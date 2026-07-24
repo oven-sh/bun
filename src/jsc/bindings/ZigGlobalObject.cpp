@@ -2832,40 +2832,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionToClass, (JSC::JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionCheckBufferRead, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto bufVal = callFrame->argument(0);
-    auto offsetVal = callFrame->argument(1);
-    auto byteLengthVal = callFrame->argument(2);
-
-    // Mirrors Node's read-path validation (lib/internal/buffer.js): validateNumber
-    // on the offset, then boundsError(). A non-integer offset (NaN, 1.01) reports
-    // "an integer", but a finite-floor value like Infinity or a negative integer
-    // reports the ">= 0 and <= N" range, matching boundsError's MathFloor check.
-    if (!offsetVal.isNumber()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "offset"_s, "number"_s, offsetVal);
-    double offset = offsetVal.asNumber();
-
-    if (!bufVal.isCell()) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
-    auto* buf = dynamicDowncast<JSC::JSArrayBufferView>(bufVal.asCell());
-    if (!buf) return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "buf"_s, "Buffer"_s, bufVal);
-    size_t byteLength = byteLengthVal.asNumber();
-    ssize_t type = ((ssize_t)buf->length()) - byteLength;
-
-    // A non-integer offset (NaN, 1.01) is "an integer" even when numerically
-    // within bounds — the caller only reaches here because buf[offset] was
-    // undefined, which for a fractional index happens regardless of bounds.
-    if (std::floor(offset) != offset) {
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, "an integer"_s, offsetVal);
-    }
-    if (!(offset >= 0 && offset <= (double)type)) {
-        if (type < 0) return Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, globalObject, ""_s);
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, "offset"_s, makeString(">= 0 and <= "_s, type), offsetVal);
-    }
-    return JSValue::encode(jsUndefined());
-}
 EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
 {
     auto& vm = this->vm();
@@ -2937,7 +2903,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         { BuiltinName::k_toClass, 1, jsFunctionToClass },
         { BuiltinName::k_inherits, 1, jsFunctionInherits },
         { BuiltinName::k_makeAbortError, 1, jsFunctionMakeAbortError },
-        { BuiltinName::k_checkBufferRead, 1, jsFunctionCheckBufferRead },
     };
     Vector<GlobalPropertyInfo, 32> staticGlobals;
     staticGlobals.append(GlobalPropertyInfo { builtinNames.lazyPrivateName(),

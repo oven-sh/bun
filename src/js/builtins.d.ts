@@ -540,7 +540,6 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 
 declare function $min(a: number, b: number): number;
 
-declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
 
 interface Map<K, V> {
   $get: typeof Map.prototype.get;

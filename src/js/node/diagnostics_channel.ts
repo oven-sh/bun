@@ -281,6 +281,16 @@ class TracingChannel {
     }
   }
 
+  get hasSubscribers() {
+    return (
+      this.start.hasSubscribers ||
+      this.end.hasSubscribers ||
+      this.asyncStart.hasSubscribers ||
+      this.asyncEnd.hasSubscribers ||
+      this.error.hasSubscribers
+    );
+  }
+
   subscribe(handlers) {
     for (const name of traceEvents) {
       if (!handlers[name]) continue;

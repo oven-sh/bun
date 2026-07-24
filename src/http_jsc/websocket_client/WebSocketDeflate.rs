@@ -64,6 +64,8 @@ pub struct PerMessageDeflate {
     pub compress_stream: zlib::DeflateEncoder,
     pub decompress_stream: zlib::InflateDecoder,
     pub params: Params,
+    /// Per-connection inbound-message cap (0 disables the check).
+    pub max_payload: usize,
     // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
     // handles, shared across connections), but the concrete type is *this*
     // `RareData`, which `bun_jsc` cannot name without a dep cycle, so each
@@ -79,9 +81,6 @@ const Z_DEFAULT_MEM_LEVEL: c_int = 8;
 
 // Buffer size for compression/decompression operations
 const COMPRESSION_BUFFER_SIZE: usize = 4096;
-
-// Maximum decompressed message size (128 MB)
-const MAX_DECOMPRESSED_SIZE: usize = 128 * 1024 * 1024;
 
 // DEFLATE trailer bytes added by Z_SYNC_FLUSH
 const DEFLATE_TRAILER: [u8; 4] = [0x00, 0x00, 0xff, 0xff];
@@ -105,7 +104,7 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
+    pub(crate) fn init(params: Params, max_payload: usize) -> crate::Result<Box<Self>> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         let compress_stream = zlib::DeflateEncoder::new(
@@ -125,9 +124,15 @@ impl PerMessageDeflate {
             params,
             compress_stream,
             decompress_stream,
+            max_payload,
             // Fresh per-connection instance; see the `rare_data` field note.
             rare_data: RareData::default(),
         }))
+    }
+
+    #[inline]
+    fn exceeds_max(&self, len: usize) -> bool {
+        self.max_payload > 0 && len > self.max_payload
     }
 
     fn can_use_libdeflate(len: usize) -> bool {
@@ -151,7 +156,7 @@ impl PerMessageDeflate {
                 let result =
                     decompressor.decompress_to_vec(in_buf, out, libdeflate_sys::Encoding::Deflate);
                 if result.status == libdeflate_sys::Status::Success {
-                    if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
+                    if self.exceeds_max(out.len() - initial_len) {
                         return Err(DecompressError::TooLarge);
                     }
                     return Ok(());
@@ -175,7 +180,7 @@ impl PerMessageDeflate {
             remaining = &remaining[consumed..];
 
             // Check for decompression bomb
-            if out.len() - initial_len > MAX_DECOMPRESSED_SIZE {
+            if self.exceeds_max(out.len() - initial_len) {
                 return Err(DecompressError::TooLarge);
             }
 

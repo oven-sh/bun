@@ -136,6 +136,8 @@ class BunWebSocket extends EventEmitter {
   #binaryType = "nodebuffer";
   // Bitset to track whether event handlers are set.
   #eventId = 0;
+  #handshakeTimer = null;
+  #handshakeAborted = false;
 
   constructor(url, protocols, options) {
     super();
@@ -164,6 +166,8 @@ class BunWebSocket extends EventEmitter {
     // any `perMessageDeflate` that's present and falsy suppresses the extension
     // offer; omitted or truthy keeps the default.
     let disableDeflate = false;
+    let handshakeTimeout;
+    let maxPayload = 100 * 1024 * 1024;
     // https://github.com/websockets/ws/blob/0d1b5e6c4acad16a6b1a1904426eb266a5ba2f72/lib/websocket.js#L741-L747
     if ($isObject(options)) {
       headers = options?.headers;
@@ -171,6 +175,11 @@ class BunWebSocket extends EventEmitter {
       tlsOptions = options?.tls;
       if ("perMessageDeflate" in options && !options.perMessageDeflate) {
         disableDeflate = true;
+      }
+      handshakeTimeout = options.handshakeTimeout;
+      const optMaxPayload = options.maxPayload;
+      if (optMaxPayload !== undefined) {
+        maxPayload = optMaxPayload;
       }
 
       // Extract from agent if provided (like HttpsProxyAgent)
@@ -224,7 +233,17 @@ class BunWebSocket extends EventEmitter {
         end: () => {
           if (!didCallEnd) {
             didCallEnd = true;
-            this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+            this.#createWebSocket(
+              url,
+              protocols,
+              headers,
+              method,
+              proxy,
+              tlsOptions,
+              disableDeflate,
+              maxPayload,
+              handshakeTimeout,
+            );
           }
         },
         write() {},
@@ -253,32 +272,74 @@ class BunWebSocket extends EventEmitter {
       EventEmitter.$call(nodeHttpClientRequestSimulated);
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
-        this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+        this.#createWebSocket(
+          url,
+          protocols,
+          headers,
+          method,
+          proxy,
+          tlsOptions,
+          disableDeflate,
+          maxPayload,
+          handshakeTimeout,
+        );
       }
       return;
     }
 
-    this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
+    this.#createWebSocket(
+      url,
+      protocols,
+      headers,
+      method,
+      proxy,
+      tlsOptions,
+      disableDeflate,
+      maxPayload,
+      handshakeTimeout,
+    );
   }
 
-  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate) {
+  #createWebSocket(url, protocols, headers, method, proxy, tls, disableDeflate, maxPayload, handshakeTimeout) {
     // The native WebSocket keeps permessage-deflate enabled by default;
     // forward `perMessageDeflate: false` only when the caller asked to disable.
-    let wsOptions;
-    if (headers || proxy || tls || disableDeflate) {
-      wsOptions = { protocols };
-      if (headers) wsOptions.headers = headers;
-      if (method) wsOptions.method = method;
-      if (proxy) wsOptions.proxy = proxy;
-      if (tls) wsOptions.tls = tls;
-      if (disableDeflate) wsOptions.perMessageDeflate = false;
-    } else {
-      wsOptions = protocols;
-    }
+    let wsOptions = { protocols, maxPayload };
+    if (headers) wsOptions.headers = headers;
+    if (method) wsOptions.method = method;
+    if (proxy) wsOptions.proxy = proxy;
+    if (tls) wsOptions.tls = tls;
+    if (disableDeflate) wsOptions.perMessageDeflate = false;
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
 
+    if (handshakeTimeout) {
+      this.#handshakeTimer = setTimeout(() => {
+        this.#abortHandshake(new Error("Opening handshake has timed out"));
+      }, handshakeTimeout);
+      ws.addEventListener("open", () => this.#clearHandshakeTimer(), onceObject);
+      ws.addEventListener("close", () => this.#clearHandshakeTimer(), onceObject);
+    }
+
     return ws;
+  }
+
+  #clearHandshakeTimer() {
+    const timer = this.#handshakeTimer;
+    if (timer !== null) {
+      clearTimeout(timer);
+      this.#handshakeTimer = null;
+    }
+  }
+
+  #abortHandshake(err) {
+    if (this.#handshakeAborted || this.#ws.readyState !== ReadyState_CONNECTING) return;
+    this.#handshakeAborted = true;
+    this.#clearHandshakeTimer();
+    this.#ws.terminate();
+    process.nextTick(() => {
+      this.emit("error", err);
+      this.emit("close", 1006, Buffer.alloc(0));
+    });
   }
 
   #onOrOnce(event, listener, once) {
@@ -308,6 +369,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "close",
           ({ code, reason, wasClean }) => {
+            if (this.#handshakeAborted) return;
             this.emit("close", code, reason, wasClean);
           },
           once,
@@ -333,6 +395,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "error",
           err => {
+            if (this.#handshakeAborted) return;
             this.emit("error", err);
           },
           once,

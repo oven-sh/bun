@@ -569,11 +569,7 @@ impl BunxCommand {
     #[cfg(unix)]
     fn is_trusted_cache_root(cache_root: &ZStr, uid: libc::uid_t) -> bool {
         match bun_sys::lstat(cache_root) {
-            Ok(st) => {
-                (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                    && st.st_uid == uid
-                    && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
-            }
+            Ok(st) => bun_sys::stat_is_owner_only_writable_dir(&st, uid),
             Err(_) => true,
         }
     }

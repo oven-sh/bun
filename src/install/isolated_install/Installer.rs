@@ -307,9 +307,10 @@ impl<'a> Installer<'a> {
         // contents hash, not the peer set). Once it exists, reuse it: rebuilding
         // it replaces the directory under earlier entries' running hardlink tasks.
         if let crate::patch_install::Callback::Apply(apply) = &patch_task.callback {
-            if sys::directory_exists_at(apply.cache_dir, apply.cache_dir_subpath.as_zstr())
-                .unwrap_or(false)
-            {
+            if crate::package_manager_real::directories::cache_entry_is_dir(
+                apply.cache_dir,
+                apply.cache_dir_subpath.as_zstr(),
+            ) {
                 return;
             }
         }

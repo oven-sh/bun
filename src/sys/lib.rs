@@ -1247,6 +1247,17 @@ pub type Stat = libc::stat;
 #[cfg(windows)]
 pub type Stat = bun_libuv_sys::uv_stat_t;
 
+/// Shared predicate for the "is this a cache root we trust to source bytes
+/// from" checks (the bunx cache, the install extraction cache, the per-sha
+/// `bun --bun` node-symlink dir): a real directory, owned by `uid`, with no
+/// group/other write bits.
+#[cfg(unix)]
+#[inline]
+pub fn stat_is_owner_only_writable_dir(st: &Stat, uid: libc::uid_t) -> bool {
+    let mode = st.st_mode as Mode;
+    S::ISDIR(mode) && st.st_uid == uid && (mode & (S::IWGRP | S::IWOTH)) == 0
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Syscall surface — real posix libc FFI. Windows path lives in
 // `windows_impl` (NT/kernel32/libuv triad) below.
@@ -7278,13 +7289,18 @@ pub enum ExistsAtType {
     File,
     Directory,
 }
-/// Windows tail — `NtQueryAttributesFile` against an
-/// OBJECT_ATTRIBUTES built from an already NT-prefixed wide path. Shared by the
-/// UTF-8 (`exists_at_type`) and UTF-16 (`exists_at_type_w`) entry points so the
-/// width dispatch does not
-/// duplicate the syscall body.
+/// `NtQueryAttributesFile` against an OBJECT_ATTRIBUTES built from an already
+/// NT-prefixed wide path, relative to `dir`. Shared syscall body for
+/// `exists_at_type` / `exists_at_type_w` / `get_file_attributes_at` so the
+/// OBJECT_ATTRIBUTES setup lives in one place.
 #[cfg(windows)]
-fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
+fn nt_query_basic_attrs_at(
+    dir: Fd,
+    mut path: &[u16],
+) -> core::result::Result<
+    bun_windows_sys::externs::FILE_BASIC_INFORMATION,
+    bun_windows_sys::externs::NTSTATUS,
+> {
     use bun_windows_sys::externs as w;
     // Trim leading `.\` — NtQueryAttributesFile expects relative paths
     // without it.
@@ -7314,27 +7330,37 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
     let mut basic_info: w::FILE_BASIC_INFORMATION = bun_core::ffi::zeroed();
     // SAFETY: FFI; attr/basic_info valid for the call duration.
     let rc = unsafe { w::ntdll::NtQueryAttributesFile(&attr, &mut basic_info) };
-    if rc != w::NTSTATUS::SUCCESS {
+    if rc == w::NTSTATUS::SUCCESS {
+        Ok(basic_info)
+    } else {
+        Err(rc)
+    }
+}
+
+#[cfg(windows)]
+fn exists_at_type_nt(dir: Fd, path: &[u16]) -> Maybe<ExistsAtType> {
+    use bun_windows_sys::externs as w;
+    match nt_query_basic_attrs_at(dir, path) {
+        Ok(basic_info) => Ok(
+            // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
+            // marker (OneDrive sets it) and does not affect directory-ness; only
+            // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+            if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+                ExistsAtType::Directory
+            } else {
+                ExistsAtType::File
+            },
+        ),
         // `errnoSys` for `NTSTATUS` routes through the curated
         // `translateNTStatusToErrno` table first (so `OBJECT_PATH_NOT_FOUND`
         // deterministically maps to `ENOENT`, which `directory_exists_at()`
         // branches on), then falls back to `RtlNtStatusToDosError` for
         // unmapped codes.
-        return Err(Error::from_code(
+        Err(rc) => Err(Error::from_code(
             windows::translate_nt_status_to_errno(rc),
             Tag::access,
-        ));
+        )),
     }
-    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
-    // marker (OneDrive sets it) and does not affect directory-ness; only
-    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
-    Ok(
-        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
-            ExistsAtType::Directory
-        } else {
-            ExistsAtType::File
-        },
-    )
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {
@@ -7364,6 +7390,22 @@ pub fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let mut wbuf = bun_paths::w_path_buffer_pool::get();
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)
+}
+/// `NtQueryAttributesFile` relative to `dir`, surfacing the directory and
+/// reparse-point bits. Unlike `lstatat` → `fstat` (which maps junctions to
+/// `S_IFDIR` and never sets `S_IFLNK`), this exposes
+/// `FILE_ATTRIBUTE_REPARSE_POINT` so callers can refuse junctions/symlinks.
+#[cfg(windows)]
+pub fn get_file_attributes_at(dir: Fd, sub: &ZStr) -> Option<WindowsFileAttributes> {
+    use bun_windows_sys::externs as w;
+    let mut wbuf = bun_paths::w_path_buffer_pool::get();
+    let path = bun_paths::string_paths::to_nt_path(&mut wbuf.0[..], sub.as_bytes()).as_slice();
+    let bi = nt_query_basic_attrs_at(dir, path).ok()?;
+    Some(WindowsFileAttributes {
+        is_directory: (bi.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0,
+        is_reparse_point: (bi.FileAttributes & w::FILE_ATTRIBUTE_REPARSE_POINT) != 0,
+        raw: bi.FileAttributes,
+    })
 }
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {

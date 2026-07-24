@@ -327,7 +327,22 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
 
             match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
-                Ok(d) => return d,
+                Ok(d) => {
+                    if is_trusted_cache_root(d.fd()) {
+                        return d;
+                    }
+                    bun_core::pretty_errorln!(
+                        "<r><yellow>warn<r>: ignoring install cache at <b>{}<r> because it is not a directory owned by the current user or is writable by other users. Set $BUN_INSTALL_CACHE_DIR to a directory only you can write to, or remove it.",
+                        bun_fmt::s(&cache_dir.path)
+                    );
+                    drop(d);
+                    // SAFETY: narrow `&mut enable` projection; disjoint from
+                    // any `&options.{registries,scope}` the caller may hold.
+                    unsafe { (*this).options.enable.set(Enable::CACHE, false) };
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(b"") };
+                    continue;
+                }
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
                     // any `&options.{registries,scope}` the caller may hold.
@@ -359,6 +374,25 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             }
         }
     }
+}
+
+/// A shared install cache is trusted only when it is a real directory owned by
+/// the current user and not group/other-writable. The cache-hit path never
+/// re-verifies integrity, so a writable-by-others cache root would let any
+/// co-tenant supply the bytes that end up in node_modules. On failure the
+/// caller falls back to the per-project `node_modules/.cache`.
+#[cfg(unix)]
+fn is_trusted_cache_root(dir: Fd) -> bool {
+    match sys::fstat(dir) {
+        Ok(st) => sys::stat_is_owner_only_writable_dir(&st, bun_sys::c::getuid()),
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(unix))]
+#[inline(always)]
+fn is_trusted_cache_root(_dir: Fd) -> bool {
+    true
 }
 
 pub struct CacheDir {
@@ -747,8 +781,31 @@ pub fn cached_tarball_folder_name(
     )
 }
 
+/// `true` iff `subpath` under `dir` is a real directory, not a symlink or
+/// junction. A cache hit short-circuits the tarball download and its integrity
+/// check, so a link planted at the predictable entry name must be treated as
+/// absent and re-fetched. POSIX uses `lstatat` (AT_SYMLINK_NOFOLLOW); on
+/// Windows `lstatat`'s `fstat` never sets `S_IFLNK` for a junction, so query
+/// the attributes directly and refuse `FILE_ATTRIBUTE_REPARSE_POINT`.
+pub fn cache_entry_is_dir(dir: Fd, subpath: &ZStr) -> bool {
+    #[cfg(windows)]
+    {
+        match sys::get_file_attributes_at(dir, subpath) {
+            Some(a) => a.is_directory && !a.is_reparse_point,
+            None => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        match sys::lstatat(dir, subpath) {
+            Ok(st) => bun_sys::S::ISDIR(st.st_mode as _),
+            Err(_) => false,
+        }
+    }
+}
+
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
-    sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
+    cache_entry_is_dir(get_cache_directory(this), folder_path)
 }
 
 // ─────────────────────────── global directories ───────────────────────────────

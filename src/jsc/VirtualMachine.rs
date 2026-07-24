@@ -4768,72 +4768,91 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        if value.is_aggregate_error(global_ref) {
-            // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list.
-            struct AggCtx<'a> {
-                formatter: *mut crate::console_object::Formatter<'a>,
-                writer: *mut bun_core::io::Writer,
-                exception_list: *mut ExceptionList,
-                allow_ansi_color: bool,
-                allow_side_effects: bool,
-            }
-            extern "C" fn agg_iter(
-                _vm: *mut crate::VM,
-                _global: &JSGlobalObject,
-                ctx: *mut c_void,
-                next_value: JSValue,
-            ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                // SAFETY: per-thread VM.
-                let vm = VirtualMachine::get().as_mut();
-                let exception_list = if ctx.exception_list.is_null() {
-                    None
-                } else {
-                    // SAFETY: non-null branch; borrows the caller's stack
-                    // `ExceptionList`, live for the synchronous `for_each`.
-                    Some(unsafe { &mut *ctx.exception_list })
-                };
-                // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let formatter = unsafe { &mut *ctx.formatter };
-                // SAFETY: `ctx.writer` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let writer = unsafe { &mut *ctx.writer };
-                vm.print_errorlike_object(
-                    next_value,
-                    None,
-                    exception_list,
-                    formatter,
-                    writer,
-                    ctx.allow_ansi_color,
-                    ctx.allow_side_effects,
-                );
-            }
-            let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(formatter),
-                writer: std::ptr::from_mut(writer),
-                exception_list: exception_list
-                    .map(std::ptr::from_mut::<ExceptionList>)
-                    .unwrap_or(core::ptr::null_mut()),
-                allow_ansi_color,
-                allow_side_effects,
-            };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
-            let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
-            return;
-        }
-
-        // Note: reborrow so the add-to-error-list tail can still see it after
+        // Note: reborrow so the aggregate branch can lend the list to its
+        // iteration ctx and the add-to-error-list tail can still see it after
         // `print_error_from_maybe_private_data`.
         let mut exception_list = exception_list;
+
+        if value.is_aggregate_error(global_ref) {
+            // `getErrorsProperty` is `getDirect` (own slot, nothrow): it
+            // returns empty when the own `errors` property is absent (deleted
+            // or never installed), the raw GetterSetter cell when redefined
+            // as an accessor, and whatever the user stored otherwise.
+            // Iterating anything but the spec-created shape (an array) is
+            // unsafe (an empty value decodes as a null cell), so tampered
+            // values fall through to the plain error-printing path below.
+            let errors = value.get_errors_property(global_ref);
+            if errors.is_array() {
+                // Note: `JSValue::for_each` takes a C-ABI fn
+                // pointer + erased ctx, so thread the captures through a struct.
+                // The C trampoline erases lifetimes via `*mut c_void`; round-trip
+                // the caller's `&mut ExceptionList` as a raw pointer so child
+                // errors append to the same list.
+                struct AggCtx<'a> {
+                    formatter: *mut crate::console_object::Formatter<'a>,
+                    writer: *mut bun_core::io::Writer,
+                    exception_list: *mut ExceptionList,
+                    allow_ansi_color: bool,
+                    allow_side_effects: bool,
+                }
+                extern "C" fn agg_iter(
+                    _vm: *mut crate::VM,
+                    _global: &JSGlobalObject,
+                    ctx: *mut c_void,
+                    next_value: JSValue,
+                ) {
+                    // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
+                    let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
+                    // SAFETY: per-thread VM.
+                    let vm = VirtualMachine::get().as_mut();
+                    let exception_list = if ctx.exception_list.is_null() {
+                        None
+                    } else {
+                        // SAFETY: non-null branch; borrows the caller's stack
+                        // `ExceptionList`, live for the synchronous `for_each`.
+                        Some(unsafe { &mut *ctx.exception_list })
+                    };
+                    // SAFETY: `ctx.formatter` borrows the caller's stack local,
+                    // live across the synchronous `for_each` call.
+                    let formatter = unsafe { &mut *ctx.formatter };
+                    // SAFETY: `ctx.writer` borrows the caller's stack local,
+                    // live across the synchronous `for_each` call.
+                    let writer = unsafe { &mut *ctx.writer };
+                    vm.print_errorlike_object(
+                        next_value,
+                        None,
+                        exception_list,
+                        formatter,
+                        writer,
+                        ctx.allow_ansi_color,
+                        ctx.allow_side_effects,
+                    );
+                }
+                let mut ctx = AggCtx {
+                    formatter: std::ptr::from_mut(formatter),
+                    writer: std::ptr::from_mut(writer),
+                    exception_list: exception_list
+                        .as_deref_mut()
+                        .map(std::ptr::from_mut::<ExceptionList>)
+                        .unwrap_or(core::ptr::null_mut()),
+                    allow_ansi_color,
+                    allow_side_effects,
+                };
+                if errors
+                    .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
+                    .is_ok()
+                {
+                    return;
+                }
+                // Iteration ran user JS and threw (e.g. a patched
+                // `Array.prototype[Symbol.iterator]`). This runs inside the
+                // exception printer, so clear the secondary exception
+                // (terminations stay pending) and fall through to print the
+                // AggregateError itself instead of swallowing it.
+                global_ref.clear_exception_except_termination();
+            }
+        }
+
         let was_internal = self.print_error_from_maybe_private_data(
             value,
             exception_list.as_deref_mut(),

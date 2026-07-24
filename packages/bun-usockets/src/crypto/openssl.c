@@ -110,6 +110,12 @@ struct loop_ssl_data {
   char *ssl_spill;
   unsigned int ssl_spill_len;
   unsigned int ssl_spill_off;
+  /* Set while the spill holds a handshake's final flight that the JS
+   * on_handshake callback may still discard (node's memory-BIO lets destroy()
+   * drop enc_out_ before EncOut flushes it; here the owner's close path frees
+   * the spill without the last-chance drain). Cleared - and the spill drained
+   * normally - once that callback returns without closing the socket. */
+  int ssl_spill_discard_on_close;
 };
 
 enum {
@@ -465,6 +471,7 @@ static inline struct us_ssl_reneg_state_t *us_reneg_state(SSL *ssl) {
 extern void us_internal_socket_raw_shutdown(struct us_socket_t *s);
 
 static void ssl_update_handshake(struct us_socket_t *s);
+static inline int ssl_gone(struct us_socket_t *s);
 
 /* ── BIO plumbing ─────────────────────────────────────────────────────────
  * The same shared mem-BIO pair is reused for every SSL* on a loop. The write
@@ -597,6 +604,7 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
     loop_ssl_data->ssl_spill_len = remainder;
     loop_ssl_data->ssl_spill_off = 0;
     loop_ssl_data->ssl_spill_owner = s;
+    loop_ssl_data->ssl_spill_discard_on_close = 0;
     return 0;
   }
   return 1;
@@ -616,6 +624,7 @@ static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket
     loop_ssl_data->ssl_spill_len = 0;
     loop_ssl_data->ssl_spill_off = 0;
     loop_ssl_data->ssl_spill_owner = NULL;
+    loop_ssl_data->ssl_spill_discard_on_close = 0;
     return 1;
   }
   return 0;
@@ -625,11 +634,19 @@ static int ssl_drain_spill(struct loop_ssl_data *loop_ssl_data, struct us_socket
 static void ssl_release_spill(struct us_loop_t *loop, struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)loop->data.ssl_data;
   if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
-    /* Hard close with ciphertext still spilled: give the kernel one last
-     * chance to take it (it usually can - the spill is bounded small). */
-    ssl_drain_spill(loop_ssl_data, s);
+    if (loop_ssl_data->ssl_spill_discard_on_close) {
+      /* The held handshake flight is being dropped; the peer never saw this
+       * side finish, so any further TLS record (close_notify) would arrive
+       * under keys it has not installed. Suppress them. */
+      s->ssl_fatal_error = 1;
+    } else {
+      /* Hard close with ciphertext still spilled: give the kernel one last
+       * chance to take it (it usually can - the spill is bounded small). */
+      ssl_drain_spill(loop_ssl_data, s);
+    }
   }
   if (loop_ssl_data && loop_ssl_data->ssl_spill_owner == s) {
+    loop_ssl_data->ssl_spill_discard_on_close = 0;
     us_free(loop_ssl_data->ssl_spill);
     loop_ssl_data->ssl_spill = NULL;
     loop_ssl_data->ssl_spill_len = 0;
@@ -1590,6 +1607,54 @@ static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   us_dispatch_handshake(s, success, verify_error);
 }
 
+/* Dispatch on_handshake(success=1) while the handshake's final flight sits in
+ * the batch buffer. Node's TLSWrap seals handshake records into a memory BIO
+ * and runs JS from the SSL_CB_HANDSHAKE_DONE info callback before EncOut
+ * copies enc_out_ to the TCP stream, so a verify-rejecting client's destroy()
+ * drops that flight and the server's handshake never completes. Here the
+ * batched flight is parked in the spill slot with discard-on-close set: a
+ * close from inside the callback frees it without draining, and any
+ * us_internal_ssl_write the callback issues drains it first so wire order is
+ * preserved when the connection is kept. */
+static void ssl_trigger_handshake_success(struct us_socket_t *s,
+                                          struct loop_ssl_data *loop_ssl_data) {
+  unsigned int len = loop_ssl_data ? loop_ssl_data->ssl_write_batch_len : 0;
+  if (!len || loop_ssl_data->ssl_spill_owner) {
+    if (len) ssl_flush_write_batch(loop_ssl_data, s);
+    ssl_trigger_handshake(s, 1);
+    return;
+  }
+  char *held = us_malloc(len);
+  if (!held) {
+    ssl_flush_write_batch(loop_ssl_data, s);
+    ssl_trigger_handshake(s, 1);
+    return;
+  }
+  memcpy(held, loop_ssl_data->ssl_write_batch, len);
+  loop_ssl_data->ssl_write_batch_len = 0;
+  loop_ssl_data->ssl_spill = held;
+  loop_ssl_data->ssl_spill_len = len;
+  loop_ssl_data->ssl_spill_off = 0;
+  loop_ssl_data->ssl_spill_owner = s;
+  loop_ssl_data->ssl_spill_discard_on_close = 1;
+
+  ssl_trigger_handshake(s, 1);
+
+  if (loop_ssl_data->ssl_spill_owner == s &&
+      loop_ssl_data->ssl_spill_discard_on_close) {
+    loop_ssl_data->ssl_spill_discard_on_close = 0;
+    if (!ssl_gone(s)) {
+      ssl_drain_spill(loop_ssl_data, s);
+    } else {
+      us_free(loop_ssl_data->ssl_spill);
+      loop_ssl_data->ssl_spill = NULL;
+      loop_ssl_data->ssl_spill_len = 0;
+      loop_ssl_data->ssl_spill_off = 0;
+      loop_ssl_data->ssl_spill_owner = NULL;
+    }
+  }
+}
+
 static void ssl_trigger_handshake_econnreset(struct us_socket_t *s) {
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
   /* A fatal SSL protocol error (wrong version number, bad record, ...) was
@@ -1711,7 +1776,9 @@ struct us_socket_t *us_internal_ssl_close(struct us_socket_t *s, int code, void 
   if (code == LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN && !reason
       && !s->ssl_close_after_spill && !s->ssl_fatal_error && !us_socket_is_closed(s)) {
     struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
-    if (loop_ssl_data && !ssl_drain_spill(loop_ssl_data, s)) {
+    if (loop_ssl_data && !(loop_ssl_data->ssl_spill_owner == s &&
+                           loop_ssl_data->ssl_spill_discard_on_close) &&
+        !ssl_drain_spill(loop_ssl_data, s)) {
       s->ssl_close_after_spill = 1;
       return s;
     }
@@ -1778,48 +1845,62 @@ static void ssl_update_handshake(struct us_socket_t *s) {
     return;
   }
 
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  int batching = loop_ssl_data && !loop_ssl_data->ssl_write_batching;
+  if (batching) loop_ssl_data->ssl_write_batching = 1;
+
   unsigned char ssl_was_in_use = s->ssl_in_use;
   s->ssl_in_use = 1;
   int result = SSL_do_handshake(s_ssl(s));
   s->ssl_in_use = ssl_was_in_use;
+
+  if (batching) loop_ssl_data->ssl_write_batching = 0;
   if (!ssl_was_in_use && s->ssl_pending_detach) {
     /* A callback run from inside the handshake destroyed this socket; perform
      * the deferred close now and do not touch the SSL again. */
+    if (batching) loop_ssl_data->ssl_write_batch_len = 0;
     s->ssl_pending_detach = 0;
     us_socket_close(s, s->ssl_pending_close_code, NULL);
     return;
   }
 
   if (SSL_get_shutdown(s_ssl(s)) & SSL_RECEIVED_SHUTDOWN) {
+    if (batching) ssl_flush_write_batch(loop_ssl_data, s);
     ssl_close(s, 0, NULL);
     return;
   }
 
-  if (result <= 0) {
-    int err = SSL_get_error(s_ssl(s), result);
-    if (err == SSL_ERROR_PENDING_CERTIFICATE) {
-      /* Suspended by an async SNICallback: stay in HANDSHAKE_PENDING with no
-       * poll re-arm; us_socket_sni_resolve() re-drives the handshake when the
-       * JS resolution arrives. */
-      s->ssl_handshake_state = HANDSHAKE_PENDING;
-      return;
-    }
-    if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
-      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        ssl_park_fatal_reason(s);
-      }
-      ssl_trigger_handshake(s, 0);
-      return;
-    }
-    s->ssl_handshake_state = HANDSHAKE_PENDING;
+  if (result > 0) {
+    ssl_trigger_handshake_success(s, batching ? loop_ssl_data : NULL);
+    if (ssl_gone(s)) return;
     s->ssl_write_wants_read = 1;
-    s->flags.last_write_failed = 1;
     return;
   }
 
-  ssl_trigger_handshake(s, 1);
-  if (ssl_gone(s)) return;
+  /* Non-success paths: the batched records are this round's outbound flight
+   * (ClientHello, server Hello/Cert/Finished, an alert) - send them now so the
+   * peer can progress. */
+  if (batching) ssl_flush_write_batch(loop_ssl_data, s);
+
+  int err = SSL_get_error(s_ssl(s), result);
+  if (err == SSL_ERROR_PENDING_CERTIFICATE) {
+    /* Suspended by an async SNICallback: stay in HANDSHAKE_PENDING with no
+     * poll re-arm; us_socket_sni_resolve() re-drives the handshake when the
+     * JS resolution arrives. */
+    s->ssl_handshake_state = HANDSHAKE_PENDING;
+    return;
+  }
+  if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
+    if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+      ssl_park_fatal_reason(s);
+    }
+    ssl_trigger_handshake(s, 0);
+    return;
+  }
+  s->ssl_handshake_state = HANDSHAKE_PENDING;
   s->ssl_write_wants_read = 1;
+  s->flags.last_write_failed = 1;
 }
 
 /* ── Event hooks (called from loop.c / socket.c when s->ssl != NULL) ────── */
@@ -2005,15 +2086,30 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
   int read = 0;
 restart:
   while (1) {
+    /* While the handshake is pending, SSL_read may seal this side's final
+     * flight (TLS 1.3 client Finished, TLS 1.2 server Finished). Batch it so
+     * ssl_trigger_handshake_success can let the JS on_handshake callback
+     * discard it when verification is rejected. */
+    int hs_batching = s->ssl_handshake_state == HANDSHAKE_PENDING &&
+                      !loop_ssl_data->ssl_write_batching;
+    if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),
                              loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
+    if (hs_batching) {
+      loop_ssl_data->ssl_write_batching = 0;
+      if (!s->ssl || !SSL_is_init_finished(s_ssl(s)) ||
+          s->ssl_handshake_state != HANDSHAKE_PENDING) {
+        ssl_flush_write_batch(loop_ssl_data, s);
+      }
+    }
     if (!ssl_was_in_use && s->ssl_pending_detach) {
       /* A callback run from inside this read destroyed the socket; perform
        * the deferred close now and stop processing. */
+      if (hs_batching) loop_ssl_data->ssl_write_batch_len = 0;
       s->ssl_pending_detach = 0;
       return us_socket_close(s, s->ssl_pending_close_code, NULL);
     }
@@ -2027,6 +2123,7 @@ restart:
        * when the JS resolution arrives. */
       if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE &&
           err != SSL_ERROR_PENDING_CERTIFICATE) {
+        if (hs_batching) ssl_flush_write_batch(loop_ssl_data, s);
         if (err == SSL_ERROR_WANT_RENEGOTIATE) {
           if (ssl_renegotiate(s)) continue;
           if (ssl_gone(s)) return NULL;
@@ -2075,6 +2172,7 @@ restart:
         /* If the BIO still has unread ciphertext at this point, the TLS
          * framing is broken — close. */
         if (loop_ssl_data->ssl_read_input_length) {
+          if (hs_batching) loop_ssl_data->ssl_write_batch_len = 0;
           return ssl_close(s, 0, NULL);
         }
         /* SSL_read drove the handshake to completion but returned no app
@@ -2085,7 +2183,7 @@ restart:
          * loads. The save/restore below makes this safe even if the JS
          * callback writes; with read==0 the buffer is empty anyway. */
         if (s->ssl_handshake_state == HANDSHAKE_PENDING && SSL_is_init_finished(s_ssl(s))) {
-          ssl_trigger_handshake(s, 1);
+          ssl_trigger_handshake_success(s, hs_batching ? loop_ssl_data : NULL);
           if (ssl_gone(s)) return NULL;
           loop_ssl_data->ssl_socket = s;
         }
@@ -2119,7 +2217,7 @@ restart:
       char *saved_input = loop_ssl_data->ssl_read_input;
       unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
       unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
-      ssl_trigger_handshake(s, 1);
+      ssl_trigger_handshake_success(s, hs_batching ? loop_ssl_data : NULL);
       if (ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;

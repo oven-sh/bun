@@ -966,6 +966,73 @@ it("ALPNCallback returning an offered protocol completes the handshake with it",
   await once(server, "close");
 });
 
+// When a TLS 1.3 client's certificate verification fails and it tears the
+// connection down (rejectUnauthorized: true), the server must not see a
+// completed handshake. Node's memory-BIO lets the destroy() inside the info
+// callback drop the client's Finished flight before it reaches the wire, so
+// the server reports tlsClientError instead of secureConnection; Bun now
+// holds that flight until the on_handshake callback returns.
+// Covers test/js/node/test/parallel/test-tls-close-error.js.
+it("client verify-reject prevents the server seeing a completed handshake", async () => {
+  const { bunExe, bunEnv } = require("harness");
+  const keys = join(import.meta.dir, "..", "test", "fixtures", "keys");
+  const script = `
+    const tls = require("tls");
+    const fs = require("fs");
+    const server = tls.createServer({
+      key: fs.readFileSync(${JSON.stringify(join(keys, "agent1-key.pem"))}),
+      cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}),
+    });
+    let events = [];
+    server.on("secureConnection", s => {
+      events.push(["secureConnection", s.authorized]);
+      s.end();
+    });
+    server.on("tlsClientError", err => events.push(["tlsClientError", err.code ?? err.message]));
+    const dial = rejectUnauthorized =>
+      new Promise(done => {
+        events = [];
+        const c = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized });
+        c.on("secureConnect", () => events.push(["client-secureConnect", c.authorized]));
+        c.on("error", e => events.push(["client-error", e.code ?? e.message]));
+        c.on("close", hadError => {
+          events.push(["client-close", hadError]);
+          // Give the server a turn to observe the client's close.
+          setImmediate(() => setImmediate(() => {
+            console.log(JSON.stringify(events));
+            c.destroy();
+            done();
+          }));
+        });
+      });
+    server.listen(0, "127.0.0.1", async () => {
+      await dial(true);
+      await dial(false);
+      server.close();
+    });
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [reject, allow] = stdout.trim().split("\n").map(l => JSON.parse(l));
+
+  // rejectUnauthorized: true (default): client drops, server handshake never
+  // completes. Node reports ECONNRESET here.
+  expect(reject).toEqual([
+    ["client-error", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+    ["client-close", true],
+    ["tlsClientError", "ECONNRESET"],
+  ]);
+
+  // rejectUnauthorized: false: client keeps the connection, so its Finished
+  // is sent and the server emits secureConnection. Both sides proceed with
+  // authorized=false.
+  expect(allow).toContainEqual(["secureConnection", false]);
+  expect(allow).toContainEqual(["client-secureConnect", false]);
+  for (const ev of allow) expect(ev[0]).not.toBe("tlsClientError");
+  expect(exitCode).toBe(0);
+});
+
 it("an asynchronous SNICallback suspends the handshake and resumes with the selected context", async () => {
   // The callback resolves on a later tick - the handshake must wait for it
   // (BoringSSL select-certificate retry) instead of falling through to the

@@ -77,7 +77,7 @@ export const workarounds: Workaround[] = [
       // https://github.com/llvm/llvm-project/pull/188913 — lower this
       // threshold to the exact 22.1.x once it lands. Apple clang is
       // already excluded: resolveLlvmToolchain only accepts Homebrew
-      // llvm (LLVM_VERSION_RANGE is >=21 <23), so cfg.clangVersion is
+      // llvm (LLVM_VERSION_RANGE is >=22.1.0 <22.1.99), so cfg.clangVersion is
       // always LLVM clang's version here.
       const FIXED_IN_LLVM = "22.1.4";
       return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);

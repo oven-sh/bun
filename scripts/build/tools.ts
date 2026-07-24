@@ -264,8 +264,8 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
  * LLVM version constraint. Any version in the same major.minor range is
  * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
+export const LLVM_VERSION = "22.1.4";
+const LLVM_MAJOR = "22";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 

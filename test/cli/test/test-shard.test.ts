@@ -120,7 +120,7 @@ describe.concurrent("--shard", () => {
     // With no test files at all, --shard should stay out of the way and
     // let the normal "No tests found!" error path handle it.
     using dir = tempDir("shard-no-files", {
-      "not-a-test.ts": "export const x = 1;",
+      "helper.ts": "export const x = 1;",
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "test", "--shard=1/3"],

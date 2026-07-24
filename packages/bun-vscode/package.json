@@ -71,7 +71,7 @@
         },
         "bun.test.filePattern": {
           "type": "string",
-          "default": "**/*{.test.,.spec.,_test_,_spec_}{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
+          "default": "**/{*.test,*_test,*-test,*.spec,*_spec,test-*,test}.{js,ts,tsx,jsx,mts,cts,cjs,mjs}",
           "description": "Glob pattern to find test files"
         },
         "bun.test.customFlag": {

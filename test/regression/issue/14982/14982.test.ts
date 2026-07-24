@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "../../../harness";
 
 describe("issue 14982", () => {
   it("does not hang in commander", async () => {
-    const process = Bun.spawn([bunExe(), join(__dirname, "commander-hang.fixture.ts"), "test"], {
+    const process = Bun.spawn([bunExe(), join(__dirname, "commander-hang.fixture.ts"), "go"], {
       stdin: "inherit",
       stdout: "pipe",
       stderr: "inherit",

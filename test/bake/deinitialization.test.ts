@@ -3,7 +3,7 @@ import path from "node:path";
 
 test("dev server deinitializes itself", () => {
   const result = Bun.spawnSync({
-    cmd: [bunExe(), "test", path.join(import.meta.dir, "fixtures/deinitialization/test.ts")],
+    cmd: [bunExe(), "test", path.join(import.meta.dir, "fixtures/deinitialization/deinit.fixture.ts")],
     env: bunEnv,
     stdio: ["inherit", "inherit", "inherit"],
     cwd: path.join(import.meta.dir, "fixtures/deinitialization"),

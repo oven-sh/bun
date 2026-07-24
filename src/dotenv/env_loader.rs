@@ -615,7 +615,11 @@ impl Loader {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false>(
+            str,
+            &mut self.map,
+            &mut value_buffer,
+        )
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(

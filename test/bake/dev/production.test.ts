@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps } from "../bake-harness";
 
@@ -11,37 +11,76 @@ const platformPath = (path: string) => (process.platform === "win32" ? path.repl
  * Production build tests
  */
 describe("production", () => {
-  test("works with sourcemaps - error thrown in React component", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `export default function IndexPage() {
+  test(
+    "works with sourcemaps - error thrown in React component",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function IndexPage() {
   throw new Error("oh no!");
   return <div>Hello World</div>;
 }`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
 
-    // Run the build command
-    const {
-      exitCode: buildExitCode,
-      stdout: buildStdout,
-      stderr: buildStderr,
-    } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+      // Run the build command
+      const {
+        exitCode: buildExitCode,
+        stdout: buildStdout,
+        stderr: buildStderr,
+      } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
-    // The build should fail due to the runtime error during SSG
-    expect(buildExitCode).toBe(1);
+      // The build should fail due to the runtime error during SSG
+      expect(buildExitCode).toBe(1);
 
-    // Check that the error message shows the proper source location
-    expect(buildStderr.toString()).toContain("throw new Error");
-    expect(buildStderr.toString()).toContain("oh no!");
-  });
+      // Check that the error message shows the proper source location
+      expect(buildStderr.toString()).toContain("throw new Error");
+      expect(buildStderr.toString()).toContain("oh no!");
+      // https://github.com/oven-sh/bun/issues/33214: the build must surface the
+      // thrown error and exit rather than hang on a render promise that never settles.
+    },
+    isASAN ? 60_000 : 30_000,
+  );
+
+  test(
+    "fails the build when a parameterized route throws during SSG",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-param-throw", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/blog/[slug].tsx": `export default function BlogPost({ params }) {
+  throw new Error("param boom");
+  return <div>{params.slug}</div>;
+}
+export function getStaticPaths() {
+  return { paths: [{ params: { slug: "hello" } }], fallback: false };
+}`,
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
+
+      // A render error on a route generated from `getStaticPaths` must fail the
+      // build. Previously the render promise was dropped by the caller, so the
+      // error became an unhandled rejection and the build still exited 0.
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+
+      expect(stderr.toString()).toContain("param boom");
+      expect(exitCode).toBe(1);
+    },
+    isASAN ? 60_000 : 30_000,
+  );
 
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {

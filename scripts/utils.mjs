@@ -1128,19 +1128,6 @@ export function getBuildId() {
 }
 
 /**
- * @returns {number | undefined}
- */
-export function getBuildNumber() {
-  if (isBuildkite) {
-    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
-  }
-
-  if (isGithubAction) {
-    return parseInt(getEnv("GITHUB_RUN_ID"));
-  }
-}
-
-/**
  * @returns {URL | undefined}
  */
 export function getBuildUrl() {
@@ -1188,24 +1175,6 @@ export function isBuildManual() {
       return buildSource === "ui" && !buildId;
     }
   }
-}
-
-/**
- * @param {string} [os]
- * @returns {number}
- */
-export function getBootstrapVersion(os) {
-  const scriptPath = join(
-    import.meta.dirname,
-    os === "windows" || (!os && isWindows) ? "bootstrap.ps1" : "bootstrap.sh",
-  );
-  const scriptContent = readFile(scriptPath, { cache: true });
-  const match = /# Version: (\d+)/.exec(scriptContent);
-  if (match) {
-    const [, version] = match;
-    return parseInt(version);
-  }
-  return 0;
 }
 
 /**
@@ -1897,29 +1866,6 @@ export function getHostname() {
 export function getUsername() {
   const { username } = userInfo();
   return username;
-}
-
-/**
- * @param {string} distro
- * @returns {string}
- */
-export function getUsernameForDistro(distro) {
-  if (/windows/i.test(distro)) {
-    return "administrator";
-  }
-  if (/alpine|centos/i.test(distro)) {
-    return "root";
-  }
-  if (/debian/i.test(distro)) {
-    return "admin";
-  }
-  if (/ubuntu/i.test(distro)) {
-    return "ubuntu";
-  }
-  if (/amazon|amzn|al\d+|rhel/i.test(distro)) {
-    return "ec2-user";
-  }
-  throw new Error(`Unsupported distro: ${distro}`);
 }
 
 /**

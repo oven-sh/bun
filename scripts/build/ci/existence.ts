@@ -1,0 +1,156 @@
+// "Does this content-addressed image already exist?" — one implementation for
+// pipeline generation.
+//
+// .buildkite/ci.mjs runs this for all 8 images at the very start of every
+// build (on queue=build-image, which holds the cloud credentials) and emits a
+// bake step ONLY for the images whose name is missing. So the pipeline
+// itself shows which images a push builds; existing images cost nothing.
+// machine.mjs still re-checks by name before launching (a race between two
+// simultaneous builds of the same new hash) — that is the guard, this is the
+// plan.
+//
+// AWS: describe-images by exact name. Azure: gallery version GET, treating
+// only a Succeeded version as existing (Failed/Creating are re-baked by
+// machine.mjs, which owns that state handling). Credentials come from the
+// same buildkite secrets machine.mjs uses; there is no separate identity.
+
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { imageName } from "./naming.ts";
+import type { Image } from "./types.ts";
+
+export type Existence = {
+  image: Image;
+  name: string;
+  exists: boolean;
+  /** Where it lives when it exists (AMI id / gallery version state). */
+  detail: string;
+};
+
+type Secrets = { get(name: string): string };
+
+/** Check all images, in parallel. */
+export async function checkImages(images: readonly Image[], secrets: Secrets): Promise<Existence[]> {
+  return Promise.all(images.map(image => checkImage(image, secrets)));
+}
+
+export async function checkImage(image: Image, secrets: Secrets): Promise<Existence> {
+  const name = imageName(image);
+  if (image.os === "linux") return checkAwsAmi(image, name, secrets);
+  return checkAzureGalleryVersion(image, name, secrets);
+}
+
+async function checkAwsAmi(image: Image, name: string, secrets: Secrets): Promise<Existence> {
+  const env = {
+    ...process.env,
+    AWS_ACCESS_KEY_ID: secrets.get("EC2_ACCESS_KEY_ID"),
+    AWS_SECRET_ACCESS_KEY: secrets.get("EC2_SECRET_ACCESS_KEY"),
+    AWS_REGION: secrets.get("EC2_REGION"),
+  };
+  // state=available only: an AMI that is still pending, or that failed,
+  // is NOT usable and must not suppress its own re-bake (mirrors the Azure
+  // path, which counts only a Succeeded version).
+  const args = [
+    "ec2",
+    "describe-images",
+    "--owners",
+    "self",
+    "--filters",
+    `Name=name,Values=${name}`,
+    "Name=state,Values=available",
+    "--output",
+    "json",
+  ];
+  let stdout: string;
+  try {
+    // Async so the per-image probes actually overlap under Promise.all.
+    ({ stdout } = await promisify(execFile)("aws", args, { encoding: "utf8", env }));
+  } catch (cause) {
+    const e = cause as NodeJS.ErrnoException & { code?: unknown; stderr?: string };
+    // ENOENT / spawn failure: the aws CLI could not start at all.
+    if (typeof e.code === "string") throw new Error(`could not run the aws CLI to check ${name}: ${e.message}`);
+    throw new Error(
+      `aws describe-images failed for ${name} (exit ${String(e.code)}): ${(e.stderr ?? e.message).trim()}`,
+    );
+  }
+  const parsed = JSON.parse(stdout);
+  const [found] = parsed.Images;
+  if (found) return { image, name, exists: true, detail: `${found.ImageId} (available)` };
+  return { image, name, exists: false, detail: "no available AMI with this name" };
+}
+
+async function checkAzureGalleryVersion(image: Image, name: string, secrets: Secrets): Promise<Existence> {
+  if (image.os !== "windows") throw new Error(`checkAzureGalleryVersion: ${image.key} is not a windows image`);
+  const tenant = secrets.get("AZURE_TENANT_ID");
+  const clientId = secrets.get("AZURE_CLIENT_ID");
+  const clientSecret = secrets.get("AZURE_CLIENT_SECRET");
+  const subscription = secrets.get("AZURE_SUBSCRIPTION_ID");
+  const token = await azureToken(tenant, clientId, clientSecret);
+  const { gallery } = image;
+  const path =
+    `/subscriptions/${subscription}/resourceGroups/${gallery.resourceGroup}` +
+    `/providers/Microsoft.Compute/galleries/${gallery.name}/images/${name}/versions/${gallery.imageVersion}`;
+  // Generous ceiling: this is a single metadata GET that Azure answers in
+  // under a second when healthy. The bound exists only to turn a genuinely
+  // dead endpoint (a hung TLS handshake never rejects on its own) into a
+  // visible failure — it fails loudly into the existence-check banner, it
+  // never silently skips a bake. Slow-but-alive Azure has 2 minutes.
+  const response = await fetch(`https://management.azure.com${path}?api-version=2024-03-03`, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (response.status === 404) {
+    return { image, name, exists: false, detail: "no gallery version with this name" };
+  }
+  if (!response.ok) {
+    throw new Error(`azure gallery probe failed for ${name}: ${response.status} ${await response.text()}`);
+  }
+  const body = await response.json();
+  const state = body?.properties?.provisioningState;
+  // A launchable version (Succeeded, or Updating = live version mid tag
+  // write) counts as existing so no bake is emitted for it; Creating and
+  // dead states are handled by the bake in machine.ts.
+  if (classifyGalleryVersionState(state) === "reuse") {
+    return { image, name, exists: true, detail: `version ${gallery.imageVersion} ${state}` };
+  }
+  return { image, name, exists: false, detail: `version present but ${state}; will re-bake` };
+}
+
+/**
+ * What a gallery image version's provisioningState means for reuse. One
+ * classification shared by the pipeline existence check (below) and the
+ * bake-time probe in machine.ts, so they can never disagree.
+ *
+ *   - "Succeeded": a finished, launchable bake            → reuse
+ *   - "Updating":  an EXISTING launchable version whose metadata is being
+ *                  written (e.g. robobun stamping a `last-used` demand tag
+ *                  holds a 27-region version here for ~2 minutes while it
+ *                  stays fully usable). NOT a bake in flight.  → reuse
+ *   - "Creating":  a genuine bake in flight, no replicas yet → not reusable,
+ *                  and machine.ts refuses to race it
+ *   - "Failed" / "Canceled" / anything else: a dead version → re-bake
+ */
+export type GalleryVersionReuse = "reuse" | "creating" | "rebake";
+
+/** Classify a gallery image version's provisioningState for reuse. */
+export function classifyGalleryVersionState(state: string | undefined): GalleryVersionReuse {
+  if (state === "Succeeded" || state === "Updating") return "reuse";
+  if (state === "Creating") return "creating";
+  return "rebake";
+}
+
+/** Azure client-credentials OAuth token for the management API. The single
+ * implementation shared by pipeline generation and machine.ts. */
+export async function azureToken(tenant: string, clientId: string, clientSecret: string): Promise<string> {
+  const response = await fetch(`https://login.microsoftonline.com/${tenant}/oauth2/v2.0/token`, {
+    method: "POST",
+    signal: AbortSignal.timeout(120_000),
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body:
+      `grant_type=client_credentials&client_id=${clientId}` +
+      `&client_secret=${encodeURIComponent(clientSecret)}&scope=https://management.azure.com/.default`,
+  });
+  if (!response.ok) throw new Error(`azure auth failed: ${response.status} ${await response.text()}`);
+  const data = await response.json();
+  return data.access_token;
+}

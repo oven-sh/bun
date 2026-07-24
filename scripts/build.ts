@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   // GNU-style include-path vars (CPATH, C_INCLUDE_PATH, CPLUS_INCLUDE_PATH,
   // OBJC_INCLUDE_PATH) apply to every clang invocation regardless of
   // --target. The CI build containers set them for the *host* gcc toolchain
-  // (.buildkite/Dockerfile), which hijacks <vector> & co. away from the MSVC
+  // (the CI build host image), which hijacks <vector> & co. away from the MSVC
   // STL when cross-compiling for Windows ("'bits/c++config.h' file not
   // found"). Scrub them for Windows cross builds — they are host-targeted by
   // definition. Native Windows builds (INCLUDE/LIB from the VS dev shell) and

@@ -60,7 +60,7 @@
           # Python for build scripts
           pkgs.python3
 
-          # Other build dependencies from bootstrap.sh
+          # Other build dependencies from the CI image spec (scripts/build/ci/spec.ts)
           pkgs.libtool
           pkgs.ruby
           pkgs.perl
@@ -80,9 +80,9 @@
 
           # Additional dependencies for Linux
         ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
-          pkgs.gdb # for debugging core dumps (from bootstrap.sh line 1535)
+          pkgs.gdb # for debugging core dumps
 
-          # Chromium dependencies for Puppeteer testing (from bootstrap.sh lines 1397-1483)
+          # Chromium dependencies for Puppeteer testing (scripts/build/ci/spec.ts chromium packages)
           # X11 and graphics libraries
           pkgs.xorg.libX11
           pkgs.xorg.libxcb

@@ -19,7 +19,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::resumable_sink::{
-    ResumableHTMLRewriterSink, ResumableSink, ResumableSinkBackpressure, ResumableSinkContext,
+    ResumableHTMLRewriterSink, ResumableSinkBackpressure, ResumableSinkContext,
 };
 use crate::webcore::{self, ReadableStream, Response};
 use bun_core::String as BunString;
@@ -560,7 +560,6 @@ pub struct BufferOutputSink {
     pub response: *mut Response, // BORROW_FIELD: kept alive by response_value Strong
     pub response_value: StrongOptional,
     pub input_buffer: MutableString,
-    pub input_sink: Option<NonNull<ResumableHTMLRewriterSink>>,
     // The `heap::into_raw` root pointer (set in `init()` once the heap address
     // is known). `ResumableSinkContext` enters via `&mut self`, but
     // `run_output_sink` re-enters `SinkRef::handle_chunk` via the root pointer;
@@ -624,7 +623,6 @@ impl BufferOutputSink {
             response: core::ptr::null_mut(),
             response_value: StrongOptional::empty(),
             input_buffer: MutableString::init_empty(),
-            input_sink: None,
             this: core::ptr::null_mut(),
             tmp_sync_error: None,
         }));
@@ -892,11 +890,13 @@ impl BufferOutputSink {
         };
 
         *value = webcore::body::Value::Used;
-        // Caller already took +1 for the in-flight reader; `init_exact_refs(2)`
-        // adds the sink's own +1 on top, released by `clear_input_sink`.
-        let input_sink = ResumableSink::init_exact_refs(&global, readable_stream, sink, 2);
-        // SAFETY: sink is a live heap allocation (refcount > 0).
-        unsafe { (*sink).input_sink = NonNull::new(input_sink) };
+        // The caller's in-flight +1 on `BufferOutputSink` keeps `context` valid
+        // until `write_end_request` fires; the `ResumableSink` allocation
+        // itself is owned solely by its own lifecycle (pipe ref / JS wrapper).
+        // Not stored: `on_input_end` runs inside `ResumableSink::end_pipe`'s
+        // `&mut self`, so a back-pointer this struct could deref from `Drop`
+        // would retag the sink's root pointer and pop `end_pipe`'s borrow.
+        let _ = ResumableHTMLRewriterSink::init(&global, readable_stream, sink);
         Ok(())
     }
 
@@ -1006,18 +1006,6 @@ impl BufferOutputSink {
         }
     }
 
-    fn clear_input_sink(&mut self) {
-        if let Some(input_sink) = self.input_sink.take() {
-            // SAFETY: `input_sink` came from `ResumableSink::init_exact_refs`
-            // with refcount 2; this releases our +1. `detach_js` first so a
-            // still-rooted JS wrapper becomes collectible (runs no JS).
-            unsafe {
-                (*input_sink.as_ptr()).detach_js();
-                ResumableHTMLRewriterSink::deref_(input_sink.as_ptr());
-            }
-        }
-    }
-
     /// Note: takes `*mut Self` (not `&mut self`) because
     /// `HtmlRewriter::write/end` re-enter
     /// `SinkRef::handle_chunk(&mut self)` through the
@@ -1119,7 +1107,6 @@ impl lol_html::OutputSink for SinkRef {
 impl Drop for BufferOutputSink {
     fn drop(&mut self) {
         // bytes, input_buffer, context (Rc), response_value (Strong) drop automatically.
-        self.clear_input_sink();
         if !self.rewriter.is_null() {
             // SAFETY: rewriter heap-allocated by init() and not yet freed
             // (`run_output_sink` nulls the field before consuming it in `end`).

@@ -65,37 +65,6 @@ impl Url {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        use crate::dependencies::UrlDependency;
-        let dep: Option<UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` (mut borrow) is hoisted out of the arg
-            // list so `filename()` (shared borrow) can run; result is `&'a _`.
-            let import_records = dest.get_import_records()?;
-            Some(UrlDependency::new(
-                dest.arena,
-                self,
-                dest.filename(),
-                import_records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
         let import_record = dest.import_record(self.import_record_idx)?;
         let is_internal = import_record
             .flags

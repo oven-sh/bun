@@ -61,36 +61,6 @@ mod ext {
 
     /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
-        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` borrows &mut *dest, so capture
-            // arena/filename first.
-            let arena = dest.arena;
-            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
-            let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(
-                arena, this, filename, records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
         let import_record = dest.import_record(this.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
         // `get_import_record_url` reborrows &mut *dest, so capture
@@ -316,20 +286,6 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::Url(url) => {
-                    if dest.dependencies.is_some()
-                        && is_custom_property
-                        && !url.is_absolute(dest.get_import_records()?)
-                    {
-                        let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?[url.import_record_idx as usize]
-                                .path
-                                .pretty,
-                        );
-                        return dest.new_error(
-                            css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
-                            Some(url.loc),
-                        );
-                    }
                     ext::url_to_css(url, dest)?;
                     has_whitespace = false;
                 }

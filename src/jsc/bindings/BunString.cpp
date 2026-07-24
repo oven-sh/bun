@@ -733,11 +733,6 @@ extern "C" BunString URL__password(WTF::URL* url)
     return Bun::toStringRef(url->password());
 }
 
-extern "C" BunString URL__search(WTF::URL* url)
-{
-    return Bun::toStringRef(url->query().toStringWithoutCopying());
-}
-
 /// Returns the host WITHOUT the port.
 ///
 /// Note that this does NOT match JS behavior, which returns the host with the port.

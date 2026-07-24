@@ -21,17 +21,6 @@ pub struct PrinterOptions<'a> {
     pub project_root: Option<&'a [u8]>,
     /// Targets to output the CSS for.
     pub targets: Targets,
-    /// Whether to analyze dependencies (i.e. `@import` and `url()`).
-    /// If true, the dependencies are returned as part of the
-    /// [ToCssResult](super::stylesheet::ToCssResult).
-    ///
-    /// When enabled, `@import` and `url()` dependencies
-    /// are replaced with hashed placeholders that can be replaced with the final
-    /// urls later (after bundling).
-    pub analyze_dependencies: Option<css::dependencies::DependencyOptions>,
-    /// A mapping of pseudo classes to replace with class names that can be applied
-    /// from JavaScript. Useful for polyfills, for example.
-    pub pseudo_classes: Option<PseudoClasses<'a>>,
     pub public_path: &'a [u8],
 }
 
@@ -48,8 +37,6 @@ impl<'a> PrinterOptions<'a> {
                 browsers: None,
                 ..Targets::default()
             },
-            analyze_dependencies: None,
-            pseudo_classes: None,
             public_path: b"",
         }
     }
@@ -59,23 +46,6 @@ impl<'a> Default for PrinterOptions<'a> {
     fn default() -> Self {
         Self::default()
     }
-}
-
-/// A mapping of user action pseudo classes to replace with class names.
-///
-/// See [PrinterOptions](PrinterOptions).
-#[derive(Default, Clone, Copy)]
-pub struct PseudoClasses<'a> {
-    /// The class name to replace `:hover` with.
-    pub hover: Option<&'a [u8]>,
-    /// The class name to replace `:active` with.
-    pub active: Option<&'a [u8]>,
-    /// The class name to replace `:focus` with.
-    pub focus: Option<&'a [u8]>,
-    /// The class name to replace `:focus-visible` with.
-    pub focus_visible: Option<&'a [u8]>,
-    /// The class name to replace `:focus-within` with.
-    pub focus_within: Option<&'a [u8]>,
 }
 
 pub use css::targets::Targets;
@@ -132,11 +102,6 @@ pub struct Printer<'a> {
     pub skip_prefixed_nested_rules: bool,
     pub in_calc: bool,
     pub css_module: Option<css::CssModule<'a>>,
-    pub dependencies: Option<BumpVec<'a, css::Dependency>>,
-    pub remove_imports: bool,
-    /// A mapping of pseudo classes to replace with class names that can be applied
-    /// from JavaScript. Useful for polyfills, for example.
-    pub pseudo_classes: Option<PseudoClasses<'a>>,
     pub indentation_buf: BumpVec<'a, u8>,
     // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
     // unsafe variance cast — see the SAFETY note there) and always restores the parent
@@ -265,7 +230,7 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
+    // deinit() dropped — scratchbuf/indentation_buf are arena-backed
     // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
@@ -283,17 +248,6 @@ impl<'a> Printer<'a> {
             dest,
             minify: options.minify,
             targets: options.targets,
-            dependencies: if options.analyze_dependencies.is_some() {
-                Some(BumpVec::new_in(arena))
-            } else {
-                None
-            },
-            remove_imports: options
-                .analyze_dependencies
-                .as_ref()
-                .map(|d| d.remove_imports)
-                .unwrap_or(false),
-            pseudo_classes: options.pseudo_classes,
             indentation_buf: BumpVec::new_in(arena),
             import_info,
             scratchbuf,

@@ -259,10 +259,6 @@ pub struct Config {
     /// Default is `true`.
     pub animation: bool,
 
-    /// Whether to scope grid names.
-    /// Default is `true`.
-    pub grid: bool,
-
     /// Whether to scope custom identifiers
     /// Default is `true`.
     pub custom_idents: bool,
@@ -274,7 +270,6 @@ impl Default for Config {
             pattern: Pattern::default(),
             dashed_idents: false,
             animation: true,
-            grid: true,
             custom_idents: true,
         }
     }

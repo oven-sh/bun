@@ -175,8 +175,6 @@ pub struct HiveArray<T, const CAPACITY: usize> {
 }
 
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
-    pub const SIZE: usize = CAPACITY;
-
     pub const fn init() -> Self {
         Self {
             buffer: UnsafeCell::new([const { MaybeUninit::uninit() }; CAPACITY]),
@@ -675,33 +673,6 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         NonNull::from(Box::leak(unsafe { boxed.assume_init() }))
     }
 
-    /// See [`HiveArray::get`] — same UB hazards, plus the heap path leaks a
-    /// `Box<MaybeUninit<T>>` if the caller early-returns before `ptr::write`.
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get(&self) -> *mut T {
-        // Forget the token so its `Drop` does not release the slot — legacy
-        // callers expect the slot to remain claimed until their later `put()`.
-        ManuallyDrop::new(self.claim()).addr().as_ptr()
-    }
-
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn get_and_see_if_new(&self, new: &mut bool) -> *mut T {
-        if CAPACITY > 0 {
-            #[allow(deprecated)]
-            if let Some(value) = self.hive.get() {
-                *new = false;
-                return value;
-            }
-        }
-
-        bun_core::heap::into_raw(Box::<T>::new_uninit()).cast::<T>()
-    }
-
-    #[deprecated = "returns *mut T to uninitialized memory; use get_init / emplace / claim"]
-    pub fn try_get(&self) -> *mut T {
-        ManuallyDrop::new(self.claim()).addr().as_ptr()
-    }
-
     /// One-shot claim + write. Preferred entry point — no uninit window.
     /// Infallible: spills to a heap `Box<T>` when the inline hive is full.
     #[inline]
@@ -773,9 +744,8 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     ///
     /// # Safety
     /// `value` must point to a fully-initialized `T` previously obtained from
-    /// [`get`](Self::get) / [`get_and_see_if_new`](Self::get_and_see_if_new) /
-    /// [`try_get`](Self::try_get) on this `Fallback` and subsequently written
-    /// by the caller.
+    /// [`get_init`](Self::get_init) / [`emplace`](Self::emplace) /
+    /// [`claim`](Self::claim) on this `Fallback`.
     pub unsafe fn put(&self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract — `value` is fully initialized.
@@ -866,8 +836,7 @@ impl<T, const CAPACITY: usize> HiveRef<T, CAPACITY> {
 }
 
 /// Owning handle to a refcounted [`HiveRef`] pool slot. `Clone` increments,
-/// `Drop` decrements and recycles when the count hits zero. Cross FFI with
-/// [`into_raw`](Self::into_raw) / [`from_raw`](Self::from_raw), like `Rc`/`Box`.
+/// `Drop` decrements and recycles when the count hits zero.
 pub struct HiveRefHandle<T, const CAP: usize> {
     ptr: NonNull<HiveRef<T, CAP>>,
 }
@@ -894,13 +863,7 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
         }
     }
 
-    /// Hand the slot to FFI without decrementing. Pair with [`from_raw`].
-    #[inline]
-    pub fn into_raw(self) -> *mut HiveRef<T, CAP> {
-        ManuallyDrop::new(self).ptr.as_ptr()
-    }
-
-    /// Reclaim ownership of a `+1` ref returned by [`into_raw`].
+    /// Reclaim ownership of a `+1` ref previously handed to FFI.
     ///
     /// # Safety
     /// `ptr` must be a live slot whose `+1` has not already been released.
@@ -915,20 +878,6 @@ impl<T, const CAP: usize> HiveRefHandle<T, CAP> {
     #[inline]
     pub fn as_ptr(&self) -> *mut HiveRef<T, CAP> {
         self.ptr.as_ptr()
-    }
-
-    /// Exclusive access to the payload. `None` if there are other live handles
-    /// — same shape as [`Rc::get_mut`](std::rc::Rc::get_mut). A blanket
-    /// `DerefMut` would be unsound: `Clone` takes `&self`, so a second handle
-    /// could be made while a `&mut T` from `deref_mut()` is outstanding.
-    #[inline]
-    pub fn get_mut(&mut self) -> Option<&mut T> {
-        if self.slot().ref_count.get() != 1 {
-            return None;
-        }
-        // SAFETY: refcount == 1 ⇒ this handle is the only owner; `&mut self`
-        // proves no other access path through it.
-        Some(unsafe { &mut (*self.ptr.as_ptr()).value })
     }
 }
 
@@ -1215,43 +1164,6 @@ mod tests {
     }
 
     #[test]
-    fn fallback_deprecated_get_apis() {
-        const CAP: usize = 1;
-        let f = Fallback::<u64, CAP>::init();
-
-        // get() / try_get(): inline first, heap after the hive fills.
-        let p0 = f.get();
-        assert!(f.r#in(p0));
-        let p1 = f.try_get();
-        assert!(!f.r#in(p1));
-        // SAFETY: caller owns the uninitialized slots and writes before reading.
-        unsafe {
-            p0.write(11);
-            p1.write(22);
-            assert_eq!(*p0, 11);
-            assert_eq!(*p1, 22);
-            f.put(p0);
-            f.put(p1);
-        }
-
-        // get_and_see_if_new(): caller pre-inits to true; flipped false on
-        // an inline (recycled) hit, left true when a fresh heap box is made.
-        let mut new = true;
-        let p0 = f.get_and_see_if_new(&mut new);
-        assert!(!new);
-        let mut new = true;
-        let p1 = f.get_and_see_if_new(&mut new);
-        assert!(new);
-        // SAFETY: same as above.
-        unsafe {
-            p0.write(33);
-            p1.write(44);
-            f.put_raw(p0);
-            f.put_raw(p1);
-        }
-    }
-
-    #[test]
     fn fallback_new_boxed_and_init_in_place() {
         const CAP: usize = 4;
 
@@ -1356,7 +1268,7 @@ mod tests {
 
         // Drop releases the slot when the count hits zero.
         // SAFETY: `pool` outlives every handle.
-        let mut h = unsafe {
+        let h = unsafe {
             HiveRefHandle::new(
                 Tracked {
                     v: 1,
@@ -1366,19 +1278,14 @@ mod tests {
             )
         };
         assert_eq!(h.v, 1);
-        // Sole owner: `get_mut` succeeds.
-        h.get_mut().unwrap().v = 11;
-        assert_eq!(h.v, 11);
         let h2 = h.clone();
-        assert_eq!(h2.v, 11);
-        // Shared: `get_mut` is `None` while another handle is live.
-        assert!(h.get_mut().is_none());
+        assert_eq!(h2.v, 1);
         drop(h);
         assert_eq!(drops.get(), 0);
         drop(h2);
         assert_eq!(drops.get(), 1);
 
-        // into_raw / from_raw round-trip preserves the count.
+        // from_raw reclaims a +1 handed across FFI.
         // SAFETY: `pool` outlives every handle.
         let h = unsafe {
             HiveRefHandle::new(
@@ -1389,9 +1296,10 @@ mod tests {
                 pool_ptr,
             )
         };
-        let raw = h.into_raw();
+        let raw = h.as_ptr();
+        core::mem::forget(h);
         assert_eq!(drops.get(), 1);
-        // SAFETY: `raw` carries a +1 from `into_raw`.
+        // SAFETY: `raw` carries a +1 (forgotten above).
         let h = unsafe { HiveRefHandle::<Tracked, CAP>::from_raw(raw) };
         drop(h);
         assert_eq!(drops.get(), 2);

@@ -69,12 +69,6 @@ extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getEnsureAsyncLocalStorageInstance
     return JSValue::encode(zig->bakeAdditions().ensureAsyncLocalStorageInstanceJSFunction(globalObject));
 }
 
-extern "C" SYSV_ABI JSC::EncodedJSValue Bake__getSSRResponseConstructor(JSC::JSGlobalObject* globalObject)
-{
-    auto* zig = static_cast<Zig::GlobalObject*>(globalObject);
-    return JSValue::encode(zig->bakeAdditions().JSBakeResponseConstructor(globalObject));
-}
-
 BUN_DEFINE_HOST_FUNCTION(jsFunctionBakeGetAsyncLocalStorage, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     auto* zig = static_cast<Zig::GlobalObject*>(globalObject);

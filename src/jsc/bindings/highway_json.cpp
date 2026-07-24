@@ -175,17 +175,5 @@ extern "C" size_t highway_json_index_chunk(const uint8_t* input, size_t len, siz
     return HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
         input, len, base_offset, out_indices, out_dirty, inout_state, out_flags);
 }
-
-// Whole-document form; appends the two `len` sentinels stage 2 relies on.
-extern "C" size_t highway_json_index(const uint8_t* input, size_t len, uint32_t* out_indices,
-    uint64_t* out_dirty, uint32_t* out_flags)
-{
-    uint64_t state[3] = { 0, 0, 0 };
-    size_t n = HWY_DYNAMIC_DISPATCH(JsonIndexImpl)(
-        input, len, 0, out_indices, out_dirty, state, out_flags);
-    out_indices[n] = (uint32_t)len;
-    out_indices[n + 1] = (uint32_t)len;
-    return n;
-}
 } // namespace bun
 #endif

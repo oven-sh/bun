@@ -430,16 +430,6 @@ JSC_DEFINE_HOST_FUNCTION(callBigIntStatFS, (JSC::JSGlobalObject * lexicalGlobalO
     return JSValue::encode(callJSStatFSFunction<true>(lexicalGlobalObject, callFrame));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSBigIntStatFSObjectConstructor(Zig::GlobalObject* globalobject)
-{
-    return JSValue::encode(globalobject->m_JSStatFSBigIntClassStructure.constructor(globalobject));
-}
-
-extern "C" JSC::EncodedJSValue Bun__JSStatFSObjectConstructor(Zig::GlobalObject* globalobject)
-{
-    return JSValue::encode(globalobject->m_JSStatFSClassStructure.constructor(globalobject));
-}
-
 void JSStatFSPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);

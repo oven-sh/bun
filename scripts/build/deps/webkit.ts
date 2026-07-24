@@ -45,7 +45,7 @@ export const WEBKIT_VERSION = "c9296e353e365ecf0de82f273bb0a88a3df465be";
  */
 
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import type { Config } from "../config.ts";
 import { computeCpuTargetFlags } from "../flags.ts";
 import { slash } from "../shell.ts";
@@ -385,13 +385,20 @@ export const webkit: Dependency = {
           cfg.debug ? "Debug" : "Release",
           "-OutputDir",
           icu,
-          // ICU is deliberately built UNinstrumented even under ASAN: it is
-          // mature third-party code, and instrumenting its globals on COFF
-          // yields false global-buffer-overflow/ODR reports at startup
-          // (linker-folded empty string literals). The std::string
-          // annotation mismatch that would otherwise fail the link is
-          // resolved by disabling MSVC STL container annotations for the
-          // whole graph (see the _DISABLE_STRING_ANNOTATION defines).
+          // Build ICU with the SAME standalone LLVM the rest of the graph
+          // uses. msbuild's ClangCL toolset otherwise picks Visual Studio's
+          // bundled (older) clang, and ASAN-instrumented objects from
+          // different LLVM versions can't be mixed into one binary — the
+          // global-registration ABI differs and produces bogus reports at
+          // startup. cfg.cc is <llvm>/bin/clang-cl.exe; pass its install dir.
+          "-LLVMInstallDir",
+          dirname(dirname(cfg.cc)),
+          // ICU gets the same AddressSanitizer setting as everything else:
+          // the MSVC STL fails the link (/failifmismatch annotate_string)
+          // when instrumented and uninstrumented objects disagree on
+          // std::string container annotations, and full instrumentation is
+          // the goal anyway.
+          ...(cfg.asan ? ["-Sanitizer", "address"] : []),
         ],
         cwd: srcDir,
         outputs: localIcuLibs(cfg),

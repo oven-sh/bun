@@ -1,8 +1,8 @@
 diff --git a/build-icu.ps1 b/build-icu.ps1
-index 750badf91f..c6a2f29443 100644
+index 750badf91f..d9d7481fe8 100644
 --- a/build-icu.ps1
 +++ b/build-icu.ps1
-@@ -16,7 +16,13 @@ param(
+@@ -16,7 +16,19 @@ param(
      [ValidateSet("Release", "Debug")]
      [string]$BuildType = "Release",
  
@@ -13,20 +13,41 @@ index 750badf91f..c6a2f29443 100644
 +    # container-annotation setting matches an ASAN WebKit/consumer
 +    # (lld-link /failifmismatch on annotate_string otherwise).
 +    [ValidateSet("", "address")]
-+    [string]$Sanitizer = ""
++    [string]$Sanitizer = "",
++
++    # Pin the ClangCL toolset to a specific standalone LLVM (matches the
++    # compiler/runtime the consumer uses) instead of the VS-bundled clang;
++    # mixing ASAN-instrumented objects across LLVM versions corrupts global
++    # registration. Version is derived from clang-cl at that path.
++    [string]$LLVMInstallDir = ""
  )
  
  $ErrorActionPreference = "Stop"
-@@ -126,7 +132,7 @@ function Patch-IcuVcxProj {
+@@ -81,6 +93,14 @@ if ($Platform -eq "x64") {
+ 
+ # ClangCL for stage 2 so -march= limits codegen (MSVC /arch:SSE2 is a no-op on x64).
+ $ToolsetArg = if ($Platform -eq "x64") { @("/p:PlatformToolset=ClangCL") } else { @() }
++if ($LLVMInstallDir -and $Platform -eq "x64") {
++    $cl = Join-Path $LLVMInstallDir "bin\clang-cl.exe"
++    if (-not (Test-Path $cl)) { throw "LLVMInstallDir has no bin\clang-cl.exe: $LLVMInstallDir" }
++    $verLine = (& $cl --version 2>&1 | Select-Object -First 1)
++    $llvmVer = if ($verLine -match "version (\d+\.\d+\.\d+)") { $Matches[1] } else { throw "cannot read clang version from $cl" }
++    $ToolsetArg += @("/p:LLVMInstallDir=$LLVMInstallDir", "/p:LLVMToolsVersion=$llvmVer")
++    Write-Host ":: ClangCL toolset pinned to LLVM $llvmVer at $LLVMInstallDir"
++}
+ 
+ # --- Function to patch vcxproj files for static library build with /MT ---
+ function Patch-IcuVcxProj {
+@@ -126,7 +146,7 @@ function Patch-IcuVcxProj {
      $content = $content -replace '<OutputFile>[^<]*\.(dll|DLL)</OutputFile>', ''
      $content = $content -replace '<ImportLibrary>[^<]*</ImportLibrary>', ''
  
 -    # Strip .rc — rc.exe cannot parse clang stddef.h and static libs do not need version resources.
-+    # Strip .rc ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â rc.exe cannot parse clang stddef.h and static libs do not need version resources.
++    # Strip .rc ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â rc.exe cannot parse clang stddef.h and static libs do not need version resources.
      $content = $content -replace "(?s)<ResourceCompile[^>]*>.*?</ResourceCompile>", ""
      $content = $content -replace "<ResourceCompile[^>]*/>", ""
  
-@@ -234,6 +240,16 @@ if ((Test-Path $icupkg) -and $datFile) {
+@@ -234,6 +254,16 @@ if ((Test-Path $icupkg) -and $datFile) {
      Write-Host ":: WARNING: icupkg.exe or icudt*l.dat not found; skipping ICU data filter"
  }
  
@@ -43,7 +64,7 @@ index 750badf91f..c6a2f29443 100644
  # ========================================================================
  # STAGE 2: Rebuild common and i18n as static libraries with /MT
  # ========================================================================
-@@ -342,4 +358,4 @@ if (Test-Path $icuDataLibSrc) {
+@@ -342,4 +372,4 @@ if (Test-Path $icuDataLibSrc) {
      throw "ICU data library not found. Expected at: $icuDataLibSrc"
  }
  

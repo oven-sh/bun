@@ -126,6 +126,11 @@ impl SubscriptionCtx {
         Ok(count)
     }
 
+    /// The channels this context has listeners for, as a JS array of strings.
+    pub fn subscribed_channels(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        self.subscription_callback_map().keys(global_object)
+    }
+
     /// Test whether this context has any subscriptions. It is mandatory to
     /// guard deinit with this function.
     pub fn has_subscriptions(&self, global_object: &JSGlobalObject) -> JsResult<bool> {
@@ -809,6 +814,7 @@ impl JSValkeyClient {
                 read_buffer: Default::default(),
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
+                resubscribe_pending: 0,
                 auto_flusher: Default::default(),
             }),
             global_object,
@@ -929,6 +935,7 @@ impl JSValkeyClient {
                 read_buffer: Default::default(),
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
+                resubscribe_pending: 0,
                 auto_flusher: Default::default(),
             }),
             global_object,
@@ -1269,6 +1276,58 @@ impl JSValkeyClient {
                 self.client_mut().flags.connection_promise_returns_client = false;
             }
         }
+
+        // Last, so a failure here cannot strand `.connect()`. Still ahead of the
+        // offline queue: nothing drains it until this scope's microtask drain and
+        // `on_writable` run, both of which happen after this returns.
+        self.resubscribe()
+    }
+
+    /// Replay the subscription set onto a freshly (re)connected socket.
+    ///
+    /// The server forgets every subscription when the connection drops, but the
+    /// JS-side callback map survives it, so without this a reconnected
+    /// subscriber reports `connected` while silently receiving nothing.
+    ///
+    /// The command goes straight into the write buffer (ahead of anything the
+    /// offline queue still holds) and carries no promise, so the confirmations
+    /// it produces are counted off by `resubscribe_pending` rather than
+    /// consuming another command's promise.
+    fn resubscribe(&self) -> JsTerminatedResult<()> {
+        if !self.is_subscriber() || self.this_value.get().try_get().is_none() {
+            return Ok(());
+        }
+
+        let global_object = self.global_object;
+        let channels = self
+            ._subscription_ctx
+            .get()
+            .subscribed_channels(&global_object)?;
+        let mut iter = channels.array_iterator(&global_object)?;
+        let mut args: Vec<bun_core::ZigStringSlice> = Vec::with_capacity(iter.len as usize);
+        while let Some(channel) = iter.next()? {
+            let channel_str = channel.to_bun_string(&global_object)?;
+            args.push(channel_str.to_utf8());
+            channel_str.deref();
+        }
+        if args.is_empty() {
+            return Ok(());
+        }
+
+        debug!("Replaying SUBSCRIBE for {} channel(s)", args.len());
+        let subscribe_cmd = Command {
+            command: b"SUBSCRIBE",
+            args: command::Args::Slices(&args),
+            meta: command::Meta::default(),
+        };
+        let client = self.client_mut();
+        if subscribe_cmd.write(client.writer()).is_err() {
+            return narrow_terminated(client.fail(
+                b"Failed to write SUBSCRIBE command",
+                protocol::RedisError::OutOfMemory,
+            ));
+        }
+        client.resubscribe_pending = u32::try_from(args.len()).expect("int cast");
         Ok(())
     }
 

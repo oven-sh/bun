@@ -6036,6 +6036,28 @@ CPP_DECL [[ZIG_EXPORT(check_slow)]] uint32_t JSC__JSMap__size(JSC::JSMap* map, J
     return map->size();
 }
 
+// Returns the map's keys as a JSArray, in insertion order.
+CPP_DECL [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSMap__keys(JSC::JSMap* map, JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSArray* keys = JSC::constructEmptyArray(globalObject, nullptr, map->size());
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, JSC::IterationKind::Keys);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    unsigned index = 0;
+    JSC::JSValue key;
+    while (iterator->next(globalObject, key)) {
+        keys->putDirectIndex(globalObject, index++, key);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSC::JSValue::encode(keys);
+}
+
 CPP_DECL void JSC__VM__setControlFlowProfiler(JSC::VM* vm, bool isEnabled)
 {
     if (isEnabled) {

@@ -253,6 +253,10 @@ pub struct ValkeyClient {
     /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.
     pub queue: command::entry::Queue,
 
+    /// Subscribe confirmations still owed by the promise-less SUBSCRIBE that
+    /// `JSValkeyClient::resubscribe` replays after a reconnect. One per channel.
+    pub resubscribe_pending: u32,
+
     // Connection parameters
     // `connection_strings` is retained because `js_valkey.rs` still slices it
     // when constructing/duplicating clients.
@@ -1088,11 +1092,28 @@ impl ValkeyClient {
         let mut should_consume_promise_pair = true;
         let mut pair_maybe: Option<command::PromisePair> = None;
 
+        if self.resubscribe_pending > 0 && matches!(value, RESPValue::Error(_)) {
+            // The replayed SUBSCRIBE was refused (an ACL change during the outage,
+            // say). It owns no promise pair, so this error must not eat one, and no
+            // confirmation is coming for any of its channels.
+            self.resubscribe_pending = 0;
+            should_consume_promise_pair = false;
+        }
+
         // For subscription clients, check if this is a push message that doesn't need a promise pair
         if let RESPValue::Push(push) = value {
             match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
                 Some(protocol::SubscriptionPushMessage::Message) => {
                     // Message pushes never need promise pairs
+                    should_consume_promise_pair = false;
+                }
+                Some(protocol::SubscriptionPushMessage::Subscribe)
+                    if self.resubscribe_pending > 0 =>
+                {
+                    // Confirmation of the SUBSCRIBE replayed on reconnect. It was
+                    // written without a promise, and its confirmations are the first
+                    // replies on the new connection, so no pair belongs to it.
+                    self.resubscribe_pending -= 1;
                     should_consume_promise_pair = false;
                 }
                 Some(
@@ -1270,6 +1291,7 @@ impl ValkeyClient {
         self.flags.failed = false;
         self.flags.is_authenticated = false;
         self.flags.is_selecting_db_internal = false;
+        self.resubscribe_pending = 0;
         if matches!(self.socket, AnySocket::SocketTcp(_)) {
             // if is tcp, we need to start the connection process
             // if is tls, we need to wait for the handshake to complete

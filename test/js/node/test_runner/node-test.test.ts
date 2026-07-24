@@ -1135,6 +1135,48 @@ test.concurrent("run(): object actual/expected cross the pipe by value", async (
   });
 });
 
+test.concurrent.each([
+  ["process", ""],
+  ["none", ", isolation: 'none'"],
+] as const)(
+  "run() with %s isolation keeps declaration order when a later describe body throws",
+  async (_label, isolationArg) => {
+    // node runs siblings in declaration order: the earlier test's verdict
+    // (testNumber 1) precedes the throwing suite's (testNumber 2). Settling
+    // the failed suite at collection time used to emit its events first.
+    using dir = tempDir("node-test-throw-order", {
+      "f.test.mjs": `
+      import { test, describe } from 'node:test';
+      test('a', () => {});
+      describe('b', () => { throw new Error('body boom'); });
+    `,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))]${isolationArg} });
+      const ev = [];
+      stream.on('test:pass', function onPass(t) { ev.push(['pass', t.name, t.testNumber]); });
+      stream.on('test:fail', function onFail(t) { ev.push(['fail', t.name, t.testNumber, t.details?.error?.failureType ?? '']); });
+      for await (const _ of stream);
+      console.log(JSON.stringify(ev));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 output for this fixture.
+    expect(JSON.parse(stdout.trim() || "null")).toEqual([
+      ["pass", "a", 1],
+      ["fail", "b", 2, "testCodeFailure"],
+    ]);
+  },
+);
+
 test.concurrent("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
   using dir = tempDir("node-test-suite-duration", {
     "f.test.mjs": `

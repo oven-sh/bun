@@ -423,10 +423,11 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       state.interrupted = true;
       state.childProc?.kill();
     }
+    // node installs process signal handlers only under --test (harness.js
+    // gates on isTestRunner); a library run() honors just opts.signal, so the
+    // CLI eval driver owns SIGINT/SIGTERM and routes them through the signal.
     const signal = opts.signal as AbortSignal | undefined;
     if (signal?.aborted) onInterrupt();
-    process.on("SIGINT", onInterrupt);
-    process.on("SIGTERM", onInterrupt);
     signal?.addEventListener("abort", onInterrupt, { once: true });
     try {
       for (let i = 0; i < files.length; i++) {
@@ -434,8 +435,6 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
         await runOneFile(files[i], opts, reporter, counts, state, i + 1);
       }
     } finally {
-      process.off("SIGINT", onInterrupt);
-      process.off("SIGTERM", onInterrupt);
       signal?.removeEventListener("abort", onInterrupt);
     }
 
@@ -3603,7 +3602,9 @@ async function runStandalone() {
     counts.failed++;
   } finally {
     const durationMs = roundDurationMs(performance.now() - startedAt);
-    standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
+    // Emitted directly so it carries no data.file, matching the runFiles and
+    // in-process arms (the sink would stamp Bun.main on a run-level event).
+    stream.emitMessage("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
     emitRunDiagnostics(stream, counts, durationMs);
     stream.emitMessage("test:summary", {
       __proto__: null,
@@ -4154,34 +4155,48 @@ function addSuite(
           function onWrappedSuiteFailed(err: unknown) {
             suiteNode.childrenFailed++;
             suiteNode.error = err;
-            noteSuiteCollectionSettled(suiteNode);
-            if (isTodoAdvisory) return undefined;
-            if (runChildReporterEnabled) {
-              // Async twin of the sync body-throw path above: a rejecting
-              // describe callback cancels the declared children, not the file.
-              suiteNode.hookSetupFailed = true;
+            if (isTodoAdvisory) {
+              // Advisory failure: children still run; settle at execution turn
+              // so the suite's events keep declaration order.
+              settleSuiteAfterHooks();
               return undefined;
             }
+            if (runChildReporterEnabled) {
+              // Async twin of the sync body-throw path below: a rejecting
+              // describe callback cancels the declared children, not the file.
+              // Settling through the deferred afterAll keeps the suite's event
+              // set in declaration order relative to earlier siblings (node).
+              suiteNode.hookSetupFailed = true;
+              settleSuiteAfterHooks();
+              return undefined;
+            }
+            noteSuiteCollectionSettled(suiteNode);
             throw err;
           }
           let built: unknown;
           try {
             built = runWithNode(suiteNode, buildWrappedSuiteFn);
           } catch (err) {
-            // Settle so the suite (and every enclosing suite's childrenDone
-            // accounting) still completes.
             suiteNode.childrenFailed++;
             suiteNode.error = err;
-            noteSuiteCollectionSettled(suiteNode);
-            if (isTodoAdvisory) return undefined;
+            if (isTodoAdvisory) {
+              settleSuiteAfterHooks();
+              return undefined;
+            }
             if (runChildReporterEnabled) {
               // node attributes a throwing describe body to the suite
               // (testCodeFailure) and cancels the children it declared before
               // throwing; swallow it from bun:test, whose describe-error path
-              // would fail the whole file instead.
+              // would fail the whole file instead. The deferred afterAll (which
+              // bun:test still runs — the body reads as succeeded) settles at
+              // execution turn so the events keep declaration order (node).
               suiteNode.hookSetupFailed = true;
+              settleSuiteAfterHooks();
               return undefined;
             }
+            // Settle so the suite (and every enclosing suite's childrenDone
+            // accounting) still completes before bun:test's describe-error path.
+            noteSuiteCollectionSettled(suiteNode);
             throw err;
           }
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {

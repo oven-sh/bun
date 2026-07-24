@@ -338,6 +338,16 @@ async function main() {
   const abortController = new AbortController();
   runOptions.signal = abortController.signal;
 
+  // node's harness installs process signal handlers only under --test
+  // (isTestRunner); the runner owns them here so a library run() never
+  // suppresses default Ctrl+C termination. Routed through the run's abort
+  // signal, which kills the current child and stops spawning.
+  function onRunnerSignal() {
+    abortController.abort();
+  }
+  process.on("SIGINT", onRunnerSignal);
+  process.on("SIGTERM", onRunnerSignal);
+
   let stream;
   try {
     stream = run(runOptions);
@@ -373,6 +383,9 @@ async function main() {
     abortController.abort();
     console.error((err as Error)?.stack ?? err);
     process.exit(7);
+  } finally {
+    process.off("SIGINT", onRunnerSignal);
+    process.off("SIGTERM", onRunnerSignal);
   }
 
   // Write only on failure so an earlier process.exitCode = 1 (e.g. a late

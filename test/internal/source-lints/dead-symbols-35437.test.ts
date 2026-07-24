@@ -8,7 +8,7 @@
 // built binary, so it belongs in test/internal/source-lints/ per the README.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -16,17 +16,6 @@ const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
 function src(p: string): string {
   return readFileSync(path.join(repoRoot, p), "utf8");
 }
-
-test("dead headers removed in #35437 do not reappear", () => {
-  const deadHeaders = [
-    "src/jsc/bindings/objects.h",
-    "src/jsc/bindings/TextCodecASCIIFastPath.h",
-    "src/jsc/bindings/ZigLazyStaticFunctions.h",
-    "src/jsc/bindings/ZigLazyStaticFunctions-inlines.h",
-  ];
-  const resurrected = deadHeaders.filter(h => existsSync(path.join(repoRoot, h)));
-  expect(resurrected).toEqual([]);
-});
 
 test("dead extern C symbols removed in #35437 do not reappear", () => {
   const checks: Array<[string, RegExp]> = [

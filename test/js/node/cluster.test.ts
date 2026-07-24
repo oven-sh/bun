@@ -1,5 +1,10 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
+import path from "node:path";
+
+// Every test here forks at least one cluster worker (a whole bun process, plus
+// a nested fork), which runs well past the 5s default under a debug/ASAN build.
+setDefaultTimeout(40_000);
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -184,4 +189,218 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
+});
+
+// https://github.com/oven-sh/bun/issues/20642
+test("worker.disconnect() with a net.Server exits instead of hanging", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, "cluster", "worker-disconnect-with-tcp-server-fixture.ts")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Two workers each: listening + disconnecting; primary logs two worker exits + final line.
+  const listening = [...stdout.matchAll(/\[worker \d+\] listening/g)].length;
+  const disconnecting = [...stdout.matchAll(/\[worker \d+\] disconnecting/g)].length;
+  const workerExited = [...stdout.matchAll(/\[master\] worker \d+ exited/g)].length;
+  expect({ listening, disconnecting, workerExited, stderr, exitCode }).toEqual({
+    listening: 2,
+    disconnecting: 2,
+    workerExited: 2,
+    stderr: "",
+    exitCode: 0,
+  });
+  expect(stdout).toContain("[master] all workers exited");
+});
+
+// Per https://nodejs.org/api/cluster.html#workerdisconnect, disconnect() closes the
+// worker's servers, waits for their 'close' events, then disconnects the IPC channel.
+// Covers both node:http (own SO_REUSEPORT socket) and net.Server (_getServer stub).
+test.concurrent(
+  "primary-initiated worker.disconnect() closes the worker's http server and the worker exits",
+  async () => {
+    using dir = tempDir("cluster-disconnect-http", {
+      "main.js": `
+        const cluster = require("node:cluster");
+        const http = require("node:http");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          const disconnected = new Promise(resolve => worker.once("disconnect", resolve));
+          const exited = new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
+
+          worker.on("message", async msg => {
+            if (msg.cmd !== "listening") return;
+            const port = msg.port;
+            const before = await (await fetch(\`http://127.0.0.1:\${port}/\`)).text();
+
+            worker.disconnect();
+
+            // The worker must close its server, disconnect the channel and
+            // exit on its own. If it never does (the bug), kill it so it
+            // cannot outlive the test, and report the failure.
+            let timer;
+            const timedOut = new Promise(resolve => {
+              timer = setTimeout(resolve, 20_000, "timeout");
+            });
+            const exit = await Promise.race([Promise.all([exited, disconnected]).then(([e]) => e), timedOut]);
+            clearTimeout(timer);
+            if (exit === "timeout") {
+              worker.process.kill("SIGKILL");
+              console.log(JSON.stringify({ fail: "worker did not exit after disconnect()" }));
+              process.exit(1);
+            }
+
+            // The worker is gone, so nothing may be listening on its port.
+            const after = await new Promise(resolve => {
+              const socket = net.connect(port, "127.0.0.1");
+              socket.once("connect", () => {
+                socket.destroy();
+                resolve("still listening");
+              });
+              socket.once("error", () => resolve("refused"));
+            });
+
+            console.log(JSON.stringify({ before, exit, exitedAfterDisconnect: worker.exitedAfterDisconnect, after }));
+            process.exit(0);
+          });
+        } else {
+          const server = http.createServer((req, res) => res.end("served-by-worker"));
+          server.listen(0, "127.0.0.1", () => {
+            process.send({ cmd: "listening", port: server.address().port });
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      // Inherited so that on regression the worker's output reaches the
+      // runner log instead of filling an unread pipe.
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(
+      '{"before":"served-by-worker","exit":{"code":0,"signal":null},"exitedAfterDisconnect":true,"after":"refused"}',
+    );
+    expect(exitCode).toBe(0);
+  },
+);
+
+test.concurrent(
+  "primary-initiated worker.disconnect() closes the worker's net.Server and the worker exits",
+  async () => {
+    using dir = tempDir("cluster-disconnect-net", {
+      "main.js": `
+        const cluster = require("node:cluster");
+        const net = require("node:net");
+
+        if (cluster.isPrimary) {
+          const worker = cluster.fork();
+          const exited = new Promise(resolve => worker.once("exit", (code, signal) => resolve({ code, signal })));
+
+          worker.on("message", async msg => {
+            if (msg.cmd !== "listening") return;
+            worker.disconnect();
+
+            let timer;
+            const timedOut = new Promise(resolve => {
+              timer = setTimeout(resolve, 20_000, "timeout");
+            });
+            const exit = await Promise.race([exited, timedOut]);
+            clearTimeout(timer);
+            if (exit === "timeout") {
+              worker.process.kill("SIGKILL");
+              console.log(JSON.stringify({ fail: "worker did not exit after disconnect()" }));
+              process.exit(1);
+            }
+            console.log(JSON.stringify({ exit }));
+            process.exit(0);
+          });
+        } else {
+          const server = net.createServer(socket => socket.end());
+          // disconnect() must close the worker's real listening socket, not
+          // just the cluster bookkeeping stub.
+          server.once("close", () => console.log("worker server closed"));
+          server.listen(0, "127.0.0.1", () => {
+            process.send({ cmd: "listening", port: server.address().port });
+          });
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      // Inherited so that on regression the worker's output reaches the
+      // runner log instead of filling an unread pipe.
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim().split("\n")).toEqual(["worker server closed", '{"exit":{"code":0,"signal":null}}']);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A shutdown path and an error path both asking a worker to go away is the normal
+// race in a cluster manager, so Node makes the second disconnect() a no-op.
+test.concurrent("calling worker.disconnect() twice does not throw", async () => {
+  using dir = tempDir("cluster-double-disconnect", {
+    "main.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.on("online", () => {
+          worker.disconnect();
+          worker.disconnect();
+        });
+        worker.on("exit", (code, signal) => console.log("worker-exit", code, signal));
+        cluster.on("disconnect", () => console.log("cluster-disconnect"));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("ERR_IPC_DISCONNECTED");
+  // The primary and the worker share stdout, so their interleaving is not fixed.
+  const lines = stdout.split("\n").filter(Boolean).sort();
+  expect(lines).toEqual(["cluster-disconnect", "worker-exit 0 null"]);
+  expect(exitCode).toBe(0);
+});
+
+// The primary keeps its end of the channel open, so a "disconnect" sent before the
+// worker booted does not swallow the "online" message coming the other way.
+test.concurrent("disconnecting a worker before it comes online still emits 'online'", async () => {
+  using dir = tempDir("cluster-disconnect-before-online", {
+    "main.js": `
+      const cluster = require("node:cluster");
+      if (cluster.isPrimary) {
+        const worker = cluster.fork();
+        worker.disconnect();
+        worker.on("online", () => console.log("online"));
+        worker.on("exit", code => console.log("worker-exit", code));
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.split("\n").filter(Boolean).sort()).toEqual(["online", "worker-exit 0"]);
+  expect(exitCode).toBe(0);
 });

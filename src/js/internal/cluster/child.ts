@@ -1,6 +1,7 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
+const { owner_symbol } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessageChild", 2);
@@ -15,7 +16,6 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const owner_symbol = Symbol("owner_symbol");
 
 export default cluster;
 
@@ -110,6 +110,14 @@ cluster._getServer = function (obj, options, cb) {
     message.port = (address && address.port) || options.port;
     send(message);
   });
+};
+
+// node:http binds its own SO_REUSEPORT socket instead of going through
+// _getServer (handle passing over IPC is unsupported), so it never enters
+// `handles`. Register it here so _disconnect still closes it.
+cluster._trackServer = function (server) {
+  handles.set(server, server);
+  server.once("close", () => handles.delete(server));
 };
 
 function removeIndexesKey(indexesKey, index) {
@@ -242,6 +250,9 @@ Worker.prototype.disconnect = function () {
 };
 
 Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
+  // The primary may ask to disconnect more than once. Tearing the channel down
+  // twice would throw ERR_IPC_DISCONNECTED out of process.disconnect().
+  if (this.exitedAfterDisconnect) return;
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 

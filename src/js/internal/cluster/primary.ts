@@ -326,10 +326,13 @@ function send(worker, message, handle?, cb?) {
 }
 
 // Extend generic Worker with methods specific to the primary process.
+
+// The worker closes its servers and then disconnects the channel from its
+// side (see Worker.prototype._disconnect in child.ts); the primary must not
+// tear the channel down first or the worker's graceful shutdown is skipped.
 Worker.prototype.disconnect = function () {
   this.exitedAfterDisconnect = true;
   send(this, { act: "disconnect" });
-  this.process.disconnect();
   removeHandlesForWorker(this);
   removeWorker(this);
   return this;

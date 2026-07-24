@@ -688,10 +688,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             bun_core::warn!(
                                 "Timeout downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(extract.name.slice()),
-                                extract.resolution.fmt(
-                                    &manager.lockfile.buffers.string_bytes,
-                                    PathSep::Auto,
-                                ),
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
                                 task.retried,
                                 manager.options.max_retry_count,
                             );

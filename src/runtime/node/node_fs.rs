@@ -351,6 +351,24 @@ fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get()
 }
 
+/// Inside a standalone executable, the `/$bunfs/` (POSIX) / `B:\~BUN\`
+/// (Windows) prefix is a reserved virtual root. Writes must not fall through
+/// to the real filesystem and create a literal `/$bunfs/` tree on disk.
+#[inline]
+fn reject_standalone_write(path: &[u8], syscall: sys::Tag) -> Maybe<()> {
+    if standalone_module_graph_get().is_some()
+        && bun_standalone_graph::is_reserved_standalone_path(path)
+    {
+        return Err(sys::Error {
+            errno: E::EROFS as _,
+            syscall,
+            path: path.into(),
+            ..Default::default()
+        });
+    }
+    Ok(())
+}
+
 /// Local shim for `Maybe(void)::aborted` (node.rs:302). `bun_sys::Maybe` is
 /// `core::result::Result`, which has no `aborted()` constructor; inline the
 /// sentinel error directly.
@@ -730,6 +748,26 @@ mod _async_tasks {
             match F {
                 NodeFSFunctionEnum::Open => {
                     let args: &args::Open = args_as!(args::Open);
+                    let bun_flags = args.flags.as_int();
+                    if bun_flags
+                        & (sys::O::WRONLY
+                            | sys::O::RDWR
+                            | sys::O::CREAT
+                            | sys::O::APPEND
+                            | sys::O::TRUNC)
+                        != 0
+                    {
+                        if let Err(err) = reject_standalone_write(args.path.slice(), sys::Tag::open)
+                        {
+                            task.result = Err(err);
+                            let task_ptr: *mut Self = task;
+                            task.global_object()
+                                .bun_vm()
+                                .event_loop_mut()
+                                .enqueue_task(Task::init(task_ptr));
+                            return task.promise.value();
+                        }
+                    }
                     let path = if strings::eql_comptime(args.path.slice(), b"/dev/null") {
                         ZStr::from_static(b"\\\\.\\NUL\0")
                     } else {
@@ -1817,6 +1855,10 @@ mod _async_tasks {
             let this = unsafe { &**_done };
 
             let args = &this.args;
+            if let Err(err) = reject_standalone_write(args.dest.slice(), sys::Tag::copyfile) {
+                this.finish_concurrently(Err(err));
+                return;
+            }
             let mut src_buf = OSPathBuffer::uninit();
             let mut dest_buf = OSPathBuffer::uninit();
             let name_too_long = |path: &PathLike| sys::Error {
@@ -4763,6 +4805,7 @@ impl NodeFS {
                 Ok(())
             }
             PathOrFileDescriptor::Path(path_) => {
+                reject_standalone_write(path_.slice(), sys::Tag::open)?;
                 let path = path_.slice_z(&mut self.sync_error_buf);
                 let fd = Syscall::open(path, FileSystemFlags::A.as_int(), args.mode)?;
                 let _close = scopeguard::guard(fd, |fd| fd.close());
@@ -4962,6 +5005,7 @@ impl NodeFS {
     }
 
     pub fn copy_file(&mut self, args: &args::CopyFile, _: Flavor) -> Maybe<ret::CopyFile> {
+        reject_standalone_write(args.dest.slice(), sys::Tag::copyfile)?;
         match self.copy_file_inner(args) {
             Ok(_) => Ok(()),
             Err(err) => Err(sys::Error {
@@ -5440,6 +5484,7 @@ impl NodeFS {
     }
 
     pub fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
+        reject_standalone_write(args.path.slice(), sys::Tag::chown)?;
         #[cfg(windows)]
         {
             return match Syscall::chown(
@@ -5459,6 +5504,7 @@ impl NodeFS {
     }
 
     pub fn chmod(&mut self, args: &args::Chmod, _: Flavor) -> Maybe<ret::Chmod> {
+        reject_standalone_write(args.path.slice(), sys::Tag::chmod)?;
         let path = args.path.slice_z(&mut self.sync_error_buf);
         #[cfg(windows)]
         {
@@ -5582,6 +5628,7 @@ impl NodeFS {
     }
 
     pub fn lchmod(&mut self, args: &args::LCHmod, _: Flavor) -> Maybe<ret::Lchmod> {
+        reject_standalone_write(args.path.slice(), sys::Tag::lchmod)?;
         #[cfg(windows)]
         {
             let _ = args;
@@ -5609,6 +5656,7 @@ impl NodeFS {
     }
 
     pub fn lchown(&mut self, args: &args::LChown, _: Flavor) -> Maybe<ret::Lchown> {
+        reject_standalone_write(args.path.slice(), sys::Tag::lchown)?;
         // On Windows `Syscall::lchown` routes through uv_fs_lchown, which is
         // a no-op success, matching Node.
         let path = args.path.slice_z(&mut self.sync_error_buf);
@@ -5619,6 +5667,7 @@ impl NodeFS {
     }
 
     pub fn link(&mut self, args: &args::Link, _: Flavor) -> Maybe<ret::Link> {
+        reject_standalone_write(args.new_path.slice(), sys::Tag::link)?;
         let mut to_buf = PathBuffer::uninit();
         let from = args.old_path.slice_z(&mut self.sync_error_buf);
         let to = args.new_path.slice_z(&mut to_buf);
@@ -5680,6 +5729,7 @@ impl NodeFS {
                 ..Default::default()
             });
         }
+        reject_standalone_write(args.path.slice(), sys::Tag::mkdir)?;
         if args.recursive {
             self.mkdir_recursive(args)
         } else {
@@ -5973,6 +6023,7 @@ impl NodeFS {
     }
 
     pub fn mkdtemp(&mut self, args: &args::MkdirTemp, _: Flavor) -> Maybe<ret::Mkdtemp> {
+        reject_standalone_write(args.prefix.slice(), sys::Tag::mkdtemp)?;
         let prefix_buf = &mut self.sync_error_buf;
         let prefix_slice = args.prefix.slice();
         let len = prefix_slice.len().min(prefix_buf.len().saturating_sub(7));
@@ -6035,6 +6086,12 @@ impl NodeFS {
     }
 
     pub fn open(&mut self, args: &args::Open, _: Flavor) -> Maybe<ret::Open> {
+        let flags = args.flags.as_int();
+        if flags & (sys::O::WRONLY | sys::O::RDWR | sys::O::CREAT | sys::O::APPEND | sys::O::TRUNC)
+            != 0
+        {
+            reject_standalone_write(args.path.slice(), sys::Tag::open)?;
+        }
         let path = if cfg!(windows) && args.path.slice() == b"/dev/null" {
             // SAFETY: literal is NUL-terminated; len excludes the sentinel.
             ZStr::from_static(b"\\\\.\\NUL\0")
@@ -7032,6 +7089,17 @@ impl NodeFS {
         let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
         let fd_maybe_windows: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
+                let flags = args.flag.as_int();
+                if flags
+                    & (sys::O::WRONLY
+                        | sys::O::RDWR
+                        | sys::O::CREAT
+                        | sys::O::APPEND
+                        | sys::O::TRUNC)
+                    != 0
+                {
+                    reject_standalone_write(p.slice(), sys::Tag::open)?;
+                }
                 let path = p.slice_z(&mut self.sync_error_buf);
 
                 if let Some(graph) = standalone_module_graph_get() {
@@ -7392,6 +7460,7 @@ impl NodeFS {
     ) -> Maybe<ret::WriteFile> {
         let fd = match &args.file {
             PathOrFileDescriptor::Path(p) => {
+                reject_standalone_write(p.slice(), sys::Tag::open)?;
                 let path = p.slice_z_with_force_copy::<true>(pathbuf);
                 // O_TRUNC is dropped on purpose: keeping the existing blocks
                 // allocated makes rewriting a large file cheaper, and the resize
@@ -7692,6 +7761,8 @@ impl NodeFS {
     }
 
     pub fn rename(&mut self, args: &args::Rename, _: Flavor) -> Maybe<ret::Rename> {
+        reject_standalone_write(args.old_path.slice(), sys::Tag::rename)?;
+        reject_standalone_write(args.new_path.slice(), sys::Tag::rename)?;
         let from_buf = &mut self.sync_error_buf;
         let mut to_buf = PathBuffer::uninit();
         let from = args.old_path.slice_z(from_buf);
@@ -7703,6 +7774,7 @@ impl NodeFS {
     }
 
     pub fn rmdir(&mut self, args: &args::RmDir, _: Flavor) -> Maybe<ret::Rmdir> {
+        reject_standalone_write(args.path.slice(), sys::Tag::rmdir)?;
         if args.recursive {
             // On Windows a rooted-but-driveless path ("/tmp/foo") must resolve
             // against the cwd drive.
@@ -7743,6 +7815,7 @@ impl NodeFS {
     }
 
     pub fn rm(&mut self, args: &args::Rm, _: Flavor) -> Maybe<ret::Rm> {
+        reject_standalone_write(args.path.slice(), sys::Tag::rm)?;
         // We cannot use removefileat() on macOS because it does not handle write-protected files as expected.
         if args.recursive {
             // See the matching comment in `rmdir`: pre-resolve the path on
@@ -7866,6 +7939,7 @@ impl NodeFS {
     }
 
     pub fn symlink(&mut self, args: &args::Symlink, _: Flavor) -> Maybe<ret::Symlink> {
+        reject_standalone_write(args.new_path.slice(), sys::Tag::symlink)?;
         let mut to_buf = PathBuffer::uninit();
         #[cfg(windows)]
         {
@@ -7980,6 +8054,7 @@ impl NodeFS {
     }
 
     fn truncate_inner(&mut self, path: &PathLike, len: u64, flags: i32) -> Maybe<ret::Truncate> {
+        reject_standalone_write(path.slice(), sys::Tag::truncate)?;
         // Mask `len` to a `u63` envelope so the `i64` cast is always in range,
         // rather than `try_from().unwrap()`-panicking
         // on a hostile `> i64::MAX` value.
@@ -8035,6 +8110,7 @@ impl NodeFS {
     }
 
     pub fn unlink(&mut self, args: &args::Unlink, _: Flavor) -> Maybe<ret::Unlink> {
+        reject_standalone_write(args.path.slice(), sys::Tag::unlink)?;
         #[cfg(windows)]
         {
             return match Syscall::unlink(args.path.slice_z(&mut self.sync_error_buf)) {
@@ -8088,6 +8164,7 @@ impl NodeFS {
     }
 
     pub fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
+        reject_standalone_write(args.path.slice(), sys::Tag::utime)?;
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -8125,6 +8202,7 @@ impl NodeFS {
     }
 
     pub fn lutimes(&mut self, args: &args::Lutimes, _: Flavor) -> Maybe<ret::Lutimes> {
+        reject_standalone_write(args.path.slice(), sys::Tag::lutime)?;
         #[cfg(windows)]
         {
             let mut req = UvFsReq::new();
@@ -8174,6 +8252,7 @@ impl NodeFS {
     /// This function is `cpSync`, but only if you pass `{ recursive: ..., force: ..., errorOnExist: ..., mode: ... }'
     /// The other options like `filter` use a JS fallback, see `src/js/internal/fs/cp.ts`
     pub fn cp(&mut self, args: &args::Cp, _: Flavor) -> Maybe<ret::Cp> {
+        reject_standalone_write(args.dest.slice(), sys::Tag::copyfile)?;
         let mut src_buf = OSPathBuffer::uninit();
         let mut dest_buf = OSPathBuffer::uninit();
         let name_too_long = |path: &PathLike| sys::Error {

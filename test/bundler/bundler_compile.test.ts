@@ -449,6 +449,135 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!", setCwd: true },
   });
+  // Writes aimed at the virtual `/$bunfs/` root must not fall through to the
+  // real filesystem and create a literal `/$bunfs/` directory at `/`.
+  itBundled("compile/EmbeddedFilesReadOnly", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import embedded from "./a.txt" with { type: "file" };
+        import fs from "node:fs";
+        import fsp from "node:fs/promises";
+        import path from "node:path";
+
+        const vroot = import.meta.dir;
+        const newPath = vroot + "/new.txt";
+        const bare = path.dirname(vroot);
+
+        const results: Record<string, unknown> = {};
+        const run = (name: string, fn: () => unknown) => {
+          try { fn(); results[name] = "OK"; }
+          catch (e: any) { results[name] = e?.code ?? e?.message; }
+        };
+        const runAsync = async (name: string, fn: () => Promise<unknown>) => {
+          try { await fn(); results[name] = "OK"; }
+          catch (e: any) { results[name] = e?.code ?? e?.message; }
+        };
+
+        // Mutating node:fs ops on a path under the virtual root.
+        run("writeFileSync", () => fs.writeFileSync(newPath, "x"));
+        run("writeFileSync-embedded", () => fs.writeFileSync(embedded, "x"));
+        run("appendFileSync", () => fs.appendFileSync(newPath, "x"));
+        run("mkdirSync", () => fs.mkdirSync(vroot + "/sub"));
+        run("mkdirSync-recursive", () => fs.mkdirSync(vroot + "/a/b", { recursive: true }));
+        run("openSync-w", () => fs.closeSync(fs.openSync(newPath, "w")));
+        run("openSync-a", () => fs.closeSync(fs.openSync(newPath, "a")));
+        run("openSync-r+", () => fs.closeSync(fs.openSync(newPath, "r+")));
+        run("unlinkSync", () => fs.unlinkSync(embedded));
+        run("rmSync", () => fs.rmSync(embedded));
+        run("rmdirSync", () => fs.rmdirSync(vroot));
+        run("renameSync-from", () => fs.renameSync(embedded, "/tmp/x"));
+        run("renameSync-to", () => fs.renameSync("/tmp/x", newPath));
+        run("symlinkSync", () => fs.symlinkSync("/tmp/x", newPath));
+        run("linkSync", () => fs.linkSync("/tmp/x", newPath));
+        run("truncateSync", () => fs.truncateSync(embedded, 0));
+        run("chmodSync", () => fs.chmodSync(embedded, 0o644));
+        run("chownSync", () => fs.chownSync(embedded, 0, 0));
+        run("utimesSync", () => fs.utimesSync(embedded, 0, 0));
+        run("copyFileSync-dest", () => fs.copyFileSync(process.execPath, newPath));
+        run("readFileSync-w+", () => fs.readFileSync(newPath, { flag: "w+" }));
+        run("readFileSync-a+", () => fs.readFileSync(newPath, { flag: "a+" }));
+        run("mkdirSync-bare", () => fs.mkdirSync(bare));
+        run("rmSync-bare", () => fs.rmSync(bare, { recursive: true, force: true }));
+
+        // Representative async variants.
+        await runAsync("writeFile", () => fsp.writeFile(newPath, "x"));
+        await runAsync("mkdir", () => fsp.mkdir(vroot + "/sub"));
+        await runAsync("unlink", () => fsp.unlink(embedded));
+        await runAsync("open-w", async () => (await fsp.open(newPath, "w")).close());
+        await runAsync("cp-dest", () => fsp.cp(process.execPath, newPath));
+
+        // Bun.write
+        await runAsync("Bun.write-string", () => Bun.write(newPath, "x"));
+        await runAsync("Bun.write-bytes", () => Bun.write(newPath, new Uint8Array(4)));
+        await runAsync("Bun.write-file", () => Bun.write(Bun.file(newPath), "x"));
+        await runAsync("Bun.file.writer", async () => {
+          const w = Bun.file(newPath).writer();
+          w.write("x");
+          await w.end();
+        });
+        await runAsync("Bun.file.write", () => Bun.file(newPath).write("x"));
+        await runAsync("Bun.file.unlink", () => Bun.file(newPath).unlink());
+        await runAsync("Bun.write-bare", () => Bun.write(bare, "x"));
+
+        // Embedded reads must keep working.
+        results["readFileSync"] = fs.readFileSync(embedded, "utf8");
+        results["statSync.size"] = fs.statSync(embedded).size;
+        results["existsSync"] = fs.existsSync(embedded);
+
+        // No real virtual-root directory leaked onto disk.
+        const realRoot = process.platform === "win32" ? "B:\\\\~BUN" : "/$bunfs";
+        results["realRootExists"] = fs.existsSync(realRoot);
+
+        console.log(JSON.stringify(results));
+      `,
+      "/a.txt": "EMBEDDED-BYTES",
+    },
+    run: {
+      stdout: JSON.stringify({
+        "writeFileSync": "EROFS",
+        "writeFileSync-embedded": "EROFS",
+        "appendFileSync": "EROFS",
+        "mkdirSync": "EROFS",
+        "mkdirSync-recursive": "EROFS",
+        "openSync-w": "EROFS",
+        "openSync-a": "EROFS",
+        "openSync-r+": "EROFS",
+        "unlinkSync": "EROFS",
+        "rmSync": "EROFS",
+        "rmdirSync": "EROFS",
+        "renameSync-from": "EROFS",
+        "renameSync-to": "EROFS",
+        "symlinkSync": "EROFS",
+        "linkSync": "EROFS",
+        "truncateSync": "EROFS",
+        "chmodSync": "EROFS",
+        "chownSync": "EROFS",
+        "utimesSync": "EROFS",
+        "copyFileSync-dest": "EROFS",
+        "readFileSync-w+": "EROFS",
+        "readFileSync-a+": "EROFS",
+        "mkdirSync-bare": "EROFS",
+        "rmSync-bare": "EROFS",
+        "writeFile": "EROFS",
+        "mkdir": "EROFS",
+        "unlink": "EROFS",
+        "open-w": "EROFS",
+        "cp-dest": "EROFS",
+        "Bun.write-string": "EROFS",
+        "Bun.write-bytes": "EROFS",
+        "Bun.write-file": "EROFS",
+        "Bun.file.writer": "EROFS",
+        "Bun.file.write": "EROFS",
+        "Bun.file.unlink": "EROFS",
+        "Bun.write-bare": "EROFS",
+        "readFileSync": "EMBEDDED-BYTES",
+        "statSync.size": 14,
+        "existsSync": true,
+        "realRootExists": false,
+      }),
+    },
+  });
   itBundled("compile/Bun.isStandaloneExecutable", {
     compile: true,
     assetNaming: "[name].[ext]",

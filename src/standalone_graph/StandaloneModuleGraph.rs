@@ -142,6 +142,17 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
     }
 }
 
+/// True for any path at or under the reserved virtual root, including the bare
+/// prefix without a trailing separator (`path.dirname(import.meta.dir)`).
+/// Used by the write guards in `node:fs` and `Bun.write`.
+pub fn is_reserved_standalone_path(str_: &[u8]) -> bool {
+    #[cfg(windows)]
+    let str_ = strings::paths::without_nt_prefix::<u8>(str_);
+    is_bun_standalone_file_path_canonicalized(str_)
+        || str_ == &BASE_PATH.as_bytes()[..BASE_PATH.len() - 1]
+        || (cfg!(windows) && str_ == &BASE_PUBLIC_PATH.as_bytes()[..BASE_PUBLIC_PATH.len() - 1])
+}
+
 impl StandaloneModuleGraph {
     // Callers mutate `wtf_string` / `cached_blob`, so these accessors take
     // `&mut self`. Switching to `UnsafeCell` per-`File`

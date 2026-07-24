@@ -3557,7 +3557,9 @@ async function runStandalone() {
     counts.failed++;
   } finally {
     const durationMs = roundDurationMs(performance.now() - startedAt);
-    standaloneSink!("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
+    // Emitted directly so it carries no data.file, matching runFiles /
+    // runFilesInProcess and the adjacent run-level summary.
+    stream.emitMessage("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
     emitRunDiagnostics(stream, counts, durationMs);
     stream.emitMessage("test:summary", {
       __proto__: null,
@@ -4101,46 +4103,42 @@ function addSuite(
               Promise.resolve(undefined).then(done, done);
             });
           }
-          function onWrappedSuiteBuilt() {
-            settleSuiteAfterHooks();
-          }
-          function onWrappedSuiteFailed(err: unknown) {
+          // Records the body failure so maybeCompleteSuite emits the suite's
+          // own testCodeFailure verdict; hookSetupFailed makes declared
+          // children cancel at execution turn. The settle itself is registered
+          // by the caller (deferred via settleSuiteAfterHooks in run-child
+          // mode so a zero-child throw keeps declaration order).
+          function recordSuiteBodyFailed(err: unknown) {
             suiteNode.childrenFailed++;
             suiteNode.error = err;
-            noteSuiteCollectionSettled(suiteNode);
-            if (isTodoAdvisory) return undefined;
-            if (runChildReporterEnabled) {
-              // Async twin of the sync body-throw path above: a rejecting
-              // describe callback cancels the declared children, not the file.
-              suiteNode.hookSetupFailed = true;
-              return undefined;
-            }
+            if (!isTodoAdvisory) suiteNode.hookSetupFailed = true;
+          }
+          function onWrappedSuiteFailed(err: unknown) {
+            recordSuiteBodyFailed(err);
+            if (isTodoAdvisory || runChildReporterEnabled) return undefined;
             throw err;
           }
           let built: unknown;
           try {
             built = runWithNode(suiteNode, buildWrappedSuiteFn);
           } catch (err) {
-            // Settle so the suite (and every enclosing suite's childrenDone
-            // accounting) still completes.
-            suiteNode.childrenFailed++;
-            suiteNode.error = err;
-            noteSuiteCollectionSettled(suiteNode);
-            if (isTodoAdvisory) return undefined;
-            if (runChildReporterEnabled) {
-              // node attributes a throwing describe body to the suite
-              // (testCodeFailure) and cancels the children it declared before
-              // throwing; swallow it from bun:test, whose describe-error path
-              // would fail the whole file instead.
-              suiteNode.hookSetupFailed = true;
+            recordSuiteBodyFailed(err);
+            if (isTodoAdvisory || runChildReporterEnabled) {
+              // Swallowed from bun:test (whose describe-error path would fail
+              // the whole file); it sees the body as successful and runs the
+              // deferred settle at the suite's execution turn.
+              settleSuiteAfterHooks();
               return undefined;
             }
+            noteSuiteCollectionSettled(suiteNode);
             throw err;
           }
-          if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
-            return (built as Promise<unknown>).then(onWrappedSuiteBuilt, onWrappedSuiteFailed);
-          }
+          // Register the settle before awaiting so it lands inside this
+          // describe's scope even when the async body rejects later.
           settleSuiteAfterHooks();
+          if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
+            return (built as Promise<unknown>).then(undefined, onWrappedSuiteFailed);
+          }
           return built;
         };
 

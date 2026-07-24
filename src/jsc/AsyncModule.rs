@@ -1,6 +1,5 @@
 use core::ffi::c_void;
 
-use bun_alloc::Arena as ArenaAllocator;
 use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
@@ -30,10 +29,9 @@ pub struct InitOpts<'a> {
     pub package_json: Option<&'a PackageJSON>,
     pub loader: bun_ast::Loader,
     pub hash: u32,
-    pub arena: Box<ArenaAllocator>,
-    /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
-    /// alive alongside `arena` until the module finishes loading.
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// Owns the `MimallocArena` + AST allocator state backing
+    /// `parse_result`; must stay alive until the module finishes loading.
+    pub ast_arena: bun_alloc::AstArena,
 }
 
 pub struct AsyncModule {
@@ -56,9 +54,8 @@ pub struct AsyncModule {
     pub loader: api::Loader,
     pub hash: u32, // default = u32::MAX
     pub global_this: crate::GlobalRef,
-    pub arena: Box<ArenaAllocator>,
-    /// See [`InitOpts::ast_alloc_state`].
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// See [`InitOpts::ast_arena`].
+    pub ast_arena: bun_alloc::AstArena,
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
@@ -659,8 +656,7 @@ impl AsyncModule {
             // .stmt_blocks = stmt_blocks,
             // .expr_blocks = expr_blocks,
             global_this: crate::GlobalRef::new(global_object),
-            arena: opts.arena,
-            ast_alloc_state: opts.ast_alloc_state,
+            ast_arena: opts.ast_arena,
             poll_ref: KeepAlive::default(),
             any_task: AnyTask::AnyTask::default(),
         })
@@ -1299,12 +1295,13 @@ impl AsyncModule {
             // SAFETY: per-thread VM.
             let _ = unsafe {
                 (*jsc_vm).transpiler.print_with_source_map(
-                    // `self.arena` is the same per-call arena that built
+                    // `self.ast_arena` is the same per-call arena that built
                     // `parse_result.ast` (handed to the queue via
-                    // `InitOpts::arena` after the original parse). The
+                    // `InitOpts::ast_arena` after the original parse). The
                     // printer's rope-flattening scratch belongs in it, not
                     // in the per-VM `transpiler_arena`.
-                    &self.arena,
+                    self.ast_arena.arena(),
+                    self.ast_arena.alloc(),
                     parse_result,
                     &mut printer,
                     bun_js_printer::Format::EsmAscii,

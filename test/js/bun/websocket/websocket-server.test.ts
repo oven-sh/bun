@@ -1183,6 +1183,16 @@ describe("ServerWebSocket", () => {
         done();
       },
     }));
+    test("(undefined, undefined)", done => ({
+      open(ws) {
+        ws.close(undefined, undefined);
+      },
+      close(_, code, reason) {
+        expect(code).toBe(1000);
+        expect(reason).toBeEmpty();
+        done();
+      },
+    }));
     test("(no reason)", done => ({
       open(ws) {
         ws.close(1001);

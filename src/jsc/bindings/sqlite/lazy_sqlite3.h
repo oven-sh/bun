@@ -34,6 +34,7 @@ typedef sqlite3_int64 (*lazy_sqlite3_changes64_type)(sqlite3*);
 typedef int (*lazy_sqlite3_clear_bindings_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_close_v2_type)(sqlite3*);
 typedef int (*lazy_sqlite3_close_type)(sqlite3*);
+typedef void (*lazy_sqlite3_interrupt_type)(sqlite3*);
 typedef int (*lazy_sqlite3_file_control_type)(sqlite3*, const char* zDbName, int op, void* pArg);
 typedef int (*lazy_sqlite3_extended_result_codes_type)(sqlite3*, int onoff);
 typedef const void* (*lazy_sqlite3_column_blob_type)(sqlite3_stmt*, int iCol);
@@ -62,8 +63,10 @@ typedef int (*lazy_sqlite3_finalize_type)(sqlite3_stmt* pStmt);
 typedef void (*lazy_sqlite3_free_type)(void*);
 typedef int (*lazy_sqlite3_get_autocommit_type)(sqlite3*);
 typedef int (*lazy_sqlite3_total_changes_type)(sqlite3*);
+typedef sqlite3_int64 (*lazy_sqlite3_total_changes64_type)(sqlite3*);
 typedef int (*lazy_sqlite3_config_type)(int, ...);
 typedef int (*lazy_sqlite3_open_v2_type)(const char* filename, sqlite3** ppDb, int flags, const char* zVfs);
+typedef int (*lazy_sqlite3_threadsafe_type)();
 typedef int (*lazy_sqlite3_prepare_v2_type)(sqlite3* db, const char* zSql, int nByte, sqlite3_stmt** ppStmt, const char** pzTail);
 typedef int (*lazy_sqlite3_prepare_v3_type)(sqlite3* db, const char* zSql, int nByte, unsigned int prepFlags, sqlite3_stmt** ppStmt, const char** pzTail);
 typedef int (*lazy_sqlite3_prepare16_v3_type)(sqlite3* db, const void* zSql, int nByte, unsigned int prepFlags, sqlite3_stmt** ppStmt, const void** pzTail);
@@ -73,6 +76,7 @@ typedef int (*lazy_sqlite3_db_config_type)(sqlite3*, int op, ...);
 typedef const char* (*lazy_sqlite3_db_filename_type)(sqlite3*, const char* zDbName);
 typedef sqlite3* (*lazy_sqlite3_db_handle_type)(sqlite3_stmt*);
 typedef int (*lazy_sqlite3_busy_timeout_type)(sqlite3*, int ms);
+typedef int (*lazy_sqlite3_busy_handler_type)(sqlite3*, int (*)(void*, int), void*);
 typedef int (*lazy_sqlite3_wal_checkpoint_v2_type)(sqlite3*, const char* zDb, int eMode, int* pnLog, int* pnCkpt);
 typedef const char* (*lazy_sqlite3_bind_parameter_name_type)(sqlite3_stmt*, int);
 typedef int (*lazy_sqlite3_exec_type)(sqlite3*, const char* sql, int (*callback)(void*, int, char**, char**), void*, char** errmsg);
@@ -143,7 +147,9 @@ inline lazy_sqlite3_changes64_type lazy_sqlite3_changes64;
 inline lazy_sqlite3_clear_bindings_type lazy_sqlite3_clear_bindings;
 inline lazy_sqlite3_close_v2_type lazy_sqlite3_close_v2;
 inline lazy_sqlite3_close_type lazy_sqlite3_close;
+inline lazy_sqlite3_interrupt_type lazy_sqlite3_interrupt;
 inline lazy_sqlite3_busy_timeout_type lazy_sqlite3_busy_timeout;
+inline lazy_sqlite3_busy_handler_type lazy_sqlite3_busy_handler;
 inline lazy_sqlite3_wal_checkpoint_v2_type lazy_sqlite3_wal_checkpoint_v2;
 inline lazy_sqlite3_file_control_type lazy_sqlite3_file_control;
 inline lazy_sqlite3_column_blob_type lazy_sqlite3_column_blob;
@@ -169,6 +175,7 @@ inline lazy_sqlite3_finalize_type lazy_sqlite3_finalize;
 inline lazy_sqlite3_free_type lazy_sqlite3_free;
 inline lazy_sqlite3_get_autocommit_type lazy_sqlite3_get_autocommit;
 inline lazy_sqlite3_open_v2_type lazy_sqlite3_open_v2;
+inline lazy_sqlite3_threadsafe_type lazy_sqlite3_threadsafe;
 inline lazy_sqlite3_prepare_v2_type lazy_sqlite3_prepare_v2;
 inline lazy_sqlite3_prepare_v3_type lazy_sqlite3_prepare_v3;
 inline lazy_sqlite3_prepare16_v3_type lazy_sqlite3_prepare16_v3;
@@ -193,6 +200,7 @@ inline lazy_sqlite3_error_offset_type lazy_sqlite3_error_offset;
 inline lazy_sqlite3_memory_used_type lazy_sqlite3_memory_used;
 inline lazy_sqlite3_bind_parameter_name_type lazy_sqlite3_bind_parameter_name;
 inline lazy_sqlite3_total_changes_type lazy_sqlite3_total_changes;
+inline lazy_sqlite3_total_changes64_type lazy_sqlite3_total_changes64;
 inline lazy_sqlite3_last_insert_rowid_type lazy_sqlite3_last_insert_rowid;
 inline lazy_sqlite3_exec_type lazy_sqlite3_exec;
 inline lazy_sqlite3_limit_type lazy_sqlite3_limit;
@@ -243,7 +251,9 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_clear_bindings lazy_sqlite3_clear_bindings
 #define sqlite3_close_v2 lazy_sqlite3_close_v2
 #define sqlite3_close lazy_sqlite3_close
+#define sqlite3_interrupt lazy_sqlite3_interrupt
 #define sqlite3_busy_timeout lazy_sqlite3_busy_timeout
+#define sqlite3_busy_handler lazy_sqlite3_busy_handler
 #define sqlite3_wal_checkpoint_v2 lazy_sqlite3_wal_checkpoint_v2
 #define sqlite3_file_control lazy_sqlite3_file_control
 #define sqlite3_column_blob lazy_sqlite3_column_blob
@@ -266,7 +276,9 @@ inline lazy_sqlite3changeset_apply_type lazy_sqlite3changeset_apply;
 #define sqlite3_finalize lazy_sqlite3_finalize
 #define sqlite3_free lazy_sqlite3_free
 #define sqlite3_get_autocommit lazy_sqlite3_get_autocommit
+#define sqlite3_total_changes64 lazy_sqlite3_total_changes64
 #define sqlite3_open_v2 lazy_sqlite3_open_v2
+#define sqlite3_threadsafe lazy_sqlite3_threadsafe
 #define sqlite3_prepare_v2 lazy_sqlite3_prepare_v2
 #define sqlite3_prepare_v3 lazy_sqlite3_prepare_v3
 #define sqlite3_prepare16_v3 lazy_sqlite3_prepare16_v3
@@ -367,6 +379,10 @@ inline int lazyLoadSQLite()
     }
     lazy_sqlite3_open_v2 = (lazy_sqlite3_open_v2_type)dlsym(sqlite3_handle, "sqlite3_open_v2");
     if (!lazy_sqlite3_open_v2) return -1;
+    lazy_sqlite3_interrupt = (lazy_sqlite3_interrupt_type)dlsym(sqlite3_handle, "sqlite3_interrupt");
+    if (!lazy_sqlite3_interrupt) return -1;
+    lazy_sqlite3_threadsafe = (lazy_sqlite3_threadsafe_type)dlsym(sqlite3_handle, "sqlite3_threadsafe");
+    if (!lazy_sqlite3_threadsafe) return -1;
     lazy_sqlite3_bind_blob = (lazy_sqlite3_bind_blob_type)dlsym(sqlite3_handle, "sqlite3_bind_blob");
     lazy_sqlite3_bind_blob64 = (lazy_sqlite3_bind_blob64_type)dlsym(sqlite3_handle, "sqlite3_bind_blob64");
     lazy_sqlite3_bind_double = (lazy_sqlite3_bind_double_type)dlsym(sqlite3_handle, "sqlite3_bind_double");
@@ -384,6 +400,8 @@ inline int lazyLoadSQLite()
     lazy_sqlite3_close_v2 = (lazy_sqlite3_close_v2_type)dlsym(sqlite3_handle, "sqlite3_close_v2");
     lazy_sqlite3_close = (lazy_sqlite3_close_type)dlsym(sqlite3_handle, "sqlite3_close");
     lazy_sqlite3_busy_timeout = (lazy_sqlite3_busy_timeout_type)dlsym(sqlite3_handle, "sqlite3_busy_timeout");
+    lazy_sqlite3_busy_handler = (lazy_sqlite3_busy_handler_type)dlsym(sqlite3_handle, "sqlite3_busy_handler");
+    if (!lazy_sqlite3_busy_handler) return -1;
     lazy_sqlite3_wal_checkpoint_v2 = (lazy_sqlite3_wal_checkpoint_v2_type)dlsym(sqlite3_handle, "sqlite3_wal_checkpoint_v2");
     lazy_sqlite3_file_control = (lazy_sqlite3_file_control_type)dlsym(sqlite3_handle, "sqlite3_file_control");
     lazy_sqlite3_column_blob = (lazy_sqlite3_column_blob_type)dlsym(sqlite3_handle, "sqlite3_column_blob");
@@ -431,6 +449,7 @@ inline int lazyLoadSQLite()
     lazy_sqlite3_memory_used = (lazy_sqlite3_memory_used_type)dlsym(sqlite3_handle, "sqlite3_memory_used");
     lazy_sqlite3_bind_parameter_name = (lazy_sqlite3_bind_parameter_name_type)dlsym(sqlite3_handle, "sqlite3_bind_parameter_name");
     lazy_sqlite3_total_changes = (lazy_sqlite3_total_changes_type)dlsym(sqlite3_handle, "sqlite3_total_changes");
+    lazy_sqlite3_total_changes64 = (lazy_sqlite3_total_changes64_type)dlsym(sqlite3_handle, "sqlite3_total_changes64");
     lazy_sqlite3_last_insert_rowid = (lazy_sqlite3_last_insert_rowid_type)dlsym(sqlite3_handle, "sqlite3_last_insert_rowid");
     lazy_sqlite3_exec = (lazy_sqlite3_exec_type)dlsym(sqlite3_handle, "sqlite3_exec");
     lazy_sqlite3_limit = (lazy_sqlite3_limit_type)dlsym(sqlite3_handle, "sqlite3_limit");
@@ -508,6 +527,13 @@ inline int lazyLoadSQLite()
     if (!lazy_sqlite3_changes64) {
         lazy_sqlite3_changes64 = [](sqlite3* db) -> sqlite3_int64 {
             return static_cast<sqlite3_int64>(lazy_sqlite3_changes(db));
+        };
+    }
+    // sqlite3_total_changes64 has the same SQLite 3.37/macOS 12 compatibility
+    // gap as sqlite3_changes64, so retain the long-standing 32-bit fallback.
+    if (!lazy_sqlite3_total_changes64) {
+        lazy_sqlite3_total_changes64 = [](sqlite3* db) -> sqlite3_int64 {
+            return static_cast<sqlite3_int64>(lazy_sqlite3_total_changes(db));
         };
     }
 

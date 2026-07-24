@@ -39,6 +39,149 @@ The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x fa
 
 ---
 
+## AsyncDatabase
+
+`AsyncDatabase` provides an asynchronous SQLite connection for applications that
+need to keep the event loop available while SQLite work runs. It is a separate
+connection type from `Database`:
+
+```ts db.ts icon="/icons/typescript.svg"
+import { AsyncDatabase } from "bun:sqlite";
+
+const db = await AsyncDatabase.open("mydb.sqlite");
+```
+
+Each `AsyncDatabase` connection processes operations in FIFO order, with one
+operation active at a time. Pending work is bounded by `maxPending` (which
+defaults to `64`); submitting more work than the limit rejects that
+operation's Promise. This means that `AsyncDatabase` does not make operations
+on one connection run concurrently.
+The asynchronous API is about event-loop availability, not universally faster
+queries: scheduling work and copying results adds overhead. Prefer the
+synchronous `Database` for short queries, and consider using separate Workers
+manually when you need independent JavaScript execution contexts.
+
+### `AsyncDatabase.open(filename, options?)`
+
+`open()` returns a Promise that resolves to an `AsyncDatabase`. The default
+connection is read/write and creates the database if needed.
+
+```ts db.ts icon="/icons/typescript.svg"
+import { AsyncDatabase } from "bun:sqlite";
+
+const db = await AsyncDatabase.open("mydb.sqlite", {
+  readwrite: true,
+  create: true,
+  strict: true,
+  safeIntegers: true,
+  busyTimeout: 5_000,
+  maxPending: 32,
+});
+```
+
+The supported options are:
+
+- `readonly`: open an existing database read-only. This cannot be combined with
+  `readwrite: true` or `create: true`.
+- `readwrite`: request read/write access (the default).
+- `create`: create the database if it does not exist (the default; set to
+  `false` to require an existing file).
+- `strict`: require every named parameter and allow names without `$`, `:`, or
+  `@` prefixes.
+- `safeIntegers`: return SQLite integer row values and `lastInsertRowid` as
+  `bigint` values; `changes` remains a `number`.
+- `busyTimeout`: maximum time in milliseconds to wait for a locked database.
+  The default is `0`.
+- `maxPending`: maximum number of active and queued operations for this
+  connection. The default is `64`.
+
+### Operations
+
+All operations return Promises. `exec()` resolves to `undefined`; it is useful
+for schema changes and other statements where no result is needed. `run()`
+resolves to an object containing `changes` and `lastInsertRowid`.
+
+```ts db.ts icon="/icons/typescript.svg"
+await db.exec(`
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+  );
+`);
+
+await db.run("INSERT INTO users (name) VALUES (?)", ["Ada"]);
+
+const user = await db.get("SELECT id, name FROM users WHERE id = ?", [1]); // { id: 1, name: "Ada" } or null
+
+const users = await db.all("SELECT id, name FROM users ORDER BY id"); // [{ id: 1, name: "Ada" }]
+
+const values = await db.values("SELECT id, name FROM users ORDER BY id"); // [[1, "Ada"]]
+```
+
+Pass an array for positional bindings or an object for named bindings:
+
+```ts db.ts icon="/icons/typescript.svg"
+const positional = await db.get("SELECT ? AS name", ["Ada"]);
+
+// With strict: true (as in the open() example above), the prefix is optional.
+const named = await db.get("SELECT $name AS name", { name: "Ada" });
+```
+
+`get()` returns the first row or `null`, `all()` returns rows as objects, and
+`values()` returns rows as arrays. Positional bindings must match the statement's
+parameter count. Without `strict`, an unmatched named parameter is left as
+`NULL`; with `strict`, missing named parameters reject the operation.
+
+### Cancellation
+
+Pass an `AbortSignal` in the per-operation options object. The options object is
+the second argument to `exec()` and the third argument to `run()`, `get()`,
+`all()`, and `values()`.
+
+```ts db.ts icon="/icons/typescript.svg"
+const controller = new AbortController();
+controller.abort(new Error("cancelled"));
+
+try {
+  await db.all("SELECT id, name FROM users", undefined, { signal: controller.signal });
+} catch (error) {
+  console.log(error); // Error: cancelled
+}
+```
+
+Cancellation is best effort. A queued operation can be removed before it
+starts; an active operation is interrupted when SQLite can honor the interrupt.
+The operation may already have started, and cancellation does not undo side
+effects that have occurred.
+
+### Closing
+
+`close()` returns a Promise. It stops new operations, drains the active and
+queued work, and then closes the connection. Calling it more than once returns
+the same Promise.
+
+```ts db.ts icon="/icons/typescript.svg"
+await db.close();
+```
+
+Use `await using` to close the connection automatically when the scope exits:
+
+```ts db.ts icon="/icons/typescript.svg"
+{
+  await using db = await AsyncDatabase.open(":memory:");
+  await db.exec("CREATE TABLE messages (text TEXT)");
+  await db.run("INSERT INTO messages VALUES (?)", ["Hello"]);
+}
+```
+
+`AsyncDatabase` does not expose callback transactions, a public
+`AsyncStatement`, streaming or iterator APIs, user-defined functions,
+extension loading, serialization, backup, or other synchronous
+`Database`-specific helpers. WAL mode is not enabled automatically; enable it
+explicitly when needed, for example with `await db.exec("PRAGMA journal_mode = WAL")`.
+
+---
+
 ## Database
 
 To open or create a SQLite3 database:

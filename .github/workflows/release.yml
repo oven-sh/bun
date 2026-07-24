@@ -48,6 +48,10 @@ on:
         description: "Should types be PR'd to DefinitelyTyped?"
         type: boolean
         default: false
+      use-msi:
+        description: Should the Windows MSI installer be built?
+        type: boolean
+        default: false
 
 jobs:
   sign:
@@ -79,6 +83,93 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+  msi:
+    # Builds a single universal bun-windows.msi containing the x64,
+    # x64-baseline, and arm64 bun.exe payloads. A small native
+    # CustomAction DLL (compiled from packages/bun-msi/detect-cpu.c at
+    # build time, so no binary is checked in) picks the right one at
+    # install time via IsWow64Process2 + IsProcessorFeaturePresent — the
+    # same Win32 calls install.ps1 P/Invokes. Runs after `sign` so the
+    # embedded bun.exe binaries are already Authenticode-signed.
+    #
+    # Package platform is x64; ARM64 Windows 11 runs x64 MSIs under
+    # emulation and IsWow64Process2 reports the native machine from there,
+    # so ARM64 hosts still receive the arm64 payload.
+    #
+    # The MSI wrapper itself is not code-signed here — the DigiCert smctl
+    # secrets live in Buildkite, not GitHub Actions. If SM_API_KEY /
+    # SM_CLIENT_CERT_* / SM_KEYPAIR_ALIAS / SM_HOST are ever mirrored into
+    # this repo's Actions secrets, drop them into this job's env and add an
+    # `smctl sign` step after the build.
+    name: Build MSI installer
+    runs-on: windows-latest
+    needs: sign
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.use-msi == 'true' }}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        # BUN_VERSION is read from the process env, not ${{ }}-interpolated,
+        # so a tag containing shell metacharacters can't splice into the
+        # script. (BUN_VERSION is maintainer-controlled either way — it
+        # comes from workflow_dispatch inputs or release.tag_name — but
+        # the env pattern is the Actions hardening recommendation.)
+        run: |
+          v="$BUN_VERSION"
+          if [[ "$v" == "canary" ]]; then
+            echo "tag=canary" >> "$GITHUB_OUTPUT"
+          elif [[ "$v" == bun-v* ]]; then
+            echo "tag=$v" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=bun-v$v" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Download Windows release zips
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          $targets = "bun-windows-x64", "bun-windows-x64-baseline", "bun-windows-aarch64"
+          foreach ($t in $targets) {
+            gh release download $env:RELEASE_TAG --pattern "$t.zip" --repo $env:REPO
+            if ($LASTEXITCODE -ne 0) { throw "gh release download failed for $t ($LASTEXITCODE)" }
+            Expand-Archive -Path "$t.zip" -DestinationPath . -Force
+            if (-not (Test-Path "$t\bun.exe")) { throw "bun.exe not found inside $t.zip" }
+          }
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          # Package/@Version must be numeric major.minor.build. For canary,
+          # fall back to the repo's LATEST so the MSI still carries the
+          # upcoming release number rather than 0.0.0.
+          $version = $env:BUN_VERSION -replace '^bun-v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            $version = (Get-Content LATEST -Raw).Trim()
+          }
+          .\packages\bun-msi\build-msi.ps1 `
+            -BunExeX64         "bun-windows-x64\bun.exe" `
+            -BunExeX64Baseline "bun-windows-x64-baseline\bun.exe" `
+            -BunExeArm64       "bun-windows-aarch64\bun.exe" `
+            -Version $version `
+            -Output "bun-windows.msi"
+      - name: Upload MSI to release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          REPO: ${{ github.repository }}
+        run: gh release upload $env:RELEASE_TAG "bun-windows.msi" --clobber --repo $env:REPO
+      - name: Upload MSI as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-windows.msi
+          path: bun-windows.msi
+          if-no-files-found: error
   npm:
     name: Release to NPM
     runs-on: ubuntu-latest

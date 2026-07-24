@@ -22,6 +22,7 @@ pub use bun_sql_jsc::postgres::create_binding as sql_jsc_postgres_create_binding
 // The real body already lives in this crate.
 pub use crate::api::crash_handler_jsc::js_bindings::generate as crash_handler_crash_handler_js_bindings_generate;
 
+pub use bun_install_jsc::bin_linking_shim_jsc::js_parse_shebang as install_windows_shim_bin_linking_shim_testing_ap_is_parse_shebang;
 pub use bun_install_jsc::dependency_jsc::dependency_from_js as install_dependency_from_js;
 pub use bun_install_jsc::dependency_jsc::tag_infer_from_js as install_dependency_version_tag_infer_from_js;
 pub use bun_install_jsc::hosted_git_info_jsc::js_from_url as install_hosted_git_info_testing_ap_is_js_from_url;

@@ -7,6 +7,7 @@
 //! install_binding compile against the `bun_jsc` + `bun_install` surface and
 //! are wired into the runtime via the `dispatch_js2native` re-exports.
 
+pub mod bin_linking_shim_jsc;
 pub mod dependency_jsc;
 pub mod hosted_git_info_jsc;
 pub mod ini_jsc;

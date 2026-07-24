@@ -1,6 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import defaultMacro, {
@@ -135,11 +135,11 @@ test("ireturnapromise", async () => {
 
 // moduleLoaderFetch held a GCOwnedDataScope across Bun__transpileFile. When a macro returned a
 // pending Promise, the macro runner spun the event loop (wait_for_promise), JSC's
-// IncrementalSweeper fired with no VMEntryScope on the stack, and the debug-only
+// IncrementalSweeper fired with no VMEntryScope on the stack, and the ASSERT_ENABLED-only
 // ASSERT(!m_topGCOwnedDataScope) in Heap::clearConcurrentRetainedDataIfPossible aborted.
 // The Bun.gc(true) inside the macro schedules the sweeper; the setTimeout gives the sweeper
 // timer time to become due while wait_for_promise loops.
-test.skipIf(!isDebug)("promise-returning macro does not trip the GCOwnedDataScope sweeper assertion", async () => {
+test.skipIf(!isDebug && !isASAN)("promise-returning macro does not trip the GCOwnedDataScope sweeper assertion", async () => {
   using dir = tempDir("macro-promise-sweeper", {
     "macro.ts": `
       export async function delayed() {

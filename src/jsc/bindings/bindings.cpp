@@ -857,11 +857,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         } else {
                             if (left.isUndefined() || right.isUndefined())
                                 continue;
-                            return false;
+                            // With asymmetric matchers, recurse so matchAsymmetricMatcher()
+                            // can see the hole before the isEmpty() check, matching the
+                            // generic loop. Without matchers, hole vs non-undefined is false.
+                            if constexpr (!enableAsymmetricMatchers) {
+                                return false;
+                            }
                         }
-                    }
-
-                    if constexpr (!enableAsymmetricMatchers) {
+                    } else if constexpr (!enableAsymmetricMatchers) {
                         if (!left.isObject() || !right.isObject()) {
                             bool same = sameValueNonObject(globalObject, left, right);
                             RETURN_IF_EXCEPTION(scope, false);

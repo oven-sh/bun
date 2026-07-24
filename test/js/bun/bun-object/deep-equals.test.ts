@@ -214,6 +214,14 @@ describe("Bun.deepEquals fast-path coverage", () => {
     });
   });
 
+  it("asymmetric matchers see array holes in loose mode regardless of indexing shape", () => {
+    // Int32Shape received vs ContiguousShape expected must behave like DoubleShape.
+    expect([1, , 3]).toEqual([1, expect.anything(), 3]);
+    expect([1.5, , 3.5]).toEqual([1.5, expect.anything(), 3.5]);
+    // Strict mode rejects hole vs any value before the matcher runs.
+    expect([, 1]).not.toStrictEqual([expect.anything(), 1]);
+  });
+
   it("strict mode still distinguishes class names when prototypes match", () => {
     class Foo {}
     class Bar {}

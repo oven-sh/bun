@@ -5,7 +5,7 @@
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
 pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
-    "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
+    "fetch() request with GET/HEAD method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
 
 pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
@@ -230,8 +230,7 @@ pub(crate) fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments(
@@ -336,7 +335,7 @@ impl StringOrURL {
 // Bun__fetch entry point
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Public entry point for `Bun.fetch` - validates body on GET/HEAD/OPTIONS
+/// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 pub(crate) fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
@@ -391,7 +390,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
     let global_this = ctx;
-    let arguments = callframe.arguments_old::<2>();
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
     // outlives this call frame.
@@ -402,7 +400,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut force_http3 = false;
     let mut force_http1 = false;
 
-    if arguments.len == 0 {
+    if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
             format_args!("{FETCH_ERROR_NO_ARGS}"),
@@ -421,7 +419,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
 
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
+    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
 
     let first_arg = args.next_eat().unwrap();
 
@@ -1601,6 +1599,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
+    // WHATWG Fetch step 36 forbids a body for GET/HEAD; Bun additionally
+    // rejects TRACE (RFC 9110 §9.3.8 "MUST NOT send content") since it does
+    // not enforce forbidden methods. has_request_body() encodes exactly that.
     if !ALLOW_GET_BODY && !method.has_request_body() && body.has_body() && !upgraded_connection {
         let err = global_this.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,

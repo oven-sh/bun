@@ -10,7 +10,6 @@ use bun_io::max_buf::MaxBuf;
 use bun_io::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
-#[cfg(not(windows))]
 use bun_ptr::ScopedRef;
 use bun_ptr::{IntrusiveRc, ParentRef, RefCount};
 use bun_sys;
@@ -148,7 +147,7 @@ impl PipeReader {
         process: NonNull<Subprocess<'static>>,
         event_loop: NonNull<EventLoop>,
         lazy: bool,
-    ) -> bun_sys::Result<()> {
+    ) {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
@@ -166,9 +165,25 @@ impl PipeReader {
                 self.reader
                     .flags
                     .remove(bun_io::pipe_reader::WindowsFlags::IS_DONE);
-                return bun_sys::Result::Ok(());
+                return;
             }
-            return self.reader.start_with_current_pipe();
+            // Hold one more ref so `self` survives the on_reader_error() teardown
+            // below long enough to return; matches the POSIX keepalive.
+            //
+            // SAFETY: `self` is live; ScopedRef bumps the intrusive refcount and
+            // derefs on Drop. The deref may free `*self`, but no borrow of `self`
+            // outlives the guard's drop on return.
+            let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
+            if let bun_sys::Result::Err(err) = self.reader.start_with_current_pipe() {
+                // Route through the same teardown as a read-callback error
+                // (matches POSIX's register_poll failure path): state=Err,
+                // detach from the Subprocess via on_close_io, release the
+                // start() ref, and let the caller proceed to the sibling pipe.
+                // Returning Err would have the caller throw after try_kill
+                // without unwinding this pipe or the never-started sibling,
+                // and on_process_exit's later drain then double-derefs them.
+                self.on_reader_error(err);
+            }
         }
 
         #[cfg(not(windows))]
@@ -178,7 +193,7 @@ impl PipeReader {
                 // pipe buffer provides backpressure and the child blocks.
                 self.reader.flags.insert(PosixFlags::IS_PAUSED);
             }
-            // PosixBufferedReader.start() always returns .result, but if poll
+            // PosixBufferedReader.start() always returns Ok(()); if poll
             // registration fails it synchronously invokes onReaderError() first,
             // which drops both the Readable.pipe ref (via onCloseIO) and the ref we
             // just took above. Hold one more ref so `this` survives long enough to
@@ -189,29 +204,22 @@ impl PipeReader {
             // outlives the guard's drop on return.
             let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
-            match self.reader.start(self.stdio_result.unwrap(), true) {
-                bun_sys::Result::Err(err) => {
-                    return bun_sys::Result::Err(err);
-                }
-                bun_sys::Result::Ok(()) => {
-                    #[cfg(unix)]
-                    {
-                        if matches!(self.state, State::Err(_)) {
-                            // onReaderError already ran; `_keepalive`'s Drop on return
-                            // will drop the last ref and deinit() closes the handle.
-                            return bun_sys::Result::Ok(());
-                        }
-                        if let Some(poll) = self.reader.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
-                            poll.set_flag(FilePollFlag::Nonblocking);
-                        }
-                        self.reader.flags.insert(
-                            PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE,
-                        );
-                    }
+            let _ = self.reader.start(self.stdio_result.unwrap(), true);
 
-                    return bun_sys::Result::Ok(());
+            #[cfg(unix)]
+            {
+                if matches!(self.state, State::Err(_)) {
+                    // onReaderError already ran; `_keepalive`'s Drop on return
+                    // will drop the last ref and deinit() closes the handle.
+                    return;
                 }
+                if let Some(poll) = self.reader.handle.get_poll() {
+                    poll.set_flag(FilePollFlag::Socket);
+                    poll.set_flag(FilePollFlag::Nonblocking);
+                }
+                self.reader
+                    .flags
+                    .insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
             }
         }
     }
@@ -388,30 +396,11 @@ impl PipeReader {
     /// Safe fn: only reachable via the `#[ref_count(destroy = …)]` derive,
     /// whose generated trait `destructor` upholds the sole-owner contract.
     fn deinit(this: *mut PipeReader) {
-        // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
-        let this_ref = unsafe { &mut *this };
-
         #[cfg(unix)]
         {
+            // SAFETY: refcount == 0 ⇒ `this` is the unique owner.
+            let this_ref = unsafe { &*this };
             debug_assert!(this_ref.reader.is_done() || matches!(this_ref.state, State::Err(_)));
-        }
-
-        #[cfg(windows)]
-        {
-            // WindowsBufferedReader.onError() never closes the source, and
-            // WindowsBufferedReader.deinit() nulls this.source before calling
-            // closeImpl so it never actually closes either. Close it here on
-            // the error path so the uv.Pipe handle doesn't leak.
-            if matches!(this_ref.state, State::Err(_))
-                && this_ref.reader.source.is_some()
-                && !this_ref.reader.source.as_ref().unwrap().is_closed()
-            {
-                this_ref.reader.close_impl::<false>();
-            }
-            debug_assert!(
-                this_ref.reader.source.is_none()
-                    || this_ref.reader.source.as_ref().unwrap().is_closed()
-            );
         }
 
         // The `state` buffer and `reader` are freed by Drop when the Box drops.

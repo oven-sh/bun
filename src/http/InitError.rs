@@ -8,4 +8,6 @@ pub enum InitError {
     InvalidCAFile,
     #[error("InvalidCA")]
     InvalidCA,
+    #[error("InvalidCRL")]
+    InvalidCRL,
 }

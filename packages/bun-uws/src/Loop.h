@@ -23,7 +23,6 @@
 
 #include "LoopData.h"
 #include <libusockets.h>
-#include <iostream>
 #include "AsyncSocket.h"
 
 extern "C" int bun_is_exiting();

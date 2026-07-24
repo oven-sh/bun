@@ -259,6 +259,12 @@ static ExceptionOr<std::optional<ProxyConfig>> setupProxy(const String& proxyUrl
     if (!url.isValid())
         return Exception { SyntaxError, makeString("Invalid proxy URL: "_s, proxyUrl) };
 
+    // Only HTTP CONNECT proxies are supported. Reject socks5://, ftp://, etc. up front
+    // instead of silently sending an HTTP CONNECT request to a non-HTTP proxy, matching
+    // fetch()'s UnsupportedProxyProtocol behaviour.
+    if (!url.protocolIsInHTTPFamily())
+        return Exception { SyntaxError, makeString("Unsupported proxy protocol \""_s, url.protocol(), "\" (expected \"http\" or \"https\")"_s) };
+
     ProxyConfig config;
     config.host = url.host().toString();
     config.isHTTPS = url.protocolIs("https"_s);
@@ -1751,7 +1757,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::timeout: {
-        didReceiveClose(CleanStatus::Clean, 1013, "Timeout"_s);
+        // Opening-handshake timeout: per WHATWG "fail the WebSocket connection"
+        // fire error + close(1006). didReceiveClose gates the error event on
+        // wasConnecting, so a (currently unreachable) post-open timeout only closes.
+        didReceiveClose(CleanStatus::NotClean, 1006, "Timeout"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::closed: {

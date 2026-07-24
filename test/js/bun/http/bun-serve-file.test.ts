@@ -469,6 +469,98 @@ describe("Bun.file in serve routes", () => {
       expect(await res.text()).toBe("Hello, World!");
     });
 
+    // RFC 9110 §13.2.2 steps 1–2: If-Match / If-Unmodified-Since evaluate
+    // first and short-circuit with 412 before If-None-Match / If-Modified-Since.
+    describe.each(["GET", "HEAD"])("If-Match / If-Unmodified-Since (%s)", method => {
+      it("If-Match: non-matching tag on a file route with ETag → 412", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"' },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Match: matching tag on a file route with ETag → 200", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"custom-etag"' },
+        });
+        expect(res.status).toBe(200);
+        if (method === "GET") expect(await res.text()).toBe("Hello, World!");
+      });
+
+      it("If-Match: * on a file route without a stored ETag → 200", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Match": "*" },
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it("If-Match: tag list on a file route without a stored ETag → 412", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"anything"' },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it('If-Match: W/"custom-etag" uses strong compare → 412', async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": 'W/"custom-etag"' },
+        });
+        expect(res.status).toBe(412);
+      });
+
+      it("If-Unmodified-Since earlier than mtime → 412", async () => {
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
+        });
+        expect(res.status).toBe(412);
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Unmodified-Since at or after mtime → 200", async () => {
+        const lm = (await fetch(new URL(`/hello-blob.txt`, server.url))).headers.get("Last-Modified");
+        expect(lm).not.toBeEmpty();
+        const res = await fetch(new URL(`/hello-blob.txt`, server.url), {
+          method,
+          headers: { "If-Unmodified-Since": lm! },
+        });
+        expect(res.status).toBe(200);
+      });
+
+      it("If-Match failure + If-None-Match match → 412 (not 304)", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"', "If-None-Match": '"custom-etag"' },
+        });
+        expect(res.status).toBe(412);
+      });
+
+      it("If-Match failure + Range → 412 (no Content-Range)", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"zz"', "Range": "bytes=0-3" },
+        });
+        expect(res.status).toBe(412);
+        expect(res.headers.get("content-range")).toBeNull();
+        expect(await res.text()).toBe("");
+      });
+
+      it("If-Match present suppresses If-Unmodified-Since", async () => {
+        const res = await fetch(new URL(`/with-etag.txt`, server.url), {
+          method,
+          headers: { "If-Match": '"custom-etag"', "If-Unmodified-Since": "Mon, 01 Jan 2001 00:00:00 GMT" },
+        });
+        expect(res.status).toBe(200);
+      });
+    });
+
     it.todo("handles ETag", async () => {
       const res1 = await fetch(new URL(`/hello.txt`, server.url));
       const etag = res1.headers.get("ETag");

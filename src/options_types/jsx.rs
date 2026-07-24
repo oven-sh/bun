@@ -232,29 +232,6 @@ impl Pragma {
         }
     }
 
-    pub fn parse_package_name(str: &[u8]) -> &[u8] {
-        if str.is_empty() {
-            return str;
-        }
-        if str[0] == b'@' {
-            if let Some(first_slash) = strings::index_of_char(&str[1..], b'/') {
-                let first_slash = first_slash as usize;
-                let remainder = &str[1 + first_slash + 1..];
-
-                if let Some(last_slash) = strings::index_of_char(remainder, b'/') {
-                    let last_slash = last_slash as usize;
-                    return &str[0..first_slash + 1 + last_slash + 1];
-                }
-            }
-        }
-
-        if let Some(first_slash) = strings::index_of_char(str, b'/') {
-            return &str[0..first_slash as usize];
-        }
-
-        str
-    }
-
     /// When `package_name` is the default `"react"`, this borrows the
     /// interned `defaults::IMPORT_SOURCE*` with zero allocations.
     pub fn set_import_source(&mut self) {

@@ -45,6 +45,7 @@ In the bun repo:
 
 - `scripts/build/deps/boringssl.ts` — set `BORINGSSL_COMMIT` to `$NEW_SHA`.
 - `test/js/node/process/process.test.js` — update the `boringssl:` entry in `expectedVersions` to `$NEW_SHA`.
+- `src/js/node/tls.ts` — two hand-maintained mirrors of BoringSSL tables must be re-derived from the new pin (a test pins the current set, but cannot see upstream additions on its own): `_VALID_CIPHERS_SET` ← `ssl/ssl_cipher.cc` `kCiphers`, `CIPHER_LIST_SELECTORS` ← `ssl/ssl_cipher.cc` `kCipherAliases`.
 - Regenerate the source lists (the file's header comment has the exact one-liner). Only `gen/sources.json` is authoritative — diff old vs new and apply the delta:
 
   ```sh

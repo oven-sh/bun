@@ -116,9 +116,7 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
-    // `bun_core::Once<T, fn(A)->T>` can't
-    // accept a non-`'static` `&mut PackageManager` argument, so use `OnceLock`
-    // directly and split get/set so the closure doesn't need to capture `this`.
+    // Split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
         return td;
     }

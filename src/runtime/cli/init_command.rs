@@ -362,6 +362,13 @@ impl InitCommand {
             }
         }
 
+        // The template picker reads single keystrokes from raw-mode stdin; on a
+        // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
+        // forever. npm init falls back to defaults when stdin is not a TTY.
+        if !auto_yes && !Output::is_stdin_tty() {
+            auto_yes = true;
+        }
+
         if let Some(ifdir) = initialize_in_folder {
             if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
                 bun_core::pretty_errorln!(

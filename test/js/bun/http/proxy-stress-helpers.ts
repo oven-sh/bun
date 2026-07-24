@@ -712,34 +712,42 @@ export interface DeadPort {
  * A port on 127.0.0.1 that refuses connections for as long as the returned
  * handle is alive.
  *
- * The port is held as the *local* side of a live TCP connection: bound, so
- * the kernel's ephemeral allocator will not hand it to a concurrent
- * `listen(0)`, and not listening, so `connect()` to it is refused. Do not
- * simplify to bind-then-close: that frees the port into exactly the pool
- * `listen(0)` draws from, and a sibling `test.concurrent` will take it.
+ * The returned port is the `bind(0)`-allocated listening port of a server
+ * that has since stopped listening but whose one accepted connection is
+ * still established. That keeps the port in the kernel's bind hash with a
+ * `bind()`-style `fastreuse >= 0` bucket, which BOTH the ephemeral
+ * `listen(0)` allocator and the connect-time `__inet_hash_connect`
+ * allocator skip. Nothing is listening on it, so `connect()` is refused.
+ *
+ * Do not return the client-side local port of the held connection: that
+ * port was allocated by `connect()` (`fastreuse == -1`), which
+ * `__inet_hash_connect` WILL consider for reuse, and on Linux a later
+ * `connect(127.0.0.1:P)` can be assigned source port P and self-connect
+ * (observed as ~1/10000, surfacing as `Malformed_HTTP_Response` because the
+ * client reads back its own CONNECT line).
  */
 export async function deadPort(): Promise<DeadPort> {
-  let accepted: net.Socket | undefined;
+  let accepted!: net.Socket;
+  const acceptedP = Promise.withResolvers<void>();
   const sink = net.createServer(s => {
     accepted = s;
     s.on("error", () => {});
+    acceptedP.resolve();
   });
   sink.listen(0, "127.0.0.1");
   await once(sink, "listening");
-  const holder = net.connect({ host: "127.0.0.1", port: (sink.address() as net.AddressInfo).port });
+  const port = (sink.address() as net.AddressInfo).port;
+  const holder = net.connect({ host: "127.0.0.1", port });
   holder.on("error", () => {});
   await once(holder, "connect");
-  const port = (holder.address() as net.AddressInfo).port;
-  // `sink` has served its purpose (giving `holder` something to connect to);
-  // stop accepting so its listening port can be recycled. The established
-  // connection — and with it `holder`'s local-port binding — survives
-  // server.close().
+  await acceptedP.promise;
+  // Stop listening; `accepted` (and `holder`) keep the port bound.
   sink.close();
   return {
     port,
     [Symbol.dispose]() {
       holder.destroy();
-      accepted?.destroy();
+      accepted.destroy();
     },
   };
 }

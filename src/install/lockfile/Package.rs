@@ -351,6 +351,32 @@ fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Orderi
     }
 }
 
+/// The workspace member registered at `folder_path` (relative to the top-level dir),
+/// matched by path so `"alias": "file:../member"` is found too. Declined when a
+/// different member owns the alias as its name: the `Tag::Workspace` resolver
+/// (`enqueue_dependency`) looks the path up by name first and would link that member.
+fn find_workspace_by_path(
+    workspace_paths: &lockfile::NameHashMap,
+    buf: &[u8],
+    alias_hash: PackageNameHash,
+    folder_path: &[u8],
+) -> Option<String> {
+    if folder_path.is_empty() {
+        return None;
+    }
+    let (&name_hash, workspace_path) = workspace_paths.iter().find(|(_, workspace_path)| {
+        // workspace paths are stored posix; `folder_path` uses the platform separator
+        let workspace_path = workspace_path.slice(buf);
+        workspace_path.len() == folder_path.len()
+            && core::iter::zip(workspace_path, folder_path)
+                .all(|(&a, &b)| a == b || (path::is_sep_any(a) && path::is_sep_any(b)))
+    })?;
+    if name_hash != alias_hash && workspace_paths.get(&alias_hash).is_some() {
+        return None;
+    }
+    Some(*workspace_path)
+}
+
 /// Field tags for the binary lockfile serializer (`bun.lockb`). The
 /// reflection-backed `MultiArrayList` no longer needs an enum, but the
 /// serializer iterates fields by tag to write column blobs in a fixed order.
@@ -1752,9 +1778,32 @@ impl Package<u64> {
                 };
                 let relative =
                     resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
-                // if relative is empty, we are linking the package to itself
-                dependency_version.value.folder = string_builder
-                    .append::<String>(if relative.is_empty() { b"." } else { relative });
+                // The bun.lock parser rewrites a dependency that resolved to a workspace
+                // package to `Tag::Workspace` (`map_dep_to_pkg`). Do the same here so a
+                // freshly parsed package.json compares equal to its loaded lockfile entry.
+                if let Some(workspace) =
+                    find_workspace_by_path(workspace_paths, buf, external_alias.hash, relative)
+                {
+                    let path = workspace.sliced(buf);
+                    if let Some(mut dep) = dependency::parse_with_tag(
+                        external_alias.value,
+                        Some(external_alias.hash),
+                        path.slice,
+                        dependency::version::Tag::Workspace,
+                        &path,
+                        Some(&mut *log),
+                        Some(&mut *pm),
+                    ) {
+                        // Whole-struct move so `Drop` frees the old value;
+                        // keep the user's `file:` literal.
+                        dep.literal = dependency_version.literal;
+                        dependency_version = dep;
+                    }
+                } else {
+                    // if relative is empty, we are linking the package to itself
+                    dependency_version.value.folder = string_builder
+                        .append::<String>(if relative.is_empty() { b"." } else { relative });
+                }
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {

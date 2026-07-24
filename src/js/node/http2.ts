@@ -4500,9 +4500,11 @@ class ServerHttp2Session extends Http2Session {
   }
 
   get socket() {
+    // Once the underlying socket is detached (destroy/close), Node returns
+    // undefined instead of the cached proxy so `instanceof` and truthiness
+    // guards in cleanup handlers stay inert.
+    if (!this[bunHTTP2Socket]) return undefined;
     if (this.#socket_proxy) return this.#socket_proxy;
-    const socket = this[bunHTTP2Socket];
-    if (!socket) return null;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }
@@ -5451,9 +5453,11 @@ class ClientHttp2Session extends Http2Session {
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {
+    // Once the underlying socket is detached (destroy/close), Node returns
+    // undefined instead of the cached proxy so `instanceof` and truthiness
+    // guards in cleanup handlers stay inert.
+    if (!this[bunHTTP2Socket]) return undefined;
     if (this.#socket_proxy) return this.#socket_proxy;
-    const socket = this[bunHTTP2Socket];
-    if (!socket) return null;
     this.#socket_proxy = new Proxy(this, proxySocketHandler);
     return this.#socket_proxy;
   }

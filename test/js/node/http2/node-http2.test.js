@@ -1789,6 +1789,47 @@ it("sensitive headers should work", async () => {
   }
 });
 
+it("session.socket is undefined after the session is destroyed", async () => {
+  const server = http2.createServer();
+  try {
+    server.on("session", ss => ss.on("error", () => {}));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    const listening = Promise.withResolvers();
+    server.on("error", listening.reject);
+    server.listen(0, "127.0.0.1", listening.resolve);
+    await listening.promise;
+
+    const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    const connected = Promise.withResolvers();
+    client.on("error", connected.reject);
+    client.on("connect", connected.resolve);
+    await connected.promise;
+
+    // Cache the proxy before destroy so we exercise the stale-proxy path;
+    // operations on the captured reference must still throw SOCKET_UNBOUND.
+    const socketBefore = client.socket;
+    expect(socketBefore).toBeDefined();
+
+    const closed = Promise.withResolvers();
+    client.on("close", closed.resolve);
+    client.destroy();
+    await closed.promise;
+
+    expect(client.socket).toBeUndefined();
+    expect(() => client.socket instanceof net.Socket).not.toThrow();
+    expect(client.socket instanceof net.Socket).toBe(false);
+    expect(() => socketBefore instanceof net.Socket).toThrow(
+      expect.objectContaining({ code: "ERR_HTTP2_SOCKET_UNBOUND" }),
+    );
+  } finally {
+    server.close();
+  }
+});
+
 it("http2 session.goaway() validates input types", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer((req, res) => {

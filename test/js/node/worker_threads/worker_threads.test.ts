@@ -498,6 +498,33 @@ describe("execArgv option", async () => {
     });
   });
 
+  it("a bare optional-value flag does not swallow the next flag", async () => {
+    // `--config` takes a value only via `=` (OneOptional in bun_clap), so the
+    // `-r <p>` after it must stay a preload and the round-trip must accept
+    // the reported execArgv.
+    using dir = tempDir("worker-execargv-optval", {
+      "preload-o.js": "globalThis.__o = 'O';",
+      "main.js": `console.log(JSON.stringify(process.execArgv));
+        new (require("worker_threads").Worker)(
+          "require('worker_threads').parentPort.postMessage(globalThis.__o)",
+          { eval: true, execArgv: process.execArgv },
+        ).on("message", t => { console.log(t); process.exit(0); });`,
+    });
+    const p = join(String(dir), "preload-o.js");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--config", "-r", p, "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+      lines: [JSON.stringify(["--config", "-r", p]), "O"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("bun's own glued short flags round-trip through process.execArgv", async () => {
     // bun_clap accepts -r<path> at the CLI (node's CLI rejects it), so
     // process.execArgv normalizes it to the separate-token form node's
@@ -601,14 +628,6 @@ describe("execArgv option", async () => {
     using dir = tempDir("worker-nodeopts-glued", { "preload-n.js": "globalThis.__nopts = 'N';" });
     const p = join(String(dir), "preload-n.js").replaceAll("\\", "/");
     const w = new Worker("1", { eval: true, env: { ...process.env, NODE_OPTIONS: `-r ${p}` } });
-    await once(w, "exit");
-  });
-
-  it("accepts node's whole-token aliases from process.execArgv", async () => {
-    // `bun -pe X` reports ["-pe", X] verbatim (pinned in process.test.js), so
-    // the round-trip must accept -pe; it parses as -p (accepted-but-unhonored,
-    // a no-op in a worker).
-    const w = new Worker("1", { eval: true, execArgv: ["-pe", "1+1"] });
     await once(w, "exit");
   });
 

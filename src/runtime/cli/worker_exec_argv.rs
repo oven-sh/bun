@@ -310,12 +310,15 @@ pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
         Some(needs_next_value)
     }
 
-    // `--long`/`-s` for every AUTO_PARAMS flag that takes a value; used to
-    // decide whether a non-flag token is a value or the script name.
+    // `--long`/`-s` for every AUTO_PARAMS flag whose value bun_clap consumes
+    // from the NEXT argv token (One/Many only — an OneOptional flag like
+    // `--inspect` or `--config` takes a value solely via `=`, so the token
+    // after it is a fresh flag or the script, never a value); used to decide
+    // whether a non-flag token is a value or the script name.
     static TAKES_VALUE: LazyLock<bun_collections::StringSet> = LazyLock::new(|| {
         let mut set = bun_collections::StringSet::new();
         for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-            if param.takes_value != bun_clap::Values::None {
+            if matches!(param.takes_value, bun_clap::Values::One | bun_clap::Values::Many) {
                 if let Some(name) = param.names.long {
                     let mut k = Vec::with_capacity(2 + name.len());
                     k.extend_from_slice(b"--");

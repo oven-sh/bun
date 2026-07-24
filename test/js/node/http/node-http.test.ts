@@ -24,7 +24,7 @@ import http, {
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { connect, createServer as createNetServer } from "node:net";
+import net, { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -143,6 +143,26 @@ describe("node:http", () => {
       expect(listenResponse instanceof Server).toBe(true);
       expect(listenResponse).toBe(server);
       listenResponse.close();
+    });
+
+    // https://github.com/oven-sh/bun/issues/4360
+    it("http.Server inherits from net.Server", async () => {
+      expect(http.Server.prototype instanceof net.Server).toBe(true);
+      expect(net.Server.prototype instanceof http.Server).toBe(false);
+      expect(Object.getPrototypeOf(http.Server.prototype)).toBe(net.Server.prototype);
+      expect(Object.getPrototypeOf(http.Server)).toBe(net.Server);
+
+      const server = createServer();
+      expect(server instanceof http.Server).toBe(true);
+      expect(server instanceof net.Server).toBe(true);
+      expect(server instanceof EventEmitter).toBe(true);
+
+      expect(server.listening).toBe(false);
+      server.listen(0);
+      await once(server, "listening");
+      expect(server.listening).toBe(true);
+      server.close();
+      expect(server.listening).toBe(false);
     });
 
     it("listen callback should be bound to server", async () => {

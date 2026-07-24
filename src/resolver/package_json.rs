@@ -229,23 +229,7 @@ impl PackageJSON {
         if self.optional_peer_dependencies.is_empty() {
             return false;
         }
-        let name: &[u8] = if import_path.first() == Some(&b'@') {
-            match strings::index_of_char(&import_path[1..], b'/') {
-                Some(first) => {
-                    let after_scope = 2 + first as usize;
-                    match strings::index_of_char(&import_path[after_scope..], b'/') {
-                        Some(second) => &import_path[..after_scope + second as usize],
-                        None => import_path,
-                    }
-                }
-                None => import_path,
-            }
-        } else {
-            match strings::index_of_char(import_path, b'/') {
-                Some(i) => &import_path[..i as usize],
-                None => import_path,
-            }
-        };
+        let name = Package::parse_name(import_path).unwrap_or(import_path);
         self.optional_peer_dependencies
             .iter()
             .any(|p| strings::eql(p, name))

@@ -572,7 +572,6 @@ public:
     V(public, LazyClassStructure, m_NodeVMSourceTextModuleClassStructure)                                    \
     V(public, LazyClassStructure, m_NodeVMSyntheticModuleClassStructure)                                     \
     V(public, LazyClassStructure, m_JSX509CertificateClassStructure)                                         \
-    V(public, LazyClassStructure, m_JSClipboardItemClassStructure)                                           \
     V(public, LazyClassStructure, m_JSWebViewClassStructure)                                                 \
     V(public, LazyClassStructure, m_JSSignClassStructure)                                                    \
     V(public, LazyClassStructure, m_JSVerifyClassStructure)                                                  \
@@ -658,9 +657,6 @@ public:
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_cryptoObject)                                          \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_navigatorObject)                                       \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_clipboardInstance)                                     \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_clipboardOnGetTypeSettled)                           \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_clipboardOnWriteMaterialized)                        \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_clipboardOnWriteFailed)                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_performanceObject)                                     \
     V(public, LazyPropertyOfGlobalObject<Bun::Process>, m_processObject)                                     \
     V(public, LazyPropertyOfGlobalObject<CustomGetterSetter>, m_lazyStackCustomGetterSetter)                 \

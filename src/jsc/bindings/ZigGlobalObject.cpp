@@ -1210,6 +1210,7 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(BroadcastChannel);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ByteLengthQueuingStrategy)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Clipboard);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ClipboardEvent);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ClipboardItem);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CloseEvent);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CompressionStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(CountQueuingStrategy)
@@ -2349,29 +2350,6 @@ void GlobalObject::finishCreation(VM& vm)
             // The wrapper (cached by the DOM wrapper map) owns the impl.
             auto clipboard = WebCore::Clipboard::create(globalObject->scriptExecutionContext());
             init.set(WebCore::toJS(init.owner, globalObject, clipboard.get()).getObject());
-        });
-
-    m_JSClipboardItemClassStructure.initLater(
-        [](LazyClassStructure::Initializer& init) {
-            Bun::setupClipboardItemClassStructure(init);
-        });
-
-    // The clipboard's three promise-reaction handlers. Each is invoked as
-    // `handler(value, contextCell)` by `performPromiseThenWithContext`; all their state
-    // arrives in the context cell, so one shared function per realm serves every operation.
-    m_clipboardOnGetTypeSettled.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, Bun::jsClipboardHandler_onGetTypeSettled, ImplementationVisibility::Private));
-        });
-
-    m_clipboardOnWriteMaterialized.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteMaterialized, ImplementationVisibility::Private));
-        });
-
-    m_clipboardOnWriteFailed.initLater(
-        [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteFailed, ImplementationVisibility::Private));
         });
 
     m_navigatorObject.initLater(

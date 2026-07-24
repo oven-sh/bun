@@ -26,6 +26,8 @@
 #include "JSClipboardItem.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
+#include "JSDOMConvertInterface.h"
+#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
@@ -35,39 +37,13 @@
 #include "WebCoreJSClientData.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
-#include <JavaScriptCore/InternalFieldTuple.h>
-#include <JavaScriptCore/IteratorOperations.h>
-#include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 
 namespace WebCore {
 using namespace JSC;
-
-// Implemented in Rust (src/runtime/webcore/clipboard.rs): the promise entry
-// points settle from Bun's work pool, and the capability predicates keep the
-// platform backend the single source of truth for what it can do.
-extern "C" JSC::EncodedJSValue Bun__Clipboard__readText(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Clipboard__writeText(JSC::JSGlobalObject*, const BunString*);
-extern "C" JSC::EncodedJSValue Bun__Clipboard__read(JSC::JSGlobalObject*);
-// Takes the promise `write()` already returned; the job owns it from that point and
-// settles it when the platform write finishes.
-extern "C" void Bun__Clipboard__writeBlobs(JSC::JSGlobalObject*, JSC::EncodedJSValue promise, JSC::EncodedJSValue mimesArray, JSC::EncodedJSValue blobsArray);
-extern "C" bool Bun__Clipboard__supportsType(const BunString*);
-extern "C" bool Bun__Clipboard__writesSingleRepresentation();
-extern "C" bool Bun__Clipboard__blobNeedsToReadFile(JSC::EncodedJSValue blob);
-
-bool clipboardSupportsType(const WTF::String& type)
-{
-    // MIME types are compared by their lowercased serialization.
-    auto lowered = type.convertToASCIILowercase();
-    auto typeString = Bun::toString(lowered);
-    return Bun__Clipboard__supportsType(&typeString);
-}
 
 // Attributes and functions
 
@@ -184,216 +160,77 @@ JSC_DEFINE_CUSTOM_GETTER(jsClipboardConstructor, (JSGlobalObject * lexicalGlobal
     return JSValue::encode(JSClipboard::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-// ─── readText / writeText ───────────────────────────────────────────────────
-
-static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_readTextBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter)
+static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_readTextBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter castedThis, Ref<DeferredPromise>&& promise)
 {
-    return Bun__Clipboard__readText(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    impl.readText(WTF::move(promise));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_readText, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperationReturningPromise<JSClipboard>::callReturningOwnPromise<jsClipboardPrototypeFunction_readTextBody>(*lexicalGlobalObject, *callFrame, "readText"_s);
+    return IDLOperationReturningPromise<JSClipboard>::call<jsClipboardPrototypeFunction_readTextBody>(*lexicalGlobalObject, *callFrame, "readText"_s);
 }
 
-static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeTextBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter)
+static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeTextBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter castedThis, Ref<DeferredPromise>&& promise)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    // A promise-returning operation converts argument failures to rejections.
-    if (callFrame->argumentCount() < 1) [[unlikely]] {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-    auto text = convert<IDLDOMString>(*lexicalGlobalObject, callFrame->uncheckedArgument(0));
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    auto textString = Bun::toString(text);
-    RELEASE_AND_RETURN(throwScope, Bun__Clipboard__writeText(lexicalGlobalObject, &textString));
+    UNUSED_PARAM(throwScope);
+    auto& impl = castedThis->wrapped();
+    if (callFrame->argumentCount() < 1) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    impl.writeText(WTF::move(data), WTF::move(promise));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_writeText, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperationReturningPromise<JSClipboard>::callReturningOwnPromise<jsClipboardPrototypeFunction_writeTextBody>(*lexicalGlobalObject, *callFrame, "writeText"_s);
+    return IDLOperationReturningPromise<JSClipboard>::call<jsClipboardPrototypeFunction_writeTextBody>(*lexicalGlobalObject, *callFrame, "writeText"_s);
 }
 
-// ─── read / write ───────────────────────────────────────────────────────────
-
-static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_readBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame*, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter)
+static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_readBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter castedThis, Ref<DeferredPromise>&& promise)
 {
-    // The Rust job reads every supported representation and resolves with
-    // `[ClipboardItem]` (or `[]`), so nothing is left to chain here.
-    return Bun__Clipboard__read(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(throwScope);
+    UNUSED_PARAM(callFrame);
+    auto& impl = castedThis->wrapped();
+    impl.read(WTF::move(promise));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_read, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperationReturningPromise<JSClipboard>::callReturningOwnPromise<jsClipboardPrototypeFunction_readBody>(*lexicalGlobalObject, *callFrame, "read"_s);
+    return IDLOperationReturningPromise<JSClipboard>::call<jsClipboardPrototypeFunction_readBody>(*lexicalGlobalObject, *callFrame, "read"_s);
 }
 
-static JSC::EncodedJSValue rejectedWithNotAllowed(JSC::JSGlobalObject* globalObject, const WTF::String& message)
-{
-    return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, createDOMException(globalObject, WebCore::ExceptionCode::NotAllowedError, message)));
-}
-
-// Promise.all has settled with every ClipboardItemData. Convert each settled value to a
-// Blob of the item's matching type (in place, so the same array is the Rust job's blobs
-// array), reject loudly on a file-backed Blob the job cannot snapshot, then hand the item
-// to the Rust job which snapshots the bytes and performs one platform transaction.
-JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteMaterialized, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
-    auto* item = uncheckedDowncast<Bun::JSClipboardItem>(context->getInternalField(0));
-    auto* promise = uncheckedDowncast<JSC::JSPromise>(context->getInternalField(1));
-    const auto& types = item->types();
-
-    auto* settled = dynamicDowncast<JSC::JSArray>(callFrame->argument(0));
-    if (!settled || settled->length() < types.size()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Promise.all returned an unexpected value"_s);
-        promise->rejectWithCaughtException(vm, scope);
-        return JSValue::encode(jsUndefined());
-    }
-    for (unsigned i = 0; i < types.size(); i++) {
-        JSValue value = settled->getIndex(globalObject, i);
-        if (scope.exception()) [[unlikely]] {
-            promise->rejectWithCaughtException(vm, scope);
-            return JSValue::encode(jsUndefined());
-        }
-        JSValue blob = Bun::clipboardDataToBlob(globalObject, value, types[i]);
-        if (scope.exception()) [[unlikely]] {
-            promise->rejectWithCaughtException(vm, scope);
-            return JSValue::encode(jsUndefined());
-        }
-        if (Bun__Clipboard__blobNeedsToReadFile(JSValue::encode(blob))) [[unlikely]] {
-            throwTypeError(globalObject, scope, "Cannot write a file-backed Blob to the clipboard. Read it into memory first (`await blob.bytes()`)."_s);
-            promise->rejectWithCaughtException(vm, scope);
-            return JSValue::encode(jsUndefined());
-        }
-        settled->putDirectIndex(globalObject, i, blob);
-        if (scope.exception()) [[unlikely]] {
-            promise->rejectWithCaughtException(vm, scope);
-            return JSValue::encode(jsUndefined());
-        }
-    }
-
-    JSC::JSObject* mimesArray = item->frozenTypes(globalObject);
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-        return JSValue::encode(jsUndefined());
-    }
-    // The job owns the promise from here: it rejects rather than throws, so the only
-    // exception this can leave pending is a termination, which has to keep unwinding.
-    Bun__Clipboard__writeBlobs(globalObject, JSValue::encode(promise), JSValue::encode(mimesArray), JSValue::encode(settled));
-    RETURN_IF_EXCEPTION(scope, {});
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteFailed, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
-    // A representation that never arrived rejects the write with the same reason.
-    uncheckedDowncast<JSC::JSPromise>(context->getInternalField(1))->reject(vm, callFrame->argument(0));
-    scope.assertNoException();
-    return JSValue::encode(jsUndefined());
-}
-
-static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter)
+static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter castedThis, Ref<DeferredPromise>&& promise)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    if (callFrame->argumentCount() < 1) [[unlikely]] {
-        throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-
-    // WebIDL `sequence<ClipboardItem>`: any iterable, every element branded.
-    JSC::MarkedArgumentBuffer items;
-    JSC::forEachInIterable(lexicalGlobalObject, callFrame->uncheckedArgument(0), [&items](JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue nextItem) {
-        items.append(nextItem);
-    });
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    if (items.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-    for (size_t i = 0; i < items.size(); i++) {
-        if (!dynamicDowncast<Bun::JSClipboardItem>(items.at(i))) [[unlikely]] {
-            throwTypeError(lexicalGlobalObject, throwScope, "Clipboard.prototype.write expects a sequence of ClipboardItem"_s);
-            return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-        }
-    }
-    if (items.size() == 0)
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::JSPromise::resolvedPromise(lexicalGlobalObject, jsUndefined())));
-    if (items.size() > 1)
-        RELEASE_AND_RETURN(throwScope, rejectedWithNotAllowed(lexicalGlobalObject, "Writing multiple ClipboardItems is not supported."_s));
-
-    auto* item = dynamicDowncast<Bun::JSClipboardItem>(items.at(0));
-    const auto& types = item->types();
-    // Per spec, a representation the implementation cannot write rejects the
-    // whole write, before anything is written.
-    for (const auto& type : types) {
-        if (!clipboardSupportsType(type))
-            RELEASE_AND_RETURN(throwScope, rejectedWithNotAllowed(lexicalGlobalObject, makeString("The type \""_s, type, "\" is not supported on this platform."_s)));
-    }
-    if (Bun__Clipboard__writesSingleRepresentation() && types.size() > 1)
-        RELEASE_AND_RETURN(throwScope, rejectedWithNotAllowed(lexicalGlobalObject, "Writing more than one representation per item is not supported on this platform."_s));
-
-    // Await every ClipboardItemData at once: Promise.all([value0, ..., valueN-1]). The
-    // single reaction receives the settled Array<Blob | string> and finishes the write; no
-    // intermediate state is carried across microtasks beyond {item, promise}.
-    JSC::MarkedArgumentBuffer values;
-    for (size_t i = 0; i < types.size(); i++)
-        values.append(item->valueAt(static_cast<unsigned>(i)));
-    if (values.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-    JSC::JSArray* valuesArray = JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), values);
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-
-    JSC::JSObject* promiseConstructor = lexicalGlobalObject->promiseConstructor();
-    JSC::JSValue allFn = promiseConstructor->get(lexicalGlobalObject, JSC::Identifier::fromString(vm, "all"_s));
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    auto callData = JSC::getCallData(allFn);
-    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, throwScope, "Promise.all is not callable"_s);
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-    JSC::MarkedArgumentBuffer allArgs;
-    allArgs.append(valuesArray);
-    ASSERT(!allArgs.hasOverflowed());
-    JSC::JSValue allResult = JSC::call(lexicalGlobalObject, allFn, callData, promiseConstructor, allArgs);
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    auto* allPromise = dynamicDowncast<JSC::JSPromise>(allResult);
-    if (!allPromise) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, throwScope, "Promise.all did not return a Promise"_s);
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-
-    auto* promise = JSC::JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
-    auto* zigGlobal = defaultGlobalObject(lexicalGlobalObject);
-    auto* context = JSC::InternalFieldTuple::create(vm, lexicalGlobalObject->internalFieldTupleStructure(), item, promise);
-    allPromise->performPromiseThenWithContext(vm, lexicalGlobalObject,
-        zigGlobal->m_clipboardOnWriteMaterialized.get(lexicalGlobalObject),
-        zigGlobal->m_clipboardOnWriteFailed.get(lexicalGlobalObject),
-        jsUndefined(), context);
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
+    UNUSED_PARAM(throwScope);
+    auto& impl = castedThis->wrapped();
+    if (callFrame->argumentCount() < 1) [[unlikely]]
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+    auto data = convert<IDLSequence<IDLInterface<ClipboardItem>>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data"_s, "Clipboard"_s, "write"_s, "ClipboardItem"_s); });
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    impl.write(WTF::move(data), WTF::move(promise));
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_write, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperationReturningPromise<JSClipboard>::callReturningOwnPromise<jsClipboardPrototypeFunction_writeBody>(*lexicalGlobalObject, *callFrame, "write"_s);
+    return IDLOperationReturningPromise<JSClipboard>::call<jsClipboardPrototypeFunction_writeBody>(*lexicalGlobalObject, *callFrame, "write"_s);
 }
-
-// ─── plumbing ───────────────────────────────────────────────────────────────
 
 JSC::GCClient::IsoSubspace* JSClipboard::subspaceForImpl(JSC::VM& vm)
 {
@@ -443,27 +280,3 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 }
 
 } // namespace WebCore
-
-// ─── entry points for the Rust backend ──────────────────────────────────────
-
-// Fired after a successful write ("copy") or read ("paste") at the
-// `navigator.clipboard` EventTarget (a runtime has no focused element). Like
-// `Process__dispatchOnBeforeExit`, the dispatch machinery owns exceptions.
-extern "C" void Bun__Clipboard__fireEvent(JSC::JSGlobalObject* globalObject, bool isCopy)
-{
-    auto* global = defaultGlobalObject(globalObject);
-    // Nothing can be listening if `navigator.clipboard` was never created.
-    if (!global->m_clipboardInstance.isInitialized())
-        return;
-    auto* wrapper = WTF::dynamicDowncast<WebCore::JSClipboard>(global->m_clipboardInstance.getInitializedOnMainThread(global));
-    if (!wrapper || !wrapper->wrapped().hasEventListeners())
-        return;
-    wrapper->wrapped().fireClipboardEvent(isCopy ? WTF::AtomString("copy"_s) : WTF::AtomString("paste"_s));
-}
-
-// Builds the `"NotAllowedError"` DOMException the clipboard promises reject
-// with; the Rust side has no DOMException constructor of its own.
-extern "C" JSC::EncodedJSValue Bun__Clipboard__createNotAllowedError(JSC::JSGlobalObject* globalObject, const BunString* message)
-{
-    return JSC::JSValue::encode(WebCore::createDOMException(globalObject, WebCore::ExceptionCode::NotAllowedError, message->toWTFString(BunString::ZeroCopy)));
-}

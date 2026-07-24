@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2015-2021 Apple Inc. All rights reserved.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,19 +26,29 @@
 #pragma once
 
 #include "root.h"
+#include "ClipboardItemData.h"
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
+#include "ExceptionCode.h"
 #include <wtf/RefCounted.h>
+#include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
+class ClipboardItem;
+class DeferredPromise;
 class ScriptExecutionContext;
 
 // https://w3c.github.io/clipboard-apis/#clipboard-interface
-// The async methods live on the JS wrapper (they call Bun's Rust clipboard
-// backend); the impl object only provides the EventTarget identity that
-// `copy`/`paste` events are fired at.
+//
+// Ported from WebCore's Clipboard. The differences all follow from there being
+// no Pasteboard, no Document and no permission model in a runtime: the platform
+// transaction is Bun's Rust backend rather than a Pasteboard, and it is
+// asynchronous, so ItemWriter's last step schedules a request and settles when
+// that reports back instead of writing inline.
 class Clipboard final : public RefCounted<Clipboard>, public ContextDestructionObserver, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(Clipboard);
 
@@ -46,9 +56,18 @@ public:
     static Ref<Clipboard> create(ScriptExecutionContext* context) { return adoptRef(*new Clipboard(context)); }
     ~Clipboard();
 
+    void readText(Ref<DeferredPromise>&&);
+    void writeText(const String& data, Ref<DeferredPromise>&&);
+    void read(Ref<DeferredPromise>&&);
+    // Upstream takes Vector<Ref<ClipboardItem>>; Bun's IDLInterface converter
+    // yields RefPtr, and entries are non-null because the sequence conversion
+    // already rejected anything that was not a ClipboardItem.
+    void write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPromise>&&);
+    void getType(ClipboardItem&, const String& type, Ref<DeferredPromise>&&);
+
     // The runtime projection of the spec's clipboard events: there is no
-    // document or focused element, so successful operations fire at this
-    // EventTarget (`navigator.clipboard`), matching `clipboardchange`.
+    // document or focused element, so a successful operation fires at this
+    // EventTarget (`navigator.clipboard`).
     void fireClipboardEvent(const AtomString& type);
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
@@ -62,6 +81,41 @@ private:
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
+
+    // Collects every item's representations into refcounted Blobs, then runs one
+    // platform transaction once they have all arrived. Mirrors WebCore's
+    // Clipboard::ItemWriter, pending-item countdown included.
+    class ItemWriter : public RefCounted<ItemWriter> {
+    public:
+        static Ref<ItemWriter> create(Clipboard& clipboard, Ref<DeferredPromise>&& promise)
+        {
+            return adoptRef(*new ItemWriter(clipboard, WTF::move(promise)));
+        }
+
+        ~ItemWriter();
+
+        void write(const Vector<RefPtr<ClipboardItem>>&);
+        void invalidate();
+
+    private:
+        ItemWriter(Clipboard&, Ref<DeferredPromise>&&);
+
+        void setData(std::optional<ClipboardItemData>&&, size_t index);
+        void didSetAllData();
+        void didFinishPlatformWrite(const String& failureMessage);
+        void reject(ExceptionCode, const String& message);
+        // Rejects with the value a representation failed with, so the caller
+        // sees its own rejection reason rather than a generic NotAllowedError.
+        void rejectWithValue(JSC::JSValue failureReason);
+        void detachFromClipboard();
+
+        WeakPtr<Clipboard, WeakPtrImplWithEventTargetData> m_clipboard;
+        RefPtr<DeferredPromise> m_promise;
+        Vector<std::optional<ClipboardItemData>> m_dataToWrite;
+        unsigned m_pendingItemCount { 0 };
+    };
+
+    RefPtr<ItemWriter> m_activeItemWriter;
 };
 
 } // namespace WebCore

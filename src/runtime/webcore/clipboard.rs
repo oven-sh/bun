@@ -1,31 +1,47 @@
-//! Native `navigator.clipboard` backend: the platform clipboard I/O and the
-//! async plumbing. The JS-visible classes are C++ (`JSClipboard*.cpp`,
-//! `JSClipboardItem.cpp`); they call the `Bun__Clipboard__*` entry points
-//! below, each returning a promise settled from the work pool.
+//! Native `navigator.clipboard` backend: the platform clipboard I/O, and
+//! nothing else.
+//!
+//! WebCore owns every promise and every JS value (see
+//! `src/jsc/bindings/webcore/Clipboard.cpp`). This side is handed a scheduling
+//! call carrying plain bytes and an opaque `WebCore::ClipboardRequest*`, does
+//! the work on the work pool, and hands that handle back on the JS thread
+//! exactly once — which is also what releases it.
 
-use core::ffi::c_char;
+use core::ffi::c_void;
+use core::ptr;
 
-use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSPromiseStrong, JSValue, JsError, JsResult,
-    StringJsc as _,
-};
+use bun_jsc::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject};
 
-// Implemented by the C++ classes: firing the copy/paste events at the
-// `navigator.clipboard` EventTarget, building the DOMExceptions the clipboard
-// promises reject with, wrapping a `Blob` impl, and constructing the
-// `ClipboardItem` that `read()` resolves with.
+/// An opaque `WebCore::ClipboardRequest*`. Only C++ ever dereferences it; the
+/// job just carries it across the thread hop.
+#[derive(Clone, Copy)]
+struct RequestHandle(*mut c_void);
+
+// SAFETY: the pointer is never dereferenced off the JS thread — `run` does not
+// touch it, and `then` only passes it back to C++, which runs on the JS thread.
+unsafe impl Send for RequestHandle {}
+
+/// Mirrors `WebCore::ClipboardRepresentation`. All pointers borrow for the
+/// duration of the call.
+#[repr(C)]
+pub struct Representation {
+    ty: *const u8,
+    ty_len: usize,
+    bytes: *const u8,
+    len: usize,
+}
+
 unsafe extern "C" {
-    fn Bun__Clipboard__fireEvent(global: &JSGlobalObject, is_copy: bool);
-    fn Bun__Clipboard__createNotAllowedError(
+    /// Settles the request on the JS thread. A null `failure_message` means the
+    /// operation succeeded.
+    fn Bun__Clipboard__requestComplete(
         global: &JSGlobalObject,
-        message: &BunString,
-    ) -> JSValue;
-    fn Bun__ClipboardItem__createFromEntries(
-        global: &JSGlobalObject,
-        types: JSValue,
-        blobs: JSValue,
-    ) -> JSValue;
+        request: *mut c_void,
+        representations: *const Representation,
+        count: usize,
+        failure_message: *const u8,
+        failure_length: usize,
+    );
 }
 
 /// Serializes our own work-pool jobs so concurrent clipboard calls cannot
@@ -60,15 +76,6 @@ impl Mime {
         }
     }
 
-    /// The `'static` NUL-terminated form `Blob__fromBytesWithType` requires.
-    fn as_cstr(self) -> *const c_char {
-        match self {
-            Mime::TextPlain => c"text/plain".as_ptr(),
-            Mime::TextHtml => c"text/html".as_ptr(),
-            Mime::ImagePng => c"image/png".as_ptr(),
-        }
-    }
-
     fn from_bytes(bytes: &[u8]) -> Option<Mime> {
         match bytes {
             b"text/plain" => Some(Mime::TextPlain),
@@ -82,29 +89,25 @@ impl Mime {
 /// What `run` executes off the JS thread; inputs are plain owned bytes
 /// snapshotted on the JS thread so no JS value ever crosses the hop.
 enum Op {
+    /// Read `text/plain` only.
     ReadText,
-    WriteText(Vec<u8>),
+    /// Read every supported representation.
     Read,
-    WriteItems(Vec<(Mime, Vec<u8>)>),
+    Write(Vec<(Mime, Vec<u8>)>),
 }
 
-/// Filled by `run` on the work pool; `then` only converts it to a settled
-/// promise (and fires the corresponding clipboard event on success).
+/// Filled by `run` on the work pool; `then` only hands it back to WebCore.
 enum Outcome {
-    /// Raw pasteboard bytes; other processes write them, so they are not
-    /// trusted to be UTF-8 — `clone_utf8` owns handling that.
-    Text(Vec<u8>),
-    NoText,
-    /// Every supported representation present on the clipboard right now.
-    Items(Vec<(Mime, Vec<u8>)>),
-    WriteOk,
+    /// What the platform produced. Empty means the clipboard held nothing this
+    /// backend recognizes, which is not an error.
+    Representations(Vec<(Mime, Vec<u8>)>),
     Failed(Unavailable),
 }
 
 pub(crate) struct ClipboardCtx {
     op: Op,
     outcome: Option<Outcome>,
-    promise: JSPromiseStrong,
+    request: RequestHandle,
 }
 
 impl AnyTaskJobCtx for ClipboardCtx {
@@ -112,14 +115,10 @@ impl AnyTaskJobCtx for ClipboardCtx {
         let _guard = CLIPBOARD_LOCK.lock_guard();
         self.outcome = Some(match &self.op {
             Op::ReadText => match platform::read_type(Mime::TextPlain) {
-                Ok(Some(bytes)) => Outcome::Text(bytes),
-                Ok(None) => Outcome::NoText,
+                Ok(Some(bytes)) => Outcome::Representations(vec![(Mime::TextPlain, bytes)]),
+                Ok(None) => Outcome::Representations(Vec::new()),
                 Err(unavailable) => Outcome::Failed(unavailable),
             },
-            Op::WriteText(bytes) => write_outcome(platform::write_types(&[(
-                Mime::TextPlain,
-                bytes.as_slice(),
-            )])),
             // One job (and one lock acquisition) per `read()`, so our own
             // concurrent calls never interleave; other processes can still
             // change the clipboard between the per-type probes.
@@ -140,141 +139,111 @@ impl AnyTaskJobCtx for ClipboardCtx {
                     }
                 }
                 if readable {
-                    Outcome::Items(present)
+                    Outcome::Representations(present)
                 } else {
                     Outcome::Failed(unavailable)
                 }
             }
-            Op::WriteItems(items) => {
+            Op::Write(items) => {
                 let borrowed: Vec<(Mime, &[u8])> =
                     items.iter().map(|(m, b)| (*m, b.as_slice())).collect();
-                write_outcome(platform::write_types(&borrowed))
+                match platform::write_types(&borrowed) {
+                    Ok(()) => Outcome::Representations(Vec::new()),
+                    Err(unavailable) => Outcome::Failed(unavailable),
+                }
             }
         });
     }
 
-    fn then(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        // Settle on every path: leaving the promise pending after a failed
-        // conversion (huge text / OOM) would hang the caller forever. The
-        // clipboard events fire only after a success, once the promise is
-        // settled (the reactions still run later, as microtasks).
-        let promise = self.promise.swap();
+    fn then(&mut self, global: &JSGlobalObject) -> bun_jsc::JsResult<()> {
         match self.outcome.take().expect("run() filled the outcome") {
-            Outcome::Text(bytes) => match BunString::clone_utf8(&bytes).transfer_to_js(global) {
-                Ok(value) => {
-                    promise.resolve(global, value)?;
-                    fire_event(global, false);
-                }
-                Err(err) => promise.reject_with_async_stack(global, Err(err))?,
-            },
-            // No text on the clipboard — the spec resolves `readText()` with "".
-            Outcome::NoText => {
-                let empty = BunString::static_(b"").to_js(global)?;
-                promise.resolve(global, empty)?;
-                fire_event(global, false);
+            Outcome::Representations(items) => {
+                // Borrowed views over `items`, which outlives the call.
+                let views: Vec<Representation> = items
+                    .iter()
+                    .map(|(mime, bytes)| Representation {
+                        ty: mime.as_str().as_ptr(),
+                        ty_len: mime.as_str().len(),
+                        bytes: bytes.as_ptr(),
+                        len: bytes.len(),
+                    })
+                    .collect();
+                // SAFETY: JS thread, live global, and the views borrow `items`
+                // for the duration of the call.
+                unsafe {
+                    Bun__Clipboard__requestComplete(
+                        global,
+                        self.request.0,
+                        views.as_ptr(),
+                        views.len(),
+                        ptr::null(),
+                        0,
+                    )
+                };
             }
-            Outcome::Items(items) => match create_items_array(global, &items) {
-                Ok(value) => {
-                    promise.resolve(global, value)?;
-                    fire_event(global, false);
-                }
-                Err(err) => promise.reject_with_async_stack(global, Err(err))?,
-            },
-            Outcome::WriteOk => {
-                promise.resolve(global, JSValue::UNDEFINED)?;
-                fire_event(global, true);
-            }
-            // The spec'd failure for an unreachable clipboard or a failed
-            // write is a "NotAllowedError" DOMException.
-            Outcome::Failed(unavailable) => {
-                let message = BunString::static_(unavailable.message());
-                // SAFETY: FFI into the C++ error factory with live arguments.
-                let error = unsafe { Bun__Clipboard__createNotAllowedError(global, &message) };
-                promise.reject(global, Ok(error))?;
-            }
+            Outcome::Failed(unavailable) => complete_with_failure(global, self.request.0, unavailable),
         }
         Ok(())
     }
 }
 
-/// Fires the runtime projection of the spec's clipboard events ("copy" after
-/// a successful write, "paste" after a successful read) at
-/// `navigator.clipboard`; a no-op if that singleton was never created.
-fn fire_event(global: &JSGlobalObject, is_copy: bool) {
-    // SAFETY: FFI on the JS thread with a live global.
-    unsafe { Bun__Clipboard__fireEvent(global, is_copy) };
+/// Rejects the request with the actionable reason the platform gave.
+fn complete_with_failure(global: &JSGlobalObject, request: *mut c_void, unavailable: Unavailable) {
+    let message = unavailable.message();
+    // SAFETY: JS thread, live global, and `message` is a 'static literal.
+    unsafe {
+        Bun__Clipboard__requestComplete(
+            global,
+            request,
+            ptr::null(),
+            0,
+            message.as_ptr(),
+            message.len(),
+        )
+    };
 }
 
-/// `[ClipboardItem]` (or `[]`) from the representations a `read()` found.
-fn create_items_array(global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) -> JsResult<JSValue> {
-    if items.is_empty() {
-        return JSValue::create_empty_array(global, 0);
-    }
-    let types = JSValue::create_array_from_iter(global, items.iter(), |(mime, _)| {
-        BunString::static_(mime.as_str().as_bytes()).to_js(global)
-    })?;
-    let blobs = JSValue::create_array_from_iter(global, items.iter(), |(mime, bytes)| {
-        // SAFETY: the byte range is live for the call; `as_cstr` is 'static,
-        // which `Blob__fromBytesWithType` requires for the content type.
-        let blob = unsafe {
-            crate::webcore::blob::Blob__fromBytesWithType(
-                global,
-                bytes.as_ptr(),
-                bytes.len(),
-                mime.as_cstr(),
-            )
-        };
-        // Wrap the fresh impl in its JS object (ownership transfers to JSC).
-        // SAFETY: `blob` is the live, uniquely-owned impl created above.
-        Ok(unsafe { crate::webcore::blob::BlobExt::to_js(&*blob, global) })
-    })?;
-    // The C++ factory returns the empty value ⟺ it threw (OOM).
-    // SAFETY: FFI into the C++ ClipboardItem factory with two live arrays.
-    let item = bun_jsc::call_zero_is_throw(global, || unsafe {
-        Bun__ClipboardItem__createFromEntries(global, types, blobs)
-    })?;
-    JSValue::create_array_from_slice(global, &[item])
-}
-
-/// Schedules the clipboard op on the work pool; the job settles `promise` and owns the
-/// only handle to it.
-fn schedule_with_promise(
-    global: &JSGlobalObject,
-    op: Op,
-    promise: JSPromiseStrong,
-) -> JsResult<()> {
-    AnyTaskJob::create_and_schedule(
-        global,
-        ClipboardCtx {
-            op,
-            outcome: None,
-            promise,
-        },
-    )
-}
-
-/// Schedules the clipboard op on the work pool and returns the pending promise.
-fn schedule(global: &JSGlobalObject, op: Op) -> JsResult<JSValue> {
-    let promise = JSPromiseStrong::init(global);
-    let promise_value = promise.value();
-    schedule_with_promise(global, op, promise)?;
-    Ok(promise_value)
-}
-
-fn write_outcome(result: Result<(), Unavailable>) -> Outcome {
-    match result {
-        Ok(()) => Outcome::WriteOk,
-        Err(unavailable) => Outcome::Failed(unavailable),
+/// Schedules the op on the work pool. If scheduling fails there is nothing left
+/// to settle the request, so it is rejected here rather than left pending.
+fn schedule(global: &JSGlobalObject, op: Op, request: *mut c_void) {
+    let ctx = ClipboardCtx {
+        op,
+        outcome: None,
+        request: RequestHandle(request),
+    };
+    if AnyTaskJob::create_and_schedule(global, ctx).is_err() {
+        complete_with_failure(global, request, Unavailable::Platform);
     }
 }
 
-// ─── entry points for the C++ classes ───────────────────────────────────────
+/// Copies a borrowed byte range; the backing memory belongs to the caller and
+/// is not valid past the call that handed it over.
+///
+/// # Safety
+/// `[ptr, ptr+len)` must be a readable range, or `ptr` null with `len` 0.
+unsafe fn copy_bytes(ptr: *const u8, len: usize) -> Vec<u8> {
+    if ptr.is_null() || len == 0 {
+        return Vec::new();
+    }
+    // SAFETY: forwarded from the caller's contract.
+    unsafe { bun_core::ffi::slice(ptr, len) }.to_vec()
+}
 
-/// `ClipboardItem.supports()` and the C++ `write()` validation: whether this
-/// build's platform backend can represent `mime` on the OS clipboard.
+// ─── entry points for WebCore ───────────────────────────────────────────────
+
+/// `ClipboardItem.supports()` and `write()`'s validation: whether this build's
+/// platform backend can represent `mime` on the OS clipboard.
+///
+/// # Safety
+/// `[mime, mime+len)` must be a readable range of the lowercased MIME type.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__supportsType(mime: &BunString) -> bool {
-    Mime::from_bytes(mime.to_utf8().slice()).is_some_and(|mime| SUPPORTED.contains(&mime))
+pub unsafe extern "C" fn Bun__Clipboard__supportsType(mime: *const u8, len: usize) -> bool {
+    if mime.is_null() || len == 0 {
+        return false;
+    }
+    // SAFETY: forwarded from the caller's contract.
+    let bytes = unsafe { bun_core::ffi::slice(mime, len) };
+    Mime::from_bytes(bytes).is_some_and(|mime| SUPPORTED.contains(&mime))
 }
 
 /// Whether the platform backend can only own one representation per write.
@@ -283,110 +252,66 @@ pub extern "C" fn Bun__Clipboard__writesSingleRepresentation() -> bool {
     WRITES_SINGLE_REPRESENTATION
 }
 
-/// Whether this Blob's bytes are not in memory (`Bun.file()`, S3): the write
-/// path snapshots memory synchronously, so such Blobs must be rejected
-/// loudly rather than written as empty representations.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__blobNeedsToReadFile(blob: JSValue) -> bool {
-    use bun_jsc::JsClass as _;
-    // SAFETY: `from_js` returned a pointer to the live, JSC-owned impl of
-    // this JS Blob; it is only dereferenced within this JS-thread call.
-    crate::webcore::blob::Blob::from_js(blob)
-        .is_some_and(|blob| unsafe { (*blob).needs_to_read_file() || (*blob).is_s3() })
-}
-
 /// `Clipboard.prototype.readText`.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__readText(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::to_js_host_fn_result(global, schedule(global, Op::ReadText))
+pub extern "C" fn Bun__Clipboard__scheduleReadText(global: &JSGlobalObject, request: *mut c_void) {
+    schedule(global, Op::ReadText, request);
 }
 
-/// `Clipboard.prototype.writeText`; the C++ layer already applied the WebIDL
-/// `DOMString` conversion, so `text` is the exact string to place.
+/// `Clipboard.prototype.read`: one job reads every supported representation.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__writeText(global: &JSGlobalObject, text: &BunString) -> JSValue {
-    let bytes = text.to_utf8_bytes();
-    bun_jsc::to_js_host_fn_result(global, schedule(global, Op::WriteText(bytes)))
+pub extern "C" fn Bun__Clipboard__scheduleRead(global: &JSGlobalObject, request: *mut c_void) {
+    schedule(global, Op::Read, request);
 }
 
-/// `Clipboard.prototype.read`: one job reads every supported representation
-/// and resolves with `[ClipboardItem]` (or `[]`).
+/// `Clipboard.prototype.writeText`; WebCore already applied the WebIDL
+/// `DOMString` conversion, so these are the exact bytes to place.
+///
+/// # Safety
+/// `[text, text+len)` must be a readable range, or `text` null with `len` 0.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__read(global: &JSGlobalObject) -> JSValue {
-    bun_jsc::to_js_host_fn_result(global, schedule(global, Op::Read))
-}
-
-/// `Clipboard.prototype.write`, after the C++ layer validated the item and
-/// materialized every representation: `mimes` and `blobs` are index-aligned
-/// JS arrays of MIME strings and in-memory `Blob`s. `promise` is the promise
-/// `write()` already returned; the scheduled job takes ownership of it and is
-/// what settles it.
-#[unsafe(no_mangle)]
-pub extern "C" fn Bun__Clipboard__writeBlobs(
+pub unsafe extern "C" fn Bun__Clipboard__scheduleWriteText(
     global: &JSGlobalObject,
-    promise: JSValue,
-    mimes: JSValue,
-    blobs: JSValue,
+    request: *mut c_void,
+    text: *const u8,
+    len: usize,
 ) {
-    let Err(err) = write_blobs(global, promise, mimes, blobs) else {
-        return;
-    };
-    match err {
-        // The VM is tearing down. Leave the termination pending so it keeps unwinding
-        // instead of being turned into a rejection nobody can observe.
-        JsError::Terminated => return,
-        // `OutOfMemory` leaves nothing pending — throwing it is what creates the exception.
-        JsError::OutOfMemory => {
-            global.throw_out_of_memory_value();
-        }
-        JsError::Thrown => {}
-    }
-    // Nothing was scheduled, so settling `promise` is still this call's job. The caller's
-    // state array roots the cell, so re-taking a handle is safe even if the job's own
-    // handle was already created and dropped.
-    if let Some(exception) = global.try_take_exception() {
-        JSPromiseStrong::from_value(promise, global).reject_without_swap(global, Ok(exception));
-    }
+    // SAFETY: forwarded from the caller's contract.
+    let bytes = unsafe { copy_bytes(text, len) };
+    schedule(global, Op::Write(vec![(Mime::TextPlain, bytes)]), request);
 }
 
-fn write_blobs(
+/// `Clipboard.prototype.write`, after WebCore collected every representation
+/// into a Blob and checked that this backend supports each type.
+///
+/// # Safety
+/// `representations[0..count]` must be readable, and each entry's byte ranges
+/// valid for the duration of this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Bun__Clipboard__scheduleWrite(
     global: &JSGlobalObject,
-    promise: JSValue,
-    mimes: JSValue,
-    blobs: JSValue,
-) -> JsResult<()> {
-    // The C++ layer validated the item, so every entry is a supported MIME
-    // string paired with an in-memory Blob from `ClipboardItem.getType`.
-    let mut items: Vec<(Mime, Vec<u8>)> = Vec::new();
-    let mut mime_iter = mimes.array_iterator(global)?;
-    let mut blob_iter = blobs.array_iterator(global)?;
-    while let Some(mime_value) = mime_iter.next()? {
-        let Some(blob_value) = blob_iter.next()? else {
-            break;
-        };
-        let mime_string = OwnedString::new(BunString::from_js(mime_value, global)?);
-        let mime = Mime::from_bytes(mime_string.to_utf8().slice())
-            .expect("Clipboard.prototype.write only forwards supported MIME types");
-        let size = crate::webcore::blob::Blob__getSize(blob_value);
-        let ptr = crate::webcore::blob::Blob__getDataPtr(blob_value);
-        debug_assert!(
-            !ptr.is_null() || size == 0,
-            "Clipboard.prototype.write only forwards in-memory Blobs"
-        );
-        let bytes = if ptr.is_null() || size == 0 {
-            Vec::new()
-        } else {
-            // SAFETY: `ptr .. ptr+size` is the live in-memory view of a
-            // JSC-owned Blob for the duration of this JS-thread call.
-            unsafe { bun_core::ffi::slice(ptr.cast::<u8>(), size) }.to_vec()
-        };
-        items.push((mime, bytes));
+    request: *mut c_void,
+    representations: *const Representation,
+    count: usize,
+) {
+    let mut items: Vec<(Mime, Vec<u8>)> = Vec::with_capacity(count);
+    if !representations.is_null() {
+        // SAFETY: forwarded from the caller's contract.
+        let entries = unsafe { core::slice::from_raw_parts(representations, count) };
+        for entry in entries {
+            // SAFETY: same.
+            let ty = unsafe { copy_bytes(entry.ty, entry.ty_len) };
+            let Some(mime) = Mime::from_bytes(&ty) else {
+                // WebCore validates support before collecting, so this cannot
+                // normally happen; reject rather than write a partial item.
+                complete_with_failure(global, request, Unavailable::Platform);
+                return;
+            };
+            // SAFETY: same.
+            items.push((mime, unsafe { copy_bytes(entry.bytes, entry.len) }));
+        }
     }
-    schedule_with_promise(
-        global,
-        Op::WriteItems(items),
-        JSPromiseStrong::from_value(promise, global),
-    )
+    schedule(global, Op::Write(items), request);
 }
 
 /// Why the platform clipboard is unreachable; each variant carries the

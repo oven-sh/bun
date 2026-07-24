@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,15 +23,32 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://w3c.github.io/clipboard-apis/#clipboard-event-interfaces
-// Bun: `clipboardData` is always null (there is no DataTransfer).
-[
-    Exposed=(Window,Worker)
-] interface ClipboardEvent : Event {
-    constructor(DOMString type, optional ClipboardEventInit eventInitDict = {});
-    readonly attribute DataTransfer? clipboardData;
+#pragma once
+
+#include "root.h"
+#include "ClipboardItemData.h"
+#include "ClipboardItemDataSource.h"
+#include <wtf/TZoneMalloc.h>
+
+namespace WebCore {
+
+// The data source for an item read() produced. Bun's counterpart to WebCore's
+// ClipboardItemPasteboardDataSource: upstream keeps a Clipboard back-pointer and
+// re-reads the Pasteboard lazily per type, whereas one Bun read() already
+// returned every supported representation, so this just owns them.
+class ClipboardItemPlatformDataSource final : public ClipboardItemDataSource {
+    WTF_MAKE_TZONE_ALLOCATED(ClipboardItemPlatformDataSource);
+
+public:
+    ClipboardItemPlatformDataSource(ClipboardItem&, ClipboardItemData&&);
+    ~ClipboardItemPlatformDataSource();
+
+private:
+    Vector<String> types() const final;
+    void getType(const String&, Ref<DeferredPromise>&&) final;
+    void collectDataForWriting(Clipboard& destination, CollectCompletionHandler&&) final;
+
+    ClipboardItemData m_data;
 };
 
-dictionary ClipboardEventInit : EventInit {
-    DataTransfer? clipboardData = null;
-};
+} // namespace WebCore

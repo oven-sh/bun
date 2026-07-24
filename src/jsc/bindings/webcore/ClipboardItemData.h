@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2019 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,15 +23,22 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://w3c.github.io/clipboard-apis/#clipboard-event-interfaces
-// Bun: `clipboardData` is always null (there is no DataTransfer).
-[
-    Exposed=(Window,Worker)
-] interface ClipboardEvent : Event {
-    constructor(DOMString type, optional ClipboardEventInit eventInitDict = {});
-    readonly attribute DataTransfer? clipboardData;
-};
+#pragma once
 
-dictionary ClipboardEventInit : EventInit {
-    DataTransfer? clipboardData = null;
-};
+#include "root.h"
+#include "blob.h"
+#include <wtf/KeyValuePair.h>
+#include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
+
+namespace WebCore {
+
+// One item's representations, each already serialized to a refcounted Blob.
+//
+// This is the runtime's stand-in for WebCore::PasteboardCustomData, which holds
+// `String or Ref<SharedBuffer>` per type. Bun has neither Pasteboard nor
+// SharedBuffer, and its Blob is already refcounted over the Rust-owned bytes, so
+// Blob is both the collected form and what the platform transaction reads from.
+using ClipboardItemData = Vector<KeyValuePair<String, Ref<Blob>>>;
+
+} // namespace WebCore

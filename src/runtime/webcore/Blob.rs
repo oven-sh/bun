@@ -6062,6 +6062,98 @@ pub extern "C" fn Blob__getSize(value: JSValue) -> usize {
     unsafe { (*blob).shared_view().len() }
 }
 
+// The clipboard collects representations as refcounted `WebCore::Blob`s rather
+// than JS values, so it needs these same accessors against the impl. See
+// `src/jsc/bindings/webcore/ClipboardBlob.h`.
+
+/// Borrows the Blob's resident bytes; empty when it has none.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid for writes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implGetSpan(
+    blob: &Blob,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) {
+    let data = blob.shared_view();
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        *out_ptr = if data.is_empty() { core::ptr::null() } else { data.as_ptr() };
+        *out_len = data.len();
+    }
+}
+
+/// Whether reading this Blob would have to touch a file or the network, in
+/// which case `shared_view()` is empty and callers must not treat it as data.
+#[unsafe(no_mangle)]
+pub extern "C" fn Blob__implNeedsToReadFile(blob: &Blob) -> bool {
+    blob.needs_to_read_file() || blob.is_s3()
+}
+
+/// Borrows the Blob's content type. The bytes live as long as the Blob.
+///
+/// # Safety
+/// `out_ptr` and `out_len` must be valid for writes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__implGetContentType(
+    blob: &Blob,
+    out_ptr: *mut *const u8,
+    out_len: *mut usize,
+) {
+    let slice = blob.content_type_slice();
+    // SAFETY: forwarded from the caller's contract.
+    unsafe {
+        *out_ptr = slice.as_ptr();
+        *out_len = slice.len();
+    }
+}
+
+/// Like `Blob__fromBytesWithType`, but normalizes `mime` exactly as the `Blob`
+/// constructor normalizes its `type` option — Bun promotes text types to carry
+/// `;charset=utf-8`, and callers compare against what `Blob.prototype.type`
+/// reports. Takes a length rather than a NUL-terminated string so a caller can
+/// pass an arbitrary WTF::String's UTF-8.
+///
+/// # Safety
+/// `[ptr, ptr+len)` and `[mime, mime+mime_len)` must be readable ranges (or the
+/// pointers null with the lengths 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn Blob__fromBytesWithNormalizedType(
+    global_this: &JSGlobalObject,
+    ptr: *const u8,
+    len: usize,
+    mime: *const u8,
+    mime_len: usize,
+    normalize: bool,
+) -> *mut Blob {
+    // SAFETY: forwarded from the caller's contract.
+    let blob = unsafe { Blob__fromBytes(global_this, ptr, len) };
+    if mime.is_null() || mime_len == 0 {
+        return blob;
+    }
+    // SAFETY: forwarded from the caller's contract.
+    let slice = unsafe { bun_core::ffi::slice(mime, mime_len) };
+    if !is_valid_blob_type(slice) {
+        return blob;
+    }
+    // SAFETY: `blob` is a fresh heap allocation we solely own until returned.
+    unsafe {
+        // The same lookup `new Blob([...], { type })` performs, so a Blob built
+        // here is indistinguishable from one built in JS.
+        (*blob).content_type.set(if normalize {
+            match global_this.bun_vm().as_mut().mime_type(slice) {
+                Some(mime) => BlobContentType::from(mime),
+                None => BlobContentType::from_lowercased(slice),
+            }
+        } else {
+            BlobContentType::Owned(slice.into())
+        });
+        (*blob).content_type_was_set.set(true);
+    }
+    blob
+}
+
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range (or `ptr` null / `len` 0).
 #[unsafe(no_mangle)]
@@ -6085,7 +6177,8 @@ pub unsafe extern "C" fn Blob__fromBytes(
 ///
 /// # Safety
 /// `[ptr, ptr+len)` must be a valid readable byte range and `mime` a
-/// NUL-terminated `'static` C string.
+/// NUL-terminated C string valid for the duration of the call (its bytes are
+/// copied into the Blob's owned content type).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn Blob__fromBytesWithType(
     global_this: &JSGlobalObject,

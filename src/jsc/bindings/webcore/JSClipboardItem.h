@@ -19,26 +19,25 @@
 
 #pragma once
 
-#include "Clipboard.h"
+#include "ClipboardItem.h"
 #include "JSDOMWrapper.h"
-#include "JSEventTarget.h"
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
 
-class JSClipboard : public JSEventTarget {
+class JSClipboardItem : public JSDOMWrapper<ClipboardItem> {
 public:
-    using Base = JSEventTarget;
-    using DOMWrapped = Clipboard;
-    static JSClipboard* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<Clipboard>&& impl)
+    using Base = JSDOMWrapper<ClipboardItem>;
+    static JSClipboardItem* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<ClipboardItem>&& impl)
     {
-        JSClipboard* ptr = new (NotNull, JSC::allocateCell<JSClipboard>(globalObject->vm())) JSClipboard(structure, *globalObject, WTF::move(impl));
+        JSClipboardItem* ptr = new (NotNull, JSC::allocateCell<JSClipboardItem>(globalObject->vm())) JSClipboardItem(structure, *globalObject, WTF::move(impl));
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
 
     static JSC::JSObject* createPrototype(JSC::VM&, JSDOMGlobalObject&);
     static JSC::JSObject* prototype(JSC::VM&, JSDOMGlobalObject&);
+    static ClipboardItem* toWrapped(JSC::VM&, JSC::JSValue);
 
     DECLARE_INFO;
 
@@ -56,42 +55,48 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    Clipboard& wrapped() const
-    {
-        return static_cast<Clipboard&>(Base::wrapped());
-    }
+
+    DECLARE_VISIT_CHILDREN;
+
+    // WebIDL FrozenArray [SameObject]: `types` must be the same JSArray on every
+    // get, so it is built once and cached on the wrapper.
+    JSC::JSValue cachedTypes() const { return m_cachedTypes.get(); }
+    void setCachedTypes(JSC::VM& vm, JSC::JSValue value) { m_cachedTypes.set(vm, this, value); }
 
 protected:
-    JSClipboard(JSC::Structure*, JSDOMGlobalObject&, Ref<Clipboard>&&);
+    JSClipboardItem(JSC::Structure*, JSDOMGlobalObject&, Ref<ClipboardItem>&&);
 
-    void finishCreation(JSC::VM&);
+    DECLARE_DEFAULT_FINISH_CREATION;
+
+private:
+    mutable JSC::WriteBarrier<JSC::Unknown> m_cachedTypes;
 };
 
-class JSClipboardOwner final : public JSC::WeakHandleOwner {
+class JSClipboardItemOwner final : public JSC::WeakHandleOwner {
 public:
     bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
-inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Clipboard*)
+inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, ClipboardItem*)
 {
-    static NeverDestroyed<JSClipboardOwner> owner;
+    static NeverDestroyed<JSClipboardItemOwner> owner;
     return &owner.get();
 }
 
-inline void* wrapperKey(Clipboard* wrappableObject)
+inline void* wrapperKey(ClipboardItem* wrappableObject)
 {
     return wrappableObject;
 }
 
-JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Clipboard&);
-inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Clipboard* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
-JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Clipboard>&&);
-inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<Clipboard>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
+JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, ClipboardItem&);
+inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, ClipboardItem* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
+JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<ClipboardItem>&&);
+inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<ClipboardItem>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
-template<> struct JSDOMWrapperConverterTraits<Clipboard> {
-    using WrapperClass = JSClipboard;
-    using ToWrappedReturnType = Clipboard*;
+template<> struct JSDOMWrapperConverterTraits<ClipboardItem> {
+    using WrapperClass = JSClipboardItem;
+    using ToWrappedReturnType = ClipboardItem*;
 };
 
 } // namespace WebCore

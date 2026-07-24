@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016 Apple Inc. All rights reserved.
+ * Copyright (C) 2019-2024 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -23,15 +23,27 @@
  * THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-// https://w3c.github.io/clipboard-apis/#clipboard-event-interfaces
-// Bun: `clipboardData` is always null (there is no DataTransfer).
-[
-    Exposed=(Window,Worker)
-] interface ClipboardEvent : Event {
-    constructor(DOMString type, optional ClipboardEventInit eventInitDict = {});
-    readonly attribute DataTransfer? clipboardData;
+// https://w3c.github.io/clipboard-apis/#clipboard-item-interface
+// Bun: no SecureContext or EnabledBySetting (a runtime has neither), and
+// supports() answers from the platform backend rather than a fixed table.
+
+typedef (DOMString or Blob) ClipboardItemDataType;
+typedef Promise<ClipboardItemDataType> ClipboardItemData;
+
+enum PresentationStyle { "unspecified", "inline", "attachment" };
+
+dictionary ClipboardItemOptions {
+    PresentationStyle presentationStyle = "unspecified";
 };
 
-dictionary ClipboardEventInit : EventInit {
-    DataTransfer? clipboardData = null;
+[
+    Exposed=(Window,Worker)
+] interface ClipboardItem {
+    constructor(record<DOMString, ClipboardItemData> items, optional ClipboardItemOptions options = {});
+
+    readonly attribute FrozenArray<DOMString> types;
+    [NewObject] Promise<Blob> getType(DOMString type);
+    static boolean supports(DOMString type);
+
+    readonly attribute PresentationStyle presentationStyle;
 };

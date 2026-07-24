@@ -48,7 +48,7 @@ describe("interface shape", () => {
     // @ts-expect-error — Clipboard has no public constructor.
     expect(() => new Clipboard()).toThrow(TypeError);
     // @ts-expect-error — Clipboard has no public constructor.
-    expect(() => new Clipboard()).toThrow("Use `new Clipboard(...)` instead of `Clipboard(...)`");
+    expect(() => new Clipboard()).toThrow("Illegal constructor");
   });
 
   test("prototype members are enumerable functions with the right arity", () => {
@@ -193,6 +193,15 @@ describe("ClipboardItem", () => {
   test("getType() of an absent type rejects with a NotFoundError DOMException", async () => {
     const item = new ClipboardItem({ "text/plain": "x" });
     await expectDOMException(item.getType("image/png"), "NotFoundError");
+    // The message names the type that was missing.
+    await expect(item.getType("image/png")).rejects.toThrow('"image/png"');
+  });
+
+  test("getType() forwards the representation's own rejection reason", async () => {
+    // Same reason write() surfaces for the same failure, rather than a
+    // flattened AbortError.
+    const item = new ClipboardItem({ "text/plain": Promise.reject(new Error("nope")) });
+    await expect(item.getType("text/plain")).rejects.toThrow("nope");
   });
 
   // WebIDL `(DOMString or Blob)`: a non-Blob fulfillment value is ToString'd
@@ -298,6 +307,18 @@ describe("read / write", () => {
 
     // Writing an empty sequence is a no-op that must not reject.
     await navigator.clipboard.write([]);
+
+    // A Blob whose bytes are not in memory (`Bun.file()`) must reject rather
+    // than be written as an empty representation — both when its declared type
+    // matches the key (the write path checks residency) and when it does not
+    // (re-wrapping would have to read it).
+    using fileDir = tempDir("clipboard-file-blob", { "a.txt": "on disk", "b.mjs": "export {};" });
+    await expect(
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "a.txt")) })]),
+    ).rejects.toThrow(TypeError);
+    await expect(
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": Bun.file(join(String(fileDir), "b.mjs")) })]),
+    ).rejects.toThrow(TypeError);
 
     // A ClipboardItemData that rejects propagates as the write's rejection,
     // and an uncoercible settled value rejects there too.

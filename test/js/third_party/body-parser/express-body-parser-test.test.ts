@@ -3,9 +3,9 @@
 // depend on @types/node which conflicts with bun-types
 import bodyParser from "body-parser";
 import { expect, test } from "bun:test";
-const { json } = bodyParser;
 import express, { Application, Request, Response } from "express";
 import net from "net";
+const { json } = bodyParser;
 // Express uses iconv-lite
 test("iconv works", () => {
   var iconv = require("iconv-lite");

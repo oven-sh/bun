@@ -212,7 +212,9 @@ impl Default for AstArena {
 
 impl Drop for AstArena {
     fn drop(&mut self) {
-        let Some(mut inner) = self.0.take() else { return };
+        let Some(mut inner) = self.0.take() else {
+            return;
+        };
         // Clean, then park for the next `AstArena::new()` on this thread. If
         // the slot is already occupied (nested scopes) or the thread is
         // tearing down, the box is dropped here (`mi_heap_destroy`).

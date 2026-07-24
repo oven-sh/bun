@@ -754,7 +754,13 @@ impl Expr {
         a: Expr,
         b: Expr,
     ) -> Expr {
-        Self::join_with_left_associative_op_with_check(alloc, op, a, b, bun_core::StackCheck::init())
+        Self::join_with_left_associative_op_with_check(
+            alloc,
+            op,
+            a,
+            b,
+            bun_core::StackCheck::init(),
+        )
     }
 
     fn join_with_left_associative_op_with_check(
@@ -1918,9 +1924,7 @@ impl Data {
         let this = *self;
         match &this {
             Data::EArray(el) => {
-                let items = el
-                    .items
-                    .try_deep_clone_with(|e| e.deep_clone(into))?;
+                let items = el.items.try_deep_clone_with(|e| e.deep_clone(into))?;
                 let item = bump.alloc(E::Array {
                     items,
                     comma_after_spread: el.comma_after_spread,
@@ -2022,9 +2026,7 @@ impl Data {
             Data::ENew(el) => {
                 let item = bump.alloc(E::New {
                     target: el.target.deep_clone(into)?,
-                    args: el
-                        .args
-                        .try_deep_clone_with(|e| e.deep_clone(into))?,
+                    args: el.args.try_deep_clone_with(|e| e.deep_clone(into))?,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     close_parens_loc: el.close_parens_loc,
                 });
@@ -2039,9 +2041,7 @@ impl Data {
             Data::ECall(el) => {
                 let item = bump.alloc(E::Call {
                     target: el.target.deep_clone(into)?,
-                    args: el
-                        .args
-                        .try_deep_clone_with(|e| e.deep_clone(into))?,
+                    args: el.args.try_deep_clone_with(|e| e.deep_clone(into))?,
                     optional_chain: el.optional_chain,
                     is_direct_eval: el.is_direct_eval,
                     close_paren_loc: el.close_paren_loc,
@@ -2094,9 +2094,7 @@ impl Data {
                         None => None,
                     },
                     properties: el.properties.try_deep_clone_with(|p| p.deep_clone(into))?,
-                    children: el
-                        .children
-                        .try_deep_clone_with(|e| e.deep_clone(into))?,
+                    children: el.children.try_deep_clone_with(|e| e.deep_clone(into))?,
                     key_prop_index: el.key_prop_index,
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,

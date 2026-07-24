@@ -254,7 +254,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    pub fn parse(source: &'a Source, log: &mut Log, alloc: AstAlloc) -> Result<Expr, ExternalError> {
+    pub fn parse(
+        source: &'a Source,
+        log: &mut Log,
+        alloc: AstAlloc,
+    ) -> Result<Expr, ExternalError> {
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
             pos: 0,

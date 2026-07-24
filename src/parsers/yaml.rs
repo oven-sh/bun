@@ -92,10 +92,7 @@ impl From<YamlParseError> for crate::Error {
 // Top-level free functions
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn parse<'i, Enc: Encoding>(
-    alloc: AstAlloc,
-    input: &'i [Enc::Unit],
-) -> ParseResult<'i, Enc> {
+pub fn parse<'i, Enc: Encoding>(alloc: AstAlloc, input: &'i [Enc::Unit]) -> ParseResult<'i, Enc> {
     let mut parser: Parser<Enc> = Parser::init(alloc, input);
 
     match parser.parse() {
@@ -4195,7 +4192,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                             break 'node scalar.data.to_expr(self.alloc, scalar_start, self.input);
                         }
 
-                        let implicit_key = scalar.data.to_expr(self.alloc, scalar_start, self.input);
+                        let implicit_key =
+                            scalar.data.to_expr(self.alloc, scalar_start, self.input);
 
                         let implicit_key_anchors = node_props.implicit_key_anchors(scalar_line)?;
 

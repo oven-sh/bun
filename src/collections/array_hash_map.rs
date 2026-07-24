@@ -1988,7 +1988,8 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone> StringHashMap<V, A> 
             {
                 RawEntryMut::Occupied(e) => e.into_mut(),
                 RawEntryMut::Vacant(e) => {
-                    e.insert_hashed_nocheck(hash, owned_key(key, alloc), value).1
+                    e.insert_hashed_nocheck(hash, owned_key(key, alloc), value)
+                        .1
                 }
             },
         )

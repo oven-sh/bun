@@ -6856,9 +6856,7 @@ pub mod bv2_impl {
                 }
                 parse_task::ResultValue::Success(result) => {
                     // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                    result
-                        .log
-                        .clone_to(this.transpiler.log_mut());
+                    result.log.clone_to(this.transpiler.log_mut());
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
@@ -7161,8 +7159,7 @@ pub mod bv2_impl {
                                 .expect("oom");
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                            err.log
-                                .clone_to(this.transpiler.log_mut());
+                            err.log.clone_to(this.transpiler.log_mut());
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",

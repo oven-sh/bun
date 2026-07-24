@@ -1209,7 +1209,11 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
             b'f' if tail.starts_with(b"false") && self.rest_is_ws_cold(&tail[5..]) => {
                 self.cursor += 1;
-                Ok(Expr::init(self.alloc, E::Boolean { value: false }, loc_tail))
+                Ok(Expr::init(
+                    self.alloc,
+                    E::Boolean { value: false },
+                    loc_tail,
+                ))
             }
             b'n' if tail.starts_with(b"null") && self.rest_is_ws_cold(&tail[4..]) => {
                 self.cursor += 1;

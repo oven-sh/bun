@@ -299,6 +299,80 @@ it("Database.open", () => {
   new Database().close();
 });
 
+// https://github.com/oven-sh/bun/issues/9410
+describe("Database constructor access-mode options", () => {
+  it("{ create: false } opens an existing database read-write", () => {
+    const dir = tempDirWithFiles("sqlite-create-false", {});
+    const dbPath = path.join(dir, "test.db");
+
+    {
+      const db = new Database(dbPath, { create: true });
+      db.exec("CREATE TABLE foo (id INTEGER)");
+      db.close();
+    }
+
+    const db = new Database(dbPath, { create: false });
+    try {
+      db.exec("INSERT INTO foo (id) VALUES (1)");
+      expect(db.query("SELECT id FROM foo").get()).toEqual({ id: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("{ create: false } errors with SQLITE_CANTOPEN when the file does not exist", () => {
+    const dir = tempDirWithFiles("sqlite-create-false-missing", {});
+    const dbPath = path.join(dir, "does-not-exist.db");
+
+    let error;
+    try {
+      new Database(dbPath, { create: false });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+    expect(error.code).toBe("SQLITE_CANTOPEN");
+  });
+
+  it("{ create: false, readonly: true } opens readonly", () => {
+    const dir = tempDirWithFiles("sqlite-create-false-ro", {});
+    const dbPath = path.join(dir, "test.db");
+
+    {
+      const db = new Database(dbPath, { create: true });
+      db.exec("CREATE TABLE foo (id INTEGER)");
+      db.close();
+    }
+
+    const db = new Database(dbPath, { create: false, readonly: true });
+    try {
+      expect(() => db.exec("INSERT INTO foo (id) VALUES (1)")).toThrow("attempt to write a readonly database");
+      expect(db.query("SELECT COUNT(*) as n FROM foo").get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("{ readwrite: false } opens an existing database readonly", () => {
+    const dir = tempDirWithFiles("sqlite-readwrite-false", {});
+    const dbPath = path.join(dir, "test.db");
+
+    {
+      const db = new Database(dbPath, { create: true });
+      db.exec("CREATE TABLE foo (id INTEGER)");
+      db.close();
+    }
+
+    const db = new Database(dbPath, { readwrite: false });
+    try {
+      expect(() => db.exec("INSERT INTO foo (id) VALUES (1)")).toThrow("attempt to write a readonly database");
+      expect(db.query("SELECT COUNT(*) as n FROM foo").get()).toEqual({ n: 0 });
+    } finally {
+      db.close();
+    }
+  });
+});
+
 it("upsert cross-process, see #1366", () => {
   const dir = realpathSync(tmpdir()) + "/";
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {

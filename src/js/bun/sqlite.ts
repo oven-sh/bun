@@ -393,19 +393,26 @@ class Database implements SqliteTypes.Database {
         flags |= constants.SQLITE_OPEN_READWRITE;
       }
 
-      if ("strict" in options || "safeIntegers" in options) {
-        if (options.safeIntegers) {
-          this.#internalFlags |= kSafeIntegersFlag;
-        }
-
-        if (options.strict) {
-          this.#internalFlags |= kStrictFlag;
-        }
-
-        // If they only set strict: true, reset it back.
-        if (flags === 0) {
+      // sqlite3_open_v2 requires one of SQLITE_OPEN_READONLY, SQLITE_OPEN_READWRITE, or
+      // SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE. If none of the above branches fired
+      // (e.g. { create: false }), derive the access mode from explicit false values
+      // against the documented defaults of { readwrite: true, create: true }.
+      if (flags === 0) {
+        if (options.readwrite === false) {
+          flags = constants.SQLITE_OPEN_READONLY;
+        } else if (options.create === false) {
+          flags = constants.SQLITE_OPEN_READWRITE;
+        } else {
           flags = constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE;
         }
+      }
+
+      if (options.safeIntegers) {
+        this.#internalFlags |= kSafeIntegersFlag;
+      }
+
+      if (options.strict) {
+        this.#internalFlags |= kStrictFlag;
       }
     } else if (typeof options === "number") {
       flags = options;

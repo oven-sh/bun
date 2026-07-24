@@ -87,6 +87,21 @@ describe("bundler", async () => {
     },
   });
 
+  // https://github.com/oven-sh/bun/issues/12981
+  for (const target of ["bun", "browser"] as const) {
+    itBundled(`bun/loader-text-file-invalid-utf8-${target}`, {
+      target,
+      files: {
+        "/entry.ts": /* js */ `
+          import t from './f.txt';
+          console.log(JSON.stringify([...t].map(c => c.codePointAt(0))));
+        `,
+        "/f.txt": Buffer.from([0x61, 0xff, 0xfe, 0x62]),
+      },
+      run: { stdout: "[97,65533,65533,98]" },
+    });
+  }
+
   itBundled("bun/loader-json-proto-key-is-own-property", {
     target: "bun",
     files: {

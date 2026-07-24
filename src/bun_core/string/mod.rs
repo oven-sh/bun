@@ -2256,24 +2256,37 @@ pub mod printer {
         let mut i: usize = 0;
 
         while i < n {
-            let width: u8 = match encoding {
-                StrEncoding::Latin1 | StrEncoding::Ascii | StrEncoding::Utf16 => 1,
-                StrEncoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text_in[i]),
-            };
-            let clamped_width = (width as usize).min(n.saturating_sub(i));
-            let c: i32 = match encoding {
-                StrEncoding::Utf8 => {
-                    let mut buf = [0u8; 4];
-                    buf[..clamped_width].copy_from_slice(&text_in[i..i + clamped_width]);
-                    strings::decode_wtf8_rune_t::<i32>(buf, width, 0)
-                }
+            let (width, c): (u8, i32) = match encoding {
+                StrEncoding::Latin1 => (1, text_in[i] as i32),
                 StrEncoding::Ascii => {
                     debug_assert!(text_in[i] <= 0x7F);
-                    text_in[i] as i32
+                    (1, text_in[i] as i32)
                 }
-                StrEncoding::Latin1 => text_in[i] as i32,
-                StrEncoding::Utf16 => text16[i] as i32,
+                StrEncoding::Utf16 => (1, text16[i] as i32),
+                StrEncoding::Utf8 => {
+                    let first = text_in[i];
+                    if first < 0x80 {
+                        (1, first as i32)
+                    } else {
+                        // Same WHATWG UTF-8 decode as
+                        // `bun_js_printer::write_pre_quoted_string_inner`: ill-formed
+                        // sequences become U+FFFD with maximal-subpart advancement.
+                        let replacement = strings::convert_utf8_bytes_into_utf16(&text_in[i..]);
+                        let len = (replacement.len as usize).max(1);
+                        if replacement.fail {
+                            i += len;
+                            if ascii_only {
+                                writer.write_all(&bmp_escape(strings::UNICODE_REPLACEMENT))?;
+                            } else {
+                                writer.write_all(b"\xEF\xBF\xBD")?;
+                            }
+                            continue;
+                        }
+                        (len as u8, replacement.code_point as i32)
+                    }
+                }
             };
+            let clamped_width = (width as usize).min(n.saturating_sub(i));
 
             if can_print_without_escape(c, ascii_only) {
                 match encoding {

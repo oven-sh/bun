@@ -1,0 +1,19 @@
+diff --git a/Source/WTF/wtf/win/SignalsWin.cpp b/Source/WTF/wtf/win/SignalsWin.cpp
+index 28be55d821..fa9a129ccb 100644
+--- a/Source/WTF/wtf/win/SignalsWin.cpp
++++ b/Source/WTF/wtf/win/SignalsWin.cpp
+@@ -107,7 +107,13 @@ LONG WINAPI vectoredHandler(struct _EXCEPTION_POINTERS *exceptionInfo)
+ 
+     PlatformRegisters& registers = *(exceptionInfo->ContextRecord);
+ 
+-    long result = EXCEPTION_EXECUTE_HANDLER;
++    // The unclaimed default MUST be EXCEPTION_CONTINUE_SEARCH so an exception no
++    // WTF handler owns proceeds down the chain (e.g. to AddressSanitizers
++    // shadow committer). EXCEPTION_EXECUTE_HANDLER is not a valid vectored-handler
++    // return value; the dispatcher treats it as CONTINUE_EXECUTION, re-executing
++    // the faulting instruction with nothing resolved and re-entering this handler
++    // in an unbounded re-fault loop.
++    long result = EXCEPTION_CONTINUE_SEARCH;
+     handlers.forEachHandler(signal, [&] (const SignalHandler& handler) {
+         switch (handler(signal, sigInfo, registers)) {
+         case SignalAction::Handled:

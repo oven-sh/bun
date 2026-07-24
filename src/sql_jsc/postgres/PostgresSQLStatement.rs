@@ -83,6 +83,22 @@ impl PostgresSQLStatement {
         self.ref_count.set(n);
     }
 
+    /// Reset to the state a freshly created statement is in before its first
+    /// Parse, under a new server-side name, so `advance()` re-Parses it on the
+    /// next `ReadyForQuery`. Used when the server reports the previous
+    /// prepared statement is gone (26000) or its cached plan is stale (0A000).
+    pub fn reset_for_reprepare(&mut self, prepared_statement_id: u64) {
+        self.status = Status::Pending;
+        self.error_response = None;
+        self.fields = Vec::new();
+        self.parameters = Box::default();
+        self.cached_structure = PostgresCachedStructure::default();
+        self.needs_duplicate_check = true;
+        self.fields_flags = DataCellFlags::default();
+        self.signature
+            .set_prepared_statement_name(prepared_statement_id);
+    }
+
     pub fn check_for_duplicate_fields(&mut self) {
         if !self.needs_duplicate_check {
             return;

@@ -224,7 +224,11 @@ function validateSecureContextOptions(options) {
     if (typeof privateKeyIdentifier === "string" && typeof privateKeyEngine === "string") {
       throw $ERR_CRYPTO_CUSTOM_ENGINE_NOT_SUPPORTED("Custom engines not supported by this OpenSSL");
     } else if (typeof privateKeyIdentifier !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("options.privateKeyIdentifier", ["string", "null", "undefined"], privateKeyIdentifier);
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.privateKeyIdentifier",
+        ["string", "null", "undefined"],
+        privateKeyIdentifier,
+      );
     } else {
       throw $ERR_INVALID_ARG_TYPE("options.privateKeyEngine", ["string", "null", "undefined"], privateKeyEngine);
     }

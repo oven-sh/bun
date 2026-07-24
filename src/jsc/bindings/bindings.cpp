@@ -936,8 +936,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict && !skipPrototypeIdentity) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
-            return false;
+        // A Proxy is transparent to this comparison: its traps forward
+        // [[GetPrototypeOf]] and own-property enumeration to the target, but
+        // JSC reports the proxy's own class name, which would reject every
+        // proxy/target pair. node compares prototypes, never class names.
+        if (!o1->isProxy() && !o2->isProxy()) {
+            if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+                return false;
+            }
         }
     }
 

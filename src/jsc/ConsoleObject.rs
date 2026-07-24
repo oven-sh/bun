@@ -2473,11 +2473,33 @@ pub mod formatter {
                             break;
                         }
 
+                        // `%%` consumes no argument, so collapse it before the
+                        // argument-exhaustion guard below (Node.js always
+                        // collapses `%%` regardless of remaining args).
+                        if slice[i as usize] == b'%' {
+                            // print up to and including the first %
+                            let end = &slice[0..i as usize];
+                            writer.write_all(end);
+                            // then skip the second % so we dont hit it again
+                            slice = &slice[slice.len().min((i + 1) as usize)..];
+                            len = slice.len() as u32;
+                            // Start the next iteration at `slice[1]`,
+                            // not `slice[0]`. (This is itself an
+                            // off-by-one vs the WHATWG spec; tracked
+                            // separately.)
+                            i = 1;
+                            continue;
+                        }
+
                         // borrowck — `writer` holds `&mut self.estimated_line_length`,
                         // so route `remaining_values` reads/writes through the `RawSlice`
                         // field directly instead of the `&self` helper methods.
                         if self.remaining_values.is_empty() {
-                            break;
+                            // No argument to consume: leave `%X` literal in the
+                            // output and keep scanning so later `%%` escapes
+                            // still collapse (Node.js behavior).
+                            i += 1;
+                            continue;
                         }
 
                         let token: PercentTag = match slice[i as usize] {
@@ -2488,20 +2510,6 @@ pub mod formatter {
                             b'd' | b'i' => PercentTag::I,
                             b'c' => PercentTag::C,
                             b'j' => PercentTag::J,
-                            b'%' => {
-                                // print up to and including the first %
-                                let end = &slice[0..i as usize];
-                                writer.write_all(end);
-                                // then skip the second % so we dont hit it again
-                                slice = &slice[slice.len().min((i + 1) as usize)..];
-                                len = slice.len() as u32;
-                                // Start the next iteration at `slice[1]`,
-                                // not `slice[0]`. (This is itself an
-                                // off-by-one vs the WHATWG spec; tracked
-                                // separately.)
-                                i = 1;
-                                continue;
-                            }
                             _ => {
                                 i += 1;
                                 continue;
@@ -2702,12 +2710,17 @@ pub mod formatter {
                                 // +1 WTF ref on every exit (incl. the `?` below).
                                 let mut str = OwnedString::new(BunString::empty());
                                 next_value.json_stringify_fast(global, &mut str)?;
-                                writer.add_for_new_line(str.length());
-                                writer.print(format_args!("{str}"));
+                                if str.is_empty() {
+                                    // JSON.stringify returned `undefined` (for
+                                    // undefined/function/symbol). Node.js string-
+                                    // coerces that to the literal "undefined".
+                                    writer.add_for_new_line("undefined".len());
+                                    writer.write_all(b"undefined");
+                                } else {
+                                    writer.add_for_new_line(str.length());
+                                    writer.print(format_args!("{str}"));
+                                }
                             }
-                        }
-                        if self.remaining_values.is_empty() {
-                            break;
                         }
                     }
                     _ => {}

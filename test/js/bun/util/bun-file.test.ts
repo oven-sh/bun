@@ -1,6 +1,6 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -23,6 +23,42 @@ test("delete() and stat() should work with unicode paths", async () => {
   expect(await Bun.file(filename).delete()).toBe(undefined);
 
   expect(await Bun.file(filename).exists()).toBe(false);
+});
+
+describe("Bun.file().lastModified", () => {
+  // 2**52 - 1: the internal "not yet statted" sentinel that must never reach JS.
+  const SENTINEL = 4503599627370495;
+
+  test("returns 0 for a path that does not exist", async () => {
+    using dir = tempDir("lastmodified-missing", {});
+    const missing = Bun.file(join(String(dir), "does-not-exist.txt"));
+    expect(await missing.exists()).toBe(false);
+    expect(missing.lastModified).toBe(0);
+    expect(missing.lastModified).not.toBe(SENTINEL);
+  });
+
+  test("a missing file is not newer than a real one", async () => {
+    using dir = tempDir("lastmodified-compare", { "real.txt": "x" });
+    const real = Bun.file(join(String(dir), "real.txt"));
+    const missing = Bun.file(join(String(dir), "nope.txt"));
+    expect(real.lastModified).toBeGreaterThan(0);
+    expect(real.lastModified).toBeLessThan(SENTINEL);
+    expect(missing.lastModified).toBe(0);
+    expect(missing.lastModified < real.lastModified).toBe(true);
+  });
+
+  test("returns 0 after the file is deleted", async () => {
+    using dir = tempDir("lastmodified-deleted", { "gone.txt": "x" });
+    const path = join(String(dir), "gone.txt");
+    expect(Bun.file(path).lastModified).toBeGreaterThan(0);
+    await Bun.file(path).delete();
+    expect(Bun.file(path).lastModified).toBe(0);
+  });
+
+  test("in-memory Blob.lastModified is 0, not the internal sentinel", () => {
+    expect(new Blob(["x"]).lastModified).toBe(0);
+    expect(new Blob().lastModified).toBe(0);
+  });
 });
 
 test("writer.end() should not close the fd if it does not own the fd", async () => {

@@ -367,14 +367,11 @@ test.skipIf(!isASAN)(
   60_000,
 );
 
-// A direct stream's pull() that throws synchronously reaches handle_reject
-// AFTER do_render_stream already wrote the 200 status+headers. handle_reject
-// gated only on has_responded() (response ended), not has_written_status(),
-// so the server's error() handler was asked to produce a second Response and
-// render_metadata wrote its status/headers into the in-flight body. Debug
-// builds hit the !has_written_status assert in do_write_status and aborted;
-// release builds spliced the error() header block into the chunked body.
-describe("sync pull() throw after status is written does not re-render error()", () => {
+// A direct stream's pull() throws synchronously. The boundary is whether a
+// body byte has reached uWS by then: if one has, the status line is committed
+// and error() must NOT be re-rendered (its header block would be spliced into
+// the chunked body); if none has, error() can replace the response entirely.
+describe("sync pull() throw: error() boundary is the first body byte", () => {
   function fixture(pullBody: string) {
     return `
       const net = require("node:net");
@@ -428,7 +425,7 @@ describe("sync pull() throw after status is written does not re-render error()",
     expect(exitCode).toBe(0);
   });
 
-  test("no body bytes flushed: stream is ended without splicing error() headers", async () => {
+  test("no body bytes flushed: error() replaces the response", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture(`throw new Error("boom");`)],
       env: bunEnv,
@@ -436,15 +433,24 @@ describe("sync pull() throw after status is written does not re-render error()",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("error: boom");
     const { wire, errorHandlerCalls } = JSON.parse(stdout);
-    // Status 200 was already written; the stream is ended empty. The error()
-    // response's status (500), headers, and body must not appear on the wire.
-    expect(wire).not.toContain("x-err");
-    expect(wire).not.toContain("FROM-ERROR-HANDLER");
-    expect(wire.startsWith("HTTP/1.1 200 OK\r\n")).toBe(true);
-    expect(errorHandlerCalls).toBe(0);
-    expect(exitCode).toBe(0);
+    // pull() threw before any body byte reached uWS, so no status line is
+    // committed yet and error() can replace the response in full.
+    expect({
+      wire: wire.split("\r\n")[0],
+      hasXErr: wire.includes("x-err: 1"),
+      body: wire.split("\r\n\r\n")[1],
+      errorHandlerCalls,
+      stderr,
+      exitCode,
+    }).toEqual({
+      wire: "HTTP/1.1 500 Internal Server Error",
+      hasXErr: true,
+      body: "FROM-ERROR-HANDLER",
+      errorHandlerCalls: 1,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

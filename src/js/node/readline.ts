@@ -43,7 +43,6 @@ const {
 
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
-
 var isWritable;
 
 var { inspect } = Bun;

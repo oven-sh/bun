@@ -633,6 +633,11 @@ impl CompileC {
                 return Err(crate::Error::DeferredErrors);
             }
         };
+        // errdefer state.destroy(): every Err return below must free the TCC state.
+        let state_guard = scopeguard::guard(state_ptr, |p| {
+            // SAFETY: `p` came from `TCC::State::init` above and has not been destroyed.
+            unsafe { TCC::State::destroy(p.as_ptr()) };
+        });
         // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
         // we hold the only reference for the rest of this function.
         let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
@@ -873,7 +878,7 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        Ok(state_ptr)
+        Ok(scopeguard::ScopeGuard::into_inner(state_guard))
     }
 }
 

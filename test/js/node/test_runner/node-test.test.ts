@@ -1,11 +1,11 @@
 import { spawn } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // Every test here spawns a bun subprocess (debug+ASAN startup is ~3s each).
-setDefaultTimeout(isDebug ? 30_000 : 10_000);
+setDefaultTimeout(isDebug || isASAN ? 30_000 : 10_000);
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -555,7 +555,7 @@ test.concurrent("run(): an uncaught exception during a pending body fails that t
   // The shim must fail the test as soon as the error is attributed, not wait
   // for a timeout rescue. Debug+ASAN pays ~3s per nested spawn, so size the
   // hang guard to clear two spawns there while staying tight on release.
-  const hangGuard = isDebug ? 20_000 : 4_000;
+  const hangGuard = isDebug || isASAN ? 20_000 : 4_000;
   const exited = await Promise.race([proc.exited, Bun.sleep(hangGuard).then(() => "timeout" as const)]);
   if (exited === "timeout") proc.kill();
   const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);

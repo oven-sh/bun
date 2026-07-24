@@ -14,6 +14,7 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     [new Set(), new Set()],
     [Symbol.for("foo"), Symbol.for("foo")],
     [NaN, NaN],
+    [new Date(NaN), new Date(NaN)],
   ])("Bun.deepEquals(%p, %p) === true, regardless of strict modee", (a, b) => {
     expect(Bun.deepEquals(a, b, true)).toBe(true);
     expect(Bun.deepEquals(a, b, false)).toBe(true);
@@ -24,6 +25,7 @@ describe.each([true, false])("Bun.deepEquals(a, b, strict: %p)", strict => {
     [-0, +0], //
     [{ a: 1 }, { a: 2 }],
     ["foo", "bar"],
+    [new Date(NaN), new Date(0)],
   ])("Bun.deepEquals(%p, %p) !== true, regardless of strict modee", (a, b) => {
     expect(Bun.deepEquals(a, b, true)).toBe(false);
     expect(Bun.deepEquals(a, b, false)).toBe(false);

@@ -1334,7 +1334,6 @@ pub mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
-    use js_ast::Symbol;
     use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
@@ -2363,9 +2362,19 @@ pub mod __gated_printer {
             }
         }
 
+        /// The symbol table is owned by the renamer struct that `self.renamer`
+        /// borrows for `'a`, and the print pass never mutates it. Detach the
+        /// borrow from `&self` so callers can hold the returned `&Symbol`
+        /// across `&mut self` print calls (same convention as `import_record`
+        /// and `name_for_symbol`).
         #[inline]
-        fn symbols(&self) -> &js_ast::symbol::Map {
-            self.renamer.symbols()
+        fn symbols(&self) -> &'a js_ast::symbol::Map {
+            // SAFETY: `Renamer<'a, 'a>` holds `&'a mut {NoOp,Number,Minify}Renamer`,
+            // each of which owns its `symbol::Map` by value, so the map's address
+            // is stable and valid for `'a`. No code path reachable from the
+            // printer mutates the map (the only `get_mut` callers run before
+            // `Printer::init`), so this never aliases a live `&mut`.
+            unsafe { &*std::ptr::from_ref(self.renamer.symbols()) }
         }
 
         /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
@@ -3939,11 +3948,7 @@ pub mod __gated_printer {
                     } else {
                         e.ref_
                     };
-                    // reshaped for borrowck — `get_const` borrows self;
-                    // capture as `BackRef` so the `&self` borrow is dropped before the
-                    // `&mut self` print calls below. Symbol table is arena-backed and
-                    // outlives the print pass (BackRef invariant).
-                    let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
+                    let symbol = self.symbols().get_const(ref_).unwrap();
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
@@ -5285,11 +5290,8 @@ pub mod __gated_printer {
                                 self.print_space();
                                 let last = slice_of(s.items).len() - 1;
                                 for (i, item) in slice_of(s.items).iter().enumerate() {
-                                    // reshaped for borrowck — detach symbol from
-                                    // `&self` via `BackRef` (arena-backed table outlives print).
-                                    let symbol = BackRef::<Symbol>::new(
-                                        self.symbols().get_with_link_const(item.name.ref_).unwrap(),
-                                    );
+                                    let symbol =
+                                        self.symbols().get_with_link_const(item.name.ref_).unwrap();
                                     let name = symbol.original_name.slice();
                                     let mut did_print = false;
 
@@ -5356,13 +5358,7 @@ pub mod __gated_printer {
                             let item = array[i];
 
                             if !item.original_name.slice().is_empty() {
-                                // reshaped for borrowck — detach symbol from
-                                // `&self` via `BackRef` (arena-backed; outlives the print pass).
-                                let symbol = self
-                                    .symbols()
-                                    .get_const(item.name.ref_)
-                                    .map(BackRef::<Symbol>::new);
-                                if let Some(symbol) = symbol {
+                                if let Some(symbol) = self.symbols().get_const(item.name.ref_) {
                                     if let Some(namespace) = &symbol.namespace_alias {
                                         if namespace.was_originally_property_access {
                                             let import_record = self.import_record(

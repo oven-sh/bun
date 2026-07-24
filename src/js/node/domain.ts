@@ -83,6 +83,52 @@ domain.createDomain = domain.create = function () {
     domain.active = process.domain = stack.length ? stack[stack.length - 1] : null;
     return this;
   };
+  // Routes an exception thrown by an async callback that ran inside this
+  // domain, like Node's Domain.prototype._errorHandler: decorate the error,
+  // emit 'error' (never on a handlerless top-level domain, so the process
+  // still gets its uncaughtException), and clear the domain stack because the
+  // throw ended this tick. Returns whether a handler caught the error.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L219
+  d._errorHandler = function (er) {
+    let caught = false;
+
+    if ((typeof er === "object" && er !== null) || typeof er === "function") {
+      ObjectDefineProperty(er, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: d,
+        writable: true,
+      });
+      er.domainThrown = true;
+    }
+
+    if (stack.length === 1) {
+      if (d.listenerCount("error") > 0) {
+        caught = d.emit("error", er);
+      }
+    } else {
+      try {
+        caught = d.emit("error", er);
+      } catch (er2) {
+        // The domain error handler threw: see if an outer domain catches it.
+        stack.pop();
+        if (stack.length) {
+          domain.active = process.domain = stack[stack.length - 1];
+          caught = process.domain._errorHandler(er2);
+        } else {
+          throw er2;
+        }
+      }
+    }
+
+    // Uncaught exceptions end the current tick; no domains stay entered
+    // between ticks.
+    stack.length = 0;
+    domain.active = process.domain = null;
+
+    return caught;
+  };
   return d;
 };
 

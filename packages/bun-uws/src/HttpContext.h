@@ -951,7 +951,14 @@ public:
                 /* Middleware? Automatically respond to expectations */
                 std::string_view expect = user.httpRequest->getHeader("expect");
                 if (expect.length() && expect == "100-continue") {
-                    user.httpResponse->writeContinue();
+                    /* RFC 9110 10.1.1: a Content-Length over the configured
+                     * limit is a 413 from the head alone; skip the 100 so the
+                     * handler can answer the final status directly. */
+                    std::string_view cl = user.httpRequest->getHeader("content-length");
+                    uint64_t len = cl.length() ? HttpParser::toUnsignedInteger(cl) : 0;
+                    if (len == UINT64_MAX || len <= httpContextData->maxRequestBodySize) {
+                        user.httpResponse->writeContinue();
+                    }
                 }
             }
 

@@ -60,6 +60,9 @@ struct H3App {
     void clearRoutes() {
         http3Context->getContextData()->router = decltype(http3Context->getContextData()->router){};
     }
+    void setMaxRequestBodySize(uint64_t maxRequestBodySize) {
+        http3Context->getContextData()->maxRequestBodySize = maxRequestBodySize;
+    }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {

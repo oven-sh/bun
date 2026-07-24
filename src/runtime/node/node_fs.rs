@@ -6571,11 +6571,10 @@ impl NodeFS {
             Err(err) => {
                 if !is_root {
                     match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => return Ok(()),
+                        // The entry can't be descended into: dangling symlink, not a
+                        // directory, not permitted, or a symlink loop. EACCES is absent on
+                        // purpose: like Node, an unreadable directory fails the whole walk.
+                        E::ENOENT | E::ENOTDIR | E::EPERM | E::ELOOP => return Ok(()),
                         _ => {}
                     }
                     if root_basename.len() + 1 + basename.as_bytes().len() + 1
@@ -6777,11 +6776,10 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                     match err.get_errno() {
-                        // These things can happen and there's nothing we can do about it.
-                        //
-                        // This is different than what Node does, at the time of writing.
-                        // Node doesn't gracefully handle errors like these. It fails the entire operation.
-                        E::ENOENT | E::ENOTDIR | E::EPERM => continue,
+                        // The entry can't be descended into: dangling symlink, not a
+                        // directory, not permitted, or a symlink loop. EACCES is absent on
+                        // purpose: like Node, an unreadable directory fails the whole walk.
+                        E::ENOENT | E::ENOTDIR | E::EPERM | E::ELOOP => continue,
                         _ => {
                             // TODO: propagate file path (removed previously because it leaked the path)
                             return Err(err);

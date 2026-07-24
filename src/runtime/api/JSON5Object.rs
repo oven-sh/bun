@@ -373,10 +373,21 @@ impl Stringifier {
 
     fn append_quoted_string(&mut self, str: &BunString) {
         self.builder.append_lchar(b'\'');
-        for i in 0..str.length() {
+        let len = str.length();
+        let mut i = 0;
+        while i < len {
             let c = str.char_at(i);
             match c {
-                0x00 => self.builder.append_latin1(b"\\0"),
+                0x00 => {
+                    // `\0` followed by a decimal digit is a forbidden octal
+                    // escape, so emit `\x00` in that position (matches the
+                    // json5 npm reference).
+                    if i + 1 < len && matches!(str.char_at(i + 1), 0x30..=0x39) {
+                        self.builder.append_latin1(b"\\x00");
+                    } else {
+                        self.builder.append_latin1(b"\\0");
+                    }
+                }
                 0x08 => self.builder.append_latin1(b"\\b"),
                 0x09 => self.builder.append_latin1(b"\\t"),
                 0x0a => self.builder.append_latin1(b"\\n"),
@@ -395,10 +406,38 @@ impl Stringifier {
                     self.builder
                         .append_lchar(bun_core::fmt::hex_char_lower(c as u8));
                 }
+                0xD800..=0xDFFF => {
+                    // Well-formed output: escape lone surrogates as \uHHHH so
+                    // the result round-trips through parse(). A valid lead+trail
+                    // pair is emitted verbatim.
+                    if bun_core::strings::u16_is_lead(c)
+                        && i + 1 < len
+                        && bun_core::strings::u16_is_trail(str.char_at(i + 1))
+                    {
+                        self.builder.append_uchar(c);
+                        self.builder.append_uchar(str.char_at(i + 1));
+                        i += 2;
+                        continue;
+                    }
+                    self.append_unicode_escape(c);
+                }
                 _ => self.builder.append_uchar(c),
             }
+            i += 1;
         }
         self.builder.append_lchar(b'\'');
+    }
+
+    fn append_unicode_escape(&mut self, c: u16) {
+        self.builder.append_latin1(b"\\u");
+        self.builder
+            .append_lchar(bun_core::fmt::hex_char_lower((c >> 12) as u8));
+        self.builder
+            .append_lchar(bun_core::fmt::hex_char_lower((c >> 8) as u8));
+        self.builder
+            .append_lchar(bun_core::fmt::hex_char_lower((c >> 4) as u8));
+        self.builder
+            .append_lchar(bun_core::fmt::hex_char_lower(c as u8));
     }
 
     fn newline(&mut self) {

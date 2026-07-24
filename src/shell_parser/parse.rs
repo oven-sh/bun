@@ -2571,6 +2571,24 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                             self.tokens.push(Token::Newline);
                             fell_through = true;
                         }
+                        // CRLF: drop a `\r` right before `\n` in Normal state so
+                        // the `\n` arm handles the newline. Inside quotes `\r`
+                        // stays literal (matches bash/dash).
+                        c if c == u32::from(b'\r') => {
+                            const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'\r' as usize));
+                            if self.chars.state == CharState::Single
+                                || self.chars.state == CharState::Double
+                            {
+                                break 'escaped;
+                            }
+                            if let Some(next) = self.peek() {
+                                if !next.escaped && next.char == u32::from(b'\n') {
+                                    fell_through = true;
+                                    break 'escaped;
+                                }
+                            }
+                            break 'escaped;
+                        }
                         // glob asterisks
                         c if c == u32::from(b'*') => {
                             const _: () = assert!(SPECIAL_CHARS_TABLE.is_set(b'*' as usize));
@@ -2896,6 +2914,24 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     self.break_word_impl(true, true, false)?;
                 }
                 continue;
+            }
+            // `\<CR><LF>` line-continuation (CRLF parity with escaped-`\n`).
+            // Bare escaped CR in Double state re-emits the swallowed
+            // backslash so `\<CR>` stays literal `\` + CR (bash/POSIX).
+            else if char == u32::from(b'\r') {
+                debug_assert!(input.escaped);
+                if let Some(next) = self.peek() {
+                    if !next.escaped && next.char == u32::from(b'\n') {
+                        let _ = self.eat();
+                        if self.chars.state != CharState::Double {
+                            self.break_word_impl(true, true, false)?;
+                        }
+                        continue;
+                    }
+                }
+                if self.chars.state == CharState::Double {
+                    self.append_char_to_str_pool(u32::from(b'\\'))?;
+                }
             }
 
             self.append_char_to_str_pool(char)?;
@@ -3775,12 +3811,14 @@ impl<'a, const ENCODING: StringEncoding> ShellCharIter<'a, ENCODING> {
                     Src::Unicode(u) => u.index_next().map(|v| v.char),
                 }?;
                 match peeked {
-                    // Backslash only applies to these characters
+                    // Backslash only applies to these characters. `\r` lets
+                    // `\<CR><LF>` reach the escaped-`\r` handler (parity with `\<LF>`).
                     c if c == u32::from(b'$')
                         || c == u32::from(b'`')
                         || c == u32::from(b'"')
                         || c == u32::from(b'\\')
                         || c == u32::from(b'\n')
+                        || c == u32::from(b'\r')
                         || c == u32::from(b'#') =>
                     {
                         char = peeked;

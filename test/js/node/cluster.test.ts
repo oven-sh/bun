@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
+import path from "node:path";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -184,4 +185,67 @@ test("disconnect() on a cluster.Worker built around a plain object does not abor
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "returned self: true", exitCode: 0 });
+});
+
+// worker.disconnect() must deliver every message already accepted by
+// worker.send() and let the worker observe 'disconnect'. In Node the primary
+// only enqueues {act:'disconnect'} (ordered after the user messages on the
+// same channel); the worker closes the channel from its side once received.
+test("worker.disconnect() delivers queued send() messages and the worker sees 'disconnect'", async () => {
+  using dir = tempDir("cluster-disconnect-drain", {
+    "main.js": `
+      const cluster = require("node:cluster");
+      const fs = require("node:fs");
+      const N = 50;
+      if (cluster.isPrimary) {
+        const OUT = process.argv[2];
+        const worker = cluster.fork({ OUT });
+        worker.once("message", msg => {
+          if (msg !== "ready") return;
+          // 64 KiB per message so the IPC write queue backs up past the
+          // kernel socket buffer before disconnect() is called.
+          const payload = Buffer.alloc(64 * 1024, "z").toString();
+          let acked = 0;
+          for (let i = 0; i < N; i++) worker.send({ q: "p", i, payload }, err => { if (!err) acked++; });
+          worker.disconnect();
+          let sawDisconnect = false;
+          worker.once("disconnect", () => { sawDisconnect = true; });
+          worker.once("exit", (code, signal) => {
+            const got = JSON.parse(fs.readFileSync(OUT, "utf8"));
+            console.log(JSON.stringify({
+              acked, received: got.n, workerSawDisconnect: got.saw,
+              primarySawDisconnect: sawDisconnect, exitedAfterDisconnect: worker.exitedAfterDisconnect,
+              code, signal,
+            }));
+          });
+        });
+      } else {
+        let n = 0, saw = false;
+        const dump = () => { try { fs.writeFileSync(process.env.OUT, JSON.stringify({ n, saw })); } catch {} };
+        process.on("message", m => { if (m && m.q === "p") n++; });
+        process.on("disconnect", () => { saw = true; dump(); process.exit(0); });
+        process.on("exit", dump);
+        process.send("ready");
+      }
+    `,
+  });
+  const out = path.join(String(dir), "out.json");
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.js", out],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    acked: 50,
+    received: 50,
+    workerSawDisconnect: true,
+    primarySawDisconnect: true,
+    exitedAfterDisconnect: true,
+    code: 0,
+    signal: null,
+  });
+  expect(exitCode).toBe(0);
 });

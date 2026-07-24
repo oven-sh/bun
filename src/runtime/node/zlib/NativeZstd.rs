@@ -160,16 +160,16 @@ mod _impl {
             let process_callback_value = arguments[3];
 
             let Some(mut write_state) = write_state_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     "writeState",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     write_state_value,
                 ));
             };
             if write_state.typed_array_type != jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     "writeState",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     write_state_value,
                 ));
             }
@@ -215,9 +215,9 @@ mod _impl {
                 dictionary_buf = match dictionary_value.as_array_buffer(global) {
                     Some(buf) => buf,
                     None => {
-                        return Err(global.throw_invalid_argument_type_value(
+                        return Err(global.throw_invalid_argument_type_list(
                             "dictionary",
-                            "Buffer, TypedArray, or DataView",
+                            &[b"Buffer", b"TypedArray", b"DataView"],
                             dictionary_value,
                         ));
                     }
@@ -234,16 +234,16 @@ mod _impl {
             }
 
             let Some(mut params_) = init_params_array_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     "initParamsArray",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     init_params_array_value,
                 ));
             };
             if params_.typed_array_type != jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     "initParamsArray",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     init_params_array_value,
                 ));
             }

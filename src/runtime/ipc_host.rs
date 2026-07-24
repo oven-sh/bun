@@ -116,9 +116,9 @@ pub(crate) fn do_send(
         && !message.is_boolean()
         && !message.is_null()
     {
-        return Err(global_object.throw_invalid_argument_type_value_one_of(
+        return Err(global_object.throw_invalid_argument_type_list(
             b"message",
-            b"string, object, number, or boolean",
+            &[b"string", b"object", b"number", b"boolean"],
             message,
         ));
     }

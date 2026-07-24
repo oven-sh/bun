@@ -3370,9 +3370,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         if !sc_js.is_empty() {
             let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     b"secureContext",
-                    b"SecureContext",
+                    &[b"SecureContext"],
                     sc_js,
                 ));
             };
@@ -4452,9 +4452,9 @@ pub fn js_upgrade_duplex_to_tls(
     };
     if !sc_js.is_empty() {
         let Some(sc) = sc_js.as_class_ref::<SecureContext>() else {
-            return Err(global.throw_invalid_argument_type_value(
+            return Err(global.throw_invalid_argument_type_list(
                 b"secureContext",
-                b"SecureContext",
+                &[b"SecureContext"],
                 sc_js,
             ));
         };

@@ -658,7 +658,7 @@ static bool isClassName(const WTF::String& type)
 // grouped into primitive type names ("of type ..."), class names ("an
 // instance of ..."), and everything else.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1404
-WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
+static WTF::String formatInvalidArgType(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, const WTF::Vector<WTF::String>& expected_types, JSValue actual_value)
 {
     WTF::StringBuilder result;
 
@@ -670,12 +670,7 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     WTF::Vector<WTF::String> instances;
     WTF::Vector<WTF::String> other;
 
-    for (unsigned i = 0, length = expected_types.size(); i < length; i++) {
-        auto* str = expected_types.at(i).toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto view = str->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        WTF::String value = view->toString();
+    for (const auto& value : expected_types) {
         if (isPrimitiveTypeName(value))
             types.append(value.convertToASCIILowercase());
         else if (isClassName(value))
@@ -724,6 +719,49 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     RETURN_IF_EXCEPTION(scope, {});
 
     return result.toString();
+}
+
+WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const StringView& arg_name, ArgList expected_types, JSValue actual_value)
+{
+    WTF::Vector<WTF::String> types;
+    types.reserveInitialCapacity(expected_types.size());
+    for (unsigned i = 0, length = expected_types.size(); i < length; i++) {
+        auto* str = expected_types.at(i).toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view = str->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        types.append(view->toString());
+    }
+    RELEASE_AND_RETURN(scope, formatInvalidArgType(scope, globalObject, arg_name, types, actual_value));
+}
+
+// Renders the "<name>" argument / "<name>" property prefix Node's
+// ERR_INVALID_ARG_TYPE uses, so Rust-side messages pick "property" for dotted
+// names the same way the C++ ones do.
+extern "C" BunString Bun__ErrorCode__formatParameterName(BunString argName)
+{
+    WTF::StringBuilder result;
+    auto argNameString = argName.toWTFString();
+    addParameter(result, argNameString);
+    return Bun::toStringRef(result.toString());
+}
+
+// Renders Node's ERR_INVALID_ARG_TYPE message for a list of expected types so
+// the Rust error paths use the same renderer as the C++ ones: "argument" vs
+// "property" for dotted names, "of type" for primitive type names, and "an
+// instance of" for class names.
+extern "C" BunString Bun__ErrorCode__formatInvalidArgType(JSC::JSGlobalObject* globalObject, BunString argName, const BunString* expectedTypes, size_t expectedTypesLength, EncodedJSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    WTF::Vector<WTF::String> types;
+    types.reserveInitialCapacity(expectedTypesLength);
+    for (size_t i = 0; i < expectedTypesLength; i++) {
+        types.append(expectedTypes[i].toWTFString());
+    }
+    auto argNameString = argName.toWTFString();
+    auto message = formatInvalidArgType(scope, globalObject, argNameString, types, JSValue::decode(value));
+    RETURN_IF_EXCEPTION(scope, Zig::BunStringEmpty);
+    return Bun::toStringRef(message);
 }
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)

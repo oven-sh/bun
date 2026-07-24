@@ -1,6 +1,6 @@
 // https://github.com/oven-sh/bun/issues/5356
 // jest.resetModules is not a function in bun:test
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("jest.resetModules", () => {

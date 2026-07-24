@@ -1,6 +1,7 @@
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::Ordering;
+use std::borrow::Cow;
 
 use bstr::ByteSlice;
 
@@ -415,6 +416,53 @@ impl bun_core::output::ErrName for ForManifestError {
 }
 
 impl NetworkTask {
+    fn registry_href_has_http_scheme(registry_href: &[u8]) -> bool {
+        registry_href
+            .get(..b"http://".len())
+            .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"http://"))
+            || registry_href
+                .get(..b"https://".len())
+                .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"https://"))
+    }
+
+    fn registry_url_suffix_start(registry_href: &[u8]) -> usize {
+        let query_start = strings::index_of_char(registry_href, b'?').map(|i| i as usize);
+        let hash_start = strings::index_of_char(registry_href, b'#').map(|i| i as usize);
+        match (query_start, hash_start) {
+            (Some(query), Some(hash)) => query.min(hash),
+            (Some(query), None) => query,
+            (None, Some(hash)) => hash,
+            (None, None) => registry_href.len(),
+        }
+    }
+
+    fn registry_base_for_manifest_join(
+        registry_href: &[u8],
+    ) -> Result<Cow<'_, [u8]>, ForManifestError> {
+        if !Self::registry_href_has_http_scheme(registry_href) {
+            return Ok(Cow::Borrowed(registry_href));
+        }
+
+        let suffix_start = Self::registry_url_suffix_start(registry_href);
+
+        if suffix_start > 0 && registry_href[suffix_start - 1] == b'/' {
+            return Ok(Cow::Borrowed(registry_href));
+        }
+
+        let mut base = Vec::new();
+        let capacity = registry_href
+            .len()
+            .checked_add(1)
+            .ok_or(ForManifestError::OutOfMemory)?;
+        base.try_reserve_exact(capacity)
+            .map_err(|_| ForManifestError::OutOfMemory)?;
+        base.extend_from_slice(&registry_href[..suffix_start]);
+        base.push(b'/');
+        base.extend_from_slice(&registry_href[suffix_start..]);
+
+        Ok(Cow::Owned(base))
+    }
+
     pub fn for_manifest(
         &mut self,
         name: &[u8],
@@ -444,8 +492,9 @@ impl NetworkTask {
             // `OwnedString` derefs the WTF-backed result on scope exit —
             // covers both the
             // success path and the InvalidURL early returns below.
+            let registry_base = Self::registry_base_for_manifest_join(scope.url.href())?;
             let tmp = bun_core::OwnedString::new(bun_url::join(
-                &bun_core::String::borrow_utf8(scope.url.href()),
+                &bun_core::String::borrow_utf8(registry_base.as_ref()),
                 &bun_core::String::borrow_utf8(encoded_name),
             ));
 
@@ -502,7 +551,10 @@ impl NetworkTask {
 
             {
                 let joined = URL::parse(&url_bytes);
-                let registry = scope.url.url();
+                let registry_base_href = registry_base.as_ref();
+                let registry_base_path =
+                    &registry_base_href[..Self::registry_url_suffix_start(registry_base_href)];
+                let registry = URL::parse(registry_base_path);
                 let registry_dir_end =
                     strings::last_index_of_char(registry.pathname, b'/').map_or(0, |i| i + 1);
                 let registry_dir = &registry.pathname[..registry_dir_end];

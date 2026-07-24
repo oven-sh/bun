@@ -4,11 +4,8 @@
 //! operations like writing `Store::File` to another `Store::File` knows to use a
 //! basic file copy instead of a naive read write loop.
 
-use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
-
-use bun_jsc::JsCell;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
@@ -2150,6 +2147,12 @@ impl BlobExt for Blob {
 
     // TODO: Move this to a separate `File` object or BunFile
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
+        // `new File()` always stamps `last_modified`; prefer it over a file
+        // store's live mtime. `Blob__setAsFile` leaves it 0.0, which falls
+        // through so FormData.get() on a Bun.file entry still reports mtime.
+        if self.is_jsdom_file.get() && self.last_modified.get() != 0.0 {
+            return JSValue::js_number(self.last_modified.get());
+        }
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
                 // do not hold a pattern-bound `&File` across
@@ -3313,47 +3316,29 @@ impl BlobExt for Blob {
 
                 jsc::JSType::DOMWrapper => {
                     if !fail_if_top_value_is_not_typed_array_like {
+                        // REQUIRE_ARRAY callers reach here only via a length-1
+                        // array: `top_value` is a *part* (bytes only). A bare
+                        // Blob body (REQUIRE_ARRAY=false) keeps its metadata.
                         if let Some(blob_ptr) = top_value.as_::<Blob>() {
                             // SAFETY: JS heap pointer; single-threaded JS execution.
                             let blob = unsafe { &mut *blob_ptr };
-                            if MOVE {
-                                // Move the store without bumping its refcount, but take
-                                // independent ownership of name/content_type so the
-                                // source's eventual finalize() doesn't double-free them.
-                                // *Take* the StoreRef out of `blob`
-                                // (no clone, no into_raw leak) and field-copy the
-                                // rest, deep-owning `name`/`content_type` — net 0 on
-                                // the store refcount.
-                                let _blob = Blob {
-                                    reported_estimated_size: Cell::new(
-                                        blob.reported_estimated_size.get(),
-                                    ),
-                                    size: Cell::new(blob.size.get()),
-                                    offset: Cell::new(blob.offset.get()),
-                                    store: JsCell::new(blob.take_store()), // ← the move
-                                    content_type: JsCell::new(blob.content_type.get().clone()),
-                                    content_type_was_set: Cell::new(
-                                        blob.content_type_was_set.get(),
-                                    ),
-                                    charset: Cell::new(blob.charset.get()),
-                                    is_jsdom_file: Cell::new(blob.is_jsdom_file.get()),
-                                    ref_count: bun_ptr::RawRefCount::init(0), // setNotHeapAllocated
-                                    global_this: Cell::new(blob.global_this.get()),
-                                    last_modified: Cell::new(blob.last_modified.get()),
-                                    name: blob.name.clone(),
-                                };
-                                return Ok(_blob);
+                            let out = if REQUIRE_ARRAY {
+                                blob.dupe_without_metadata()
                             } else {
-                                return Ok(blob.dupe());
+                                blob.dupe()
+                            };
+                            if MOVE {
+                                out.store.set(blob.take_store());
                             }
+                            return Ok(out);
                         } else if let Some(artifact) =
                             top_value.as_class_ref::<crate::api::BuildArtifact>()
                         {
-                            // The previous "move" path here only nulled the store on a
-                            // local copy and left `build.blob` fully intact, so it was
-                            // never a real move. Share the store and deep-copy owned
-                            // buffers instead — regardless of `MOVE`.
-                            return Ok(artifact.blob.dupe());
+                            return Ok(if REQUIRE_ARRAY {
+                                artifact.blob.dupe_without_metadata()
+                            } else {
+                                artifact.blob.dupe()
+                            });
                         } else {
                             // Dispatch on the `ZigStringSlice` variant to detect an
                             // owned (heap) slice. Pass
@@ -5595,9 +5580,9 @@ pub fn jsdom_file_construct_(
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
                     // `get::<_, true>` on a single-Blob sequence returns
-                    // `dupe()` (a shared StoreRef), so this `Bytes` may already
-                    // carry an owned `stored_name` from the source blob; the
-                    // assignment drops (frees) the previous `Box<[u8]>`.
+                    // `dupe_without_metadata()` (a shared StoreRef), so this `Bytes`
+                    // may already carry an owned `stored_name` from the source blob;
+                    // the assignment drops (frees) the previous `Box<[u8]>`.
                     bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
                 store::Data::S3(_) | store::Data::File(_) => {

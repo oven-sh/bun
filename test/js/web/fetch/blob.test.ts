@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { utimesSync } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -686,5 +687,120 @@ describe("file-backed slice bounds are respected when streaming and serving", ()
     expect(await clone.text()).toBe("56789");
     // Serializing resolves the original's size, clamping the window to EOF.
     expect(s.size).toBe(5);
+  });
+});
+
+describe("new Blob([part]) / new File([part], name) do not inherit part metadata", () => {
+  // Per the File API spec, parts contribute only their bytes; the new Blob's
+  // `type` is "" unless options.type is a valid value, and File's
+  // `lastModified` is the explicit option (or Date.now()), never the part's.
+
+  test("single Blob part does not leak its .type into the wrapper", async () => {
+    const part = new Blob(["y"], { type: "x/secret" });
+    expect({
+      blobNoOpts: new Blob([part]).type,
+      fileNoOpts: new File([part], "n").type,
+      blobInvalidType: new Blob([part], { type: "x/é" }).type,
+      fileInvalidType: new File([part], "n", { type: "x/é" }).type,
+      blobValidType: new Blob([part], { type: "x/ok" }).type,
+      blobTwoParts: new Blob([part, "z"]).type,
+    }).toEqual({
+      blobNoOpts: "",
+      fileNoOpts: "",
+      blobInvalidType: "",
+      fileInvalidType: "",
+      blobValidType: "x/ok",
+      blobTwoParts: "",
+    });
+    // bytes are still copied from the part
+    expect(await new Blob([part]).text()).toBe("y");
+  });
+
+  test("single File part does not turn the wrapper into a File", () => {
+    const part = new File(["y"], "secret.txt", { type: "x/secret", lastModified: 123 });
+    const wrapped = new Blob([part]);
+    expect({
+      type: wrapped.type,
+      isFile: wrapped instanceof File,
+    }).toEqual({
+      type: "",
+      isFile: false,
+    });
+  });
+
+  test("sliced Blob part keeps its byte window but not its .type", async () => {
+    const base = new Blob(["0123456789"], { type: "x/secret" });
+    const slice = base.slice(3, 7, "x/slice");
+    const wrapped = new Blob([slice]);
+    expect(wrapped.type).toBe("");
+    expect(wrapped.size).toBe(4);
+    expect(await wrapped.text()).toBe("3456");
+  });
+
+  test("new File([Bun.file(path)], name, {lastModified}) honors the explicit lastModified", async () => {
+    using dir = tempDir("blob-file-lastmodified", {
+      "f.bin": "OLD",
+    });
+    const p = path.join(String(dir), "f.bin");
+    const bunFile = Bun.file(p);
+    const wrapped = new File([bunFile], "n", { lastModified: 7 });
+    expect(wrapped.lastModified).toBe(7);
+    expect(wrapped.name).toBe("n");
+    // bytes are still the file's bytes
+    expect(await wrapped.text()).toBe("OLD");
+  });
+
+  test("new File([Bun.file(path)], name) without lastModified defaults to now, not the file mtime", async () => {
+    using dir = tempDir("blob-file-lastmodified-default", {
+      "f.bin": "OLD",
+    });
+    const p = path.join(String(dir), "f.bin");
+    // force mtime far into the past so "now" vs "file mtime" are unambiguous
+    const oldMtime = new Date(1_000_000_000_000); // 2001-09-09
+    utimesSync(p, oldMtime, oldMtime);
+    const before = Date.now();
+    const wrapped = new File([Bun.file(p)], "n");
+    const after = Date.now();
+    // Date.now() and the native milli_timestamp() are separate clock reads
+    // and truncate independently, so allow 1s of slack on each side.
+    expect(wrapped.lastModified).toBeGreaterThanOrEqual(before - 1000);
+    expect(wrapped.lastModified).toBeLessThanOrEqual(after + 1000);
+  });
+
+  test("a bare Blob body (not a part) keeps its content-type for server.fetch", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req => new Response(req.headers.get("content-type") ?? "<null>"),
+    });
+    const body = new Blob(['{"a":1}'], { type: "application/json" });
+    const res = await server.fetch(server.url.href, { method: "POST", body });
+    expect(await res.text()).toContain("application/json");
+  });
+
+  test("a Blob body with empty .type contributes no Content-Type header", async () => {
+    using dir = tempDir("blob-empty-ct", { "f.html": "<h1>hi</h1>" });
+    await using server = Bun.serve({
+      port: 0,
+      fetch: req =>
+        Response.json({
+          has: req.headers.has("content-type"),
+          ct: req.headers.get("content-type"),
+        }),
+    });
+    const wrapped = new Blob([Bun.file(path.join(String(dir), "f.html"))]);
+    expect(wrapped.type).toBe("");
+    const res = await fetch(server.url, { method: "POST", body: wrapped });
+    expect(await res.json()).toEqual({ has: false, ct: null });
+  });
+
+  test("FormData.get() on a Bun.file entry still reports the file mtime", async () => {
+    using dir = tempDir("blob-formdata-mtime", { "f.bin": "hi" });
+    const p = path.join(String(dir), "f.bin");
+    const oldMtime = new Date(1_000_000_000_000); // 2001-09-09
+    utimesSync(p, oldMtime, oldMtime);
+    const fd = new FormData();
+    fd.append("f", Bun.file(p));
+    const entry = fd.get("f") as File;
+    expect(entry.lastModified).toBe(1_000_000_000_000);
   });
 });

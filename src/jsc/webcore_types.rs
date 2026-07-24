@@ -352,6 +352,19 @@ impl Blob {
         self.dupe_with_content_type(false)
     }
 
+    /// Shares `self`'s bytes (store + offset/size/charset) but leaves
+    /// `content_type`/`last_modified`/`name`/`is_jsdom_file` at defaults.
+    /// Used by `new Blob([part])`, where parts contribute only bytes.
+    pub fn dupe_without_metadata(&self) -> Blob {
+        let blob = Blob::default();
+        blob.size.set(self.size.get());
+        blob.offset.set(self.offset.get());
+        blob.store.set(self.store.get().clone());
+        blob.charset.set(self.charset.get());
+        blob.global_this.set(self.global_this.get());
+        blob
+    }
+
     /// Alias for [`Self::dupe`].
     #[inline]
     pub fn borrowed_view(&self) -> Blob {

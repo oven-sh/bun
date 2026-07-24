@@ -5311,3 +5311,94 @@ describe("multi-line comment scanning", () => {
     expectParseError(`/*${pad600}🦊`, message);
   });
 });
+
+describe("json/toml loader with reserved-word top-level keys", () => {
+  const js = new Bun.Transpiler({ loader: "js" });
+  const reparses = out => {
+    try {
+      js.transformSync(out);
+      return "ok";
+    } catch (e) {
+      return (e.errors ?? [e]).map(x => x.message).join(" | ");
+    }
+  };
+
+  // prettier-ignore
+  const reserved = [
+    "break", "case", "catch", "class", "const", "continue", "debugger",
+    "delete", "do", "else", "enum", "export", "extends", "false", "finally",
+    "for", "function", "if", "import", "in", "instanceof", "new", "null",
+    "return", "super", "switch", "this", "throw", "true", "try", "typeof",
+    "var", "void", "while", "with",
+    "implements", "interface", "let", "package", "private", "protected",
+    "public", "static", "yield",
+    "await", "arguments", "eval",
+  ];
+
+  it("emits valid JS for every reserved-word key (json)", () => {
+    const t = new Bun.Transpiler();
+    const failures = [];
+    for (const k of reserved) {
+      const out = t.transformSync(JSON.stringify({ [k]: 1 }), "json");
+      if (reparses(out) !== "ok") failures.push({ key: k, out });
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("emits valid JS for every reserved-word key (toml)", () => {
+    const t = new Bun.Transpiler();
+    const failures = [];
+    for (const k of reserved) {
+      const out = t.transformSync(`${k} = 1`, "toml");
+      if (reparses(out) !== "ok") failures.push({ key: k, out });
+    }
+    expect(failures).toEqual([]);
+  });
+
+  it("aliases reserved-word keys and preserves the exported name", () => {
+    const t = new Bun.Transpiler();
+    expect(t.transformSync('{"if":1,"ok":2}', "json")).toBe(
+      "var _if = 1, ok = 2;\n\nexport {\n  _if as if,\n  ok\n};\nexport default { if: _if, ok };\n",
+    );
+    expect(t.transformSync('{"class":1}', "json")).toBe(
+      "var _class = 1;\n\nexport {\n  _class as class\n};\nexport default { class: _class };\n",
+    );
+    expect(t.transformSync("if = 1", "toml")).toBe(
+      "var _if = 1;\n\nexport {\n  _if as if\n};\nexport default {\n  if: _if\n};\n",
+    );
+  });
+
+  it("emits valid JS when many reserved-word keys are combined", () => {
+    const t = new Bun.Transpiler();
+    const obj = Object.fromEntries(reserved.map((k, i) => [k, i]));
+    obj.plain = 999;
+    const out = t.transformSync(JSON.stringify(obj), "json");
+    expect({ out, verdict: reparses(out) }).toEqual({ out, verdict: "ok" });
+    for (const k of reserved) expect(out).toContain(` as ${k}`);
+    expect(out).toContain("plain");
+  });
+
+  it("still handles non-identifier and default keys", () => {
+    const t = new Bun.Transpiler();
+    const out = t.transformSync('{"b c":1,"default":2,"if":3}', "json");
+    expect(reparses(out)).toBe("ok");
+    expect(out).toContain('b_c as "b c"');
+    expect(out).toContain("_if as if");
+  });
+
+  it("suffixes when a mangled key collides with a sibling", () => {
+    const t = new Bun.Transpiler();
+    for (const [src, decl, aliases] of [
+      ['{"if":1,"_if":2}', "var _if = 1, _if2 = 2;", ["_if as if", "_if2 as _if"]],
+      ['{"_if":1,"if":2}', "var _if = 1, _if2 = 2;", ["_if", "_if2 as if"]],
+      ['{"let":1,"_let":2}', "var _let = 1, _let2 = 2;", ["_let as let", "_let2 as _let"]],
+      ['{"b c":1,"b_c":2}', "var b_c = 1, b_c2 = 2;", ['b_c as "b c"', "b_c2 as b_c"]],
+      ['{"if":1,"_if":2,"_if2":3}', "var _if = 1, _if2 = 2, _if22 = 3;", ["_if as if", "_if2 as _if", "_if22 as _if2"]],
+    ]) {
+      const out = t.transformSync(src, "json");
+      expect({ src, verdict: reparses(out) }).toEqual({ src, verdict: "ok" });
+      expect(out.split("\n")[0]).toBe(decl);
+      for (const a of aliases) expect(out).toContain(a);
+    }
+  });
+});

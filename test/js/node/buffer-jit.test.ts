@@ -130,6 +130,17 @@ describe("Buffer accessor JIT", () => {
       }
       assert(coerced === 2000, "value coerced exactly once per call, even when it then throws: " + coerced);
       // The BigInt writers: too-wide BigInts throw; the widest valid ones store.
+      // NaN and +-Infinity, which the value range check treats differently (Node stores 0 for NaN
+      // but throws for the infinities), must keep doing so once the write is JIT-compiled.
+      for (let i = 0; i < 2000; i++) {
+        assert(scratch.writeInt8(NaN, 0) === 1 && scratch.readInt8(0) === 0, "NaN stores 0 (int8)");
+        assert(scratch.writeUInt16LE(NaN, 0) === 2 && scratch.readUInt16LE(0) === 0, "NaN stores 0 (uint16)");
+        assert(scratch.writeUIntLE(NaN, 0, 3) === 3 && scratch.readUIntLE(0, 3) === 0, "NaN stores 0 (var width)");
+        for (const [f, what] of [[() => scratch.writeInt8(Infinity, 0), "int8 +Inf"], [() => scratch.writeInt8(-Infinity, 0), "int8 -Inf"], [() => scratch.writeIntLE(Infinity, 0, 4), "var-width +Inf"]]) {
+          try { f(); assert(false, what + " should throw"); } catch (e) { assert(e.code === "ERR_OUT_OF_RANGE", what + ": " + e.code); }
+        }
+      }
+
       const bb = Buffer.alloc(8);
       const bd = new DataView(bb.buffer, bb.byteOffset, 8);
       for (let i = 0; i < 2000; i++) {

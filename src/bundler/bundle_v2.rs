@@ -1897,6 +1897,8 @@ pub mod bv2_impl {
             // when `scb_bitset` is `None`).
             let scb_list = self.graph.server_component_boundaries.slice();
 
+            // INVARIANT: self.graph.ast is not resized while ast_slice is live
+            // (Slice<T> holds raw column pointers).
             let mut ast_slice = self.graph.ast.slice();
             let all_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;
@@ -2056,6 +2058,8 @@ pub mod bv2_impl {
             // version and exports a non-object in CommonJS (often a function). If we
             // pick the "module" field and the package is imported with "require" then
             // code expecting a function will crash.
+            // INVARIANT: self.graph.ast is not resized while ast_slice is live
+            // (Slice<T> holds raw column pointers).
             let mut ast_slice = self.graph.ast.slice();
             let ast_import_records: &mut [import_record::List<'_>] =
                 ast_slice.split_mut().import_records;

@@ -667,9 +667,6 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
-    // SAFETY: wait_for_promise/event_loop().tick() re-enter JS which may mutate VM fields;
-    // holding &mut VM across that would alias.
-
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     unsafe { (*vm).is_in_preload = true };

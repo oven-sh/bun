@@ -557,6 +557,8 @@ impl<'a> LinkerContext<'a> {
         }
 
         if self.options.output_format == Format::Cjs || self.options.output_format == Format::Iife {
+            // INVARIANT: self.graph.ast is not resized while ast_slice is live
+            // (Slice<T> holds raw column pointers).
             let mut ast_slice = self.graph.ast.slice();
             let ast_cols = ast_slice.split_mut();
             let exports_kind: &mut [ExportsKind] = ast_cols.exports_kind;

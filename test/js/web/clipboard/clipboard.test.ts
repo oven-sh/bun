@@ -267,18 +267,18 @@ describe("ClipboardItem", () => {
   });
 
   // Regression for JSClipboardItem missing its destroy() method-table entry:
-  // without it GC never ran ~JSClipboardItem, leaking every wrapped impl (and
-  // the Strong<JSPromise> each representation holds) forever.
+  // without it GC swept the wrapper but never ran ~JSClipboardItem, so the
+  // impl's DOMPromise stayed in guardedObjects and pinned its JSPromise.
   test("collected wrappers release their impl", () => {
     const { heapStats } = require("bun:jsc");
     Bun.gc(true);
-    const before = heapStats().objectTypeCounts.ClipboardItem || 0;
+    const before = heapStats().objectTypeCounts.Promise || 0;
     for (let i = 0; i < 2000; i++) new ClipboardItem({ "text/plain": "x" });
     Bun.gc(true);
     Bun.gc(true);
-    const after = heapStats().objectTypeCounts.ClipboardItem || 0;
-    // The wrapper count returns to near-baseline; without destroy() it stayed at ~2000.
-    expect(after - before).toBeLessThan(100);
+    const after = heapStats().objectTypeCounts.Promise || 0;
+    // Each leaked impl pinned one Promise; without destroy() this grew by ~2000.
+    expect(after - before).toBeLessThan(200);
   });
 });
 

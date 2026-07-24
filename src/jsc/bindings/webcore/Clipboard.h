@@ -63,7 +63,6 @@ public:
     // yields RefPtr, and entries are non-null because the sequence conversion
     // already rejected anything that was not a ClipboardItem.
     void write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPromise>&&);
-    void getType(ClipboardItem&, const String& type, Ref<DeferredPromise>&&);
 
     // The runtime projection of the spec's clipboard events: there is no
     // document or focused element, so a successful operation fires at this

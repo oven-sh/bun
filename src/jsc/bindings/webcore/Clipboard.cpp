@@ -162,11 +162,6 @@ void Clipboard::write(const Vector<RefPtr<ClipboardItem>>& data, Ref<DeferredPro
     itemWriter->write(data);
 }
 
-void Clipboard::getType(ClipboardItem& item, const String& type, Ref<DeferredPromise>&& promise)
-{
-    item.getType(type, WTF::move(promise));
-}
-
 // MARK: - ItemWriter
 
 Clipboard::ItemWriter::ItemWriter(Clipboard& clipboard, Ref<DeferredPromise>&& promise)

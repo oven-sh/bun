@@ -220,29 +220,40 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
         didSettleAllTypes();
     });
     // whenSettled only throws for termination, in which case no reaction was
-    // registered; the completion handler is already retired on re-collect.
-    if (catchScope.exception()) [[unlikely]]
+    // registered and nothing else will discharge the handler.
+    if (catchScope.exception()) [[unlikely]] {
         catchScope.clearException();
+        invokeCompletionHandler(std::nullopt);
+    }
 }
 
 void ClipboardItemBindingsDataSource::didSettleAllTypes()
 {
+    // Take ownership up front: toWTFString/.get() below run user JS, which can
+    // re-enter collectDataForWriting and swap m_completionHandler. Firing the
+    // local keeps this generation's handler paired with this generation's data.
+    auto completionHandler = std::exchange(m_completionHandler, {});
+    auto invoke = [&](std::optional<ClipboardItemData>&& data, JSC::JSValue reason = {}) {
+        if (completionHandler)
+            completionHandler(WTF::move(data), reason);
+    };
+
     RefPtr allTypesSettled = std::exchange(m_allTypesSettled, nullptr);
     if (!allTypesSettled) {
-        invokeCompletionHandler(std::nullopt);
+        invoke(std::nullopt);
         return;
     }
     if (allTypesSettled->status() != DOMPromise::Status::Fulfilled) {
         // One representation rejected, so the item as a whole has no data. The
         // aggregate carries that representation's own reason, which is what
         // write() should reject with.
-        invokeCompletionHandler(std::nullopt, allTypesSettled->result());
+        invoke(std::nullopt, allTypesSettled->result());
         return;
     }
 
     auto* globalObject = allTypesSettled->globalObject();
     if (!globalObject) {
-        invokeCompletionHandler(std::nullopt);
+        invoke(std::nullopt);
         return;
     }
 
@@ -260,20 +271,20 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
     // whatever it handed back.
     auto* resolvedArray = dynamicDowncast<JSC::JSArray>(resolved);
     if (!resolvedArray || resolvedArray->length() < m_itemPromises.size()) {
-        invokeCompletionHandler(std::nullopt);
+        invoke(std::nullopt);
         return;
     }
     for (unsigned index = 0; index < m_itemPromises.size(); ++index) {
         JSC::JSValue value = resolved.get(globalObject, index);
         if (catchScope.exception()) [[unlikely]] {
             catchScope.clearException();
-            invokeCompletionHandler(std::nullopt);
+            invoke(std::nullopt);
             return;
         }
         resolvedValues.append(value);
     }
     if (resolvedValues.hasOverflowed()) [[unlikely]] {
-        invokeCompletionHandler(std::nullopt);
+        invoke(std::nullopt);
         return;
     }
 
@@ -286,20 +297,20 @@ void ClipboardItemBindingsDataSource::didSettleAllTypes()
         bool terminated = false;
         RefPtr blob = blobFromResolvedValue(*globalObject, resolvedValues.at(index), m_itemPromises[index].key, error, terminated);
         if (terminated) {
-            invokeCompletionHandler(std::nullopt);
+            invoke(std::nullopt);
             return;
         }
         // A representation that could not become a Blob fails the whole item,
         // so a partial write never reaches the clipboard. `error` is the
         // exception its WebIDL coercion threw, if any.
         if (!blob) {
-            invokeCompletionHandler(std::nullopt, error);
+            invoke(std::nullopt, error);
             return;
         }
         data.append({ m_itemPromises[index].key, blob.releaseNonNull() });
     }
 
-    invokeCompletionHandler(WTF::move(data));
+    invoke(WTF::move(data));
 }
 
 void ClipboardItemBindingsDataSource::invokeCompletionHandler(std::optional<ClipboardItemData>&& data, JSC::JSValue failureReason)

@@ -1282,10 +1282,18 @@ class Session extends EventEmitter {
       case "Network.enable": {
         // Node rebuilds this session's buffer on every enable, discarding prior state.
         const state = new NetworkState();
+        // Node's dispatcher delivers these as Maybe<int>, so clamp to finite
+        // non-negative int32 and fall through to the defaults otherwise: NaN
+        // would disable eviction and a negative would evict the entry just
+        // written.
         const maxTotal = (params as any)?.maxTotalBufferSize;
         const maxResource = (params as any)?.maxResourceBufferSize;
-        if (typeof maxTotal === "number") state.maxTotalBufferSize = maxTotal;
-        if (typeof maxResource === "number") state.maxResourceBufferSize = maxResource;
+        if (typeof maxTotal === "number" && Number.isFinite(maxTotal) && maxTotal >= 0) {
+          state.maxTotalBufferSize = maxTotal | 0;
+        }
+        if (typeof maxResource === "number" && Number.isFinite(maxResource) && maxResource >= 0) {
+          state.maxResourceBufferSize = maxResource | 0;
+        }
         networkEnabledSessions.$set(this, state);
         return {};
       }

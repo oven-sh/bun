@@ -540,6 +540,7 @@ class Debugger {
           // "localhost" binds one address family only, but Node's inspector
           // listens on 127.0.0.1 and CDP clients dial loopback over either
           // family. Additively bind whichever loopback address is still free.
+          let v4Held = false;
           for (const loopback of ["127.0.0.1", "::1"]) {
             try {
               this.#loopbackServer = Bun.serve({
@@ -549,14 +550,17 @@ class Debugger {
                 websocket: this.#websocket,
               });
               break;
-            } catch {
+            } catch (e) {
               // Already bound by the primary listener, or unavailable.
+              // EADDRINUSE on 127.0.0.1 is itself proof the primary holds it.
+              if (loopback === "127.0.0.1" && (e as any)?.code === "EADDRINUSE") v4Held = true;
             }
           }
           // Advertise 127.0.0.1 as Node's default bind does, but only when
           // provably bound: a loopback listener on ::1 implies the primary
-          // holds 127.0.0.1, else that ::1 bind would have failed too.
-          if (this.#loopbackServer) this.#cdpHost = `127.0.0.1:${server.port}`;
+          // holds 127.0.0.1 (else that ::1 bind would have failed too), and
+          // EADDRINUSE from the 127.0.0.1 attempt proves it directly.
+          if (this.#loopbackServer || v4Held) this.#cdpHost = `127.0.0.1:${server.port}`;
         }
       }
       return;

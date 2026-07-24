@@ -175,7 +175,12 @@ function decodeMappings(mappings: string): ScriptSourceMap {
       let digit: number | undefined;
       do {
         digit = VLQ_VALUES.$get(mappings[index++]);
-        if (digit === undefined) return { byGeneratedLine, originalOrder };
+        if (digit === undefined) {
+          // originalOrder's consumer binary-searches by original position, so
+          // the partial result must still be sorted on the abort path.
+          originalOrder.sort(compareOriginalOrder);
+          return { byGeneratedLine, originalOrder };
+        }
         value += (digit & 31) << shift;
         shift += 5;
       } while (digit & 32 && index < length);
@@ -376,11 +381,13 @@ class InspectorCDPAdapter {
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
-  // Profiler domain: tracking state plus the deferred Profiler.stop reply,
-  // answered when ScriptProfiler.trackingComplete delivers the samples.
+  // Profiler domain: tracking state plus the deferred Profiler.stop replies,
+  // each answered in order when ScriptProfiler.trackingComplete delivers the
+  // samples. A FIFO so pipelined start/stop pairs over the remote transport
+  // cannot overwrite one another's pending reply id.
   #profilerTracking = false;
   #profilerStartTime = 0;
-  #profilerStopClientId: number | string | undefined;
+  #profilerStopClientIds: (number | string)[] = [];
   // NodeRuntime domain state, per connection, mirroring Node's RuntimeAgent.
   #nodeRuntimeEnabled = false;
   #notifyWhenWaitingForDisconnect = false;
@@ -446,6 +453,7 @@ class InspectorCDPAdapter {
     this.#preParseBreakpoints.$clear();
     this.#breakpointIdAliases.$clear();
     this.#pending.$clear();
+    this.#profilerStopClientIds.length = 0;
     const state = this.#disconnectNotify;
     state.adapters?.delete(this);
     this.#notifyWhenWaitingForDisconnect = false;
@@ -544,8 +552,9 @@ class InspectorCDPAdapter {
 
   #onProfilerStopReply(id: number, _result: AnyObject, error: AnyObject) {
     // The success reply waits for trackingComplete; only an error answers here.
-    if (error && this.#profilerStopClientId === id) {
-      this.#profilerStopClientId = undefined;
+    if (error) {
+      const at = this.#profilerStopClientIds.indexOf(id);
+      if (at >= 0) this.#profilerStopClientIds.splice(at, 1);
       this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
     }
   }
@@ -1106,7 +1115,7 @@ class InspectorCDPAdapter {
           return;
         }
         this.#profilerTracking = false;
-        this.#profilerStopClientId = id;
+        this.#profilerStopClientIds.push(id);
         // The success reply waits for trackingComplete; only an error answers here.
         this.#sendToBackend(
           "ScriptProfiler.stopTracking",
@@ -1345,8 +1354,7 @@ class InspectorCDPAdapter {
         return;
 
       case "ScriptProfiler.trackingComplete": {
-        const clientId = this.#profilerStopClientId;
-        this.#profilerStopClientId = undefined;
+        const clientId = this.#profilerStopClientIds.shift();
         // Broadcast to every session sharing this backend: all of them learn
         // tracking ended; only the one whose Profiler.stop is waiting replies.
         this.#profilerTracking = false;

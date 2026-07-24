@@ -33,7 +33,7 @@ class InProcessInspectorChannel;
 static InProcessInspectorChannel& inProcessInspectorChannel();
 // Deliver the in-process session's buffered events synchronously from a pause
 // loop (a posted drain task cannot run while the thread is parked).
-static void drainInProcessInspectorWhilePaused();
+static void drainInProcessInspectorWhilePaused(Zig::GlobalObject*);
 static void finishDeferredInProcessDetach(Zig::GlobalObject*);
 
 class BunInspectorConnection;
@@ -290,7 +290,7 @@ public:
             // Debugger.paused (and any replies) synchronously so its
             // listeners can evaluateOnCallFrame while paused, matching
             // inProcessRunWhilePaused's same-thread semantics.
-            drainInProcessInspectorWhilePaused();
+            drainInProcessInspectorWhilePaused(global);
             size_t closedCount = 0;
             for (auto& connection : connections) {
                 ConnectionStatus status = connection->status.load();
@@ -672,13 +672,15 @@ void InProcessInspectorChannel::drainSynchronously()
     }
 }
 
-static void drainInProcessInspectorWhilePaused()
+static void drainInProcessInspectorWhilePaused(Zig::GlobalObject* globalObject)
 {
     auto& channel = inProcessInspectorChannel();
     bool wasInPauseLoop = channel.inPauseLoop;
     channel.inPauseLoop = true;
     channel.drainSynchronously();
     channel.inPauseLoop = wasInPauseLoop;
+    if (!wasInPauseLoop && channel.dispatchDepth == 0)
+        finishDeferredInProcessDetach(globalObject);
 }
 
 // Pause loop for the inspected thread. When a remote debugger is attached it
@@ -708,6 +710,9 @@ static void inProcessRunWhilePaused(JSC::JSGlobalObject& globalObject, bool& isD
             debugger->continueProgram();
         isDoneProcessingEvents = true;
     }
+    // A session.disconnect() from a paused listener is deferred until here.
+    if (channel.dispatchDepth == 0)
+        finishDeferredInProcessDetach(static_cast<Zig::GlobalObject*>(&globalObject));
 }
 
 class JSBunInspectorConnection final : public JSC::JSDestructibleObject {
@@ -1272,6 +1277,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_dispatchInProcessInspectorMessage, (JSGlobal
     channel.dispatchDepth++;
     globalObject->inspectorDebuggable().dispatchMessageFromRemote(WTF::move(message));
     channel.dispatchDepth--;
+    // A session.disconnect() from a listener fired during the dispatch above is
+    // deferred until the controller is off the stack.
+    if (channel.dispatchDepth == 0 && !channel.inPauseLoop)
+        finishDeferredInProcessDetach(globalObject);
     // The dispatch runs arbitrary user JS (Runtime.evaluate); surface anything it left pending.
     RETURN_IF_EXCEPTION(scope, {});
     // Own the pause loop while an in-process session is attached (it defers
@@ -1309,11 +1318,14 @@ static void detachInProcessFrontend(Zig::GlobalObject* globalObject, InProcessIn
 }
 
 // Completes a detach that jsFunction_disconnectInProcessInspector deferred
-// because a remote frontend still shared the backend agents.
+// because a remote frontend still shared the backend agents or because the
+// disconnect arrived from inside a dispatch/pause (see below).
 static void finishDeferredInProcessDetach(Zig::GlobalObject* globalObject)
 {
     auto& channel = inProcessInspectorChannel();
     if (!channel.discarding || !channel.connected)
+        return;
+    if (channel.dispatchDepth > 0 || channel.inPauseLoop)
         return;
     if (globalObject->inspectorController().frontendRouter().hasRemoteFrontend())
         return;
@@ -1335,7 +1347,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_disconnectInProcessInspector, (JSGlobalObjec
     channel.onMessages.clear();
     if (!channel.connected)
         return JSValue::encode(jsUndefined());
-    if (globalObject->inspectorController().frontendRouter().hasRemoteFrontend()) {
+    // Defer when a remote frontend shares the backend agents (detaching tears
+    // them down), and when this call arrived from inside a dispatch or the
+    // pause loop: disconnectFrontend runs willDestroyFrontendAndBackend while
+    // dispatchMessageFromRemote / Debugger::pauseIfNeeded are on the stack.
+    if (globalObject->inspectorController().frontendRouter().hasRemoteFrontend() || channel.dispatchDepth > 0 || channel.inPauseLoop) {
         channel.discarding = true;
         return JSValue::encode(jsUndefined());
     }

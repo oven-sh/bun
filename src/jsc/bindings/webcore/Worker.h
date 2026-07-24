@@ -83,6 +83,10 @@ struct WorkerOptions;
 ///                 │Closing │ ───────────────► │ Closed │
 ///                 └────────┘  dispatched      └────────┘
 ///
+/// dispatchOpenIfNeeded() (parent thread) takes the same Pending -> Running
+/// edge, under the same lock, when the parent observes the worker's first
+/// output before the worker thread has reached dispatchOnline().
+///
 /// Closing exists so that inside the 'close'/'exit' handler threadId reads
 /// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
 /// — which only gates on Closed (old TerminatedFlag behaviour) — still
@@ -97,7 +101,7 @@ class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWith
 public:
     enum class State : uint8_t {
         Pending, // created; worker thread starting up
-        Running, // dispatchOnline has fired; worker event loop is spinning
+        Running, // set by dispatchOnline (worker thread) or dispatchOpenIfNeeded (parent); isOnline() is true
         Closing, // worker thread has exited; close task is dispatching the 'close' event
         Closed, // close event dispatched on the parent; worker is fully done
     };
@@ -173,6 +177,7 @@ private:
 
     void enqueueToWorker(MessageWithMessagePorts&&);
     void drainToParent(ScriptExecutionContext&);
+    bool dispatchOpenIfNeeded();
 
     WorkerOptions m_options;
 
@@ -193,6 +198,10 @@ private:
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
+
+    // Whether the 'open' event has been dispatched (dispatchOpenIfNeeded).
+    // Parent thread only, so it needs no synchronization.
+    bool m_openDispatched { false };
 
     // Stable for the process lifetime; used with ScriptExecutionContext::
     // postTaskTo() so the worker thread never dereferences the parent context

@@ -1138,10 +1138,33 @@ impl Expect {
                 );
             }
 
+            let line = core::ffi::c_ulong::from(srcloc.line);
+            let col = core::ffi::c_ulong::from(srcloc.column);
+
+            // Detect a value conflict at record time so the test itself fails;
+            // `write_inline_snapshots` runs after the whole file, too late to
+            // attribute the failure to a test or correct the reporter counts.
+            if let Some(conflicting_value) =
+                runner
+                    .snapshots
+                    .take_conflicting_inline_snapshot(file_id, line, col, &pretty_value)
+            {
+                let signature = Self::get_signature(fn_name, "", false);
+                let diff_format = DiffFormatter {
+                    received_string: Some(&pretty_value),
+                    expected_string: Some(&conflicting_value),
+                    global_this: Some(global_this),
+                    ..Default::default()
+                };
+                return Err(global_this.throw_pretty(format_args!(
+                    "{signature}\n\nMultiple inline snapshots on the same line must all have the same value:\n{diff_format}\n"
+                )));
+            }
+
             // 2. save to write later
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
-                line: core::ffi::c_ulong::from(srcloc.line),
-                col: core::ffi::c_ulong::from(srcloc.column),
+                line,
+                col,
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
                 has_matchers: property_matchers.is_some(),
                 is_added: result.is_none(),

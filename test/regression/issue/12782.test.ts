@@ -32,14 +32,17 @@ test("12782", async () => {
     error: Environment variable FOO is not set
         at <anonymous> (file:NN:NN)
     (fail) (unnamed)
+    (skip) foo > should not run
+    (skip) foo > inner describe > should not run
 
     test/regression/issue/12782.bar.fixture.ts:
     (pass) bar > should not run
     (pass) bar > inner describe > should not run
 
      2 pass
+     2 skip
      1 fail
-    Ran 3 tests across 2 files."
+    Ran 5 tests across 2 files."
   `);
   expect(exitCode).toBe(1);
 });

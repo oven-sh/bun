@@ -317,27 +317,34 @@ for (const inlineSnapshot of [false, true]) {
         );
       });
 
-      test("grow file for new snapshot", async () => {
-        const t4 = new SnapshotTester(inlineSnapshot);
-        await t4.update(/*js*/ `
+      // This test does the most child spawns in the file (4 update calls) and
+      // needs the debug-aware timeout SnapshotTester.test applies, or it times
+      // out and leaks a stray toMatchSnapshot() onto the next test's counter.
+      test(
+        "grow file for new snapshot",
+        async () => {
+          const t4 = new SnapshotTester(inlineSnapshot);
+          await t4.update(/*js*/ `
               test("abc", () => { expect("hello").toMatchSnapshot() });
             `);
-        await t4.update(
-          /*js*/ `
+          await t4.update(
+            /*js*/ `
                 test("abc", () => { expect("hello").toMatchSnapshot() });
                 test("def", () => { expect("goodbye").toMatchSnapshot() });
               `,
-          { shouldNotError: true, shouldGrow: true },
-        );
-        await t4.update(/*js*/ `
+            { shouldNotError: true, shouldGrow: true },
+          );
+          await t4.update(/*js*/ `
               test("abc", () => { expect("hello").toMatchSnapshot() });
               test("def", () => { expect("hello").toMatchSnapshot() });
             `);
-        await t4.update(/*js*/ `
+          await t4.update(/*js*/ `
               test("abc", () => { expect("goodbye").toMatchSnapshot() });
               test("def", () => { expect("hello").toMatchSnapshot() });
             `);
-      });
+        },
+        isDebug ? 100_000 : 5_000,
+      );
 
       const t2 = new SnapshotTester(inlineSnapshot);
       t2.test("backtick in test name", `test("\`", () => {expect("abc").toMatchSnapshot();})`);
@@ -619,18 +626,26 @@ Date)
     );
   });
   it("should error trying to update the same line twice", async () => {
-    await tester.testError(
-      {
-        msg: "error: Failed to update inline snapshot: Multiple inline snapshots on the same line must all have the same value",
-      },
-      /*js*/ `
-        function oops(a) {expect(a).toMatchInlineSnapshot()}
-        test("whoops", () => {
-          oops(1);
-          oops(2);
-        });
-      `,
-    );
+    const code = /*js*/ `
+      function oops(a) {expect(a).toMatchInlineSnapshot()}
+      test("whoops", () => {
+        oops(1);
+        oops(2);
+      });
+    `;
+    const thefile = tester.tmpfile(code);
+    const junit = tester.tmpdir + "/" + thefile + ".junit.xml";
+    const res = await tester.spawn(["--reporter=junit", "--reporter-outfile=" + junit], thefile);
+    const err = res.stderr.toString();
+    expect(err).toInclude("Multiple inline snapshots on the same line must all have the same value");
+    // The conflict has to fail the test itself so the reporters, the JUnit
+    // output, and the exit code all agree.
+    expect(err).toInclude("(fail) whoops");
+    expect(err).toInclude("0 pass");
+    expect(err).toInclude("1 fail");
+    expect(readFileSync(junit, "utf-8")).toInclude('failures="1"');
+    expect(tester.readfile(thefile)).toEqual(code);
+    expect(res.exitCode).toBe(1);
 
     // fun trick:
     // function oops(a) {expect(a).toMatchInlineSnapshot('1')}

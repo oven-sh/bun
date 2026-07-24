@@ -1510,7 +1510,10 @@ impl<Parent: WindowsBufferedWriterParent> WindowsBufferedWriter<Parent> {
             return;
         }
         let pending = Self::r(this).get_buffer_internal();
-        let has_pending_data = (pending.len() - written) != 0;
+        // `close()` may have run before this callback (exit-first ordering) and
+        // cleared the parent's buffer to 0 while `written` still carries the
+        // submitted size; treat that as no pending data rather than underflowing.
+        let has_pending_data = pending.len().saturating_sub(written) != 0;
         let is_done_before = Self::r(this).is_done;
         // SAFETY: parent BACKREF valid.
         unsafe {

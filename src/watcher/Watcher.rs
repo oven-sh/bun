@@ -182,14 +182,14 @@ impl Watcher {
             ctx.on_watch_error(err);
         }
 
-        let mut this = Box::new(Watcher {
+        let this = Box::new(Watcher {
             watchlist: WatchList::default(),
             mutex: Mutex::default(),
             cwd: top_level_dir,
             ctx: ctx.cast::<()>(),
             on_file_update: on_file_update_wrapped::<T>,
             on_error: on_error_wrapped::<T>,
-            platform: Platform::default(),
+            platform: Platform::new(top_level_dir)?,
             watch_events: vec![WatchEvent::default(); MAX_COUNT].into_boxed_slice(),
             changed_filepaths: [const { None }; MAX_COUNT],
             watchloop_handle: bun_core::AtomicCell::new(false),
@@ -201,18 +201,27 @@ impl Watcher {
             thread_lock: ThreadLock::init_unlocked(),
         });
 
-        this.platform.init(top_level_dir)?;
-
         // Initialize trace file if BUN_WATCHER_TRACE env var is set
         WatcherTrace::init();
 
         Ok(this)
     }
 
-    /// Write trace events to the trace file if enabled.
-    /// This runs on the watcher thread, so no locking is needed.
-    pub fn write_trace_events(&self, events: &[WatchEvent], changed_files: &[ChangedFilePath]) {
-        WatcherTrace::write_events(&self.watchlist, events, changed_files);
+    /// Lock, check `running`, then dispatch a batch of `watch_events` /
+    /// `changed_filepaths` through the trace writer and `on_file_update`.
+    ///
+    /// The platform `watch_loop_cycle` fills `self.watch_events[..event_count]`
+    /// and `self.changed_filepaths[..changed_count]` and calls this instead of
+    /// open-coding the lock/trace/callback sequence.
+    pub(crate) fn dispatch_file_updates(&mut self, event_count: usize, changed_count: usize) {
+        let _guard = self.mutex.lock_guard();
+        if !self.running.load() {
+            return;
+        }
+        let events = &mut self.watch_events[..event_count];
+        let changed = &self.changed_filepaths[..changed_count];
+        WatcherTrace::write_events(&self.watchlist, events, changed);
+        (self.on_file_update)(self.ctx, events, changed, &self.watchlist);
     }
 
     pub fn start(&mut self) -> Result<(), crate::Error> {
@@ -351,11 +360,10 @@ impl Watcher {
         // the still-present entry's now-closed fd → `EBADF reading "<path>"`.
         //
         // We do NOT lock here: the only callers are deferred from
-        // `WatcherContext::on_file_update`, which is itself invoked while the
-        // platform watcher already holds `self.mutex` (KEventWatcher.rs:138,
-        // INotifyWatcher.rs:555, WindowsWatcher.rs). `bun_threading::Mutex` is
-        // non-recursive — re-locking here is `os_unfair_lock` SIGILL on darwin
-        // and self-deadlock on Linux/Windows.
+        // `WatcherContext::on_file_update`, which is itself invoked from
+        // `dispatch_file_updates` while `self.mutex` is already held.
+        // `bun_threading::Mutex` is non-recursive — re-locking here is
+        // `os_unfair_lock` SIGILL on darwin and self-deadlock on Linux/Windows.
         debug_assert!(
             self.mutex.is_held_by_current_thread(),
             "flush_evictions: caller must hold self.mutex (platform watcher holds it around on_file_update)",
@@ -446,14 +454,10 @@ impl Watcher {
     /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
-        // Raw libc::kevent on purpose:
-        // this is a registration-only call (nevents = 0) whose return value
-        // is intentionally ignored.
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
         use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
         // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
-        // SAFETY: all-zero is a valid KEvent
         let mut event: KEvent = bun_core::ffi::zeroed();
 
         event.flags = (EV_ADD | EV_CLEAR | EV_ENABLE) as _;
@@ -467,23 +471,12 @@ impl Watcher {
 
         // Store the index for fast filtering later
         event.udata = watchlist_id as _;
-        let mut events: [KEvent; 1] = [event];
 
         // This took a lot of work to figure out the right permutation
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        // SAFETY: events ptr/len valid; kqueue fd unwrapped from Some
-        let _ = unsafe {
-            libc::kevent(
-                self.platform.fd.unwrap().native(),
-                events.as_ptr(),
-                1,
-                events.as_mut_ptr(),
-                0,
-                core::ptr::null(),
-            )
-        };
+        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(

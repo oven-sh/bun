@@ -181,17 +181,8 @@ impl INotifyWatcher {
         result
     }
 
-    // kept as in-place &mut self init (not `-> Result<Self, _>`) because
-    // INotifyWatcher is embedded as `Watcher.platform` with field defaults already set.
-    pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), crate::Error> {
+    pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
         use bun_sys::linux::IN;
-        debug_assert!(!self.loaded);
-        self.loaded = true;
-
-        self.coalesce_interval = env_var::BUN_INOTIFY_COALESCE_INTERVAL
-            .get()
-            .and_then(|v| isize::try_from(v).ok())
-            .unwrap_or(100_000);
 
         let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
         let errno = bun_sys::get_errno(raw);
@@ -200,9 +191,17 @@ impl INotifyWatcher {
             // init-failed tag.
             return Err(crate::Error::Sys(errno));
         }
-        self.fd = Fd::from_native(raw);
-        bun_core::scoped_log!(watcher, "{} init", self.fd);
-        Ok(())
+        let fd = Fd::from_native(raw);
+        bun_core::scoped_log!(watcher, "{} init", fd);
+        Ok(Self {
+            fd,
+            loaded: true,
+            coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
+                .get()
+                .and_then(|v| isize::try_from(v).ok())
+                .unwrap_or(100_000),
+            ..Self::default()
+        })
     }
 
     pub(crate) fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
@@ -519,22 +518,9 @@ fn process_inotify_event_batch(
     if watch_events.is_empty() {
         return Ok(());
     }
-    // End the &mut borrow of `this` via `watch_events` before re-borrowing other
-    // fields below; we re-slice `this.watch_events` directly after the lock.
-    let _ = watch_events;
 
-    let _guard = this.mutex.lock_guard();
-    if this.running.load() {
-        // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
-        // reshaped for borrowck — split disjoint field borrows so we can
-        // pass `&mut watch_events[..]` in place
-        // without a gratuitous `.to_vec()`/`.clone()`.
-        let deduped = &mut this.watch_events[..last_event_index + 1];
-        let changed = &this.changed_filepaths[..name_off as usize];
-        crate::watcher_trace::write_events(&this.watchlist, deduped, changed);
-        (this.on_file_update)(this.ctx, deduped, changed, &this.watchlist);
-    }
-
+    // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
+    this.dispatch_file_updates(last_event_index + 1, name_off as usize);
     Ok(())
 }
 

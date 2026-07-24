@@ -50,7 +50,7 @@ pub(crate) fn is_macro_path(str: &[u8]) -> bool {
 // stored in `VirtualMachine` (the only producer of `MacroContext`).
 pub struct MacroContext {
     pub resolver: *mut Resolver<'static>,
-    pub env: *mut DotEnvLoader<'static>,
+    pub env: *mut DotEnvLoader,
     pub macros: MacroMap,
     pub remap: bun_ptr::BackRef<MacroRemap>,
     pub javascript_object: JSValue,
@@ -424,7 +424,7 @@ impl Macro {
         resolver: &mut Resolver<'static>,
         input_specifier: &[u8],
         log: &mut Log,
-        env: *mut DotEnvLoader<'static>,
+        env: *mut DotEnvLoader,
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,

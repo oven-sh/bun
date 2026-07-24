@@ -759,12 +759,49 @@ async function runTests() {
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-file-flush.js";
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-write-stream-flush.js";
+        // A file that only drives node:test's run() is the parent of the run,
+        // not a test file: Node executes it as a plain script, and under
+        // `bun test` a file registering no tests of its own exits before its
+        // run() finishes. Files that also register tests at the top level (as
+        // opposed to inside a NODE_TEST_CONTEXT child branch) still need
+        // `bun test`. run() spawns its own children with `bun test`.
+        const importsRun =
+          /\brun\b[^\n]*=\s*require\(['"]node:test['"]\)/.test(testContent) ||
+          /import\s*{[^}]*\brun\b[^}]*}\s*from\s*['"]node:test['"]/.test(testContent);
+        // Registrations behind a NODE_TEST_CONTEXT guard belong to the child
+        // run() spawns, not to this process; an unindented one is this file's
+        // own and must keep `bun test`, or it silently never runs and the file
+        // "passes" having tested nothing. Requiring the guard as well keeps a
+        // file whose only registrations are indented for some other reason
+        // (inside an `if`, an IIFE) on `bun test`, where the worst case is a
+        // real run rather than a vacuous pass.
+        const registersAtColumnZero = /^(?:test|it|describe|suite)\s*[.(]/m.test(testContent);
+        const registersTests = /(?:^|[^.\w])(?:test|it|describe|suite)\s*[.(]/m.test(testContent);
+        const guardsOnTestContext = testContent.includes("NODE_TEST_CONTEXT");
+        const isRunDriver = importsRun && !registersAtColumnZero && (!registersTests || guardsOnTestContext);
+        // The needs-test filename opt-in wins over this heuristic.
+        if (isRunDriver && !title.includes("needs-test")) runWithBunTest = false;
         const subcommand = runWithBunTest ? "test" : "run";
         const env = {
           FORCE_COLOR: "0",
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
+          // Node parity: a node test process exits only when its event loop
+          // drains, and common.mustCall() verifies counts in 'exit' handlers.
+          BUN_TEST_DRAIN_EVENT_LOOP: "1",
         };
+        if (title.includes("test-util-styletext")) {
+          // These assert styleText's own color decisions against a TTY, so they need a
+          // color-capable environment they can then override per case. Drop the forced
+          // settings above, spawnBun's FORCE_COLOR, and CI (which resolves to "no color"
+          // in containers that don't identify the vendor), and pin TERM so every agent
+          // agrees.
+          env.FORCE_COLOR = undefined;
+          env.NO_COLOR = undefined;
+          env.NODE_DISABLE_COLORS = undefined;
+          env.CI = undefined;
+          env.TERM = "xterm-256color";
+        }
         if (!isWindows && title.includes("/sequential/")) {
           // Sequential node tests share common.PORT (12346); a cluster worker
           // or child_process subprocess that outlives its test can keep that

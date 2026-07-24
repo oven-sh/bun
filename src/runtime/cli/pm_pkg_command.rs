@@ -15,12 +15,10 @@ use bun_sys;
 
 pub(crate) struct PmPkgCommand;
 
-/// Process-lifetime arena for `E::Object::put()` / `json::parse` calls.
-/// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
-/// just a `LazyLock` borrow).
+/// Process-lifetime AST allocator for `E::Object::put()` / `json::parse` calls.
 #[inline]
-fn dummy_bump() -> &'static bun_alloc::Arena {
-    crate::cli::cli_arena()
+fn dummy_bump() -> bun_alloc::AstAlloc {
+    crate::cli::cli_ast_alloc()
 }
 
 // `bun_ast::Indentation` and `bun_js_printer::Indentation` are now the same
@@ -155,10 +153,10 @@ impl PmPkgCommand {
         };
 
         let source = Source::init_path_string(path, &contents[..]);
-        // Use the process-lifetime CLI arena
+        // Use the process-lifetime CLI AST arena
         // so the returned `Expr` (which may reference arena-owned nodes)
         // outlives this frame. CLI is one-shot.
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let alloc = crate::cli::cli_ast_alloc();
         // SAFETY: CLI dispatch is single-threaded; no other borrow of
         // `ctx.log` is live while `log` is passed to the JSON parser below.
         let log: &mut Log = unsafe { ctx.log_mut() };
@@ -170,7 +168,7 @@ impl PmPkgCommand {
             },
             &source,
             log,
-            bump,
+            alloc,
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -387,7 +385,7 @@ impl PmPkgCommand {
 
         let mut modified = false;
 
-        if let Some(name_prop) = root.get(b"name") {
+        if let Some(name_prop) = root.get(dummy_bump(), b"name") {
             if let ExprData::EString(str) = &name_prop.data {
                 let name_str = str.slice8();
                 let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
@@ -399,7 +397,7 @@ impl PmPkgCommand {
             }
         }
 
-        if let Some(bin_prop) = root.get(b"bin") {
+        if let Some(bin_prop) = root.get(dummy_bump(), b"bin") {
             if let ExprData::EObject(obj) = &bin_prop.data {
                 let props = obj.properties.slice();
                 for prop in props {
@@ -454,6 +452,7 @@ impl PmPkgCommand {
 
                 js_printer::print_json(
                     &mut printer,
+                    dummy_bump(),
                     expr,
                     &Source::init_empty_file(b"expression.json"),
                     js_printer::PrintJsonOptions {
@@ -506,7 +505,7 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current.get(prop_name).ok_or(crate::Error::NotFound)?;
+                    current = current.get(dummy_bump(), prop_name).ok_or(crate::Error::NotFound)?;
                     remaining_part = &part[first_bracket..];
                 }
 
@@ -534,7 +533,7 @@ impl PmPkgCommand {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(crate::Error::NotFound);
                         }
-                        current = current.get(index_str).ok_or(crate::Error::NotFound)?;
+                        current = current.get(dummy_bump(), index_str).ok_or(crate::Error::NotFound)?;
                     }
 
                     remaining_part = &remaining_part[actual_bracket_end + 1..];
@@ -552,7 +551,7 @@ impl PmPkgCommand {
                             current = arr.items.slice()[index];
                         }
                         ExprData::EObject(_) => {
-                            current = current.get(part).ok_or(crate::Error::NotFound)?;
+                            current = current.get(dummy_bump(), part).ok_or(crate::Error::NotFound)?;
                         }
                         _ => return Err(crate::Error::NotFound),
                     }
@@ -560,7 +559,7 @@ impl PmPkgCommand {
                     if !matches!(current.data, ExprData::EObject(_)) {
                         return Err(crate::Error::NotFound);
                     }
-                    current = current.get(part).ok_or(crate::Error::NotFound)?;
+                    current = current.get(dummy_bump(), part).ok_or(crate::Error::NotFound)?;
                 }
             }
         }
@@ -663,18 +662,19 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        let mut nested_obj = root.get(current_key);
+        let alloc = dummy_bump();
+        let mut nested_obj = root.get(alloc, current_key);
         if nested_obj.is_none()
             || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
         {
-            let new_obj = Expr::init(E::Object::default(), Loc::EMPTY);
+            let new_obj = Expr::init(alloc, E::Object::empty(alloc), Loc::EMPTY);
 
             root.data
                 .e_object_mut()
                 .unwrap()
-                .put(dummy_bump(), current_key, new_obj)?;
+                .put(alloc, current_key, new_obj)?;
 
-            nested_obj = root.get(current_key);
+            nested_obj = root.get(alloc, current_key);
         }
 
         if !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_)) {
@@ -686,36 +686,37 @@ impl PmPkgCommand {
     }
 
     fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
+        let alloc = dummy_bump();
         if parse_json {
             if value == b"true" {
-                return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
+                return Ok(Expr::init(alloc, E::Boolean { value: true }, Loc::EMPTY));
             } else if value == b"false" {
-                return Ok(Expr::init(E::Boolean { value: false }, Loc::EMPTY));
+                return Ok(Expr::init(alloc, E::Boolean { value: false }, Loc::EMPTY));
             } else if value == b"null" {
-                return Ok(Expr::init(E::Null {}, Loc::EMPTY));
+                return Ok(Expr::init(alloc, E::Null {}, Loc::EMPTY));
             }
 
             if let Some(int_val) = bun_core::fmt::parse_decimal::<i64>(value) {
-                return Ok(Expr::init(E::Number::new(int_val as f64), Loc::EMPTY));
+                return Ok(Expr::init(alloc, E::Number::new(int_val as f64), Loc::EMPTY));
             }
 
             if let Some(float_val) = parse_f64(value) {
-                return Ok(Expr::init(E::Number::new(float_val), Loc::EMPTY));
+                return Ok(Expr::init(alloc, E::Number::new(float_val), Loc::EMPTY));
             }
 
             let temp_source = Source::init_path_string(b"package.json", value);
             let mut temp_log = Log::init();
             if let Ok(json_expr) =
-                json::parse_package_json_utf8(&temp_source, &mut temp_log, dummy_bump())
+                json::parse_package_json_utf8(&temp_source, &mut temp_log, alloc)
             {
                 return Ok(json_expr);
             } else {
-                let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-                return Ok(Expr::init(E::String::init(data), Loc::EMPTY));
+                let data: &[u8] = alloc.dupe_str(value);
+                return Ok(Expr::init(alloc, E::String::init(data), Loc::EMPTY));
             }
         } else {
-            let data: &[u8] = dummy_bump().alloc_slice_copy(value);
-            Ok(Expr::init(E::String::init(data), Loc::EMPTY))
+            let data: &[u8] = alloc.dupe_str(value);
+            Ok(Expr::init(alloc, E::String::init(data), Loc::EMPTY))
         }
     }
 
@@ -734,7 +735,7 @@ impl PmPkgCommand {
         }
 
         if path_parts.len() == 1 {
-            let exists = root.get(path_parts[0]).is_some();
+            let exists = root.get(dummy_bump(), path_parts[0]).is_some();
             if exists {
                 return Self::remove_property(root, path_parts[0]);
             }
@@ -753,14 +754,14 @@ impl PmPkgCommand {
         let remaining_path = &path[1..];
 
         if remaining_path.is_empty() {
-            let exists = root.get(current_key).is_some();
+            let exists = root.get(dummy_bump(), current_key).is_some();
             if exists {
                 return Self::remove_property(root, current_key);
             }
             return Ok(false);
         }
 
-        let nested_obj = root.get(current_key);
+        let nested_obj = root.get(dummy_bump(), current_key);
         if nested_obj.is_none()
             || !matches!(nested_obj.as_ref().unwrap().data, ExprData::EObject(_))
         {
@@ -806,8 +807,9 @@ impl PmPkgCommand {
         // old list, ptr::read kept entries into the new list, then forget the
         // old buffer (CLI is one-shot — leak is intentional, see
         // load_package_json).
-        let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
-        let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
+        let alloc = dummy_bump();
+        let old = core::mem::ManuallyDrop::new(alloc.take(&mut e_obj.properties));
+        let mut new_props: G::PropertyList = alloc.vec_with_capacity(old_len - 1);
         for prop in old.slice() {
             if let Some(k) = &prop.key {
                 if let ExprData::EString(s) = &k.data {
@@ -840,6 +842,7 @@ impl PmPkgCommand {
 
         if let Err(e) = js_printer::print_json(
             &mut writer,
+            dummy_bump(),
             root,
             &pkg.source,
             js_printer::PrintJsonOptions {

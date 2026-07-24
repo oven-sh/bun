@@ -3,7 +3,6 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_alloc::Arena as Bump;
 use bun_core::Global::SyncCStr;
 use bun_core::MutableString;
 use bun_core::{self, Environment, Global, Output, Progress, fmt as bun_fmt};
@@ -292,11 +291,9 @@ impl UpgradeCommand {
         let mut log = bun_ast::Log::init();
         let source =
             bun_ast::Source::init_path_string(b"releases.json", metadata_body.list.as_slice());
-        bun_ast::initialize_store();
-        // `JSON::parse_utf8` needs a bump arena; this is a one-shot
-        // CLI path so use the process-lifetime CLI arena.
-        let bump: &'static Bump = crate::cli::cli_arena();
-        let expr = match JSON::parse_utf8(&source, &mut log, bump) {
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let expr = match JSON::parse_utf8(&source, &mut log, alloc) {
             Ok(e) => e,
             Err(err) => {
                 if !SILENT {
@@ -354,7 +351,7 @@ impl UpgradeCommand {
             return Ok(None);
         }
 
-        if let Some(tag_name_) = expr.as_property(b"tag_name") {
+        if let Some(tag_name_) = expr.as_property(alloc, b"tag_name") {
             if let Some(tag_name) = tag_name_.expr.as_utf8_string_literal() {
                 version.tag = Box::<[u8]>::from(tag_name);
             }
@@ -378,7 +375,7 @@ impl UpgradeCommand {
         }
 
         'get_asset: {
-            let Some(assets_) = expr.as_property(b"assets") else {
+            let Some(assets_) = expr.as_property(alloc, b"assets") else {
                 break 'get_asset;
             };
             // `bun_ast::Expr` only exposes the raw `EArray` payload,
@@ -388,7 +385,7 @@ impl UpgradeCommand {
             };
 
             for asset in assets.items.slice() {
-                if let Some(content_type) = asset.as_property(b"content_type") {
+                if let Some(content_type) = asset.as_property(alloc, b"content_type") {
                     let Some(content_type_) = content_type.expr.as_utf8_string_literal() else {
                         continue;
                     };
@@ -402,7 +399,7 @@ impl UpgradeCommand {
                     }
                 }
 
-                if let Some(name_) = asset.as_property(b"name") {
+                if let Some(name_) = asset.as_property(alloc, b"name") {
                     if let Some(name) = name_.expr.as_utf8_string_literal() {
                         if bun_core::env::IS_DEBUG {
                             let filename = if !use_profile {
@@ -425,7 +422,7 @@ impl UpgradeCommand {
                             continue;
                         }
 
-                        version.zip_url = match asset.as_property(b"browser_download_url") {
+                        version.zip_url = match asset.as_property(alloc, b"browser_download_url") {
                             Some(p) => match p.expr.as_utf8_string_literal() {
                                 Some(s) => Box::<[u8]>::from(s),
                                 None => break 'get_asset,
@@ -437,13 +434,13 @@ impl UpgradeCommand {
                             Output::flush();
                         }
 
-                        if let Some(digest_) = asset.as_property(b"digest") {
+                        if let Some(digest_) = asset.as_property(alloc, b"digest") {
                             if let Some(digest) = digest_.expr.as_utf8_string_literal() {
                                 version.digest = Version::parse_asset_digest(digest);
                             }
                         }
 
-                        if let Some(size_) = asset.as_property(b"size") {
+                        if let Some(size_) = asset.as_property(alloc, b"size") {
                             if let bun_ast::ExprData::ENumber(n) = &size_.expr.data {
                                 version.size =
                                     u32::try_from(((n.value().ceil()) as i32).max(0)).unwrap();

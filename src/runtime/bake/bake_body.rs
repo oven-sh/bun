@@ -1147,11 +1147,6 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> crate::Result<()> {
-        // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
-        // runs `exit()` at end-of-fn.
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         // The caller (`DevServer::init`) hands us an uninitialized slot, so
         // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.

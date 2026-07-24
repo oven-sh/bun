@@ -90,13 +90,14 @@ for (let [gcTick, label] of [
         const out = join(tmpdirSync(), "stdout-trunc-sync.txt");
         writeFileSync(out, "OLD-CONTENT-0123456789ABCDEF");
         gcTick();
-        spawnSync({
+        const { exitCode } = spawnSync({
           cmd: [bunExe(), "-e", "process.stdout.write('NEW')"],
           env: bunEnv,
           stdout: Bun.file(out),
         });
         gcTick();
         expect(readFileSync(out, "utf8")).toBe("NEW");
+        expect(exitCode).toBe(0);
       });
     });
 
@@ -327,9 +328,10 @@ for (let [gcTick, label] of [
           env: bunEnv,
           stdout: Bun.file(out),
         });
-        await exited;
+        const exitCode = await exited;
         gcTick();
         expect(readFileSync(out, "utf8")).toBe("NEW");
+        expect(exitCode).toBe(0);
       });
 
       it("Bun.file() as stderr truncates the destination", async () => {
@@ -341,9 +343,10 @@ for (let [gcTick, label] of [
           env: bunEnv,
           stderr: Bun.file(out),
         });
-        await exited;
+        const exitCode = await exited;
         gcTick();
         expect(readFileSync(out, "utf8")).toBe("NEW");
+        expect(exitCode).toBe(0);
       });
 
       it("Bun.file() works as stdin", async () => {

@@ -2144,26 +2144,29 @@ it("a throwing EventTarget listener does not hard-exit mid-dispatch", async () =
   expect(exitCode).toBe(1);
 });
 
-it.each(["throw", "strict"])("--unhandled-rejections=%s fatal-exits with pending work", async mode => {
-  // Mode::Throw/Strict are explicit Node-compat opt-ins. With no
-  // unhandledRejection/uncaughtException listener, Node fatal-exits 1; a
-  // keep-alive report would leave the interval ticking forever.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      `--unhandled-rejections=${mode}`,
-      "-e",
-      `setInterval(() => console.log("TICK"), 5000); Promise.reject(new Error("rejected"))`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).not.toContain("TICK");
-  expect(stderr).toContain("rejected");
-  expect(exitCode).toBe(1);
-});
+it.each([undefined, "throw", "strict"])(
+  "an unhandled rejection fatal-exits with pending work (--unhandled-rejections=%s)",
+  async mode => {
+    // Node's default is throw since v15. With no unhandledRejection /
+    // uncaughtException listener, Node fatal-exits 1; a keep-alive report
+    // would leave the interval ticking forever.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        ...(mode ? [`--unhandled-rejections=${mode}`] : []),
+        "-e",
+        `setInterval(() => console.log("TICK"), 5000); Promise.reject(new Error("rejected"))`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).not.toContain("TICK");
+    expect(stderr).toContain("rejected");
+    expect(exitCode).toBe(1);
+  },
+);
 
 it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
   // Same keep-alive default as the Bun.listen handlers above, reached

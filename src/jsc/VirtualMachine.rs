@@ -3447,7 +3447,25 @@ impl VirtualMachine {
                 if handle_unhandled() {
                     return;
                 }
-                // continue to default handler
+                // Pre-04a67938 this fell through to counter++/print and the
+                // liveness check wound the process down; that check is gone
+                // (so Bun.serve keeps serving after a handler error). Take
+                // the fatal path here like Mode::Throw — Node's default has
+                // been throw since v15, and an uncaughtException listener can
+                // still claim it.
+                let wrapped =
+                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
+                if self.uncaught_exception_fatal(
+                    global_object,
+                    wrapped,
+                    UncaughtExceptionOrigin::Rejection,
+                ) {
+                    drain(self);
+                    return;
+                }
+                if self.event_loop_mut().drain_microtasks().is_err() {
+                    return;
+                }
             }
             Mode::None => {
                 let _ = handle_unhandled();

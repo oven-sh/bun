@@ -109,6 +109,7 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" bool Bun__VM__hasEvalEntryPoint(void*);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
@@ -158,8 +159,9 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         globalObject->putDirect(vm, builtinNames(vm).exportsPublicName(), exports, 0);
         globalObject->putDirect(vm, builtinNames(vm).requirePublicName(), requireFunction, 0);
         globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-        globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+        // Node: __filename is "[eval]"/"[stdin]" (the module id), __dirname is ".".
+        globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), moduleObject->m_id.get(), 0);
+        globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), JSC::jsString(vm, WTF::String("."_s)), 0);
 
         // The 3-arg JSC::evaluate overload catches the exception into a
         // discarded NakedPtr (Completion.h), so a require() failure or any
@@ -372,6 +374,29 @@ JSC_DEFINE_CUSTOM_SETTER(jsRequireExtensionsSetter,
     return true;
 }
 
+// Shared by require.main and process.mainModule: the CJS main-module object,
+// or undefined for -e/-p/stdin entries (which have no main module in Node).
+JSValue resolveMainCommonJSModule(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun__VM__hasEvalEntryPoint(globalObject->bunVM())) {
+        return jsUndefined();
+    }
+    auto& builtinNames = Bun::builtinNames(vm);
+    JSValue mainValue = globalObject->bunObject()->get(globalObject, builtinNames.mainPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue mainModule = globalObject->requireMap()->get(globalObject, mainValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    return mainModule;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsRequireMainGetter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(resolveMainCommonJSModule(globalObject));
+}
+
 static const HashTableValue RequireResolveFunctionPrototypeValues[] = {
     { "paths"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, requireResolvePathsFunction, 1 } },
 };
@@ -431,10 +456,7 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 
     reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
-        vm,
-        globalObject,
-        commonJSMainCodeGenerator(vm),
-        globalObject->globalScope());
+        vm, globalObject, 0, "main"_s, jsRequireMainGetter, ImplementationVisibility::Public);
 
     this->putDirectAccessor(
         globalObject,
@@ -1463,6 +1485,35 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
 
 static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sourceOrigin, const WTF::String& sourceURL);
 
+// module.id for a new CJS module object. id="." marks the Node main module, so
+// compare against the entry path instead of "first module seen" so -r preloads
+// (which run first) do not steal the main identity. For -e/-p/stdin entries
+// Node uses "[eval]"/"[stdin]" (the basename of the synthetic absolute filename).
+static JSString* moduleIdForNewCommonJSModule(Zig::GlobalObject* globalObject, JSString* filename, const WTF::String& sourceURL, size_t sepIndex)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun__VM__specifierIsEvalEntryPoint(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+        if (sepIndex != WTF::notFound) {
+            RELEASE_AND_RETURN(scope, JSC::jsSubstring(globalObject, filename, sepIndex + 1, sourceURL.length() - sepIndex - 1));
+        }
+        return filename;
+    }
+    // Compare against Bun.main (the realpath of the entry) rather than raw
+    // vm.main(): under e.g. the node-argv0 shim the entry may be requested via
+    // a symlink while this module is keyed by its realpath.
+    JSValue mainValue = globalObject->bunObject()->get(globalObject, Bun::builtinNames(vm).mainPublicName());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (mainValue.isString()) {
+        auto mainStr = asString(mainValue)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (mainStr == sourceURL) {
+            return JSC::jsString(vm, WTF::String("."_s));
+        }
+    }
+    return filename;
+}
+
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSString* requireMapKey,
@@ -1494,9 +1545,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         auto requireMap = globalObject->requireMap();
-        if (requireMap->size() == 0) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-        }
+        requireMapKey = moduleIdForNewCommonJSModule(globalObject, filename, sourceURL, index);
+        RETURN_IF_EXCEPTION(scope, {});
 
         if (globalObject->hasOverriddenModuleWrapper) [[unlikely]] {
             auto concat = makeString(
@@ -1611,9 +1661,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             dirname = jsEmptyString(vm);
         }
         auto requireMap = globalObject->requireMap();
-        if (requireMap->size() == 0) {
-            requireMapKey = JSC::jsString(vm, WTF::String("."_s));
-        }
+        requireMapKey = moduleIdForNewCommonJSModule(globalObject, filename, sourceURL, index);
+        RETURN_IF_EXCEPTION(scope, {});
 
         moduleObject = JSCommonJSModule::create(
             vm,

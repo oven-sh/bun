@@ -131,6 +131,14 @@ pub fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue
     }
 }
 
+/// Exported as `Bun__VM__hasEvalEntryPoint`.
+/// True when the process entry point is `-e`/`-p` eval or piped stdin. Node has
+/// no `require.main`/`process.mainModule` for such entries.
+// HOST_EXPORT(Bun__VM__hasEvalEntryPoint, c)
+pub fn has_eval_entry_point(this: &mut VirtualMachine) -> bool {
+    this.module_loader.eval_source.is_some()
+}
+
 /// Exported as `Bun__VM__specifierIsEvalEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
 pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {

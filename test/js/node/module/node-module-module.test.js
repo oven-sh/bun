@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { symlinkSync } from "fs";
+import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -363,5 +364,125 @@ describe.concurrent("node-module-module", () => {
    ./j.cjs (seen)
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
+  });
+});
+
+describe.concurrent("main-module identity", () => {
+  const runJSON = async (cmd, cwd) => {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+    return JSON.parse(stdout.trim());
+  };
+
+  const evalBody = `JSON.stringify({
+    reqMainIsModule: require.main === module,
+    reqMain: require.main,
+    mainModule: process.mainModule,
+    moduleId: module.id,
+    filename: __filename,
+    dirname: __dirname,
+  })`;
+
+  // Node has no main module for -e/-p/stdin entries.
+  test.each([["-e"], ["--print"], ["-p"]])("bun %s has no main module", async flag => {
+    const src = flag === "-e" ? `console.log(${evalBody})` : evalBody;
+    expect(await runJSON([bunExe(), flag, src])).toEqual({
+      reqMainIsModule: false,
+      reqMain: undefined,
+      mainModule: undefined,
+      moduleId: "[eval]",
+      filename: "[eval]",
+      dirname: ".",
+    });
+  });
+
+  test("stdin entry has no main module", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-"],
+      env: bunEnv,
+      stdin: new Blob([`console.log(${evalBody})`]),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout.trim())).toEqual({
+      reqMainIsModule: false,
+      reqMain: undefined,
+      mainModule: undefined,
+      moduleId: "[stdin]",
+      filename: "[stdin]",
+      dirname: ".",
+    });
+  });
+
+  test("-r preload does not steal the main-module identity", async () => {
+    using dir = tempDir("main-module-preload", {
+      "pre.cjs": `globalThis.__pre = { preId: module.id, preReqMain: require.main, preMainModule: process.mainModule };\n`,
+      "main.cjs": `const p = globalThis.__pre;
+        console.log(JSON.stringify({
+          ...p,
+          mainId: module.id,
+          reqMainId: require.main && require.main.id,
+          reqMainIsModule: require.main === module,
+          mainModuleIsModule: process.mainModule === module,
+        }));\n`,
+    });
+    const cwd = String(dir);
+    expect(await runJSON([bunExe(), "-r", "./pre.cjs", "./main.cjs"], cwd)).toEqual({
+      preId: path.join(cwd, "pre.cjs"),
+      preReqMain: undefined,
+      preMainModule: undefined,
+      mainId: ".",
+      reqMainId: ".",
+      reqMainIsModule: true,
+      mainModuleIsModule: true,
+    });
+  });
+
+  test("reading process.mainModule during preload does not poison it", async () => {
+    using dir = tempDir("main-module-poison", {
+      "pre.cjs": `void String(process.mainModule);\n`,
+      "main.cjs": `const after = process.mainModule && process.mainModule.id;
+        const isMain = process.mainModule === module;
+        process.mainModule = 42;
+        console.log(JSON.stringify({ after, isMain, assigned: process.mainModule }));\n`,
+    });
+    expect(await runJSON([bunExe(), "-r", "./pre.cjs", "./main.cjs"], String(dir))).toEqual({
+      after: ".",
+      isMain: true,
+      assigned: 42,
+    });
+  });
+
+  test.skipIf(isWindows)("symlinked entry under the node-argv0 shim still gets id='.'", async () => {
+    using dir = tempDir("main-module-symlink", {
+      "real/main.cjs": `console.log(JSON.stringify({ id: module.id, reqMainIsModule: require.main === module }));\n`,
+    });
+    const cwd = String(dir);
+    symlinkSync("real", path.join(cwd, "link"), "dir");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join("link", "main.cjs")],
+      argv0: "node",
+      env: bunEnv,
+      cwd,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) expect({ stdout, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout.trim())).toEqual({ id: ".", reqMainIsModule: true });
+  });
+
+  test("first CJS imported from an ESM entry is not the main module", async () => {
+    using dir = tempDir("main-module-esm-entry", {
+      "main.mjs": `import { id, isReqMain } from "./foo.cjs";
+        console.log(JSON.stringify({ fooId: id, isReqMain }));\n`,
+      "foo.cjs": `module.exports = { id: module.id, isReqMain: require.main === module };\n`,
+    });
+    const cwd = String(dir);
+    expect(await runJSON([bunExe(), "./main.mjs"], cwd)).toEqual({
+      fooId: path.join(cwd, "foo.cjs"),
+      isReqMain: false,
+    });
   });
 });

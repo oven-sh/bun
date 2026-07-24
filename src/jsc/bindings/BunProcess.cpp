@@ -4024,30 +4024,22 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
     process->queueNextTick<2>(globalObject, function, { JSValue::decode(arg1), JSValue::decode(arg2) });
 }
 
-// This does the equivalent of
-// return require.cache.get(Bun.main)
-static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
+// process.mainModule must be a live view, not a first-read memoization: a -r
+// preload that reads it (legitimately undefined at that instant) would otherwise
+// cache undefined for the life of the process.
+JSC_DEFINE_CUSTOM_GETTER(processMainModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(processObject->globalObject());
-    auto* bun = globalObject->bunObject();
-    auto& builtinNames = Bun::builtinNames(vm);
-    JSValue mainValue = bun->get(globalObject, builtinNames.mainPublicName());
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
-    auto* requireMap = globalObject->requireMap();
-    JSValue mainModule = requireMap->get(globalObject, mainValue);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
-    return mainModule;
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(Bun::resolveMainCommonJSModule(globalObject));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessMainModule, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName propertyName))
+{
+    auto* thisObject = dynamicDowncast<Process>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return false;
+    thisObject->putDirect(JSC::getVM(globalObject), propertyName, JSValue::decode(encodedValue), 0);
+    return true;
 }
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
@@ -4488,7 +4480,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback
   kill                             Process_functionKill                                Function 2
-  mainModule                       constructMainModuleProperty                         PropertyCallback
+  mainModule                       processMainModule                                   CustomAccessor
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
   nextTick                         constructProcessNextTickFn                          PropertyCallback

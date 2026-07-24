@@ -57,10 +57,6 @@ fn load_bunfig(
             }
         };
 
-    bun_ast::stmt::data::Store::create();
-    bun_ast::expr::data::Store::create();
-    let _store_reset = bun_ast::StoreResetGuard::new();
-
     // A drop-guard borrowing `&mut *ctx.log` would conflict with the
     // `Bunfig::parse(.., ctx)` reborrow.
     // Route through the raw `*mut Log` (process-lifetime, set in

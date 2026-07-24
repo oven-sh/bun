@@ -1369,7 +1369,12 @@ describe("bun pm migrate for existing yarn.lock", () => {
         stdin: "ignore",
       });
 
-      const exitCode = await migrateResult.exited;
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(migrateResult.stdout).text(),
+        new Response(migrateResult.stderr).text(),
+        migrateResult.exited,
+      ]);
+
       expect(exitCode).toBe(0);
       expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
 

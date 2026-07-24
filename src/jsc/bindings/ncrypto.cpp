@@ -4393,6 +4393,57 @@ bool Rsa::setPrivateKey(BignumPointer&& d,
     return true;
 }
 
+bool Rsa::validateOrRepairPrivateKey()
+{
+    if (rsa_ == nullptr) return false;
+    if (RSA_check_key(rsa_) == 1) return true;
+
+    // BoringSSL hard-fails on inconsistent CRT params where OpenSSL falls back
+    // to m^d mod n. Recompute dp/dq/qi from d,p,q so JWK imports with bad CRT
+    // hints still yield a working key when the core (n,e,d,p,q) is valid.
+    ERR_clear_error();
+
+    const BIGNUM* d;
+    const BIGNUM* p;
+    const BIGNUM* q;
+    RSA_get0_key(rsa_, nullptr, nullptr, &d);
+    RSA_get0_factors(rsa_, &p, &q);
+    if (!d || !p || !q) return false;
+
+    BignumCtxPointer ctx(BN_CTX_new());
+    BignumPointer pm1(BN_dup(p));
+    BignumPointer qm1(BN_dup(q));
+    BignumPointer dp = BignumPointer::New();
+    BignumPointer dq = BignumPointer::New();
+    if (!ctx || !pm1 || !qm1 || !dp || !dq
+        || BN_sub_word(pm1.get(), 1) != 1
+        || BN_sub_word(qm1.get(), 1) != 1
+        || BN_mod(dp.get(), d, pm1.get(), ctx.get()) != 1
+        || BN_mod(dq.get(), d, qm1.get(), ctx.get()) != 1) {
+        ERR_clear_error();
+        return false;
+    }
+
+    BignumPointer qi(BN_mod_inverse(nullptr, q, p, ctx.get()));
+    if (!qi) {
+        ERR_clear_error();
+        return false;
+    }
+
+    if (RSA_set0_crt_params(
+            const_cast<RSA*>(rsa_), dp.get(), dq.get(), qi.get())
+        != 1) {
+        return false;
+    }
+    dp.release();
+    dq.release();
+    qi.release();
+
+    if (RSA_check_key(rsa_) == 1) return true;
+    ERR_clear_error();
+    return false;
+}
+
 DataPointer Rsa::encrypt(const EVPKeyPointer& key,
     const Rsa::CipherParams& params,
     const Buffer<const void> in)

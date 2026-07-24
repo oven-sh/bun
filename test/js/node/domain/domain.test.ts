@@ -47,6 +47,27 @@ test("a non-Domain process.domain is never pushed onto the stack by an async pai
   expect(r.exitCode).toBe(7);
 });
 
+test("a non-Domain process.domain is never assigned to a new EventEmitter by init", async () => {
+  // Node's wrapped init reads exports.active (only ever a real Domain), not
+  // process.domain, so a non-Domain value never reaches ee.domain and emit
+  // takes the original fast path. Without the _errorHandler filter Bun's
+  // init assigned the raw value and the domain-aware emit's domain.enter()
+  // threw a TypeError.
+  const r = await run(`
+    require("domain");
+    process.domain = { foo: 1 };
+    const ee = new (require("events"))();
+    ee.on("data", () => console.log("ok"));
+    ee.emit("data");
+    ee.emit("error", new Error("boom"));
+  `);
+  expect(r.stdout.trim()).toBe("ok");
+  expect(r.stderr).toContain("boom");
+  expect(r.stderr).not.toContain("enter is not a function");
+  expect(r.stderr).not.toContain("emit is not a function");
+  expect(r.exitCode).toBe(1);
+});
+
 test("patching AsyncLocalStorage.prototype.getStore after loading node:domain does not hijack domain error routing", async () => {
   const r = await run(`
     const domain = require("domain");

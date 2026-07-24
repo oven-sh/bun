@@ -613,8 +613,12 @@ EventEmitter.init = function init(this: any, opts: any) {
     value: null,
     writable: true,
   } as PropertyDescriptor);
+  // Node's init reads exports.active (only ever a real Domain or null), not
+  // process.domain; Bun unifies both into globalActive, so filter out a
+  // non-Domain process.domain value with the same _errorHandler guard
+  // isRestoredPairing/domainWouldClaim/fatalErrorDispatch already apply.
   const active = currentActive();
-  if (active && !(this instanceof Domain)) {
+  if (active && typeof active._errorHandler === "function" && !(this instanceof Domain)) {
     this.domain = active;
   }
 

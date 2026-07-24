@@ -761,8 +761,11 @@ describe("bundler", () => {
     format: "cjs",
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      // The wrapped dependency keeps its own "use strict" inside the closure
-      expect(out).toMatch(/__commonJS\(function\(exports[^)]*\) \{\s*"use strict";/);
+      // The wrapped dependency keeps its own "use strict" inside the closure:
+      // it must appear after the runtime helpers (not hoisted to the top) and
+      // as the first statement of the closure body.
+      expect(out.indexOf('"use strict"')).toBeGreaterThan(out.indexOf("require_dep"));
+      expect(out).toMatch(/\{\s*"use strict";\s*exports/);
     },
   });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {

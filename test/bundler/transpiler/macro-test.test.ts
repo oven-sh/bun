@@ -139,9 +139,11 @@ test("ireturnapromise", async () => {
 // ASSERT(!m_topGCOwnedDataScope) in Heap::clearConcurrentRetainedDataIfPossible aborted.
 // The Bun.gc(true) inside the macro schedules the sweeper; the setTimeout gives the sweeper
 // timer time to become due while wait_for_promise loops.
-test.skipIf(!isDebug && !isASAN)("promise-returning macro does not trip the GCOwnedDataScope sweeper assertion", async () => {
-  using dir = tempDir("macro-promise-sweeper", {
-    "macro.ts": `
+test.skipIf(!isDebug && !isASAN)(
+  "promise-returning macro does not trip the GCOwnedDataScope sweeper assertion",
+  async () => {
+    using dir = tempDir("macro-promise-sweeper", {
+      "macro.ts": `
       export async function delayed() {
         Bun.gc(true);
         const { promise, resolve } = Promise.withResolvers();
@@ -149,26 +151,27 @@ test.skipIf(!isDebug && !isASAN)("promise-returning macro does not trip the GCOw
         return promise;
       }
     `,
-    "entry.test.ts": `
+      "entry.test.ts": `
       import { delayed } from "./macro.ts" with { type: "macro" };
       import { test, expect } from "bun:test";
       test("macro promise", () => { expect(delayed()).toBe("ok"); });
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "entry.test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
-    stderr: expect.not.stringContaining("m_topGCOwnedDataScope"),
-    exitCode: 0,
-    signalCode: null,
-  });
-});
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "entry.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stderr: expect.not.stringContaining("m_topGCOwnedDataScope"),
+      exitCode: 0,
+      signalCode: null,
+    });
+  },
+);
 
 // A numeric key >= 100000 (JSC's MIN_SPARSE_ARRAY_INDEX) makes the property put inside
 // JSC__JSValue__putToPropertyKey take a path that can throw, so the binding must check for

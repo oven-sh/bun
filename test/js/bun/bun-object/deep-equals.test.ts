@@ -237,6 +237,20 @@ describe("Bun.deepEquals fast-path coverage", () => {
     const y = {};
     Object.defineProperty(y, Symbol.toStringTag, { value: "Tagged", enumerable: false });
     expect(Bun.deepEquals(x, y, true)).toBe(false);
+
+    // Enumerable own `constructor` holding distinct native constructors: the
+    // property walk deep-compares values, which is not equivalent to `.name`.
+    expect(Bun.deepEquals({ constructor: Array }, { constructor: Object }, true)).toBe(false);
+    expect(Bun.deepEquals({ constructor: Map }, { constructor: Set }, true)).toBe(false);
+  });
+
+  it("a self-referential asymmetric matcher throws RangeError instead of crashing", () => {
+    const arr: any[] = [];
+    const m = expect.arrayContaining(arr);
+    arr.push(m);
+    const x: any[] = [];
+    x.push(x);
+    expect(() => expect(x).toEqual(m)).toThrow(RangeError);
   });
 
   it("large Int32 array comparison is fast", () => {

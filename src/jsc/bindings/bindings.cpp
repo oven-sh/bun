@@ -709,6 +709,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
+        // matchAsymmetricMatcher() can re-enter Bun__deepEquals (e.g.
+        // arrayContaining) with fresh stack-local buffers, so guard before it.
+        // The Bun.deepEquals instantiation compiles this block out, so the guard
+        // for that path still waits for the object check below.
+        if ((c1Type == JSC::JSType(JSDOMWrapperType) || c2Type == JSC::JSType(JSDOMWrapperType)) && !vm.isSafeToRecurse()) [[unlikely]] {
+            throwStackOverflowError(globalObject, scope);
+            return false;
+        }
         if (c2Type == JSC::JSType(JSDOMWrapperType)) {
             switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
@@ -996,12 +1004,19 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
 
     if constexpr (isStrict && !skipPrototype) {
         // calculatedClassName() reads the own `constructor` and own/inherited
-        // Symbol.toStringTag before falling back to the prototype. When neither
-        // structure has DontEnum properties, any own constructor/toStringTag is
-        // enumerable and therefore compared by the property walk below, so a matching
-        // prototype (or identical Structure) is sufficient to prove agreement.
-        bool canSkipClassName = !o1Structure->hasNonEnumerableProperties() && !o2Structure->hasNonEnumerableProperties()
-            && (o1Structure == o2Structure || o1->getPrototypeDirect() == o2->getPrototypeDirect());
+        // Symbol.toStringTag before falling back to the prototype. Skipping it is
+        // only sound when neither structure has either key (the property walk
+        // deep-compares values, which is not equivalent to comparing `.name`).
+        // The structure's seen-properties bloom filter rules out a miss in one
+        // load + bit test; a false positive just falls through to the full check.
+        auto ctorBits = CompactPtr<UniquedStringImpl>::encode(vm.propertyNames->constructor.impl());
+        auto tagBits = CompactPtr<UniquedStringImpl>::encode(vm.propertyNames->toStringTagSymbol.impl());
+        auto hasNoClassNameKeys = [&](Structure* s) {
+            auto seen = s->seenProperties();
+            return seen.ruleOut(ctorBits) && seen.ruleOut(tagBits);
+        };
+        bool canSkipClassName = (o1Structure == o2Structure || o1->getPrototypeDirect() == o2->getPrototypeDirect())
+            && hasNoClassNameKeys(o1Structure) && (o1Structure == o2Structure || hasNoClassNameKeys(o2Structure));
         if (!canSkipClassName) {
             if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
                 return false;

@@ -926,7 +926,9 @@ function serializeRunError(error: unknown, depth = 0) {
       name: error.name,
       cause: cause !== undefined && depth < 8 ? serializeRunCause(cause, depth + 1) : undefined,
     };
-    // Only JSON-safe primitives survive the pipe (node uses the v8 serializer).
+    // Only JSON-safe primitives survive the pipe as-is (node uses the v8
+    // serializer); carry anything else via inspect() so the tap reporter's
+    // assertion-like block still renders expected/actual.
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
       const t = typeof value;

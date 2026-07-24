@@ -2986,7 +2986,20 @@ impl PostgresSQLConnection {
                 let js_err =
                     crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                 if let Some(stmt) = request.statement_mut() {
-                    if stmt.status == StatementStatus::Parsing {
+                    // Evict and mark Failed when either the Parse itself was
+                    // rejected, or SQLSTATE 26000/0A000 reported that the
+                    // server no longer holds (or accepts) an already-parsed
+                    // plan: DEALLOCATE / DISCARD ALL / a pooler backend swap,
+                    // or DDL changed the result type. The next execution then
+                    // re-prepares instead of failing forever on this
+                    // connection. The Failed guard makes this idempotent: a
+                    // second pipelined 26000/0A000 on the same statement must
+                    // not remove()+deref again, since the map may by then hold
+                    // a fresh entry inserted by a rejection handler's retry.
+                    if stmt.status != StatementStatus::Failed
+                        && (stmt.status == StatementStatus::Parsing
+                            || err.is_prepared_statement_invalid())
+                    {
                         stmt.status = StatementStatus::Failed;
                         stmt.error_response = Some(
                             crate::postgres::postgres_sql_statement::Error::Protocol(err),

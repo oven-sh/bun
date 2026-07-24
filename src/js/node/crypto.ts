@@ -1,6 +1,7 @@
 // Hardcoded module "node:crypto"
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const LazyTransform = require("internal/streams/lazy_transform");
+const { guardCallback } = require("internal/shared");
 const { defineCustomPromisifyArgs } = require("internal/promisify");
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;
@@ -156,6 +157,15 @@ crypto_exports.hash = function hash(algorithm, input, outputEncoding = "hex") {
 };
 
 // TODO: move this to zig
+// Hoisted .then handlers for node-style callbacks; `this` is the guarded
+// callback (bound at the call site) so no closure allocates per invocation.
+function deliverCallbackResult(this: (...args: unknown[]) => void, result: unknown) {
+  this(null, result);
+}
+function deliverCallbackError(this: (...args: unknown[]) => void, err: unknown) {
+  this(err);
+}
+
 function pbkdf2(password, salt, iterations, keylen, digest, callback) {
   if (typeof digest === "function") {
     callback = digest;
@@ -164,10 +174,9 @@ function pbkdf2(password, salt, iterations, keylen, digest, callback) {
 
   const promise = _pbkdf2(password, salt, iterations, keylen, digest, callback);
   if (callback) {
-    promise.then(
-      result => callback(null, result),
-      err => callback(err),
-    );
+    // Guarded so a throw inside the callback is an uncaughtException, as in node.
+    const cb = guardCallback(callback);
+    promise.then(deliverCallbackResult.bind(cb), deliverCallbackError.bind(cb));
     return;
   }
 

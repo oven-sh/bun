@@ -40,6 +40,14 @@ class TestTCPWrap {
   }
 }
 
+const { isInsideNodeModules } = require("internal/shared");
+
+function safeGetenv(name: string) {
+  return process.env[name];
+}
+
+let cachedUvBinding: Record<string, unknown> | undefined;
+
 function internalBinding(name: string) {
   switch (name) {
     case "trace_events":
@@ -49,24 +57,63 @@ function internalBinding(name: string) {
         getCategoryEnabledBuffer: agent.getCategoryEnabledBuffer,
       };
     case "constants":
-      return {
-        trace: {
-          TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN: 98,
-          TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
-        },
-      };
-    // libuv error codes, the UDP handle wrap, and the minimal TCP wrap the
-    // vendored dgram tests consume.
-    case "uv":
+      // The real thing: os/fs/crypto/zlib/trace sections, same object node's
+      // internalBinding("constants") exposes (ProcessBindingConstants.cpp).
+      return $processBindingConstants;
+    case "uv": {
       // process.binding("uv") carries libuv's own codes on every platform
-      // (including Windows' synthetic ones), same as node's uv binding.
-      return process.binding("uv");
+      // (including Windows' synthetic ones), same as node's uv binding —
+      // but not getErrorMessage, which node's binding also exposes. Derive
+      // it from the same native uv_e table (util.getSystemErrorMap) so the
+      // messages can never diverge. Cached: node returns a stable object.
+      if (cachedUvBinding === undefined) {
+        const errmap: Map<number, [string, string]> = require("node:util").getSystemErrorMap();
+        cachedUvBinding = {
+          ...process.binding("uv"),
+          getErrorMessage: function getErrorMessage(n: number) {
+            const entry = errmap.get(n);
+            return entry !== undefined ? entry[1] : `Unknown system error ${n}`;
+          },
+        };
+      }
+      return cachedUvBinding;
+    }
+    // node's credentials binding: without setuid/setgid mismatch handling,
+    // safeGetenv degenerates to a plain env read (same as node run normally).
+    case "credentials":
+      return { safeGetenv };
+    case "buffer": {
+      const { kMaxLength, kStringMaxLength } = require("node:buffer");
+      return { kMaxLength, kStringMaxLength };
+    }
     case "udp_wrap":
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
-    default:
-      throw new Error(`internalBinding("${name}") is not implemented in Bun`);
+    case "util":
+      return { isInsideNodeModules };
+    // The icu-era binding node exposed until nodejs/node#55156; vendored
+    // tests like test-icu-punycode still consume it.
+    case "icu": {
+      const icu = $cpp("NodeURL.cpp", "Bun::createNodeICUBinding");
+      // Node asked ICU's converter registry; answer from the runtime's
+      // encoding registry instead.
+      icu.hasConverter = function hasConverter(label: string) {
+        try {
+          new TextDecoder(label);
+          return true;
+        } catch {
+          return false;
+        }
+      };
+      return icu;
+    }
+    default: {
+      const err = new Error(`internalBinding("${name}") is not implemented in Bun`);
+      // node reports unknown/restricted bindings with this code.
+      (err as Error & { code: string }).code = "ERR_INVALID_MODULE";
+      throw err;
+    }
   }
 }
 

@@ -58,6 +58,20 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
         // instead to terminate the worker sooner
         worker.exit();
     } else {
+        // A watch-reload kill-signal handler may call process.exit; node
+        // restarts the watched child regardless. `process.exit()` must never
+        // return control to JS (code after it would run, and remaining signal
+        // listeners would fire), so replace the process here instead of
+        // unwinding back through the emit loop — the 'exit' event has already
+        // been dispatched by the caller.
+        if bun_jsc::posix_signal_handle::is_emitting_watch_kill_signal() {
+            let should_clear_terminal =
+                !vm.env_loader().has_set_no_clear_terminal_on_reload(
+                    !bun_core::Output::enable_ansi_colors_stdout(),
+                );
+            bun_core::Output::flush();
+            bun_core::reload_process(should_clear_terminal, false);
+        }
         vm.on_exit();
         vm.global_exit();
     }
@@ -299,6 +313,13 @@ mod _impl {
                             }
                         }
                     }
+                    // Node's whole-token aliases are not params, so they never
+                    // land above; an alias takes a value iff its target does.
+                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+                        if set.contains(to) {
+                            bun_core::handle_oom(set.insert(from));
+                        }
+                    }
                     set
                 });
 
@@ -407,10 +428,34 @@ mod _impl {
     }
 
     fn get_cwd(global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        // Real syscall (not the resolver's cached top_level_dir): Node's
+        // process.cwd() calls uv_cwd() so a deleted cwd must surface here.
         let mut buf = PathBuffer::uninit();
-        match crate::node::path::get_cwd(&mut buf) {
-            bun_sys::Result::Ok(r) => Ok(ZigString::init(r).with_encoding().to_js(global_object)),
-            bun_sys::Result::Err(e) => Err(global_object.throw_value(e.to_js(global_object))),
+        match Syscall::getcwd(&mut buf[..]) {
+            bun_sys::Result::Ok(len) => Ok(ZigString::init(&buf[..len])
+                .with_encoding()
+                .to_js(global_object)),
+            bun_sys::Result::Err(e) => {
+                // Node's UVException from `Cwd` (node_process_methods.cc):
+                // "CODE: process.cwd failed with error <uv_strerror>[, hint], uv_cwd"
+                let (code, label) = e.uv_code_label().unwrap_or(("UNKNOWN", "unknown error"));
+                let hint = if e.get_errno() == bun_sys::E::ENOENT {
+                    ", the current working directory was likely removed \
+                     without changing the working directory"
+                } else {
+                    ""
+                };
+                let message =
+                    format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
+                let err = bun_jsc::SystemError {
+                    errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
+                    code: BunString::static_(code).into(),
+                    message: BunString::clone_utf8(message.as_bytes()).into(),
+                    syscall: BunString::static_("uv_cwd").into(),
+                    ..Default::default()
+                };
+                Err(global_object.throw_value(err.to_error_instance(global_object)))
+            }
         }
     }
 

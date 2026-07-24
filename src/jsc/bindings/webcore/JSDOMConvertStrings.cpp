@@ -100,6 +100,12 @@ String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Match V8/Node's wording for symbol-to-string coercion errors.
+    if (value.isSymbol()) [[unlikely]] {
+        throwTypeError(&lexicalGlobalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return {};
+    }
+
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -110,6 +116,12 @@ AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue val
 {
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Match V8/Node's wording for symbol-to-string coercion errors.
+    if (value.isSymbol()) [[unlikely]] {
+        throwTypeError(&lexicalGlobalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return nullAtom();
+    }
 
     auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});

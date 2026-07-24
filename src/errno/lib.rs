@@ -45,36 +45,40 @@ macro_rules! __decl_uv_e {
     ( $( $ident:ident = $value:expr => $display:literal ),+ $(,)? ) => {
         $( pub const $ident: i32 = $value; )+
 
+        /// The full (negated code, name) table for this target —
+        /// target-independent libuv-synthetic codes (values from
+        /// vendor/libuv/include/uv/errno.h) first, then the per-OS rows.
+        /// Consumed by `name()` and node:util's `getSystemErrorMap()`.
+        pub static ENTRIES: &[(i32, &'static str)] = &[
+            (-4095, "EOF"),
+            (-4094, "UNKNOWN"),
+            (-3000, "EAI_ADDRFAMILY"),
+            (-3001, "EAI_AGAIN"),
+            (-3002, "EAI_BADFLAGS"),
+            (-3003, "EAI_CANCELED"),
+            (-3004, "EAI_FAIL"),
+            (-3005, "EAI_FAMILY"),
+            (-3006, "EAI_MEMORY"),
+            (-3007, "EAI_NODATA"),
+            (-3008, "EAI_NONAME"),
+            (-3009, "EAI_OVERFLOW"),
+            (-3010, "EAI_SERVICE"),
+            (-3011, "EAI_SOCKTYPE"),
+            (-3013, "EAI_BADHINTS"),
+            (-3014, "EAI_PROTOCOL"),
+            $( (-($ident), $display) ),+
+        ];
+
         /// Negated libuv error code (`-UV_E*`) → user-visible name.
         /// `None` for unmapped values (caller falls back to
-        /// `"Unknown system error N"`). Input is the raw signed value as
-        /// returned to JS — i.e. `-uv_e::FOO`.
+        /// `"Unknown system error N"`). First match wins, mirroring the
+        /// duplicate-value tolerance of the old `if`-chain (EAGAIN aliases).
         pub fn name(neg_uv_err: i32) -> Option<&'static str> {
-            // Target-independent libuv-synthetic codes (no `uv_e::*` const).
-            // Values from vendor/libuv/include/uv/errno.h.
-            match neg_uv_err {
-                -4095 => return Some("EOF"),
-                -4094 => return Some("UNKNOWN"),
-                -3000 => return Some("EAI_ADDRFAMILY"),
-                -3001 => return Some("EAI_AGAIN"),
-                -3002 => return Some("EAI_BADFLAGS"),
-                -3003 => return Some("EAI_CANCELED"),
-                -3004 => return Some("EAI_FAIL"),
-                -3005 => return Some("EAI_FAMILY"),
-                -3006 => return Some("EAI_MEMORY"),
-                -3007 => return Some("EAI_NODATA"),
-                -3008 => return Some("EAI_NONAME"),
-                -3009 => return Some("EAI_OVERFLOW"),
-                -3010 => return Some("EAI_SERVICE"),
-                -3011 => return Some("EAI_SOCKTYPE"),
-                -3013 => return Some("EAI_BADHINTS"),
-                -3014 => return Some("EAI_PROTOCOL"),
-                _ => {}
+            for &(code, name) in ENTRIES {
+                if code == neg_uv_err {
+                    return Some(name);
+                }
             }
-            // Per-OS rows. `if`-chain (not `match`) because two `$value`s may
-            // resolve to the same integer on some targets (e.g. EAGAIN ==
-            // EWOULDBLOCK), which `match` rejects as an unreachable pattern.
-            $( if neg_uv_err == -($ident) { return Some($display); } )+
             None
         }
     };

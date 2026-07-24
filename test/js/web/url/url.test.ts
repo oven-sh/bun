@@ -4,21 +4,16 @@ import { resolveObjectURL } from "node:buffer";
 
 describe("url", () => {
   it("URL throws", () => {
-    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
-    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
-    expect(() => new URL("boop", "http!/example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against "http!/example.com"',
-    );
+    // Node-compatible message: exactly "Invalid URL".
+    expect(() => new URL("")).toThrow("Invalid URL");
+    expect(() => new URL(" ")).toThrow("Invalid URL");
+    expect(() => new URL("boop", "http!/example.com")).toThrow("Invalid URL");
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       expect.objectContaining({
         code: "ERR_INVALID_URL",
       }),
     );
-
-    // redact
-    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against <redacted>',
-    );
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow("Invalid URL");
   });
 
   it("should have correct origin and protocol", () => {
@@ -82,22 +77,51 @@ describe("url", () => {
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("file://");
   });
+  it("leaves opaque (non-special-scheme) hosts unchanged", () => {
+    // Non-special schemes never run IDNA; the host is UTF-8 percent-encoded
+    // verbatim per WHATWG and node/ada. U+1E9E is an IDNA delta source for
+    // special schemes only.
+    expect(new URL("foo://\u1E9E.com/").href).toBe("foo://%E1%BA%9E.com/");
+    expect(new URL("foo://a\u180Eb/").href).toBe("foo://a%E1%A0%8Eb/");
+    // special scheme: delta applies, host is IDNA-processed.
+    expect(new URL("http://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    // Non-canonical special-scheme authority forms reach IDNA too.
+    expect(new URL("http:/\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\\\\\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("\t//\u1E9E.com", "http://x/").href).toBe("http://xn--zca.com/");
+    // Same scheme as the base without "//" is relative-state (path, not host):
+    // the delta source stays percent-encoded verbatim.
+    expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
+    // Cross-scheme reaches the authority state and IDNA runs.
+    expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
+    // file: only has a host with exactly two slashes; ///x and /x are path.
+    expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
+    // Bracketed hosts go to the IPv6 parser, never IDNA.
+    expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    // setter on a non-special scheme: opaque host stays verbatim.
+    const u = new URL("foo://x/");
+    u.hostname = "\u1E9E";
+    expect(u.hostname).toBe("%E1%BA%9E");
+  });
+
   it("prints", () => {
+    // URL.prototype carries [Symbol.for("nodejs.util.inspect.custom")], so
+    // Bun.inspect matches node's util.inspect output.
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {
-  href: "https://example.com/",
-  origin: "https://example.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "example.com",
-  hostname: "example.com",
-  port: "",
-  pathname: "/",
-  hash: "",
-  search: "",
-  searchParams: ${Bun.inspect(new URLSearchParams())},
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://example.com/',
+  origin: 'https://example.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'example.com',
+  hostname: 'example.com',
+  port: '',
+  pathname: '/',
+  search: '',
+  searchParams: URLSearchParams {},
+  hash: ''
 }`);
 
     expect(
@@ -105,20 +129,18 @@ describe("url", () => {
         new URL("https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night"),
       ),
     ).toBe(`URL {
-  href: "https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  origin: "https://github.com",
-  protocol: "https:",
-  username: "",
-  password: "",
-  host: "github.com",
-  hostname: "github.com",
-  port: "",
-  pathname: "/oven-sh/bun/issues/135",
-  hash: "",
-  search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
-  toJSON: [Function: toJSON],
-  toString: [Function: toString],
+  href: 'https://github.com/oven-sh/bun/issues/135?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  origin: 'https://github.com',
+  protocol: 'https:',
+  username: '',
+  password: '',
+  host: 'github.com',
+  hostname: 'github.com',
+  port: '',
+  pathname: '/oven-sh/bun/issues/135',
+  search: '?hello%20i%20have%20spaces%20thank%20you%20good%20night',
+  searchParams: URLSearchParams { 'hello i have spaces thank you good night' => '' },
+  hash: ''
 }`);
   });
   it("works", () => {

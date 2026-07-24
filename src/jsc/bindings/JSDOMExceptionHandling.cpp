@@ -182,8 +182,16 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
     case ExceptionCode::InvalidThisError:
         return Bun::createInvalidThisError(lexicalGlobalObject, message.isEmpty() ? "Expected this to be of a different type"_s : message);
 
-    case ExceptionCode::InvalidURLError:
-        return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_URL, message.isEmpty() ? "Invalid URL"_s : message);
+    case ExceptionCode::InvalidURLError: {
+        // Node's ERR_INVALID_URL: plain TypeError (`${err}` has no [code]
+        // suffix), message "Invalid URL" (nodejs/node#38614), and the
+        // offending input — carried in the Exception message — on `error.input`.
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto* error = JSC::createTypeError(lexicalGlobalObject, "Invalid URL"_s);
+        error->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, WTF::String("ERR_INVALID_URL"_s)), 0);
+        error->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, message));
+        return error;
+    }
 
     case ExceptionCode::CryptoOperationFailedError:
         return Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_CRYPTO_OPERATION_FAILED, message.isEmpty() ? "Crypto operation failed"_s : message);

@@ -1,4 +1,5 @@
 #include "ProcessBindingUV.h"
+#include "BunProcess.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -101,15 +102,34 @@
   macro(EILSEQ, "illegal byte sequence") \
   macro(ESOCKTNOSUPPORT, "socket type not supported") \
   macro(ENODATA, "no data available") \
-  macro(EUNATCH, "protocol driver not attached")
+  macro(EUNATCH, "protocol driver not attached") \
+  macro(ENOEXEC, "exec format error")
 
 // clang-format on
+extern "C" bool Bun__Node__ProcessPendingDeprecation;
+
 namespace Bun {
 namespace ProcessBindingUV {
 
 JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+
+    if (Bun__Node__ProcessPendingDeprecation) {
+        // Node latches DEP0119 per Environment (each worker warns once).
+        auto* process = defaultGlobalObject(globalObject)->processObject();
+        if (!process->m_warnedErrname) {
+            process->m_warnedErrname = true;
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            Process::emitWarning(globalObject,
+                JSC::jsString(vm, WTF::String("Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead."_s)),
+                JSC::jsString(vm, WTF::String("DeprecationWarning"_s)),
+                JSC::jsString(vm, WTF::String("DEP0119"_s)),
+                JSC::jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
     auto arg0 = callFrame->argument(0);
 
     // Node.js crashes here:
@@ -126,7 +146,8 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
     BUN_UV_ERRNO_MAP(CASE)
 #undef CASE
 
-    return JSValue::encode(jsString(vm, makeString("Unknown system error: "_s, err)));
+    // node: `Unknown system error ${err}` (no colon), matching util.getSystemErrorName.
+    return JSValue::encode(jsString(vm, makeString("Unknown system error "_s, err)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

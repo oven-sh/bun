@@ -2786,10 +2786,58 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("transcode", () => {
-        expect(typeof BufferModule.transcode).toBe("undefined");
+        expect(typeof BufferModule.transcode).toBe("function");
+        const transcode = BufferModule.transcode;
 
-        // This is a masqueradesAsUndefined function
-        expect(() => BufferModule.transcode()).toThrow("Not implemented");
+        expect(transcode(Buffer.from("hä", "latin1"), "latin1", "utf8")).toStrictEqual(Buffer.from("hä", "utf8"));
+        expect(() => transcode(Buffer.from("a"), "b", "utf8")).toThrow(
+          "Unable to transcode Buffer [U_ILLEGAL_ARGUMENT_ERROR]",
+        );
+        expect(() => transcode()).toThrow(
+          'The "source" argument must be an instance of Buffer or Uint8Array. Received undefined',
+        );
+
+        // Substitution matrix, verified against node v25.2.1.
+        const cases = [
+          [[0xe4], "ascii", "utf8", [239, 191, 189]], // invalid ascii decodes to U+FFFD
+          [[0xe4], "ascii", "latin1", [0x3f]], // ...and U+FFFD narrows to '?'
+          [[0xe4], "ascii", "ucs2", [0xe4, 0x00]], // ascii->ucs2 widens like latin1
+          [[0xc0], "utf8", "utf8", [239, 191, 189]],
+          [[0xc0, 0x41], "utf8", "latin1", [0x3f, 0x41]],
+          [[0xf0, 0x80, 0x80], "utf8", "latin1", [0x3f, 0x3f, 0x3f]], // one U+FFFD per ill-formed byte
+          [[0xe1, 0x80], "utf8", "latin1", [0x3f]], // truncated sequence at EOF is one U+FFFD
+          [[0x41], "ucs2", "ucs2", [0xfd, 0xff]], // trailing odd byte becomes U+FFFD
+          [[0x41, 0x00, 0x42], "ucs2", "ucs2", [0x41, 0x00, 0xfd, 0xff]],
+          [[0x00, 0xd8], "ucs2", "ucs2", [0xfd, 0xff]], // lone surrogate becomes U+FFFD
+          [[0x00, 0xd8], "ucs2", "latin1", [0x3f]],
+          [[0x3d, 0xd8, 0x00, 0xde], "ucs2", "latin1", [0x3f]], // a full pair is one '?'
+          [[0x41], "ucs2", "latin1", []], // odd byte dropped for narrow targets
+          [[0x41, 0x00, 0x42], "ucs2", "utf8", [0x41]],
+          [[0x41], "utf8", "utf8", [0x41]],
+          [[0x41], undefined, undefined, [0x41]], // normalizeEncoding defaults to utf8
+          [[0x41], "", "ascii", [0x41]],
+        ];
+        for (const [bytes, from, to, expected] of cases) {
+          expect([...transcode(Buffer.from(bytes), from, to)]).toEqual(expected);
+        }
+
+        // Failures keep node's error contract.
+        for (const [bytes, from, to] of [
+          [[0xc0, 0x41], "utf8", "ucs2"],
+          [[0x00, 0xd8], "ucs2", "utf8"],
+          [[0x41], "ucs2", "utf8"],
+        ]) {
+          expect(() => transcode(Buffer.from(bytes), from, to)).toThrow(
+            expect.objectContaining({
+              message: "Unable to transcode Buffer [U_INVALID_CHAR_FOUND]",
+              code: "U_INVALID_CHAR_FOUND",
+              errno: 10,
+            }),
+          );
+        }
+        expect(() => transcode(Buffer.from("a"), "base64", "utf8")).toThrow(
+          expect.objectContaining({ code: "U_ILLEGAL_ARGUMENT_ERROR", errno: 1 }),
+        );
       });
 
       it("Buffer.from (Node.js test/test-buffer-from.js)", () => {

@@ -1,13 +1,14 @@
 'use strict';
 
-// This tests that --cpu-prof generates CPU profile when
-// process.exit(55) exits the process.
+// This tests that --cpu-prof-dir and --cpu-prof-name works together.
 
 const common = require('../common');
 const fixtures = require('../common/fixtures');
 common.skipIfInspectorDisabled();
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { spawnSync } = require('child_process');
 
 const tmpdir = require('../common/tmpdir');
@@ -20,20 +21,27 @@ const {
 
 {
   tmpdir.refresh();
+  const dir = tmpdir.resolve('prof');
+  const file = path.join(dir, 'test.cpuprofile');
   const output = spawnSync(process.execPath, [
     '--cpu-prof',
     '--cpu-prof-interval',
     kCpuProfInterval,
-    fixtures.path('workload', 'fibonacci-exit.js'),
+    '--cpu-prof-name',
+    'test.cpuprofile',
+    '--cpu-prof-dir',
+    dir,
+    fixtures.path('workload', 'fibonacci.js'),
   ], {
     cwd: tmpdir.path,
     env,
   });
-  if (output.status !== 55) {
+  if (output.status !== 0) {
     console.log(output.stderr.toString());
   }
-  assert.strictEqual(output.status, 55);
-  const profiles = getCpuProfiles(tmpdir.path);
-  assert.strictEqual(profiles.length, 1);
-  verifyFrames(output, profiles[0], 'fibonacci-exit.js');
+  assert.strictEqual(output.status, 0);
+  assert(fs.existsSync(dir));
+  const profiles = getCpuProfiles(dir);
+  assert.deepStrictEqual(profiles, [file]);
+  verifyFrames(output, file, 'fibonacci.js');
 }

@@ -56,7 +56,10 @@ unsafe extern "C" {
 }
 
 pub fn set_sampling_interval(interval: u32) {
-    Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast"));
+    // Reachable from a Worker's execArgv: 0 stalls the sampler and the process
+    // never exits, and a value past c_int would panic the cast.
+    let clamped = interval.clamp(1, c_int::MAX as u32);
+    Bun__setSamplingInterval(clamped as c_int);
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {
@@ -184,8 +187,9 @@ fn build_output_path(
         path.join(&[config.dir]).expect("unreachable");
     }
 
-    // Append filename
-    path.append(filename).expect("unreachable");
+    // Join filename; `join` resolves an absolute --cpu-prof-name where
+    // `append` asserts on it.
+    path.join(&[filename]).expect("unreachable");
 
     Ok(())
 }
@@ -194,28 +198,84 @@ fn generate_default_filename(
     buf: &mut PathBuffer,
     md_format: bool,
 ) -> Result<&[u8], ProfilerError> {
-    // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
-    // Use microsecond timestamp for uniqueness
-    let timespec = bun_core::Timespec::now(bun_core::TimespecMockMode::ForceRealTime);
+    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    write_diagnostic_filename(&mut cursor, "CPU", extension)
+        .map_err(|_| ProfilerError::FilenameTooLong)?;
+    let len = usize::try_from(cursor.position()).expect("int cast");
+    Ok(&buf[..len])
+}
+
+/// Node's DiagnosticFilename format (src/util.cc MakeFilename): local time,
+/// main-thread tid 0, and one 3-digit sequence shared by every diagnostic
+/// filename in the process (CPU and Heap draw from the same counter):
+/// `<prefix>.<yyyymmdd>.<hhmmss>.<pid>.<tid>.<seq><extension>`.
+pub(crate) fn write_diagnostic_filename(
+    cursor: &mut dyn std::io::Write,
+    prefix: &str,
+    extension: &str,
+) -> std::io::Result<()> {
     #[cfg(windows)]
     let pid = bun_sys::windows::GetCurrentProcessId();
     #[cfg(not(windows))]
     // SAFETY: getpid() is always safe to call.
     let pid = unsafe { libc::getpid() };
 
-    let epoch_microseconds: u64 = u64::try_from(
-        timespec
-            .sec
-            .wrapping_mul(1_000_000)
-            .wrapping_add(timespec.nsec / 1000),
+    let (year, month, day, hour, minute, second) = local_time_now();
+
+    static SEQ: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+    let seq = SEQ.fetch_add(1, core::sync::atomic::Ordering::Relaxed) + 1;
+
+    write!(
+        cursor,
+        "{prefix}.{year:04}{month:02}{day:02}.{hour:02}{minute:02}{second:02}.{pid}.0.{seq:03}{extension}"
     )
-    .unwrap();
+}
 
-    let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
+#[cfg(not(windows))]
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs()) as libc::time_t;
+    let mut tm: libc::tm = bun_core::ffi::zeroed();
+    // SAFETY: localtime_r only writes into `tm` and is thread-safe.
+    unsafe { libc::localtime_r(&raw const secs, &raw mut tm) };
+    (
+        tm.tm_year + 1900,
+        (tm.tm_mon + 1) as u32,
+        tm.tm_mday as u32,
+        tm.tm_hour as u32,
+        tm.tm_min as u32,
+        tm.tm_sec as u32,
+    )
+}
 
-    let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
-    let len = usize::try_from(cursor.position()).expect("int cast");
-    Ok(&buf[..len])
+#[cfg(windows)]
+pub(crate) fn local_time_now() -> (i32, u32, u32, u32, u32, u32) {
+    #[repr(C)]
+    #[derive(Default)]
+    struct SystemTime {
+        year: u16,
+        month: u16,
+        day_of_week: u16,
+        day: u16,
+        hour: u16,
+        minute: u16,
+        second: u16,
+        milliseconds: u16,
+    }
+    unsafe extern "system" {
+        fn GetLocalTime(system_time: *mut SystemTime);
+    }
+    let mut st = SystemTime::default();
+    // SAFETY: GetLocalTime only writes the out-param (kernel32 SYSTEMTIME layout).
+    unsafe { GetLocalTime(&mut st) };
+    (
+        i32::from(st.year),
+        u32::from(st.month),
+        u32::from(st.day),
+        u32::from(st.hour),
+        u32::from(st.minute),
+        u32::from(st.second),
+    )
 }

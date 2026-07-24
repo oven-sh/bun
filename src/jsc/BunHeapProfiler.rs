@@ -1,5 +1,5 @@
 use crate::CrateError as Error;
-use bun_core::{Output, Timespec, TimespecMockMode};
+use bun_core::Output;
 use bun_core::{OwnedString, String as BunString};
 use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
@@ -87,12 +87,15 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
         }
     }
 
-    // Print message to stderr to let user know where the profile was written
-    bun_core::pretty_errorln!(
-        "Heap profile written to: {}",
-        bstr::BStr::new(path_buf.slice())
-    );
-    Output::flush();
+    // Print where the markdown profile was written; node parity for the
+    // .heapprofile format is silence on success.
+    if config.text_format {
+        bun_core::pretty_errorln!(
+            "Heap profile written to: {}",
+            bstr::BStr::new(path_buf.slice())
+        );
+        Output::flush();
+    }
     Ok(())
 }
 
@@ -105,49 +108,20 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
 
-    // Append directory if specified
+    // Join directory and filename; `join` resolves absolute segments where
+    // `append` asserts on them (node accepts absolute --heap-prof-dir/-name).
     if !config.dir.is_empty() {
-        path.append(config.dir)?;
+        path.join(&[config.dir])?;
     }
-
-    // Append filename
-    path.append(filename)?;
+    path.join(&[filename])?;
     Ok(())
 }
 
 fn generate_default_filename(buf: &mut PathBuffer, text_format: bool) -> Result<&[u8], Error> {
-    // Generate filename like:
-    // - Markdown format: Heap.{timestamp}.{pid}.md
-    // - V8 format: Heap.{timestamp}.{pid}.heapsnapshot
-    let timespec = Timespec::now(TimespecMockMode::ForceRealTime);
-    #[cfg(windows)]
-    let pid: core::ffi::c_uint = bun_sys::windows::GetCurrentProcessId();
-    #[cfg(not(windows))]
-    // SAFETY: getpid() is always safe to call.
-    let pid: core::ffi::c_int = unsafe { libc::getpid() };
-
-    let epoch_microseconds: u64 = u64::try_from(
-        timespec
-            .sec
-            .wrapping_mul(1_000_000)
-            .wrapping_add(timespec.nsec / 1000),
-    )
-    .unwrap();
-
-    let extension: &str = if text_format { "md" } else { "heapsnapshot" };
-
-    // Write into the fixed buffer, then return the written slice
-    use std::io::Write;
-    let buf_slice = buf.as_mut_slice();
-    let total = buf_slice.len();
-    let mut cursor: &mut [u8] = buf_slice;
-    write!(
-        &mut cursor,
-        "Heap.{}.{}.{}",
-        epoch_microseconds, pid, extension
-    )
-    .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
-    let remaining = cursor.len();
-    let written = total - remaining;
+    let extension: &str = if text_format { ".md" } else { ".heapprofile" };
+    let mut cursor = std::io::Cursor::new(&mut buf[..]);
+    crate::bun_cpu_profiler::write_diagnostic_filename(&mut cursor, "Heap", extension)
+        .map_err(|_| crate::CrateError::Sys(bun_errno::SystemErrno::ENOSPC))?;
+    let written = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf.as_slice()[..written])
 }

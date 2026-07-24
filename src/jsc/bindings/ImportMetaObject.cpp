@@ -360,10 +360,21 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             }
         }
 
+        // node resolves builtin ids before validating `paths`
+        // (Module._resolveFilename checks BuiltinModule.normalizeRequirableId
+        // first), so `require.resolve("node:fs", { paths: [0] })` must not
+        // throw. Only real builtins bypass; "node:nope" still validates.
+        if (!userPathList.isUndefinedOrNull() && moduleName.isString()) {
+            auto builtinCheckStr = moduleName.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (Bun::isBuiltinModule(builtinCheckStr))
+                userPathList = jsUndefined();
+        }
+
         if (!userPathList.isUndefinedOrNull()) {
             if (JSArray* userPathListArray = dynamicDowncast<JSArray>(userPathList)) {
                 if (!moduleName.isString()) {
-                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "id"_s, "string"_s, moduleName);
+                    Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "request"_s, "string"_s, moduleName);
                     scope.release();
                     return {};
                 }
@@ -372,6 +383,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 WTF::Vector<BunString> paths;
                 for (size_t i = 0; i < userPathListArray->length(); ++i) {
                     JSValue path = userPathListArray->getIndex(globalObject, i);
+                    if (scope.exception()) [[unlikely]]
+                        goto cleanup;
+                    if (!path.isString()) {
+                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
+                        goto cleanup;
+                    }
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
@@ -394,7 +411,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                 }
                 RELEASE_AND_RETURN(scope, result);
             } else {
-                Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "option.paths"_s, userPathList);
+                Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "options.paths"_s, userPathList);
                 scope.release();
                 return {};
             }

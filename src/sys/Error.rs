@@ -331,6 +331,13 @@ impl Error {
         Some((<&'static str>::from(e), e))
     }
 
+    /// (code, uv_strerror label) pair, e.g. `("ENOENT", "no such file or
+    /// directory")` — the pieces of Node's `UVException` message.
+    pub fn uv_code_label(&self) -> Option<(&'static str, &'static str)> {
+        let (code, system_errno) = self.get_error_code_tag_name()?;
+        Some((code, libuv_error_map::LIBUV_ERROR_MAP[system_errno]))
+    }
+
     pub fn msg(&self) -> Option<&'static [u8]> {
         let (_code, system_errno) = self.get_error_code_tag_name()?;
         // Both error maps are total (`initFull("unknown error")`), so the

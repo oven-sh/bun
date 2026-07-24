@@ -334,6 +334,9 @@ pub struct DebugOptions {
     pub fallback_only: bool,
     pub silent: bool,
     pub hot_reload: HotReload,
+    /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
+    /// reload (node delivers this signal to its watched child; default SIGTERM).
+    pub watch_kill_signal: bun_core::SignalCode,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -360,6 +363,7 @@ impl Default for DebugOptions {
             fallback_only: false,
             silent: false,
             hot_reload: HotReload::None,
+            watch_kill_signal: bun_core::SignalCode::DEFAULT,
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,

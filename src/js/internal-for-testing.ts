@@ -225,6 +225,217 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+// node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
+// non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
+// so the node edge cases are handled here.
+const rustNormalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
+const nodeKEmptyObject = require("internal/shared").kEmptyObject;
+function nodeNormalizeEncoding(enc) {
+  if (enc == null) return "utf8";
+  if (typeof enc !== "string") return undefined;
+  const lower = enc.toLowerCase();
+  if (lower === "utf-16le") return "utf16le";
+  // The Rust map also accepts Buffer-only names node's normalizeEncoding rejects.
+  if (lower === "buffer" || lower === "utf16-le") return undefined;
+  return rustNormalizeEncoding(enc);
+}
+
+// Verbatim from node lib/internal/util.js (countBinaryOnes/getCIDR).
+function countBinaryOnes(n) {
+  // Count the number of bits set in parallel, which is faster than looping
+  n = n - ((n >>> 1) & 0x55555555);
+  n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
+  return (((n + (n >>> 4)) & 0xf0f0f0f) * 0x1010101) >>> 24;
+}
+
+function getCIDR(address, netmask, family) {
+  let ones = 0;
+  let split = ".";
+  let range = 10;
+  let groupLength = 8;
+  let hasZeros = false;
+  let lastPos = 0;
+
+  if (family === "IPv6") {
+    split = ":";
+    range = 16;
+    groupLength = 16;
+  }
+
+  for (let i = 0; i < netmask.length; i++) {
+    if (netmask[i] !== split) {
+      if (i + 1 < netmask.length) {
+        continue;
+      }
+      i++;
+    }
+    const part = netmask.slice(lastPos, i);
+    lastPos = i + 1;
+    if (part !== "") {
+      if (hasZeros) {
+        if (part !== "0") {
+          return null;
+        }
+      } else {
+        const binary = parseInt(part, range);
+        const binaryOnes = countBinaryOnes(binary);
+        ones += binaryOnes;
+        if (binaryOnes !== groupLength) {
+          if (binary.toString(2).includes("01")) {
+            return null;
+          }
+          hasZeros = true;
+        }
+      }
+    }
+  }
+
+  return `${address}/${ones}`;
+}
+
+// Verbatim from node lib/internal/util.js assignFunctionName (assert -> throw).
+function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
+  if (typeof name !== "string") {
+    const symbolDescription = name.description;
+    if (symbolDescription === undefined) throw new Error("Attempted to name function after descriptionless Symbol");
+    name = `[${symbolDescription}]`;
+  }
+  return Object.defineProperty(fn, "name", {
+    __proto__: null,
+    writable: false,
+    enumerable: false,
+    configurable: true,
+    ...Object.getOwnPropertyDescriptor(fn, "name"),
+    ...descriptor,
+    value: name,
+  });
+}
+
+function nodeIsError(e) {
+  return require("node:util/types").isNativeError(e) || e instanceof Error;
+}
+
+// node's internal WeakReference: a WeakRef that pins the target strongly
+// while its refcount is above zero.
+class WeakReference {
+  #ref;
+  #strong = null;
+  #refCount = 0;
+  constructor(object) {
+    this.#ref = new WeakRef(object);
+  }
+  get() {
+    // Serving from the pinned ref (when held) is equivalent to deref() and
+    // keeps the keepalive member read, not write-only.
+    return this.#strong ?? this.#ref.deref();
+  }
+  incRef() {
+    if (++this.#refCount === 1) this.#strong = this.#ref.deref();
+  }
+  decRef() {
+    if (--this.#refCount === 0) this.#strong = null;
+  }
+}
+
+// node's internal/child_process.getValidStdio, ported verbatim except that
+// bun has no Pipe/TTY/TCP handle wraps: pipe entries get a closeable stand-in
+// handle and wrap detection is omitted (throws ERR_INVALID_ARG_VALUE instead).
+function stdioStringToArray(stdio, channel?) {
+  const options: (string | number)[] = [];
+  switch (stdio) {
+    case "ignore":
+    case "overlapped":
+    case "pipe":
+      options.push(stdio, stdio, stdio);
+      break;
+    case "inherit":
+      options.push(0, 1, 2);
+      break;
+    default:
+      throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+  if (channel) options.push(channel);
+  return options;
+}
+
+function makeCodedError(Base: ErrorConstructor, code: string, message: string) {
+  const err = new Base(message) as Error & { code: string };
+  err.code = code;
+  return err;
+}
+
+function nodeGetValidStdio(stdio, sync?) {
+  const { isArrayBufferView } = require("node:util/types");
+  let ipc;
+  let ipcFd;
+
+  if (typeof stdio === "string") {
+    stdio = stdioStringToArray(stdio);
+  } else if (!Array.isArray(stdio)) {
+    throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
+  }
+
+  while (stdio.length < 3) stdio.push(undefined);
+
+  stdio = stdio.reduce(function reduceStdioEntry(acc, stdio, i) {
+    function cleanup() {
+      for (let i = 0; i < acc.length; i++) {
+        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle.close();
+      }
+    }
+
+    stdio ??= i < 3 ? "pipe" : "ignore";
+
+    if (stdio === "ignore") {
+      acc.push({ type: "ignore" });
+    } else if (stdio === "pipe" || stdio === "overlapped" || (typeof stdio === "number" && stdio < 0)) {
+      const a: Record<string, unknown> = {
+        type: stdio === "overlapped" ? "overlapped" : "pipe",
+        readable: i === 0,
+        writable: i !== 0,
+      };
+      // node: `a.handle = new Pipe(PipeConstants.SOCKET)`; bun has no Pipe wrap.
+      if (!sync) a.handle = { close() {} };
+      acc.push(a);
+    } else if (stdio === "ipc") {
+      if (sync || ipc !== undefined) {
+        cleanup();
+        if (!sync) throw $ERR_IPC_ONE_PIPE();
+        else throw makeCodedError(Error, "ERR_IPC_SYNC_FORK", "IPC cannot be used with synchronous forks");
+      }
+      ipc = { close() {} };
+      ipcFd = i;
+      acc.push({ type: "pipe", handle: ipc, ipc: true });
+    } else if (stdio === "inherit") {
+      acc.push({ type: "inherit", fd: i });
+    } else if (typeof stdio === "number") {
+      acc.push({ type: "fd", fd: stdio });
+    } else if (typeof stdio.fd === "number") {
+      const { fd } = stdio;
+      acc.push({ type: "fd", fd });
+    } else if (isArrayBufferView(stdio) || typeof stdio === "string") {
+      if (!sync) {
+        cleanup();
+        const inspected = require("node:util").inspect(stdio);
+        throw makeCodedError(
+          TypeError,
+          "ERR_INVALID_SYNC_FORK_INPUT",
+          `Asynchronous forks do not support Buffer, TypedArray, DataView or string input: ${inspected}`,
+        );
+      }
+    } else {
+      cleanup();
+      throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
+    }
+
+    return acc;
+  }, []);
+
+  return { stdio, ipc, ipcFd };
+}
+
+let cachedInternalChildProcess;
+
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin
@@ -232,14 +443,53 @@ export const Dequeue = require("internal/fifo");
 // vendored tests need more internals.
 export const exposedInternals = {
   "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
+  "internal/util/debuglog": require("internal/util/debuglog"),
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  // Bun's real implementations, under the names node's tests import them by.
+  "internal/validators": require("internal/validators"),
+  "internal/util/inspect": require("internal/util/inspect"),
+  "internal/freelist": require("internal/freelist"),
   // Node's internal/fixed_queue module IS the FixedQueue class.
   "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
-  "internal/freelist": require("internal/freelist"),
-  "internal/validators": require("internal/validators"),
+  "internal/assert/myers_diff": require("internal/assert/myers_diff"),
+  // Bun's internal/errors only carries aggregateTwoErrors; the ERR_* hierarchy
+  // is native, not a JS `codes` table, so nothing else is exposed here.
+  "internal/errors": require("internal/errors"),
+  // normalizeEncoding wraps the same Rust binding node:crypto and the
+  // webstream adapters call; the rest are node's own JS helpers, ported
+  // verbatim from lib/internal/util.js where Bun has no native equivalent.
+  "internal/util": {
+    normalizeEncoding: nodeNormalizeEncoding,
+    // Bun always has crypto support compiled in.
+    assertCrypto() {},
+    getCIDR,
+    isError: nodeIsError,
+    assignFunctionName,
+    kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
+    kEmptyObject: nodeKEmptyObject,
+    WeakReference,
+  },
+  // Bun's EventTarget/Event/CustomEvent are the native (global) ones; node
+  // keeps them in internal/event_target. kWeakHandler is Bun's real weak
+  // listener symbol from internal/shared. Bun has no NodeEventTarget.
+  "internal/event_target": {
+    Event: globalThis.Event,
+    CustomEvent: globalThis.CustomEvent,
+    EventTarget: globalThis.EventTarget,
+    kWeakHandler: require("internal/shared").kWeakHandler,
+  },
+  // ChildProcess is the real class exec()/spawn() instantiate, so vendored
+  // tests can monkeypatch its prototype; getValidStdio is ported from node.
+  // A getter so loading this module does not eagerly pull in child_process.
+  get "internal/child_process"() {
+    return (cachedInternalChildProcess ??= {
+      ChildProcess: require("node:child_process").ChildProcess,
+      getValidStdio: nodeGetValidStdio,
+    });
+  },
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

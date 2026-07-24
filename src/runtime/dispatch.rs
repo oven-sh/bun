@@ -363,6 +363,14 @@ pub fn run_task(
             unsafe { hot_reloader::HotReloadTask::deinit(t) };
             return Ok(RunTaskResult::EarlyReturn);
         }
+        task_tag::WatchReloadTask => {
+            let t = cast_ptr!(hot_reloader::WatchReloadTask);
+            // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
+            unsafe { (*t).run() };
+            // SAFETY: paired with heap::alloc in `Task::enqueue`.
+            unsafe { hot_reloader::WatchReloadTask::deinit(t) };
+            return Ok(RunTaskResult::EarlyReturn);
+        }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
         task_tag::FSWatchTask => {
@@ -584,7 +592,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 98,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

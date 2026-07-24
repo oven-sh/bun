@@ -47,6 +47,63 @@ afterEach(() => {
   watchee?.kill();
 });
 
+it.skipIf(isWindows)(
+  "process.exit() in a watch kill-signal handler never returns to JS",
+  async () => {
+    using dir = tempDir("watch-exit-in-sigterm", {
+      "exiter.js": `process.on("SIGTERM", () => {
+  process.exit(0);
+  require("fs").writeFileSync("should-not-write.txt", "hello");
+});
+process.on("SIGTERM", () => {
+  require("fs").writeFileSync("second-listener-ran.txt", "hello");
+});
+console.log("started");
+setInterval(() => {}, 1000);
+`,
+    });
+    const cwd = String(dir);
+    const path = join(cwd, "exiter.js");
+    watchee = spawn({
+      cwd,
+      cmd: [bunExe(), "--watch", "exiter.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+    let starts = 0;
+    let touched = false;
+    const decoder = new TextDecoder();
+    await (async () => {
+      // Output written before this reader attaches waits in the kernel pipe
+      // buffer, so no start can be missed. Lines are reassembled across chunk
+      // boundaries before matching.
+      let buffered = "";
+      for await (const chunk of watchee.stdout) {
+        buffered += decoder.decode(chunk);
+        let newline;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (line.includes("started") && ++starts === 2) return;
+          if (starts === 1 && !touched) {
+            touched = true;
+            // First boot seen: touch the file to trigger the kill-signal reload.
+            await Bun.write(path, (await Bun.file(path).text()) + "\n// touched");
+          }
+        }
+      }
+      // The child exiting before the reload start is a failure of the watch
+      // path itself; without this the absent-file expects below pass vacuously.
+      throw new Error(`watchee stdout ended after ${starts} start(s); expected 2`);
+    })();
+    expect(await Bun.file(join(cwd, "should-not-write.txt")).exists()).toBe(false);
+    expect(await Bun.file(join(cwd, "second-listener-ran.txt")).exists()).toBe(false);
+  },
+  10000,
+);
+
 // Watcher::start() must propagate a failed thread spawn as an Err through its
 // Result return instead of aborting inside start() with `.expect()`. An
 // LD_PRELOAD shim arms on inotify_init1 (which Watcher::init() calls on Linux
@@ -73,14 +130,15 @@ __attribute__((constructor)) static void no_core(void) {
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
-  armed = 1;
+  /* Watcher::start() retries once on EAGAIN; fail both attempts. */
+  armed = 2;
   return real_inotify_init1(flags);
 }
 
 int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), void *arg) {
   if (!real_pthread_create) real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
   if (armed) {
-    armed = 0;
+    armed--;
     return EAGAIN;
   }
   return real_pthread_create(t, a, f, arg);
@@ -119,3 +177,51 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
   expect(stdout).not.toContain("unreachable");
   expect(exitCode).not.toBe(0);
 });
+
+// A script that registers a SIGTERM handler and then spins in synchronous
+// code must still restart on file change: the watcher thread posts the reload
+// to the JS thread first (so listeners can run), but forces the reload itself
+// after a bounded grace window when the JS thread never drains the task.
+it("--watch forces a restart when the kill-signal listener thread is stuck in sync code", async () => {
+  using dir = tempDir("watch-busy-sigterm", {
+    "busy.js": `
+      process.on("SIGTERM", () => {});
+      console.log("iter first");
+      // The busy loop never yields to the event loop, so the posted
+      // WatchReloadTask cannot run. The watcher-thread fallback must fire.
+      for (;;) {}
+    `,
+  });
+
+  watchee = spawn({
+    cmd: [bunExe(), "--watch", "busy.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const reader = watchee.stdout.getReader();
+  const decoder = new TextDecoder();
+  let output = "";
+  const waitFor = async (needle: string) => {
+    while (!output.includes(needle)) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
+      output += decoder.decode(value, { stream: true });
+    }
+  };
+
+  await waitFor("iter first");
+  await Bun.write(
+    join(String(dir), "busy.js"),
+    `process.on("SIGTERM", () => {});
+     console.log("iter second");
+     process.exit(0);`,
+  );
+  await waitFor("iter second");
+
+  reader.releaseLock();
+  watchee.kill();
+  await watchee.exited;
+}, 30000);

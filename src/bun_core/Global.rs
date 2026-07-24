@@ -289,6 +289,77 @@ macro_rules! __define_signal_code {
 }
 for_each_signal!(__define_signal_code);
 
+impl SignalCode {
+    /// This table uses Linux numbering; returns the current platform's number
+    /// (they differ on macOS/BSD), or `None` when the platform lacks the signal.
+    pub fn platform_number(self) -> Option<i32> {
+        #[cfg(unix)]
+        {
+            use SignalCode as S;
+            Some(match self {
+                S::SIGHUP => libc::SIGHUP,
+                S::SIGINT => libc::SIGINT,
+                S::SIGQUIT => libc::SIGQUIT,
+                S::SIGILL => libc::SIGILL,
+                S::SIGTRAP => libc::SIGTRAP,
+                S::SIGABRT => libc::SIGABRT,
+                S::SIGBUS => libc::SIGBUS,
+                S::SIGFPE => libc::SIGFPE,
+                S::SIGKILL => libc::SIGKILL,
+                S::SIGUSR1 => libc::SIGUSR1,
+                S::SIGSEGV => libc::SIGSEGV,
+                S::SIGUSR2 => libc::SIGUSR2,
+                S::SIGPIPE => libc::SIGPIPE,
+                S::SIGALRM => libc::SIGALRM,
+                S::SIGTERM => libc::SIGTERM,
+                S::SIG16 => return None,
+                S::SIGCHLD => libc::SIGCHLD,
+                S::SIGCONT => libc::SIGCONT,
+                S::SIGSTOP => libc::SIGSTOP,
+                S::SIGTSTP => libc::SIGTSTP,
+                S::SIGTTIN => libc::SIGTTIN,
+                S::SIGTTOU => libc::SIGTTOU,
+                S::SIGURG => libc::SIGURG,
+                S::SIGXCPU => libc::SIGXCPU,
+                S::SIGXFSZ => libc::SIGXFSZ,
+                S::SIGVTALRM => libc::SIGVTALRM,
+                S::SIGPROF => libc::SIGPROF,
+                S::SIGWINCH => libc::SIGWINCH,
+                S::SIGIO => libc::SIGIO,
+                #[cfg(target_os = "linux")]
+                S::SIGPWR => libc::SIGPWR,
+                #[cfg(not(target_os = "linux"))]
+                S::SIGPWR => return None,
+                S::SIGSYS => libc::SIGSYS,
+            })
+        }
+        #[cfg(not(unix))]
+        {
+            // Windows numbering: the CRT's <signal.h> sparse set plus the
+            // synthetic SIGHUP/SIGQUIT/SIGKILL/SIGWINCH our libuv header
+            // defines (src/jsc/bindings/libuv/uv/win.h) — the same values
+            // BunProcess.cpp's signal maps compile against. The enum
+            // discriminants are Linux numbers and must not leak here:
+            // SIGABRT is 22 on Windows, not 6. Everything else has no
+            // Windows number, mirroring the unix arm's None for SIGPWR.
+            use SignalCode as S;
+            match self {
+                S::SIGHUP => Some(1),
+                S::SIGINT => Some(2),
+                S::SIGQUIT => Some(3),
+                S::SIGILL => Some(4),
+                S::SIGABRT => Some(22),
+                S::SIGFPE => Some(8),
+                S::SIGKILL => Some(9),
+                S::SIGSEGV => Some(11),
+                S::SIGTERM => Some(15),
+                S::SIGWINCH => Some(28),
+                _ => None,
+            }
+        }
+    }
+}
+
 // ─── analytics::features (MOVE_DOWN from bun_analytics) ───────────────────
 // Atomic counters so cross-thread `.fetch_add` is sound. Only the
 // counters are tier-0; `builtin_modules` (EnumSet over jsc HardcodedModule)

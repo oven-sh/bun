@@ -27,7 +27,24 @@
 
 #include <wtf/text/StringToIntegerConversion.h>
 
+namespace Bun {
+bool hasValidPunycodeHost(WTF::StringView);
+}
+
+namespace Bun {
+bool containsUnicode16IDNADeltaSource(WTF::StringView);
+WTF::String applyUnicode16IDNADelta(const WTF::String&);
+}
+
 namespace WebCore {
+
+// Like the URL constructor (DOMURL.cpp), reject special-scheme hosts whose
+// xn-- labels fail UTS #46; the WHATWG setters fail silently, so refuse the
+// commit instead of throwing.
+static bool hasAcceptableHost(const WTF::URL& url)
+{
+    return Bun::hasValidPunycodeHost(url.host()) || !url.hasSpecialScheme();
+}
 
 String URLDecomposition::origin() const
 {
@@ -107,6 +124,15 @@ static unsigned countASCIIDigits(StringView string)
 void URLDecomposition::setHost(StringView value)
 {
     auto fullURL = this->fullURL();
+    // The value is a host[:port] by definition: apply the Unicode 16 IDNA
+    // delta so old platform ICU data yields node's host (see DOMURL.cpp).
+    // Non-special schemes have opaque hosts, and '['-prefixed hosts go to
+    // the IPv6 parser; neither runs IDNA.
+    String mappedValue;
+    if (fullURL.hasSpecialScheme() && !value.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(value)) {
+        mappedValue = Bun::applyUnicode16IDNADelta(value.toString());
+        value = mappedValue;
+    }
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
@@ -136,7 +162,7 @@ void URLDecomposition::setHost(StringView value)
                 fullURL.setHostAndPort(value.left(separator + 1 + portLength));
         }
     }
-    if (fullURL.isValid())
+    if (fullURL.isValid() && hasAcceptableHost(fullURL))
         setFullURL(fullURL);
 }
 
@@ -148,12 +174,19 @@ String URLDecomposition::hostname() const
 void URLDecomposition::setHostname(StringView host)
 {
     auto fullURL = this->fullURL();
+    // See setHost: the input is a hostname by definition, and only special
+    // schemes run IDNA on it.
+    String mappedHost;
+    if (fullURL.hasSpecialScheme() && !host.startsWith('[') && Bun::containsUnicode16IDNADeltaSource(host)) {
+        mappedHost = Bun::applyUnicode16IDNADelta(host.toString());
+        host = mappedHost;
+    }
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
     if (fullURL.hasOpaquePath())
         return;
     fullURL.setHost(host);
-    if (fullURL.isValid())
+    if (fullURL.isValid() && hasAcceptableHost(fullURL))
         setFullURL(fullURL);
 }
 

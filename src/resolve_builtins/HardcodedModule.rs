@@ -163,6 +163,8 @@ pub enum HardcodedModule {
     NodeStreamWritableInternal,
     #[strum(serialize = "node:_tls_common")]
     NodeTlsCommonInternal,
+    #[strum(serialize = "node:_tls_wrap")]
+    NodeTlsWrapInternal,
     #[strum(serialize = "node:_http_agent")]
     NodeHttpAgentInternal,
     #[strum(serialize = "node:_http_client")]
@@ -265,6 +267,7 @@ bun_core::comptime_string_map! {
         b"node:_stream_wrap" => HardcodedModule::NodeStreamWrapInternal,
         b"node:_stream_writable" => HardcodedModule::NodeStreamWritableInternal,
         b"node:_tls_common" => HardcodedModule::NodeTlsCommonInternal,
+        b"node:_tls_wrap" => HardcodedModule::NodeTlsWrapInternal,
         b"node:_http_agent" => HardcodedModule::NodeHttpAgentInternal,
         b"node:_http_client" => HardcodedModule::NodeHttpClientInternal,
         b"node:_http_common" => HardcodedModule::NodeHttpCommonInternal,
@@ -597,7 +600,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     (
         b"node:_tls_wrap",
         Alias {
-            path: zstr!("node:tls"),
+            path: zstr!("node:_tls_wrap"),
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,
@@ -669,7 +672,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     (
         b"_tls_wrap",
         Alias {
-            path: zstr!("node:tls"),
+            path: zstr!("node:_tls_wrap"),
             tag: import_record::Tag::Builtin,
             node_builtin: true,
             node_only_prefix: false,

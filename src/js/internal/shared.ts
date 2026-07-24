@@ -147,6 +147,74 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+// Node invokes fs/dns callbacks off the libuv completion via InternalMakeCallback:
+// a throw leaves callback->Call() empty, failing the InternalCallbackScope, and
+// the pending exception surfaces through TriggerUncaughtException instead of a
+// promise rejection. Bun runs these callbacks from a promise reaction, where an
+// unguarded throw would only reject that promise (an unhandledRejection).
+// https://github.com/nodejs/node/blob/v26.3.0/src/api/callback.cc#L255-L268
+// fs dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc#L724-L741
+// dns dispatch: https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L1881
+const reportUncaughtException = $newCppFunction("BunProcess.cpp", "jsFunctionReportUncaughtException", 1);
+
+// Wrap a node-style callback so a throw inside it takes the uncaught path. The
+// callback keeps its place in the event loop; only the throw is rerouted. The
+// arity switch avoids materializing `arguments` for the shapes fs and dns use.
+function guardCallback(callback) {
+  return function guarded(a, b, c) {
+    try {
+      switch (arguments.length) {
+        case 0:
+          return callback();
+        case 1:
+          return callback(a);
+        case 2:
+          return callback(a, b);
+        case 3:
+          return callback(a, b, c);
+        default:
+          return callback.$apply(undefined, arguments);
+      }
+    } catch (e) {
+      reportUncaughtException(e);
+    }
+  };
+}
+
+const nodeModulesRE = /[\\/]node_modules[\\/]/;
+function returnStackFrames(_err: unknown, frames: unknown[]) {
+  return frames;
+}
+
+// Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
+// first real user frame (skipping node:/internal/native frames) lives inside
+// a node_modules directory. Uses prepareStackTrace CallSites so no stack
+// string is materialized; globals restored in finally.
+function isInsideNodeModules(frameLimit: number): boolean {
+  const prevLimit = Error.stackTraceLimit;
+  const prevPrepare = Error.prepareStackTrace;
+  let frames: { getFileName(): string | null }[];
+  try {
+    Error.stackTraceLimit = frameLimit;
+    Error.prepareStackTrace = returnStackFrames;
+    const target: { stack?: unknown } = {};
+    Error.captureStackTrace(target, isInsideNodeModules);
+    frames = target.stack as typeof frames;
+  } finally {
+    Error.stackTraceLimit = prevLimit;
+    Error.prepareStackTrace = prevPrepare;
+  }
+  if (!$isJSArray(frames)) return false;
+  for (const frame of frames) {
+    const filename = frame.getFileName();
+    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+      continue;
+    }
+    return nodeModulesRE.test(filename);
+  }
+  return false;
+}
+
 // Marks an addEventListener() options object so that dispatch still invokes the
 // listener after an unrelated listener called event.stopImmediatePropagation().
 // `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
@@ -340,6 +408,9 @@ export default {
   ErrnoException,
   once,
   getLazy,
+  guardCallback,
+  isInsideNodeModules,
+  reportUncaughtException,
   resistStopPropagation,
 
   hasObserver,

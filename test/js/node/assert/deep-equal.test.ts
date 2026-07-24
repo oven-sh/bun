@@ -202,7 +202,6 @@ const cases: Case[] = [
     b: () => ({}),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "two null-prototype objects with the same keys",
@@ -240,7 +239,6 @@ const cases: Case[] = [
     b: anonymousClassInstance,
     strict: false,
     loose: true,
-    strictBug: "matches classes by name, so reports equal",
   },
   {
     name: "instances of two distinct identically named classes",
@@ -248,7 +246,6 @@ const cases: Case[] = [
     b: sameNameClassInstance,
     strict: false,
     loose: true,
-    strictBug: "matches classes by name, so reports equal",
   },
   {
     name: "an Array subclass instance and an array",
@@ -256,7 +253,6 @@ const cases: Case[] = [
     b: () => [],
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "[] and Object.create(Array.prototype)",
@@ -342,7 +338,6 @@ const cases: Case[] = [
     b: () => new Date(0),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
 
@@ -355,7 +350,6 @@ const cases: Case[] = [
     b: () => /a/g,
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
 
@@ -441,7 +435,6 @@ const cases: Case[] = [
     b: () => new Map(),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {
@@ -462,7 +455,6 @@ const cases: Case[] = [
     b: () => new WeakMap(),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {
@@ -471,7 +463,6 @@ const cases: Case[] = [
     b: () => new WeakSet(),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   {
@@ -539,7 +530,6 @@ const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "a typed array with an extra own property",
@@ -582,7 +572,6 @@ const cases: Case[] = [
     b: () => [1],
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
   { name: "arrays of different length", a: () => [1, 2], b: () => [1], strict: false, loose: false },
@@ -759,8 +748,38 @@ describe("detached ArrayBuffer", () => {
     });
   }
 
+  test("deepStrictEqual throws Node's DataView TypeError on a detached view", () => {
+    const detachedView = () => {
+      const ab = new ArrayBuffer(4);
+      const dv = new DataView(ab);
+      structuredClone(ab, { transfer: [ab] });
+      return dv;
+    };
+    const error = caught(() => assert.deepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0))));
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error?.message).toBe(
+      "Cannot perform get DataView.prototype.byteLength on a detached or out-of-bounds ArrayBuffer",
+    );
+    expect(() => util.isDeepStrictEqual(detachedView(), new DataView(new ArrayBuffer(0)))).toThrow(TypeError);
+    // Bun.deepEquals keeps its own-properties DataView surface: no throw.
+    expect(Bun.deepEquals(detachedView(), new DataView(new ArrayBuffer(0)), true)).toBe(true);
+  });
+
   test("assert.partialDeepStrictEqual throws TypeError on a detached ArrayBuffer", () => {
     expect(() => assert.partialDeepStrictEqual(detached(), new ArrayBuffer(0))).toThrow(TypeError);
+  });
+
+  test("assert.partialDeepStrictEqual checks own properties on a KeyObject after equals()", () => {
+    const crypto = require("node:crypto");
+    const key = crypto.createSecretKey(Buffer.from("secret"));
+    const key2 = crypto.createSecretKey(Buffer.from("secret"));
+    Object.assign(key2, { x: 1 });
+    // expected has {x:1} that actual lacks: node throws ERR_ASSERTION.
+    expect(() => assert.partialDeepStrictEqual(key, key2)).toThrow(assert.AssertionError);
+    // subset direction: extra own prop on actual is fine.
+    expect(() =>
+      assert.partialDeepStrictEqual(Object.assign(key, { x: 1 }), crypto.createSecretKey(Buffer.from("secret"))),
+    ).not.toThrow();
   });
 
   test("error matches Node's message", () => {

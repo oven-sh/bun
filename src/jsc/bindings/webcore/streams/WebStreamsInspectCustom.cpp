@@ -15,6 +15,11 @@ using namespace JSC;
 
 EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSValue thisValue, ASCIILiteral name, JSObject* data)
 {
+    return customInspect(lexicalGlobalObject, callFrame, thisValue, WTF::String(name), data);
+}
+
+EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame, JSValue thisValue, const WTF::String& name, JSObject* data)
+{
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -26,7 +31,6 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     if (depth < 0)
         return JSValue::encode(thisValue);
 
-    // opts = { ...options, depth: options.depth == null ? null : options.depth - 1 }
     JSObject* opts = constructEmptyObject(lexicalGlobalObject);
     JSValue childDepth = jsNull();
     if (optionsValue.isObject()) {
@@ -67,6 +71,38 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsString(vm, makeString(name, " "_s, view.data)));
+}
+
+WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisValue, ASCIILiteral fallback)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* obj = thisValue.getObject();
+    while (obj) {
+        PropertySlot slot(obj, PropertySlot::InternalMethodType::GetOwnProperty);
+        bool has = obj->methodTable()->getOwnPropertySlot(obj, lexicalGlobalObject, vm.propertyNames->constructor, slot);
+        RETURN_IF_EXCEPTION(scope, fallback);
+        if (has) {
+            JSValue ctorValue = slot.getValue(lexicalGlobalObject, vm.propertyNames->constructor);
+            RETURN_IF_EXCEPTION(scope, fallback);
+            if (!ctorValue.isEmpty() && ctorValue.isCallable()) {
+                JSValue nameValue = ctorValue.get(lexicalGlobalObject, vm.propertyNames->name);
+                RETURN_IF_EXCEPTION(scope, fallback);
+                if (!nameValue.isEmpty() && nameValue.isString()) {
+                    String name = asString(nameValue)->value(lexicalGlobalObject);
+                    RETURN_IF_EXCEPTION(scope, fallback);
+                    if (!name.isEmpty())
+                        return name;
+                }
+            }
+        }
+        JSValue proto = obj->getPrototype(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, fallback);
+        if (proto.isEmpty())
+            break;
+        obj = proto.getObject();
+    }
+    return fallback;
 }
 
 void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunction)

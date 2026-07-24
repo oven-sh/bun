@@ -728,7 +728,9 @@ function reviveSerializedValue(value: unknown) {
 }
 
 function rebuildError(serialized: any, depth = 0): Error {
-  const { message, stack, name, code, failureType, cause, generatedMessage, operator } = serialized;
+  const { message, stack, name, code, failureType, cause } = serialized;
+  const generatedMessage = reviveSerializedValue(serialized.generatedMessage);
+  const operator = reviveSerializedValue(serialized.operator);
   const actual = reviveSerializedValue(serialized.actual);
   const expected = reviveSerializedValue(serialized.expected);
   const diff = reviveSerializedValue(serialized.diff);
@@ -3392,7 +3394,10 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   } else {
     // Node's root Test.postRun cancels each pending subtest; matches the
     // suite-level setupFailed path in runStandaloneEntry.
-    for (const entry of standaloneQueue) reportCancelledNode(entry.node);
+    for (const entry of standaloneQueue) {
+      activeRunFile = entry.node.filePath ?? null;
+      reportCancelledNode(entry.node);
+    }
   }
   standaloneQueue.length = 0;
   for (const hook of root.hooks.after) {

@@ -2,6 +2,19 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 
+// Child processes that send Runtime.evaluate or hit a Debugger pause go through
+// JSC's InjectedScript, which has missing RELEASE_AND_RETURN at
+// JSInjectedScriptHostPrototype.cpp jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension
+// and JSJavaScriptCallFrame::scopeChain (constructArray return). Both live in
+// the prebuilt WebKit, so validateExceptionChecks aborts the child before the
+// test can observe anything. Strip the flag for those spawns so ASAN/LSAN still
+// run against the child; drop this once the WebKit prebuilt has the two
+// RELEASE_AND_RETURN wraps.
+const injectedScriptChildEnv = (() => {
+  const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
+  return env;
+})();
+
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
 });
@@ -191,7 +204,7 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: injectedScriptChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -398,6 +411,7 @@ process.stderr.write("WAITING_FOR_DEBUGGER\\n");
 inspector.waitForDebugger();
 const resumedByClient = globalThis.__resumed_by_client === true;
 console.log(JSON.stringify({ resumedByClient }));
+inspector.close();
 process.exit(resumedByClient ? 0 : 7);
 `;
 
@@ -408,7 +422,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: injectedScriptChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -474,6 +488,7 @@ process.stderr.write("FIRST_RESUMED\\n");
 inspector.waitForDebugger();
 process.stderr.write("SECOND_RESUMED\\n");
 console.log(JSON.stringify({ first: globalThis.__mark, second: globalThis.__mark2 }));
+inspector.close();
 process.exit(0);
 `;
 
@@ -484,7 +499,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs"],
-    env: bunEnv,
+    env: injectedScriptChildEnv,
     cwd: String(dir),
     stderr: "pipe",
   });
@@ -849,6 +864,7 @@ let beforeOpen = 1;
 inspector.open(0, "127.0.0.1", true);
 const mod = await import("./mod.mjs");
 console.log(JSON.stringify({ after: mod.after, beforeOpen }));
+inspector.close();
 process.exit(0);
 `,
     "mod.mjs": `
@@ -861,7 +877,7 @@ export { after };
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "entry.mjs"],
-    env: bunEnv,
+    env: injectedScriptChildEnv,
     cwd: String(dir),
     stdout: "pipe",
     stderr: "pipe",

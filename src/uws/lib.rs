@@ -30,7 +30,7 @@ pub use bun_uws_sys::{
 /// contract. With `panic = "abort"` Rust panics terminate in the crash-handler
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
-pub use bun_uws_sys::response::State;
+pub use bun_uws_sys::response::{PINNED_WRITE_THRESHOLD, State};
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
 

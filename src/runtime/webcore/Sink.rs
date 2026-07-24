@@ -80,6 +80,12 @@ macro_rules! decl_js_sink_externs {
                 ) -> JSValue;
                 #[link_name = concat!($abi, "__setDestroyCallback")]
                 pub(crate) safe fn set_destroy_callback(v: JSValue, cb: usize);
+                #[link_name = concat!($abi, "__setPendingWriteValue")]
+                pub(crate) safe fn set_pending_write_value(
+                    this: JSValue,
+                    g: &JSGlobalObject,
+                    v: JSValue,
+                );
                 #[link_name = concat!($abi, "__assignToStream")]
                 pub(crate) safe fn assign_to_stream(
                     g: &JSGlobalObject,
@@ -119,6 +125,13 @@ macro_rules! impl_js_sink_abi {
                 }
                 fn set_destroy_callback_extern(value: ::bun_jsc::JSValue, callback: usize) {
                     __abi::set_destroy_callback(value, callback)
+                }
+                fn set_pending_write_value_extern(
+                    this: ::bun_jsc::JSValue,
+                    global: &::bun_jsc::JSGlobalObject,
+                    value: ::bun_jsc::JSValue,
+                ) {
+                    __abi::set_pending_write_value(this, global, value)
                 }
                 fn assign_to_stream_extern(
                     global: &::bun_jsc::JSGlobalObject,
@@ -162,6 +175,15 @@ pub trait JsSinkAbi {
     ) -> crate::webcore::jsc::JSValue;
     /// `${abi_name}__setDestroyCallback`.
     fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
+    /// `${abi_name}__setPendingWriteValue` — store/clear a GC-visited
+    /// `m_pendingWriteValue` on the wrapper (sink or controller) at
+    /// `this`, so a large write's backing store stays alive while the
+    /// socket drains without `protect()`/`Strong`.
+    fn set_pending_write_value_extern(
+        this: crate::webcore::jsc::JSValue,
+        global: &crate::webcore::jsc::JSGlobalObject,
+        value: crate::webcore::jsc::JSValue,
+    );
     /// `${abi_name}__assignToStream`. Safe wrapper: takes `&JSGlobalObject` and
     /// performs the `as_ptr()` projection internally so the FFI call is the
     /// impl body's sole guarded operation.
@@ -328,8 +350,25 @@ pub trait JsSinkType: Sized {
     fn memory_cost(&self) -> usize;
     fn finalize(&mut self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
+    /// `write_bytes` with the originating JS cell, for sinks that can hold the
+    /// backing store by reference past the call (pinned zero-copy writes).
+    fn write_bytes_with_value(
+        &mut self,
+        data: &streams::Result,
+        _input_value: crate::webcore::jsc::JSValue,
+    ) -> streams::result::Writable {
+        self.write_bytes(data)
+    }
     fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
+    /// `write_latin1` with the originating JS cell; see `write_bytes_with_value`.
+    fn write_latin1_with_value(
+        &mut self,
+        data: &streams::Result,
+        _input_value: crate::webcore::jsc::JSValue,
+    ) -> streams::result::Writable {
+        self.write_latin1(data)
+    }
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, global: &JSGlobalObject) -> sys::Result<JSValue>;
     fn flush(&mut self) -> sys::Result<()>;
@@ -471,7 +510,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             let data = bun_ptr::RawSlice::new(slice);
             return Ok(this
                 .sink
-                .write_bytes(&streams::Result::Temporary(data))
+                .write_bytes_with_value(&streams::Result::Temporary(data), arg)
                 .to_js(global));
         }
 
@@ -505,7 +544,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         let data = bun_ptr::RawSlice::new(view.slice());
         Ok(this
             .sink
-            .write_latin1(&streams::Result::Temporary(data))
+            .write_latin1_with_value(&streams::Result::Temporary(data), str_.to_js())
             .to_js(global))
     }
 

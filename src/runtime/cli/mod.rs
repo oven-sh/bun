@@ -847,6 +847,178 @@ pub mod command {
         }
     }
 
+    // `is_npm`/`is_npx` compare the basename exactly so `pnpm`/`pnpx` (and
+    // anything else ending in "npm"/"npx") are not caught.
+    pub(crate) fn is_npm(argv0: &[u8]) -> bool {
+        let base = bun_paths::basename(argv0);
+        base == b"npm" || (cfg!(windows) && base == b"npm.exe")
+    }
+
+    pub(crate) fn is_npx(argv0: &[u8]) -> bool {
+        let base = bun_paths::basename(argv0);
+        base == b"npx" || (cfg!(windows) && base == b"npx.exe")
+    }
+
+    /// npm long options that take a separate value argument and have no bun
+    /// equivalent. When bun is invoked as `npm` via the `--bun` shim these are
+    /// dropped together with their value so the value is not mistaken for a
+    /// positional (e.g. `npm install --loglevel error react` must not try to
+    /// install a package called `error`). Kept sorted for `binary_search`.
+    const NPM_VALUE_FLAGS_IGNORED: &[&[u8]] = &[
+        b"access",
+        b"before",
+        b"cache",
+        b"depth",
+        b"editor",
+        b"fetch-retries",
+        b"fetch-retry-factor",
+        b"fetch-retry-maxtimeout",
+        b"fetch-retry-mintimeout",
+        b"fetch-timeout",
+        b"globalconfig",
+        b"init-author-email",
+        b"init-author-name",
+        b"init-author-url",
+        b"init-license",
+        b"init-module",
+        b"init-version",
+        b"location",
+        b"loglevel",
+        b"logs-dir",
+        b"logs-max",
+        b"maxsockets",
+        b"message",
+        b"node-options",
+        b"otp",
+        b"pack-destination",
+        b"prefix",
+        b"script-shell",
+        b"searchexclude",
+        b"searchlimit",
+        b"searchopts",
+        b"searchstaleness",
+        b"tag",
+        b"userconfig",
+        b"viewer",
+        b"workspace",
+    ];
+
+    #[cold]
+    fn is_npm_ignored_value_flag(arg: &[u8]) -> bool {
+        if let Some(name) = arg.strip_prefix(b"--") {
+            let name = match strings::index_of_char(name, b'=') {
+                Some(eq) => &name[..eq as usize],
+                None => name,
+            };
+            return NPM_VALUE_FLAGS_IGNORED.binary_search(&name).is_ok();
+        }
+        arg == b"-w" || arg.starts_with(b"-w=")
+    }
+
+    /// Rewrite argv when bun is invoked as `npm` (via the `--bun` shim dir) so
+    /// the rest of the CLI can dispatch it as a normal bun invocation.
+    /// Best-effort: subcommands bun has no equivalent for fall through
+    /// unchanged.
+    ///
+    /// # Safety
+    /// Single-threaded CLI startup; stores into the process-global argv slot.
+    #[cold]
+    #[inline(never)]
+    unsafe fn translate_npm_argv() {
+        use bun_core::{ZStr, zstr};
+        debug_assert!(
+            NPM_VALUE_FLAGS_IGNORED.is_sorted(),
+            "NPM_VALUE_FLAGS_IGNORED must be sorted for binary_search"
+        );
+
+        let argv = bun::argv().as_slice();
+        let mut out: Vec<&'static ZStr> = Vec::with_capacity(argv.len() + 1);
+        let Some(&argv0) = argv.first() else { return };
+        out.push(argv0);
+
+        // Copy argv[from..] into `out`, dropping npm-only value-taking flags
+        // (and their separate value). Stops at the first positional when
+        // `stop_at_positional` is set and returns its index; otherwise copies
+        // through to the end, returning `argv.len()`. A bare `--` ends flag
+        // processing either way.
+        let copy_dropping_npm_flags =
+            |out: &mut Vec<&'static ZStr>, from: usize, stop_at_positional: bool| -> usize {
+                let mut i = from;
+                while i < argv.len() {
+                    let a = argv[i];
+                    let ab = a.as_bytes();
+                    if ab == b"--" {
+                        if !stop_at_positional {
+                            out.extend_from_slice(&argv[i..]);
+                        }
+                        return i;
+                    }
+                    if ab.first() != Some(&b'-') {
+                        if stop_at_positional {
+                            return i;
+                        }
+                        out.push(a);
+                        i += 1;
+                        continue;
+                    }
+                    if is_npm_ignored_value_flag(ab) {
+                        let consumes_next = !strings::contains_char(ab, b'=')
+                            && argv
+                                .get(i + 1)
+                                .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+                        i += if consumes_next { 2 } else { 1 };
+                        continue;
+                    }
+                    out.push(a);
+                    i += 1;
+                }
+                argv.len()
+            };
+
+        let sub_idx = copy_dropping_npm_flags(&mut out, 1, true);
+        let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
+        let rest_start = sub_idx + usize::from(sub_idx < argv.len());
+
+        match subcommand.map(|z| z.as_bytes()) {
+            // npm's lifecycle shortcuts run the package.json script; map to
+            // `bun run <name>` so `npm test` does not invoke bun's test runner.
+            Some(b"test" | b"t" | b"tst") => {
+                out.push(zstr!("run"));
+                out.push(zstr!("test"));
+            }
+            Some(b"start") => {
+                out.push(zstr!("run"));
+                out.push(zstr!("start"));
+            }
+            Some(b"stop") => {
+                out.push(zstr!("run"));
+                out.push(zstr!("stop"));
+            }
+            Some(b"restart") => {
+                out.push(zstr!("run"));
+                out.push(zstr!("restart"));
+            }
+            Some(b"run-script" | b"rum" | b"urn") => out.push(zstr!("run")),
+            Some(b"clean-install" | b"ic" | b"install-clean" | b"isntall-clean") => {
+                out.push(zstr!("ci"));
+            }
+            Some(b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta" | b"instal") => {
+                out.push(zstr!("install"));
+            }
+            Some(b"ls" | b"la" | b"ll") => out.push(zstr!("list")),
+            Some(b"view" | b"show") => out.push(zstr!("info")),
+            Some(_) => out.push(*subcommand.unwrap()),
+            None => {}
+        }
+
+        copy_dropping_npm_flags(&mut out, rest_start, false);
+
+        static SLOT: std::sync::OnceLock<Box<[&'static ZStr]>> = std::sync::OnceLock::new();
+        let stored = SLOT.get_or_init(move || out.into_boxed_slice());
+        // SAFETY: per fn contract — single-threaded startup.
+        unsafe { bun::set_argv(stored) };
+    }
+
     /// Cheap argv prescan for the dominant `bun <path>` / `bun .` shape.
     ///
     /// `which()` classifies any first positional that isn't one of the ~40
@@ -943,8 +1115,35 @@ pub mod command {
             return Tag::RunAsNodeCommand;
         }
 
+        if is_npx(argv0) {
+            // SAFETY: single-threaded startup
+            IS_BUNX_EXE.store(true, core::sync::atomic::Ordering::Relaxed);
+            return Tag::BunxCommand;
+        }
+
+        let as_npm = is_npm(argv0);
+        let (argv, mut iter) = if as_npm {
+            bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG
+                .store(false, core::sync::atomic::Ordering::Relaxed);
+            // SAFETY: single-threaded startup; rewrites the process-global argv
+            // view. Fall through to the normal subcommand matcher on the
+            // rewritten argv so `npm install` / `npm run` / etc. dispatch to
+            // the same Tag a direct `bun` invocation would.
+            unsafe { translate_npm_argv() };
+            let argv = bun::argv();
+            let mut iter = argv.iter();
+            let _ = iter.next();
+            (argv, iter)
+        } else {
+            (argv, iter)
+        };
+
         let Some(mut first_arg_name) = iter.next() else {
-            return Tag::AutoCommand;
+            return if as_npm {
+                Tag::HelpCommand
+            } else {
+                Tag::AutoCommand
+            };
         };
         while !first_arg_name.is_empty()
             && first_arg_name[0] == b'-'
@@ -1232,7 +1431,7 @@ pub mod command {
         {
             let argv = bun::argv();
             let argv0 = argv.get(0).map(bun_core::ZStr::as_bytes).unwrap_or(b"");
-            if !is_node(argv0) && !is_bun_x(argv0) {
+            if !is_node(argv0) && !is_bun_x(argv0) && !is_npx(argv0) {
                 if argv.len() == 2 {
                     match argv.get(1).map(bun_core::ZStr::as_bytes) {
                         Some(b"-v" | b"--version") => print_version_and_exit(),
@@ -1241,40 +1440,42 @@ pub mod command {
                     }
                 }
 
-                let empty_eval = match argv.len() {
-                    2 => matches!(
-                        argv.get(1).map(bun_core::ZStr::as_bytes),
-                        Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
-                    ),
-                    3 => {
-                        argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
-                            && matches!(
-                                argv.get(1).map(bun_core::ZStr::as_bytes),
-                                Some(b"-e" | b"-p" | b"--eval" | b"--print")
-                            )
+                if !is_npm(argv0) {
+                    let empty_eval = match argv.len() {
+                        2 => matches!(
+                            argv.get(1).map(bun_core::ZStr::as_bytes),
+                            Some(b"-e=" | b"-p=" | b"--eval=" | b"--print=")
+                        ),
+                        3 => {
+                            argv.get(2).is_some_and(|a| a.as_bytes().is_empty())
+                                && matches!(
+                                    argv.get(1).map(bun_core::ZStr::as_bytes),
+                                    Some(b"-e" | b"-p" | b"--eval" | b"--print")
+                                )
+                        }
+                        _ => false,
+                    };
+                    if empty_eval {
+                        Output::flush();
+                        return HelpCommand::exec();
                     }
-                    _ => false,
-                };
-                if empty_eval {
-                    Output::flush();
-                    return HelpCommand::exec();
-                }
 
-                // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
-                // path-shaped (`looks_like_run_entrypoint`), which no
-                // subcommand keyword can be, so `which()` would unambiguously
-                // return `Tag::AutoCommand`; short-circuit straight to that
-                // arm so a plain `bun <file>` never decodes the subcommand
-                // classifier (`which()` + its `RootCommandMatcher` keyword
-                // table / rodata) or walks the per-tag dispatch `match` below.
-                // Dispatches to exactly the arm `which()` would have selected,
-                // so config loading / arg parsing / passthrough are unchanged.
-                if argv
-                    .get(1)
-                    .map(bun_core::ZStr::as_bytes)
-                    .is_some_and(looks_like_run_entrypoint)
-                {
-                    return exec_auto_or_run(Tag::AutoCommand, log);
+                    // `bun <path>` / `bun .` — the dominant run shape. argv[1] is
+                    // path-shaped (`looks_like_run_entrypoint`), which no
+                    // subcommand keyword can be, so `which()` would unambiguously
+                    // return `Tag::AutoCommand`; short-circuit straight to that
+                    // arm so a plain `bun <file>` never decodes the subcommand
+                    // classifier (`which()` + its `RootCommandMatcher` keyword
+                    // table / rodata) or walks the per-tag dispatch `match` below.
+                    // Dispatches to exactly the arm `which()` would have selected,
+                    // so config loading / arg parsing / passthrough are unchanged.
+                    if argv
+                        .get(1)
+                        .map(bun_core::ZStr::as_bytes)
+                        .is_some_and(looks_like_run_entrypoint)
+                    {
+                        return exec_auto_or_run(Tag::AutoCommand, log);
+                    }
                 }
             }
         }

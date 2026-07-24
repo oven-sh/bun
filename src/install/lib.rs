@@ -593,6 +593,16 @@ impl RunCommand {
                 // SAFETY: literal ends in NUL; len excludes it.
                 ZStr::from_static(B)
             };
+            const NPM_LINK: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/npm\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                ZStr::from_static(B)
+            };
+            const NPX_LINK: &ZStr = {
+                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/npx\0").as_bytes();
+                // SAFETY: literal ends in NUL; len excludes it.
+                ZStr::from_static(B)
+            };
             const DIR_Z: &ZStr = {
                 const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
                 // SAFETY: literal ends in NUL; len excludes it.
@@ -616,7 +626,7 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            for dest in [NODE_LINK, BUN_LINK, NPM_LINK, NPX_LINK] {
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
@@ -721,7 +731,12 @@ impl RunCommand {
             }
 
             let image_path = win::exe_path_w();
-            for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
+            for name in [
+                strings::w!("\\node.exe\0"),
+                strings::w!("\\bun.exe\0"),
+                strings::w!("\\npm.exe\0"),
+                strings::w!("\\npx.exe\0"),
+            ] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
                 // `target_path_buffer` is mutated in place between FFI calls
                 // (the dir-NUL/backslash toggle below).

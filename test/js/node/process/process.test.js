@@ -231,6 +231,144 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+it("process.env coerces assigned values to strings", () => {
+  try {
+    process.env.COERCE_UNDEF = "initial";
+    process.env.COERCE_UNDEF = undefined;
+    process.env.COERCE_NUM = 42;
+    process.env.COERCE_NULL = null;
+    process.env.COERCE_BOOL = true;
+    process.env.COERCE_BIG = 42n;
+    process.env.COERCE_ARR = [1, 2];
+    process.env.COERCE_FN = function f() {};
+    process.env.COERCE_OBJ = { toString: () => "from-toString" };
+    process.env["4242424242"] = 55;
+    Object.assign(process.env, { COERCE_ASN: 7 });
+    Object.defineProperty(process.env, "COERCE_DEF", {
+      value: 7,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+
+    expect({
+      undef: process.env.COERCE_UNDEF,
+      num: process.env.COERCE_NUM,
+      null: process.env.COERCE_NULL,
+      bool: process.env.COERCE_BOOL,
+      big: process.env.COERCE_BIG,
+      arr: process.env.COERCE_ARR,
+      fn: process.env.COERCE_FN,
+      obj: process.env.COERCE_OBJ,
+      idx: process.env["4242424242"],
+      asn: process.env.COERCE_ASN,
+      def: process.env.COERCE_DEF,
+    }).toEqual({
+      undef: "undefined",
+      num: "42",
+      null: "null",
+      bool: "true",
+      big: "42",
+      arr: "1,2",
+      fn: String(function f() {}),
+      obj: "from-toString",
+      idx: "55",
+      asn: "7",
+      def: "7",
+    });
+
+    expect(Object.values(process.env).every(v => typeof v === "string")).toBe(true);
+    expect(JSON.parse(JSON.stringify(process.env)).COERCE_BIG).toBe("42");
+
+    expect(() => {
+      process.env.COERCE_THROWS = {
+        toString() {
+          throw new Error("boom");
+        },
+      };
+    }).toThrow("boom");
+    expect(process.env.COERCE_THROWS).toBeUndefined();
+
+    // Node throws on Symbol values (ToString on Symbol throws) for set, assign, and defineProperty.
+    expect(() => (process.env.COERCE_SYM = Symbol("s"))).toThrow(TypeError);
+    expect(() => Object.assign(process.env, { COERCE_SYM: Symbol("s") })).toThrow(TypeError);
+    expect(() =>
+      Object.defineProperty(process.env, "COERCE_SYM", {
+        value: Symbol("s"),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      }),
+    ).toThrow(TypeError);
+    expect(process.env.COERCE_SYM).toBeUndefined();
+
+    // structuredClone(process.env) must keep working now that the backing object
+    // has its own ClassInfo. Windows wraps it in a Proxy that was never clonable.
+    if (!isWindows) {
+      expect(structuredClone(process.env).COERCE_NUM).toBe("42");
+    }
+  } finally {
+    for (const k of [
+      "COERCE_UNDEF",
+      "COERCE_NUM",
+      "COERCE_NULL",
+      "COERCE_BOOL",
+      "COERCE_BIG",
+      "COERCE_ARR",
+      "COERCE_FN",
+      "COERCE_OBJ",
+      "COERCE_ASN",
+      "COERCE_DEF",
+      "COERCE_THROWS",
+      "COERCE_SYM",
+      "4242424242",
+    ]) {
+      delete process.env[k];
+    }
+  }
+});
+
+it("process.env coerces assigned values to strings in a worker with an explicit env", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+       const w = new Worker(
+         \`process.env.X = 42;
+          process.env.Y = "y";
+          process.env.Y = undefined;
+          Object.defineProperty(process.env, "Z", { value: 7, writable: true, enumerable: true, configurable: true });
+          require("worker_threads").parentPort.postMessage({
+            SEED: process.env.SEED,
+            X: process.env.X, Y: process.env.Y, Z: process.env.Z,
+            xt: typeof process.env.X, yt: typeof process.env.Y, zt: typeof process.env.Z,
+            clone: structuredClone(process.env),
+          });\`,
+         { eval: true, env: { SEED: "seed" } },
+       );
+       w.on("message", m => { console.log(JSON.stringify(m)); });
+       w.on("error", e => { console.error(String(e)); process.exitCode = 1; });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || stderr), exitCode }).toEqual({
+    result: {
+      SEED: "seed",
+      X: "42",
+      Y: "undefined",
+      Z: "7",
+      xt: "string",
+      yt: "string",
+      zt: "string",
+      clone: { SEED: "seed", X: "42", Y: "undefined", Z: "7" },
+    },
+    exitCode: 0,
+  });
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

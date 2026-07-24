@@ -744,6 +744,109 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     return store;
 }
 
+// Default (non-SHARE_ENV) process.env: plain object for reads, with put/putByIndex/
+// defineOwnProperty overridden to toString() the value first so `= 42` reads back
+// "42" and `= undefined` reads back "undefined", matching Node.js.
+class JSProcessEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSProcessEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSProcessEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSProcessEnvMap* ptr = new (NotNull, JSC::allocateCell<JSProcessEnvMap>(vm)) JSProcessEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+
+private:
+    JSProcessEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSProcessEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSProcessEnvMap) };
+
+bool JSProcessEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (propertyName.isSymbol()) {
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
+
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
+}
+
+bool JSProcessEnvMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+}
+
+bool JSProcessEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (propertyName.isSymbol() || !descriptor.isDataDescriptor() || !descriptor.value()) {
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+    JSString* string = descriptor.value().toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    PropertyDescriptor coerced(descriptor);
+    coerced.setValue(string);
+    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
+}
+
+JSObject* createProcessEnvMapObject(Zig::GlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto* structure = JSProcessEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    return JSProcessEnvMap::create(vm, structure);
+}
+
+bool isEnvironmentVariablesMapObject(const JSC::ClassInfo* info)
+{
+    return info == JSProcessEnvMap::info() || info == JSSharedEnvMap::info();
+}
+
 JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -751,16 +854,19 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
+#if OS(WINDOWS)
+    // The windowsEnv Proxy's set/defineProperty traps coerce, and windowsEnv()
+    // stores a toJSON function on this object directly: keep it a plain object.
     JSC::JSObject* object = nullptr;
     if (count < 63) {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
     } else {
         object = constructEmptyObject(globalObject, globalObject->objectPrototype());
     }
-
-#if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
     RETURN_IF_EXCEPTION(scope, {});
+#else
+    JSC::JSObject* object = createProcessEnvMapObject(globalObject);
 #endif
 
     static NeverDestroyed<String> TZ = MAKE_STATIC_STRING_IMPL("TZ");

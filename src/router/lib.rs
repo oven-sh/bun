@@ -1077,12 +1077,6 @@ pub struct Match<'a> {
     pub query_string: &'a [u8],
 }
 
-impl<'a> Match<'a> {
-    pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(self.pathname, b"/")
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // Traits abstracting over the router's collaborators
 // (Resolver, Server, RequestContext).

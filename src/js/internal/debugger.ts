@@ -151,17 +151,18 @@ export default function (
     return;
   }
 
-  if (isNodeInspector) {
-    // node:inspector's inspector.open(): connections speak the V8 Chrome
-    // DevTools Protocol, the listening URL is reported back to the inspected
-    // thread (which prints Node's "Debugger listening on ..." line), and a
-    // control callback lets the inspected thread close the server or forward
-    // commands from the in-process inspector.Session.
-    let debug: Debugger | undefined;
+  // Control channel between the inspected thread and the debugger thread for
+  // a server node:inspector owns: inspector.close() stops it, a later
+  // inspector.open() starts a new one here instead of spawning another
+  // debugger thread, and an in-process inspector.Session forwards its
+  // Debugger.* commands to the backend a remote frontend shares.
+  // `initial` is the server that is already listening, if any.
+  function createNodeInspectorControl(initial: Debugger | undefined) {
+    let debug = initial;
     let sessionBackend: Backend | undefined;
     let sessionAdapter: any;
     let sessionRefs = 0;
-    const control = (message: string) => {
+    function control(message: string) {
       let parsed: any;
       try {
         parsed = JSON.parse(message);
@@ -257,8 +258,17 @@ export default function (
           return;
         }
       }
-    };
+    }
+    return control;
+  }
 
+  if (isNodeInspector) {
+    // node:inspector's inspector.open(): connections speak the V8 Chrome
+    // DevTools Protocol, the listening URL is reported back to the inspected
+    // thread (which prints Node's "Debugger listening on ..." line), and a
+    // control callback lets the inspected thread close the server or forward
+    // commands from the in-process inspector.Session.
+    let debug: Debugger | undefined;
     try {
       debug = new Debugger(
         executionContextId,
@@ -275,11 +285,15 @@ export default function (
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
       // an "open" control message on this already-running debugger thread.
-      reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
+      reportNodeInspectorServerStarted(
+        "",
+        createNodeInspectorControl(undefined),
+        nodeInspectorListenErrorDetail(error),
+      );
       return;
     }
 
-    reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
+    reportNodeInspectorServerStarted(debug.url!.href, createNodeInspectorControl(debug), undefined);
     return;
   }
 
@@ -298,6 +312,15 @@ export default function (
     );
   } catch (error) {
     exit("Failed to start inspector:\n", error);
+  }
+
+  // --inspect serves a CDP endpoint alongside Bun's JSC one. Report it so
+  // node:inspector answers url() with it, refuses inspector.open() with
+  // ERR_INSPECTOR_ALREADY_ACTIVATED and can stop the server through
+  // inspector.close(), the way Node behaves for a CLI-started inspector.
+  const { cdpUrl } = debug;
+  if (enableNodeCDP && cdpUrl) {
+    reportNodeInspectorServerStarted(cdpUrl, createNodeInspectorControl(debug), undefined);
   }
 
   // If the user types --inspect, we print the URL to the console.

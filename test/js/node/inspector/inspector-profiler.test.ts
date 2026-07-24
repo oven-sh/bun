@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
@@ -180,14 +180,14 @@ describe("node:inspector", () => {
       expect(() => session.post("Profiler.enable")).toThrow("not connected");
     });
 
-    test("post() with callback calls callback with error if not connected", async () => {
-      const { promise, resolve, reject } = Promise.withResolvers<Error>();
-      session.post("Profiler.enable", err => {
-        if (err) resolve(err);
-        else reject(new Error("Expected error"));
-      });
-      const error = await promise;
-      expect(error.message).toContain("not connected");
+    test("post() with a callback still throws if not connected", () => {
+      // Node checks the connection before it looks at the callback, so the
+      // error is thrown rather than delivered (verified on v26.3.0).
+      const callback = jest.fn();
+      expect(() => session.post("Profiler.enable", callback)).toThrow(
+        expect.objectContaining({ code: "ERR_INSPECTOR_NOT_CONNECTED" }),
+      );
+      expect(callback).not.toHaveBeenCalled();
     });
   });
 
@@ -639,7 +639,52 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
 
     test("console is exported", () => {
       expect(inspector.console).toBeObject();
-      expect(inspector.console.log).toBe(globalThis.console.log);
+      // Node's inspector console is not the global console: it reports to the
+      // inspector only, so nothing reaches stdout or stderr.
+      expect(inspector.console.log).toBeInstanceOf(Function);
+      expect(inspector.console.log).not.toBe(globalThis.console.log);
+      expect(Object.keys(inspector.console)).toEqual([
+        "debug",
+        "error",
+        "info",
+        "log",
+        "warn",
+        "dir",
+        "dirxml",
+        "table",
+        "trace",
+        "group",
+        "groupCollapsed",
+        "groupEnd",
+        "clear",
+        "count",
+        "countReset",
+        "assert",
+        "profile",
+        "profileEnd",
+        "time",
+        "timeLog",
+        "timeEnd",
+        "timeStamp",
+        "context",
+      ]);
+    });
+
+    test("console.log writes nothing to stdout or stderr", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("node:inspector").console.log("from the inspector console"); console.log("from the global console");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("from the global console\n");
+      expect(stderr).not.toContain("from the inspector console");
+      expect(exitCode).toBe(0);
     });
 
     // open()/close()/waitForDebugger() behavior is covered in inspector.test.ts;

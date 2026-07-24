@@ -549,6 +549,9 @@ pub struct RuntimeOptions {
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    /// `bun inspect` / `node inspect`: boot the internal debugger CLI instead
+    /// of resolving the first positional as an entry point.
+    pub node_inspect_cli: bool,
 }
 
 #[derive(Default)]
@@ -611,6 +614,7 @@ impl Default for RuntimeOptions {
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            node_inspect_cli: false,
         }
     }
 }

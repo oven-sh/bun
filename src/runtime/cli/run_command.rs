@@ -1082,6 +1082,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.main_is_html_entrypoint = loader
             .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
             == Loader::Html;
+        vm.main_is_node_inspect = ctx.runtime_options.node_inspect_cli;
 
         // ── enter `Run::start` under the JSC API lock ──────────────────────
         // SAFETY: `RUN` is the process-global singleton;
@@ -2965,6 +2966,14 @@ impl RunCommand {
         Self::boot(ctx, entry, None)
     }
 
+    /// `bun inspect [...]` / `node inspect [...]` — the Node-compatible CLI
+    /// debugger. Boots the VM with `internal/debugger/inspect` as the entry
+    /// point instead of a user script.
+    pub(crate) fn exec_inspect(ctx: &mut ContextData) -> crate::Result<()> {
+        ctx.runtime_options.node_inspect_cli = true;
+        Self::boot(ctx, Box::from(&b"inspect"[..]), None)
+    }
+
     /// `node` argv0 emulation. Port of `execAsIfNode`.
     pub fn exec_as_if_node(ctx: &mut ContextData) -> crate::Result<()> {
         // SAFETY: single-threaded CLI startup; `PRETEND_TO_BE_NODE` is set in
@@ -2988,6 +2997,12 @@ impl RunCommand {
 
         if ctx.positionals.is_empty() {
             Self::exec_as_if_node_missing_script();
+        }
+
+        // `node inspect [...]` launches the CLI debugger rather than running a
+        // script named "inspect".
+        if &*ctx.positionals[0] == b"inspect" {
+            return Self::exec_inspect(ctx);
         }
 
         // borrowck — `_boot_and_handle_error` takes `&mut ctx`, so

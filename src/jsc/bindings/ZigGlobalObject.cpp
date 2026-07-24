@@ -4080,6 +4080,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == Bun__JSBundler__onResolvePluginSetup) {
+        return GlobalObject::PromiseFunctions::Bun__JSBundler__onResolvePluginSetup;
+    } else if (handler == Bun__JSBundler__onRejectPluginSetup) {
+        return GlobalObject::PromiseFunctions::Bun__JSBundler__onRejectPluginSetup;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

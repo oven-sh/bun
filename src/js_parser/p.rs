@@ -3767,24 +3767,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // would collide. The record index disambiguates. The bundler's
             // linker resolves metadata references directly and its renamer
             // already deduplicates, so keep the plain form there.
-            let name: &'a [u8] = if self.options.features.emit_decorator_metadata
-                && !self.options.bundle
-            {
-                bun_alloc::arena_format!(
-                    in self.arena,
-                    "import_{}_{}",
-                    bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base()),
-                    stmt.import_record_index,
-                )
-            } else {
-                bun_alloc::arena_format!(
-                    in self.arena,
-                    "import_{}",
-                    bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
-                )
-            }
-            .into_bump_str()
-            .as_bytes();
+            let name: &'a [u8] =
+                if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                    bun_alloc::arena_format!(
+                        in self.arena,
+                        "import_{}_{}",
+                        bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base()),
+                        stmt.import_record_index,
+                    )
+                } else {
+                    bun_alloc::arena_format!(
+                        in self.arena,
+                        "import_{}",
+                        bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
+                    )
+                }
+                .into_bump_str()
+                .as_bytes();
             stmt.namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, name);
             VecExt::append(&mut self.current_scope_mut().generated, stmt.namespace_ref);
         }
@@ -7273,10 +7272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 
-    fn serialize_metadata_import_item(
-        &mut self,
-        ref_: Ref,
-    ) -> Result<Option<Expr>, crate::Error> {
+    fn serialize_metadata_import_item(&mut self, ref_: Ref) -> Result<Option<Expr>, crate::Error> {
         let Some(dot) = self.metadata_root_for_import_item(ref_) else {
             return Ok(None);
         };

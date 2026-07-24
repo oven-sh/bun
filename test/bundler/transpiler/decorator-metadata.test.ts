@@ -1,5 +1,5 @@
-import "reflect-metadata";
 import { bunEnv, bunExe, tempDir } from "harness";
+import "reflect-metadata";
 
 describe("decorator metadata", () => {
   test("type serialization", () => {
@@ -570,11 +570,7 @@ describe("decorator metadata", () => {
         cwd: String(dir),
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
 

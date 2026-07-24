@@ -175,9 +175,8 @@ impl IniTestingAPIs {
 
         let env = global.bun_vm().as_mut().transpiler.env();
         let source = bun_ast::Source::init_path_string(b"<src>", utf8str.slice());
-        let arena = bun_alloc::Arena::new();
         let mut parser = Parser::init(&source, env);
-        parser.parse(&arena)?;
+        parser.parse()?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),

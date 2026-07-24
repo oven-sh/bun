@@ -10,8 +10,8 @@ pub mod error;
 pub use error::{Error, Result};
 
 // `bun.w_path_buffer_pool` — u16 sibling. Backed by the same generic
-// thread-local pool as the u8 one (path_buffer_pool.rs already handles both
-// via `PoolStorage`).
+// process-global pool as the u8 one (path_buffer_pool.rs handles both via
+// `PoolStorage`).
 pub mod w_path_buffer_pool {
     use super::WPathBuffer;
     use super::path_buffer_pool::{PathBufferPoolT, PoolGuard};
@@ -19,10 +19,6 @@ pub mod w_path_buffer_pool {
     #[inline]
     pub fn get() -> PoolGuard<WPathBuffer> {
         PathBufferPoolT::<WPathBuffer>::get()
-    }
-    #[inline]
-    pub fn put(buf: Box<WPathBuffer>) {
-        PathBufferPoolT::<WPathBuffer>::put(buf)
     }
 }
 

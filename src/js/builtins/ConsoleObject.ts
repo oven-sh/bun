@@ -594,9 +594,14 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
-        // The arguments will be formatted in warn() again
-        this.warn.$apply(this, args);
+        if (args.length > 0) {
+          var rest = [];
+          rest.push("Assertion failed: " + args[0]);
+          for (var i = 1; i < args.length; i++) rest.push(args[i]);
+          this.warn.$apply(this, rest);
+        } else {
+          this.warn("Assertion failed");
+        }
       }
     },
 

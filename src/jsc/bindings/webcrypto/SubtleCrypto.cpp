@@ -767,6 +767,32 @@ static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params,
     return true;
 }
 
+// Node validates RSA-PSS saltLength against the key before starting the job and
+// rejects with an OperationError whose cause is ERR_OUT_OF_RANGE.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/crypto/rsa.js#L286-L299
+static bool rejectIfRsaPssSaltLengthOutOfRange(const CryptoAlgorithmParameters& params, const CryptoKey& key, Ref<DeferredPromise>&& promise)
+{
+    auto* pssParams = dynamicDowncast<CryptoAlgorithmRsaPssParams>(params);
+    auto* rsaKey = dynamicDowncast<CryptoKeyRSA>(key);
+    if (!pssParams || !rsaKey)
+        return false;
+
+    const EVP_MD* md = digestAlgorithm(rsaKey->hashAlgorithmIdentifier());
+    if (!md)
+        return false;
+
+    // ceil((modulusLength - 1) / 8) - hLen - 2
+    int64_t maxSaltLength = static_cast<int64_t>((rsaKey->keySizeInBits() + 6) / 8) - EVP_MD_size(md) - 2;
+    if (static_cast<int64_t>(pssParams->saltLength) <= maxSaltLength)
+        return false;
+
+    auto message = makeString("The value of \"algorithm.saltLength\" is out of range. It must be >= 0 && <= "_s, maxSaltLength, ". Received "_s, static_cast<uint64_t>(pssParams->saltLength));
+    rejectWithCause(WTF::move(promise), OperationError, "The operation failed for an operation-specific reason"_s, [message = WTF::move(message)](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+        return Bun::createError(&globalObject, Bun::ErrorCode::ERR_OUT_OF_RANGE, message);
+    });
+    return true;
+}
+
 RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto> weakThis)
 {
     if (weakThis)
@@ -928,6 +954,9 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
     if (rejectIfMlDsaContextTooLong(*params, WTF::move(promise)))
         return;
 
+    if (rejectIfRsaPssSaltLengthOutOfRange(*params, key, WTF::move(promise)))
+        return;
+
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
     auto index = promise.ptr();
@@ -976,6 +1005,9 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     }
 
     if (rejectIfMlDsaContextTooLong(*params, WTF::move(promise)))
+        return;
+
+    if (rejectIfRsaPssSaltLengthOutOfRange(*params, key, WTF::move(promise)))
         return;
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());

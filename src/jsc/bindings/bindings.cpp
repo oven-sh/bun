@@ -139,6 +139,8 @@
 
 #include <JavaScriptCore/JSWeakMap.h>
 #include "JSURLSearchParams.h"
+#include "node/crypto/JSKeyObject.h"
+#include "webcrypto/JSCryptoKey.h"
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/InternalFieldTuple.h"
@@ -1032,6 +1034,35 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     VM& vm = globalObject->vm();
     uint8_t c1Type = c1->type();
     uint8_t c2Type = c2->type();
+
+    // Keys carry their material in native slots, so the own-property walk below
+    // reports unrelated keys as equal. Node compares the material instead.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L414-L444
+    if (auto* keyObject1 = dynamicDowncast<Bun::JSKeyObject>(c1)) {
+        auto* keyObject2 = dynamicDowncast<Bun::JSKeyObject>(c2);
+        if (!keyObject2)
+            return false;
+        if (keyObject1->handle().type() != keyObject2->handle().type())
+            return false;
+        if (keyObject1->handle().equals(keyObject2->handle()) != std::optional<bool>(true))
+            return false;
+    } else if (auto* cryptoKey1 = dynamicDowncast<WebCore::JSCryptoKey>(c1)) {
+        auto* cryptoKey2 = dynamicDowncast<WebCore::JSCryptoKey>(c2);
+        if (!cryptoKey2)
+            return false;
+        auto& key1 = cryptoKey1->wrapped();
+        auto& key2 = cryptoKey2->wrapped();
+        if (key1.type() != key2.type() || key1.extractable() != key2.extractable()
+            || key1.algorithmIdentifier() != key2.algorithmIdentifier() || key1.usagesBitmap() != key2.usagesBitmap())
+            return false;
+        auto material1 = Bun::KeyObject::create(key1);
+        auto material2 = Bun::KeyObject::create(key2);
+        // A key shape neither side can be converted to a KeyObject falls through
+        // to the property walk rather than being reported as unequal.
+        if (!material1.hasException() && !material2.hasException()
+            && material1.returnValue().equals(material2.returnValue()) != std::optional<bool>(true))
+            return false;
+    }
 
     switch (c1Type) {
     case JSSetType: {

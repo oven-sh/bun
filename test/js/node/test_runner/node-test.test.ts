@@ -1067,8 +1067,8 @@ test.concurrent(
       import { fileURLToPath } from 'node:url';
       const stream = run({ files: [fileURLToPath(new URL('./empty.test.mjs', import.meta.url))] });
       const out = { events: [], perFileSummaries: 0, runCounts: null };
-      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name.split(/[\\/]/).pop(), t.testNumber]); });
-      stream.on('test:fail', function onFail(t) { out.events.push(['fail', t.name.split(/[\\/]/).pop(), t.testNumber]); });
+      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
+      stream.on('test:fail', function onFail(t) { out.events.push(['fail', t.name.split(/[\\\\/]/).pop(), t.testNumber]); });
       stream.on('test:summary', function onSummary(t) {
         if (t.file !== undefined) out.perFileSummaries++;
         else out.runCounts = t.counts;

@@ -1161,16 +1161,12 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
     exportValues.append(object);
 
     for (const auto& propertyName : propertyNames) {
-        exportNames.append(propertyName);
-        auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-        // Yes, we have to call getters :(
+        // get() reifies the lazy property, running its initializer. None of them are
+        // expected to throw; if one does, fail the whole module (the import rejects
+        // with that error) rather than exporting a half-initialized namespace.
         JSValue value = object->get(globalObject, propertyName);
-
-        if (topExceptionScope.exception()) {
-            (void)topExceptionScope.tryClearException();
-            value = jsUndefined();
-        }
+        RETURN_IF_EXCEPTION(scope, void());
+        exportNames.append(propertyName);
         exportValues.append(value);
     }
 }
@@ -1186,17 +1182,10 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     auto& vm = JSC::getVM(lexicalGlobalObject);
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
 
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* object = globalObject->bunObject();
-
-    // :'(
-    if (object->hasNonReifiedStaticProperties()) [[likely]] {
-        object->reifyAllStaticProperties(lexicalGlobalObject);
-    }
-
-    RETURN_IF_EXCEPTION(scope, void());
-
-    Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
+    // Don't bulk-reifyAllStaticProperties here (see generateNativeModule_NodeModule for why):
+    // it runs every PropertyCallback back-to-back with no exception check in between, which
+    // trips BUN_JSC_validateExceptionChecks=1. exportBunObject's get() loop lazy-reifies instead.
+    Bun::exportBunObject(vm, globalObject, globalObject->bunObject(), exportNames, exportValues);
 }
 
 } // namespace Zig

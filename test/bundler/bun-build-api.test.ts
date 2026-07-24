@@ -590,6 +590,130 @@ describe("Bun.build", () => {
     }
   });
 
+  describe("plugin filter RegExp flags", () => {
+    // A /g or /y RegExp is stateful: .test() advances lastIndex on a match, so a
+    // shared filter would alternate match/miss across consecutive modules.
+    // The remaining flags exercise the native Yarr pre-filter, which on
+    // assertion-enabled builds used to abort for anything outside i/m/v.
+    for (const flags of ["g", "y", "gi", "u", "s", "d", "imsud"]) {
+      test.concurrent(`onLoad filter with /${flags} matches every module`, async () => {
+        using dir = tempDir("plugin-filter-flags-load", {
+          "entry.ts": `import a from "virt:one"; import b from "virt:two"; import c from "virt:three"; console.log(a, b, c);`,
+        });
+        let loads = 0;
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "entry.ts")],
+          throw: false,
+          plugins: [
+            {
+              name: "filter-flags",
+              setup(b) {
+                b.onResolve({ filter: /^virt:/ }, args => ({ path: args.path, namespace: "virt" }));
+                b.onLoad({ filter: new RegExp("^virt:", flags), namespace: "virt" }, args => {
+                  loads++;
+                  return { contents: `export default ${JSON.stringify(args.path)};`, loader: "js" };
+                });
+              },
+            },
+          ],
+        });
+        expect({ success: result.success, loads, errors: result.logs.map(l => l.message) }).toEqual({
+          success: true,
+          loads: 3,
+          errors: [],
+        });
+      });
+
+      test.concurrent(`onResolve filter with /${flags} matches every import`, async () => {
+        using dir = tempDir("plugin-filter-flags-resolve", {
+          "entry.ts": `import a from "virt:one"; import b from "virt:two"; import c from "virt:three"; console.log(a, b, c);`,
+        });
+        let resolves = 0;
+        const result = await Bun.build({
+          entrypoints: [join(String(dir), "entry.ts")],
+          throw: false,
+          plugins: [
+            {
+              name: "filter-flags",
+              setup(b) {
+                b.onResolve({ filter: new RegExp("^virt:", flags) }, args => {
+                  resolves++;
+                  return { path: args.path, namespace: "virt" };
+                });
+                b.onLoad({ filter: /^virt:/, namespace: "virt" }, args => ({
+                  contents: `export default ${JSON.stringify(args.path)};`,
+                  loader: "js",
+                }));
+              },
+            },
+          ],
+        });
+        expect({ success: result.success, resolves, errors: result.logs.map(l => l.message) }).toEqual({
+          success: true,
+          resolves: 3,
+          errors: [],
+        });
+      });
+    }
+
+    test.concurrent("onResolve /y filter is anchored at offset 0", async () => {
+      using dir = tempDir("plugin-filter-sticky", {
+        "entry.ts": `import a from "virt:a"; import b from "xvirt:b"; console.log(a, b);`,
+      });
+      const resolved: string[] = [];
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "sticky",
+            setup(b) {
+              // /virt:/y must match "virt:a" (offset 0) but not "xvirt:b" (offset 1).
+              b.onResolve({ filter: /virt:/y }, args => {
+                resolved.push(args.path);
+                return { path: args.path, namespace: "virt" };
+              });
+              b.onResolve({ filter: /^xvirt:/ }, args => ({ path: args.path, namespace: "virt" }));
+              b.onLoad({ filter: /./, namespace: "virt" }, args => ({
+                contents: `export default ${JSON.stringify(args.path)};`,
+                loader: "js",
+              }));
+            },
+          },
+        ],
+      });
+      expect({ success: result.success, resolved }).toEqual({ success: true, resolved: ["virt:a"] });
+    });
+
+    test.concurrent("frozen filter without g/y still works", async () => {
+      using dir = tempDir("plugin-filter-frozen", {
+        "entry.ts": `import a from "virt:a"; import b from "virt:b"; console.log(a, b);`,
+      });
+      let loads = 0;
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "frozen",
+            setup(b) {
+              b.onResolve({ filter: Object.freeze(/^virt:/) }, args => ({ path: args.path, namespace: "virt" }));
+              b.onLoad({ filter: Object.freeze(/^virt:/), namespace: "virt" }, args => {
+                loads++;
+                return { contents: `export default ${JSON.stringify(args.path)};`, loader: "js" };
+              });
+            },
+          },
+        ],
+      });
+      expect({ success: result.success, loads, errors: result.logs.map(l => String(l.message)) }).toEqual({
+        success: true,
+        loads: 2,
+        errors: [],
+      });
+    });
+  });
+
   test.concurrent("hash considers cross chunk imports", async () => {
     Bun.gc(true);
     const fixture = tempDirWithFiles("build-hash-cross-chunk-imports", {

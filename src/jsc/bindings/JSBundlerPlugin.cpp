@@ -22,7 +22,7 @@
 #include <JavaScriptCore/JSPromise.h>
 #include "BunClientData.h"
 #include "ModuleLoader.h"
-#include <JavaScriptCore/RegularExpression.h>
+#include <JavaScriptCore/YarrInterpreter.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -283,9 +283,15 @@ void BundlerPlugin::NativePluginList::append(JSC::VM& vm, JSC::RegExp* filter, S
 
 bool BundlerPlugin::FilterRegExp::match(JSC::VM& vm, const String& path)
 {
+    if (!m_bytecode)
+        return false;
     WTF::Locker locker { lock };
     Yarr::MatchingContextHolder regExpContext(vm, nullptr, Yarr::MatchFrom::CompilerThread);
-    return regex.match(path) != -1;
+    Vector<unsigned, 32> offsets;
+    offsets.grow(m_bytecode->m_offsetsSize);
+    for (unsigned i = 0; i < m_bytecode->m_body->m_numSubpatterns + 1; ++i)
+        offsets[i * 2] = Yarr::offsetNoMatch;
+    return Yarr::interpret(m_bytecode.get(), path, 0, offsets.mutableSpan().data()) != Yarr::offsetNoMatch;
 }
 
 int BundlerPlugin::NativePluginList::call(JSC::VM& vm, BundlerPlugin* plugin, int* shouldContinue, void* bunContextPtr, const BunString* namespaceStr, const BunString* pathString, OnBeforeParseArguments* onBeforeParseArgs, OnBeforeParseResult* onBeforeParseResult)

@@ -714,14 +714,14 @@ async function runOneFile(
   }
 }
 
-// Reverses the serializer's non-finite re-tagging (JSON emits null for
-// NaN/Infinity, so they cross the pipe as { nonFinite: "NaN" }). Gated on the
-// three exact strings the serializer produces so a user's own
-// { nonFinite: 'anything' } actual/expected is not misread as the envelope.
+// Unwraps serializeExtraValue's _bunTag envelope: primitives crossed bare,
+// every non-primitive came wrapped, so user data cannot occupy the envelope
+// shape and a user's own { nonFinite: 'NaN' } round-trips unchanged.
 function reviveSerializedValue(value: unknown) {
-  if (value !== null && typeof value === "object" && Object.keys(value as object).length === 1) {
-    const nf = (value as { nonFinite?: unknown }).nonFinite;
-    if (nf === "NaN" || nf === "Infinity" || nf === "-Infinity") return Number(nf);
+  if (value !== null && typeof value === "object") {
+    const tag = (value as { _bunTag?: unknown })._bunTag;
+    if (tag === "nf") return Number((value as { v: string }).v);
+    if (tag === "v") return (value as { v: unknown }).v;
   }
   return value;
 }
@@ -959,18 +959,23 @@ function serializeRunCause(cause: unknown, depth: number) {
 
 // deepStrictEqual carries objects in actual/expected: pass them by value when
 // JSON can carry them (node's v8 serializer preserves them), and degrade to
-// the inspected string otherwise instead of dropping the field.
+// the inspected string otherwise instead of dropping the field. Always wrapped
+// in the _bunTag envelope so the parent never confuses a user's object with
+// the serializer's own non-finite tag (reviveSerializedValue checks only the
+// envelope shape, which user data cannot occupy once wrapped here).
 function serializeExtraValue(value: unknown) {
   const t = typeof value;
+  // JSON emits null for non-finite numbers; tag so the parent revives.
+  if (t === "number" && !Number.isFinite(value)) return { __proto__: null, _bunTag: "nf", v: String(value) };
   if (t !== "symbol" && t !== "function") {
     try {
       JSON.stringify(value);
-      return value;
+      return { __proto__: null, _bunTag: "v", v: value };
     } catch {
       // fall through to the inspected-string form
     }
   }
-  return require("node:util").inspect(value);
+  return { __proto__: null, _bunTag: "v", v: require("node:util").inspect(value) };
 }
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
@@ -987,16 +992,17 @@ function serializeRunError(error: unknown, depth = 0) {
       name: error.name,
       cause: cause !== undefined && depth < 8 ? serializeRunCause(cause, depth + 1) : undefined,
     };
-    // Only JSON-safe primitives survive the pipe as-is (node uses the v8
-    // serializer); carry anything else via inspect() so the tap reporter's
-    // assertion-like block still renders expected/actual.
+    // JSON-safe primitives cross the pipe as-is; anything else goes through
+    // the _bunTag envelope so the reviver can distinguish serializer tags
+    // from user data (node uses the v8 serializer which needs no such tag).
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
       const t = typeof value;
-      // JSON emits null for non-finite numbers; re-tag so the parent revives.
-      if (t === "number" && !Number.isFinite(value)) out[key] = { __proto__: null, nonFinite: String(value) };
-      else if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
-      else if (value !== undefined) out[key] = serializeExtraValue(value);
+      if (value === null || t === "string" || t === "boolean" || (t === "number" && Number.isFinite(value))) {
+        out[key] = value;
+      } else if (value !== undefined) {
+        out[key] = serializeExtraValue(value);
+      }
     }
     return out;
   }

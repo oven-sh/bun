@@ -1159,6 +1159,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_extract(),
                     log_level,
                 ) {
+                    // The callback queue below is drained exactly once; record
+                    // the appended package so a dependency enqueued after this
+                    // drain (e.g. the same tarball reached transitively) can
+                    // resolve instead of queueing a callback that nothing will
+                    // ever process.
+                    manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
@@ -1251,8 +1257,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let name = clone.name.slice();
                 let url = clone.url.slice();
 
-                manager.git_repositories.insert(task.id, repo_fd);
-
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
@@ -1331,69 +1335,94 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
+                manager.git_repositories.insert(task.id, repo_fd);
+
                 if C::HAS_ON_EXTRACT && C::IS_PACKAGE_INSTALLER {
                     // Installing!
-                    // this dependency might be something other than a git dependency! only need the name and
-                    // behavior, use the resolution from the task.
-                    let dep_id = clone.dep_id;
-                    // reshaped for borrowck — copy the small `String` handles
-                    // + behavior bit so
-                    // the `&manager.lockfile` borrow doesn't extend across the
-                    // `&mut manager` calls (`has_created_network_task`,
-                    // `enqueue_git_checkout`) below; detach the slice backing
-                    // through `string_buf_ptr` (matching the
-                    // `PackageManifest`-arm `name` detach pattern above).
-                    let (dep_name_handle, is_required) = {
-                        let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                        (dep.name, dep.behavior.is_required())
-                    };
-                    // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
-                    // enqueued for git resolutions; `value.git` is the active arm.
-                    let git = *clone.res.git();
-                    // SAFETY: `string_bytes` lives as long as `manager.lockfile`
-                    // and is not reallocated while resolve tasks are draining.
-                    let string_buf = unsafe {
-                        bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
-                    };
-                    let dep_name = dep_name_handle.slice(string_buf);
-                    let committish = git.committish.slice(string_buf);
-                    let repo = git.repo.slice(string_buf);
-
-                    use crate::repository_real::RepositoryExt as _;
-                    let resolved = crate::repository_real::Repository::find_commit(
-                        manager.env_mut(),
-                        manager.log_mut(),
-                        repo_fd,
-                        dep_name,
-                        committish,
-                        task.id,
-                    )?;
-
-                    let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
-
-                    if manager.has_created_network_task(checkout_id, is_required) {
+                    // The clone task is shared by every dependency on this repo
+                    // URL (one queue entry per dependency, typically different
+                    // committishes). Enqueue a checkout for each of them, not
+                    // just the dependency stored on the task, or the rest are
+                    // silently never installed.
+                    let Some(waiters) = manager.task_queue.remove(&task.id) else {
                         continue;
-                    }
+                    };
+                    use crate::repository_real::RepositoryExt as _;
+                    for waiter in waiters.iter() {
+                        let dep_id = match waiter {
+                            bun_install::TaskCallbackContext::Dependency(id) => *id,
+                            _ => continue,
+                        };
+                        // this dependency might be something other than a git
+                        // dependency! only need the name and behavior from it,
+                        // use the resolution from the lockfile.
+                        // reshaped for borrowck — copy the small `String`
+                        // handles + behavior bit so the `&manager.lockfile`
+                        // borrow doesn't extend across the `&mut manager` calls
+                        // (`has_created_network_task`, `enqueue_git_checkout`)
+                        // below; detach the slice backing through
+                        // `string_buf_ptr` (matching the `PackageManifest`-arm
+                        // `name` detach pattern above).
+                        let (dep_name_handle, is_required) = {
+                            let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                            (dep.name, dep.behavior.is_required())
+                        };
+                        let pkg_id = manager.lockfile.buffers.resolutions[dep_id as usize];
+                        if pkg_id == INVALID_PACKAGE_ID {
+                            continue;
+                        }
+                        let res = manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                        if res.tag != bun_install::ResolutionTag::Git {
+                            continue;
+                        }
+                        // SAFETY: `res.tag == Git` checked just above —
+                        // `value.git` is the active union arm.
+                        let git = *res.git();
+                        // SAFETY: `string_bytes` lives as long as `manager.lockfile`
+                        // and is not reallocated while resolve tasks are draining.
+                        let string_buf = unsafe {
+                            bun_ptr::detach_lifetime(
+                                manager.lockfile.buffers.string_bytes.as_slice(),
+                            )
+                        };
+                        let dep_name = dep_name_handle.slice(string_buf);
+                        let committish = git.committish.slice(string_buf);
+                        let repo = git.repo.slice(string_buf);
 
-                    // reshaped for borrowck — split nested `&mut manager`.
-                    let queued = enqueue::enqueue_git_checkout(
-                        manager,
-                        checkout_id,
-                        repo_fd,
-                        dep_id,
-                        dep_name,
-                        &clone.res,
-                        &resolved,
-                        None,
-                    );
-                    manager.task_batch.push(ThreadPoolBatch::from(queued));
+                        let resolved = crate::repository_real::Repository::find_commit(
+                            manager.env_mut(),
+                            manager.log_mut(),
+                            repo_fd,
+                            dep_name,
+                            committish,
+                            task.id,
+                        )?;
+
+                        let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
+
+                        if manager.has_created_network_task(checkout_id, is_required) {
+                            continue;
+                        }
+
+                        // reshaped for borrowck — split nested `&mut manager`.
+                        let queued = enqueue::enqueue_git_checkout(
+                            manager,
+                            checkout_id,
+                            repo_fd,
+                            dep_id,
+                            dep_name,
+                            &res,
+                            &resolved,
+                            None,
+                        );
+                        manager.task_batch.push(ThreadPoolBatch::from(queued));
+                    }
                 } else {
                     // Resolving!
-                    let dependency_list_entry = manager
+                    let dependency_list = manager
                         .task_queue
-                        .get_mut(&task.id)
+                        .remove(&task.id)
                         .expect("infallible: task queued");
-                    let dependency_list = core::mem::take(dependency_list_entry);
 
                     process_dependency_list_for_ctx::<C>(
                         manager,
@@ -1483,6 +1512,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_git_checkout(),
                     log_level,
                 ) {
+                    // The callback queue below is drained exactly once; record
+                    // the appended package so a dependency enqueued after this
+                    // drain (e.g. the same repo+commit reached transitively)
+                    // can resolve instead of queueing a callback that nothing
+                    // will ever process.
+                    manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         let any_root = Cell::new(false);
                         let dependency_list: TaskCallbackList = {

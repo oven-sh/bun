@@ -1218,6 +1218,33 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+
+                if needs_ctx {
+                    if let Some(&pkg_id) = this.appended_task_packages.get(&checkout_id) {
+                        // The checkout for this repo+commit already completed
+                        // and drained its callback queue; a context queued now
+                        // would never be processed. Resolve against the package
+                        // it appended, applying the same fix-up the completion
+                        // drain applies to queued dependencies.
+                        let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
+                        let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
+                        let dep_version =
+                            &mut this.lockfile.buffers.dependencies[id as usize].version;
+                        // The buffer row can hold a different tag than this
+                        // arm when the dependency comes from `overrides`.
+                        if dep_version.tag == dependency::version::Tag::Git {
+                            let repo = dep_version.git_mut();
+                            // SAFETY: `pkg_res.tag == Git` — the recorded
+                            // checkout appended a git-resolved package;
+                            // `value.git` is the active union arm.
+                            repo.resolved = pkg_res.git().resolved;
+                            repo.package_name = pkg_name;
+                        }
+                        success_fn(this, id, pkg_id);
+                        return Ok(());
+                    }
+                }
+
                 let entry = this
                     .task_queue
                     .get_or_put_context(checkout_id, ())
@@ -1302,6 +1329,25 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bstr::BStr::new(this.lockfile.str(&version.literal)),
                     bstr::BStr::new(&url),
                 );
+            }
+
+            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+                if let Some(&pkg_id) = this.appended_task_packages.get(&task_id) {
+                    // The extract for this tarball already completed and
+                    // drained its callback queue; a context queued now would
+                    // never be processed. Resolve against the package it
+                    // appended, applying the same fix-up the completion drain
+                    // applies to queued dependencies.
+                    let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
+                    let dep_version = &mut this.lockfile.buffers.dependencies[id as usize].version;
+                    // The buffer row can hold a different tag than this arm
+                    // when the dependency comes from `overrides`.
+                    if dep_version.tag == dependency::version::Tag::Github {
+                        dep_version.github_mut().package_name = pkg_name;
+                    }
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             let ctx = if is_root {
@@ -1500,6 +1546,25 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     bstr::BStr::new(this.lockfile.str(&version.literal)),
                     bstr::BStr::new(url),
                 );
+            }
+
+            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+                if let Some(&pkg_id) = this.appended_task_packages.get(&task_id) {
+                    // The extract for this tarball already completed and
+                    // drained its callback queue; a context queued now would
+                    // never be processed. Resolve against the package it
+                    // appended, applying the same fix-up the completion drain
+                    // applies to queued dependencies.
+                    let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
+                    let dep_version = &mut this.lockfile.buffers.dependencies[id as usize].version;
+                    // The buffer row can hold a different tag than this arm
+                    // when the dependency comes from `overrides`.
+                    if dep_version.tag == dependency::version::Tag::Tarball {
+                        dep_version.tarball_mut().package_name = pkg_name;
+                    }
+                    success_fn(this, id, pkg_id);
+                    return Ok(());
+                }
             }
 
             let ctx = if is_root {

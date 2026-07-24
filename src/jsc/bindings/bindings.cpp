@@ -1313,33 +1313,83 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSValue key1;
-        while (iter1->next(globalObject, key1)) {
-            bool has = set2->has(globalObject, key1);
+        // node's setEquiv pairs the two sets off: an element of set2 consumes
+        // the element of set1 it matched, so Set([{a:1},{a:1}]) is not equal to
+        // Set([{a:1},{a:2}]) even though every element of the first has some
+        // partner in the second. Only the node entry point pays for the
+        // matching pass; Bun.deepEquals keeps its "has a partner" rule.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L677-L719
+        if constexpr (checkPrototypes) {
+            // Elements stay rooted by set1 for as long as it is alive, which it
+            // is: c1 is reachable from the caller's gcBuffer.
+            Vector<JSValue, 8> unpaired;
+            auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
             RETURN_IF_EXCEPTION(scope, {});
-            if (has) {
-                continue;
-            }
-
-            // We couldn't find the key in the second set. This may be a false positive due to how
-            // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
-            auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSValue key2;
-            bool foundMatchingKey = false;
-            while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (equal) {
-                    foundMatchingKey = true;
-                    break;
+            JSValue key1;
+            while (iter1->next(globalObject, key1)) {
+                if (!key1.isObject()) {
+                    bool has = set2->has(globalObject, key1);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (has) continue;
+                    if constexpr (isStrict) return false;
                 }
+                unpaired.append(key1);
             }
 
-            if (!foundMatchingKey) {
-                return false;
+            if (!unpaired.isEmpty()) {
+                auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue key2;
+                while (iter2->next(globalObject, key2)) {
+                    if (!key2.isObject()) {
+                        if constexpr (isStrict) continue;
+                        bool has = set1->has(globalObject, key2);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (has) continue;
+                    }
+                    bool paired = false;
+                    for (size_t i = 0; i < unpaired.size(); i++) {
+                        bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, unpaired[i], key2, gcBuffer, stack, scope, true);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (equal) {
+                            unpaired.removeAt(i);
+                            paired = true;
+                            break;
+                        }
+                    }
+                    if (!paired) return false;
+                }
+                if (!unpaired.isEmpty()) return false;
+            }
+        } else {
+            auto iter1 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set1, IterationKind::Keys);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue key1;
+            while (iter1->next(globalObject, key1)) {
+                bool has = set2->has(globalObject, key1);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (has) {
+                    continue;
+                }
+
+                // We couldn't find the key in the second set. This may be a false positive due to how
+                // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+                auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue key2;
+                bool foundMatchingKey = false;
+                while (iter2->next(globalObject, key2)) {
+                    bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (equal) {
+                        foundMatchingKey = true;
+                        break;
+                    }
+                }
+
+                if (!foundMatchingKey) {
+                    return false;
+                }
             }
         }
 
@@ -1360,6 +1410,44 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (leftSize != map2->size()) {
             return false;
+        }
+
+        // As with sets, node pairs entries off: a key of map2 consumes the
+        // map1 entry it matched, so two entries with deep-equal-but-distinct
+        // object keys cannot both match the same partner.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L721-L787
+        if constexpr (checkPrototypes) {
+            // Entries stay rooted by map1, which the caller's gcBuffer keeps alive.
+            Vector<std::pair<JSValue, JSValue>, 8> unpaired;
+            auto iterLeft = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue leftKey, leftValue;
+            while (iterLeft->nextKeyValue(globalObject, leftKey, leftValue)) {
+                unpaired.append({ leftKey, leftValue });
+            }
+
+            auto iterRight = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSValue rightKey, rightValue;
+            while (iterRight->nextKeyValue(globalObject, rightKey, rightValue)) {
+                bool paired = false;
+                for (size_t i = 0; i < unpaired.size(); i++) {
+                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, unpaired[i].first, rightKey, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!keysEqual) continue;
+                    bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, unpaired[i].second, rightValue, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!valuesEqual) continue;
+                    unpaired.removeAt(i);
+                    paired = true;
+                    break;
+                }
+                if (!paired) return false;
+            }
+            if (!unpaired.isEmpty()) return false;
+
+            // node also compares own enumerable properties of Maps.
+            break;
         }
 
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
@@ -1399,10 +1487,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             }
         }
 
-        if constexpr (checkPrototypes) {
-            // node also compares own enumerable properties of Maps.
-            break;
-        }
         return true;
     }
     case ArrayBufferType: {

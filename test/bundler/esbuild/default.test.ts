@@ -2657,7 +2657,6 @@ describe.concurrent("bundler", () => {
     minifySyntax: true,
     minifyWhitespace: true,
     bundling: false,
-    todo: true,
     onAfterBundle(api) {
       assert(api.readFile("/out.js").includes('"use strict";'), '"use strict"; was emitted');
     },

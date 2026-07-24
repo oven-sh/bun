@@ -623,6 +623,22 @@ describe("bundler", () => {
       expect([...out.matchAll(/"use client"/g)]).toHaveLength(1);
     },
   });
+  itBundled("edgecase/DirectiveAfterLegalCommentHoisted", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        /*! @license MIT */
+        "use client";
+        export function Button() { return <div>Click</div>; }
+      `,
+    },
+    external: ["react", "react-dom", "react/jsx-dev-runtime", "react/jsx-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // A preserved legal comment does not terminate the directive prologue
+      expect(out).toStartWith('"use client";\n');
+      expect(out).toContain("@license MIT");
+    },
+  });
   itBundled("edgecase/DirectiveHoistedAboveRuntimeHelpers", {
     files: {
       "/entry.tsx": /* tsx */ `

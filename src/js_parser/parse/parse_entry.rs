@@ -773,30 +773,49 @@ impl<'a> Parser<'a> {
         // the AST so the printer / linker can emit it ahead of auto-injected
         // parts (JSX runtime import, runtime helpers, `before`-hoisted imports).
         // https://github.com/oven-sh/bun/issues/6854
+        // Preserved legal comments (`/*! ... */`, `//! ...`) become SComment
+        // statements ahead of the statement they precede, so they are part of
+        // the leading run without terminating the prologue. The REPL treats
+        // directives as expressions (a bare string is a completion value), so
+        // leave them in place there.
         let mut prologue_len = 0usize;
-        for stmt in stmts.iter() {
-            if matches!(stmt.data, js_ast::StmtData::SDirective(_)) {
-                prologue_len += 1;
-            } else {
-                break;
+        let mut directive_count = 0usize;
+        if !p.options.repl_mode {
+            for stmt in stmts.iter() {
+                match stmt.data {
+                    js_ast::StmtData::SDirective(_) => {
+                        prologue_len += 1;
+                        directive_count += 1;
+                    }
+                    js_ast::StmtData::SComment(_) => prologue_len += 1,
+                    _ => break,
+                }
             }
         }
-        let directives: bun_ast::StoreSlice<bun_ast::StoreStr> = if prologue_len == 0 {
+        let directives: bun_ast::StoreSlice<bun_ast::StoreStr> = if directive_count == 0 {
             bun_ast::StoreSlice::EMPTY
         } else {
-            let mut list = BumpVec::<bun_ast::StoreStr>::with_capacity_in(prologue_len, p.arena);
+            let mut list = BumpVec::<bun_ast::StoreStr>::with_capacity_in(directive_count, p.arena);
             for stmt in stmts[..prologue_len].iter() {
-                let js_ast::StmtData::SDirective(d) = &stmt.data else {
-                    unreachable!()
-                };
-                if !list.iter().any(|e| e.slice() == d.value.slice()) {
-                    list.push(d.value);
+                if let js_ast::StmtData::SDirective(d) = &stmt.data {
+                    if !list.iter().any(|e| e.slice() == d.value.slice()) {
+                        list.push(d.value);
+                    }
                 }
             }
             bun_ast::StoreSlice::from_bump(list)
         };
-        let stmts: &'a mut [Stmt] = if prologue_len > 0 {
-            &mut stmts[prologue_len..]
+        let stmts: &'a mut [Stmt] = if directive_count > 0 {
+            // Compact the comments to the end of the prologue prefix
+            // (preserving their order), then drop the directive slots.
+            let mut j = prologue_len;
+            for i in (0..prologue_len).rev() {
+                if matches!(stmts[i].data, js_ast::StmtData::SComment(_)) {
+                    j -= 1;
+                    stmts[j] = stmts[i];
+                }
+            }
+            &mut stmts[directive_count..]
         } else {
             stmts
         };

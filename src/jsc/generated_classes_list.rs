@@ -98,6 +98,7 @@ pub mod Classes {
     pub use crate::webcore::Request;
     pub use crate::webcore::Response;
     pub use crate::webcore::ResumableFetchSink;
+    pub use crate::webcore::ResumableHTMLRewriterSink;
     pub use crate::webcore::ResumableS3UploadSink;
     pub use crate::webcore::S3Client;
     pub use crate::webcore::S3Stat;

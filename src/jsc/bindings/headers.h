@@ -772,16 +772,6 @@ BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
 
 #endif
 
-#pragma mark - Bun__BodyValueBufferer
-
-
-#ifdef __cplusplus
-
-BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStream);
-BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
-
-#endif
-
 #ifdef __cplusplus
 
 BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__Describe2__bunTestThen);

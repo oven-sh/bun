@@ -1119,12 +1119,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("underscore");
-        expect(stderr).toContain("dollar");
-        expect(stderr).toContain("mix");
-        expect(stderr).toContain("$123invalid");
-        expect(stderr).toContain("$hasdash");
-        expect(stderr).toContain("$hasspace");
+        expect(stderr).toContain("Edge: underscore | dollar | mix | $123invalid | $has-dash | $has space");
       });
 
       test("handles deeply nested properties with arrays", () => {
@@ -1170,7 +1165,31 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("1 | $missing| $a.b.c| 1");
+        expect(stderr).toContain("1 | $missing | $a.b.c | 1");
+      });
+
+      test("renders null and undefined property values", () => {
+        const stderr = runTest({
+          args: [],
+          input: `
+            import { test, expect } from "bun:test";
+
+            test.each([{ v: null }])('v is $v here', ({ v }) => {
+              expect(v).toBe(null);
+            });
+            test.each([{ v: undefined }])('u is $v end', ({ v }) => {
+              expect(v).toBe(undefined);
+            });
+            test.each([{ a: { b: null } }])('nested $a.b tail', () => {});
+            test.each([{ v: 1 }])('missing $nope end', () => {});
+          `,
+        });
+
+        expect(stderr).toContain("(pass) v is null here");
+        expect(stderr).toContain("(pass) u is undefined end");
+        expect(stderr).toContain("(pass) nested null tail");
+        expect(stderr).toContain("(pass) missing $nope end");
+        expect(stderr).toContain("4 pass");
       });
     });
   });

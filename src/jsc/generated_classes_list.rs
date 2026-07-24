@@ -102,6 +102,7 @@ pub mod Classes {
     pub use crate::webcore::S3Client;
     pub use crate::webcore::S3Stat;
     pub use crate::webcore::TextDecoder;
+    pub use crate::webcore::blob::FileLock;
     pub use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSource;
     pub use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
     pub use crate::webcore::crypto::Crypto;

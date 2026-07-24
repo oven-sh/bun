@@ -1386,6 +1386,7 @@ impl Tag {
     pub const ioctl: Tag = Tag(104);
     pub const getrlimit: Tag = Tag(105);
     pub const setrlimit: Tag = Tag(106);
+    pub const flock: Tag = Tag(107);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1393,7 +1394,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 107] = [
+        const NAMES: [&str; 108] = [
             "TODO",
             "dup",
             "access",
@@ -1502,6 +1503,7 @@ impl Tag {
             "ioctl",
             "getrlimit",
             "setrlimit",
+            "flock",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1552,6 +1554,7 @@ pub(crate) mod safe_libc {
         // macOS has had fdatasync(2) since 10.7; the `libc` crate omits the
         // Apple binding, so a local decl is needed there anyway.
         pub(crate) safe fn fdatasync(fd: c_int) -> c_int;
+        pub(crate) safe fn flock(fd: c_int, operation: c_int) -> c_int;
         pub(crate) safe fn fchdir(fd: c_int) -> c_int;
         pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
         pub(crate) safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
@@ -3004,6 +3007,22 @@ mod posix_impl {
         check!(safe_libc::fdatasync(fd.native()), Tag::fdatasync);
         Ok(())
     }
+    pub fn flock(fd: Fd, exclusive: bool, nonblocking: bool) -> Maybe<()> {
+        let mut op = if exclusive {
+            libc::LOCK_EX
+        } else {
+            libc::LOCK_SH
+        };
+        if nonblocking {
+            op |= libc::LOCK_NB;
+        }
+        check!(safe_libc::flock(fd.native(), op), Tag::flock);
+        Ok(())
+    }
+    pub fn funlock(fd: Fd) -> Maybe<()> {
+        check!(safe_libc::flock(fd.native(), libc::LOCK_UN), Tag::flock);
+        Ok(())
+    }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {
         let rc = check!(safe_libc::lseek(fd.native(), offset, whence), Tag::lseek);
         Ok(rc)
@@ -3896,6 +3915,36 @@ mod windows_impl {
     }
     pub fn fdatasync(fd: Fd) -> Maybe<()> {
         sys_uv::fdatasync(fd)
+    }
+    pub fn flock(fd: Fd, exclusive: bool, nonblocking: bool) -> Maybe<()> {
+        let mut flags: w::DWORD = 0;
+        if exclusive {
+            flags |= w::LOCKFILE_EXCLUSIVE_LOCK;
+        }
+        if nonblocking {
+            flags |= w::LOCKFILE_FAIL_IMMEDIATELY;
+        }
+        let mut ov: w::OVERLAPPED = bun_core::ffi::zeroed();
+        // SAFETY: `ov` is valid for the duration of the call.
+        let ok =
+            unsafe { w::kernel32::LockFileEx(fd.native() as w::HANDLE, flags, 0, !0, !0, &mut ov) };
+        if ok == 0 {
+            return Err(Error::new(w::get_last_errno(), Tag::flock).with_fd(fd));
+        }
+        Ok(())
+    }
+    pub fn funlock(fd: Fd) -> Maybe<()> {
+        let mut ov: w::OVERLAPPED = bun_core::ffi::zeroed();
+        // SAFETY: `ov` is valid for the duration of the call.
+        let ok = unsafe { w::kernel32::UnlockFileEx(fd.native() as w::HANDLE, 0, !0, !0, &mut ov) };
+        if ok == 0 {
+            // POSIX flock(LOCK_UN) on an unlocked fd is a no-op; match that.
+            if w::Win32Error::get() == w::Win32Error::NOT_LOCKED {
+                return Ok(());
+            }
+            return Err(Error::new(w::get_last_errno(), Tag::flock).with_fd(fd));
+        }
+        Ok(())
     }
 
     // ── kernel32 / ntdll arms ────────────────────────────────────────────

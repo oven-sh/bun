@@ -84,6 +84,8 @@ pub mod task_tag {
         FChown,
         Fdatasync,
         FetchTasklet,
+        FileLockIOTask,
+        FileLockTask,
         Fstat,
         FSWatchTask,
         Fsync,

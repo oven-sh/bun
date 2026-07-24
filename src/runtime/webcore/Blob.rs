@@ -54,10 +54,14 @@ pub use store::{Store, StoreRef};
 
 #[path = "blob/copy_file.rs"]
 pub mod copy_file;
+#[path = "blob/FileLock.rs"]
+pub mod file_lock;
 #[path = "blob/read_file.rs"]
 pub mod read_file;
 #[path = "blob/write_file.rs"]
 pub mod write_file;
+
+pub use file_lock::FileLock;
 
 /// Deallocator for `ArrayBuffer`s backed by a `Blob::Store` ref. Passed as a C
 /// callback to `ArrayBuffer::to_js_with_context`; the `ctx` is a raw `Store*`
@@ -225,6 +229,8 @@ pub trait BlobExt {
     fn get_exists_sync(&self) -> JSValue;
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
+    fn do_lock(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
+    fn do_unlock(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_exists(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn pipe_readable_stream_to_blob(
         &self,
@@ -1369,6 +1375,93 @@ impl BlobExt for Blob {
             store::Data::S3(s3) => s3.unlink(store, global_this, args.next_eat()),
             store::Data::File(file) => file.unlink(global_this),
             store::Data::Bytes(_) => unreachable!(), // validate_writable_blob should have caught this
+        }
+    }
+
+    fn do_lock(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let file = store_as_file_for_lock(global_this, self, "lock")?;
+        let mut exclusive = true;
+        let mut nonblocking = false;
+        let mut signal: Option<*mut jsc::AbortSignal> = None;
+        if let Some(options) = callframe.arguments().first().copied() {
+            if options.is_object() {
+                if let Some(v) = options.get_truthy(global_this, "exclusive")? {
+                    if !v.is_boolean() {
+                        return Err(global_this.throw_invalid_argument_type(
+                            "lock",
+                            "options.exclusive",
+                            "boolean",
+                        ));
+                    }
+                    exclusive = v.to_boolean();
+                }
+                if let Some(v) = options.get_truthy(global_this, "nonblocking")? {
+                    if !v.is_boolean() {
+                        return Err(global_this.throw_invalid_argument_type(
+                            "lock",
+                            "options.nonblocking",
+                            "boolean",
+                        ));
+                    }
+                    nonblocking = v.to_boolean();
+                }
+                if let Some(v) = options.get_truthy(global_this, "signal")? {
+                    match jsc::AbortSignal::from_js(v) {
+                        Some(s) => {
+                            // SAFETY: `s` is the live AbortSignal backing `v`.
+                            if let Some(err) =
+                                unsafe { (*s).node_abort_error_if_aborted(global_this) }
+                            {
+                                return Ok(
+                                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this,
+                                        err,
+                                    ),
+                                );
+                            }
+                            // SAFETY: take a +1 ref for the task; released via
+                            // `detach()` in `LockTaskCtx::then`.
+                            unsafe { (*s).ref_() };
+                            signal = Some(s);
+                        }
+                        None => {
+                            return Err(global_this.throw_invalid_argument_type(
+                                "lock",
+                                "options.signal",
+                                "AbortSignal",
+                            ));
+                        }
+                    }
+                }
+            } else if !options.is_undefined_or_null() {
+                return Err(global_this.throw_invalid_argument_type("lock", "options", "object"));
+            }
+        }
+        let source = match &file.pathlike {
+            PathOrFileDescriptor::Fd(fd) => file_lock::LockSource::Fd(*fd),
+            PathOrFileDescriptor::Path(p) => file_lock::LockSource::Path(p.slice().to_vec()),
+        };
+        Ok(file_lock::schedule_lock(
+            global_this,
+            source,
+            exclusive,
+            nonblocking,
+            signal,
+        ))
+    }
+
+    fn do_unlock(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+        let file = store_as_file_for_lock(global_this, self, "unlock")?;
+        match &file.pathlike {
+            PathOrFileDescriptor::Fd(fd) => Ok(file_lock::unlock_fd(global_this, *fd)),
+            PathOrFileDescriptor::Path(_) => Ok(
+                JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                    global_this,
+                    global_this.ERR_INVALID_ARG_TYPE(format_args!(
+                        "unlock() on a path-backed BunFile requires the FileLock returned by lock()"
+                    )),
+                ),
+            ),
         }
     }
 
@@ -5301,6 +5394,24 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
         )));
     }
     Ok(())
+}
+
+fn store_as_file_for_lock<'a>(
+    global_this: &JSGlobalObject,
+    blob: &'a Blob,
+    op: &str,
+) -> JsResult<&'a store::File> {
+    let Some(store) = blob.store.get() else {
+        return Err(global_this.throw(format_args!("Cannot {op} a detached Blob")));
+    };
+    match &store.data {
+        store::Data::File(file) => Ok(file),
+        store::Data::Bytes(_) => Err(global_this.throw_invalid_arguments(format_args!(
+            "{op}() is only available on files (from Bun.file())"
+        ))),
+        store::Data::S3(_) => Err(global_this
+            .throw_invalid_arguments(format_args!("{op}() is not supported on S3 files"))),
+    }
 }
 
 /// `Bun.write(destination, input, options?)`

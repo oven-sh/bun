@@ -71,6 +71,23 @@ pub mod kernel32 {
         // `WAIT_FAILED` + GetLastError, no UB.
         pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
 
+        // ── file locking ──
+        pub fn LockFileEx(
+            hFile: HANDLE,
+            dwFlags: DWORD,
+            dwReserved: DWORD,
+            nNumberOfBytesToLockLow: DWORD,
+            nNumberOfBytesToLockHigh: DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
+        pub fn UnlockFileEx(
+            hFile: HANDLE,
+            dwReserved: DWORD,
+            nNumberOfBytesToUnlockLow: DWORD,
+            nNumberOfBytesToUnlockHigh: DWORD,
+            lpOverlapped: *mut OVERLAPPED,
+        ) -> BOOL;
+
         // ── file moves ──
         pub fn MoveFileExW(
             lpExistingFileName: LPCWSTR,
@@ -134,6 +151,8 @@ pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
+pub const LOCKFILE_FAIL_IMMEDIATELY: DWORD = 0x1;
+pub const LOCKFILE_EXCLUSIVE_LOCK: DWORD = 0x2;
 pub use bun_windows_sys::FILETIME;
 
 pub use bun_windows_sys::DUPLICATE_SAME_ACCESS;

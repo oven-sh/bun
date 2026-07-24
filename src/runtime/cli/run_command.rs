@@ -1365,7 +1365,11 @@ impl Run {
                 json_format: opts.json_format,
                 interval: opts.interval,
             });
-            bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
+            // SAFETY: `vm.jsc_vm` set in `init`.
+            bun_jsc::bun_cpu_profiler::set_sampling_interval(
+                unsafe { &mut *vm.jsc_vm },
+                opts.interval,
+            );
             // SAFETY: `vm.jsc_vm` set in `init`.
             bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
             bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);

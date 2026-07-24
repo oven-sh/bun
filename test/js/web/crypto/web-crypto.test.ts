@@ -986,6 +986,77 @@ describe("SubtleCrypto.deriveBits length", () => {
   });
 });
 
+// importKey("jwk", ...) for RSA private keys must validate the key material at import
+// time (DataError), not hand back a poisoned CryptoKey whose first sign()/decrypt()
+// fails with OperationError. https://www.w3.org/TR/WebCryptoAPI/#rsassa-pkcs1-operations
+describe("RSA private JWK import validation", () => {
+  const msg = new TextEncoder().encode("hello");
+  const flip = (b64u: string, i: number) => {
+    const b = Buffer.from(b64u, "base64url");
+    b[i] ^= 0xff;
+    return b.toString("base64url");
+  };
+  const mutations = (jwk: JsonWebKey) => ({
+    "p and q swapped": { ...jwk, p: jwk.q, q: jwk.p },
+    "dp corrupted": { ...jwk, dp: flip(jwk.dp!, 4) },
+    "dq corrupted": { ...jwk, dq: flip(jwk.dq!, 4) },
+    "qi corrupted": { ...jwk, qi: flip(jwk.qi!, 3) },
+    "d corrupted": { ...jwk, d: flip(jwk.d!, 10) },
+    "e mismatched with d": { ...jwk, e: "Aw" },
+    "p corrupted (n != p*q)": { ...jwk, p: flip(jwk.p!, 4) },
+  });
+  const outcome = (jwk: JsonWebKey, alg: RsaHashedImportParams, usages: KeyUsage[]) =>
+    crypto.subtle.importKey("jwk", jwk, alg, true, usages).then(
+      key => (key instanceof CryptoKey ? "imported" : "other"),
+      e => e.name,
+    );
+
+  it.each([["RSASSA-PKCS1-v1_5"], ["RSA-PSS"], ["RSA-OAEP"]])(
+    "%s rejects inconsistent private key components with DataError",
+    async name => {
+      const usages: KeyUsage[] = name === "RSA-OAEP" ? ["encrypt", "decrypt"] : ["sign", "verify"];
+      const privUsage: KeyUsage[] = name === "RSA-OAEP" ? ["decrypt"] : ["sign"];
+      const alg = { name, hash: "SHA-256" } as const;
+      const { privateKey } = await crypto.subtle.generateKey(
+        { ...alg, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+        true,
+        usages,
+      );
+      const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+
+      const results: Record<string, string> = {};
+      for (const [label, mutated] of Object.entries(mutations(jwk))) {
+        results[label] = await outcome(mutated, alg, privUsage);
+      }
+      expect(results).toEqual({
+        "p and q swapped": "DataError",
+        "dp corrupted": "DataError",
+        "dq corrupted": "DataError",
+        "qi corrupted": "DataError",
+        "d corrupted": "DataError",
+        "e mismatched with d": "DataError",
+        "p corrupted (n != p*q)": "DataError",
+      });
+    },
+  );
+
+  it("still imports, signs and verifies a consistent round-tripped JWK", async () => {
+    const alg = { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" } as const;
+    const { privateKey, publicKey } = await crypto.subtle.generateKey(
+      { ...alg, modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]) },
+      true,
+      ["sign", "verify"],
+    );
+    const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+    const reimported = await crypto.subtle.importKey("jwk", jwk, alg, true, ["sign"]);
+    const sig = await crypto.subtle.sign(alg, reimported, msg);
+    expect(await crypto.subtle.verify(alg, publicKey, sig, msg)).toBe(true);
+
+    const pubJwk = await crypto.subtle.exportKey("jwk", publicKey);
+    expect(await outcome(pubJwk, alg, ["verify"])).toBe("imported");
+  });
+});
+
 describe("X25519 JWK import", () => {
   const x25519Public: JsonWebKey = {
     kty: "OKP",

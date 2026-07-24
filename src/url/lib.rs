@@ -1020,10 +1020,16 @@ impl QueryStringMap {
 
             let name_hash: u64 = wyhash(name_slice);
 
+            // `URLPath::parse` decoded every escape in the path except the
+            // `%2F`/`%25` PRESERVE_STRUCTURE kept, so decoding those here is
+            // the single decode applied to a captured param value.
             let value_slice = result.raw_value(scanner.pathname.pathname);
-            value.length = u32::try_from(value_slice.len()).unwrap();
             value.offset = buf_writer_pos;
-            buf.extend_from_slice(value_slice);
+            value.length = PercentEncoding::decode(&mut buf, value_slice).unwrap_or_else(|_| {
+                buf.truncate(buf_writer_pos as usize);
+                buf.extend_from_slice(value_slice);
+                u32::try_from(value_slice.len()).unwrap()
+            });
             buf_writer_pos += value.length;
 
             list.push(Param {
@@ -1340,7 +1346,7 @@ impl From<DecodeError> for crate::Error {
 
 impl PercentEncoding {
     pub fn decode(writer: &mut impl bun_core::io::Write, input: &[u8]) -> Result<u32, DecodeError> {
-        Self::decode_fault_tolerant::<_, false>(writer, input, None)
+        Self::decode_fault_tolerant::<_, false, false>(writer, input, None)
     }
 
     /// Decode percent-encoded input into allocated memory.
@@ -1363,7 +1369,14 @@ impl PercentEncoding {
         Self::decode(&mut w, input)
     }
 
-    pub fn decode_fault_tolerant<W: bun_core::io::Write, const FAULT_TOLERANT: bool>(
+    /// `PRESERVE_STRUCTURE` copies `%2F` and `%25` through verbatim so route
+    /// matchers that split the output on `/` never see a decoded slash, and
+    /// so the per-value decode of a captured segment is the only decode.
+    pub fn decode_fault_tolerant<
+        W: bun_core::io::Write,
+        const FAULT_TOLERANT: bool,
+        const PRESERVE_STRUCTURE: bool,
+    >(
         writer: &mut W,
         input: &[u8],
         needs_redirect: Option<&mut bool>,
@@ -1407,10 +1420,15 @@ impl PercentEncoding {
                         }
                     }
 
-                    writer.write_byte(
-                        (strings::to_ascii_hex_value(input[i + 1]) << 4)
-                            | strings::to_ascii_hex_value(input[i + 2]),
-                    )?;
+                    let decoded = (strings::to_ascii_hex_value(input[i + 1]) << 4)
+                        | strings::to_ascii_hex_value(input[i + 2]);
+                    if PRESERVE_STRUCTURE && matches!(decoded, b'/' | b'%') {
+                        writer.write_all(&input[i..i + 3])?;
+                        i += 3;
+                        written += 3;
+                        continue;
+                    }
+                    writer.write_byte(decoded)?;
                     i += 3;
                     written += 1;
                     continue;

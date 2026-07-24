@@ -670,11 +670,9 @@ it(".params decodes percent escapes in a route segment exactly once", () => {
 
   const escaped = router.match("/posts/%252e%252e%252fetc")!;
   expect(escaped.name).toBe("/posts/[id]");
-  expect(escaped.pathname).toBe("/posts/%2e%2e%2fetc");
   expect(escaped.params.id).toBe("%2e%2e%2fetc");
 
   const percent = router.match("/posts/100%2525")!;
-  expect(percent.pathname).toBe("/posts/100%25");
   expect(percent.params.id).toBe("100%25");
 });
 
@@ -916,4 +914,89 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     exitCode,
     signalCode: proc.signalCode,
   }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
+});
+
+it("match() does not let a percent-encoded '/' cross a route segment boundary", () => {
+  // Routing splits the path on '/'. Decoding %2F before that split let
+  // `/admin%2Fpanel` select the nested `/admin/panel` route instead of the
+  // `[file]` parameter; only the captured param value may be decoded.
+  const { dir } = make(["[file].tsx", "admin/panel.tsx", "posts/[id].tsx", "index.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const m = (p: string) => {
+    const r = router.match(p);
+    return r ? { name: r.name, params: r.params } : null;
+  };
+
+  expect({
+    encodedSlash: m("/admin%2Fpanel"),
+    encodedSlashLower: m("/admin%2fpanel"),
+    literalSlash: m("/admin/panel"),
+    nonStatic: m("/he%2Fllo"),
+    nestedDynamic: m("/posts/a%2Fb"),
+    // %25 must stay encoded too, or the per-param decode would then read the
+    // following bytes as a fresh escape (double decode).
+    encodedPercent: m("/posts/%2541"),
+    mixed: m("/posts/%25%2F"),
+  }).toEqual({
+    encodedSlash: { name: "/[file]", params: { file: "admin/panel" } },
+    encodedSlashLower: { name: "/[file]", params: { file: "admin/panel" } },
+    literalSlash: { name: "/admin/panel", params: {} },
+    nonStatic: { name: "/[file]", params: { file: "he/llo" } },
+    nestedDynamic: { name: "/posts/[id]", params: { id: "a/b" } },
+    encodedPercent: { name: "/posts/[id]", params: { id: "%41" } },
+    mixed: { name: "/posts/[id]", params: { id: "%/" } },
+  });
+});
+
+it("match() returns null for a malformed percent escape instead of throwing", () => {
+  // The declared return type is `MatchedRoute | null`. A server that does
+  // `router.match(request)` on a raw incoming URL must not be brought down
+  // by a malformed escape in either the path or the query.
+  const { dir } = make(["index.tsx", "[file].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Malformed escape in the path: no route can match.
+  for (const p of ["/%e", "/foo%", "/%zz"]) {
+    expect(router.match(p)).toBeNull();
+  }
+  // Malformed escape in the query: the path part is fine, so the route
+  // still matches.
+  for (const p of ["/ok?%=1", "/ok?x=%", "/ok?x=%e"]) {
+    expect(router.match(p)?.name).toBe("/[file]");
+  }
+});
+
+it("match() splits path and query before percent-decoding", () => {
+  // Decoding the query before splitting it into name/value pairs turned an
+  // encoded '&'/'=' into a real delimiter and double-decoded '%25'; an
+  // encoded '?' in the path likewise started a spurious query string.
+  const { dir } = make(["p.tsx", "posts/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  const q = (p: string) => {
+    const r = router.match(p);
+    return r ? { name: r.name, params: r.params, query: r.query } : null;
+  };
+
+  expect({
+    encodedAmpAndEq: q("/p?a=b%26c%3Dd"),
+    doubleEncoded: q("/p?a=%2520"),
+    encodedQuestionInPath: q("/posts/a%3Fb"),
+    encodedQuestionInPathWithQuery: q("/posts/a%3Fb?c=1"),
+    literalQuestionInQueryValue: q("/p?a=b?c=d"),
+    // https://github.com/oven-sh/bun/issues/8384
+    encodedQuestionInQueryValue: q("/p?prompt=test%3ftest"),
+  }).toEqual({
+    encodedAmpAndEq: { name: "/p", params: {}, query: { a: "b&c=d" } },
+    doubleEncoded: { name: "/p", params: {}, query: { a: "%20" } },
+    encodedQuestionInPath: { name: "/posts/[id]", params: { id: "a?b" }, query: { id: "a?b" } },
+    encodedQuestionInPathWithQuery: {
+      name: "/posts/[id]",
+      params: { id: "a?b" },
+      query: { id: "a?b", c: "1" },
+    },
+    literalQuestionInQueryValue: { name: "/p", params: {}, query: { a: "b?c=d" } },
+    encodedQuestionInQueryValue: { name: "/p", params: {}, query: { prompt: "test?test" } },
+  });
 });

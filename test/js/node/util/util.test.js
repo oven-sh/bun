@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -432,6 +432,32 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
+  // inspect.colors is user-mutable; styleText must see keys added after its
+  // internal cache was first populated instead of crashing on the stale cache.
+  it.concurrent("styleText accepts inspect.colors entries added after first call", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+         util.styleText("red", "x", { validateStream: false });
+         util.inspect.colors.myColor = [95, 39];
+         const single = util.styleText("myColor", "x", { validateStream: false });
+         const array = util.styleText(["bold", "myColor"], "x", { validateStream: false });
+         process.stdout.write(JSON.stringify({ single, array }));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      single: "\u001b[95mx\u001b[39m",
+      array: "\u001b[1m\u001b[95mx\u001b[39m\u001b[22m",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   describe("getCallSites", () => {
     it("restores Error state when stackTraceLimit is non-writable", () => {
       const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
@@ -446,6 +472,27 @@ describe("util", () => {
         Object.defineProperty(Error, "stackTraceLimit", desc);
         Error.prepareStackTrace = savedPrepare;
       }
+    });
+
+    it.concurrent("is unaffected by user tampering with the Error global", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const util = require("node:util");
+           delete Error.captureStackTrace;
+           globalThis.Error = undefined;
+           function outer() { return util.getCallSites(5); }
+           const sites = outer();
+           process.stdout.write(JSON.stringify(sites.map(s => s.functionName)));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toContain("outer");
+      expect(exitCode).toBe(0);
     });
 
     it("each frame has the node v26 shape", () => {

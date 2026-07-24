@@ -637,6 +637,31 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
     return true;
 }
 
+// JSTypes that specialObjectsDequal() always returns std::nullopt for. When both
+// operands have one of these types we skip both specialObjectsDequal() calls.
+// ObjectType is excluded because that function checks it for boxed Symbol/BigInt.
+static ALWAYS_INLINE bool isPlainObjectOrArrayType(uint8_t t)
+{
+    return t == FinalObjectType || t == ArrayType || t == DerivedArrayType;
+}
+
+// SameValue for two values we already know are not bitwise identical and where at
+// least one is not an object. Avoids the redundant branches in JSC::sameValue that
+// collapse to `v1 == v2` for objects.
+static ALWAYS_INLINE bool sameValueNonObject(JSGlobalObject* globalObject, JSValue v1, JSValue v2)
+{
+    if (v1.isNumber()) {
+        if (!v2.isNumber())
+            return false;
+        double x = v1.asNumber();
+        double y = v2.asNumber();
+        if (std::isnan(x) || std::isnan(y))
+            return std::isnan(x) && std::isnan(y);
+        return std::bit_cast<uint64_t>(x) == std::bit_cast<uint64_t>(y);
+    }
+    return JSValue::strictEqual(globalObject, v1, v2);
+}
+
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
 {
     if (obj->canGetIndexQuickly(i)) {
@@ -671,62 +696,64 @@ static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
 template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
+    if (v1 == v2)
+        return true;
+
     VM& vm = globalObject->vm();
-    if (!vm.isSafeToRecurse()) [[unlikely]] {
-        throwStackOverflowError(globalObject, scope);
-        return false;
-    }
+
+    JSCell* c1 = v1.isCell() ? v1.asCell() : nullptr;
+    JSCell* c2 = v2.isCell() ? v2.asCell() : nullptr;
+    uint8_t c1Type = c1 ? c1->type() : 0;
+    uint8_t c2Type = c2 ? c2->type() : 0;
 
     // need to check this before primitives, asymmetric matchers
     // can match against any type of value.
     if constexpr (enableAsymmetricMatchers) {
-        if (v2.isCell() && !v2.isEmpty() && v2.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        if (c2Type == JSC::JSType(JSDOMWrapperType)) {
             switch (matchAsymmetricMatcher(globalObject, v2, v1, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
                 return true;
             case AsymmetricMatcherResult::NOT_MATCHER:
-                // continue comparison
                 break;
             }
-        } else if (v1.isCell() && !v1.isEmpty() && v1.asCell()->type() == JSC::JSType(JSDOMWrapperType)) {
+        } else if (c1Type == JSC::JSType(JSDOMWrapperType)) {
             switch (matchAsymmetricMatcher(globalObject, v1, v2, scope)) {
             case AsymmetricMatcherResult::FAIL:
                 return false;
             case AsymmetricMatcherResult::PASS:
                 return true;
             case AsymmetricMatcherResult::NOT_MATCHER:
-                // continue comparison
                 break;
             }
-        }
-    }
-
-    if (!v1.isEmpty() && !v2.isEmpty()) {
-        auto same = JSC::sameValue(globalObject, v1, v2);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (same) {
-            return true;
         }
     }
 
     if (v1.isEmpty() || v2.isEmpty())
         return v1.isEmpty() == v2.isEmpty();
 
-    if (v1.isPrimitive() || v2.isPrimitive())
+    // If either side is not a true object (non-cell, or string/symbol/bigint), the
+    // result is fully determined by SameValue semantics; we already know v1 != v2.
+    if (c1Type < FirstObjectType || c2Type < FirstObjectType) {
+        bool same = sameValueNonObject(globalObject, v1, v2);
+        RETURN_IF_EXCEPTION(scope, false);
+        return same;
+    }
+
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
         return false;
+    }
 
-    RELEASE_ASSERT(v1.isCell());
-    RELEASE_ASSERT(v2.isCell());
-
+    // Cycle detection. Entries are always objects, so encoded-bit equality is
+    // pointer equality; JSValue::strictEqual would add string/bigint branches.
     const size_t length = stack.size();
-    const auto originalGCBufferSize = gcBuffer.size();
     for (size_t i = 0; i < length; i++) {
-        auto values = stack.at(i);
-        if (JSC::JSValue::strictEqual(globalObject, values.first, v1)) {
-            return JSC::JSValue::strictEqual(globalObject, values.second, v2);
-        } else if (JSC::JSValue::strictEqual(globalObject, values.second, v2))
+        auto& values = stack.at(i);
+        if (values.first == v1) {
+            return values.second == v2;
+        } else if (values.second == v2)
             return false;
     }
 
@@ -735,36 +762,47 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         gcBuffer.append(v2);
         stack.append({ v1, v2 });
     }
-    auto removeFromStack = WTF::makeScopeExit([&] {
+    auto removeFromStack = WTF::makeScopeExit([addToStack, &stack, &gcBuffer] {
         if (addToStack) {
-            stack.removeAt(length);
-            while (gcBuffer.size() > originalGCBufferSize)
-                gcBuffer.removeLast();
+            stack.removeLast();
+            gcBuffer.removeLast();
+            gcBuffer.removeLast();
         }
     });
 
-    JSCell* c1 = v1.asCell();
-    JSCell* c2 = v2.asCell();
-    ASSERT(c1);
-    ASSERT(c2);
-    std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c1, c2);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c2, c1);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
-    JSObject* o1 = v1.getObject();
-    JSObject* o2 = v2.getObject();
+    // Dispatch on special JSTypes. For plain objects and arrays the switch always
+    // returns nullopt, so skip the call(s) entirely in that common case.
+    bool c1IsPlain = isPlainObjectOrArrayType(c1Type);
+    bool c2IsPlain = isPlainObjectOrArrayType(c2Type);
+    if (!c1IsPlain) {
+        std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c1, c2);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return *isSpecialEqual;
+    }
+    if (!c2IsPlain) {
+        std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c2, c1);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isSpecialEqual.has_value()) return *isSpecialEqual;
+    }
+    JSObject* o1 = asObject(c1);
+    JSObject* o2 = asObject(c2);
 
-    bool v1Array = isArray(globalObject, v1);
-    RETURN_IF_EXCEPTION(scope, false);
-    bool v2Array = isArray(globalObject, v2);
-    RETURN_IF_EXCEPTION(scope, false);
+    bool hasProxy = c1Type == ProxyObjectType || c2Type == ProxyObjectType;
+    bool v1Array, v2Array;
+    if (hasProxy) [[unlikely]] {
+        v1Array = isArray(globalObject, v1);
+        RETURN_IF_EXCEPTION(scope, false);
+        v2Array = isArray(globalObject, v2);
+        RETURN_IF_EXCEPTION(scope, false);
+    } else {
+        v1Array = c1Type == ArrayType || c1Type == DerivedArrayType;
+        v2Array = c2Type == ArrayType || c2Type == DerivedArrayType;
+    }
 
     if (v1Array != v2Array)
         return false;
 
-    if (v1Array && v2Array && !(o1->isProxy() || o2->isProxy())) {
+    if (v1Array && !hasProxy) {
         JSC::JSArray* array1 = uncheckedDowncast<JSC::JSArray>(v1);
         JSC::JSArray* array2 = uncheckedDowncast<JSC::JSArray>(v2);
 
@@ -776,43 +814,117 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
         }
 
-        uint64_t i = 0;
-        for (; i < array1Length; i++) {
-            JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
-            RETURN_IF_EXCEPTION(scope, false);
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
-            RETURN_IF_EXCEPTION(scope, false);
+        Structure* a1Structure = array1->structure();
+        Structure* a2Structure = array2->structure();
 
-            if constexpr (isStrict) {
-                if (left.isEmpty() && right.isEmpty()) {
-                    continue;
-                }
-                if (left.isEmpty() || right.isEmpty()) {
+        // Tight indexed-storage loop. Read the backing store once instead of
+        // re-switching on indexingType() per element via tryGetIndexQuickly().
+        // The generic path below also reads own slots only (it does not forward
+        // holes to the prototype), so a prototype-chain guard is unnecessary.
+        if (array1Length == array2Length) {
+            IndexingType shape1 = array1->indexingType() & IndexingShapeMask;
+            IndexingType shape2 = array2->indexingType() & IndexingShapeMask;
+            Butterfly* b1 = array1->butterfly();
+            Butterfly* b2 = array2->butterfly();
+
+            if (shape1 == Int32Shape && shape2 == Int32Shape) {
+                // Int32 slots are encoded JSValues; holes are 0. Bitwise equality is
+                // SameValue for both, so a memcmp is exact here.
+                if (array1Length && memcmp(b1->contiguous().data(), b2->contiguous().data(), array1Length * sizeof(EncodedJSValue)) != 0)
                     return false;
-                }
+                goto compareArraySymbols;
             }
 
-            if constexpr (!isStrict) {
-                if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
+            if (shape1 == DoubleShape && shape2 == DoubleShape) {
+                // Double slots are raw doubles; holes are canonical PNaN (never a
+                // stored value). SameValue distinguishes +0/-0, so memcmp is exact.
+                if (array1Length && memcmp(b1->contiguousDouble().data(), b2->contiguousDouble().data(), array1Length * sizeof(double)) != 0)
+                    return false;
+                goto compareArraySymbols;
+            }
+
+            if ((shape1 == ContiguousShape || shape1 == Int32Shape) && (shape2 == ContiguousShape || shape2 == Int32Shape)) {
+                const WriteBarrier<Unknown>* d1 = b1->contiguous().data();
+                const WriteBarrier<Unknown>* d2 = b2->contiguous().data();
+                for (size_t i = 0; i < array1Length; i++) {
+                    JSValue left = d1[i].get();
+                    JSValue right = d2[i].get();
+                    if (left == right)
+                        continue;
+
+                    if constexpr (isStrict) {
+                        if (!left || !right)
+                            return false;
+                    } else {
+                        if ((!left || !right) && (left.isUndefined() || right.isUndefined()))
+                            continue;
+                    }
+
+                    if constexpr (!enableAsymmetricMatchers) {
+                        if (!left.isObject() || !right.isObject()) {
+                            bool same = sameValueNonObject(globalObject, left, right);
+                            RETURN_IF_EXCEPTION(scope, false);
+                            if (!same) return false;
+                            continue;
+                        }
+                    }
+
+                    auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (!eql) return false;
+                }
+                goto compareArraySymbols;
+            }
+        }
+
+        {
+            uint64_t i = 0;
+            for (; i < array1Length; i++) {
+                JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
+                RETURN_IF_EXCEPTION(scope, false);
+                JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+                RETURN_IF_EXCEPTION(scope, false);
+
+                if (left == right)
+                    continue;
+
+                if constexpr (isStrict) {
+                    if (left.isEmpty() && right.isEmpty()) {
+                        continue;
+                    }
+                    if (left.isEmpty() || right.isEmpty()) {
+                        return false;
+                    }
+                }
+
+                if constexpr (!isStrict) {
+                    if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
+                        continue;
+                    }
+                }
+
+                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (!eql) return false;
+            }
+
+            for (; i < array2Length; i++) {
+                JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+                RETURN_IF_EXCEPTION(scope, false);
+
+                if (((right.isEmpty() || right.isUndefined()))) {
                     continue;
                 }
-            }
 
-            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (!eql) return false;
+                return false;
+            }
         }
 
-        for (; i < array2Length; i++) {
-            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
-            RETURN_IF_EXCEPTION(scope, false);
-
-            if (((right.isEmpty() || right.isUndefined()))) {
-                continue;
-            }
-
-            return false;
-        }
+    compareArraySymbols:
+        // A structure with isQuickPropertyAccessAllowedForEnumeration() set has no
+        // symbol keys and no DontEnum properties; skip enumeration outright.
+        if (a1Structure->isQuickPropertyAccessAllowedForEnumeration() && a2Structure->isQuickPropertyAccessAllowedForEnumeration())
+            return true;
 
         JSC::PropertyNameArrayBuilder a1(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
         JSC::PropertyNameArrayBuilder a2(vm, PropertyNameMode::Symbols, PrivateSymbolMode::Exclude);
@@ -863,20 +975,58 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
+    JSC::Structure* o1Structure = o1->structure();
+    JSC::Structure* o2Structure = o2->structure();
+
     if constexpr (isStrict && !skipPrototype) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
-            return false;
+        // Same structure implies same prototype and therefore same class name; same
+        // prototype alone is enough for calculatedClassName() to agree.
+        if (o1Structure != o2Structure && o1->getPrototypeDirect() != o2->getPrototypeDirect()) {
+            if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+                return false;
+            }
         }
     }
 
-    JSC::Structure* o1Structure = o1->structure();
     if (!o1Structure->hasNonReifiedStaticProperties() && o1Structure->canPerformFastPropertyEnumeration()) {
-        JSC::Structure* o2Structure = o2->structure();
         if (!o2Structure->hasNonReifiedStaticProperties() && o2Structure->canPerformFastPropertyEnumeration()) {
 
             bool result = true;
             bool sameStructure = o2Structure->id() == o1Structure->id();
             if (sameStructure) {
+                // Same Structure means identical {key -> offset, attributes} map. When the
+                // structure additionally has no DontEnum / symbol keys we can walk the raw
+                // inline + out-of-line slots and skip materializing a PropertyTable.
+                if (o1Structure->isQuickPropertyAccessAllowedForEnumeration()) {
+                    unsigned inlineSize = o1Structure->inlineSize();
+                    unsigned outOfLineSize = o1Structure->outOfLineSize();
+                    if (inlineSize) {
+                        const WriteBarrierBase<Unknown>* s1 = o1->inlineStorage();
+                        const WriteBarrierBase<Unknown>* s2 = o2->inlineStorage();
+                        for (unsigned i = 0; i < inlineSize; i++) {
+                            JSValue left = s1[i].get();
+                            JSValue right = s2[i].get();
+                            if (left == right) continue;
+                            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, false);
+                            if (!eql) return false;
+                        }
+                    }
+                    if (outOfLineSize) {
+                        const WriteBarrierBase<Unknown>* s1 = o1->outOfLineStorage();
+                        const WriteBarrierBase<Unknown>* s2 = o2->outOfLineStorage();
+                        for (unsigned i = 0; i < outOfLineSize; i++) {
+                            JSValue left = s1[-1 - static_cast<int>(i)].get();
+                            JSValue right = s2[-1 - static_cast<int>(i)].get();
+                            if (left == right) continue;
+                            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
+                            RETURN_IF_EXCEPTION(scope, false);
+                            if (!eql) return false;
+                        }
+                    }
+                    return true;
+                }
+
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
@@ -897,9 +1047,6 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     }
 
                     if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
 
                     auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -912,6 +1059,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 });
             } else {
                 size_t count = 0;
+                size_t foundInO2 = 0;
                 o1Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                     if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {
                         return true;
@@ -944,11 +1092,9 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                         result = false;
                         return false;
                     }
+                    foundInO2++;
 
                     if (left == right) return true;
-                    auto same = JSC::sameValue(globalObject, left, right);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (same) return true;
 
                     auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -961,6 +1107,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 });
 
                 if (result) {
+                    // If o2 has no DontEnum/symbol keys and no deleted offsets, its visible
+                    // property count is exactly the slot count. When that matches the number
+                    // of o1 keys that resolved in o2, the key sets are identical and the
+                    // reverse pass would only repeat work.
+                    if (o2Structure->isQuickPropertyAccessAllowedForEnumeration() && foundInO2 == o2Structure->inlineSize() + o2Structure->outOfLineSize())
+                        return true;
+
                     size_t remain = count;
                     o2Structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
                         if (entry.attributes() & PropertyAttribute::DontEnum || PropertyName(entry.key()).isPrivateName()) {

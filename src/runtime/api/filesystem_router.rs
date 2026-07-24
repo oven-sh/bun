@@ -121,12 +121,11 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<Box<FileSystemRouter>> {
-        let argument_ = callframe.arguments_old::<1>();
-        if argument_.len == 0 {
+        let [argument] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() == 0 {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -544,13 +543,12 @@ impl FileSystemRouter {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let argument_ = callframe.arguments_old::<2>();
-        if argument_.len == 0 {
+        let [argument] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() == 0 {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));
         }
 
-        let argument = argument_.ptr[0];
         if argument.is_empty_or_undefined_or_null() || !argument.is_cell() {
             return Err(global_this
                 .throw_invalid_arguments(format_args!("Expected string, Request or Response")));

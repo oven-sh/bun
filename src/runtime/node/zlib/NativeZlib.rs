@@ -15,9 +15,7 @@ mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::{
-        CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
-    };
+    use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPoolTask};
 
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive};
     use crate::node::util::validators;
@@ -44,7 +42,7 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
-        pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+        pub this_value: JsCell<JsRef>,
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
@@ -95,7 +93,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
-                this_value: JsCell::new(StrongOptional::empty()),
+                this_value: JsCell::new(JsRef::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
@@ -254,7 +252,7 @@ mod _impl {
         fn deinit(this: *mut Self) {
             // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
             // is the heap::alloc pointer produced at construction. `this_value`
-            // (Strong) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
+            // (JsRef) and `poll_ref` (CountedKeepAlive) are Drop types — freed by
             // heap::take below.
             unsafe {
                 (*this).stream.with_mut(|s| s.close());

@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
@@ -773,5 +773,109 @@ describe("crc32", () => {
     expect(() => zlib.crc32(undefined)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     // Omitted second arg defaults to value=0.
     expect(zlib.crc32("hello")).toBe(zlib.crc32("hello", 0));
+  });
+});
+
+// The native handles hold a back-reference to their own JS wrapper as a JsRef
+// that is upgraded to a strong GC root only while an async write is in flight
+// on the work pool, and dropped once the write completes. This test drives
+// the native handle directly (bypassing the Transform wrapper) so both halves
+// of that lifecycle are exercised under forced GC.
+describe("native handle wrapper JsRef lifecycle", () => {
+  it("roots the wrapper across an in-flight write and releases it afterwards", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+const zlib = require("node:zlib");
+const { heapStats } = require("bun:jsc");
+const {
+  DEFLATE, BROTLI_ENCODE, ZSTD_COMPRESS,
+  Z_FINISH, Z_DEFAULT_WINDOWBITS, Z_DEFAULT_COMPRESSION,
+  Z_DEFAULT_MEMLEVEL, Z_DEFAULT_STRATEGY,
+  BROTLI_OPERATION_FINISH, ZSTD_e_end,
+} = zlib.constants;
+
+const NativeZlib = zlib.createDeflate()._handle.constructor;
+const NativeBrotli = zlib.createBrotliCompress()._handle.constructor;
+const NativeZstd = zlib.createZstdCompress()._handle.constructor;
+
+const input = Buffer.alloc(256, "in-flight GC root probe");
+
+// Construct + init + write in its own frame so no stale bytecode register holds
+// the wrapper once we return; only the JsRef strong root (set in write()) keeps
+// it alive across the forced GC below.
+function schedule(name, Ctor, mode, init, flush) {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const ws = new Uint32Array(2);
+  const out = Buffer.alloc(512);
+  const h = new Ctor(mode);
+  init(h, ws, resolve);
+  h.onerror = (m, e, c) => reject(new Error(name + " " + c + ": " + m));
+  h.write(flush, input, 0, input.length, out, 0, out.length);
+  return { weak: new WeakRef(h), promise, ws, out };
+}
+
+async function checkRooting(name, Ctor, mode, init, flush) {
+  for (let i = 0; i < 4; i++) {
+    const { weak, promise, ws, out } = schedule(name, Ctor, mode, init, flush);
+    Bun.gc(true);
+    if (weak.deref() === undefined) {
+      throw new Error(name + ": wrapper collected while an async write was in flight");
+    }
+    await promise;
+    const have = out.length - ws[0];
+    if (have <= 0) throw new Error(name + ": no output produced");
+  }
+}
+
+await checkRooting("zlib", NativeZlib, DEFLATE,
+  (h, ws, cb) => h.init(Z_DEFAULT_WINDOWBITS, Z_DEFAULT_COMPRESSION, Z_DEFAULT_MEMLEVEL, Z_DEFAULT_STRATEGY, ws, cb, undefined),
+  Z_FINISH);
+await checkRooting("brotli", NativeBrotli, BROTLI_ENCODE,
+  (h, ws, cb) => h.init(new Uint32Array(0), ws, cb),
+  BROTLI_OPERATION_FINISH);
+await checkRooting("zstd", NativeZstd, ZSTD_COMPRESS,
+  (h, ws, cb) => h.init(new Uint32Array(0), undefined, ws, cb),
+  ZSTD_e_end);
+
+// Wrappers must be collectable once the write completes and no JS reference
+// remains: the strong root is dropped in run_from_js_thread, so the live
+// count stays bounded rather than growing by 50 per batch.
+async function batch() {
+  const done = [];
+  for (let i = 0; i < 50; i++) {
+    const { promise, resolve } = Promise.withResolvers();
+    const ws = new Uint32Array(2);
+    const out = Buffer.alloc(512);
+    const h = new NativeZlib(DEFLATE);
+    h.init(Z_DEFAULT_WINDOWBITS, Z_DEFAULT_COMPRESSION, Z_DEFAULT_MEMLEVEL, Z_DEFAULT_STRATEGY, ws, resolve, undefined);
+    h.write(Z_FINISH, input, 0, input.length, out, 0, out.length);
+    done.push(promise);
+  }
+  await Promise.all(done);
+  await new Promise(r => setImmediate(r));
+}
+const counts = [];
+for (let i = 0; i < 3; i++) {
+  await batch();
+  Bun.gc(true);
+  await new Promise(r => setImmediate(r));
+  Bun.gc(true);
+  counts.push(heapStats().objectTypeCounts?.NativeZlib || 0);
+}
+const max = Math.max(...counts.slice(1));
+if (max > 25) throw new Error("NativeZlib wrappers leaking across GC: " + JSON.stringify(counts));
+
+console.log("OK");
+`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
   });
 });

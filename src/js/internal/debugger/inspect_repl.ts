@@ -63,19 +63,21 @@ const debuglog = require("node:util").debuglog("inspect");
 const startsWithBraceRegExp = /^\s*{/;
 const endsWithSemicolonRegExp = /;\s*$/;
 function isObjectLiteral(code) {
-  return RegExpPrototypeExec(startsWithBraceRegExp, code) !== null &&
-    RegExpPrototypeExec(endsWithSemicolonRegExp, code) === null;
+  return (
+    RegExpPrototypeExec(startsWithBraceRegExp, code) !== null &&
+    RegExpPrototypeExec(endsWithSemicolonRegExp, code) === null
+  );
 }
 const SHORTCUTS = {
-  cont: 'c',
-  next: 'n',
-  step: 's',
-  out: 'o',
-  backtrace: 'bt',
-  setBreakpoint: 'sb',
-  clearBreakpoint: 'cb',
-  run: 'r',
-  exec: 'p',
+  cont: "c",
+  next: "n",
+  step: "s",
+  out: "o",
+  backtrace: "bt",
+  setBreakpoint: "sb",
+  clearBreakpoint: "cb",
+  run: "r",
+  exec: "p",
 };
 
 const HELP = StringPrototypeTrim(`
@@ -121,24 +123,21 @@ takeHeapSnapshot(filepath = 'node.heapsnapshot')
 
 const FUNCTION_NAME_PATTERN = /^(?:function\*? )?([^(\s]+)\(/;
 function extractFunctionName(description) {
-  const fnNameMatch =
-    RegExpPrototypeExec(FUNCTION_NAME_PATTERN, description);
-  return fnNameMatch ? `: ${fnNameMatch[1]}` : '';
+  const fnNameMatch = RegExpPrototypeExec(FUNCTION_NAME_PATTERN, description);
+  return fnNameMatch ? `: ${fnNameMatch[1]}` : "";
 }
 
 const builtinIds = require("node:module").builtinModules;
 function isNativeUrl(url) {
-  url = SideEffectFreeRegExpPrototypeSymbolReplace(/\.js$/, url, '');
+  url = SideEffectFreeRegExpPrototypeSymbolReplace(/\.js$/, url, "");
 
-  return StringPrototypeStartsWith(url, 'node:internal/') ||
-         ArrayPrototypeIncludes(builtinIds, url);
+  return StringPrototypeStartsWith(url, "node:internal/") || ArrayPrototypeIncludes(builtinIds, url);
 }
 
 function getRelativePath(filenameOrURL) {
-  const dir = StringPrototypeSlice(Path.join(Path.resolve(), 'x'), 0, -1);
+  const dir = StringPrototypeSlice(Path.join(Path.resolve(), "x"), 0, -1);
 
-  const filename = StringPrototypeStartsWith(filenameOrURL, 'file://') ?
-    fileURLToPath(filenameOrURL) : filenameOrURL;
+  const filename = StringPrototypeStartsWith(filenameOrURL, "file://") ? fileURLToPath(filenameOrURL) : filenameOrURL;
 
   // Change path to relative, if possible
   if (StringPrototypeStartsWith(filename, dir)) {
@@ -154,19 +153,18 @@ function leftPad(n, prefix, maxN) {
   const nchars = MathMax(2, String(maxN).length);
   const nspaces = nchars - s.length;
 
-  return prefix + StringPrototypeRepeat(' ', nspaces) + s;
+  return prefix + StringPrototypeRepeat(" ", nspaces) + s;
 }
 
 function markSourceColumn(sourceText, position, useColors) {
-  if (!sourceText) return '';
+  if (!sourceText) return "";
 
   const head = StringPrototypeSlice(sourceText, 0, position);
   let tail = StringPrototypeSlice(sourceText, position);
 
   // Colourize char if stdout supports colours
   if (useColors) {
-    tail = SideEffectFreeRegExpPrototypeSymbolReplace(/(.+?)([^\w]|$)/, tail,
-                                                      '\u001b[32m$1\u001b[39m$2');
+    tail = SideEffectFreeRegExpPrototypeSymbolReplace(/(.+?)([^\w]|$)/, tail, "\u001b[32m$1\u001b[39m$2");
   }
 
   // Return source line with coloured char at `position`
@@ -174,7 +172,7 @@ function markSourceColumn(sourceText, position, useColors) {
 }
 
 function extractErrorMessage(stack) {
-  if (!stack) return '<unknown>';
+  if (!stack) return "<unknown>";
   const m = RegExpPrototypeExec(/^\w+: ([^\n]+)/, stack);
   return m?.[1] ?? stack;
 }
@@ -183,7 +181,7 @@ function convertResultToError(result) {
   const { className, description } = result;
   const err = $ERR_DEBUGGER_ERROR(extractErrorMessage(description));
   err.stack = description;
-  ObjectDefineProperty(err, 'name', { __proto__: null, value: className });
+  ObjectDefineProperty(err, "name", { __proto__: null, value: className });
   return err;
 }
 
@@ -194,21 +192,21 @@ class PropertyPreview {
 
   [customInspectSymbol](depth, opts) {
     switch (this.type) {
-      case 'string':
-      case 'undefined':
+      case "string":
+      case "undefined":
         return utilInspect(this.value, opts);
-      case 'number':
-      case 'boolean':
+      case "number":
+      case "boolean":
         return opts.stylize(this.value, this.type);
-      case 'object':
-      case 'symbol':
-        if (this.subtype === 'date') {
+      case "object":
+      case "symbol":
+        if (this.subtype === "date") {
           return utilInspect(new Date(this.value), opts);
         }
-        if (this.subtype === 'array') {
-          return opts.stylize(this.value, 'special');
+        if (this.subtype === "array") {
+          return opts.stylize(this.value, "special");
         }
-        return opts.stylize(this.value, this.subtype || 'special');
+        return opts.stylize(this.value, this.subtype || "special");
       default:
         return this.value;
     }
@@ -222,37 +220,36 @@ class ObjectPreview {
 
   [customInspectSymbol](depth, opts) {
     switch (this.type) {
-      case 'object': {
+      case "object": {
         switch (this.subtype) {
-          case 'date':
+          case "date":
             return utilInspect(new Date(this.description), opts);
-          case 'null':
+          case "null":
             return utilInspect(null, opts);
-          case 'regexp':
-            return opts.stylize(this.description, 'regexp');
-          case 'set': {
+          case "regexp":
+            return opts.stylize(this.description, "regexp");
+          case "set": {
             if (!this.entries) {
-              return `${this.description} ${this.overflow ? '{ ... }' : '{}'}`;
+              return `${this.description} ${this.overflow ? "{ ... }" : "{}"}`;
             }
-            const values = ArrayPrototypeMap(this.entries, (entry) =>
-              utilInspect(new ObjectPreview(entry.value), opts));
-            return `${this.description} { ${ArrayPrototypeJoin(values, ', ')} }`;
+            const values = ArrayPrototypeMap(this.entries, entry => utilInspect(new ObjectPreview(entry.value), opts));
+            return `${this.description} { ${ArrayPrototypeJoin(values, ", ")} }`;
           }
-          case 'map': {
+          case "map": {
             if (!this.entries) {
-              return `${this.description} ${this.overflow ? '{ ... }' : '{}'}`;
+              return `${this.description} ${this.overflow ? "{ ... }" : "{}"}`;
             }
-            const mappings = ArrayPrototypeMap(this.entries, (entry) => {
+            const mappings = ArrayPrototypeMap(this.entries, entry => {
               const key = utilInspect(new ObjectPreview(entry.key), opts);
               const value = utilInspect(new ObjectPreview(entry.value), opts);
               return `${key} => ${value}`;
             });
-            return `${this.description} { ${ArrayPrototypeJoin(mappings, ', ')} }`;
+            return `${this.description} { ${ArrayPrototypeJoin(mappings, ", ")} }`;
           }
-          case 'array':
+          case "array":
           case undefined: {
             if (this.properties.length === 0) {
-              return this.subtype === 'array' ? '[]' : '{}';
+              return this.subtype === "array" ? "[]" : "{}";
             }
             const props = ArrayPrototypeMap(this.properties, (prop, idx) => {
               const value = utilInspect(new PropertyPreview(prop));
@@ -260,11 +257,11 @@ class ObjectPreview {
               return `${prop.name}: ${value}`;
             });
             if (this.overflow) {
-              ArrayPrototypePush(props, '...');
+              ArrayPrototypePush(props, "...");
             }
-            const singleLine = ArrayPrototypeJoin(props, ', ');
-            const propString = singleLine.length > 60 ? ArrayPrototypeJoin(props, ',\n  ') : singleLine;
-            return this.subtype === 'array' ? `[ ${propString} ]` : `{ ${propString} }`;
+            const singleLine = ArrayPrototypeJoin(props, ", ");
+            const propString = singleLine.length > 60 ? ArrayPrototypeJoin(props, ",\n  ") : singleLine;
+            return this.subtype === "array" ? `[ ${propString} ]` : `{ ${propString} }`;
           }
           default:
             return this.description;
@@ -279,44 +276,44 @@ class ObjectPreview {
 class RemoteObject {
   constructor(attributes) {
     ObjectAssign(this, attributes);
-    if (this.type === 'number') {
-      this.value =
-        this.unserializableValue ? +this.unserializableValue : +this.value;
+    if (this.type === "number") {
+      this.value = this.unserializableValue ? +this.unserializableValue : +this.value;
     }
   }
 
   [customInspectSymbol](depth, opts) {
     switch (this.type) {
-      case 'boolean':
-      case 'number':
-      case 'string':
-      case 'undefined':
+      case "boolean":
+      case "number":
+      case "string":
+      case "undefined":
         return utilInspect(this.value, opts);
-      case 'symbol':
-        return opts.stylize(this.description, 'special');
-      case 'function': {
+      case "symbol":
+        return opts.stylize(this.description, "special");
+      case "function": {
         const fnName = extractFunctionName(this.description);
         const formatted = `[${this.className}${fnName}]`;
-        return opts.stylize(formatted, 'special');
+        return opts.stylize(formatted, "special");
       }
-      case 'object':
+      case "object":
         switch (this.subtype) {
-          case 'date':
+          case "date":
             return utilInspect(new Date(this.description), opts);
-          case 'null':
+          case "null":
             return utilInspect(null, opts);
-          case 'regexp':
-            return opts.stylize(this.description, 'regexp');
-          case 'map':
-          case 'set': {
+          case "regexp":
+            return opts.stylize(this.description, "regexp");
+          case "map":
+          case "set": {
             const preview = utilInspect(new ObjectPreview(this.preview), opts);
             return `${this.description} ${preview}`;
           }
           default:
             break;
         }
-        if (this.preview) {
-          return utilInspect(new ObjectPreview(this.preview), opts);
+        const { preview } = this;
+        if (preview) {
+          return utilInspect(new ObjectPreview(preview), opts);
         }
         return this.description;
       default:
@@ -334,7 +331,7 @@ class ScopeSnapshot {
   constructor(scope, properties) {
     ObjectAssign(this, scope);
     this.properties = new SafeMap();
-    this.completionGroup = ArrayPrototypeMap(properties, (prop) => {
+    this.completionGroup = ArrayPrototypeMap(properties, prop => {
       const value = new RemoteObject(prop.value);
       this.properties.set(prop.name, value);
       return prop.name;
@@ -342,27 +339,22 @@ class ScopeSnapshot {
   }
 
   [customInspectSymbol](depth, opts) {
-    const type = StringPrototypeToUpperCase(this.type[0]) +
-                 StringPrototypeSlice(this.type, 1);
-    const name = this.name ? `<${this.name}>` : '';
+    const type = StringPrototypeToUpperCase(this.type[0]) + StringPrototypeSlice(this.type, 1);
+    const name = this.name ? `<${this.name}>` : "";
     const prefix = `${type}${name} `;
-    return SideEffectFreeRegExpPrototypeSymbolReplace(/^Map /,
-                                                      utilInspect(this.properties, opts),
-                                                      prefix);
+    return SideEffectFreeRegExpPrototypeSymbolReplace(/^Map /, utilInspect(this.properties, opts), prefix);
   }
 }
 
 function copyOwnProperties(target, source) {
-  ArrayPrototypeForEach(
-    ReflectOwnKeys(source),
-    (prop) => {
-      const desc = ReflectGetOwnPropertyDescriptor(source, prop);
-      ObjectDefineProperty(target, prop, desc);
-    });
+  ArrayPrototypeForEach(ReflectOwnKeys(source), prop => {
+    const desc = ReflectGetOwnPropertyDescriptor(source, prop);
+    ObjectDefineProperty(target, prop, desc);
+  });
 }
 
 function aliasProperties(target, mapping) {
-  ArrayPrototypeForEach(ObjectKeys(mapping), (key) => {
+  ArrayPrototypeForEach(ObjectKeys(mapping), key => {
     const desc = ReflectGetOwnPropertyDescriptor(target, key);
     ObjectDefineProperty(target, mapping[key], desc);
   });
@@ -378,7 +370,7 @@ function createRepl(inspector) {
   const watchedExpressions = [];
   const knownBreakpoints = [];
   let heapSnapshotPromise = null;
-  let pauseOnExceptionState = 'none';
+  let pauseOnExceptionState = "none";
   let lastCommand;
 
   // Things we need to reset when the app restarts
@@ -404,13 +396,13 @@ function createRepl(inspector) {
   }
 
   function print(value, addNewline = true) {
-    const text = typeof value === 'string' ? value : inspect(value);
+    const text = typeof value === "string" ? value : inspect(value);
     return inspector.print(text, addNewline);
   }
 
   function getCurrentLocation() {
     if (!selectedFrame) {
-      throw $ERR_DEBUGGER_ERROR('Requires execution to be paused');
+      throw $ERR_DEBUGGER_ERROR("Requires execution to be paused");
     }
     return selectedFrame.location;
   }
@@ -425,14 +417,15 @@ function createRepl(inspector) {
       return !script.isNative || isCurrentScript(script);
     }
 
-    return ArrayPrototypeJoin(ArrayPrototypeMap(
-      ArrayPrototypeFilter(ObjectValues(knownScripts), isVisible),
-      (script) => {
+    return ArrayPrototypeJoin(
+      ArrayPrototypeMap(ArrayPrototypeFilter(ObjectValues(knownScripts), isVisible), script => {
         const isCurrent = isCurrentScript(script);
         const { isNative, url } = script;
-        const name = `${getRelativePath(url)}${isNative ? ' <native>' : ''}`;
-        return `${isCurrent ? '*' : ' '} ${script.scriptId}: ${name}`;
-      }), '\n');
+        const name = `${getRelativePath(url)}${isNative ? " <native>" : ""}`;
+        return `${isCurrent ? "*" : " "} ${script.scriptId}: ${name}`;
+      }),
+      "\n",
+    );
   }
 
   function listScripts(displayNatives = false) {
@@ -457,14 +450,14 @@ function createRepl(inspector) {
     [customInspectSymbol](depth, { stylize }) {
       const { startTime, endTime } = this.data;
       const MU = StringFromCharCode(956);
-      return stylize(`[Profile ${endTime - startTime}${MU}s]`, 'special');
+      return stylize(`[Profile ${endTime - startTime}${MU}s]`, "special");
     }
 
-    save(filename = 'node.cpuprofile') {
+    save(filename = "node.cpuprofile") {
       const absoluteFile = Path.resolve(filename);
       const json = JSONStringify(this.data);
       FS.writeFileSync(absoluteFile, json);
-      print('Saved profile to ' + absoluteFile);
+      print("Saved profile to " + absoluteFile);
     }
   }
 
@@ -480,35 +473,32 @@ function createRepl(inspector) {
       const start = MathMax(1, lineNumber - delta + 1);
       const end = lineNumber + delta + 1;
 
-      const lines = StringPrototypeSplit(scriptSource, '\n');
+      const lines = StringPrototypeSplit(scriptSource, "\n");
       return ArrayPrototypeJoin(
-        ArrayPrototypeMap(
-          ArrayPrototypeSlice(lines, start - 1, end),
-          (lineText, offset) => {
-            const i = start + offset;
-            const isCurrent = i === (lineNumber + 1);
+        ArrayPrototypeMap(ArrayPrototypeSlice(lines, start - 1, end), (lineText, offset) => {
+          const i = start + offset;
+          const isCurrent = i === lineNumber + 1;
 
-            const markedLine = isCurrent ?
-              markSourceColumn(lineText, columnNumber, options.colors) :
-              lineText;
+          const markedLine = isCurrent ? markSourceColumn(lineText, columnNumber, options.colors) : lineText;
 
-            let isBreakpoint = false;
-            ArrayPrototypeForEach(knownBreakpoints, ({ location }) => {
-              if (!location) return;
-              if (scriptId === location.scriptId &&
-              i === (location.lineNumber + 1)) {
-                isBreakpoint = true;
-              }
-            });
-
-            let prefixChar = ' ';
-            if (isCurrent) {
-              prefixChar = '>';
-            } else if (isBreakpoint) {
-              prefixChar = '*';
+          let isBreakpoint = false;
+          ArrayPrototypeForEach(knownBreakpoints, ({ location }) => {
+            if (!location) return;
+            if (scriptId === location.scriptId && i === location.lineNumber + 1) {
+              isBreakpoint = true;
             }
-            return `${leftPad(i, prefixChar, end)} ${markedLine}`;
-          }), '\n');
+          });
+
+          let prefixChar = " ";
+          if (isCurrent) {
+            prefixChar = ">";
+          } else if (isBreakpoint) {
+            prefixChar = "*";
+          }
+          return `${leftPad(i, prefixChar, end)} ${markedLine}`;
+        }),
+        "\n",
+      );
     }
   }
 
@@ -525,18 +515,16 @@ function createRepl(inspector) {
 
     loadScopes() {
       return SafePromiseAllReturnArrayLike(
-        ArrayPrototypeFilter(
-          this.scopeChain,
-          (scope) => scope.type !== 'global',
-        ),
-        async (scope) => {
+        ArrayPrototypeFilter(this.scopeChain, scope => scope.type !== "global"),
+        async scope => {
           const { objectId } = scope.object;
           const { result } = await Runtime.getProperties({
             objectId,
             generatePreview: true,
           });
           return new ScopeSnapshot(scope, result);
-        });
+        },
+      );
     }
 
     list(delta = 5) {
@@ -552,33 +540,27 @@ function createRepl(inspector) {
             location: { scriptId, lineNumber, columnNumber },
             functionName,
           } = callFrame;
-          const name = functionName || '(anonymous)';
+          const name = functionName || "(anonymous)";
 
           const script = knownScripts[scriptId];
-          const relativeUrl =
-          (script && getRelativePath(script.url)) || '<unknown>';
-          const frameLocation =
-          `${relativeUrl}:${lineNumber + 1}:${columnNumber}`;
+          const relativeUrl = (script && getRelativePath(script.url)) || "<unknown>";
+          const frameLocation = `${relativeUrl}:${lineNumber + 1}:${columnNumber}`;
 
           return `#${idx} ${name} ${frameLocation}`;
-        }), '\n');
+        }),
+        "\n",
+      );
     }
 
     static from(callFrames) {
-      return FunctionPrototypeCall(
-        ArrayFrom,
-        this,
-        callFrames,
-        (callFrame) =>
-          (callFrame instanceof CallFrame ?
-            callFrame :
-            new CallFrame(callFrame)),
+      return FunctionPrototypeCall(ArrayFrom, this, callFrames, callFrame =>
+        callFrame instanceof CallFrame ? callFrame : new CallFrame(callFrame),
       );
     }
   }
 
   function prepareControlCode(input) {
-    if (input === '\n') return lastCommand;
+    if (input === "\n") return lastCommand;
     // Add parentheses: exec process.title => exec("process.title");
     const match = RegExpPrototypeExec(/^\s*(?:exec|p)\s+([^\n]*)/, input);
     input = match ? match[1] : input;
@@ -598,33 +580,39 @@ function createRepl(inspector) {
 
   async function evalInCurrentContext(code) {
     // Repl asked for scope variables
-    if (code === '.scope') {
+    if (code === ".scope") {
       if (!selectedFrame) {
-        throw $ERR_DEBUGGER_ERROR('Requires execution to be paused');
+        throw $ERR_DEBUGGER_ERROR("Requires execution to be paused");
       }
       const scopes = await selectedFrame.loadScopes();
-      return ArrayPrototypeMap(scopes, (scope) => scope.completionGroup);
+      return ArrayPrototypeMap(scopes, scope => scope.completionGroup);
     }
 
     if (selectedFrame) {
-      return PromisePrototypeThen(Debugger.evaluateOnCallFrame({
-        callFrameId: selectedFrame.callFrameId,
-        expression: code,
-        objectGroup: 'node-inspect',
-        generatePreview: true,
-      }), RemoteObject.fromEvalResult);
+      return PromisePrototypeThen(
+        Debugger.evaluateOnCallFrame({
+          callFrameId: selectedFrame.callFrameId,
+          expression: code,
+          objectGroup: "node-inspect",
+          generatePreview: true,
+        }),
+        RemoteObject.fromEvalResult,
+      );
     }
-    return PromisePrototypeThen(Runtime.evaluate({
-      expression: code,
-      objectGroup: 'node-inspect',
-      generatePreview: true,
-    }), RemoteObject.fromEvalResult);
+    return PromisePrototypeThen(
+      Runtime.evaluate({
+        expression: code,
+        objectGroup: "node-inspect",
+        generatePreview: true,
+      }),
+      RemoteObject.fromEvalResult,
+    );
   }
 
   function controlEval(input, context, filename, callback) {
-    debuglog('eval:', input);
+    debuglog("eval:", input);
     function returnToCallback(error, result) {
-      debuglog('end-eval:', input, error);
+      debuglog("end-eval:", input, error);
       callback(error, result);
     }
 
@@ -633,12 +621,8 @@ function createRepl(inspector) {
       const result = vm.runInContext(code, context, filename);
 
       const then = result?.then;
-      if (typeof then === 'function') {
-        FunctionPrototypeCall(
-          then, result,
-          (result) => returnToCallback(null, result),
-          returnToCallback,
-        );
+      if (typeof then === "function") {
+        FunctionPrototypeCall(then, result, result => returnToCallback(null, result), returnToCallback);
       } else {
         returnToCallback(null, result);
       }
@@ -648,38 +632,34 @@ function createRepl(inspector) {
   }
 
   function debugEval(input, context, filename, callback) {
-    debuglog('eval:', input);
+    debuglog("eval:", input);
     function returnToCallback(error, result) {
-      debuglog('end-eval:', input, error);
+      debuglog("end-eval:", input, error);
       callback(error, result);
     }
 
-    PromisePrototypeThen(evalInCurrentContext(input),
-                         (result) => returnToCallback(null, result),
-                         returnToCallback,
-    );
+    PromisePrototypeThen(evalInCurrentContext(input), result => returnToCallback(null, result), returnToCallback);
   }
 
   async function formatWatchers(verbose = false) {
     if (!watchedExpressions.length) {
-      return '';
+      return "";
     }
 
-    const inspectValue = (expr) =>
-      PromisePrototypeThen(evalInCurrentContext(expr), undefined,
-                           (error) => `<${error.message}>`);
+    const inspectValue = expr =>
+      PromisePrototypeThen(evalInCurrentContext(expr), undefined, error => `<${error.message}>`);
     const lastIndex = watchedExpressions.length - 1;
 
     const values = await SafePromiseAllReturnArrayLike(watchedExpressions, inspectValue);
     const lines = ArrayPrototypeMap(watchedExpressions, (expr, idx) => {
-      const prefix = `${leftPad(idx, ' ', lastIndex)}: ${expr} =`;
+      const prefix = `${leftPad(idx, " ", lastIndex)}: ${expr} =`;
       const value = inspect(values[idx]);
-      if (!StringPrototypeIncludes(value, '\n')) {
+      if (!StringPrototypeIncludes(value, "\n")) {
         return `${prefix} ${value}`;
       }
-      return `${prefix}\n    ${StringPrototypeReplaceAll(value, '\n', '\n    ')}`;
+      return `${prefix}\n    ${StringPrototypeReplaceAll(value, "\n", "\n    ")}`;
     });
-    const valueList = ArrayPrototypeJoin(lines, '\n');
+    const valueList = ArrayPrototypeJoin(lines, "\n");
     return verbose ? `Watchers:\n${valueList}\n` : valueList;
   }
 
@@ -690,9 +670,9 @@ function createRepl(inspector) {
   // List source code
   function list(delta = 5) {
     if (!selectedFrame) {
-      throw $ERR_DEBUGGER_ERROR('Requires execution to be paused');
+      throw $ERR_DEBUGGER_ERROR("Requires execution to be paused");
     }
-    return selectedFrame.list(delta).then(null, (error) => {
+    return selectedFrame.list(delta).then(null, error => {
       print("You can't list source code right now");
       throw error;
     });
@@ -700,9 +680,9 @@ function createRepl(inspector) {
 
   function setContextLineNumber(delta = 2) {
     if (!selectedFrame) {
-      throw $ERR_DEBUGGER_ERROR('Requires execution to be paused');
+      throw $ERR_DEBUGGER_ERROR("Requires execution to be paused");
     }
-    validateNumber(delta, 'delta', 1);
+    validateNumber(delta, "delta", 1);
     contextLineNumber = delta;
     print(`The contextLine has been changed to ${delta}.`);
   }
@@ -713,7 +693,7 @@ function createRepl(inspector) {
     if (scriptUrl) {
       ObjectAssign(location, { scriptUrl });
     }
-    const isExisting = ArrayPrototypeSome(knownBreakpoints, (bp) => {
+    const isExisting = ArrayPrototypeSome(knownBreakpoints, bp => {
       if (bp.breakpointId === breakpointId) {
         ObjectAssign(bp, { location });
         return true;
@@ -727,21 +707,20 @@ function createRepl(inspector) {
 
   function listBreakpoints() {
     if (!knownBreakpoints.length) {
-      print('No breakpoints yet');
+      print("No breakpoints yet");
       return;
     }
 
     function formatLocation(location) {
-      if (!location) return '<unknown location>';
+      if (!location) return "<unknown location>";
       const script = knownScripts[location.scriptId];
       const scriptUrl = script ? script.url : location.scriptUrl;
       return `${getRelativePath(scriptUrl)}:${location.lineNumber + 1}`;
     }
     const breaklist = ArrayPrototypeJoin(
-      ArrayPrototypeMap(
-        knownBreakpoints,
-        (bp, idx) => `#${idx} ${formatLocation(bp.location)}`),
-      '\n');
+      ArrayPrototypeMap(knownBreakpoints, (bp, idx) => `#${idx} ${formatLocation(bp.location)}`),
+      "\n",
+    );
     print(breaklist);
   }
 
@@ -760,35 +739,34 @@ function createRepl(inspector) {
     if (script === undefined) {
       return PromisePrototypeThen(
         Debugger.setBreakpoint({ location: getCurrentLocation(), condition }),
-        registerBreakpoint);
+        registerBreakpoint,
+      );
     }
 
     // setBreakpoint(line): set breakpoint in current script at specific line
-    if (line === undefined && typeof script === 'number') {
+    if (line === undefined && typeof script === "number") {
       const location = {
         scriptId: getCurrentLocation().scriptId,
         lineNumber: script - 1,
       };
-      return PromisePrototypeThen(
-        Debugger.setBreakpoint({ location, condition }),
-        registerBreakpoint);
+      return PromisePrototypeThen(Debugger.setBreakpoint({ location, condition }), registerBreakpoint);
     }
 
-    validateString(script, 'script');
+    validateString(script, "script");
 
     // setBreakpoint('fn()'): Break when a function is called
-    if (StringPrototypeEndsWith(script, '()')) {
+    if (StringPrototypeEndsWith(script, "()")) {
       const debugExpr = `debug(${script.slice(0, -2)})`;
-      const debugCall = selectedFrame ?
-        Debugger.evaluateOnCallFrame({
-          callFrameId: selectedFrame.callFrameId,
-          expression: debugExpr,
-          includeCommandLineAPI: true,
-        }) :
-        Runtime.evaluate({
-          expression: debugExpr,
-          includeCommandLineAPI: true,
-        });
+      const debugCall = selectedFrame
+        ? Debugger.evaluateOnCallFrame({
+            callFrameId: selectedFrame.callFrameId,
+            expression: debugExpr,
+            includeCommandLineAPI: true,
+          })
+        : Runtime.evaluate({
+            expression: debugExpr,
+            includeCommandLineAPI: true,
+          });
       return PromisePrototypeThen(debugCall, ({ result, wasThrown }) => {
         if (wasThrown) return convertResultToError(result);
         return undefined; // This breakpoint can't be removed the same way
@@ -801,7 +779,7 @@ function createRepl(inspector) {
     if (knownScripts[script]) {
       scriptId = script;
     } else {
-      ArrayPrototypeForEach(ObjectKeys(knownScripts), (id) => {
+      ArrayPrototypeForEach(ObjectKeys(knownScripts), id => {
         const scriptUrl = knownScripts[id].url;
         if (scriptUrl && StringPrototypeIncludes(scriptUrl, script)) {
           if (scriptId !== null) {
@@ -813,23 +791,20 @@ function createRepl(inspector) {
     }
 
     if (ambiguous) {
-      print('Script name is ambiguous');
+      print("Script name is ambiguous");
       return undefined;
     }
     if (line <= 0) {
-      print('Line should be a positive value');
+      print("Line should be a positive value");
       return undefined;
     }
 
     if (scriptId !== null) {
       const location = { scriptId, lineNumber: line - 1 };
-      return PromisePrototypeThen(
-        Debugger.setBreakpoint({ location, condition }),
-        registerBreakpoint);
+      return PromisePrototypeThen(Debugger.setBreakpoint({ location, condition }), registerBreakpoint);
     }
 
-    const escapedPath = SideEffectFreeRegExpPrototypeSymbolReplace(/([/\\.?*()^${}|[\]])/g,
-                                                                   script, '\\$1');
+    const escapedPath = SideEffectFreeRegExpPrototypeSymbolReplace(/([/\\.?*()^${}|[\]])/g, script, "\\$1");
     const urlRegex = `^(.*[\\/\\\\])?${escapedPath}$`;
 
     return PromisePrototypeThen(
@@ -838,9 +813,10 @@ function createRepl(inspector) {
         lineNumber: line - 1,
         condition,
       }),
-      (bp) => {
+      bp => {
         // TODO: handle bp.locations in case the regex matches existing files
-        if (!bp.location) { // Fake it for now.
+        if (!bp.location) {
+          // Fake it for now.
           ObjectAssign(bp, {
             actualLocation: {
               scriptUrl: `.*/${script}$`,
@@ -849,7 +825,8 @@ function createRepl(inspector) {
           });
         }
         return registerBreakpoint(bp);
-      });
+      },
+    );
   }
 
   function clearBreakpoint(url, line) {
@@ -857,52 +834,40 @@ function createRepl(inspector) {
       if (!location) return false;
       const script = knownScripts[location.scriptId];
       if (!script) return false;
-      return (
-        StringPrototypeIncludes(script.url, url) &&
-        (location.lineNumber + 1) === line
-      );
+      return StringPrototypeIncludes(script.url, url) && location.lineNumber + 1 === line;
     });
     if (!breakpoint) {
       print(`Could not find breakpoint at ${url}:${line}`);
       return PromiseResolve();
     }
-    return PromisePrototypeThen(
-      Debugger.removeBreakpoint({ breakpointId: breakpoint.breakpointId }),
-      () => {
-        const idx = ArrayPrototypeIndexOf(knownBreakpoints, breakpoint);
-        ArrayPrototypeSplice(knownBreakpoints, idx, 1);
-      });
+    return PromisePrototypeThen(Debugger.removeBreakpoint({ breakpointId: breakpoint.breakpointId }), () => {
+      const idx = ArrayPrototypeIndexOf(knownBreakpoints, breakpoint);
+      ArrayPrototypeSplice(knownBreakpoints, idx, 1);
+    });
   }
 
   function restoreBreakpoints() {
     const lastBreakpoints = ArrayPrototypeSplice(knownBreakpoints, 0);
     const newBreakpoints = ArrayPrototypeMap(
-      ArrayPrototypeFilter(lastBreakpoints,
-                           ({ location }) => !!location.scriptUrl),
-      ({ location }) => setBreakpoint(location.scriptUrl,
-                                      location.lineNumber + 1));
+      ArrayPrototypeFilter(lastBreakpoints, ({ location }) => !!location.scriptUrl),
+      ({ location }) => setBreakpoint(location.scriptUrl, location.lineNumber + 1),
+    );
     if (!newBreakpoints.length) return PromiseResolve();
-    return PromisePrototypeThen(
-      SafePromiseAllReturnVoid(newBreakpoints),
-      () => {
-        print(`${newBreakpoints.length} breakpoints restored.`);
-      });
+    return PromisePrototypeThen(SafePromiseAllReturnVoid(newBreakpoints), () => {
+      print(`${newBreakpoints.length} breakpoints restored.`);
+    });
   }
 
   function setPauseOnExceptions(state) {
-    return PromisePrototypeThen(
-      Debugger.setPauseOnExceptions({ state }),
-      () => {
-        pauseOnExceptionState = state;
-      });
+    return PromisePrototypeThen(Debugger.setPauseOnExceptions({ state }), () => {
+      pauseOnExceptionState = state;
+    });
   }
 
-  Debugger.on('paused', ({ callFrames, reason /* , hitBreakpoints */ }) => {
-    if (process.env.NODE_INSPECT_RESUME_ON_START === '1' &&
-        reason === 'Break on start') {
-      debuglog('Paused on start, but NODE_INSPECT_RESUME_ON_START' +
-              ' environment variable is set to 1, resuming');
-      inspector.client.callMethod('Debugger.resume');
+  Debugger.on("paused", ({ callFrames, reason /* , hitBreakpoints */ }) => {
+    if (process.env.NODE_INSPECT_RESUME_ON_START === "1" && reason === "Break on start") {
+      debuglog("Paused on start, but NODE_INSPECT_RESUME_ON_START" + " environment variable is set to 1, resuming");
+      inspector.client.callMethod("Debugger.resume");
       return;
     }
 
@@ -911,9 +876,9 @@ function createRepl(inspector) {
     selectedFrame = currentBacktrace[0];
     const { scriptId, lineNumber } = selectedFrame.location;
 
-    const breakType = reason === 'other' ? 'break' : reason;
+    const breakType = reason === "other" ? "break" : reason;
     const script = knownScripts[scriptId];
-    const scriptUrl = script ? getRelativePath(script.url) : '[unknown]';
+    const scriptUrl = script ? getRelativePath(script.url) : "[unknown]";
 
     const header = `${breakType} in ${scriptUrl}:${lineNumber + 1}`;
 
@@ -921,11 +886,11 @@ function createRepl(inspector) {
       PromisePrototypeThen(
         SafePromiseAllReturnArrayLike([formatWatchers(true), selectedFrame.list(contextLineNumber)]),
         ({ 0: watcherList, 1: context }) => {
-          const breakContext = watcherList ?
-            `${watcherList}\n${inspect(context)}` :
-            inspect(context);
+          const breakContext = watcherList ? `${watcherList}\n${inspect(context)}` : inspect(context);
           print(`${header}\n${breakContext}`);
-        }));
+        },
+      ),
+    );
   });
 
   function handleResumed() {
@@ -933,27 +898,24 @@ function createRepl(inspector) {
     selectedFrame = null;
   }
 
-  Debugger.on('resumed', handleResumed);
+  Debugger.on("resumed", handleResumed);
 
-  Debugger.on('breakpointResolved', handleBreakpointResolved);
+  Debugger.on("breakpointResolved", handleBreakpointResolved);
 
-  Debugger.on('scriptParsed', (script) => {
+  Debugger.on("scriptParsed", script => {
     const { scriptId, url } = script;
     if (url) {
       knownScripts[scriptId] = { isNative: isNativeUrl(url), ...script };
     }
   });
 
-  Profiler.on('consoleProfileFinished', ({ profile }) => {
+  Profiler.on("consoleProfileFinished", ({ profile }) => {
     Profile.createAndRegister({ profile });
-    print(
-      'Captured new CPU profile.\n' +
-      `Access it with profiles[${profiles.length - 1}]`,
-    );
+    print("Captured new CPU profile.\n" + `Access it with profiles[${profiles.length - 1}]`);
   });
 
   function initializeContext(context) {
-    ArrayPrototypeForEach(inspector.domainNames, (domain) => {
+    ArrayPrototypeForEach(inspector.domainNames, domain => {
       ObjectDefineProperty(context, domain, {
         __proto__: null,
         value: inspector[domain],
@@ -1021,19 +983,16 @@ function createRepl(inspector) {
       },
 
       get profileEnd() {
-        return PromisePrototypeThen(Profiler.stop(),
-                                    Profile.createAndRegister);
+        return PromisePrototypeThen(Profiler.stop(), Profile.createAndRegister);
       },
 
       get profiles() {
         return profiles;
       },
 
-      takeHeapSnapshot(filename = 'node.heapsnapshot') {
+      takeHeapSnapshot(filename = "node.heapsnapshot") {
         if (heapSnapshotPromise) {
-          print(
-            'Cannot take heap snapshot because another snapshot is in progress.',
-          );
+          print("Cannot take heap snapshot because another snapshot is in progress.");
           return heapSnapshotPromise;
         }
         heapSnapshotPromise = new Promise((resolve, reject) => {
@@ -1042,7 +1001,7 @@ function createRepl(inspector) {
           let sizeWritten = 0;
           function onProgress({ done, total, finished }) {
             if (finished) {
-              print('Heap snapshot prepared.');
+              print("Heap snapshot prepared.");
             } else {
               print(`Heap snapshot: ${done}/${total}`, false);
             }
@@ -1069,18 +1028,15 @@ function createRepl(inspector) {
           }
 
           function teardown() {
-            HeapProfiler.removeListener(
-              'reportHeapSnapshotProgress', onProgress);
-            HeapProfiler.removeListener('addHeapSnapshotChunk', onChunk);
+            HeapProfiler.removeListener("reportHeapSnapshotProgress", onProgress);
+            HeapProfiler.removeListener("addHeapSnapshotChunk", onChunk);
           }
 
-          HeapProfiler.on('reportHeapSnapshotProgress', onProgress);
-          HeapProfiler.on('addHeapSnapshotChunk', onChunk);
+          HeapProfiler.on("reportHeapSnapshotProgress", onProgress);
+          HeapProfiler.on("addHeapSnapshotChunk", onChunk);
 
-          print('Heap snapshot: 0/0', false);
-          PromisePrototypeThen(
-            HeapProfiler.takeHeapSnapshot({ reportProgress: true }),
-            onResolve, onReject);
+          print("Heap snapshot: 0/0", false);
+          PromisePrototypeThen(HeapProfiler.takeHeapSnapshot({ reportProgress: true }), onResolve, onReject);
         });
         return heapSnapshotPromise;
       },
@@ -1090,7 +1046,7 @@ function createRepl(inspector) {
       },
 
       watch(expr) {
-        validateString(expr, 'expression');
+        validateString(expr, "expression");
         ArrayPrototypePush(watchedExpressions, expr);
       },
 
@@ -1100,70 +1056,72 @@ function createRepl(inspector) {
         // Unwatch by expression
         // or
         // Unwatch by watcher number
-        ArrayPrototypeSplice(watchedExpressions,
-                             index !== -1 ? index : +expr, 1);
+        ArrayPrototypeSplice(watchedExpressions, index !== -1 ? index : +expr, 1);
       },
 
       get repl() {
         // Don't display any default messages
-        const listeners = ArrayPrototypeSlice(repl.listeners('SIGINT'));
-        repl.removeAllListeners('SIGINT');
+        const listeners = ArrayPrototypeSlice(repl.listeners("SIGINT"));
+        repl.removeAllListeners("SIGINT");
 
         const oldContext = repl.context;
 
         exitDebugRepl = () => {
           // Restore all listeners
           process.nextTick(() => {
-            ArrayPrototypeForEach(listeners, (listener) => {
-              repl.on('SIGINT', listener);
+            ArrayPrototypeForEach(listeners, listener => {
+              repl.on("SIGINT", listener);
             });
           });
 
           // Exit debug repl
-          repl["eval"] = controlEval;
+          repl.evalFn = controlEval;
 
           // Swap history
           history.debug = repl.history;
           repl.history = history.control;
 
           repl.context = oldContext;
-          repl.setPrompt('debug> ');
+          repl.setPrompt("debug> ");
           repl.displayPrompt();
 
-          repl.removeListener('SIGINT', exitDebugRepl);
-          repl.removeListener('exit', exitDebugRepl);
+          repl.removeListener("SIGINT", exitDebugRepl);
+          repl.removeListener("exit", exitDebugRepl);
 
           exitDebugRepl = null;
         };
 
         // Exit debug repl on SIGINT
-        repl.on('SIGINT', exitDebugRepl);
+        repl.on("SIGINT", exitDebugRepl);
 
         // Exit debug repl on repl exit
-        repl.on('exit', exitDebugRepl);
+        repl.on("exit", exitDebugRepl);
 
         // Set new
-        repl["eval"] = debugEval;
+        repl.evalFn = debugEval;
         repl.context = {};
 
         // Swap history
         history.control = repl.history;
         repl.history = history.debug;
 
-        repl.setPrompt('> ');
+        repl.setPrompt("> ");
 
-        print('Press Ctrl+C to leave debug repl');
+        print("Press Ctrl+C to leave debug repl");
         return repl.displayPrompt();
       },
 
       get version() {
-        return PromisePrototypeThen(Runtime.evaluate({
-          expression: 'process.versions.v8',
-          contextId: 1,
-          returnByValue: true,
-        }), ({ result }) => {
-          print(result.value);
-        });
+        return PromisePrototypeThen(
+          Runtime.evaluate({
+            expression: "process.versions.v8",
+            contextId: 1,
+            returnByValue: true,
+          }),
+          ({ result }) => {
+            print(result.value);
+          },
+        );
       },
 
       scripts: listScripts,
@@ -1172,13 +1130,13 @@ function createRepl(inspector) {
       clearBreakpoint,
       setPauseOnExceptions,
       get breakOnException() {
-        return setPauseOnExceptions('all');
+        return setPauseOnExceptions("all");
       },
       get breakOnUncaught() {
-        return setPauseOnExceptions('uncaught');
+        return setPauseOnExceptions("uncaught");
       },
       get breakOnNone() {
-        return setPauseOnExceptions('none');
+        return setPauseOnExceptions("none");
       },
 
       list,
@@ -1200,10 +1158,10 @@ function createRepl(inspector) {
   }
 
   return async function startRepl() {
-    inspector.client.on('close', () => {
+    inspector.client.on("close", () => {
       resetOnStart();
     });
-    inspector.client.on('ready', () => {
+    inspector.client.on("ready", () => {
       initAfterStart();
     });
 
@@ -1211,21 +1169,22 @@ function createRepl(inspector) {
     await initAfterStart();
 
     const replOptions = {
-      prompt: 'debug> ',
+      prompt: "debug> ",
       input: inspector.stdin,
       output: inspector.stdout,
-      "eval": controlEval,
+      // `evalFn`, not upstream's `eval`: see internal/debugger/repl.
+      evalFn: controlEval,
       useGlobal: false,
       ignoreUndefined: true,
     };
 
     repl = Repl.start(replOptions);
     initializeContext(repl.context);
-    repl.on('reset', initializeContext);
+    repl.on("reset", initializeContext);
 
-    repl.defineCommand('interrupt', () => {
+    repl.defineCommand("interrupt", () => {
       // We want this for testing purposes where sending Ctrl+C can be tricky.
-      repl.emit('SIGINT');
+      repl.emit("SIGINT");
     });
 
     return repl;

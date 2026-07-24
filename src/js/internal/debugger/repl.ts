@@ -2,7 +2,7 @@
 //
 // Bun does not implement node:repl yet, so this provides just the subset of
 // the REPLServer surface that lib/internal/debugger/inspect_repl.js relies on:
-// Repl.start() with a custom `eval`, an assignable `context`/`eval`/`history`,
+// Repl.start() with a custom evaluator, an assignable `context`/`history`,
 // setPrompt/displayPrompt/pause/resume, dot-commands via defineCommand
 // (".exit", ".interrupt"), and "SIGINT"/"exit" events. Input is consumed line
 // by line via node:readline; line editing and completion are not supported.
@@ -17,7 +17,9 @@ class ReplInterface extends EventEmitter {
   input;
   output;
   context;
-  ["eval"];
+  // Not named `eval`: JSC's builtin parser rejects that identifier, and the
+  // release build minifies `this["eval"]` down to `this.eval`.
+  evalFn;
   history = [];
   ignoreUndefined = false;
   useColors = false;
@@ -31,7 +33,7 @@ class ReplInterface extends EventEmitter {
     this.input = options.input;
     this.output = options.output;
     this.#prompt = options.prompt ?? "> ";
-    this["eval"] = options["eval"];
+    this.evalFn = options.evalFn;
     this.ignoreUndefined = !!options.ignoreUndefined;
     this.useColors = options.useColors ?? !!options.output?.isTTY;
     // useGlobal: false — evaluate control commands in a fresh vm context, like
@@ -128,7 +130,7 @@ class ReplInterface extends EventEmitter {
 
     // Match node's REPL, which hands the line to `eval` with its trailing
     // newline — the debugger uses a bare "\n" to mean "repeat last command".
-    let evalFn = this["eval"];
+    const evalFn = this.evalFn;
     try {
       evalFn.$call(this, `${line}\n`, this.context, "repl", (error, result) => {
         this.#finishEval(error, result);

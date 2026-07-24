@@ -224,11 +224,12 @@ class Client extends EventEmitter {
         });
       });
     }
-    if (this._http) {
-      this._http.destroy();
+    const { _http, _socket } = this;
+    if (_http) {
+      _http.destroy();
     }
-    if (this._socket) {
-      this._socket.destroy();
+    if (_socket) {
+      _socket.destroy();
     }
     this._http = null;
     this._lastId = 0;
@@ -267,8 +268,9 @@ class Client extends EventEmitter {
       function onResponse(httpRes) {
         function parseChunks() {
           const resBody = Buffer.concat(chunks).toString();
-          if (httpRes.statusCode !== 200) {
-            reject($ERR_DEBUGGER_ERROR(`Unexpected ${httpRes.statusCode}: ${resBody}`));
+          const { statusCode } = httpRes;
+          if (statusCode !== 200) {
+            reject($ERR_DEBUGGER_ERROR(`Unexpected ${statusCode}: ${resBody}`));
             return;
           }
           try {
@@ -324,8 +326,9 @@ class Client extends EventEmitter {
       this.emit("error", e);
     });
     httpReq.on("response", httpRes => {
-      if (httpRes.statusCode >= 400) {
-        process.stderr.write(`Unexpected HTTP code: ${httpRes.statusCode}\n`);
+      const { statusCode } = httpRes;
+      if (statusCode >= 400) {
+        process.stderr.write(`Unexpected HTTP code: ${statusCode}\n`);
         httpRes.pipe(process.stderr);
       } else {
         httpRes.pipe(process.stderr);

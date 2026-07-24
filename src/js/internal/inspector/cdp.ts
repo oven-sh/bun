@@ -318,9 +318,9 @@ function collectionDescription(description: string | undefined, size: number | u
 
 function toCdpObjectPreview(preview: AnyObject | undefined): AnyObject | undefined {
   if (!preview) return preview;
-  const { lossless, size, properties, entries, valuePreview, ...rest } = preview;
+  const { lossless, size, properties, entries, valuePreview, description, ...rest } = preview;
   const out: AnyObject = rest;
-  out.description = collectionDescription(preview.description, size);
+  out.description = collectionDescription(description, size);
   // JSC's `lossless` is the negation of V8's `overflow`. JSC sends `overflow`
   // too, but only for some types, so derive it whenever `lossless` is present.
   if (lossless !== undefined) out.overflow = !lossless;
@@ -331,40 +331,44 @@ function toCdpObjectPreview(preview: AnyObject | undefined): AnyObject | undefin
 }
 
 function toCdpPropertyPreview(property: AnyObject): AnyObject {
-  if (!property.valuePreview) return property;
-  return { ...property, valuePreview: toCdpObjectPreview(property.valuePreview) };
+  const { valuePreview } = property;
+  if (!valuePreview) return property;
+  return { ...property, valuePreview: toCdpObjectPreview(valuePreview) };
 }
 
 function toCdpEntryPreview(entry: AnyObject): AnyObject {
+  const { key, value } = entry;
   const out: AnyObject = { ...entry };
-  if (entry.key) out.key = toCdpObjectPreview(entry.key);
-  if (entry.value) out.value = toCdpObjectPreview(entry.value);
+  if (key) out.key = toCdpObjectPreview(key);
+  if (value) out.value = toCdpObjectPreview(value);
   return out;
 }
 
 function toCdpRemoteObject(remote: AnyObject | undefined): AnyObject | undefined {
   if (!remote || typeof remote !== "object") return remote;
-  const { size, preview, ...rest } = remote;
+  const { size, preview, description, type, ...rest } = remote;
   const out: AnyObject = rest;
-  if (remote.type === "number" && UNSERIALIZABLE_NUMBERS.$has(remote.description)) {
+  if (type !== undefined) out.type = type;
+  if (description !== undefined) out.description = description;
+  const unserializable =
+    description !== undefined && (type === "bigint" || (type === "number" && UNSERIALIZABLE_NUMBERS.$has(description)));
+  if (unserializable) {
     delete out.value;
-    out.unserializableValue = remote.description;
-  } else if (remote.type === "bigint" && remote.description !== undefined) {
-    delete out.value;
-    out.unserializableValue = remote.description;
+    out.unserializableValue = description;
   } else if (size !== undefined) {
-    out.description = collectionDescription(remote.description, size);
+    out.description = collectionDescription(description, size);
   }
   if (preview) out.preview = toCdpObjectPreview(preview);
   return out;
 }
 
 function toCdpPropertyDescriptor(property: AnyObject): AnyObject {
+  const { value, get, set, symbol } = property;
   const out: AnyObject = { configurable: false, enumerable: false, ...property };
-  if (property.value) out.value = toCdpRemoteObject(property.value);
-  if (property.get) out.get = toCdpRemoteObject(property.get);
-  if (property.set) out.set = toCdpRemoteObject(property.set);
-  if (property.symbol) out.symbol = toCdpRemoteObject(property.symbol);
+  if (value) out.value = toCdpRemoteObject(value);
+  if (get) out.get = toCdpRemoteObject(get);
+  if (set) out.set = toCdpRemoteObject(set);
+  if (symbol) out.symbol = toCdpRemoteObject(symbol);
   return out;
 }
 
@@ -684,7 +688,11 @@ class InspectorCDPAdapter {
   #onGlobalObjectForCallFunctionOn(id: number, method: string, params: AnyObject, result: AnyObject, error: AnyObject) {
     const globalObjectId = result.result?.objectId;
     if (error || !globalObjectId) {
-      this.#replyErrorToClient(id, error?.code ?? -32000, error ? toCdpErrorMessage(error.message) : "Failed to resolve global object");
+      this.#replyErrorToClient(
+        id,
+        error?.code ?? -32000,
+        error ? toCdpErrorMessage(error.message) : "Failed to resolve global object",
+      );
       return;
     }
     this.#forwardCallFunctionOn(id, method, params, globalObjectId);

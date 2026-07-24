@@ -68,11 +68,12 @@ class NodeInspector {
     this.paused = true;
     this.child = null;
 
-    if (options.script) {
+    const { script } = options;
+    if (script) {
       this._runScript = FunctionPrototypeBind(
         launchChildProcess,
         null,
-        [options.script, ...options.scriptArgs],
+        [script, ...options.scriptArgs],
         options.host,
         options.port,
         FunctionPrototypeBind(this.childPrint, this),
@@ -119,8 +120,9 @@ class NodeInspector {
   }
 
   suspendReplWhile(fn) {
-    if (this.repl) {
-      this.repl.pause();
+    const { repl } = this;
+    if (repl) {
+      repl.pause();
     }
     this.stdin.pause();
     this.paused = true;
@@ -128,9 +130,9 @@ class NodeInspector {
       try {
         await fn();
         this.paused = false;
-        if (this.repl) {
-          this.repl.resume();
-          this.repl.displayPrompt();
+        if (repl) {
+          repl.resume();
+          repl.displayPrompt();
         }
         this.stdin.resume();
       } catch (error) {
@@ -355,7 +357,8 @@ function startInspect(argv = ArrayPrototypeSlice(process.argv, 2), stdin = proce
       process.stderr.write(e.message);
       process.stderr.write("\n");
     }
-    if (inspector.child) inspector.child.kill();
+    const { child } = inspector;
+    if (child) child.kill();
     process.exit(kGenericUserError);
   }
 

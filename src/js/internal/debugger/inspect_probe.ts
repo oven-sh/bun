@@ -30,29 +30,25 @@ const { clearTimeout, setTimeout } = require("node:timers");
 const debug = require("node:util").debuglog("inspect_probe");
 
 const InspectClient = require("internal/debugger/inspect_client");
-const {
-  ensureTrailingNewline,
-  launchChildProcess,
-} = require("internal/debugger/inspect_helpers");
+const { ensureTrailingNewline, launchChildProcess } = require("internal/debugger/inspect_helpers");
 
 const kGenericUserError = 1;
 const kNoFailure = 0;
 
 const kProbeDefaultTimeout = 30000;
 const kProbeVersion = 2;
-const kProbeDisconnectSentinel = 'Waiting for the debugger to disconnect...';
-const kProbeAttachedSentinel = 'Debugger attached.';
-const kProbeListeningPrefix = 'Debugger listening on ws://';
-const kProbeEndingPrefix = 'Debugger ending on ws://';
-const kProbeHelpLine =
-  'For help, see: https://nodejs.org/learn/getting-started/debugging';
+const kProbeDisconnectSentinel = "Waiting for the debugger to disconnect...";
+const kProbeAttachedSentinel = "Debugger attached.";
+const kProbeListeningPrefix = "Debugger listening on ws://";
+const kProbeEndingPrefix = "Debugger ending on ws://";
+const kProbeHelpLine = "For help, see: https://nodejs.org/learn/getting-started/debugging";
 // Thrown by `callCdp` after `recordInspectorFailure` has handled the failure,
 // so callers can short-circuit without recording duplicate events.
-const kInspectorFailedSentinel = Symbol('probe.inspectorFailed');
+const kInspectorFailedSentinel = Symbol("probe.inspectorFailed");
 const kStartupTeardownAdvice =
-  'The target startup may have torn down the inspector. If startup does ' +
-  'not touch the inspector, this is likely a Node.js bug. Please file an issue.';
-const kReviewProbeExprAdvice = 'If the failure repeats, review the probe expression.';
+  "The target startup may have torn down the inspector. If startup does " +
+  "not touch the inspector, this is likely a Node.js bug. Please file an issue.";
+const kReviewProbeExprAdvice = "If the failure repeats, review the probe expression.";
 const kDigitsRegex = /^\d+$/;
 const kInspectPortRegex = /^--inspect-port=(\d+)$/;
 
@@ -87,7 +83,7 @@ const kInspectPortRegex = /^--inspect-port=(\d+)$/;
  */
 
 function parseUnsignedInteger(value, name, allowZero = false) {
-  if (typeof value !== 'string' || RegExpPrototypeExec(kDigitsRegex, value) === null) {
+  if (typeof value !== "string" || RegExpPrototypeExec(kDigitsRegex, value) === null) {
     throw $ERR_DEBUGGER_STARTUP_ERROR(`Invalid ${name}: ${value}`);
   }
   const parsed = NumberParseInt(value, 10);
@@ -110,9 +106,9 @@ function parseProbeTarget(text) {
   }
 
   const suffix = match[1];
-  const line = parseUnsignedInteger(match[2], 'probe location');
+  const line = parseUnsignedInteger(match[2], "probe location");
   // Column is left as undefined if the user does not supply one.
-  const column = match[3] !== undefined ? parseUnsignedInteger(match[3], 'probe location') : undefined;
+  const column = match[3] !== undefined ? parseUnsignedInteger(match[3], "probe location") : undefined;
   return { suffix, line, column };
 }
 
@@ -126,7 +122,7 @@ function formatPendingProbeLocations(probes, pending) {
   for (const probeIndex of pending) {
     seen.add(formatTargetText(probes[probeIndex].target));
   }
-  return ArrayPrototypeJoin(ArrayFrom(seen), ', ');
+  return ArrayPrototypeJoin(ArrayFrom(seen), ", ");
 }
 
 // Trim inspector-side noise lines from stderr for reporting child errors.
@@ -135,26 +131,38 @@ function trimProbeChildStderr(stderr) {
   const kept = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (line === '' && i === lines.length - 1) { continue; }
-    if (line === kProbeDisconnectSentinel) { continue; }
-    if (line === kProbeAttachedSentinel) { continue; }
-    if (line === kProbeHelpLine) { continue; }
-    if (StringPrototypeStartsWith(line, kProbeListeningPrefix)) { continue; }
-    if (StringPrototypeStartsWith(line, kProbeEndingPrefix)) { continue; }
+    if (line === "" && i === lines.length - 1) {
+      continue;
+    }
+    if (line === kProbeDisconnectSentinel) {
+      continue;
+    }
+    if (line === kProbeAttachedSentinel) {
+      continue;
+    }
+    if (line === kProbeHelpLine) {
+      continue;
+    }
+    if (StringPrototypeStartsWith(line, kProbeListeningPrefix)) {
+      continue;
+    }
+    if (StringPrototypeStartsWith(line, kProbeEndingPrefix)) {
+      continue;
+    }
     ArrayPrototypePush(kept, line);
   }
-  return ArrayPrototypeJoin(kept, '\n');
+  return ArrayPrototypeJoin(kept, "\n");
 }
 
 function formatPreviewPropertyValue(property) {
-  if (property.type === 'string') {
-    return JSONStringify(property.value ?? '');
+  if (property.type === "string") {
+    return JSONStringify(property.value ?? "");
   }
   return property.value ?? property.type;
 }
 
 function trimRemoteObject(result) {
-  if (result === undefined || result === null || typeof result !== 'object') {
+  if (result === undefined || result === null || typeof result !== "object") {
     return result;
   }
 
@@ -164,7 +172,7 @@ function trimRemoteObject(result) {
 
   const trimmed = { __proto__: null };
   for (const { 0: key, 1: value } of ObjectEntries(result)) {
-    if (key === 'objectId' || key === 'className') {
+    if (key === "objectId" || key === "className") {
       continue;
     }
     trimmed[key] = trimRemoteObject(value);
@@ -173,7 +181,7 @@ function trimRemoteObject(result) {
 }
 
 function stripProbePreviews(value) {
-  if (value === undefined || value === null || typeof value !== 'object') {
+  if (value === undefined || value === null || typeof value !== "object") {
     return value;
   }
 
@@ -183,7 +191,7 @@ function stripProbePreviews(value) {
 
   const stripped = { __proto__: null };
   for (const { 0: key, 1: entry } of ObjectEntries(value)) {
-    if (key === 'preview') {
+    if (key === "preview") {
       continue;
     }
     stripped[key] = stripProbePreviews(entry);
@@ -193,49 +201,56 @@ function stripProbePreviews(value) {
 
 // Format CDP RemoteObject values into more readable formats.
 function formatRemoteObject(result) {
-  if (result === undefined) { return 'undefined'; }
+  if (result === undefined) {
+    return "undefined";
+  }
 
   switch (result.type) {
-    case 'undefined':
-      return 'undefined';
-    case 'string':
+    case "undefined":
+      return "undefined";
+    case "string":
       return JSONStringify(result.value);
-    case 'number':
-      if (result.unserializableValue !== undefined) {
-        return result.unserializableValue;
+    case "number":
+      const { unserializableValue } = result;
+      if (unserializableValue !== undefined) {
+        return unserializableValue;
       }
       return `${result.value}`;
-    case 'boolean':
+    case "boolean":
       return `${result.value}`;
-    case 'symbol':
-      return result.description || 'Symbol()';
-    case 'bigint':
-      return result.unserializableValue ?? result.description ?? '0n';
-    case 'function':
-      return result.description || 'function()';
-    case 'object':
-      if (result.subtype === 'null') {
-        return 'null';
+    case "symbol":
+      return result.description || "Symbol()";
+    case "bigint":
+      return result.unserializableValue ?? result.description ?? "0n";
+    case "function":
+      return result.description || "function()";
+    case "object":
+      if (result.subtype === "null") {
+        return "null";
       }
-      if (result.subtype === 'error') {
-        return result.description || 'Error';
+      if (result.subtype === "error") {
+        return result.description || "Error";
       }
-      if (result.preview !== undefined) {
-        const properties = ArrayPrototypeJoin(ArrayPrototypeMap(
-          result.preview.properties,
-          result.preview.subtype === 'array' ?
-            (property) => formatPreviewPropertyValue(property) :
-            (property) => `${property.name}: ${formatPreviewPropertyValue(property)}`,
-        ), ', ');
-        const suffix = result.preview.overflow ? ', ...' : '';
-        if (result.preview.subtype === 'array') {
+      const { preview } = result;
+      if (preview !== undefined) {
+        const properties = ArrayPrototypeJoin(
+          ArrayPrototypeMap(
+            preview.properties,
+            preview.subtype === "array"
+              ? property => formatPreviewPropertyValue(property)
+              : property => `${property.name}: ${formatPreviewPropertyValue(property)}`,
+          ),
+          ", ",
+        );
+        const suffix = result.preview.overflow ? ", ..." : "";
+        if (result.preview.subtype === "array") {
           return `[${properties}${suffix}]`;
         }
         return `{${properties}${suffix}}`;
       }
-      return result.description || result.className || 'Object';
+      return result.description || result.className || "Object";
     default:
-      return `${result.value ?? result.description ?? ''}`;
+      return `${result.value ?? result.description ?? ""}`;
   }
 }
 
@@ -248,50 +263,45 @@ function buildProbeTextReport(report) {
   const lines = [];
 
   for (const result of report.results) {
-    if (result.event === 'hit') {
+    if (result.event === "hit") {
       const probe = report.probes[result.probe];
       // If Debugger.scriptParsed was missed and the URL is unknown, fall back to the user's
       // probe target text for readability. This is unlikely unless there's a bug in V8.
-      const locText = (result.location.url !== undefined) ?
-        formatHitLocation(result.location) : formatTargetText(probe.target);
+      const locText =
+        result.location.url !== undefined ? formatHitLocation(result.location) : formatTargetText(probe.target);
       ArrayPrototypePush(lines, `Hit ${result.hit} at ${locText}`);
-      if (result.error !== undefined) {
-        ArrayPrototypePush(lines, `  [error] ${probe.expr} = ${result.error.message}`);
+      const hitError = result.error;
+      if (hitError !== undefined) {
+        ArrayPrototypePush(lines, `  [error] ${probe.expr} = ${hitError.message}`);
       } else {
-        ArrayPrototypePush(lines,
-                           `  ${probe.expr} = ` +
-                           `${formatRemoteObject(result.result)}`);
+        ArrayPrototypePush(lines, `  ${probe.expr} = ` + `${formatRemoteObject(result.result)}`);
       }
       continue;
     }
 
-    if (result.event === 'completed') {
-      ArrayPrototypePush(lines, 'Completed');
+    if (result.event === "completed") {
+      ArrayPrototypePush(lines, "Completed");
       continue;
     }
 
-    if (result.event === 'miss') {
-      ArrayPrototypePush(lines,
-                         `Missed probes: ` +
-                         `${formatPendingProbeLocations(report.probes, result.pending)}`);
+    if (result.event === "miss") {
+      ArrayPrototypePush(lines, `Missed probes: ` + `${formatPendingProbeLocations(report.probes, result.pending)}`);
       continue;
     }
 
-    if (result.event === 'timeout') {
+    if (result.event === "timeout") {
       ArrayPrototypePush(lines, result.error.message);
       continue;
     }
 
-    if (result.event === 'error') {
+    if (result.event === "error") {
       ArrayPrototypePush(lines, result.error.message);
-      if (result.error.stderr !== undefined) {
-        ArrayPrototypePush(lines, '  [stderr]');
-        const stderrLines = RegExpPrototypeSymbolSplit(
-          /\r\n|\r|\n/g,
-          result.error.stderr,
-        );
+      const { stderr } = result.error;
+      if (stderr !== undefined) {
+        ArrayPrototypePush(lines, "  [stderr]");
+        const stderrLines = RegExpPrototypeSymbolSplit(/\r\n|\r|\n/g, stderr);
         for (let i = 0; i < stderrLines.length; i++) {
-          if (stderrLines[i] === '' && i === stderrLines.length - 1) {
+          if (stderrLines[i] === "" && i === stderrLines.length - 1) {
             continue;
           }
           ArrayPrototypePush(lines, `  ${stderrLines[i]}`);
@@ -300,7 +310,7 @@ function buildProbeTextReport(report) {
     }
   }
 
-  return ensureTrailingNewline(ArrayPrototypeJoin(lines, '\n'));
+  return ensureTrailingNewline(ArrayPrototypeJoin(lines, "\n"));
 }
 
 function parseProbeTokens(tokens, args) {
@@ -315,85 +325,84 @@ function parseProbeTokens(tokens, args) {
   const probes = [];
 
   for (const token of tokens) {
-    if (token.kind === 'option-terminator') {
+    if (token.kind === "option-terminator") {
       sawSeparator = true;
       childStartIndex = token.index + 1;
       break;
     }
 
+    const tokenValue = token.value;
     if (pendingTarget !== undefined) {
-      if (token.kind === 'option' &&
-          token.name === 'expr' &&
-          token.index === expectedExprIndex &&
-          token.value !== undefined) {
+      if (
+        token.kind === "option" &&
+        token.name === "expr" &&
+        token.index === expectedExprIndex &&
+        tokenValue !== undefined
+      ) {
         ArrayPrototypePush(probes, {
-          expr: token.value,
+          expr: tokenValue,
           target: pendingTarget,
         });
         pendingTarget = undefined;
         continue;
       }
 
-      throw $ERR_DEBUGGER_STARTUP_ERROR(
-        'Each --probe must be followed immediately by --expr <expr>');
+      throw $ERR_DEBUGGER_STARTUP_ERROR("Each --probe must be followed immediately by --expr <expr>");
     }
 
-    if (token.kind === 'positional') {
+    if (token.kind === "positional") {
       childStartIndex = token.index;
       break;
     }
 
     switch (token.name) {
-      case 'json':
+      case "json":
         json = true;
         break;
-      case 'timeout':
+      case "timeout":
         if (token.value === undefined) {
           throw $ERR_DEBUGGER_STARTUP_ERROR(`Missing value for ${token.rawName}`);
         }
-        timeout = parseUnsignedInteger(token.value, 'timeout', true);
+        timeout = parseUnsignedInteger(token.value, "timeout", true);
         break;
-      case 'port':
+      case "port":
         if (token.value === undefined) {
           throw $ERR_DEBUGGER_STARTUP_ERROR(`Missing value for ${token.rawName}`);
         }
-        port = parseUnsignedInteger(token.value, 'inspector port', true);
+        port = parseUnsignedInteger(token.value, "inspector port", true);
         break;
-      case 'preview':
+      case "preview":
         preview = true;
         break;
-      case 'probe':
+      case "probe":
         pendingTarget = parseProbeTarget(token.value);
         expectedExprIndex = token.index + (token.inlineValue ? 1 : 2);
         break;
-      case 'expr':
-        throw $ERR_DEBUGGER_STARTUP_ERROR('Unexpected --expr before --probe');
+      case "expr":
+        throw $ERR_DEBUGGER_STARTUP_ERROR("Unexpected --expr before --probe");
       default:
         if (probes.length > 0) {
-          throw $ERR_DEBUGGER_STARTUP_ERROR(
-            'Use -- before child Node.js flags in probe mode');
+          throw $ERR_DEBUGGER_STARTUP_ERROR("Use -- before child Node.js flags in probe mode");
         }
         throw $ERR_DEBUGGER_STARTUP_ERROR(`Unknown probe option: ${token.rawName}`);
     }
   }
 
   if (pendingTarget !== undefined) {
-    throw $ERR_DEBUGGER_STARTUP_ERROR(
-      'Each --probe must be followed immediately by --expr <expr>');
+    throw $ERR_DEBUGGER_STARTUP_ERROR("Each --probe must be followed immediately by --expr <expr>");
   }
 
   if (probes.length === 0) {
-    throw $ERR_DEBUGGER_STARTUP_ERROR(
-      'Probe mode requires at least one --probe <loc> --expr <expr> group');
+    throw $ERR_DEBUGGER_STARTUP_ERROR("Probe mode requires at least one --probe <loc> --expr <expr> group");
   }
 
   const childArgv = ArrayPrototypeSlice(args, childStartIndex);
   if (childArgv.length === 0) {
-    throw $ERR_DEBUGGER_STARTUP_ERROR('Probe mode requires a child script');
+    throw $ERR_DEBUGGER_STARTUP_ERROR("Probe mode requires a child script");
   }
 
-  if (!sawSeparator && StringPrototypeStartsWith(childArgv[0], '-')) {
-    throw $ERR_DEBUGGER_STARTUP_ERROR('Use -- before child Node.js flags in probe mode');
+  if (!sawSeparator && StringPrototypeStartsWith(childArgv[0], "-")) {
+    throw $ERR_DEBUGGER_STARTUP_ERROR("Use -- before child Node.js flags in probe mode");
   }
 
   let skipPortPreflight = port === 0;
@@ -402,16 +411,15 @@ function parseProbeTokens(tokens, args) {
     if (inspectPortMatch === null) {
       continue;
     }
-    if (inspectPortMatch[1] === '0') {
+    if (inspectPortMatch[1] === "0") {
       skipPortPreflight = true;
       continue;
     }
-    throw $ERR_DEBUGGER_STARTUP_ERROR(
-      'Only child --inspect-port=0 is supported in probe mode');
+    throw $ERR_DEBUGGER_STARTUP_ERROR("Only child --inspect-port=0 is supported in probe mode");
   }
 
   return {
-    host: '127.0.0.1',
+    host: "127.0.0.1",
     port,
     preview,
     timeout,
@@ -428,7 +436,7 @@ class ProbeInspectorSession {
     this.client = new InspectClient();
     this.child = null;
     this.cleanupStarted = false;
-    this.childStderr = '';
+    this.childStderr = "";
     this.disconnectRequested = false;
     this.finished = false;
     // True once the inspector WebSocket connects. Event handlers ignore
@@ -439,7 +447,7 @@ class ProbeInspectorSession {
     // Distinguishes "exited before user code ran" from "exited during the live session".
     this.started = false;
     // A sliding buffer of at most kProbeDisconnectSentinel.length to detect disconnect.
-    this.disconnectSentinelBuffer = '';
+    this.disconnectSentinelBuffer = "";
     /** @type {Map<string, BreakpointDefinition>} keyed by V8 breakpointId. */
     this.breakpointDefinitions = new SafeMap();
     /** @type {Map<string, string>} scriptId -> URL. */
@@ -474,8 +482,10 @@ class ProbeInspectorSession {
   }
 
   finish(exitCode, terminal) {
-    if (this.finished) { return; }
-    debug('finish: exitCode=%d, terminal=%s', exitCode, terminal?.event);
+    if (this.finished) {
+      return;
+    }
+    debug("finish: exitCode=%d, terminal=%s", exitCode, terminal?.event);
     this.finished = true;
     if (this.timeout !== null) {
       clearTimeout(this.timeout);
@@ -487,115 +497,151 @@ class ProbeInspectorSession {
   getProbeTargetExitEvent(exitCode, signal) {
     const pending = this.getPendingProbeIndices();
     const how = signal !== null ? `with signal ${signal}` : `with code ${exitCode}`;
-    const status = pending.length === 0 ?
-      'target completion' : `probes: ${formatPendingProbeLocations(this.probes, pending)}`;
+    const status =
+      pending.length === 0 ? "target completion" : `probes: ${formatPendingProbeLocations(this.probes, pending)}`;
     const error = {
       __proto__: null,
-      code: 'probe_target_exit',
+      code: "probe_target_exit",
       message: `Target exited ${how} before ${status}`,
     };
-    if (exitCode !== null) { error.exitCode = exitCode; }
-    if (signal !== null) { error.signal = signal; }
+    if (exitCode !== null) {
+      error.exitCode = exitCode;
+    }
+    if (signal !== null) {
+      error.signal = signal;
+    }
     error.stderr = trimProbeChildStderr(this.childStderr);
-    return { event: 'error', pending, error };
+    return { event: "error", pending, error };
   }
 
   onChildOutput(text, which) {
-    if (which !== 'stderr') { return; }
+    if (which !== "stderr") {
+      return;
+    }
 
     this.childStderr += text;
 
     const combined = this.disconnectSentinelBuffer + text;
     // Detect the disconnect sentinel.
-    if (this.connected &&
-        StringPrototypeIncludes(combined, kProbeDisconnectSentinel)) {
+    if (this.connected && StringPrototypeIncludes(combined, kProbeDisconnectSentinel)) {
       this.disconnectRequested = true;
       this.client.reset();
     }
 
-    if (combined.length > kProbeDisconnectSentinel.length) {  // Slide the buffer.
-      this.disconnectSentinelBuffer = StringPrototypeSlice(combined,
-                                                           combined.length - kProbeDisconnectSentinel.length);
+    const combinedLength = combined.length;
+    const sentinelLength = kProbeDisconnectSentinel.length;
+    if (combinedLength > sentinelLength) {
+      // Slide the buffer.
+      this.disconnectSentinelBuffer = StringPrototypeSlice(combined, combinedLength - sentinelLength);
     } else {
       this.disconnectSentinelBuffer = combined;
     }
   }
 
   onChildExit(code, signal) {
-    debug('child exit: code=%s signal=%s connected=%s started=%s finished=%s inFlight=%j',
-          code, signal, this.connected, this.started, this.finished, this.inFlight);
+    debug(
+      "child exit: code=%s signal=%s connected=%s started=%s finished=%s inFlight=%j",
+      code,
+      signal,
+      this.connected,
+      this.started,
+      this.finished,
+      this.inFlight,
+    );
     // Pre-connect exits are deliberately silent: the target never reached
     // a state where probes could be set, so any report would be empty.
-    if (!this.connected) { return; }
-    if (this.finished) { return; }
+    if (!this.connected) {
+      return;
+    }
+    if (this.finished) {
+      return;
+    }
     if (this.inFlight !== null && this.inFlight.probe !== null) {
       this.recordInspectorFailure({
-        reason: 'Target process exited during probe evaluation',
+        reason: "Target process exited during probe evaluation",
         advice: kReviewProbeExprAdvice,
       });
       return;
     }
     if (this.started && code === 0 && signal === null) {
       const pending = this.getPendingProbeIndices();
-      this.finishWithTrustedResult(pending.length === 0 ? { event: 'completed' } : { event: 'miss', pending });
+      this.finishWithTrustedResult(pending.length === 0 ? { event: "completed" } : { event: "miss", pending });
       return;
     }
     this.finishWithTrustedResult(this.getProbeTargetExitEvent(code, signal));
   }
 
   onClientClose() {
-    debug('client close: disconnectRequested=%s finished=%s inFlight=%j',
-          this.disconnectRequested, this.finished, this.inFlight);
-    if (!this.connected) { return; }
-    if (this.disconnectRequested) { return; }
-    if (this.finished) { return; }
+    debug(
+      "client close: disconnectRequested=%s finished=%s inFlight=%j",
+      this.disconnectRequested,
+      this.finished,
+      this.inFlight,
+    );
+    if (!this.connected) {
+      return;
+    }
+    if (this.disconnectRequested) {
+      return;
+    }
+    if (this.finished) {
+      return;
+    }
 
-    if (this.child.exitCode !== null || this.child.signalCode !== null) {
-      this.onChildExit(this.child.exitCode, this.child.signalCode);
+    const { exitCode, signalCode } = this.child;
+    if (exitCode !== null || signalCode !== null) {
+      this.onChildExit(exitCode, signalCode);
       return;
     }
     if (!this.started) {
       this.recordInspectorFailure({
-        reason: 'Inspector connection lost before probes started',
+        reason: "Inspector connection lost before probes started",
         advice: kStartupTeardownAdvice,
       });
       return;
     }
-    if (this.inFlight !== null) {
-      if (this.inFlight.probe !== null || this.lastProbeIndex !== null) {
+    const inFlight = this.inFlight;
+    if (inFlight !== null) {
+      if (inFlight.probe !== null || this.lastProbeIndex !== null) {
         this.recordInspectorFailure({
-          reason: 'Inspector connection lost during probe activity',
-          advice: 'A probe expression may have caused the disconnection. ' +
-            'If the failure repeats, review the probe expressions.',
+          reason: "Inspector connection lost during probe activity",
+          advice:
+            "A probe expression may have caused the disconnection. " +
+            "If the failure repeats, review the probe expressions.",
         });
       } else {
         this.recordInspectorFailure({
-          reason: 'Inspector connection lost during inspector activity',
-          advice: 'This is likely a Node.js bug. Please file an issue.',
+          reason: "Inspector connection lost during inspector activity",
+          advice: "This is likely a Node.js bug. Please file an issue.",
         });
       }
       return;
     }
     this.recordInspectorFailure({
-      reason: 'Inspector connection lost',
-      advice: 'The target was likely terminated externally. If the failure ' +
-        'persists, check the target\'s process environment.',
+      reason: "Inspector connection lost",
+      advice:
+        "The target was likely terminated externally. If the failure " +
+        "persists, check the target's process environment.",
     });
   }
 
   onPaused(params) {
-    this.handlePaused(params).catch((error) => {
-      if (error === kInspectorFailedSentinel) { return; }
+    this.handlePaused(params).catch(error => {
+      if (error === kInspectorFailedSentinel) {
+        return;
+      }
       this.recordInspectorFailure({
-        reason: 'Probe mode encountered an unexpected internal failure',
-        advice: 'This is likely a Node.js bug. Please file an issue.',
+        reason: "Probe mode encountered an unexpected internal failure",
+        advice: "This is likely a Node.js bug. Please file an issue.",
         internalError: error,
       });
     });
   }
 
   async handlePaused(params) {
-    if (this.finished) { return; }
+    if (this.finished) {
+      return;
+    }
 
     const hitBreakpoints = params.hitBreakpoints;
     if (hitBreakpoints === undefined || hitBreakpoints.length === 0) {
@@ -623,12 +669,16 @@ class ProbeInspectorSession {
       // The breakpoint ID is stable even for scripts parsed after the initial resolution
       // so we can count on it here.
       const definition = this.breakpointDefinitions.get(breakpointId);
-      if (definition === undefined) { continue; }
+      if (definition === undefined) {
+        continue;
+      }
 
       // Evaluate the expressions in the order they appear on the command line.
       for (const probeIndex of definition.probeIndices) {
         await this.evaluateProbe(callFrameId, probeIndex, location);
-        if (this.finished) { break; }
+        if (this.finished) {
+          break;
+        }
       }
     }
 
@@ -636,22 +686,25 @@ class ProbeInspectorSession {
   }
 
   async evaluateProbe(callFrameId, probeIndex, location) {
-    if (this.finished) { return; }
+    if (this.finished) {
+      return;
+    }
     const probe = this.probes[probeIndex];
     const evaluation = await this.callCdp(
-      'Debugger.evaluateOnCallFrame',
+      "Debugger.evaluateOnCallFrame",
       { callFrameId, expression: probe.expr, generatePreview: true },
       { __proto__: null, index: probeIndex, location },
     );
     this.lastProbeIndex = probeIndex;
 
     probe.hits++;
-    const result = { probe: probeIndex, event: 'hit', hit: probe.hits, location };
-    if (evaluation.exceptionDetails !== undefined) {
+    const result = { probe: probeIndex, event: "hit", hit: probe.hits, location };
+    const { exceptionDetails } = evaluation;
+    if (exceptionDetails !== undefined) {
       result.error = {
         __proto__: null,
-        message: evaluation.result?.description ?? 'Probe expression failed',
-        details: { __proto__: null, exception: trimRemoteObject(evaluation.exceptionDetails) },
+        message: evaluation.result?.description ?? "Probe expression failed",
+        details: { __proto__: null, exception: trimRemoteObject(exceptionDetails) },
       };
     } else {
       result.result = trimRemoteObject(evaluation.result);
@@ -660,63 +713,70 @@ class ProbeInspectorSession {
   }
 
   async resume() {
-    if (this.finished) { return; }
-    await this.callCdp('Debugger.resume');
+    if (this.finished) {
+      return;
+    }
+    await this.callCdp("Debugger.resume");
   }
 
   async callCdp(method, params, probe = null) {
-    if (this.finished) { throw kInspectorFailedSentinel; }
+    if (this.finished) {
+      throw kInspectorFailedSentinel;
+    }
     this.inFlight = { __proto__: null, method, probe };
-    debug('CDP -> %s%s', method, probe !== null ? `, probe=${probe.index}` : '');
+    debug("CDP -> %s%s", method, probe !== null ? `, probe=${probe.index}` : "");
     try {
       const result = await this.client.callMethod(method, params);
       // A timeout or process exit can finish the report while the CDP request
       // is still outstanding. Ignore the late reply in that case.
       if (this.finished) {
-        debug('CDP <- %s discarded (already finished)', method);
+        debug("CDP <- %s discarded (already finished)", method);
         throw kInspectorFailedSentinel;
       }
-      debug('CDP <- %s (success)', method);
+      debug("CDP <- %s (success)", method);
       return result;
     } catch (err) {
-      if (err !== kInspectorFailedSentinel) {  // Already handled.
-        debug('CDP <- %s error: %s', method, err?.code);
+      if (err !== kInspectorFailedSentinel) {
+        // Already handled.
+        debug("CDP <- %s error: %s", method, err?.code);
       }
       if (this.disconnectRequested) {
         // Only the in-flight evaluation gets attribution. Other rejections
         // under disconnect are downstream noise.
         if (probe !== null) {
           this.recordInspectorFailure({
-            reason: 'Target process exited during probe evaluation',
+            reason: "Target process exited during probe evaluation",
             advice: kReviewProbeExprAdvice,
           });
         }
         throw kInspectorFailedSentinel;
       }
       // Another event handler already recorded the terminal event.
-      if (this.finished) { throw kInspectorFailedSentinel; }
+      if (this.finished) {
+        throw kInspectorFailedSentinel;
+      }
       if (!this.started) {
         this.recordInspectorFailure({
-          reason: 'Probe mode failed before user code ran',
+          reason: "Probe mode failed before user code ran",
           advice: kStartupTeardownAdvice,
           cdpError: err,
         });
-      } else if (method === 'Debugger.evaluateOnCallFrame') {
+      } else if (method === "Debugger.evaluateOnCallFrame") {
         this.recordInspectorFailure({
-          reason: 'The inspector could not evaluate a probe expression',
+          reason: "The inspector could not evaluate a probe expression",
           advice: `The rejection details are recorded on the probe hit. ${kReviewProbeExprAdvice}`,
           cdpError: err,
         });
       } else if (this.lastProbeIndex !== null) {
         this.recordInspectorFailure({
-          reason: 'Probe session failed after a probe evaluation',
-          advice: 'If the failure repeats, review the most-recently-evaluated probe expression.',
+          reason: "Probe session failed after a probe evaluation",
+          advice: "If the failure repeats, review the most-recently-evaluated probe expression.",
           cdpError: err,
         });
       } else {
         this.recordInspectorFailure({
-          reason: 'Probe session failed during inspector activity',
-          advice: 'This is likely a Node.js bug. Please file an issue.',
+          reason: "Probe session failed during inspector activity",
+          advice: "This is likely a Node.js bug. Please file an issue.",
           cdpError: err,
         });
       }
@@ -728,13 +788,21 @@ class ProbeInspectorSession {
 
   // Records the first inspector-side terminal for the session, later callers are ignored.
   recordInspectorFailure({ reason, advice, cdpError, internalError }) {
-    if (this.finished) { return; }
-    debug('recordInspectorFailure "%s": inFlight=%j, lastProbeIndex=%s, cdpError=%j',
-          reason, this.inFlight, this.lastProbeIndex, cdpError);
+    if (this.finished) {
+      return;
+    }
+    debug(
+      'recordInspectorFailure "%s": inFlight=%j, lastProbeIndex=%s, cdpError=%j',
+      reason,
+      this.inFlight,
+      this.lastProbeIndex,
+      cdpError,
+    );
     const child = this.child;
-    const exitedAbnormally = child !== null &&
-      (child.signalCode !== null || (child.exitCode !== null && child.exitCode !== 0));
+    const exitedAbnormally =
+      child !== null && (child.signalCode !== null || (child.exitCode !== null && child.exitCode !== 0));
     const inFlightProbe = this.inFlight === null ? null : this.inFlight.probe;
+    const { lastProbeIndex } = this;
     // This normally emits `probe_failure`, but yields to `probe_target_exit` when the child
     // has already exited abnormally and there is no in-flight probe to attribute to.
     if (exitedAbnormally && inFlightProbe === null) {
@@ -745,92 +813,108 @@ class ProbeInspectorSession {
     const failedCdpMethod = this.inFlight === null ? null : this.inFlight.method;
     let protocolError = null;
     // // `ERR_DEBUGGER_ERROR` is a Node-internal code, not a CDP-level protocol code
-    if (cdpError !== undefined && cdpError.code !== 'ERR_DEBUGGER_ERROR') {
-      protocolError = { __proto__: null, message: cdpError.message, code: cdpError.code };
+    const cdpErrorCode = cdpError?.code;
+    if (cdpError !== undefined && cdpErrorCode !== "ERR_DEBUGGER_ERROR") {
+      protocolError = { __proto__: null, message: cdpError.message, code: cdpErrorCode };
     }
-    const protocolErrorGoesOnHit = (protocolError !== null) && (failedCdpMethod === 'Debugger.evaluateOnCallFrame');
+    const protocolErrorGoesOnHit = protocolError !== null && failedCdpMethod === "Debugger.evaluateOnCallFrame";
 
     let attribution = null;
     if (inFlightProbe !== null) {
       const { index, location } = inFlightProbe;
       const error = { __proto__: null };
       if (protocolErrorGoesOnHit) {
-        error.message = 'Probe evaluation failed at the protocol layer';
+        error.message = "Probe evaluation failed at the protocol layer";
         error.details = { __proto__: null, protocolError };
       } else {
-        error.message = 'Probe evaluation did not complete';
+        error.message = "Probe evaluation did not complete";
       }
       this.probes[index].hits++;
       ArrayPrototypePush(this.results, {
-        probe: index, event: 'hit', hit: this.probes[index].hits, location, error,
+        probe: index,
+        event: "hit",
+        hit: this.probes[index].hits,
+        location,
+        error,
       });
       attribution = index;
-    } else if (failedCdpMethod !== null && this.lastProbeIndex !== null) {
-      attribution = this.lastProbeIndex;
+    } else if (failedCdpMethod !== null && lastProbeIndex !== null) {
+      attribution = lastProbeIndex;
     }
     // When there is no in-flight CDP call (e.g. `onClientClose` after all probes hit), ignore
     // `lastProbeIndex` since it can't be attributed to a specific probe.
 
     const pending = this.getPendingProbeIndices();
-    const suffix = pending.length === 0 ?
-      '' : ` before probes: ${formatPendingProbeLocations(this.probes, pending)}`;
+    const suffix = pending.length === 0 ? "" : ` before probes: ${formatPendingProbeLocations(this.probes, pending)}`;
     const error = {
       __proto__: null,
-      code: 'probe_failure',
+      code: "probe_failure",
       message: `${reason}${suffix}. ${advice}`,
     };
-    if (attribution !== null) { error.probe = attribution; }
+    if (attribution !== null) {
+      error.probe = attribution;
+    }
     error.stderr = trimProbeChildStderr(this.childStderr);
 
     let details;
     if (failedCdpMethod !== null) {
       details = { __proto__: null, lastCdpMethod: failedCdpMethod };
-      if (protocolError !== null && !protocolErrorGoesOnHit) { details.protocolError = protocolError; }
+      if (protocolError !== null && !protocolErrorGoesOnHit) {
+        details.protocolError = protocolError;
+      }
     }
     if (internalError !== undefined) {
       details ??= { __proto__: null };
       details.internalError = { __proto__: null, message: internalError?.message, stack: internalError?.stack };
     }
-    if (details !== undefined) { error.details = details; }
+    if (details !== undefined) {
+      error.details = details;
+    }
 
-    this.finishWithUnreliableResult({ event: 'error', pending, error });
+    this.finishWithUnreliableResult({ event: "error", pending, error });
   }
 
   startTimeout() {
     this.timeout = setTimeout(() => {
-      debug('timeout fired: finished=%s, inFlight=%j, lastProbeIndex=%s',
-            this.finished, this.inFlight, this.lastProbeIndex);
-      if (this.finished) { return; }
-      if (this.inFlight !== null) {
-        const hasProbeAttribution =
-          this.inFlight.probe !== null || this.lastProbeIndex !== null;
+      debug(
+        "timeout fired: finished=%s, inFlight=%j, lastProbeIndex=%s",
+        this.finished,
+        this.inFlight,
+        this.lastProbeIndex,
+      );
+      if (this.finished) {
+        return;
+      }
+      const inFlight = this.inFlight;
+      if (inFlight !== null) {
+        const hasProbeAttribution = inFlight.probe !== null || this.lastProbeIndex !== null;
         this.recordInspectorFailure({
-          reason: 'Probe session timed out',
-          advice: hasProbeAttribution ?
-            ('The probe expression may be slow, hanging, or interfering with the inspector connection. ' +
-            'Try increasing `--timeout`; if the failure persists, review the probe expressions.') :
-            'Try increasing `--timeout`; if the failure persists, please file an issue.',
+          reason: "Probe session timed out",
+          advice: hasProbeAttribution
+            ? "The probe expression may be slow, hanging, or interfering with the inspector connection. " +
+              "Try increasing `--timeout`; if the failure persists, review the probe expressions."
+            : "Try increasing `--timeout`; if the failure persists, please file an issue.",
         });
         return;
       }
       const pending = this.getPendingProbeIndices();
-      const message = `Timed out after ${this.options.timeout}ms waiting for ` +
-        (pending.length === 0 ? 'target completion' :
-          `probes: ${formatPendingProbeLocations(this.probes, pending)}`);
+      const message =
+        `Timed out after ${this.options.timeout}ms waiting for ` +
+        (pending.length === 0 ? "target completion" : `probes: ${formatPendingProbeLocations(this.probes, pending)}`);
       this.finishWithUnreliableResult({
-        event: 'timeout',
+        event: "timeout",
         pending,
-        error: { code: 'probe_timeout', message },
+        error: { code: "probe_timeout", message },
       });
     }, this.options.timeout);
     this.timeout.unref();
   }
 
   attachListeners() {
-    this.child.on('exit', this.onChildExit);
-    this.client.on('close', this.onClientClose);
-    this.client.on('Debugger.paused', this.onPaused);
-    this.client.on('Debugger.scriptParsed', this.onScriptParsed);
+    this.child.on("exit", this.onChildExit);
+    this.client.on("close", this.onClientClose);
+    this.client.on("Debugger.paused", this.onPaused);
+    this.client.on("Debugger.scriptParsed", this.onScriptParsed);
   }
 
   onScriptParsed(params) {
@@ -844,7 +928,7 @@ class ProbeInspectorSession {
 
     for (let probeIndex = 0; probeIndex < this.probes.length; probeIndex++) {
       const { target } = this.probes[probeIndex];
-      const key = `${target.suffix}\n${target.line}\n${target.column ?? ''}`;
+      const key = `${target.suffix}\n${target.line}\n${target.column ?? ""}`;
       let entry = uniqueTargets.get(key);
       if (entry === undefined) {
         entry = { target, probeIndices: [] };
@@ -856,26 +940,24 @@ class ProbeInspectorSession {
     for (const { target, probeIndices } of uniqueTargets.values()) {
       // On Windows, normalize backslashes to forward slashes so the regex matches
       // V8 script URLs which always use forward slashes.
-      const normalizedFile = process.platform === 'win32' ?
-        SideEffectFreeRegExpPrototypeSymbolReplace(/\\/g, target.suffix, '/') :
-        target.suffix;
-      const escapedPath = SideEffectFreeRegExpPrototypeSymbolReplace(
-        /([/\\.?*()^${}|[\]])/g,
-        normalizedFile,
-        '\\$1',
-      );
+      const normalizedFile =
+        process.platform === "win32"
+          ? SideEffectFreeRegExpPrototypeSymbolReplace(/\\/g, target.suffix, "/")
+          : target.suffix;
+      const escapedPath = SideEffectFreeRegExpPrototypeSymbolReplace(/([/\\.?*()^${}|[\]])/g, normalizedFile, "\\$1");
       const params = {
         urlRegex: `^(.*[\\/\\\\])?${escapedPath}$`,
         // CDP locations are 0-based, the probe target from CLI is 1-based.
         lineNumber: target.line - 1,
       };
-      if (target.column !== undefined) {
+      const { column } = target;
+      if (column !== undefined) {
         // Only pass columnNumber to CDP when the user specifies one, otherwise let
         // the inspector bind to the first executable column.
-        params.columnNumber = target.column - 1;
+        params.columnNumber = column - 1;
       }
 
-      const result = await this.callCdp('Debugger.setBreakpointByUrl', params);
+      const result = await this.callCdp("Debugger.setBreakpointByUrl", params);
       this.breakpointDefinitions.set(result.breakpointId, { probeIndices });
     }
   }
@@ -904,7 +986,9 @@ class ProbeInspectorSession {
   }
 
   async cleanup() {
-    if (this.cleanupStarted) { return; }
+    if (this.cleanupStarted) {
+      return;
+    }
     this.cleanupStarted = true;
 
     if (this.timeout !== null) {
@@ -914,7 +998,9 @@ class ProbeInspectorSession {
 
     this.client.reset();
 
-    if (this.child === null) { return; }
+    if (this.child === null) {
+      return;
+    }
 
     if (this.child.exitCode === null && this.child.signalCode === null) {
       this.child.kill();
@@ -924,12 +1010,11 @@ class ProbeInspectorSession {
   async run() {
     try {
       const { childArgv, host, port, skipPortPreflight } = this.options;
-      const { 0: child, 1: actualPort, 2: actualHost } =
-        await launchChildProcess(childArgv,
-                                 host,
-                                 port,
-                                 this.onChildOutput,
-                                 { skipPortPreflight });
+      const {
+        0: child,
+        1: actualPort,
+        2: actualHost,
+      } = await launchChildProcess(childArgv, host, port, this.onChildOutput, { skipPortPreflight });
       this.child = child;
       // On Debugger.enable, V8 emits Debugger.scriptParsed for all existing scripts.
       // Attach the listener early to make sure we don't miss any events.
@@ -939,14 +1024,16 @@ class ProbeInspectorSession {
       this.connected = true;
 
       try {
-        await this.callCdp('Runtime.enable');
-        await this.callCdp('Debugger.enable');
+        await this.callCdp("Runtime.enable");
+        await this.callCdp("Debugger.enable");
         await this.bindBreakpoints();
         this.started = true;
         this.startTimeout();
-        await this.callCdp('Runtime.runIfWaitingForDebugger');
+        await this.callCdp("Runtime.runIfWaitingForDebugger");
       } catch (err) {
-        if (err !== kInspectorFailedSentinel) { throw err; }
+        if (err !== kInspectorFailedSentinel) {
+          throw err;
+        }
       }
 
       const state = await this.completionPromise;
@@ -961,13 +1048,16 @@ async function runProbeMode(stdout, probeOptions) {
   try {
     const session = new ProbeInspectorSession(probeOptions);
     const { code, report } = await session.run();
-    stdout.write(probeOptions.json ?
-      `${JSONStringify(probeOptions.preview ? report : stripProbePreviews(report))}\n` :
-      buildProbeTextReport(report));
+    stdout.write(
+      probeOptions.json
+        ? `${JSONStringify(probeOptions.preview ? report : stripProbePreviews(report))}\n`
+        : buildProbeTextReport(report),
+    );
     process.exit(code);
   } catch (error) {
-    if (error.childStderr) {
-      process.stderr.write(error.childStderr);
+    const { childStderr } = error;
+    if (childStderr) {
+      process.stderr.write(childStderr);
     }
     process.stderr.write(ensureTrailingNewline(error.message));
     process.exit(kGenericUserError);

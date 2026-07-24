@@ -19,8 +19,9 @@ const kInvalidCommandLineArgument = 9;
 
 function ERR_DEBUGGER_STARTUP_ERROR(message, options?) {
   const err = $ERR_DEBUGGER_STARTUP_ERROR(message);
-  if (options !== undefined && options.childStderr !== undefined) {
-    err.childStderr = options.childStderr;
+  const childStderr = options?.childStderr;
+  if (childStderr !== undefined) {
+    err.childStderr = childStderr;
   }
   return err;
 }

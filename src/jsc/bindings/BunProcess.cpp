@@ -4276,33 +4276,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-
-    int pid = callFrame->argument(0).toInt32(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-#if !OS(WINDOWS)
-    // Node sends SIGUSR1, which its own handler turns into "start the
-    // inspector".
-    // https://github.com/nodejs/node/blob/v26.3.0/src/node_process_methods.cc#L539
-    // Bun installs no SIGUSR1 handler, so delivering the signal would kill the
-    // target instead of debugging it. Probe with signal 0 so a missing process
-    // still raises ESRCH -- `node inspect -p <pid>` reports "Target process:
-    // <pid> doesn't exist." off that errno -- and leave a live target running:
-    // it is reachable if it was started with --inspect.
-    if (kill(pid, 0) < 0) {
-        throwSystemError(scope, globalObject, "kill"_s, errno);
-        return {};
-    }
-    return JSValue::encode(jsUndefined());
-#else
-    throwTypeError(globalObject, scope, "process._debugProcess is not supported on Windows"_s);
-    return {};
-#endif
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4484,7 +4457,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_functionDebugEnd                            Function 0
-  _debugProcess                    Process_functionDebugProcess                        Function 1
+  _debugProcess                    Process_stubEmptyFunction                           Function 0
   _eval                            processGetEval                                      CustomAccessor
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0

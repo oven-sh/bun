@@ -338,6 +338,8 @@ const validateObject = (value, name, allowArray = false) => {
     throw new codes.ERR_INVALID_ARG_TYPE(name, "Object", value);
 };
 
+const SymbolToPrimitive = Symbol.toPrimitive;
+
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(
     ObjectGetOwnPropertyNames(globalThis),
@@ -840,10 +842,14 @@ inspect.styles = {
   symbol: "green",
   date: "magenta",
   // "name": intentionally not styling
-  // TODO(BridgeAR): Highlight regular expressions properly.
-  regexp: "red",
+  regexp: highlightRegExp,
   module: "underline",
 };
+
+// Define the palette for RegExp group depth highlighting. Can be changed by users.
+inspect.styles.regexp.colors = ["green", "red", "yellow", "cyan", "magenta"];
+
+const highlightRegExpColors = inspect.styles.regexp.colors.slice();
 
 function addQuotes(str, quotes) {
   if (quotes === -1) {
@@ -922,9 +928,240 @@ function strEscape(str) {
   return addQuotes(result, singleQuote);
 }
 
+function highlightRegExp(regexpString) {
+  const length = regexpString.length;
+  let out = "";
+  let i = 0;
+  let depth = 0;
+  let inClass = false;
+
+  // Verify palette and update cache if user changed colors
+  const paletteNames = highlightRegExp.colors?.length > 0 ? highlightRegExp.colors : highlightRegExpColors;
+
+  const palette = [];
+  for (const name of paletteNames) {
+    const color = inspect.colors[name];
+    if (color) palette.push([`\u001b[${color[0]}m`, `\u001b[${color[1]}m`]);
+  }
+
+  function writeGroup(start, end, decreaseDepth = 1) {
+    let seq = "";
+    i++;
+    // Only checking for the closing delimiter is a fast heuristic for regular
+    // expressions without the u or v flag. A safer check would verify that the
+    // read characters are all alphanumeric.
+    while (i < length && regexpString[i] !== end) {
+      seq += regexpString[i++];
+    }
+    if (i < length) {
+      depth -= decreaseDepth;
+      write(start);
+      writeDepth(seq, 1, 1);
+      write(end);
+      depth += decreaseDepth;
+    } else {
+      // The group is not closed which would lead to mistakes in the output.
+      // This is a workaround to prevent output from being corrupted.
+      writeDepth(start, 1, -seq.length);
+    }
+  }
+
+  function write(str) {
+    const idx = depth % palette.length;
+    // Safeguard against bugs in the implementation.
+    const color = palette[idx] ?? palette[0];
+    out += color[0] + str + color[1];
+  }
+
+  function writeDepth(str, incDepth, incI) {
+    depth += incDepth;
+    write(str);
+    depth -= incDepth;
+    i += incI;
+  }
+
+  // Opening '/'
+  write("/");
+  depth++;
+  i = 1;
+
+  // Parse pattern until next unescaped '/'
+  while (i < length) {
+    const ch = regexpString[i];
+
+    if (inClass) {
+      if (ch === "\\") {
+        let seq = "\\";
+        i++;
+        if (i < length) {
+          seq += regexpString[i++];
+          const next = seq[1];
+          if (next === "u" && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          } else if ((next === "p" || next === "P") && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          } else if (seq[1] === "x") {
+            seq += regexpString.slice(i, i + 2);
+            i += 2;
+          }
+        }
+        write(seq);
+      } else if (ch === "]") {
+        depth--;
+        write("]");
+        i++;
+        inClass = false;
+      } else if (ch === "-" && regexpString[i - 1] !== "[" && i + 1 < length && regexpString[i + 1] !== "]") {
+        writeDepth("-", 1, 1);
+      } else {
+        write(ch);
+        i++;
+      }
+    } else if (ch === "[") {
+      // Enter class
+      write("[");
+      depth++;
+      i++;
+      inClass = true;
+    } else if (ch === "(") {
+      write("(");
+      depth++;
+      i++;
+      if (i < length && regexpString[i] === "?") {
+        // Assertions and named groups
+        i++;
+        const a = i < length ? regexpString[i] : "";
+        if (a === ":" || a === "=" || a === "!") {
+          writeDepth(`?${a}`, -1, 1);
+        } else {
+          const b = i + 1 < length ? regexpString[i + 1] : "";
+          if (a === "<" && (b === "=" || b === "!")) {
+            writeDepth(`?<${b}`, -1, 2);
+          } else if (a === "<") {
+            // Named capture: write '?<name>' as a single colored token
+            i++; // consume '<'
+            const start = i;
+            while (i < length && regexpString[i] !== ">") {
+              i++;
+            }
+            const name = regexpString.slice(start, i);
+            if (i < length && regexpString[i] === ">") {
+              depth--;
+              write("?<");
+              writeDepth(name, 1, 0);
+              write(">");
+              depth++;
+              i++;
+            } else {
+              writeDepth("?<", -1, 0);
+              write(name);
+            }
+          } else {
+            write("?");
+          }
+        }
+      }
+    } else if (ch === ")") {
+      depth--;
+      write(")");
+      i++;
+    } else if (ch === "\\") {
+      let seq = "\\";
+      i++;
+      if (i < length) {
+        seq += regexpString[i++];
+        const next = seq[1];
+        if (i < length) {
+          if (next === "u" && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          } else if (next === "x") {
+            seq += regexpString.slice(i, i + 2);
+            i += 2;
+          } else if (next >= "0" && next <= "9") {
+            while (i < length && regexpString[i] >= "0" && regexpString[i] <= "9") {
+              seq += regexpString[i++];
+            }
+          } else if (next === "k" && regexpString[i] === "<") {
+            writeGroup(`${seq}<`, ">");
+            continue;
+          } else if ((next === "p" || next === "P") && regexpString[i] === "{") {
+            // Unicode properties
+            writeGroup(`${seq}{`, "}", 0);
+            continue;
+          }
+        }
+      }
+      writeDepth(seq, 1, 0);
+    } else if (ch === "|" || ch === "+" || ch === "*" || ch === "?" || ch === "," || ch === "^" || ch === "$") {
+      writeDepth(ch, 3, 1);
+    } else if (ch === "{") {
+      i++;
+      let digits = "";
+      while (i < length && regexpString[i] >= "0" && regexpString[i] <= "9") {
+        digits += regexpString[i++];
+      }
+      if (digits) {
+        write("{");
+        depth++;
+        writeDepth(digits, 1, 0);
+      }
+      if (i < length) {
+        if (regexpString[i] === ",") {
+          if (!digits) {
+            write("{");
+            depth++;
+          }
+          write(",");
+          i++;
+        } else if (!digits) {
+          depth += 1;
+          write("{");
+          depth -= 1;
+          continue;
+        }
+      }
+      let digits2 = "";
+      while (i < length && regexpString[i] >= "0" && regexpString[i] <= "9") {
+        digits2 += regexpString[i++];
+      }
+      if (digits2) {
+        writeDepth(digits2, 1, 0);
+      }
+      if (i < length && regexpString[i] === "}") {
+        depth--;
+        write("}");
+        i++;
+      }
+      if (i < length && regexpString[i] === "?") {
+        writeDepth("?", 3, 1);
+      }
+    } else if (ch === ".") {
+      writeDepth(ch, 2, 1);
+    } else if (ch === "/") {
+      // Stop at closing delimiter (unescaped, outside of character class)
+      break;
+    } else {
+      writeDepth(ch, 1, 1);
+    }
+  }
+
+  // Closing delimiter and flags
+  writeDepth("/", -1, 1);
+  if (i < length) {
+    write(regexpString.slice(i));
+  }
+  return out;
+}
+
 function stylizeWithColor(str, styleType) {
   const style = inspect.styles[styleType];
   if (style !== undefined) {
+    // Checked first: a function style (regexp) would otherwise be stringified
+    // into a property key on every lookup.
+    if (typeof style === "function") return style(str);
     const color = inspect.colors[style];
     if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
   }
@@ -1236,6 +1473,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   let base = "";
   let formatter = getEmptyFormatArray;
   let braces;
+  let extraKeys;
   let noIterator = true;
   let i = 0;
   const filter = ctx.showHidden ? ALL_PROPERTIES : ONLY_ENUMERABLE;
@@ -1293,6 +1531,11 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       // bound function is required to reconstruct missing information.
       formatter = FunctionPrototypeBind(formatTypedArray, null, bound, size);
       extrasType = kArrayExtrasType;
+
+      if (ctx.showHidden) {
+        extraKeys = ["BYTES_PER_ELEMENT", "length", "byteLength", "byteOffset", "buffer"];
+        typedArray = true;
+      }
     } else if (isMapIterator(value)) {
       keys = getKeys(value, ctx.showHidden);
       braces = getIteratorBraces("Map", tag);
@@ -1350,14 +1593,14 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (typedArray === undefined) {
         formatter = formatArrayBuffer;
       } else if (keys.length === 0 && protoProps === undefined) {
-        return prefix + `{ byteLength: ${formatNumber(ctx.stylize, value.byteLength, false)} }`;
+        return prefix + `{ [byteLength]: ${formatNumber(ctx.stylize, value.byteLength, false)} }`;
       }
       braces[0] = `${prefix}{`;
-      ArrayPrototypeUnshift(keys, "byteLength");
+      extraKeys = ["byteLength"];
     } else if (isDataView(value)) {
       braces[0] = `${getPrefix(constructor, tag, "DataView")}{`;
       // .buffer goes last, it's not a primitive like the others.
-      ArrayPrototypeUnshift(keys, "byteLength", "byteOffset", "buffer");
+      extraKeys = ["byteLength", "byteOffset", "buffer"];
     } else if (isPromise(value)) {
       braces[0] = `${getPrefix(constructor, tag, "Promise")}{`;
       formatter = formatPromise;
@@ -1403,6 +1646,18 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     // JSC stack is too powerful it must be stopped manually
     if (ctx.currentDepth > 1000) throw new RangeError(ERROR_STACK_OVERFLOW_MSG);
     output = formatter(ctx, value, recurseTimes);
+    if (extraKeys !== undefined) {
+      for (i = 0; i < extraKeys.length; i++) {
+        let formatted;
+        try {
+          formatted = formatExtraProperties(ctx, value, recurseTimes, extraKeys[i], typedArray);
+        } catch {
+          const tempValue = { [extraKeys[i]]: value.buffer[extraKeys[i]] };
+          formatted = formatExtraProperties(ctx, tempValue, recurseTimes, extraKeys[i], typedArray);
+        }
+        ArrayPrototypePush.$call(output, formatted);
+      }
+    }
     for (i = 0; i < keys.length; i++) {
       ArrayPrototypePush.$call(output, formatProperty(ctx, value, recurseTimes, keys[i], extrasType));
     }
@@ -2111,7 +2366,7 @@ function formatArray(ctx, value, recurseTimes) {
   return output;
 }
 
-function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
+function formatTypedArray(value, length, ctx, _ignored, _recurseTimes) {
   if (Buffer.isBuffer(value)) {
     BufferModule ??= require("node:buffer");
     const INSPECT_MAX_BYTES = $requireMap.$get("buffer")?.exports.INSPECT_MAX_BYTES ?? BufferModule.INSPECT_MAX_BYTES;
@@ -2126,16 +2381,6 @@ function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
   }
   if (remaining > 0) {
     output[maxLength] = remainingText(remaining);
-  }
-  if (ctx.showHidden) {
-    // .buffer goes last, it's not a primitive like the others.
-    // All besides `BYTES_PER_ELEMENT` are actually getters.
-    ctx.indentationLvl += 2;
-    for (const key of ["BYTES_PER_ELEMENT", "length", "byteLength", "byteOffset", "buffer"]) {
-      const str = formatValue(ctx, value[key], recurseTimes, true);
-      ArrayPrototypePush.$call(output, `[${key}]: ${str}`);
-    }
-    ctx.indentationLvl -= 2;
   }
   return output;
 }
@@ -2274,6 +2519,16 @@ function formatPromise(ctx, value, recurseTimes) {
     output = [state === kRejected ? `${ctx.stylize("<rejected>", "special")} ${str}` : str];
   }
   return output;
+}
+
+function formatExtraProperties(ctx, value, recurseTimes, key, typedArray) {
+  ctx.indentationLvl += 2;
+  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  ctx.indentationLvl -= 2;
+
+  // These entries are mainly getters. Should they be formatted like getters?
+  const name = ctx.stylize(`[${key}]`, "string");
+  return `${name}: ${str}`;
 }
 
 function formatProperty(ctx, value, recurseTimes, key, type, desc, original = value) {
@@ -2424,6 +2679,10 @@ function reduceToSingleString(ctx, output, base, braces, extrasType, recurseTime
   return `${braces[0]}${ln}${ArrayPrototypeJoin(output, `,\n${indentation}  `)} ${braces[1]}`;
 }
 
+function returnFalse() {
+  return false;
+}
+
 function hasBuiltInToString(value) {
   // Prevent triggering proxy traps.
   const getFullProxy = false;
@@ -2432,30 +2691,34 @@ function hasBuiltInToString(value) {
     if (proxyTarget === null) {
       return true;
     }
-    value = proxyTarget;
+    return hasBuiltInToString(proxyTarget);
   }
 
-  // Check if value has a custom Symbol.toPrimitive transformation.
-  if (typeof value[Symbol.toPrimitive] === "function") {
-    return false;
-  }
+  let hasOwnToString = ObjectPrototypeHasOwnProperty;
+  let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
-  // Count objects that have no `toString` function as built-in.
+  // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
   if (typeof value.toString !== "function") {
-    return true;
-  }
-
-  // The object has a own `toString` property. Thus it's not not a built-in one.
-  if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    if (typeof value[SymbolToPrimitive] !== "function") {
+      return true;
+    } else if (ObjectPrototypeHasOwnProperty(value, SymbolToPrimitive)) {
+      return false;
+    }
+    hasOwnToString = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    return false;
+  } else if (typeof value[SymbolToPrimitive] !== "function") {
+    hasOwnToPrimitive = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty(value, SymbolToPrimitive)) {
     return false;
   }
 
-  // Find the object that has the `toString` property as own property in the
-  // prototype chain.
+  // Find the object that has the `toString` property or `Symbol.toPrimitive` property
+  // as own property in the prototype chain.
   let pointer = value;
   do {
     pointer = ObjectGetPrototypeOf(pointer);
-  } while (!ObjectPrototypeHasOwnProperty(pointer, "toString"));
+  } while (!hasOwnToString(pointer, "toString") && !hasOwnToPrimitive(pointer, SymbolToPrimitive));
 
   // Check closer if the object is a built-in.
   const descriptor = ObjectGetOwnPropertyDescriptor(pointer, "constructor");

@@ -6,7 +6,9 @@ fixtures/wpt/*
 !fixtures/wpt/url/
 fixtures/tools
 fixtures/v8-coverage
-fixtures/test-runner
+fixtures/test-runner/*
+!fixtures/test-runner/index.js
+!fixtures/test-runner/tagged.js
 fixtures/source-map
 fixtures/snapshot/*
 !fixtures/snapshot/typescript.js

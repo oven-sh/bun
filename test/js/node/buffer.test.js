@@ -3350,7 +3350,9 @@ for (let withOverridenBufferWrite of [false, true]) {
         });
         // Node.js throws here, but we can handle it just fine
         buf.fill("");
-        expect(buf).toStrictEqual(Buffer.from([0, 0, 0, 0]));
+        // `length` is an own enumerable property on `buf` now, which node counts as a
+        // difference, so compare the bytes rather than the objects.
+        expect(Array.from(buf)).toEqual([0, 0, 0, 0]);
       });
 
       it("allocUnsafeSlow().fill()", () => {

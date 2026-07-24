@@ -314,7 +314,11 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       entrypoints: [tmpFile],
       define,
       target: "bun",
-      minify: { syntax: true, whitespace: false, keepNames: true },
+      // keepNames is intentionally off: it emits __name() calls whose runtime
+      // helper lands outside the $$capture_start$$/$$capture_end$$ window, and
+      // identifiers are not minified here so .name inference from bindings
+      // already gives the right value.
+      minify: { syntax: true, whitespace: false },
     });
     // TODO: Wait a few versions before removing this
     if (!build.success) {

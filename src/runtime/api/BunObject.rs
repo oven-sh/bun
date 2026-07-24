@@ -637,6 +637,7 @@ pub(crate) fn inspect_table(
     table_printer.value_formatter.depth = format_options.max_depth;
     table_printer.value_formatter.ordered_properties = format_options.ordered_properties;
     table_printer.value_formatter.single_line = format_options.single_line;
+    table_printer.value_formatter.disable_inspect_custom = format_options.disable_inspect_custom;
 
     let print_result = if format_options.enable_colors {
         table_printer.print_table::<true>(&mut array)

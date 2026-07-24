@@ -4228,6 +4228,11 @@ declare module "bun" {
      * Whether to compact the output
      */
     compact?: boolean;
+    /**
+     * Whether to call `[util.inspect.custom]` on the object if it exists.
+     * @default true
+     */
+    customInspect?: boolean;
   }
 
   type WebSocketOptionsProtocolsOrProtocol =

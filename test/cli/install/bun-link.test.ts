@@ -474,13 +474,18 @@ it("should link dependency without crashing", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/4719
-describe("link: with a filesystem path", () => {
+describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", linker => {
   async function checkLink(dep: string, expected: { name: string; version: string }) {
+    await writeFile(
+      join(package_dir, "bunfig.toml"),
+      `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
+    );
     const { out, err, exited } = await runBunInstall(env, package_dir);
     const errText = stderrForInstall(await new Response(err).text());
     expect(errText).not.toContain("not linked");
     expect(errText).not.toContain("error:");
-    expect(await new Response(out).text()).toContain(`+ ${expected.name}@link:`);
+    const outText = await new Response(out).text();
+    if (linker === "hoisted") expect(outText).toContain(`+ ${expected.name}@link:`);
     expect(await exited).toBe(0);
 
     const target = await readlink(join(package_dir, "node_modules", ...expected.name.split("/")));

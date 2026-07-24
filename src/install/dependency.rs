@@ -1159,8 +1159,10 @@ impl ValueExt for Value {
 /// True when a `link:` dependency value is a filesystem path rather than a
 /// globally-registered package name. Matches the same shapes `Tag::infer`
 /// treats as a folder: `.`/`..`-relative, absolute (`/` or Windows drive
-/// letter), or `~/`. Used by the resolver and installers to decide whether to
-/// look in the global link directory or next to the project root.
+/// letter), or `~/` (classified as a path for parity with `file:`; tilde
+/// expansion is not performed for either protocol). Used by the resolver and
+/// installers to decide whether to look in the global link directory or next
+/// to the project root.
 pub fn is_link_path(value: &[u8]) -> bool {
     if value.is_empty() {
         return false;

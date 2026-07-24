@@ -2145,8 +2145,7 @@ impl VirtualMachine {
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
-            addr_of_mut!((*vm).node_timing_milestones)
-                .write([-1; NodeTimingMilestone::COUNT]);
+            addr_of_mut!((*vm).node_timing_milestones).write([-1; NodeTimingMilestone::COUNT]);
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid

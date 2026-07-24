@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -326,4 +327,48 @@ test("--heap-prof --heap-prof-interval is accepted", async () => {
   const glob = new Bun.Glob("*.heapprofile");
   const files = Array.from(glob.scanSync({ cwd: String(dir) }));
   expect(files.length).toBe(1);
+});
+
+test("--diagnostic-dir sets the heap profile directory, and --heap-prof-dir overrides it", async () => {
+  using dir = tempDir("heap-prof-diagnostic-dir-test", {});
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--heap-prof", "--diagnostic-dir", "diag", "-e", `console.log("hello");`],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("hello");
+    expect(exitCode).toBe(0);
+    const glob = new Bun.Glob("*.heapprofile");
+    expect(Array.from(glob.scanSync({ cwd: join(String(dir), "diag") }))).toHaveLength(1);
+  }
+
+  {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--heap-prof",
+        "--diagnostic-dir",
+        "ignored",
+        "--heap-prof-dir",
+        "prof",
+        "-e",
+        `console.log("hello");`,
+      ],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe("hello");
+    expect(exitCode).toBe(0);
+    const glob = new Bun.Glob("*.heapprofile");
+    expect(Array.from(glob.scanSync({ cwd: join(String(dir), "prof") }))).toHaveLength(1);
+    expect(existsSync(join(String(dir), "ignored"))).toBe(false);
+  }
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
@@ -409,5 +409,48 @@ describe.concurrent("--cpu-prof", () => {
     // Validate markdown file
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
+  });
+
+  test("--diagnostic-dir sets the output directory, and --cpu-prof-dir overrides it", async () => {
+    using dir = tempDir("cpu-prof-diagnostic-dir", {
+      "test.js": `
+        function fibonacci(n) {
+          if (n <= 1) return n;
+          return fibonacci(n - 1) + fibonacci(n - 2);
+        }
+
+        const now = performance.now();
+        while (now + 100 > performance.now()) {
+            Bun.inspect(fibonacci(20));
+        }
+      `,
+    });
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", "--diagnostic-dir", "diag", "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      expect(readdirSync(join(String(dir), "diag")).filter(f => f.endsWith(".cpuprofile"))).toHaveLength(1);
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", "--diagnostic-dir", "ignored", "--cpu-prof-dir", "prof", "test.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const exitCode = await proc.exited;
+      expect(readdirSync(join(String(dir), "prof")).filter(f => f.endsWith(".cpuprofile"))).toHaveLength(1);
+      expect(existsSync(join(String(dir), "ignored"))).toBe(false);
+      expect(exitCode).toBe(0);
+    }
   });
 });

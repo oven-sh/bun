@@ -67,11 +67,9 @@ const kMilestoneBootstrapComplete = 3;
 const kMilestoneLoopStart = 4;
 const kMilestoneLoopExit = 5;
 
-const getMilestoneTimestamp = $newCppFunction(
-  "NodePerformanceTiming.cpp",
-  "jsFunction_getNodeTimingMilestone",
-  1,
-) as (index: number) => number;
+const getMilestoneTimestamp = $newCppFunction("NodePerformanceTiming.cpp", "jsFunction_getNodeTimingMilestone", 1) as (
+  index: number,
+) => number;
 
 // PerformanceEntry is not a valid constructor, so we have to fake it.
 // Every property is an own enumerable slot like node's, so

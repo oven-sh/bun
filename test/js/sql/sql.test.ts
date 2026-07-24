@@ -3997,6 +3997,49 @@ CREATE TABLE ${table_name} (
       expect(xs.map(x => x.x).join("")).toBe("123");
     });
 
+    test("reserved.unsafe() and reserved.file() reject after release()", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const reserved = await sql.reserve();
+      await reserved.release();
+      const outcome = async (p: Promise<any>) =>
+        p.then(
+          () => "fulfilled",
+          (e: any) => `rejected: ${e.code}`,
+        );
+      expect({
+        template: await outcome(reserved`select 1 as x`),
+        unsafe: await outcome(reserved.unsafe("select 1 as x")),
+        file: await outcome(reserved.file(rel("select.sql"))),
+      }).toEqual({
+        template: "rejected: ERR_POSTGRES_CONNECTION_CLOSED",
+        unsafe: "rejected: ERR_POSTGRES_CONNECTION_CLOSED",
+        file: "rejected: ERR_POSTGRES_CONNECTION_CLOSED",
+      });
+    });
+
+    test("tx.unsafe() and tx.file() reject after begin() settles", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      let leaked: any;
+      await sql.begin(async tx => {
+        leaked = tx;
+        await tx.unsafe("select 1 as x");
+      });
+      const outcome = async (p: Promise<any>) =>
+        p.then(
+          () => "fulfilled",
+          (e: any) => `rejected: ${e.code}`,
+        );
+      expect({
+        template: await outcome(leaked`select 1 as x`),
+        unsafe: await outcome(leaked.unsafe("select 1 as x")),
+        file: await outcome(leaked.file(rel("select.sql"))),
+      }).toEqual({
+        template: "rejected: ERR_POSTGRES_CONNECTION_CLOSED",
+        unsafe: "rejected: ERR_POSTGRES_CONNECTION_CLOSED",
+        file: "rejected: ERR_POSTGRES_CONNECTION_CLOSED",
+      });
+    });
+
     test("keeps process alive when it should", async () => {
       const file = path.posix.join(__dirname, "sql-fixture-ref.ts");
       const result = await $`DATABASE_URL=${process.env.DATABASE_URL} ${bunExe()} ${file}`;

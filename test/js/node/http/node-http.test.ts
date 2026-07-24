@@ -2878,6 +2878,35 @@ it("standalone ServerResponse discards body writes to a no-body response without
   expect(out).not.toContain("body");
 });
 
+it("standalone ServerResponse end() after writeHead() sets writableEnded (#25632)", async () => {
+  // With no native handle and no socket assigned, end() after writeHead() must
+  // still transition to `finished` / `writableEnded` and buffer the rendered
+  // header block into outputData, like Node.js's OutgoingMessage.end().
+  const res = new ServerResponse(new IncomingMessage(null as any));
+  res.writeHead(403);
+  res.end("forbidden");
+  expect({ finished: res.finished, writableEnded: res.writableEnded }).toEqual({
+    finished: true,
+    writableEnded: true,
+  });
+  const buffered = (res as any).outputData.map((x: any) => String(x.data)).join("");
+  expect(buffered).toStartWith("HTTP/1.1 403 Forbidden\r\n");
+  expect(buffered).toEndWith("\r\n\r\nforbidden");
+
+  // And with end() alone (no chunk), the end() callback is registered on
+  // 'finish' (which never fires without a socket), not invoked via nextTick.
+  const res2 = new ServerResponse(new IncomingMessage(null as any));
+  let cbCalled = false;
+  res2.writeHead(200);
+  res2.end(() => (cbCalled = true));
+  expect({ finished: res2.finished, writableEnded: res2.writableEnded }).toEqual({
+    finished: true,
+    writableEnded: true,
+  });
+  await new Promise<void>(r => process.nextTick(r));
+  expect(cbCalled).toBe(false);
+});
+
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
   // noBodyStatus must suppress the Transfer-Encoding header in flushHeaders()
   // and the terminating chunk in internalEnd(), like the one-shot end() path.

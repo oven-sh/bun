@@ -3082,9 +3082,6 @@ ServerResponse.prototype.writeContinue = function (cb) {
 // But we don't want it for the fetch() response version.
 ServerResponse.prototype.end = function (chunk, encoding, callback) {
   const handle = this[kHandle];
-  if (handle?.aborted) {
-    return this;
-  }
 
   if ($isCallable(chunk)) {
     callback = chunk;
@@ -3111,20 +3108,13 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
 
   if (!handle) {
-    // Read the storage directly - the `socket` getter auto-creates a
-    // FakeSocket and would make this condition always true.
-    if (this[fakeSocketSymbol] || this.outputData?.length || !this._header) {
-      // Standalone response writing through an assigned socket (or buffering
-      // until one is assigned): use the OutgoingMessage machinery. The
-      // original chunk passes through (mirroring write()): write_() has its
-      // own !_hasBody handling, including the rejectNonStandardBodyWrites
-      // throw, which the clearing below would bypass.
-      return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
-    }
-    if ($isCallable(callback)) {
-      process.nextTick(callback);
-    }
-    return this;
+    // Standalone response (no native handle): use the OutgoingMessage
+    // machinery unconditionally so `finished` / `writableEnded` transition and
+    // the chunk is buffered into outputData like Node.js, regardless of whether
+    // writeHead() rendered `_header` first. The original chunk passes through
+    // (mirroring write()): write_() has its own !_hasBody handling, including
+    // the rejectNonStandardBodyWrites throw.
+    return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
   if (this[headerStateSymbol] === NodeHTTPHeaderState.none) {
@@ -3166,9 +3156,22 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // node.js will return true if the handle is closed but the internal state is not
-    // and will not throw or emit an error
-    return true;
+    // The underlying socket is already closed (or the response completed
+    // natively). Node.js's OutgoingMessage.end() still transitions to
+    // `finished` and emits 'prefinish' in this state; the `finish` callback
+    // that would emit 'finish' is dropped by _writeRaw()'s conn.destroyed
+    // early-return, so 'finish' never fires and the end() callback (registered
+    // on 'finish') is never called. 'close' is emitted by the socket close
+    // path.
+    this._header = " ";
+    const req = this.req;
+    if (!req._consuming && !req?._readableState?.resumeScheduled) {
+      req._dump();
+    }
+    this.finished = true;
+    process.nextTick(markResponseEndedNT, this);
+    this.emit("prefinish");
+    return this;
   }
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {
@@ -3335,9 +3338,9 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
 
   const flags = handle.flags;
   if (!!(flags & NodeHTTPResponseFlags.closed_or_completed)) {
-    // node.js will return true if the handle is closed but the internal state is not
-    // and will not throw or emit an error
-    return true;
+    // Node.js's OutgoingMessage._writeRaw() returns false when the assigned
+    // socket is destroyed; the write callback is dropped (never invoked).
+    return false;
   }
 
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {

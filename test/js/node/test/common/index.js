@@ -173,7 +173,9 @@ if (process.argv.length === 2 &&
         const { onGCSweepSync } = require('./gc');
         const { releaseWeakRefs } = require('bun:jsc');
         globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
-        break;
+        // Keep scanning: a later --expose-internals on the same Flags line
+        // (e.g. `--expose-gc --expose-internals`) still needs its shim.
+        continue;
       }
       if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
         // V8's externalized-string test helpers. JavaScriptCore has no string
@@ -189,7 +191,8 @@ if (process.argv.length === 2 &&
           }
           return true;
         };
-        break;
+        // Keep scanning for the same reason as --expose-gc above.
+        continue;
       }
       if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
         // node:sqlite is always available in Bun; the Node experimental gate

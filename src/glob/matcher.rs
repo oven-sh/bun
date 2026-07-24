@@ -147,10 +147,13 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
     let mut brace_stack = BraceStack::default();
     let mut brace_budget = BRACE_BRANCH_BUDGET;
+    // glob_start must point past the consumed `!` prefix so that a pattern-initial
+    // `**` is still recognized as being at the start of a path segment.
+    let glob_start = state.glob_index;
     let matched = glob_match_impl(
         &mut state,
         glob,
-        0,
+        glob_start,
         path,
         &mut brace_stack,
         &mut brace_budget,

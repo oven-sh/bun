@@ -277,6 +277,46 @@ test("dependency on same name as workspace and dist-tag", async () => {
   expect(await exists(join(packageDir, "packages", "bar", "node_modules", "no-deps"))).toBeFalse();
 });
 
+test.concurrent("aliased dist-tag whose alias matches a workspace name fetches the alias target", async () => {
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+  await Promise.all([
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({
+        name: "pkg1",
+        version: "9.9.9",
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "consumer", "package.json"),
+      JSON.stringify({
+        name: "consumer",
+        version: "1.0.0",
+        dependencies: {
+          // alias key "pkg1" collides with workspace "pkg1", but the target is
+          // registry package "no-deps" and must be fetched, not linked.
+          "pkg1": "npm:no-deps@latest",
+        },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "packages", "consumer", "node_modules", "pkg1", "package.json")).json()).toEqual({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+});
+
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
   using ctx = await setupTest();
   const { packageDir, env } = ctx;
@@ -2070,7 +2110,7 @@ registry = "${verdaccio.registryUrl()}"
     const { stderr, exited } = spawn({
       cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
       cwd: packageDir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });

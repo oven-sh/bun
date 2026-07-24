@@ -1685,6 +1685,10 @@ impl Package<u64> {
                 let npm_name = dependency_version.npm().name;
                 semver::string::Builder::string_hash(npm_name.slice(buf))
             }
+            dependency::version::Tag::DistTag => {
+                let dist_tag_name = dependency_version.dist_tag().name;
+                semver::string::Builder::string_hash(dist_tag_name.slice(buf))
+            }
             dependency::version::Tag::Workspace => {
                 if strings::has_prefix(sliced.slice, b"workspace:") {
                     'brk: {

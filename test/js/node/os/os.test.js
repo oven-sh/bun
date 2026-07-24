@@ -137,7 +137,7 @@ describe("userInfo", () => {
     return JSON.parse(stdout);
   }
 
-  it("is read from the operating system, not the environment", async () => {
+  it.concurrent("is read from the operating system, not the environment", async () => {
     const [a, b] = await Promise.all([userInfoWithPoisonedEnv("a"), userInfoWithPoisonedEnv("b")]);
 
     // Two children that disagree on every relevant environment variable must
@@ -157,7 +157,7 @@ describe("userInfo", () => {
         .map(line => line.split(":"))
         .find(fields => fields.length >= 7 && Number(fields[2]) === process.geteuid());
 
-  it.skipIf(!passwdEntry)("reports the passwd entry of the effective uid", async () => {
+  it.concurrent.skipIf(!passwdEntry)("reports the passwd entry of the effective uid", async () => {
     expect(await userInfoWithPoisonedEnv("passwd")).toEqual({
       uid: process.geteuid(),
       gid: Number(passwdEntry[3]),
@@ -171,7 +171,7 @@ describe("userInfo", () => {
   // a uid with no passwd entry must throw the same `ERR_SYSTEM_ERROR` node does,
   // not fabricate a record from the environment. Needs Linux `setpriv` + root.
   const canSetpriv = isLinux && process.geteuid?.() === 0 && Bun.which("setpriv") != null;
-  it.skipIf(!canSetpriv)("throws ERR_SYSTEM_ERROR when the effective uid has no passwd entry", async () => {
+  it.concurrent.skipIf(!canSetpriv)("throws ERR_SYSTEM_ERROR when the effective uid has no passwd entry", async () => {
     // A uid that almost certainly has no /etc/passwd row in any CI image.
     const uid = "54321";
     await using proc = Bun.spawn({
@@ -214,7 +214,7 @@ describe("userInfo", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.skipIf(!canSetpriv)("homedir() throws ERR_SYSTEM_ERROR when $HOME is unset and no passwd entry", async () => {
+  it.concurrent.skipIf(!canSetpriv)("homedir() throws ERR_SYSTEM_ERROR when $HOME is unset and no passwd entry", async () => {
     const uid = "54321";
     const { HOME, USERPROFILE, ...envWithoutHome } = bunEnv;
     await using proc = Bun.spawn({
@@ -277,6 +277,7 @@ describe("userInfo", () => {
     const hex = os.userInfo({ encoding: "hex" });
     expect(hex.username).toBe(Buffer.from(info.username).toString("hex"));
     expect(hex.homedir).toBe(Buffer.from(info.homedir).toString("hex"));
+    expect(hex.shell).toBe(isWindows ? null : Buffer.from(info.shell).toString("hex"));
   });
 
   it("ignores options it cannot use, like node", () => {

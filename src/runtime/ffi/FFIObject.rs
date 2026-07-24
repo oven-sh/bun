@@ -742,7 +742,7 @@ pub(crate) fn getter(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
 /// Minimal `ArgumentsSlice::nextEat` — pops the next non-consumed argument.
 /// `wrapStaticMethod`'s arena/protect machinery is unused for the FFI fields
 /// (no `StringOrBuffer` params, `auto_protect=false`), so a bare cursor over
-/// `arguments_old(N).slice()` is semantically identical.
+/// `callframe.arguments()` is semantically identical.
 #[inline]
 fn next_eat<'a>(iter: &mut core::slice::Iter<'a, JSValue>) -> Option<JSValue> {
     iter.next().copied()
@@ -803,8 +803,7 @@ mod fields {
 
     // viewSource → FFI::print(global, JSValue, ?JSValue) -> JsResult<JSValue>
     pub(super) fn view_source(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
         let is_callback = next_eat(&mut iter);
         FfiImpl::print(global, object, is_callback)
@@ -812,8 +811,7 @@ mod fields {
 
     // dlopen → FFI::open(global, ZigString, JSValue) -> JSValue
     pub(super) fn dlopen(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let name = eat_zig_string(global, &mut iter)?;
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::open(global, name, object))
@@ -821,8 +819,7 @@ mod fields {
 
     // callback → FFI::callback(global, JSValue, JSValue) -> JsResult<JSValue>
     pub(super) fn callback(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let interface = eat_required(global, &mut iter)?;
         let js_callback = eat_required(global, &mut iter)?;
         FfiImpl::callback(global, interface, js_callback)
@@ -833,16 +830,14 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let object = eat_required(global, &mut iter)?;
         Ok(FfiImpl::link_symbols(global, object))
     }
 
     // toBuffer → to_buffer(global, JSValue, ?JSValue×4) -> JsResult<JSValue>
     pub(super) fn to_buffer(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);
@@ -856,8 +851,7 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<5>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);
@@ -871,16 +865,14 @@ mod fields {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let ctx = eat_required(global, &mut iter)?;
         Ok(FfiImpl::close_callback(global, ctx))
     }
 
     // CString → new_cstring(global, JSValue, ?JSValue, ?JSValue) -> JsResult<JSValue>
     pub(super) fn cstring(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<3>();
-        let mut iter = args.slice().iter();
+        let mut iter = callframe.arguments().iter();
         let value = eat_required(global, &mut iter)?;
         let byte_offset = next_eat(&mut iter);
         let length = next_eat(&mut iter);

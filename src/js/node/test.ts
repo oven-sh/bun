@@ -720,14 +720,23 @@ async function runOneFile(
 function reviveSerializedValue(value: unknown) {
   if (value !== null && typeof value === "object") {
     const tag = (value as { _bunTag?: unknown })._bunTag;
-    if (tag === "nf") return Number((value as { v: string }).v);
-    if (tag === "bi") return BigInt((value as { v: string }).v);
-    if (tag === "v") return (value as { v: unknown }).v;
+    const v = (value as { v: unknown }).v;
+    // A hostile marker line can forge { _bunTag: 'bi', v: 'x' }; return the
+    // envelope as-is rather than let BigInt() throw and destroy the run stream.
+    try {
+      if (tag === "nf") return Number(v);
+      if (tag === "bi") return BigInt(v as string);
+    } catch {
+      return value;
+    }
+    if (tag === "v") return v;
   }
   return value;
 }
 
 function rebuildError(serialized: any, depth = 0): Error {
+  // Child stdout is user-controlled: a hostile marker can send error:null.
+  if (serialized === null || typeof serialized !== "object") return new Error(String(serialized));
   const { message, stack, name, code, failureType, cause } = serialized;
   const generatedMessage = reviveSerializedValue(serialized.generatedMessage);
   const operator = reviveSerializedValue(serialized.operator);
@@ -748,8 +757,8 @@ function rebuildError(serialized: any, depth = 0): Error {
   if (operator !== undefined) error.operator = operator;
   if (diff !== undefined) error.diff = diff;
   if (failureType !== undefined) error.failureType = failureType;
-  if (cause !== undefined && depth < 8)
-    error.cause = cause?.nonError === true ? reviveSerializedValue(cause) : rebuildError(cause, depth + 1);
+  if (cause != null && depth < 8)
+    error.cause = cause.nonError === true ? reviveSerializedValue(cause) : rebuildError(cause, depth + 1);
   return error;
 }
 
@@ -801,7 +810,7 @@ function republishChildEvent(
     const detailType = isSuite ? "suite" : "test";
     const serialized = data.error;
     let error;
-    if (serialized !== undefined) {
+    if (serialized != null) {
       error = Error.isError(serialized) ? serialized : rebuildError(serialized);
     }
     data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
@@ -3788,8 +3797,11 @@ async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) 
     }
   } else {
     for (const child of node.standaloneChildren ?? []) {
-      if (signal?.aborted) break;
-      await runStandaloneEntry(child, signal);
+      // Abort cancels the suite's remaining children (node's recursive
+      // #cancel()), matching the setupFailed arm so the plan count and
+      // suite completion stay consistent.
+      if (signal?.aborted) reportCancelledNode(child.node);
+      else await runStandaloneEntry(child, signal);
     }
   }
   for (const hook of node.hooks.after) {

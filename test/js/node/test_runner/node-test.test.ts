@@ -572,6 +572,9 @@ test.concurrent("run(): a user test writing the run-event marker cannot error th
         process.stdout.write('\\0bun:test:run\\0null\\n');
         process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'x' }) + '\\n');
         process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'x', data: null }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'test:fail', data: { error: null } }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'test:fail', data: { error: { cause: null } } }) + '\\n');
+        process.stdout.write('\\0bun:test:run\\0' + JSON.stringify({ type: 'test:fail', data: { error: { actual: { _bunTag: 'bi', v: 'x' } } } }) + '\\n');
       });
     `,
     "driver.mjs": `
@@ -1068,7 +1071,7 @@ test.concurrent.each([
     `
       import { test } from 'node:test';
       test('first', () => { globalThis.__abort(); });
-      test('second', () => {});
+      test('second', () => { globalThis.__secondRan = true; });
     `,
   ],
   [
@@ -1077,15 +1080,15 @@ test.concurrent.each([
       import { describe, test } from 'node:test';
       describe('s', () => {
         test('first', () => { globalThis.__abort(); });
-        test('second', () => {});
+        test('second', () => { globalThis.__secondRan = true; });
       });
     `,
   ],
 ] as const)("run({isolation:'none'}): opts.signal stops between %s entries", async (_label, fixture) => {
   // The in-process entry loop (top-level and per-suite) checks the signal
-  // between tests, so aborting from inside the first test means the second
-  // never runs (the eval driver's SIGINT handler routes through this signal
-  // under --test-isolation=none).
+  // between tests, so aborting from inside the first test means the second's
+  // body never runs (the eval driver's SIGINT handler routes through this
+  // signal under --test-isolation=none).
   using dir = tempDir("node-test-inprocess-signal", {
     "f.test.mjs": fixture,
     "driver.mjs": `
@@ -1093,18 +1096,18 @@ test.concurrent.each([
       import { fileURLToPath } from 'node:url';
       const ac = new AbortController();
       globalThis.__abort = () => ac.abort();
+      globalThis.__secondRan = false;
       const stream = run({
         files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))],
         isolation: 'none',
         signal: ac.signal,
       });
-      const ev = [];
-      stream.on('test:pass', t => ev.push(['pass', t.name]));
-      stream.on('test:fail', t => ev.push(['fail', t.name]));
-      stream.on('test:interrupted', () => ev.push(['interrupted']));
-      stream.on('test:summary', t => { if (t.file === undefined) ev.push(['success', t.success]); });
+      const seen = { passes: [], interrupted: false, success: null };
+      stream.on('test:pass', t => seen.passes.push(t.name));
+      stream.on('test:interrupted', () => { seen.interrupted = true; });
+      stream.on('test:summary', t => { if (t.file === undefined) seen.success = t.success; });
       for await (const _ of stream);
-      console.log(JSON.stringify(ev));
+      console.log(JSON.stringify({ ...seen, secondRan: globalThis.__secondRan }));
     `,
   });
   await using proc = Bun.spawn({
@@ -1115,8 +1118,8 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ events: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-    events: [["pass", "first"], ["interrupted"], ["success", false]],
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: { passes: ["first"], interrupted: true, success: false, secondRan: false },
     stderr: "",
     exitCode: 0,
   });

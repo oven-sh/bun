@@ -36,6 +36,8 @@ use crate::webcore::{
     AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure,
 };
 
+use super::sri::{self, IntegrityMetadata};
+
 use bun_jsc::JsTerminatedResult;
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
@@ -117,6 +119,10 @@ pub struct FetchTasklet {
     pub upgraded_connection: bool,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
+    /// Parsed subresource-integrity metadata from the request's `integrity`
+    /// option. When set, the response body is fully buffered and verified
+    /// before the fetch promise settles (WHATWG fetch, main fetch step 22).
+    pub integrity: Option<IntegrityMetadata>,
     pub is_waiting_body: bool,
     pub is_waiting_abort: bool,
     pub is_waiting_request_stream_start: bool,
@@ -1025,6 +1031,25 @@ impl FetchTasklet {
             return r;
         }
 
+        // WHATWG fetch, main fetch step 22: with non-empty integrity metadata
+        // the response body must be fully read and verified before the fetch
+        // promise settles. Headers have arrived (the `metadata.is_none()`
+        // early return above didn't fire), so wait for the remaining body
+        // ticks; `BodyReceiveMode::BufferAll` (set in `get`) keeps the
+        // transport flowing into `scheduled_response_buffer` meanwhile. On the
+        // final tick, a digest mismatch becomes a network error via `on_reject`.
+        if self.result.is_success() {
+            if let Some(integrity) = self.integrity.as_ref() {
+                if self.result.has_more {
+                    cleanup(self);
+                    return Ok(());
+                }
+                if !integrity.matches(self.scheduled_response_buffer.list.as_slice()) {
+                    self.result.fail = Some(err!("IntegrityMismatch"));
+                }
+            }
+        }
+
         let tracker = self.tracker;
         tracker.will_dispatch(&global_this);
         // defer block:
@@ -1293,6 +1318,10 @@ impl FetchTasklet {
             return BodyValueError::TypeError(BunString::static_(
                 "Request body is a ReadableStream and cannot be replayed for this redirect",
             ));
+        }
+
+        if fail == err!("IntegrityMismatch") {
+            return BodyValueError::TypeError(BunString::static_(sri::MISMATCH_MESSAGE));
         }
 
         // some times we don't have metadata so we also check http.url
@@ -1901,6 +1930,7 @@ impl FetchTasklet {
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
             hostname: fetch_options.hostname,
+            integrity: fetch_options.integrity,
             is_waiting_body: false,
             is_waiting_abort: false,
             is_waiting_request_stream_start: false,
@@ -1912,6 +1942,18 @@ impl FetchTasklet {
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to_with_backpressure();
+
+        // Integrity verification needs the complete body before the promise
+        // settles, so the response is never streamed. Force `BufferAll` up
+        // front: in the default `AutoPause` mode `callback` pauses the
+        // transport after the first body chunk, and every resume hook
+        // (on_start_buffering / on_start_streaming / on_stream_drained)
+        // requires a Response object we deliberately have not created yet.
+        if fetch_tasklet.integrity.is_some() {
+            fetch_tasklet
+                .signal_store
+                .set_receive_mode_terminal(BodyReceiveMode::BufferAll);
+        }
 
         fetch_tasklet.tracker.did_schedule(global_this);
 
@@ -2563,6 +2605,8 @@ pub struct FetchOptions {
     pub global_this: Option<GlobalRef>,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
+    /// Parsed subresource-integrity metadata from the `integrity` option.
+    pub integrity: Option<IntegrityMetadata>,
     pub check_server_identity: StrongOptional,
     pub unix_socket_path: ZigStringSlice,
     pub ssl_config: Option<http::ssl_config::SharedPtr>,
@@ -2599,6 +2643,7 @@ impl Default for FetchOptions {
             signal: None,
             global_this: None,
             hostname: None,
+            integrity: None,
             check_server_identity: StrongOptional::empty(),
             unix_socket_path: ZigStringSlice::EMPTY,
             ssl_config: None,

@@ -691,5 +691,26 @@ describe("decorator metadata", () => {
       expect(stdout).toBe("RealClass true\n");
       expect(exitCode).toBe(0);
     });
+
+    test("split star import stays parseable under minifyWhitespace", () => {
+      const transpiler = new Bun.Transpiler({
+        loader: "ts",
+        minifyWhitespace: true,
+        trimUnusedImports: true,
+        tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+      });
+      const out = transpiler.transformSync(`
+        import { RealClass, JustInterface } from "./mod";
+        function dec(...args: any[]) {}
+        class Thing {
+          @dec a!: JustInterface;
+          @dec b!: RealClass;
+        }
+        new RealClass();
+      `);
+      expect(out).toContain(`import*as import_mod_0 from"./mod";import{RealClass}from"./mod";`);
+      // must still parse as a module
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(out)).not.toThrow();
+    });
   });
 });

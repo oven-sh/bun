@@ -4145,7 +4145,6 @@ unsafe fn transpile_file(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
-    source_code_override: *const bun_core::String,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
@@ -4172,12 +4171,6 @@ unsafe fn transpile_file(
     // SAFETY: per fn contract — null or a live `bun.String*`.
     let type_attribute_str: Option<&[u8]> =
         unsafe { type_attribute.as_ref() }.and_then(|s| s.as_utf8());
-
-    // Source text supplied by the caller (a monkey-patched `fs.readFileSync`
-    // override, threaded in from `fetchCommonJSModuleNonBuiltin`). When set,
-    // the transpiler parses these bytes instead of reading from disk.
-    // SAFETY: per fn contract — null or a live `bun.String*` valid for the call.
-    let source_code_override_slice = unsafe { source_code_override.as_ref() }.map(|s| s.to_utf8());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
@@ -4217,25 +4210,6 @@ unsafe fn transpile_file(
         }
     });
 
-    // ── fs.readFileSync override ────────────────────────────────────────────
-    // Own the storage in a separate slot so `lr.virtual_source` (which already
-    // borrows `virtual_source_to_use`) can be repointed without aliasing it.
-    let source_code_override_source: Option<bun_ast::Source>;
-    if let Some(ref slice) = source_code_override_slice {
-        if lr.virtual_source.is_none() {
-            source_code_override_source = Some(bun_ast::Source::init_path_string(
-                lr.path.text,
-                slice.slice(),
-            ));
-            lr.virtual_source = source_code_override_source.as_ref();
-        } else {
-            source_code_override_source = None;
-        }
-    } else {
-        source_code_override_source = None;
-    }
-    let _ = &source_code_override_source;
-
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
@@ -4269,6 +4243,56 @@ unsafe fn transpile_file(
             }
         }
     }
+
+    // ── fs.readFileSync override ────────────────────────────────────────────
+    // Node's `Module._extensions['.js']` reads module source through the
+    // public `fs.readFileSync` property. This sits after the
+    // `CommonJsCustomExtension` short-circuit above so that when a user wraps
+    // `Module._extensions['.js']` and delegates to the built-in loader, the
+    // override fires exactly once (from inside the delegation), matching Node.
+    // Own the returned string + UTF-8 view + `Source` in separate slots so
+    // `lr.virtual_source` can borrow the last without aliasing
+    // `virtual_source_to_use`.
+    let fs_override_owned: Option<bun_core::OwnedString>;
+    let fs_override_slice;
+    let fs_override_source: Option<bun_ast::Source>;
+    if (is_commonjs_require || force_loader_type.is_some())
+        && lr.virtual_source.is_none()
+        && !matches!(lr.loader, Some(Loader::Napi))
+        && bun_paths::is_absolute(lr.path.text)
+        && !bun_core::strings::has_suffix_comptime(lr.path.text, b".node")
+    {
+        // SAFETY: per fn contract — `specifier_ptr` is valid for the call.
+        match global_ref.call_overridden_fs_read_file_sync(unsafe { &*specifier_ptr }) {
+            Ok(Some(owned)) => {
+                fs_override_owned = Some(owned);
+                fs_override_slice = fs_override_owned.as_ref().map(|s| s.get().to_utf8());
+                fs_override_source = fs_override_slice
+                    .as_ref()
+                    .map(|s| bun_ast::Source::init_path_string(lr.path.text, s.slice()));
+                lr.virtual_source = fs_override_source.as_ref();
+            }
+            Ok(None) => {
+                fs_override_owned = None;
+                fs_override_slice = None;
+                fs_override_source = None;
+            }
+            Err(_) => {
+                let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
+                // SAFETY: `ret` is a valid out-param per fn contract.
+                unsafe {
+                    *ret =
+                        ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
+                }
+                return ptr::null_mut();
+            }
+        }
+    } else {
+        fs_override_owned = None;
+        fs_override_slice = None;
+        fs_override_source = None;
+    }
+    let _ = (&fs_override_owned, &fs_override_slice, &fs_override_source);
 
     // ── module_type sniff from extension / package.json ─────────────────────
     let module_type: ModuleType = 'brk: {

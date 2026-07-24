@@ -1197,6 +1197,27 @@ impl JSGlobalObject {
         ZigGlobalObject__makeNapiEnvForFFI(self)
     }
 
+    /// If `require("fs").readFileSync` has been replaced, invoke it with
+    /// `(filename, 'utf8')` and return its result (string or Buffer decoded as
+    /// UTF-8). `Ok(None)` means `node:fs` has not loaded or the export still
+    /// points at the original; `Err` means the override threw or returned a
+    /// non-string, non-Buffer value. Node's CJS loader reads module source
+    /// through this property, so packages such as vue-tsc monkey-patch it to
+    /// rewrite a module before it is evaluated.
+    pub fn call_overridden_fs_read_file_sync(
+        &self,
+        filename: &BunString,
+    ) -> JsResult<Option<OwnedString>> {
+        let mut out = BunString::empty();
+        if !ZigGlobalObject__callOverriddenFsReadFileSync(self, filename, &mut out) {
+            return Ok(None);
+        }
+        if self.has_exception() {
+            return Err(JsError::Thrown);
+        }
+        Ok(Some(OwnedString::new(out)))
+    }
+
     // returns false if it throws
     pub fn validate_object(
         &self,
@@ -1646,6 +1667,12 @@ unsafe extern "C" {
     -> JSValue;
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
+
+    safe fn ZigGlobalObject__callOverriddenFsReadFileSync(
+        this: &JSGlobalObject,
+        filename: &BunString,
+        out_source: &mut BunString,
+    ) -> bool;
 
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
     safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;

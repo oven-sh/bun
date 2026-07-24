@@ -1256,16 +1256,6 @@ function globSync(pattern: string | string[], options): string[] {
   return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
 }
 
-// Node's CJS loader reads module source through `fs.readFileSync`, so
-// replacing it is a de-facto hook (vue-tsc/volar relies on it). The native
-// loader observes the flag and reads through the override instead of natively.
-const notifyFsReadFileSyncOverride = $newCppFunction(
-  "JSCommonJSExtensions.cpp",
-  "jsFunctionNotifyFsReadFileSyncOverride",
-  2,
-);
-var _readFileSync = readFileSync;
-
 var exports = {
   appendFile,
   appendFileSync,
@@ -1320,13 +1310,7 @@ var exports = {
   openSync,
   read,
   readFile,
-  get readFileSync() {
-    return _readFileSync;
-  },
-  set readFileSync(value) {
-    _readFileSync = value;
-    notifyFsReadFileSyncOverride(value, readFileSync);
-  },
+  readFileSync,
   readSync,
   readdir,
   readdirSync,
@@ -1429,6 +1413,12 @@ var exports = {
   promises,
 };
 export default exports;
+
+// Node's CJS loader reads module source through `fs.readFileSync`, so
+// replacing it is a de-facto hook into require() (vue-tsc/volar relies on
+// it). Record the exports object and the original function so the native
+// loader can detect a replacement and read through it instead of natively.
+$newCppFunction("JSCommonJSExtensions.cpp", "jsFunctionSetFsReadFileSyncForRequire", 2)(exports, readFileSync);
 
 // Preserve the names
 function setName(fn, value) {

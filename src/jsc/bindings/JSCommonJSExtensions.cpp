@@ -201,21 +201,71 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     return deleted;
 }
 
-// Called from the setter of `require("fs").readFileSync` so the CJS loader
-// can read module source through a user-provided override (Node parity).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionNotifyFsReadFileSyncOverride, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+// Called once from node:fs when it first evaluates, recording the exports
+// object and the original readFileSync so the CJS loader can detect a
+// user-installed replacement.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetFsReadFileSyncForRequire, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    JSC::JSValue value = callFrame->argument(0);
+    auto& vm = globalObject->vm();
+    JSC::JSObject* exports = callFrame->argument(0).getObject();
     JSC::JSValue original = callFrame->argument(1);
-    if (value.isCallable() && value != original) {
-        globalObject->hasOverriddenFsReadFileSync = true;
-        globalObject->m_overriddenFsReadFileSync.set(globalObject->vm(), globalObject, value);
-    } else {
-        globalObject->hasOverriddenFsReadFileSync = false;
-        globalObject->m_overriddenFsReadFileSync.clear();
+    if (exports && original.isCallable()) {
+        globalObject->m_fsModuleExportsForRequire.set(vm, globalObject, exports);
+        globalObject->m_fsReadFileSyncOriginal.set(vm, globalObject, original);
     }
     return JSValue::encode(jsUndefined());
+}
+
+// Node's CJS loader reads module source through the public
+// `fs.readFileSync` property, so monkey-patching it is a de-facto hook into
+// require(). `transpile_file` calls this once it has established that no
+// custom `Module._extensions` handler will claim the file, so the override
+// runs exactly once per require, from inside what is conceptually
+// `Module._extensions['.js']`, matching Node. Returns false when node:fs has
+// not been loaded or the export still points at the original function.
+extern "C" bool ZigGlobalObject__callOverriddenFsReadFileSync(Zig::GlobalObject* globalObject, const BunString* filename, BunString* outSource)
+{
+    JSC::JSObject* fsExports = globalObject->m_fsModuleExportsForRequire.get();
+    if (!fsExports) [[likely]]
+        return false;
+
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue current = fsExports->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "readFileSync"_s));
+    RETURN_IF_EXCEPTION(scope, true);
+    if (!current || current == globalObject->m_fsReadFileSyncOriginal.get() || !current.isCallable())
+        return false;
+
+    JSC::CallData callData = JSC::getCallData(current);
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsString(vm, filename->toWTFString(BunString::ZeroCopy)));
+    args.append(jsString(vm, String("utf8"_s)));
+    JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, current, callData, fsExports, args);
+    RETURN_IF_EXCEPTION(scope, true);
+    if (result.isString()) {
+        *outSource = Bun::toStringRef(result.toWTFString(globalObject));
+        RETURN_IF_EXCEPTION(scope, true);
+        return true;
+    }
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
+        auto span = view->span();
+        *outSource = Bun::toStringRef(WTF::String::fromUTF8(span));
+        return true;
+    }
+    throwTypeError(globalObject, scope, makeString("Overridden fs.readFileSync did not return a string or Buffer for '"_s, filename->toWTFString(BunString::ZeroCopy), "'"_s));
+    return true;
+}
+
+extern "C" bool ZigGlobalObject__hasOverriddenFsReadFileSync(Zig::GlobalObject* globalObject)
+{
+    JSC::JSObject* fsExports = globalObject->m_fsModuleExportsForRequire.get();
+    if (!fsExports) [[likely]]
+        return false;
+    auto& vm = globalObject->vm();
+    JSC::JSValue current = fsExports->getDirect(vm, JSC::Identifier::fromString(vm, "readFileSync"_s));
+    return current && current != globalObject->m_fsReadFileSyncOriginal.get();
 }
 
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)

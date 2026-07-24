@@ -5,7 +5,7 @@
 
 namespace Bun {
 
-JSC_DECLARE_HOST_FUNCTION(jsFunctionNotifyFsReadFileSyncOverride);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetFsReadFileSyncForRequire);
 
 // require.extensions & Module._extensions
 class JSCommonJSExtensions : public JSC::JSDestructibleObject {

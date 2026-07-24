@@ -256,7 +256,6 @@ pub struct LoaderHooks {
         allow_promise: bool,
         is_commonjs_require: bool,
         force_loader: u8,
-        source_code_override: *const bun_core::String,
     ) -> *mut c_void,
 }
 
@@ -344,7 +343,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader_type: u8, // bun.schema.api.Loader — passed as raw u8 across the cycle
-    source_code_override: *const bun_core::String,
 ) -> *mut c_void {
     jsc::mark_binding();
     let Some(hooks) = loader_hooks() else {
@@ -369,7 +367,6 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
             allow_promise,
             is_commonjs_require,
             force_loader_type,
-            source_code_override,
         )
     }
 }

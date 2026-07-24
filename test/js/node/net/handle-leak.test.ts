@@ -23,13 +23,14 @@ const server = net
 await listening;
 expect(server.address()).toBe(listen_path);
 
-// A per-connection handle leak (#22913) retains >= ~1.5 KB/conn (JS Socket alone,
-// measured), so 40k measured connections produces >= 60 MB of growth and is caught
-// by the 24/40 MB margins below with ~1.5-2x headroom. ASAN is ~90x slower per
-// connection and its 256 MB margin (quarantine-sized) makes it a sanity check
-// rather than a fine-grained detector, so it runs a quarter as many.
-const warmup_total = isASAN ? 5_000 : 20_000;
-const measured_total = isASAN ? 10_000 : 40_000;
+// Counts and margins are calibrated against bun v1.2.22 (the last release with
+// the #22913 bug): at 60k measured connections it produces ~21-31 MB of growth
+// on linux and ~28-35 MB on Windows, while a fixed build stays at or below
+// ~0 MB (linux) / ~8 MB (Windows) after a 30k warmup settles RSS. ASAN is ~90x
+// slower per connection and its 256 MB margin (quarantine-sized) makes it a
+// sanity check rather than a fine-grained detector, so it runs a sixth as many.
+const warmup_total = isASAN ? 5_000 : 30_000;
+const measured_total = isASAN ? 10_000 : 60_000;
 
 async function run(total: number) {
   let done = 0;
@@ -55,19 +56,22 @@ async function run(total: number) {
   }
 }
 
-await run(warmup_total);
-Bun.gc(true);
-const warmup_rss = process.memoryUsage.rss();
+let warmup_rss: number, post_rss: number;
+try {
+  await run(warmup_total);
+  Bun.gc(true);
+  warmup_rss = process.memoryUsage.rss();
 
-await run(measured_total);
-// Mirror the warmup sample: collect before measuring so the comparison isn't
-// inflated by transient garbage from the last batch. A native handle leak
-// survives GC, so this keeps catching what the test is for.
-Bun.gc(true);
-const post_rss = process.memoryUsage.rss();
-
-server.close();
-rmSync(listen_path, { force: true });
+  await run(measured_total);
+  // Mirror the warmup sample: collect before measuring so the comparison isn't
+  // inflated by transient garbage from the last batch. A native handle leak
+  // survives GC, so this keeps catching what the test is for.
+  Bun.gc(true);
+  post_rss = process.memoryUsage.rss();
+} finally {
+  server.close();
+  rmSync(listen_path, { force: true });
+}
 
 const delta = post_rss - warmup_rss;
 console.log(
@@ -75,15 +79,15 @@ console.log(
     `(warmup ${(warmup_rss / 1024 / 1024) | 0} MB -> ${(post_rss / 1024 / 1024) | 0} MB)`,
 );
 
-// Per-Socket fields added for onread/tls bookkeeping raise steady-state RSS a
-// few MB across the measured run; a real per-connection leak produces >= 60 MB
-// at 40k connections (verified by retaining the JS Socket on each iteration).
-let margin = 1024 * 1024 * 24;
-if (isWindows) margin = 1024 * 1024 * 40;
+// bytes/conn sensitivity at these margins is the same as the previous
+// 100k-connection version (~270 bytes/conn linux, ~330 bytes/conn Windows) and
+// was verified to fail against bun v1.2.22.
+let margin = 1024 * 1024 * 16;
+if (isWindows) margin = 1024 * 1024 * 20;
 // Under ASAN we use the system allocator so the interceptor sees every
 // allocation. The ASAN free-quarantine (default 256 MB) plus glibc malloc
 // retaining freed pages causes RSS to grow well past the native margin above
-// even with no real leak. Observed ~30-45 MB on linux x64-asan at 10k measured;
-// allow up to the default quarantine size.
+// even with no real leak; allow up to the default quarantine size. The release
+// lanes above are the leak detector.
 if (isASAN) margin = 1024 * 1024 * 256;
 expect(delta).toBeLessThan(margin);

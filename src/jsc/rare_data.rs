@@ -743,81 +743,91 @@ impl RareData {
     }
 
     // ── socket groups: lazy init ──────────────────────────────────────────
+    //
+    // These take the `uws::Loop` pointer directly (rather than
+    // `&VirtualMachine`) because every caller reaches `&mut RareData` through
+    // `vm.rare_data()`, which already holds `&mut VirtualMachine`; requiring a
+    // second `&VirtualMachine` just to read `vm.uws_loop()` forced a raw-pointer
+    // split-borrow at every call site. The loop pointer is `Copy` and read
+    // before `rare_data()` is borrowed, so no aliasing.
     #[inline]
-    fn lazy_group<'a>(g: &'a mut SocketGroup, vm: &VirtualMachine) -> &'a mut SocketGroup {
+    fn lazy_group(g: &mut SocketGroup, loop_: *mut uws::Loop) -> &mut SocketGroup {
         if g.loop_.is_null() {
-            g.init(vm.uws_loop(), None, core::ptr::null_mut());
+            g.init(loop_, None, core::ptr::null_mut());
         }
         g
     }
 
-    pub fn spawn_ipc_group(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
-        Self::lazy_group(&mut self.spawn_ipc_group, vm)
+    pub fn spawn_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        Self::lazy_group(&mut self.spawn_ipc_group, loop_)
     }
-    pub fn test_parallel_ipc_group(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
-        Self::lazy_group(&mut self.test_parallel_ipc_group, vm)
+    pub fn test_parallel_ipc_group(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
+        Self::lazy_group(&mut self.test_parallel_ipc_group, loop_)
     }
     /// One shared group per (VM, ssl) for every `Bun.connect` / `tls.connect`
     /// client socket. Replaces the old per-connection `us_socket_context_t`
     /// allocation that was the root of the SSL_CTX-per-connect leak.
-    pub fn bun_connect_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn bun_connect_group<const SSL: bool>(
+        &mut self,
+        loop_: *mut uws::Loop,
+    ) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.bun_connect_group_tls
             } else {
                 &mut self.bun_connect_group_tcp
             },
-            vm,
+            loop_,
         )
     }
-    pub fn postgres_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn postgres_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.postgres_tls_group
             } else {
                 &mut self.postgres_group
             },
-            vm,
+            loop_,
         )
     }
-    pub fn mysql_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn mysql_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.mysql_tls_group
             } else {
                 &mut self.mysql_group_
             },
-            vm,
+            loop_,
         )
     }
-    pub fn valkey_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn valkey_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.valkey_tls_group
             } else {
                 &mut self.valkey_group_
             },
-            vm,
+            loop_,
         )
     }
-    pub fn ws_upgrade_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn ws_upgrade_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.ws_upgrade_tls_group
             } else {
                 &mut self.ws_upgrade_group_
             },
-            vm,
+            loop_,
         )
     }
-    pub fn ws_client_group<const SSL: bool>(&mut self, vm: &VirtualMachine) -> &mut SocketGroup {
+    pub fn ws_client_group<const SSL: bool>(&mut self, loop_: *mut uws::Loop) -> &mut SocketGroup {
         Self::lazy_group(
             if SSL {
                 &mut self.ws_client_tls_group
             } else {
                 &mut self.ws_client_group_
             },
-            vm,
+            loop_,
         )
     }
 

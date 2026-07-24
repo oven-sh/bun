@@ -160,7 +160,7 @@ impl DependencyExt for Dependency {
     }
 
     /// Sorting order for dependencies is:
-    /// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
+    /// 1. [ `workspaces`, `devDependencies`, `optionalDependencies`, `dependencies`, `peerDependencies` ]
     /// 2. name ASC
     /// "name" must be ASC so that later, when we rebuild the lockfile
     /// we insert it back in reverse order without an extra sorting pass

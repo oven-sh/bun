@@ -6079,7 +6079,11 @@ pub unsafe extern "C" fn Blob__implGetSpan(
     let data = blob.shared_view();
     // SAFETY: forwarded from the caller's contract.
     unsafe {
-        *out_ptr = if data.is_empty() { core::ptr::null() } else { data.as_ptr() };
+        *out_ptr = if data.is_empty() {
+            core::ptr::null()
+        } else {
+            data.as_ptr()
+        };
         *out_len = data.len();
     }
 }

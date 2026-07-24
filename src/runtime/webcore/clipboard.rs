@@ -181,7 +181,9 @@ impl AnyTaskJobCtx for ClipboardCtx {
                     )
                 };
             }
-            Outcome::Failed(unavailable) => complete_with_failure(global, self.request.0, unavailable),
+            Outcome::Failed(unavailable) => {
+                complete_with_failure(global, self.request.0, unavailable)
+            }
         }
         Ok(())
     }

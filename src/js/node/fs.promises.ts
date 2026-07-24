@@ -815,7 +815,7 @@ function asyncWrap(fn: any, name: string) {
 
           let bytesRead;
           try {
-            ({ bytesRead } = await handle.read(view, view.byteOffset, view.byteLength));
+            ({ bytesRead } = await handle.read(view, 0, view.byteLength));
           } catch (err) {
             if (done) return;
             await ondone();

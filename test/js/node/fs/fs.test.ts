@@ -362,6 +362,23 @@ describe("FileHandle", () => {
     reader.releaseLock();
   });
 
+  it("FileHandle#readableWebStream BYOB reader accepts a subarray view", async () => {
+    using dir = tempDir("fh-readablewebstream-byob", {
+      "data.bin": Buffer.alloc(200, "X").toString(),
+    });
+    await using fh = await fs.promises.open(join(String(dir), "data.bin"));
+    const reader = fh.readableWebStream().getReader({ mode: "byob" });
+
+    const backing = new ArrayBuffer(1000);
+    const { value, done } = await reader.read(new Uint8Array(backing, 500, 100));
+
+    expect(done).toBe(false);
+    expect(value.byteOffset).toBe(500);
+    expect(value.byteLength).toBe(100);
+    expect(Buffer.from(value).toString()).toBe(Buffer.alloc(100, "X").toString());
+    reader.releaseLock();
+  });
+
   it("FileHandle#createReadStream", async () => {
     await using fd = await fs.promises.open(__filename);
     const readable = fd.createReadStream();

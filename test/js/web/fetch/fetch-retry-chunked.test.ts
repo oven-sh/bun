@@ -63,8 +63,7 @@ test("chunked uncompressed body over a retried keep-alive connection", async () 
 
 // The <=16 KiB chunked-body dispatcher routes identity bodies through the
 // append + decode-in-tail path and compressed bodies through the scratch
-// decode path. These pin both paths for a body that fits in one read and for
-// one that is split so the first read yields -2 (needs more data).
+// decode path. These pin both paths for a body that fits in one read.
 describe("small chunked body decode", () => {
   function chunked(buf: Buffer): Buffer {
     return Buffer.concat([Buffer.from(buf.length.toString(16) + "\r\n"), buf, Buffer.from("\r\n0\r\n\r\n")]);

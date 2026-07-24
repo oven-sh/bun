@@ -3,8 +3,8 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
-    ZigStringJsc as _,
+    AnyPromise, CallFrame, DOMFormData, ErrorCode, JSGlobalObject, JSValue, JsError, JsResult,
+    JsTerminated,
 };
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
@@ -50,7 +50,14 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    ZigString::init(b"FormData missing boundary").to_error_instance(global),
+                    global
+                        .err(
+                            ErrorCode::FORMDATA_PARSE_ERROR,
+                            format_args!(
+                                "Can't decode form data from body because of incorrect MIME type/boundary"
+                            ),
+                        )
+                        .to_js(),
                 )?;
                 return Ok(());
             }
@@ -62,7 +69,12 @@ impl AsyncFormDataExt for AsyncFormData {
                 scoped_log!(FormData, "AsnycFormData.toJS -> failed ");
                 promise.reject(
                     global,
-                    global.create_error_instance(format_args!("FormData {}", e.name())),
+                    global
+                        .err(
+                            ErrorCode::FORMDATA_PARSE_ERROR,
+                            format_args!("FormData parse error {}", e.name()),
+                        )
+                        .to_js(),
                 )?;
                 return Ok(());
             }
@@ -163,7 +175,12 @@ pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         Ok(v) => Ok(v),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
         Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
-        Err(e) => Err(global.throw_error(e, "while parsing FormData")),
+        Err(e) => Err(global
+            .err(
+                ErrorCode::FORMDATA_PARSE_ERROR,
+                format_args!("FormData parse error {}", e.name()),
+            )
+            .throw()),
     }
 }
 

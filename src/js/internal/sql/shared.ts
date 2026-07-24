@@ -937,6 +937,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   abstract getRollbackDistributedSQL(name: string): string;
   abstract escapeIdentifier(name: string): string;
   abstract connectionClosedError(): Error;
+  abstract acquisitionTimeoutError(ms: number, max: number): Error;
   abstract notTaggedCallError(): Error;
   abstract queryCancelledError(): Error;
   abstract invalidTransactionStateError(message: string): Error;
@@ -1282,6 +1283,63 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
   connect(onConnected: (err: Error | null, result: any) => void, reserved: boolean = false) {
     if (this.closed) {
       return onConnected(this.connectionClosedError(), null);
+    }
+
+    // connectionTimeout bounds the total time to obtain a usable connection,
+    // including waiting for a free pool slot. Without this, a pool whose slots
+    // are all reserved (or leaked) leaves every later caller pending forever.
+    const connectionTimeout = this.connectionInfo.connectionTimeout ?? 30 * 1000;
+    if (connectionTimeout > 0) {
+      const callback = onConnected;
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      const wrapped = (err: Error | null, connection: any) => {
+        if (settled) {
+          // Timed out before the pool delivered this slot; don't leak it.
+          if (!err && connection) this.release(connection);
+          return;
+        }
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        callback(err, connection);
+      };
+      const onAcquisitionTimeout = () => {
+        timer = null;
+        if (settled) return;
+        // Only a pool with at least one established connection can be
+        // "exhausted". If every slot is still connecting or closed, the
+        // native connect timeout / retry budget owns the outcome and will
+        // drain the queue with the underlying error. Re-arm so a slot that
+        // connects after the first deadline still leaves this waiter bounded.
+        if (!this.isConnected()) {
+          timer = setTimeout(onAcquisitionTimeout, 100);
+          return;
+        }
+        settled = true;
+        let idx = this.waitingQueue.indexOf(wrapped);
+        if (idx !== -1) this.waitingQueue.splice(idx, 1);
+        else {
+          idx = this.reservedQueue.indexOf(wrapped);
+          if (idx !== -1) {
+            this.reservedQueue.splice(idx, 1);
+            // connect(_, true) may have marked a busy connection preReserved
+            // for this waiter; with no reserved waiters left that hold is
+            // unjustified and would keep flushConcurrentQueries() skipping it.
+            if (this.reservedQueue.length === 0) {
+              for (const c of this.connections) {
+                if (c) c.flags &= ~PooledConnectionFlags.preReserved;
+              }
+              this.flushConcurrentQueries();
+            }
+          }
+        }
+        callback(this.acquisitionTimeoutError(connectionTimeout, this.connections.length), null);
+        if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+          this.onAllQueriesFinished();
+        }
+      };
+      timer = setTimeout(onAcquisitionTimeout, connectionTimeout);
+      onConnected = wrapped;
     }
 
     if (this.readyConnections.size === 0) {

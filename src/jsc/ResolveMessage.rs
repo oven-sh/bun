@@ -141,9 +141,7 @@ impl ResolveMessage {
             // a path alias (SvelteKit uses `$app/*`, `$env/*`, `$lib/*`).
             Some(b'$') => true,
             // `~/` and `~~/` are Nuxt/Vite conventions for srcDir/rootDir.
-            Some(b'~') => {
-                matches!(specifier.get(1), Some(b'/')) || specifier.starts_with(b"~~/")
-            }
+            Some(b'~') => matches!(specifier.get(1), Some(b'/')) || specifier.starts_with(b"~~/"),
             _ => false,
         };
         if !looks_like_alias {

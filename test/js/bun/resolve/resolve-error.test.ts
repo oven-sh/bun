@@ -122,11 +122,7 @@ describe("ResolveMessage", () => {
           stderr: "pipe",
           stdout: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toBe("");
         expect(stderr).toContain(`Cannot find module '${specifier}'`);
         expect(stderr).toContain(hint);
@@ -144,11 +140,7 @@ describe("ResolveMessage", () => {
           stderr: "pipe",
           stdout: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stdout).toBe("");
         expect(stderr).not.toContain(hint);
         expect(exitCode).toBe(1);

@@ -6450,6 +6450,40 @@ describe("css tests", () => {
     error_test("@media (prefers-color-scheme = dark) { .foo { color: chartreuse }}", "ParserError::InvalidMediaQuery");
   });
 
+  describe("supports", () => {
+    cssTest(
+      `@supports (display: grid) { .a { color: red } }
+@supports (display: grid) { .b { color: blue } }`,
+      indoc`@supports (display: grid) {
+  .a {
+    color: red;
+  }
+
+  .b {
+    color: #00f;
+  }
+}
+`,
+    );
+    minify_test(
+      "@supports (display: grid) { .a { color: red } } @supports (display: grid) { .b { color: blue } }",
+      "@supports (display: grid){.a{color:red}.b{color:#00f}}",
+    );
+    minify_test(
+      "@supports (display: grid) { .a { color: red } } @supports (display: grid) { .b { color: blue } } @supports (display: grid) { .c { color: green } }",
+      "@supports (display: grid){.a{color:red}.b{color:#00f}.c{color:green}}",
+    );
+    minify_test(
+      "@supports (display: grid) { .a { color: red } } @supports (display: flex) { .b { color: blue } }",
+      "@supports (display: grid){.a{color:red}}@supports (display: flex){.b{color:#00f}}",
+    );
+    // https://github.com/oven-sh/bun/issues/24770
+    minify_test(
+      ".test { border-top: 1px solid red; @supports (color: blue) { border-top: 1px solid blue } @supports (color: blue) { border-left: 1px solid blue } @supports (color: blue) { border-bottom: 1px solid blue } }",
+      ".test{border-top:1px solid red;@supports (color: blue){&{border-top:1px solid #00f;border-bottom:1px solid #00f;border-left:1px solid #00f}}}",
+    );
+  });
+
   describe("transition", () => {
     minify_test(".foo { transition-duration: 500ms }", ".foo{transition-duration:.5s}");
     minify_test(".foo { transition-duration: .5s }", ".foo{transition-duration:.5s}");

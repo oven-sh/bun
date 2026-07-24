@@ -608,19 +608,19 @@ impl<'a> URL<'a> {
                 if !is_relative_path {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
+                        // An '@' that appears before the first '/' marks the end of the
+                        // userinfo section, regardless of whether a ':' precedes it.
                         // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
+                        if let Some(first_at) =
+                            strings::index_of_char(&base[offset as usize..], b'@')
+                        {
+                            if first_at
                                 < strings::index_of_char(&base[offset as usize..], b'/')
                                     .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                            {
+                                offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
+                                offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                            }
                         }
                     }
 

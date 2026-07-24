@@ -609,6 +609,61 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
+    test("crafted content-type is validated and normalized like the Blob constructor", async () => {
+      // A Blob's `type` is only stored when every byte is in U+0020..U+007E, and
+      // is ASCII-lowercased before storage. The deserializer must enforce the
+      // same rule on the wire record's content-type so a crafted image cannot
+      // materialize a `Blob.type` no `new Blob()` could produce and feed raw
+      // bytes (control chars, CR/LF) into `Response`'s `Content-Type` header.
+      //
+      // Locate the field by serializing a Blob whose type is a distinctive
+      // all-lowercase sentinel, then overwrite it in place; keeps the test
+      // robust against serializer framing changes.
+      const sentinel = "qwerty/probe-ct";
+      const image = Buffer.from(serialize(new Blob(["body"], { type: sentinel })));
+      const at = image.indexOf(Buffer.from(sentinel));
+      expect(at).toBeGreaterThan(0);
+
+      function craftType(bytes: string) {
+        expect(bytes.length).toBe(sentinel.length);
+        const out = Buffer.from(image);
+        out.set(Buffer.from(bytes, "binary"), at);
+        return out;
+      }
+
+      for (const de of [deserialize, (b: Buffer) => v8.deserialize(b)] as const) {
+        // A control byte anywhere in the field makes the whole type the empty
+        // string, and nothing reaches an outgoing Content-Type header.
+        const ctl = de(craftType("TEXT/HTM\x01;A=BCD"));
+        expect(ctl).toBeInstanceOf(Blob);
+        expect(await ctl.text()).toBe("body");
+        expect({
+          type: ctl.type,
+          ctor: new Blob(["x"], { type: "TEXT/HTM\x01;A=BCD" }).type,
+          response: new Response(ctl).headers.get("content-type"),
+        }).toEqual({ type: "", ctor: "", response: null });
+
+        // CR/LF (the header-injection vector) and DEL are rejected the same way.
+        for (const c of ["\r", "\n", "\x7f"]) {
+          expect(de(craftType(`text/plain${c};q=1`)).type).toBe("");
+        }
+
+        // A byte outside ASCII (>= 0x80) is rejected.
+        expect(de(craftType("text/pl\u00e1in;a=bc")).type).toBe("");
+
+        // Valid bytes with uppercase are accepted and lowercased, matching the
+        // constructor's normalization.
+        const upper = "ABCDE/WXYZ;Q=AA";
+        expect({
+          type: de(craftType(upper)).type,
+          ctor: new Blob(["x"], { type: upper }).type,
+        }).toEqual({ type: "abcde/wxyz;q=aa", ctor: "abcde/wxyz;q=aa" });
+
+        // A value the constructor already produces round-trips unchanged.
+        expect(de(image).type).toBe(sentinel);
+      }
+    });
+
     test("truncated payload at every byte boundary throws cleanly", () => {
       // Every truncation point must surface as a thrown error (never a
       // partially-constructed Blob, never a crash). This is the functional

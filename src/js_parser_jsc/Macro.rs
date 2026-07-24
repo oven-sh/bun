@@ -219,9 +219,10 @@ impl MacroContext {
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 
         let javascript_object = self.javascript_object;
-        // SAFETY: closure is run through JSC__VM__holdAPILock and executes the JS macro, which
-        // may re-enter MacroContext::call and mutate self.macros/self.bump; holding
-        // &-refs across that would alias.
+        // SAFETY: `self.bump` is `Option<Arena>` stored inline in this heap-boxed `MacroContext`,
+        // so its address is stable for the box's lifetime. The closure may re-enter
+        // `MacroContext::call` via JS, but re-entry sees `bump` already `Some` and does not move
+        // it. Captured raw so the closure does not extend a `&self` borrow across re-entry.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
         let bump: *const bun_alloc::Arena =

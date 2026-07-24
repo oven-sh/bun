@@ -11,16 +11,16 @@ together reduce it by ~30%.
 
 ## TL;DR
 
-* Peak working memory for a single DFG/FTL compilation is typically **100-300×**
+- Peak working memory for a single DFG/FTL compilation is typically **100-300×**
   the size of the generated code, and **1,700×** in the worst observed case
   (octane-zlib, 176 MB working set for 100 KB of output).
-* For both DFG-tier and FTL-tier compilations, **the DFG IR dominates**:
+- For both DFG-tier and FTL-tier compilations, **the DFG IR dominates**:
   70-80% of the FTL working set is allocated by DFG phases, not B3/Air.
-* Two structures account for ~70% of the DFG peak on large functions:
-  * per-`BasicBlock` `Operands<AbstractValue>` arrays (`valuesAtHead`,
+- Two structures account for ~70% of the DFG peak on large functions:
+  - per-`BasicBlock` `Operands<AbstractValue>` arrays (`valuesAtHead`,
     `valuesAtTail`, `intersectionOfPastValuesAtHead`): `blocks × operands × 3 × 32 B`
-  * Phi nodes created by CPS rethreading: up to `blocks × operands × sizeof(Node)`
-* The highest-leverage reductions are:
+  - Phi nodes created by CPS rethreading: up to `blocks × operands × sizeof(Node)`
+- The highest-leverage reductions are:
   1. Drop `intersectionOfPastValuesAtHead` for non-OSR-target blocks (-10 to -13%).
   2. Liveness-mask the per-block `Operands<AbstractValue>` arrays (-15 to -25%).
   3. Bump-allocate `DFG::Node` from the existing `SequesteredArena` path on all
@@ -44,21 +44,21 @@ configuration; `/proc/<pid>/statm` is sampled at ~1 ms. `JSC_useConcurrentJIT=0`
 so compilation happens on the main thread. Numbers below are `peakRSS(config)`
 in MB.
 
-| test | no-jit | baseline | dfg-only | ftl | dfg-concur | ftl-concur |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| richards | 32 | 36 | 38 | 42 | 40 | 49 |
-| delta-blue | 54 | 62 | 65 | 73 | 68 | 82 |
-| raytrace | 52 | 60 | 64 | 74 | 68 | 80 |
-| crypto | 32 | 36 | 39 | 44 | 43 | 49 |
-| navier-stokes | 23 | 27 | 30 | 35 | 31 | 39 |
-| gbemu | 53 | 121 | 132 | 143 | 138 | 152 |
-| Box2D | 52 | 74 | 78 | 97 | 82 | 105 |
-| **typescript** | 98 | 525 | 619 | **968** | 884 | **1055** |
-| **octane-zlib** | 36 | 43 | **223** | 231 | 225 | 242 |
-| Babylon | 53 | 83 | 89 | 101 | 98 | 131 |
-| ML | 53 | 66 | 71 | 82 | 73 | 95 |
-| Air | 54 | 102 | 111 | 123 | 123 | 152 |
-| cdjs | 53 | 97 | 102 | 99 | 103 | 102 |
+| test            | no-jit | baseline | dfg-only |     ftl | dfg-concur | ftl-concur |
+| --------------- | -----: | -------: | -------: | ------: | ---------: | ---------: |
+| richards        |     32 |       36 |       38 |      42 |         40 |         49 |
+| delta-blue      |     54 |       62 |       65 |      73 |         68 |         82 |
+| raytrace        |     52 |       60 |       64 |      74 |         68 |         80 |
+| crypto          |     32 |       36 |       39 |      44 |         43 |         49 |
+| navier-stokes   |     23 |       27 |       30 |      35 |         31 |         39 |
+| gbemu           |     53 |      121 |      132 |     143 |        138 |        152 |
+| Box2D           |     52 |       74 |       78 |      97 |         82 |        105 |
+| **typescript**  |     98 |      525 |      619 | **968** |        884 |   **1055** |
+| **octane-zlib** |     36 |       43 |  **223** |     231 |        225 |        242 |
+| Babylon         |     53 |       83 |       89 |     101 |         98 |        131 |
+| ML              |     53 |       66 |       71 |      82 |         73 |         95 |
+| Air             |     54 |      102 |      111 |     123 |        123 |        152 |
+| cdjs            |     53 |       97 |      102 |      99 |        103 |        102 |
 
 `ftl-concur - ftl` is the overhead of having 2 DFG + 7 FTL compiler threads
 run plans simultaneously (default thread counts). For typescript this is
@@ -74,15 +74,15 @@ end time and `codeSize` are known on stderr; RSS is sampled every ~0.2 ms and
 the spike `peakRSS - rssBefore` is attributed to the compile just completed.
 Top spikes:
 
-| benchmark | function | tier | codeSize | compile ms | RSS spike | ratio |
-| --- | --- | --- | ---: | ---: | ---: | ---: |
-| octane-zlib | `a1` | DFG | 100 KB | 371 | **176 MB** | 1760× |
-| octane-zlib | `a1` (OSR) | DFG | 101 KB | 375 | 131 MB | 1300× |
-| typescript | `#A9HIep` | FTL | 56 KB | 168 | 18.5 MB | 330× |
-| typescript | `#CDCNxP` | FTL | 36 KB | 141 | 17.1 MB | 475× |
-| typescript | `#A9HIep` | DFG | 47 KB | 18 | 8.8 MB | 187× |
-| Box2D | `#Al3BOp` | FTL | 18 KB | 52 | 4.8 MB | 267× |
-| gbemu | `#AYY9JL` | FTL | 30 KB | 28 | 6.0 MB | 200× |
+| benchmark   | function   | tier | codeSize | compile ms |  RSS spike | ratio |
+| ----------- | ---------- | ---- | -------: | ---------: | ---------: | ----: |
+| octane-zlib | `a1`       | DFG  |   100 KB |        371 | **176 MB** | 1760× |
+| octane-zlib | `a1` (OSR) | DFG  |   101 KB |        375 |     131 MB | 1300× |
+| typescript  | `#A9HIep`  | FTL  |    56 KB |        168 |    18.5 MB |  330× |
+| typescript  | `#CDCNxP`  | FTL  |    36 KB |        141 |    17.1 MB |  475× |
+| typescript  | `#A9HIep`  | DFG  |    47 KB |         18 |     8.8 MB |  187× |
+| Box2D       | `#Al3BOp`  | FTL  |    18 KB |         52 |     4.8 MB |  267× |
+| gbemu       | `#AYY9JL`  | FTL  |    30 KB |         28 |     6.0 MB |  200× |
 
 The octane-zlib `a1` function is an emscripten-compiled monolith: 130,377
 bytes of bytecode, 1,199 basic blocks, 497 locals+args, 51,046 DFG nodes after
@@ -96,25 +96,25 @@ timestamp gives a per-phase high-water mark.
 
 **octane-zlib `a1`, DFG-tier, 176 MB total:**
 
-| phase | RSS delta | notes |
-| --- | ---: | --- |
-| bytecode parser | **+92 MB** | allocates `BasicBlock` + all 5 `Operands<>` arrays + `Node`s |
-| CPS rethreading | **+62 MB** | Phi node creation (one per live-in `(block, var)`) |
-| control flow analysis | +10 MB | `FlowMap<AbstractValue>` + AtTail state |
-| constant folding | +10 MB | insertion set, new nodes |
-| machine code gen | +2.5 MB | assembler buffer, OSR exit tables |
+| phase                 |  RSS delta | notes                                                        |
+| --------------------- | ---------: | ------------------------------------------------------------ |
+| bytecode parser       | **+92 MB** | allocates `BasicBlock` + all 5 `Operands<>` arrays + `Node`s |
+| CPS rethreading       | **+62 MB** | Phi node creation (one per live-in `(block, var)`)           |
+| control flow analysis |     +10 MB | `FlowMap<AbstractValue>` + AtTail state                      |
+| constant folding      |     +10 MB | insertion set, new nodes                                     |
+| machine code gen      |    +2.5 MB | assembler buffer, OSR exit tables                            |
 
 **typescript `#CDCNxP`, FTL-tier, 19.2 MB total:**
 
-| phase group | RSS delta | % |
-| --- | ---: | ---: |
-| DFG parse + CPS | 3.3 MB | 17% |
-| DFG CFA + const-fold (CPS) | 1.5 MB | 8% |
-| DFG SSA conversion | 2.5 MB | 13% |
-| DFG SSA passes (GCSE, liveness, LICM, obj-alloc-elim, IRC, store-barrier) | 7.3 MB | 38% |
-| **DFG total** | **14.6 MB** | **76%** |
-| B3 lowering + passes | 2.8 MB | 15% |
-| Air (lowerToAir, liveness, regalloc, codegen) | 1.8 MB | 9% |
+| phase group                                                               |   RSS delta |       % |
+| ------------------------------------------------------------------------- | ----------: | ------: |
+| DFG parse + CPS                                                           |      3.3 MB |     17% |
+| DFG CFA + const-fold (CPS)                                                |      1.5 MB |      8% |
+| DFG SSA conversion                                                        |      2.5 MB |     13% |
+| DFG SSA passes (GCSE, liveness, LICM, obj-alloc-elim, IRC, store-barrier) |      7.3 MB |     38% |
+| **DFG total**                                                             | **14.6 MB** | **76%** |
+| B3 lowering + passes                                                      |      2.8 MB |     15% |
+| Air (lowerToAir, liveness, regalloc, codegen)                             |      1.8 MB |      9% |
 
 **Box2D `#Al3BOp`, FTL-tier, 5.8 MB**: DFG 80%, B3 8%, Air 12%.
 **gbemu `#AYY9JL`, FTL-tier, 6.0 MB**: DFG 33%, B3 18%, Air 47% (Air liveness
@@ -125,18 +125,18 @@ dominates; gbemu has many tmps, few locals).
 Release linux-x64. File references are relative to
 `vendor/WebKit/Source/JavaScriptCore/`.
 
-| type | sizeof | file:line |
-| --- | ---: | --- |
-| `DFG::Node` | **~104 B** | `dfg/DFGNode.h:3935-4101` |
-| `DFG::Edge` | 8 B | `dfg/DFGEdge.h:227` |
-| `DFG::AdjacencyList` | 24 B | `dfg/DFGAdjacencyList.h:43,199` |
-| `DFG::AbstractValue` | **32 B** | `dfg/DFGAbstractValue.h:418-464` |
-| `DFG::BasicBlock` (fixed part) | ~300 B | `dfg/DFGBasicBlock.h` |
-| `B3::Value` | 40 B (48 B min alloc) | `b3/B3Value.h:937-965` |
-| `B3::BasicBlock` | ~112 B | `b3/B3BasicBlock.h:179-184` |
-| `Air::Arg` | **32 B** | `b3/air/AirArg.h:1901-1914` |
-| `Air::Inst` | **~128 B** | `b3/air/AirInst.h:213-215` |
-| `Air::BasicBlock` | ~112 B | `b3/air/AirBasicBlock.h:151-156` |
+| type                           |                sizeof | file:line                        |
+| ------------------------------ | --------------------: | -------------------------------- |
+| `DFG::Node`                    |            **~104 B** | `dfg/DFGNode.h:3935-4101`        |
+| `DFG::Edge`                    |                   8 B | `dfg/DFGEdge.h:227`              |
+| `DFG::AdjacencyList`           |                  24 B | `dfg/DFGAdjacencyList.h:43,199`  |
+| `DFG::AbstractValue`           |              **32 B** | `dfg/DFGAbstractValue.h:418-464` |
+| `DFG::BasicBlock` (fixed part) |                ~300 B | `dfg/DFGBasicBlock.h`            |
+| `B3::Value`                    | 40 B (48 B min alloc) | `b3/B3Value.h:937-965`           |
+| `B3::BasicBlock`               |                ~112 B | `b3/B3BasicBlock.h:179-184`      |
+| `Air::Arg`                     |              **32 B** | `b3/air/AirArg.h:1901-1914`      |
+| `Air::Inst`                    |            **~128 B** | `b3/air/AirInst.h:213-215`       |
+| `Air::BasicBlock`              |                ~112 B | `b3/air/AirBasicBlock.h:151-156` |
 
 `DFG::BasicBlock` heap-allocates five `Operands<T>` vectors sized to
 `numArguments + numLocals + numTmps` in its constructor
@@ -159,19 +159,19 @@ measurements (36 KB code → ~1.4 MB of `Air::Inst`s).
 
 `B = 1199` blocks, `V = 497` operands, `N₀ = 51046` nodes after parsing.
 
-| component | formula | bytes |
-| --- | --- | ---: |
-| `BasicBlock` `valuesAtHead/Tail/intersection` | `B × V × 3 × 32` | **57.2 MB** |
-| `BasicBlock` `variablesAtHead/Tail` | `B × V × 2 × 8` | 9.5 MB |
-| Phi `Node`s from CPS rethreading | ~`B × Vₗᵢᵥₑ × (104 + overhead)` | **~62 MB** |
-| Post-parse `Node`s | `N₀ × (104 + 8 + ~16)` | ~6.5 MB |
-| `FullBytecodeLiveness` (header vectors + bit data) | `2 × bytecodeBytes × 16` + `2 × instrs × ⌈V/32⌉×4` | ~8 MB |
-| `FlowMap<AbstractValue>` (`m_abstractValuesCache`) | `Nₘₐₓ × 32` | ~2-4 MB |
-| `VariableAccessData` | `~N_setlocal × 64` | ~2.5 MB |
-| `VariableEventStream` | `~Nₘₐₓ × 3 × 14` | ~3 MB |
-| `OSRExit` + `OSRExitCompilationInfo` | `~Nₑₓᵢₜ × 150` | ~4 MB |
-| allocator slack + size-class quantization | | ~20 MB |
-| **total accounted** | | **~175 MB** |
+| component                                          | formula                                            |       bytes |
+| -------------------------------------------------- | -------------------------------------------------- | ----------: |
+| `BasicBlock` `valuesAtHead/Tail/intersection`      | `B × V × 3 × 32`                                   | **57.2 MB** |
+| `BasicBlock` `variablesAtHead/Tail`                | `B × V × 2 × 8`                                    |      9.5 MB |
+| Phi `Node`s from CPS rethreading                   | ~`B × Vₗᵢᵥₑ × (104 + overhead)`                    |  **~62 MB** |
+| Post-parse `Node`s                                 | `N₀ × (104 + 8 + ~16)`                             |     ~6.5 MB |
+| `FullBytecodeLiveness` (header vectors + bit data) | `2 × bytecodeBytes × 16` + `2 × instrs × ⌈V/32⌉×4` |       ~8 MB |
+| `FlowMap<AbstractValue>` (`m_abstractValuesCache`) | `Nₘₐₓ × 32`                                        |     ~2-4 MB |
+| `VariableAccessData`                               | `~N_setlocal × 64`                                 |     ~2.5 MB |
+| `VariableEventStream`                              | `~Nₘₐₓ × 3 × 14`                                   |       ~3 MB |
+| `OSRExit` + `OSRExitCompilationInfo`               | `~Nₑₓᵢₜ × 150`                                     |       ~4 MB |
+| allocator slack + size-class quantization          |                                                    |      ~20 MB |
+| **total accounted**                                |                                                    | **~175 MB** |
 
 The `B × V` terms dominate at ~72% of the peak.
 
@@ -195,9 +195,9 @@ Change: store it as `std::unique_ptr<Operands<AbstractValue>>`, allocated when
 `isOSRTarget` is set or on first use from CFA's "remember the intersection"
 path.
 
-* **DFG peak impact**: removes one of the three `B × V × 32` arrays from almost
+- **DFG peak impact**: removes one of the three `B × V × 32` arrays from almost
   every block: ~**-11%** of peak (19 MB on `a1`).
-* **Risk**: low. The field is read in very few places; laziness is
+- **Risk**: low. The field is read in very few places; laziness is
   straightforward. `ensureLocals`/`ensureTmps` need a null check.
 
 ### P2. Liveness-mask `valuesAtHead` / `valuesAtTail`
@@ -210,12 +210,12 @@ bottom.
 
 Two implementation options:
 
-* **2a. Compress `Operands<AbstractValue>` to "live view"**: each
+- **2a. Compress `Operands<AbstractValue>` to "live view"**: each
   `Operands<AbstractValue>` becomes `{BitVector liveMask; Vector<AbstractValue>
-  dense}` with `dense.size() == popcount(liveMask)`. Populated by CFA using
+dense}` with `dense.size() == popcount(liveMask)`. Populated by CFA using
   `FullBytecodeLiveness` (already computed). Readers that index by operand do
   a rank lookup.
-* **2b. Share one flat arena across all blocks**: replace the per-block
+- **2b. Share one flat arena across all blocks**: replace the per-block
   `Vector<AbstractValue>` with `{uint32_t offset, uint32_t count}` into a
   single `Graph`-owned `SegmentedVector<AbstractValue>`, sized lazily in CFA
   to `Σ_block liveAt(block)`. This also eliminates ~`2B` small heap
@@ -224,13 +224,13 @@ Two implementation options:
 The bytecode-liveness data is already in `Graph::m_bytecodeLiveness`; reusing
 it avoids a second analysis.
 
-* **DFG peak impact**: for `a1`, average live-in is well under half of `V`
+- **DFG peak impact**: for `a1`, average live-in is well under half of `V`
   (the 9,371 `PhantomLocal`s over 1,199 blocks imply ~8 live-in operands/block
   at parse time; CFA widens this somewhat). Conservatively **-15% to -25%** of
   peak.
-* **Risk**: medium. CFA merge logic (`DFGCFAPhase.cpp`, `InPlaceAbstractState`)
+- **Risk**: medium. CFA merge logic (`DFGCFAPhase.cpp`, `InPlaceAbstractState`)
   indexes these arrays by operand and would need a `liveAt(block, op) ? value :
-  bottom()` adapter. `ensureLocals` growth path is affected.
+bottom()` adapter. `ensureLocals` growth path is affected.
 
 ### P3. Arena-allocate `DFG::Node` everywhere (enable the SequesteredArena path on non-Darwin)
 
@@ -248,12 +248,12 @@ Change: either (a) pull `DFG::Node` into the arena set and enable the
 `DFG::Graph`-owned slab allocator that `SparseCollection<Node>::addNew`
 draws from.
 
-* **DFG peak impact**: removes ~16 B/node overhead and quantization. With
+- **DFG peak impact**: removes ~16 B/node overhead and quantization. With
   ~550k nodes in `a1` (post-parse + phis), that is ~9 MB, **~-5%** of peak.
   More importantly, the freed `Node` memory is handed back in one `reset()`
   at the end of the compile instead of ~550k `free()` calls, which also helps
   compile time.
-* **Risk**: low-medium. `SparseCollection::remove` deletes individual nodes;
+- **Risk**: low-medium. `SparseCollection::remove` deletes individual nodes;
   with a bump arena that becomes a no-op and memory is held to end of
   compilation (which it already effectively is, since the allocator caches it).
 
@@ -270,19 +270,19 @@ JSValue                 m_value;        //  8 B  (constant, usually empty)
 `SpeculatedType` uses 49 bits and `ArrayModes` uses ~30 bits; they cannot be
 merged. However:
 
-* `m_value` is set only when the abstract value is a single concrete constant
+- `m_value` is set only when the abstract value is a single concrete constant
   (`isConstant()`). These are a small minority of abstract values. Replacing
   `JSValue m_value` with `uint32_t m_frozenValueIndex` into
   `Graph::m_frozenValues` (which already interns every constant) recovers 4 B.
-* `m_effectEpoch` is a monotone counter compared for equality; 16 bits are
+- `m_effectEpoch` is a monotone counter compared for equality; 16 bits are
   sufficient within one CFA fixpoint if it is reset per block (it is, via
   `InPlaceAbstractState::beginBasicBlock`), recovering another 2-4 B.
 
 That gets to 24 B with one 4-byte hole, or 28 B if only `m_value` is narrowed.
 
-* **DFG peak impact**: `B × V × 3 × 32 → × 24` and `FlowMap × 32 → × 24`:
+- **DFG peak impact**: `B × V × 3 × 32 → × 24` and `FlowMap × 32 → × 24`:
   ~**-8% to -10%** of peak. Multiplied by the arena of P2 this is smaller.
-* **Risk**: medium. `AbstractValue` is compared and hashed pervasively; the
+- **Risk**: medium. `AbstractValue` is compared and hashed pervasively; the
   `m_value` → index change touches `filter()`, `set()`, `merge()`,
   `validateOSREntryValue()`.
 
@@ -301,10 +301,10 @@ VariableAccessData* vad; uint32_t index; }` (~24 B) stored in
 `BasicBlock::phis` as a value vector, promoted to real `Node`s only when
 another phase needs a `Node*` reference to them, would cut this by ~4×.
 
-* **DFG peak impact**: up to **-20%** of peak on `B × V`-heavy graphs;
+- **DFG peak impact**: up to **-20%** of peak on `B × V`-heavy graphs;
   much less on typical FTL inputs where CPS phis are already few (typescript
   FTL showed +180 KB for CPS rethreading).
-* **Risk**: high. Many phases pattern-match on `node->op() == Phi`; a
+- **Risk**: high. Many phases pattern-match on `node->op() == Phi`; a
   hybrid representation leaks widely. A cheaper variant is to keep `Node` but
   allocate Phi nodes from a second, tighter `struct PhiNode : Node {}` that
   `SparseCollection` cannot do today.
@@ -317,20 +317,20 @@ arm64 use ≤ 2 args; `Patch` and a few 3-operand forms are the exceptions.
 
 Options:
 
-* **6a.** Drop inline capacity to 2 (`Vector<Arg, 2>`). Insts with ≥3 args
+- **6a.** Drop inline capacity to 2 (`Vector<Arg, 2>`). Insts with ≥3 args
   spill to heap, but since Air blocks hold `Inst`s by value in a `Vector`, the
   32 B saved applies to every instruction. Expected **~-25% of Air::Inst
   storage** (128 B → 96 B). The spill allocation for 3-arg insts should come
   from the arena (P3) to avoid trading one cost for another.
-* **6b.** Shrink `Air::Arg`: `int64_t m_offset` and `int64_t m_additional`
+- **6b.** Shrink `Air::Arg`: `int64_t m_offset` and `int64_t m_additional`
   (`b3/air/AirArg.h:1902-1903`) rarely need 64 bits; most offsets fit in 32.
   Making both `int32_t` with a `BigImm`/`BigOffset` escape kind saves 8 B per
   arg → 24 B/arg → 72 B inline → `Inst` ~104 B. Also **~-20% of Air::Inst
   storage**.
 
-* **FTL peak impact**: Air is ~10-45% of the FTL peak depending on benchmark;
+- **FTL peak impact**: Air is ~10-45% of the FTL peak depending on benchmark;
   6a or 6b gives **~-3% to -8% of FTL peak**.
-* **Risk**: 6a low (one template parameter, measure 3-arg frequency first).
+- **Risk**: 6a low (one template parameter, measure 3-arg frequency first).
   6b medium (MacroAssembler interfaces take `int64_t` offsets; need an
   escape-hatch `Arg::Kind`).
 
@@ -346,7 +346,7 @@ the DFG path, and before `lowerDFGToB3` in the FTL path, recovers ~5% of peak.
 This does **not** reduce peak on its own (the arrays are allocated before CFA
 and freed after), but stacked with P2 it lets CFA run in the reclaimed space.
 
-* **Risk**: low.
+- **Risk**: low.
 
 ### P8. Fix `FullBytecodeLiveness` to index by instruction, not byte offset
 
@@ -362,8 +362,8 @@ Fix: key by instruction index (monotone, dense) and add a `byteOffset →
 instructionIndex` side table, or pack the bit data into a single contiguous
 `FastBitVector` and store `{offset, length}` per instruction.
 
-* **DFG peak impact**: **-2% to -3%**.
-* **Risk**: low; mechanical.
+- **DFG peak impact**: **-2% to -3%**.
+- **Risk**: low; mechanical.
 
 ### P9. Cap concurrent optimizing compilations by working-set budget, not thread count
 
@@ -379,7 +379,7 @@ have `JITWorklist` admission-control against a global byte budget instead of a
 fixed thread count. This doesn't reduce per-compile memory but directly
 bounds peak RSS without losing parallelism on small functions.
 
-* **Risk**: low-medium; scheduling heuristics are easy to get wrong and may
+- **Risk**: low-medium; scheduling heuristics are easy to get wrong and may
   regress JetStream first-iteration scores if large compiles are serialized.
 
 ## Reproducing these numbers
@@ -402,17 +402,17 @@ into `bench/` if ongoing tracking is wanted.
 
 ## Summary table
 
-| proposal | scope | DFG peak | FTL peak | risk |
-| --- | --- | ---: | ---: | --- |
-| P1 lazy `intersectionOfPastValuesAtHead` | `dfg/DFGBasicBlock` | -11% | -8% | low |
-| P2 liveness-masked `valuesAt*` | `dfg/DFGBasicBlock`, CFA | -15 to -25% | -12 to -19% | med |
-| P3 arena-allocate `DFG::Node` | WTF, `dfg/` | -5% | -4% | low-med |
-| P4 `AbstractValue` 32 B → 24 B | `dfg/DFGAbstractValue` | -8 to -10% | -6 to -8% | med |
-| P5 slim CPS Phi | `dfg/DFGCPSRethreading` | up to -20% | small | high |
-| P6 `Air::Inst`/`Arg` shrink | `b3/air/` | 0 | -3 to -8% | low/med |
-| P7 free CPS data earlier | `dfg/` | (enables P2) | (enables P2) | low |
-| P8 `FullBytecodeLiveness` indexing | `bytecode/` | -2 to -3% | -2% | low |
-| P9 working-set-budgeted worklist | `jit/JITWorklist` | bounds concur. peak | same | low-med |
+| proposal                                 | scope                    |            DFG peak |     FTL peak | risk    |
+| ---------------------------------------- | ------------------------ | ------------------: | -----------: | ------- |
+| P1 lazy `intersectionOfPastValuesAtHead` | `dfg/DFGBasicBlock`      |                -11% |          -8% | low     |
+| P2 liveness-masked `valuesAt*`           | `dfg/DFGBasicBlock`, CFA |         -15 to -25% |  -12 to -19% | med     |
+| P3 arena-allocate `DFG::Node`            | WTF, `dfg/`              |                 -5% |          -4% | low-med |
+| P4 `AbstractValue` 32 B → 24 B           | `dfg/DFGAbstractValue`   |          -8 to -10% |    -6 to -8% | med     |
+| P5 slim CPS Phi                          | `dfg/DFGCPSRethreading`  |          up to -20% |        small | high    |
+| P6 `Air::Inst`/`Arg` shrink              | `b3/air/`                |                   0 |    -3 to -8% | low/med |
+| P7 free CPS data earlier                 | `dfg/`                   |        (enables P2) | (enables P2) | low     |
+| P8 `FullBytecodeLiveness` indexing       | `bytecode/`              |           -2 to -3% |          -2% | low     |
+| P9 working-set-budgeted worklist         | `jit/JITWorklist`        | bounds concur. peak |         same | low-med |
 
 P1 + P2 + P3 + P4 together: ~**-35% to -45%** of DFG peak, ~**-30% to -35%**
 of FTL peak. P1, P3, P8 are the cheapest first steps.

@@ -219,6 +219,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub latest_return_had_semicolon: bool,
     pub has_import_meta: bool,
     pub has_es_module_syntax: bool,
+    /// TypeScript: whether any export other than an empty `export {}` clause
+    /// will appear in the output. Lets the visit pass drop redundant empty
+    /// export clauses that would only serve as an ESM module marker.
+    pub has_nonempty_export_stmt: bool,
+    /// Count of `SExportClause` statements that had items after parsing; used
+    /// with `has_nonempty_export_stmt` so an empty clause visited before a
+    /// later non-empty one can still be dropped.
+    pub remaining_export_clauses_with_items: u32,
     pub top_level_await_keyword: bun_ast::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
     pub fn_or_arrow_data_visit: FnOrArrowDataVisit,
@@ -8713,6 +8721,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             latest_return_had_semicolon: false,
             has_import_meta: false,
             has_es_module_syntax: false,
+            has_nonempty_export_stmt: false,
+            remaining_export_clauses_with_items: 0,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,
             fn_or_arrow_data_visit: FnOrArrowDataVisit::default(),

@@ -3281,7 +3281,45 @@ console.log(resolve.length)
     expectPrinted_("export { x, \\u0074ype y } from 'mod'", 'export { x } from "mod"');
     expectPrinted_("export { x, type if } from 'mod'", 'export { x } from "mod"');
     expectPrinted_("export { x, type y as if }; let x", "export { x };\nlet x");
-    expectPrinted_("export { type x };", "");
+
+    // "export { type x }" must leave an "export {}" ESM marker behind rather than
+    // erasing the statement entirely. This matches esbuild and tsc.
+    expectPrinted_("export { type x };", "export {}");
+    expectPrinted_("export { type x as y };", "export {}");
+    expectPrinted_("export { type as };", "export {}");
+    expectPrinted_("export { type x, type y };", "export {}");
+    expectPrinted_("export { \\u0074ype x };", "export {}");
+    // With "from" the whole re-export is still dropped (nothing to import).
+    expectPrinted_("export { type x } from 'mod';", "");
+    expectPrinted_("export { type as } from 'mod';", "");
+
+    // The resulting "export {}" is redundant when something else already marks
+    // the output as ESM, so it is dropped regardless of source order (tsc does
+    // the same; esbuild always keeps it).
+    expectPrinted_("export const a = 1; export { type B };", "export const a = 1");
+    expectPrinted_("export { type B }; export const a = 1;", "export const a = 1");
+    expectPrinted_("export default 1; export { type B };", "export default 1");
+    expectPrinted_("export function f() {} export { type B };", "export function f() {}");
+    expectPrinted_("export class C {} export { type B };", "export class C {\n}");
+    expectPrinted_("export * from 'mod'; export { type B };", 'export * from "mod"');
+    expectPrinted_("let b = 1; export { type A }; export { b };", "let b = 1;\n\nexport { b }");
+    expectPrinted_("let b = 1; export { b }; export { type A };", "let b = 1;\n\nexport { b }");
+    expectPrinted_("export { type A }; export { type B };", "export {}");
+    expectPrinted_("export { type A }; export { unbound };", "export {}");
+    expectPrinted_("await 0; export { type A };", "await 0");
+    // "export default <TypeName>" is itself dropped during visit, so it must not
+    // cause the only remaining "export {}" marker to be dropped as well.
+    expectPrinted_("interface Foo {} export default Foo; export {};", "export {}");
+    expectPrinted_("interface Foo {} export default Foo; export { type Bar };", "export {}");
+    expectPrinted_("export { type A }; interface Foo {} export default Foo;", "export {}");
+    expectPrinted_("const Foo = 1; export default Foo; export { type A };", "const Foo = 1;\nexport default Foo");
+
+    // "import { type as }" is a type-only import of the identifier "as" and
+    // must be dropped entirely; previously it leaked a bare "import 'mod'".
+    expectPrinted_("import { type as } from 'mod';", "");
+    expectPrinted_("import { type as, x } from 'mod'; x", 'import { x } from "mod";\nx');
+    expectPrinted_("import { type foo } from 'mod';", "");
+    expectPrinted_("import { type as xxx } from 'mod'; xxx", 'import { type as xxx } from "mod";\nxxx');
   });
 
   it("delete + optional chain", () => {

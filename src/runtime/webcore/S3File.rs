@@ -792,7 +792,7 @@ pub(crate) fn get_presign_url(
     global: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    get_presign_url_from(this, global, callframe.arguments().get(0).copied())
+    get_presign_url_from(this, global, callframe.arguments().first().copied())
 }
 
 pub(crate) fn get_stat(

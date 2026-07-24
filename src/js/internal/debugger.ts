@@ -124,17 +124,27 @@ export default function (
     if (debugUrl) {
       const { protocol, href, host, pathname } = debugUrl;
       if (!protocol.includes("unix")) {
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(kIgnoreWriteError);
+        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+          kIgnoreWriteError,
+        );
         Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`).catch(kIgnoreWriteError);
         if (protocol.includes("ws")) {
-          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`).catch(kIgnoreWriteError);
+          Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`).catch(
+            kIgnoreWriteError,
+          );
         }
-        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(kIgnoreWriteError);
+        Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+          kIgnoreWriteError,
+        );
       }
     } else {
-      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(kIgnoreWriteError);
+      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+        kIgnoreWriteError,
+      );
       Bun.write(Bun.stderr, `Listening on ${dim(url)}\n`).catch(kIgnoreWriteError);
-      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(kIgnoreWriteError);
+      Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n").catch(
+        kIgnoreWriteError,
+      );
     }
   }
 

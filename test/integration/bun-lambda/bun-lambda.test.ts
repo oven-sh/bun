@@ -172,8 +172,10 @@ test.concurrent("console.log formats arguments like Node, not Bun.inspect per-ar
   };
 
   let served = false;
-  const { promise: responded, resolve: markResponded } =
-    Promise.withResolvers<{ unexpected?: string; body?: string }>();
+  const { promise: responded, resolve: markResponded } = Promise.withResolvers<{
+    unexpected?: string;
+    body?: string;
+  }>();
 
   using server = Bun.serve({
     port: 0,

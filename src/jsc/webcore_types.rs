@@ -433,6 +433,15 @@ impl Blob {
         matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
+    /// `Bytes.stored_name` is the DOM File name carried on the shared store;
+    /// it must not surface on a plain Blob that merely shares that store
+    /// (e.g. the result of `file.slice()`).
+    #[inline]
+    pub fn hides_bytes_stored_name(&self) -> bool {
+        !self.is_jsdom_file.get()
+            && matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::Bytes(_)))
+    }
+
     /// `Blob.getFileName()` — the user-visible name: `Bytes.stored_name`,
     /// the file path, or the S3 key. `None` for fd-backed or unnamed blobs.
     pub fn get_file_name(&self) -> Option<&[u8]> {

@@ -1971,6 +1971,16 @@ impl BlobExt for Blob {
         blob.offset.set(offset);
         blob.size.set(len);
 
+        // Per the File API, slice() returns a new plain Blob regardless of the
+        // receiver's subclass, so drop the File brand and its identity fields.
+        // For File/S3-backed stores the DOM name lives only in `blob.name`;
+        // clearing it would unmask the on-disk path via get_file_name().
+        blob.is_jsdom_file.set(false);
+        blob.last_modified.set(0.0);
+        if blob.hides_bytes_stored_name() {
+            blob.name.set(BunString::dead());
+        }
+
         let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
         // infer the content type if it was not specified
         if content_type.is_empty()
@@ -2092,6 +2102,9 @@ impl BlobExt for Blob {
     fn get_name_string(&self) -> Option<BunString> {
         if self.name.get().tag() != bun_core::Tag::Dead {
             return Some(self.name.get());
+        }
+        if self.hides_bytes_stored_name() {
+            return None;
         }
         if let Some(path) = self.get_file_name() {
             self.name.set(BunString::clone_utf8(path));
@@ -2383,6 +2396,16 @@ impl BlobExt for Blob {
             }
             _ => {
                 blob = Blob::get::<false, true>(global_this, args[0])?;
+
+                // `new Blob(parts)` always yields a plain Blob even when `parts`
+                // contains a File, so drop any File identity propagated by dupe().
+                // For File/S3-backed stores the DOM name lives only in `blob.name`;
+                // clearing it would unmask the on-disk path via get_file_name().
+                blob.is_jsdom_file.set(false);
+                blob.last_modified.set(0.0);
+                if blob.hides_bytes_stored_name() {
+                    blob.name.set(BunString::dead());
+                }
 
                 if args.len() > 1 {
                     let options = args[1];
@@ -4345,6 +4368,9 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+    if this.hides_bytes_stored_name() {
+        return BunString::empty();
+    }
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }

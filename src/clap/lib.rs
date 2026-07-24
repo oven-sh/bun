@@ -1,7 +1,4 @@
 #![warn(unused_must_use)]
-use core::fmt;
-
-use bun_core::fmt::CountingWriter;
 use bun_core::{self, Output};
 
 pub mod args;
@@ -237,20 +234,6 @@ impl Names {
         }
         false
     }
-
-    /// Check whether `name` (with leading `-`/`--`) matches this param's short,
-    /// long, or any long alias. Shared predicate for `has_flag`/`find_param`.
-    pub fn matches(&self, name: &[u8]) -> bool {
-        if let Some(s) = self.short {
-            if name.len() == 2 && name[0] == b'-' && name[1] == s {
-                return true;
-            }
-        }
-        if name.len() >= 2 && &name[..2] == b"--" {
-            return self.matches_long(&name[2..]);
-        }
-        false
-    }
 }
 
 /// Whether a param takes no value (a flag), one value, or can be specified multiple times.
@@ -448,12 +431,6 @@ fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     }
 }
 
-#[cold]
-#[inline(never)]
-fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
-    param.id.value
-}
-
 pub struct Args<Id: 'static> {
     pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
@@ -478,10 +455,6 @@ impl<Id: 'static> Args<Id> {
 
     pub fn remaining(&self) -> &[&'static [u8]] {
         self.clap.remaining()
-    }
-
-    pub fn has_flag(params: &[Param<Id>], name: &'static [u8]) -> bool {
-        ComptimeClap::<Id>::has_flag(params, name)
     }
 }
 
@@ -546,173 +519,6 @@ where
     I: args::ArgIter<'static>,
 {
     ComptimeClap::<Id>::parse(params, iter, opt)
-}
-
-/// Will print a help message in the following format:
-///     -s, --long <valueText> helpText
-///     -s,                    helpText
-///     -s <valueText>         helpText
-///         --long             helpText
-///         --long <valueText> helpText
-#[cold]
-#[inline(never)]
-pub fn help_full<W, Id, E, C>(
-    stream: &mut W,
-    params: &[Param<Id>],
-    context: &C,
-    help_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> crate::Result<()>
-where
-    W: fmt::Write,
-    Id: Copy,
-    E: Into<crate::Error>,
-{
-    let max_spacing: usize = 'blk: {
-        let mut res: usize = 0;
-        for param in params {
-            let mut cs = CountingWriter::null();
-            print_param(&mut cs, param, context, value_text)?;
-            if res < cs.count {
-                res = cs.count;
-            }
-        }
-        break 'blk res;
-    };
-
-    for param in params {
-        if param.names.short.is_none() && param.names.long.is_none() {
-            continue;
-        }
-
-        let ht = help_text(context, param).map_err(Into::into)?;
-        // only print flag if description is defined
-        if !ht.is_empty() {
-            let mut cs = CountingWriter::wrap(stream);
-            write!(cs.inner(), "\t")?;
-            print_param(&mut cs, param, context, value_text)?;
-            let written = cs.count;
-            // stream.splatByteAll(' ', max_spacing - written)
-            for _ in 0..(max_spacing - written) {
-                stream.write_char(' ')?;
-            }
-            let ht2 = help_text(context, param).map_err(Into::into)?;
-            writeln!(stream, "\t{}", bstr::BStr::new(ht2))?;
-        }
-    }
-    Ok(())
-}
-
-#[cold]
-#[inline(never)]
-fn print_param<W, Id, E, C>(
-    stream: &mut W,
-    param: &Param<Id>,
-    context: &C,
-    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> crate::Result<()>
-where
-    W: fmt::Write,
-    Id: Copy,
-    E: Into<crate::Error>,
-{
-    if let Some(s) = param.names.short {
-        write!(stream, "-{}", s as char)?;
-    } else {
-        write!(stream, "  ")?;
-    }
-    if let Some(l) = param.names.long {
-        if param.names.short.is_some() {
-            write!(stream, ", ")?;
-        } else {
-            write!(stream, "  ")?;
-        }
-        write!(stream, "--{}", bstr::BStr::new(l))?;
-    }
-
-    write_takes_value_suffix(stream, param, context, value_text)?;
-    Ok(())
-}
-
-/// Shared by `print_param` and `usage_full`: emit the ` <val>` / ` <val>?` /
-/// ` <val>...` suffix for a param's `takes_value`.
-#[cold]
-#[inline(never)]
-fn write_takes_value_suffix<W, Id, E, C>(
-    w: &mut W,
-    param: &Param<Id>,
-    context: &C,
-    value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> crate::Result<()>
-where
-    W: fmt::Write,
-    Id: Copy,
-    E: Into<crate::Error>,
-{
-    match param.takes_value {
-        Values::None => {}
-        Values::One => {
-            write!(
-                w,
-                " <{}>",
-                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
-            )?;
-        }
-        Values::OneOptional => {
-            write!(
-                w,
-                " <{}>?",
-                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
-            )?;
-        }
-        Values::Many => {
-            write!(
-                w,
-                " <{}>...",
-                bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// A wrapper around help_full for simple help_text and value_text functions that
-/// cant return an error or take a context.
-#[cold]
-#[inline(never)]
-pub fn help_ex<W, Id>(
-    stream: &mut W,
-    params: &[Param<Id>],
-    help_text: fn(&Param<Id>) -> &'static [u8],
-    value_text: fn(&Param<Id>) -> &'static [u8],
-) -> crate::Result<()>
-where
-    W: fmt::Write,
-    Id: Copy,
-{
-    struct Context<Id> {
-        help_text: fn(&Param<Id>) -> &'static [u8],
-        value_text: fn(&Param<Id>) -> &'static [u8],
-    }
-
-    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
-        Ok((c.help_text)(p))
-    }
-
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
-        Ok((c.value_text)(p))
-    }
-
-    help_full(
-        stream,
-        params,
-        &Context {
-            help_text,
-            value_text,
-        },
-        help::<Id>,
-        value::<Id>,
-    )
 }
 
 #[cold]
@@ -844,13 +650,6 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
             }
         }
     }
-}
-
-/// A wrapper around help_ex that takes a `Param<Help>`.
-#[cold]
-#[inline(never)]
-pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
-    help_ex(stream, params, get_help_simple, get_value_simple)
 }
 
 #[cfg(test)]

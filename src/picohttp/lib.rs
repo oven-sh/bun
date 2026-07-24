@@ -7,28 +7,27 @@ use bstr::BStr;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-// `Header::clone` / `Request::clone` / `Response::clone` need the
-// unbound-lifetime `append_raw` so they can interleave appends and stash the
-// raw ptr/len pairs. The buffer is heap-owned; callers keep the builder (or
-// its moved-out buffer) alive while the returned slices are in use.
+// `Header::clone` / `Response::clone` need the unbound-lifetime `append_raw`
+// so they can interleave appends and stash the raw ptr/len pairs. The buffer
+// is heap-owned; callers keep the builder (or its moved-out buffer) alive
+// while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
-// FFI surface over vendor/picohttpparser. Hand-written (three functions, two
-// structs) rather than bindgen-generated.
+// FFI surface over vendor/picohttpparser. Hand-written rather than
+// bindgen-generated.
 #[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};
     #[repr(C)]
-    pub struct phr_header {
+    pub(super) struct phr_header {
         pub name: *const c_char,
         pub name_len: usize,
         pub value: *const c_char,
         pub value_len: usize,
     }
-    pub type struct_phr_header = phr_header;
     /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
-    /// client writes `consume_trailer` directly and inspects `_state` via
-    /// `phr_decode_chunked_is_in_data`, so the layout must match C exactly.
+    /// client writes `consume_trailer` directly, so the layout must match C
+    /// exactly.
     #[repr(C)]
     #[derive(Clone, Copy, Default)]
     pub struct phr_chunked_decoder {
@@ -38,21 +37,8 @@ mod c {
         pub _hex_count: core::ffi::c_char,
         pub _state: core::ffi::c_char,
     }
-    pub type struct_phr_chunked_decoder = phr_chunked_decoder;
     unsafe extern "C" {
-        pub fn phr_parse_request(
-            buf: *const u8,
-            len: usize,
-            method: *mut *const c_char,
-            method_len: *mut usize,
-            path: *mut *const c_char,
-            path_len: *mut usize,
-            minor_version: *mut c_int,
-            headers: *mut phr_header,
-            num_headers: *mut usize,
-            last_len: usize,
-        ) -> c_int;
-        pub fn phr_parse_response(
+        pub(super) fn phr_parse_response(
             buf: *const u8,
             len: usize,
             minor_version: *mut c_int,
@@ -63,19 +49,11 @@ mod c {
             num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
-        pub fn phr_parse_headers(
-            buf: *const u8,
-            len: usize,
-            headers: *mut phr_header,
-            num_headers: *mut usize,
-            last_len: usize,
-        ) -> c_int;
         pub fn phr_decode_chunked(
             decoder: *mut phr_chunked_decoder,
             buf: *mut u8,
             len: *mut usize,
         ) -> isize;
-        pub fn phr_decode_chunked_is_in_data(decoder: *mut phr_chunked_decoder) -> c_int;
     }
 }
 
@@ -279,13 +257,6 @@ impl<'a> HeaderList<'a> {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum ParseRequestError {
-    BadRequest,
-    ShortRead,
-}
-bun_core::impl_tag_error!(ParseRequestError);
-
 pub struct Request<'a> {
     pub method: &'a [u8],
     pub path: &'a [u8],
@@ -300,22 +271,6 @@ impl<'a> Request<'a> {
             request: self,
             ignore_insecure,
             body,
-        }
-    }
-
-    pub fn clone(&self, headers: &'a mut [Header], builder: &mut StringBuilder) -> Request<'a> {
-        for (i, header) in self.headers.iter().enumerate() {
-            headers[i] = header.clone(builder);
-        }
-
-        Request {
-            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
-            method: unsafe { builder.append_raw(self.method) },
-            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
-            path: unsafe { builder.append_raw(self.path) },
-            minor_version: self.minor_version,
-            headers,
-            bytes_read: self.bytes_read,
         }
     }
 
@@ -339,54 +294,6 @@ impl<'a> Request<'a> {
             // SAFETY: caller contract.
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
-        }
-    }
-
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Request<'a>, ParseRequestError> {
-        let mut method_ptr: *const u8 = core::ptr::null();
-        let mut method_len: usize = 0;
-        let mut path_ptr: *const u8 = core::ptr::null();
-        let mut path_len: usize = 0;
-        let mut minor_version: c_int = 0;
-        let mut num_headers: usize = src.len();
-
-        // SAFETY: picohttpparser writes back into the out-params; src is
-        // layout-compatible with phr_header (asserted above).
-        let rc = unsafe {
-            c::phr_parse_request(
-                buf.as_ptr(),
-                buf.len(),
-                (&raw mut method_ptr).cast::<*const core::ffi::c_char>(),
-                &raw mut method_len,
-                (&raw mut path_ptr).cast::<*const core::ffi::c_char>(),
-                &raw mut path_len,
-                &raw mut minor_version,
-                src.as_mut_ptr().cast::<c::phr_header>(),
-                &raw mut num_headers,
-                0,
-            )
-        };
-
-        // Leave a sentinel value, for JavaScriptCore support.
-        if rc > -1 {
-            // SAFETY: path_ptr points into buf; the byte after the path is the
-            // space before "HTTP/1.x" which picohttpparser has already consumed,
-            // so writing a NUL there is in-bounds.
-            unsafe { path_ptr.cast_mut().add(path_len).write(0) };
-        }
-
-        match rc {
-            -1 => Err(ParseRequestError::BadRequest),
-            -2 => Err(ParseRequestError::ShortRead),
-            _ => Ok(Request {
-                // SAFETY: on success, ptr/len point into `buf`.
-                method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
-                // SAFETY: on success, ptr/len point into `buf`.
-                path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
-                minor_version: usize::try_from(minor_version).expect("int cast"),
-                headers: &src[0..num_headers],
-                bytes_read: u32::try_from(rc).expect("int cast"),
-            }),
         }
     }
 }
@@ -690,40 +597,8 @@ impl fmt::Display for Response<'_> {
 // Headers
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, strum::IntoStaticStr)]
-pub enum ParseHeadersError {
-    BadHeaders,
-    ShortRead,
-}
-bun_core::impl_tag_error!(ParseHeadersError);
-
 pub struct Headers<'a> {
     pub headers: &'a [Header],
-}
-
-impl<'a> Headers<'a> {
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Headers<'a>, ParseHeadersError> {
-        let mut num_headers: usize = src.len();
-
-        // SAFETY: src is layout-compatible with phr_header (asserted above).
-        let rc = unsafe {
-            c::phr_parse_headers(
-                buf.as_ptr(),
-                buf.len(),
-                src.as_mut_ptr().cast::<c::phr_header>(),
-                &raw mut num_headers,
-                0,
-            )
-        };
-
-        match rc {
-            -1 => Err(ParseHeadersError::BadHeaders),
-            -2 => Err(ParseHeadersError::ShortRead),
-            _ => Ok(Headers {
-                headers: &src[0..num_headers],
-            }),
-        }
-    }
 }
 
 impl fmt::Display for Headers<'_> {
@@ -746,10 +621,3 @@ impl fmt::Display for Headers<'_> {
 
 pub use c::phr_chunked_decoder;
 pub use c::phr_decode_chunked;
-pub use c::phr_decode_chunked_is_in_data;
-pub use c::phr_header;
-pub use c::phr_parse_headers;
-pub use c::phr_parse_request;
-pub use c::phr_parse_response;
-pub use c::struct_phr_chunked_decoder;
-pub use c::struct_phr_header;

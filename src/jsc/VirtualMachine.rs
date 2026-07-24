@@ -4769,6 +4769,24 @@ impl VirtualMachine {
         let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
+            // Print the AggregateError's own name and message before
+            // the individual child errors.
+            let agg_name = value.get(global_ref, "name").ok().flatten()
+                .and_then(|v| v.to_bun_string(global_ref).ok())
+                .unwrap_or(bun_core::String::init(b"AggregateError"));
+            let agg_message = value.get(global_ref, "message").ok().flatten()
+                .and_then(|v| v.to_bun_string(global_ref).ok())
+                .unwrap_or_default();
+            let _ = Self::print_error_name_and_message(
+                agg_name,
+                agg_message,
+                false,
+                None,
+                writer,
+                allow_ansi_color,
+                formatter.error_display_level,
+            );
+
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip

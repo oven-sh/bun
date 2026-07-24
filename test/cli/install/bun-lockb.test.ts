@@ -428,3 +428,71 @@ it("rejects a binary lockfile whose git resolved tag contains path separators", 
   expect(await exists(join(packageDir, "node_modules", "dep"))).toBe(false);
   expect(code).not.toBe(0);
 });
+
+it("honors trustedDependencies loaded from a binary lockfile in `bun pm untrusted`/`trust`", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: false } });
+
+  // The postinstall appends a line so we can count how many times it ran.
+  const ran = join(packageDir, "ran.txt");
+  await write(
+    join(packageDir, "dep", "package.json"),
+    JSON.stringify({
+      name: "dep",
+      version: "1.0.0",
+      scripts: { postinstall: `${bunExe()} -e "require('fs').appendFileSync('../../ran.txt', 'RAN\\n')"` },
+    }),
+  );
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "lockb-trusted",
+      version: "1.0.0",
+      dependencies: { dep: "file:./dep" },
+      trustedDependencies: ["dep"],
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+  expect(await exists(join(packageDir, "bun.lockb"))).toBe(true);
+  expect(await exists(join(packageDir, "bun.lock"))).toBe(false);
+  expect(await file(ran).text()).toBe("RAN\n");
+
+  // `bun pm untrusted` must report zero: the only script-bearing package is
+  // listed in trustedDependencies. The binary lockfile stores only truncated
+  // name hashes; the loader's empty-name sentinel must be treated as a match.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "untrusted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(rawErr);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Found 0 untrusted dependencies with scripts");
+    expect(out).not.toContain("node_modules/dep");
+    expect(code).toBe(0);
+  }
+
+  // `bun pm trust dep` must refuse (already trusted) and must not re-run the
+  // postinstall.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "trust", "dep"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, rawErr, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    const err = stderrForInstall(rawErr);
+    expect(err).toContain("0 scripts ran");
+    expect(err).toContain("already trusted");
+    expect(out).not.toContain("postinstall");
+    expect(code).toBe(1);
+  }
+
+  expect(await file(ran).text()).toBe("RAN\n");
+});

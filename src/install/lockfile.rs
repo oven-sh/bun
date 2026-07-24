@@ -3215,7 +3215,10 @@ impl Lockfile {
             };
             let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
             let name_is_trusted = match trusted_dependencies.get(&hash) {
-                Some(name) => !name.is_empty() && **name == *trusted_name,
+                // Empty stored name is the legacy bun.lockb sentinel (the
+                // binary format stores only truncated hashes, no names); it
+                // means "hash-only match" and must accept.
+                Some(name) => name.is_empty() || **name == *trusted_name,
                 None => false,
             };
             if !name_is_trusted {

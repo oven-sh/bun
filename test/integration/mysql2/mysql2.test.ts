@@ -7,17 +7,13 @@ const tests: {
   label: string;
   database: {
     image: string;
-    env?: Record<string, string>;
   };
   client: ConnectionOptions;
 }[] = [
   {
-    label: "mysql:8 with root user and password",
+    label: "mysql_native_password with root user and password",
     database: {
-      image: "mysql:8",
-      env: {
-        MYSQL_ROOT_PASSWORD: "bun",
-      },
+      image: "mysql_native_password",
     },
     client: {
       user: "root",
@@ -25,12 +21,9 @@ const tests: {
     },
   },
   {
-    label: "mysql:8 with root user and empty password",
+    label: "mysql_plain with root user and empty password",
     database: {
-      image: "mysql:8",
-      env: {
-        MYSQL_ALLOW_EMPTY_PASSWORD: "yes",
-      },
+      image: "mysql_plain",
     },
     client: {
       user: "root",

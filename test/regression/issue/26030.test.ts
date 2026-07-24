@@ -6,8 +6,6 @@ describeWithContainer(
   "mysql",
   {
     image: "mysql_plain",
-    env: {},
-    args: [],
   },
   container => {
     const getOptions = () => ({

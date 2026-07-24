@@ -5745,13 +5745,12 @@ CREATE TABLE ${table_name} (
           E'\\n',                -- newline
           E'\\r',                -- carriage return
           E'\\t',                -- tab
-          E'\\v',                -- vertical tab (not in postgres.js)
+          E'\\x0b',              -- vertical tab (E'\\v' only became an escape in PostgreSQL 18)
           E'\\\\',               -- backslash
           E'\"'                  -- quote
         ]::text[] as special_escapes
       `;
-        // vertical tab will be just "v"
-        expect(result[0].special_escapes).toEqual(["\b", "\f", "\n", "\r", "\t", "v", "\\", '"']);
+        expect(result[0].special_escapes).toEqual(["\b", "\f", "\n", "\r", "\t", "\v", "\\", '"']);
       });
 
       test("text[] - octal escape sequences", async () => {
@@ -11370,16 +11369,16 @@ CREATE TABLE ${table_name} (
 
       test("pg_database[] - null values", async () => {
         await using sql = postgres({ ...options, max: 1 });
+        // Source the record from the live server: pg_database gains columns across
+        // PostgreSQL majors, so a hardcoded record literal only fits one major.
         const result = await sql`
         SELECT ARRAY[
           NULL,
-          '(5,postgres,10,6,c,f,t,-1,716,1,1663,C,C,,,)'::pg_database,
+          (SELECT d FROM pg_database d WHERE datname = 'postgres'),
           NULL
         ]::pg_database[] as array_with_nulls
       `;
-        expect(result[0].array_with_nulls[0]).toBeNull();
-        expect(result[0].array_with_nulls[1]).toBe("(5,postgres,10,6,c,f,t,-1,716,1,1663,C,C,,,)");
-        expect(result[0].array_with_nulls[2]).toBeNull();
+        expect(result[0].array_with_nulls).toEqual([null, expect.stringContaining(",postgres,"), null]);
       });
 
       test("pg_database[] - null array", async () => {

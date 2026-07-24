@@ -1,4 +1,4 @@
-FROM postgres:15
+FROM postgres:18
 COPY init-scripts/postgres-auth/ /docker-entrypoint-initdb.d/
 COPY config/pg_hba_auth.conf /etc/postgresql/pg_hba.conf
 
@@ -7,7 +7,7 @@ COPY config/pg_hba_auth.conf /etc/postgresql/pg_hba.conf
 # build-time init only needs the default local-trust hba to run its scripts.
 ENV POSTGRES_HOST_AUTH_METHOD=trust \
     POSTGRES_USER=postgres \
-    PGDATA=/var/lib/postgresql/pgdata-init
+    PGDATA=/var/lib/pgdata-init
 
 RUN set -e; \
     docker-entrypoint.sh postgres & pid=$!; \

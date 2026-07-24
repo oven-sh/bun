@@ -99,6 +99,8 @@ services:
       start_period: 60s
       start_interval: 1s
 
+  # mysql_native_password was removed in MySQL 9.x, so this service stays on the
+  # 8.4 LTS (the last line that ships the plugin) to cover the legacy-auth code path.
   mysql_native_password:
     build:
       context: .
@@ -121,7 +123,7 @@ services:
       context: ../js/sql/mysql-tls
       dockerfile: Dockerfile
       args:
-        MYSQL_VERSION: 8.4
+        MYSQL_VERSION: "9"
     image: bun-mysql-tls:local
     ports:
       - target: 3306
@@ -137,7 +139,7 @@ services:
 
   # Redis/Valkey Services
   redis_plain:
-    image: redis:7-alpine
+    image: redis:8-alpine
     command: redis-server --bind 0.0.0.0 --protected-mode no
     ports:
       - target: 6379

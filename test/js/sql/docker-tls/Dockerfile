@@ -1,5 +1,5 @@
 # Dockerfile
-FROM postgres:15.13
+FROM postgres:18
 
 # Create directory for SSL certificates
 RUN mkdir -p /etc/postgresql/ssl
@@ -77,7 +77,7 @@ RUN mkdir -p /docker-entrypoint-initdb.d && \
 # Set environment variables
 ENV POSTGRES_HOST_AUTH_METHOD=trust \
     POSTGRES_USER=postgres \
-    PGDATA=/var/lib/postgresql/pgdata-init
+    PGDATA=/var/lib/pgdata-init
 
 # Bake a fully initialized data directory into the image so cold container
 # start is just `exec postgres` (~1-2s). See test/docker/Dockerfile.postgres-plain

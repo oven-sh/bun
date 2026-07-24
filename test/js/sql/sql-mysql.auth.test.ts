@@ -19,8 +19,6 @@ describeWithContainer(
   "mysql",
   {
     image: "mysql_native_password",
-    env: {},
-    args: [],
     concurrent: true,
   },
   container => {

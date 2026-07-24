@@ -167,9 +167,15 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // so the fixup runs after the link succeeds and the declared output is
   // already the final, patched, re-signed artifact. See shims.ts.
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
+  // Windows ASAN: -fsanitize=address is a clang-cl DRIVER argument (it lives
+  // before /link, unlike $ldflags which go raw to lld-link). The driver
+  // then links the ASAN runtime itself: the clang_rt.asan_dynamic import
+  // lib plus the static-CRT runtime thunk. The dynamic runtime DLL is copied
+  // next to the binary by the build (see bun.ts) so it resolves at load.
+  const winAsanDriver = cfg.windows && cfg.asan ? " -fsanitize=address" : "";
   n.rule("link", {
     command: cfg.windows
-      ? `${wrap} ${cxx} /nologo -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
+      ? `${wrap} ${cxx} /nologo${winAsanDriver} -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`
       : `${wrap} ${cxx} @$out.rsp $ldflags -o $out${elfDebugCompressPostlinkCommand(cfg)}${machoPostlinkCommand(cfg)}`,
     description: "link $out",
     rspfile: "$out.rsp",

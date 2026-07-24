@@ -2811,6 +2811,13 @@ pub mod asan {
         safe fn __asan_unpoison_memory_region(ptr: *const c_void, size: usize);
         safe fn __asan_address_is_poisoned(ptr: *const c_void) -> bool;
         safe fn __asan_describe_address(ptr: *const c_void);
+    }
+
+    // LeakSanitizer does not exist in the Windows ASAN runtime (no
+    // `__lsan_*` symbols to link against), so root-region registration is a
+    // no-op there; every other ASAN platform has LSAN.
+    #[cfg(all(bun_asan, not(windows)))]
+    unsafe extern "C" {
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
     }
@@ -2845,17 +2852,17 @@ pub mod asan {
     /// scan).
     #[inline]
     pub fn register_root_region(ptr: *const c_void, size: usize) {
-        #[cfg(bun_asan)]
+        #[cfg(all(bun_asan, not(windows)))]
         __lsan_register_root_region(ptr, size);
-        #[cfg(not(bun_asan))]
+        #[cfg(not(all(bun_asan, not(windows))))]
         let _ = (ptr, size);
     }
     /// Undo a prior `register_root_region(ptr, size)` with identical arguments.
     #[inline]
     pub fn unregister_root_region(ptr: *const c_void, size: usize) {
-        #[cfg(bun_asan)]
+        #[cfg(all(bun_asan, not(windows)))]
         __lsan_unregister_root_region(ptr, size);
-        #[cfg(not(bun_asan))]
+        #[cfg(not(all(bun_asan, not(windows))))]
         let _ = (ptr, size);
     }
 }

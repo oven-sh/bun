@@ -527,9 +527,16 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Phony `bun` target for convenience — only when strip DIDN'T produce a
   // literal file named `bun` (which would collide with the phony). When
+  // ─── Step 8b: Windows ASAN runtime DLL ───
+  // The Windows ASAN runtime is dynamic-only (clang_rt.asan_dynamic-x86_64.dll);
+  // an instrumented bun.exe fails to load without it. Copy it out of the
+  // clang resource dir next to the binary so the exe (and any subprocess it
+  // spawns from the same dir) resolves it via the standard DLL search order.
+  const asanRuntimeDll = emitWindowsAsanRuntime(n, cfg, exe);
+
   // strip runs, `ninja bun` builds the actual stripped file; no phony needed.
   if (strippedExe === undefined) {
-    n.phony("bun", [exe]);
+    n.phony("bun", asanRuntimeDll ? [exe, asanRuntimeDll] : [exe]);
   }
 
   // ─── Step 9: smoke test ───
@@ -850,6 +857,43 @@ function emitStrip(n: Ninja, cfg: Config, inputExe: string, stripflags: string[]
   if (postlinkInputs.length > 0) node.implicitInputs = postlinkInputs;
   n.build(node);
 
+  return out;
+}
+
+/**
+ * Copy the Windows ASAN dynamic runtime (clang_rt.asan_dynamic-x86_64.dll)
+ * into the build dir beside the executable. Returns the copied DLL's path,
+ * or undefined when this isn't a native Windows ASAN build.
+ *
+ * The Windows ASAN runtime has no static variant that works with a static
+ * CRT binary — the executable always imports from this DLL — so it must sit
+ * where the loader finds it. Placing it in the exe's directory covers direct
+ * runs and the smoke test.
+ */
+function emitWindowsAsanRuntime(n: Ninja, cfg: Config, exe: string): string | undefined {
+  if (!(cfg.windows && cfg.asan && cfg.host.os === "windows")) return undefined;
+  assert(
+    cfg.clangResourceDir !== undefined,
+    "Windows ASAN build needs the clang resource dir to locate clang_rt.asan_dynamic; -print-resource-dir returned nothing",
+  );
+  const dllName = "clang_rt.asan_dynamic-x86_64.dll";
+  const src = resolve(cfg.clangResourceDir, "lib", "windows", dllName);
+  assert(
+    existsSync(src),
+    `Windows ASAN runtime not found at ${src} — is the LLVM toolchain missing its compiler-rt libs?`,
+  );
+  const out = resolve(cfg.buildDir, dllName);
+  n.rule("asan_runtime", {
+    command: `cmd /c "copy /Y $in $out"`,
+    description: "copy ASAN runtime $out",
+  });
+  n.build({
+    outputs: [out],
+    rule: "asan_runtime",
+    inputs: [src],
+    // Order after the link so the runtime lands whenever the exe is (re)built.
+    orderOnlyDeps: [exe],
+  });
   return out;
 }
 

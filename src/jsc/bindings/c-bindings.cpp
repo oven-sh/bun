@@ -692,7 +692,9 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
-#if OS(DARWIN) || ASAN_ENABLED
+    // Windows runs Bun__onExit from its own exit path (before ExitProcess),
+    // so it is never registered here — including under ASAN.
+#if (OS(DARWIN) || ASAN_ENABLED) && !OS(WINDOWS)
     atexit(Bun__onExit);
 #elif !OS(WINDOWS)
     at_quick_exit(Bun__onExit);

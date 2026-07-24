@@ -429,11 +429,12 @@ export function resolveLlvmToolchain(
 
   // Resource dir (builtin headers live at <resource-dir>/include). Needed by
   // darwin cross-compiles, which rebuild the include search path explicitly
-  // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
-  // skipped for windows targets, where nothing consumes it (and cc is
-  // clang-cl, which takes MSVC-style flags).
+  // (-nostdinc) so nothing from the build host can leak in, and by Windows
+  // ASAN builds to find the clang_rt.asan_dynamic runtime DLL under
+  // <resource-dir>/lib/windows so it can be shipped beside the binary.
+  // One ~10ms spawn; clang-cl accepts -print-resource-dir like clang.
   let clangResourceDir: string | undefined;
-  if (!msvcTarget) {
+  {
     const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
       encoding: "utf8",
       timeout: 30_000,

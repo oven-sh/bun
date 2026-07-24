@@ -776,8 +776,17 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
   // Windows cross: force off. The host clang doesn't ship the windows
   // clang_rt.asan runtime libs, so the link would fail.
+  // Windows arm64: force off. clang-cl's ASAN runtime is x64-only.
+  // Native Windows x64 is opt-in via --asan=on: C/C++ is instrumented and
+  // links the clang_rt.asan dynamic runtime; Rust is not instrumented (its
+  // -Zsanitizer=address target support does not cover windows-msvc) but runs
+  // on the intercepted libc allocator so heap lifetime bugs are still caught.
   const asan =
-    abi === "android" || freebsd || darwinCross || (windows && host.os !== "windows")
+    abi === "android" ||
+    freebsd ||
+    darwinCross ||
+    (windows && host.os !== "windows") ||
+    (windows && arm64)
       ? false
       : (partial.asan ?? asanDefault);
 

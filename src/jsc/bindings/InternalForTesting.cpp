@@ -9,7 +9,8 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
-#if ASAN_ENABLED
+// LeakSanitizer is not part of the Windows ASAN runtime.
+#if ASAN_ENABLED && !OS(WINDOWS)
 #include <sanitizer/lsan_interface.h>
 #endif
 
@@ -54,7 +55,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-#if ASAN_ENABLED
+#if ASAN_ENABLED && !OS(WINDOWS)
     return JSValue::encode(jsNumber(__lsan_do_recoverable_leak_check()));
 #endif
     return encodedJSUndefined();

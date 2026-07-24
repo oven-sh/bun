@@ -328,23 +328,38 @@ pub mod default_alloc {
         if ptr.is_null() {
             return 0;
         }
-        // Under `bun_asan` the global allocator is `std::alloc::System`, so the
-        // size must come from libc, not mimalloc — and the symbol differs per
-        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
-        // is only ever set on Linux or macOS, so the catch-all (non-asan, every
-        // `check-all` target including Windows) stays on mimalloc.
+        // Under `bun_asan` the global allocator is the system allocator, so the
+        // size must come from the CRT/libc, not mimalloc — and the symbol differs
+        // per OS (`malloc_usable_size` on Linux, `malloc_size` on macOS,
+        // `_msize` on Windows, all intercepted by that platform's ASAN
+        // runtime). The catch-all covers every non-asan `check-all` target.
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
         #[cfg(all(bun_asan, target_os = "macos"))]
         return unsafe { libc::malloc_size(ptr) };
+        #[cfg(all(bun_asan, windows))]
+        return unsafe { libc::_msize(ptr.cast_mut()) };
         // SAFETY: caller guarantees `ptr` is a live mimalloc allocation (the
         // non-null check above already handled null).
-        #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
+        #[cfg(not(any(
+            all(bun_asan, target_os = "linux"),
+            all(bun_asan, target_os = "macos"),
+            all(bun_asan, windows)
+        )))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
     }
 
     // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
     // posix_memalign/malloc_usable_size symbols don't exist on Windows.
+    //
+    // Windows ASAN: the Windows AddressSanitizer runtime intercepts the CRT
+    // heap functions (`malloc`/`calloc`/`realloc`/`free`/`_msize`) but NOT
+    // the `_aligned_*` family (upstream compiler-rt leaves those unhooked),
+    // so an aligned allocation must stay on the plain CRT heap to remain
+    // visible to ASAN. Over-aligned requests over-allocate with `malloc`,
+    // align the returned interior pointer, and stash the original `malloc`
+    // pointer in the word immediately below the aligned address; the aligned
+    // free/realloc read it back and release exactly what `malloc` returned.
 
     #[cfg(not(bun_asan))]
     #[inline]
@@ -352,7 +367,7 @@ pub mod default_alloc {
         crate::mimalloc::mi_malloc_auto_align(size, align)
     }
 
-    #[cfg(bun_asan)]
+    #[cfg(all(bun_asan, not(windows)))]
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -364,6 +379,35 @@ pub mod default_alloc {
             return core::ptr::null_mut();
         }
         p
+    }
+
+    /// Windows ASAN over-aligned allocation: `malloc(size + align)`, then
+    /// return the first `align`-aligned address at least one pointer-word
+    /// past the block start; the word just below it holds the block start.
+    #[cfg(all(bun_asan, windows))]
+    #[inline]
+    pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
+        if align <= crate::MAX_ALIGN_T {
+            return unsafe { libc::malloc(size) };
+        }
+        debug_assert!(align.is_power_of_two());
+        let Some(total) = size.checked_add(align) else {
+            return core::ptr::null_mut();
+        };
+        let raw = unsafe { libc::malloc(total) };
+        if raw.is_null() {
+            return core::ptr::null_mut();
+        }
+        let addr = raw as usize + core::mem::size_of::<*mut c_void>();
+        let aligned = (addr + align - 1) & !(align - 1);
+        // `align > MAX_ALIGN_T >= size_of::<*mut c_void>()` and `malloc` is
+        // MAX_ALIGN_T-aligned, so the header word never precedes `raw` and the
+        // aligned block still has `size` usable bytes inside `total`.
+        debug_assert!(aligned >= raw as usize + core::mem::size_of::<*mut c_void>());
+        debug_assert!(aligned + size <= raw as usize + total);
+        // SAFETY: the word at `aligned - 8` is within the `malloc`ed block.
+        unsafe { (aligned as *mut *mut c_void).sub(1).write(raw) };
+        aligned as *mut c_void
     }
 
     #[cfg(not(bun_asan))]
@@ -383,6 +427,37 @@ pub mod default_alloc {
             unsafe { core::ptr::write_bytes(p.cast::<u8>(), 0, size) };
         }
         p
+    }
+
+    /// The original `malloc` pointer for a Windows-ASAN over-aligned block
+    /// (`align > MAX_ALIGN_T`): stored in the word below the aligned address.
+    ///
+    /// # Safety
+    /// `ptr` must be an over-aligned block returned by `malloc_aligned`.
+    #[cfg(all(bun_asan, windows))]
+    #[inline]
+    unsafe fn windows_asan_block_base(ptr: *mut c_void) -> *mut c_void {
+        // SAFETY: caller guarantees the header word exists just below `ptr`.
+        unsafe { (ptr as *mut *mut c_void).sub(1).read() }
+    }
+
+    /// Free a block allocated by `malloc_aligned` / `zalloc_aligned` /
+    /// `realloc_aligned` with the alignment it was allocated with.
+    ///
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
+    #[inline]
+    pub unsafe fn free_aligned(ptr: *mut c_void, align: usize) {
+        #[cfg(all(bun_asan, windows))]
+        if !ptr.is_null() && align > crate::MAX_ALIGN_T {
+            // SAFETY: over-aligned Windows-ASAN blocks free the stored `malloc` base.
+            return unsafe { libc::free(windows_asan_block_base(ptr)) };
+        }
+        let _ = align;
+        // Everything else (mimalloc, plain-CRT small aligns, POSIX
+        // posix_memalign blocks) frees through the plain path.
+        // SAFETY: caller contract forwards to `free`.
+        unsafe { free(ptr) }
     }
 
     /// # Safety
@@ -409,12 +484,34 @@ pub mod default_alloc {
         }
         if !ptr.is_null() {
             unsafe {
-                let copy = usable_size(ptr).min(new_size);
+                let copy = usable_size_aligned(ptr, align).min(new_size);
                 core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
-                libc::free(ptr);
+                free_aligned(ptr, align);
             }
         }
         new_ptr
+    }
+
+    /// Usable size of a block allocated with `align`. Under Windows ASAN an
+    /// over-aligned block's usable bytes end where the underlying `malloc`
+    /// block ends, measured from the aligned interior pointer.
+    ///
+    /// # Safety
+    /// `ptr` must be a live allocation from the default allocator with the given `align`.
+    #[inline]
+    pub unsafe fn usable_size_aligned(ptr: *const c_void, align: usize) -> usize {
+        #[cfg(all(bun_asan, windows))]
+        if align > crate::MAX_ALIGN_T {
+            // SAFETY: over-aligned Windows-ASAN block; base word is valid.
+            unsafe {
+                let base = windows_asan_block_base(ptr.cast_mut());
+                let total = libc::_msize(base);
+                return total - (ptr as usize - base as usize);
+            }
+        }
+        let _ = align;
+        // SAFETY: caller contract forwards to `usable_size`.
+        unsafe { usable_size(ptr) }
     }
 }
 

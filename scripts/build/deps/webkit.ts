@@ -362,8 +362,8 @@ export const webkit: Dependency = {
       args.CMAKE_CXX_FLAGS = `/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${optFlagStr}`.trim();
       // Static CRT to match bun + all other deps (we build everything
       // with /MTd or /MT). Without this, cmake defaults to /MDd →
-      // RuntimeLibrary mismatch at link.
-      args.CMAKE_MSVC_RUNTIME_LIBRARY = cfg.debug ? "MultiThreadedDebug" : "MultiThreaded";
+      // RuntimeLibrary mismatch at link. ASAN can't link the debug CRT.
+      args.CMAKE_MSVC_RUNTIME_LIBRARY = cfg.debug && !cfg.asan ? "MultiThreadedDebug" : "MultiThreaded";
       spec.preBuild = {
         command: [
           "powershell",

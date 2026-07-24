@@ -26,9 +26,12 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
     }
 }
 
-pub(crate) fn default_allocator_free(_: *mut c_void, buf: &mut [u8], _: Alignment, _: usize) {
-    // SAFETY: Allocator vtable invariant — `buf` was allocated by the default allocator.
-    unsafe { default_alloc::free(buf.as_mut_ptr().cast()) }
+pub(crate) fn default_allocator_free(_: *mut c_void, buf: &mut [u8], align: Alignment, _: usize) {
+    // SAFETY: Allocator vtable invariant — `buf` was allocated by the default
+    // allocator through `aligned_alloc` with this same alignment, so it is
+    // released through the alignment-aware path (which differs from a plain
+    // `free` for over-aligned blocks under ASAN on Windows).
+    unsafe { default_alloc::free_aligned(buf.as_mut_ptr().cast(), align.to_byte_units()) }
 }
 
 pub(crate) struct MimallocAllocator;
@@ -40,8 +43,9 @@ impl MimallocAllocator {
         #[cfg(debug_assertions)]
         {
             if !ptr.is_null() {
-                // SAFETY: ptr is non-null and was just returned by the default allocator
-                let usable = unsafe { default_alloc::usable_size(ptr) };
+                // SAFETY: ptr is non-null and was just returned by the default
+                // allocator's aligned path with this alignment.
+                let usable = unsafe { default_alloc::usable_size_aligned(ptr, alignment.to_byte_units()) };
                 if usable < len && !ptr.is_null() {
                     panic!(
                         "default allocator: allocated size is too small: {} < {}",
@@ -120,8 +124,9 @@ impl ZAllocator {
         #[cfg(debug_assertions)]
         {
             if !ptr.is_null() {
-                // SAFETY: ptr is non-null and was just returned by the default allocator
-                let usable = unsafe { default_alloc::usable_size(ptr) };
+                // SAFETY: ptr is non-null and was just returned by the default
+                // allocator's aligned path with this alignment.
+                let usable = unsafe { default_alloc::usable_size_aligned(ptr, alignment.to_byte_units()) };
                 if usable < len {
                     panic!(
                         "default allocator: allocated size is too small: {} < {}",
@@ -134,9 +139,10 @@ impl ZAllocator {
         ptr.cast::<u8>()
     }
 
-    fn aligned_alloc_size(ptr: *mut u8) -> usize {
-        // SAFETY: ptr was allocated by the default allocator
-        unsafe { default_alloc::usable_size(ptr.cast()) }
+    fn aligned_alloc_size(ptr: *mut u8, alignment: Alignment) -> usize {
+        // SAFETY: ptr was allocated by the default allocator's aligned path
+        // with this alignment.
+        unsafe { default_alloc::usable_size_aligned(ptr.cast(), alignment.to_byte_units()) }
     }
 
     fn alloc_with_z_allocator(
@@ -151,7 +157,7 @@ impl ZAllocator {
     fn resize_with_z_allocator(
         _: *mut c_void,
         buf: &mut [u8],
-        _: Alignment,
+        alignment: Alignment,
         new_len: usize,
         _: usize,
     ) -> bool {
@@ -159,7 +165,7 @@ impl ZAllocator {
             return true;
         }
 
-        let full_len = Self::aligned_alloc_size(buf.as_mut_ptr());
+        let full_len = Self::aligned_alloc_size(buf.as_mut_ptr(), alignment);
         if new_len <= full_len {
             return true;
         }

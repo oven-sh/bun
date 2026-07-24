@@ -81,7 +81,15 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // `leak:uws_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
-    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    //
+    // Windows: LeakSanitizer does not exist in the Windows runtime, so any
+    // `detect_leaks` option is rejected as unknown; and Rust's system
+    // allocator is HeapAlloc, which the runtime only intercepts when
+    // `windows_hook_rtl_allocators` is on.
+    #[cfg(windows)]
+    return c"detect_stack_use_after_return=0:windows_hook_rtl_allocators=true".as_ptr();
+    #[cfg(not(windows))]
+    return c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr();
 }
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`
@@ -102,6 +110,9 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 ///
 /// `#[cold]`: read once by the LSAN runtime during its own init (never linked
 /// in release / on the `bun run` path) — keep it off the startup `.text` pages.
+///
+/// Not defined on Windows, whose ASAN runtime has no LeakSanitizer to read it.
+#[cfg(not(windows))]
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]

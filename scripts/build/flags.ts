@@ -215,14 +215,17 @@ export const globalFlags: Flag[] = [
   },
 
   // ─── MSVC runtime (Windows) ───
+  // ASAN on Windows cannot link against the debug CRT (clang-cl rejects /MTd
+  // together with -fsanitize=address), so an asan build uses /MT even when
+  // it is otherwise a debug build.
   {
     flag: "/MTd",
-    when: c => c.windows && c.debug,
+    when: c => c.windows && c.debug && !c.asan,
     desc: "Static debug MSVC runtime",
   },
   {
     flag: "/MT",
-    when: c => c.windows && c.release,
+    when: c => c.windows && (c.release || c.asan),
     desc: "Static MSVC runtime",
   },
   {

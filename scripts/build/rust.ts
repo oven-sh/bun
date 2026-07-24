@@ -348,7 +348,11 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     "--profile",
     profile.name,
   ];
-  if (tier3 || cfg.release || cfg.asan) {
+  // Windows ASAN builds don't instrument Rust (see the -Zsanitizer note in
+  // the rustflags below), so the asan reason to rebuild std doesn't apply
+  // there; release/tier3 still may.
+  const asanRebuildsStd = cfg.asan && !cfg.windows;
+  if (tier3 || cfg.release || asanRebuildsStd) {
     // Build std/core/alloc from source instead of linking the rustup prebuilt.
     //
     // tier3:   no prebuilt `rust-std` exists.
@@ -449,7 +453,16 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // Match the C/C++ side's instrumentation so cross-language stack traces
     // and shadow-memory bookkeeping agree. Nightly-only flag; the pinned
     // toolchain in `rust-toolchain.toml` is nightly.
-    rustflags.push("-Zsanitizer=address");
+    //
+    // Windows: `cfg(bun_asan)` is set (so Rust allocates from the ASAN-
+    // intercepted CRT heap and its allocations are covered by the C/C++
+    // runtime's redzones and use-after-free checks), but the Rust code is
+    // NOT instrumented. rustc's AddressSanitizer does not support the
+    // windows-msvc target: a -Zsanitizer=address object links against the
+    // clang runtime here with an ABI mismatch and fails at load
+    // (STATUS_ENTRYPOINT_NOT_FOUND). Rust's own bounds checks cover its
+    // accesses; the intercepted allocator covers heap lifetime bugs.
+    if (!cfg.windows) rustflags.push("-Zsanitizer=address");
     rustflags.push("--cfg=bun_asan");
   }
   // `bun_debug`: the cargo profile is `dev` (a Debug-buildtype build).

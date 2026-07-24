@@ -1185,7 +1185,8 @@ function emitNestedCmake(
   // /DEFAULTLIB:msvcrt.lib → link fails with CRT conflict or worse,
   // silently pulls in the dynamic CRT.
   if (cfg.windows) {
-    const rt = cfg.debug ? "MultiThreadedDebug" : "MultiThreaded";
+    // ASAN can't link the debug CRT; matches the /MTd → /MT switch in flags.ts.
+    const rt = cfg.debug && !cfg.asan ? "MultiThreadedDebug" : "MultiThreaded";
     args.push(`-DCMAKE_MSVC_RUNTIME_LIBRARY=${rt}`);
   }
 

@@ -62,6 +62,7 @@
 
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
+#include "vm/SigintWatcher.h"
 
 #include "napi_handle_scope.h"
 #include "napi_external.h"
@@ -1558,19 +1559,26 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #endif
                         };
 #if !OS(WINDOWS)
-                        Bun__ensureSignalHandler();
-                        struct sigaction action;
-                        memset(&action, 0, sizeof(struct sigaction));
+                        // SigintWatcher owns the SIGINT sigaction while a
+                        // breakOnSigint vm run is active; forwarding the
+                        // listener happens when it hands SIGINT back. Installing
+                        // forwardSignal here would make the running script
+                        // uninterruptible.
+                        if (signalNumber != SIGINT || !SigintWatcher::isActive()) {
+                            Bun__ensureSignalHandler();
+                            struct sigaction action;
+                            memset(&action, 0, sizeof(struct sigaction));
 
-                        // Set the handler in the action struct
-                        action.sa_handler = forwardSignal;
+                            // Set the handler in the action struct
+                            action.sa_handler = forwardSignal;
 
-                        // Clear the sa_mask
-                        sigemptyset(&action.sa_mask);
-                        sigaddset(&action.sa_mask, signalNumber);
-                        action.sa_flags = SA_RESTART;
+                            // Clear the sa_mask
+                            sigemptyset(&action.sa_mask);
+                            sigaddset(&action.sa_mask, signalNumber);
+                            action.sa_flags = SA_RESTART;
 
-                        sigaction(signalNumber, &action, nullptr);
+                            sigaction(signalNumber, &action, nullptr);
+                        }
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
                             eventEmitter.scriptExecutionContext()->jsGlobalObject(),

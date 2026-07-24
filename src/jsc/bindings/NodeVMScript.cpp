@@ -365,9 +365,10 @@ public:
             return;
         m_emitter = &emitter;
         // Remove from the map directly so onDidChangeListeners does not fire:
-        // the SIGINT entry stays in signalToContextIdsMap, so a mid-run
-        // process.on("SIGINT") takes the contains() early-out instead of
-        // sigaction()-ing forwardSignal over SigintWatcher's handler.
+        // the scope is constructed before SigintWatcher::install(), so the
+        // removal path would otherwise swap SIGINT to SIG_DFL for the gap.
+        // Mid-run process.on("SIGINT") calls are handled separately by the
+        // SigintWatcher::isActive() guard in onDidChangeListeners.
         m_emitter->eventListenerMap().removeAll(m_sigint);
     }
 

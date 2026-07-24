@@ -1280,10 +1280,14 @@ describe.concurrent("breakOnSigint saves and restores process SIGINT listeners",
   });
 
   test("a once() listener keeps its once-ness across the run", async () => {
+    // The anonymous listener's only root while detached is the scope's
+    // MarkedArgumentBuffer; force GC during the run so a missing root would
+    // clear the JSEventListener's weak m_jsFunction and the re-added listener
+    // would never fire.
     const result = await run(`
       let called = 0;
       process.once("SIGINT", () => called++);
-      require("vm").runInThisContext("1 + 1", { breakOnSigint: true });
+      require("vm").runInThisContext("for (let i = 0; i < 50; i++) Bun.gc(true);", { breakOnSigint: true });
       process.emit("SIGINT");
       process.emit("SIGINT");
       console.log(JSON.stringify({ called, remaining: process.listenerCount("SIGINT") }));
@@ -1333,43 +1337,67 @@ describe.concurrent("breakOnSigint saves and restores process SIGINT listeners",
     expect(result.exitCode).toBe(0);
   });
 
-  // The detach must not let a mid-run process.on("SIGINT") reinstall the
-  // process-level SIGINT sigaction over SigintWatcher's: the script's own
-  // for(;;) must still be interruptible.
-  test.skipIf(isWindows)("a mid-run process.on('SIGINT') does not stop the run being interruptible", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          process.on("SIGINT", () => {});
-          try {
-            require("vm").runInThisContext(
-              'process.on("SIGINT", () => {}); process.send("ready"); for (;;);',
-              { breakOnSigint: true },
-            );
-          } catch (e) {
-            process.stdout.write(e.code + "\\n");
-            process.exit(0);
-          }
-          process.stdout.write("survived\\n");
-          process.exit(7);
-        `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      ipc() {
-        proc.kill("SIGINT");
+  // A mid-run process.on("SIGINT") must not reinstall the process-level SIGINT
+  // sigaction over SigintWatcher's: the script's own for(;;) must still be
+  // interruptible. onDidChangeListeners skips the sigaction while
+  // SigintWatcher::isActive(), so every add/remove permutation is covered.
+  const midRunVariants: [string, { before: string; inside: string }][] = [
+    ["pre-run listener + mid-run add", { before: `process.on("SIGINT", () => {});`, inside: `process.on("SIGINT", () => {});` }],
+    [
+      "pre-run listener + mid-run add, remove, add",
+      {
+        before: `process.on("SIGINT", () => {});`,
+        inside: `const g = () => {}; process.on("SIGINT", g); process.removeListener("SIGINT", g); process.on("SIGINT", () => {});`,
       },
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "ERR_SCRIPT_EXECUTION_INTERRUPTED\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
+    ],
+    ["no pre-run listener + mid-run add", { before: ``, inside: `process.on("SIGINT", () => {});` }],
+  ];
+  test.skipIf(isWindows).each(midRunVariants)(
+    "a mid-run process.on('SIGINT') does not stop the run being interruptible (%s)",
+    async (_, { before, inside }) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            ${before}
+            try {
+              require("vm").runInThisContext(
+                ${JSON.stringify(inside + ` process.send("ready"); for (;;);`)},
+                { breakOnSigint: true },
+              );
+            } catch (e) {
+              process.stdout.write(e.code + "\\n");
+              process.exit(0);
+            }
+            process.stdout.write("survived\\n");
+            process.exit(7);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        ipc() {
+          proc.kill("SIGINT");
+          // Hang guard: if the watcher's handler has been overwritten, SIGINT
+          // is queued on the event loop and the child spins forever. Bound the
+          // wait so the assertion below reports a clear failure instead of a
+          // test-level timeout.
+          guard = setTimeout(() => proc.kill("SIGKILL"), 5000);
+        },
+      });
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      clearTimeout(guard);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "ERR_SCRIPT_EXECUTION_INTERRUPTED\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    10000,
+  );
 
   // No way to send CTRL_C_EVENT to a child from JS on Windows.
   test.skipIf(isWindows)("a delivered SIGINT after the run reaches the restored listener", async () => {

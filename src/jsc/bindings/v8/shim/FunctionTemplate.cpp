@@ -4,6 +4,7 @@
 #include "../V8Data.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
+#include "JavaScriptCore/ObjectConstructor.h"
 
 using JSC::JSValue;
 using JSC::Structure;
@@ -55,23 +56,15 @@ void FunctionTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(FunctionTemplate);
 
-JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+// Build a synthetic ApiCallbackExitFrame and invoke the template's callback.
+// Returns the callback's return-value slot (jsUndefined() if untouched);
+// callers apply [[Call]] vs [[Construct]] result substitution on top.
+static JSValue invokeCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, Function* callee, HandleScope& hs, JSC::JSObject* jscThis, bool isConstructCall)
 {
-    auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
     auto& vm = JSC::getVM(globalObject);
 
-    HandleScope hs(isolate);
-
-    // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode. So if
-    // `this` is null or undefined, we use globalThis instead; otherwise, we convert `this` to an
-    // object.
-    JSC::JSObject* jscThis = globalObject->globalThis();
-    if (!callFrame->thisValue().isUndefinedOrNull()) {
-        // TODO(@190n) throwscope, assert no exception
-        jscThis = callFrame->thisValue().toObject(globalObject);
-    }
     Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);
 
     // In V8, the target is the function being called
@@ -93,15 +86,21 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         return frame[viewOffset + index];
     };
 
-    // Bun never reports a construct call here, so V8's NewTarget() always
-    // returns undefined without reading this slot
-    slot(Info::kNewTargetIndex) = TaggedPointer();
+    // NewTarget() only reads this slot when IsConstructCall() is true
+    if (isConstructCall) {
+        Local<Value> newTarget = hs.createLocal<Value>(vm, callFrame->newTarget());
+        slot(Info::kNewTargetIndex) = newTarget.tagged();
+    } else {
+        slot(Info::kNewTargetIndex) = TaggedPointer();
+    }
     // Length() reads this as a raw integer, not a Smi
     slot(Info::kArgcIndex) = TaggedPointer::fromRaw(argc);
     // SP/FP/PC are only used by V8's stack walker, which never sees this frame
     slot(Info::kFrameSPIndex) = TaggedPointer::fromRaw(0);
     // IsConstructCall() compares this Smi against kFrameTypeApiConstructExit
-    slot(Info::kFrameTypeIndex) = TaggedPointer(Info::kFrameTypeApiCallExit);
+    slot(Info::kFrameTypeIndex) = TaggedPointer(isConstructCall
+            ? Info::kFrameTypeApiConstructExit
+            : Info::kFrameTypeApiCallExit);
     slot(Info::kFrameFPIndex) = TaggedPointer::fromRaw(0);
     slot(Info::kFramePCIndex) = TaggedPointer::fromRaw(0);
     // GetIsolate() reads this slot as a raw, untagged pointer
@@ -121,16 +120,52 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     // The FunctionCallbackInfo object is a view located at the argc slot
     const auto& info = *reinterpret_cast<const Info*>(&slot(Info::kArgcIndex));
 
-    functionTemplate->m_callback(info);
+    functionTemplate->callback()(info);
 
     TaggedPointer& return_value = slot(Info::kReturnValueIndex);
     if (return_value.isEmpty()) {
         // callback forgot to set a return value, so return undefined
-        return JSValue::encode(JSC::jsUndefined());
-    } else {
-        Local<Data> local_ret(&return_value);
-        return JSValue::encode(local_ret->localToJSValue());
+        return JSC::jsUndefined();
     }
+    Local<Data> local_ret(&return_value);
+    return local_ret->localToJSValue();
+}
+
+JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
+    auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
+
+    HandleScope hs(isolate);
+
+    // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode. So if
+    // `this` is null or undefined, we use globalThis instead; otherwise, we convert `this` to an
+    // object.
+    JSC::JSObject* jscThis = globalObject->globalThis();
+    if (!callFrame->thisValue().isUndefinedOrNull()) {
+        // toObject only throws for undefined/null, which is guarded above
+        jscThis = callFrame->thisValue().toObject(globalObject);
+    }
+
+    return JSValue::encode(invokeCallback(globalObject, callFrame, callee, hs, jscThis, false));
+}
+
+JSC::EncodedJSValue FunctionTemplate::functionConstruct(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
+    auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
+
+    HandleScope hs(isolate);
+
+    // V8 allocates the receiver from the FunctionTemplate's InstanceTemplate;
+    // Bun does not implement that yet, so use a plain object for now so the
+    // callback still observes an object `this`.
+    JSC::JSObject* jscThis = JSC::constructEmptyObject(globalObject);
+
+    JSValue result = invokeCallback(globalObject, callFrame, callee, hs, jscThis, true);
+    // [[Construct]] must yield an object; V8 substitutes the receiver when the
+    // callback returns a non-object.
+    return JSValue::encode(result.isObject() ? result : JSValue(jscThis));
 }
 
 } // namespace shim

@@ -279,6 +279,9 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template");
     });
+    it("GetFunction result can be called as a constructor", async () => {
+      await checkSameOutput("test_v8_function_template_constructor");
+    });
   });
 
   describe("Function", () => {

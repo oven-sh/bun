@@ -973,7 +973,7 @@ impl UnresolvedColor {
         let mut parser = ComponentParser::new(false);
         crate::match_ignore_ascii_case! { f, {
             b"rgb" => return input.parse_nested_block(|input2| {
-                parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, |i, p| {
+                parser.parse_relative::<SRGB, UnresolvedColor, _>(input2, true, |i, p| {
                     let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
@@ -984,7 +984,7 @@ impl UnresolvedColor {
                 })
             }),
             b"hsl" => return input.parse_nested_block(|input2| {
-                parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
+                parser.parse_relative::<HSL, UnresolvedColor, _>(input2, true, |i, p| {
                     let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));

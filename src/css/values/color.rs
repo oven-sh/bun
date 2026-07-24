@@ -1126,17 +1126,20 @@ pub fn parse_color_function(
 ) -> CssResult<CssColor> {
     let mut parser = ComponentParser::new(true);
 
+    // CSS Color 4 percentage reference ranges: lab() L/a/b 100% = 100/125/125,
+    // lch() C 100% = 150, oklab() L/a/b 100% = 1.0/0.4/0.4, oklch() C 100% = 0.4.
+    // https://www.w3.org/TR/css-color-4/#specifying-lab-lch
     crate::match_ignore_ascii_case! { function, {
-        b"lab" => parse_lab::<LAB>(input, &mut parser, |l, a, b, alpha| {
+        b"lab" => parse_lab::<LAB>(input, &mut parser, 100.0, 125.0, |l, a, b, alpha| {
             LABColor::Lab(LAB { l, a, b, alpha })
         }),
-        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, |l, a, b, alpha| {
+        b"oklab" => parse_lab::<OKLAB>(input, &mut parser, 1.0, 0.4, |l, a, b, alpha| {
             LABColor::Oklab(OKLAB { l, a, b, alpha })
         }),
-        b"lch" => parse_lch::<LCH>(input, &mut parser, |l, c, h, alpha| {
+        b"lch" => parse_lch::<LCH>(input, &mut parser, 100.0, 150.0, |l, c, h, alpha| {
             LABColor::Lch(LCH { l, c, h, alpha })
         }),
-        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, |l, c, h, alpha| {
+        b"oklch" => parse_lch::<OKLCH>(input, &mut parser, 1.0, 0.4, |l, c, h, alpha| {
             LABColor::Oklch(OKLCH { l, c, h, alpha })
         }),
         b"color" => parse_predefined(input, &mut parser),
@@ -1308,9 +1311,14 @@ pub(crate) fn delta_eok<T: Into<OKLAB>>(a_: T, b_: OKLCH) -> f32 {
     (delta_l.powi(2) + delta_a.powi(2) + delta_b.powi(2)).sqrt()
 }
 
+/// `l_basis` is the lightness `<percentage>` reference range, and also what it
+/// is normalized by before being stored: `lab(50)`, `lab(50%)` and `oklab(0.5)`
+/// all store `0.5`. `ab_basis` is the a/b reference range; they store unscaled.
 pub fn parse_lab<T>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    ab_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor>
 where
@@ -1318,11 +1326,12 @@ where
 {
     // https://www.w3.org/TR/css-color-4/#funcdef-lab
     input.parse_nested_block(|i| {
-        parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<T, CssColor, _>(i, false, |i, p| {
             // f32::max() does not propagate NaN, so use clamp for now until f32::maximum() is stable.
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
-            let a = p.parse_number(i)?;
-            let b = p.parse_number(i)?;
+            let l = (parse_number_or_percentage_with_basis(i, p, l_basis)? / l_basis)
+                .clamp(0.0, f32::MAX);
+            let a = parse_number_or_percentage_with_basis(i, p, ab_basis)?;
+            let b = parse_number_or_percentage_with_basis(i, p, ab_basis)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, a, b, alpha);
             Ok(CssColor::Lab(Box::new(lab)))
@@ -1330,13 +1339,18 @@ where
     })
 }
 
+/// `l_basis` behaves as in [`parse_lab`]; `c_basis` is the `<percentage>`
+/// reference range of the chroma component, which is stored unscaled.
 pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<OKLAB>>(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
+    l_basis: f32,
+    c_basis: f32,
     func: fn(f32, f32, f32, f32) -> LABColor,
 ) -> CssResult<CssColor> {
+    // https://www.w3.org/TR/css-color-4/#funcdef-lch
     input.parse_nested_block(|i| {
-        parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<T, CssColor, _>(i, false, |i, p| {
             if let Some(from) = &mut p.from {
                 // Relative angles should be normalized.
                 // https://www.w3.org/TR/css-color-5/#relative-LCH
@@ -1346,8 +1360,9 @@ pub fn parse_lch<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + Into<O
                 }
             }
 
-            let l = p.parse_percentage(i)?.clamp(0.0, f32::MAX);
-            let c = p.parse_number(i)?.clamp(0.0, f32::MAX);
+            let l = (parse_number_or_percentage_with_basis(i, p, l_basis)? / l_basis)
+                .clamp(0.0, f32::MAX);
+            let c = parse_number_or_percentage_with_basis(i, p, c_basis)?.clamp(0.0, f32::MAX);
             let h = parse_angle_or_number(i, p)?;
             let alpha = parse_alpha(i, p)?;
             let lab = func(l, c, h, alpha);
@@ -1366,7 +1381,7 @@ pub fn parse_hsl_hwb<T: Colorspace + ColorGamut + Into<OKLCH> + From<OKLCH> + In
     func: fn(f32, f32, f32, f32) -> CssColor,
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
-        parser.parse_relative::<T, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<T, CssColor, _>(i, true, |i, p| {
             let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
@@ -1417,7 +1432,7 @@ pub fn parse_angle_or_number(input: &mut css::Parser, parser: &ComponentParser) 
 fn parse_rgb(input: &mut css::Parser, parser: &mut ComponentParser) -> CssResult<CssColor> {
     // https://drafts.csswg.org/css-color-4/#rgb-functions
     input.parse_nested_block(|i| {
-        parser.parse_relative::<SRGB, CssColor, _>(i, |i, p| {
+        parser.parse_relative::<SRGB, CssColor, _>(i, true, |i, p| {
             let (r, g, b, is_legacy) = parse_rgb_components(i, p)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
@@ -1470,6 +1485,30 @@ pub fn parse_number_or_percentage(
         NumberOrPercentage::Number { value } => value,
         NumberOrPercentage::Percentage { unit_value } => unit_value,
     })
+}
+
+/// Parses a `<percentage> | <number>` component, scaling a percentage so `100%`
+/// maps to `percent_basis`. Going through the two typed parsers keeps relative
+/// channel keywords (`a` in `lab(from red l a b)`) resolving by their own type.
+fn parse_number_or_percentage_with_basis(
+    input: &mut css::Parser,
+    parser: &ComponentParser,
+    percent_basis: f32,
+) -> CssResult<f32> {
+    if let Ok(unit_value) = input.try_parse(|i| parser.parse_percentage(i)) {
+        return Ok(unit_value * percent_basis);
+    }
+    parser.parse_number(input)
+}
+
+/// A boundary color converted from another space lands ~1e-6 off (`#ff0000` as
+/// `lab(54.2905% 80.8049 69.891)` gives `g = -8e-7`). Well below one channel
+/// step: 255 * 1e-4 is 0.03.
+const SRGB_GAMUT_EPSILON: f32 = 1e-4;
+
+fn is_approximately_in_srgb_gamut(srgb: &SRGB) -> bool {
+    let in_range = |v: f32| (-SRGB_GAMUT_EPSILON..=1.0 + SRGB_GAMUT_EPSILON).contains(&v);
+    in_range(srgb.r) && in_range(srgb.g) && in_range(srgb.b)
 }
 
 impl LABColor {
@@ -1879,9 +1918,12 @@ impl ComponentParser {
     }
 
     /// `func` is called as `func(input, parser)`.
+    /// `srgb_bounded` marks the legacy sRGB functions (`rgb()`, `hsl()`,
+    /// `hwb()`), which cannot represent a channel outside the sRGB gamut.
     pub(crate) fn parse_relative<T, C, F>(
         &mut self,
         input: &mut css::Parser,
+        srgb_bounded: bool,
         func: F,
     ) -> CssResult<C>
     where
@@ -1894,7 +1936,7 @@ impl ComponentParser {
             .is_ok()
         {
             let from = CssColor::parse(input)?;
-            return self.parse_from::<T, C, F>(from, input, func);
+            return self.parse_from::<T, C, F>(from, input, srgb_bounded, func);
         }
 
         func(input, self)
@@ -1904,6 +1946,7 @@ impl ComponentParser {
         &mut self,
         from: CssColor,
         input: &mut css::Parser,
+        srgb_bounded: bool,
         func: F,
     ) -> CssResult<C>
     where
@@ -1913,10 +1956,20 @@ impl ComponentParser {
     {
         if let CssColor::LightDark { light, dark } = from {
             let state = input.state();
-            let light = self.parse_from::<T, C, F>(*light, input, func)?;
+            let light = self.parse_from::<T, C, F>(*light, input, srgb_bounded, func)?;
             input.reset(&state);
-            let dark = self.parse_from::<T, C, F>(*dark, input, func)?;
+            let dark = self.parse_from::<T, C, F>(*dark, input, srgb_bounded, func)?;
             return Ok(C::light_dark_owned(light, dark));
+        }
+
+        // A legacy sRGB function cannot represent an out-of-gamut origin, and gamut
+        // mapping one here would bake in a different color than a browser renders.
+        // Leave it unresolved. https://github.com/w3c/csswg-drafts/issues/8444
+        if srgb_bounded
+            && !SRGB::try_from_css_color(&from)
+                .is_some_and(|srgb| is_approximately_in_srgb_gamut(&srgb.resolve_missing()))
+        {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
 
         let new_from = match T::try_from_css_color(&from) {

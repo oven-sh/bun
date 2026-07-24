@@ -72,6 +72,13 @@ Bun.color([255, 0, 0, 255], "css"); // "red"
 
 If the input is unknown or fails to parse, `Bun.color` returns `null`.
 
+`"css"` is the only output format that accepts colors without concrete color channels, such as `currentColor`, system colors like `Canvas`, and `light-dark()`. Every other format needs to resolve the input to red, green, and blue values, so those inputs return `null` instead.
+
+```ts
+Bun.color("currentColor", "css"); // "currentColor"
+Bun.color("currentColor", "number"); // null
+```
+
 ### Format colors as ANSI (for terminals)
 
 The `"ansi"` format outputs ANSI escape codes that color text in terminals.

@@ -863,3 +863,83 @@ exports[`color(8421504, "css") 1`] = `"gray"`;
 exports[`color(0, "css") 1`] = `"#000"`;
 
 exports[`color(16777215, "css") 1`] = `"#fff"`;
+
+exports[`color("hsl(0, 100%, 50%)", "ansi-24bit") 1`] = `"\x1B[38;2;255;0;0m"`;
+
+exports[`color("hsl(0, 100%, 50%)", "ansi-16") 1`] = `"\x1B[91m"`;
+
+exports[`color("hsl(0, 100%, 50%)", "ansi256") 1`] = `"\x1B[38;5;196m"`;
+
+exports[`color("hsl(120, 100%, 50%)", "ansi-24bit") 1`] = `"\x1B[38;2;0;255;0m"`;
+
+exports[`color("hsl(120, 100%, 50%)", "ansi-16") 1`] = `"\x1B[92m"`;
+
+exports[`color("hsl(120, 100%, 50%)", "ansi256") 1`] = `"\x1B[38;5;46m"`;
+
+exports[`color("hsl(240, 100%, 50%)", "ansi-24bit") 1`] = `"\x1B[38;2;0;0;255m"`;
+
+exports[`color("hsl(240, 100%, 50%)", "ansi-16") 1`] = `"\x1B[94m"`;
+
+exports[`color("hsl(240, 100%, 50%)", "ansi256") 1`] = `"\x1B[38;5;21m"`;
+
+exports[`color("hsl(60, 100%, 50%)", "ansi-24bit") 1`] = `"\x1B[38;2;255;255;0m"`;
+
+exports[`color("hsl(60, 100%, 50%)", "ansi-16") 1`] = `"\x1B[93m"`;
+
+exports[`color("hsl(60, 100%, 50%)", "ansi256") 1`] = `"\x1B[38;5;226m"`;
+
+exports[`color("hsl(300, 100%, 50%)", "ansi-24bit") 1`] = `"\x1B[38;2;255;0;255m"`;
+
+exports[`color("hsl(300, 100%, 50%)", "ansi-16") 1`] = `"\x1B[95m"`;
+
+exports[`color("hsl(300, 100%, 50%)", "ansi256") 1`] = `"\x1B[38;5;201m"`;
+
+exports[`color("hsl(180, 100%, 50%)", "ansi-24bit") 1`] = `"\x1B[38;2;0;255;255m"`;
+
+exports[`color("hsl(180, 100%, 50%)", "ansi-16") 1`] = `"\x1B[96m"`;
+
+exports[`color("hsl(180, 100%, 50%)", "ansi256") 1`] = `"\x1B[38;5;51m"`;
+
+exports[`color("hsl(0, 100%, 50%)", "css") 1`] = `"red"`;
+
+exports[`color("hsl(120, 100%, 50%)", "css") 1`] = `"#0f0"`;
+
+exports[`color("hsl(240, 100%, 50%)", "css") 1`] = `"#00f"`;
+
+exports[`color("hsl(60, 100%, 50%)", "css") 1`] = `"#ff0"`;
+
+exports[`color("hsl(300, 100%, 50%)", "css") 1`] = `"#f0f"`;
+
+exports[`color("hsl(180, 100%, 50%)", "css") 1`] = `"#0ff"`;
+
+exports[`color("lab(50% 62.5 62.5)", "ansi-24bit") 1`] = `"\x1B[38;2;219;55;2m"`;
+
+exports[`color("lab(50% 62.5 62.5)", "ansi-16") 1`] = `"\x1B[91m"`;
+
+exports[`color("lab(50% 62.5 62.5)", "ansi256") 1`] = `"\x1B[38;5;166m"`;
+
+exports[`color("lab(75% -40 20)", "ansi-24bit") 1`] = `"\x1B[38;2;107;204;146m"`;
+
+exports[`color("lab(75% -40 20)", "ansi-16") 1`] = `"\x1B[92m"`;
+
+exports[`color("lab(75% -40 20)", "ansi256") 1`] = `"\x1B[38;5;78m"`;
+
+exports[`color("lab(100% 0 0)", "ansi-24bit") 1`] = `"\x1B[38;2;255;255;255m"`;
+
+exports[`color("lab(100% 0 0)", "ansi-16") 1`] = `"\x1B[97m"`;
+
+exports[`color("lab(100% 0 0)", "ansi256") 1`] = `"\x1B[38;5;231m"`;
+
+exports[`color("lab(0% 0 0)", "ansi-24bit") 1`] = `"\x1B[38;2;0;0;0m"`;
+
+exports[`color("lab(0% 0 0)", "ansi-16") 1`] = `"\x1B[30m"`;
+
+exports[`color("lab(0% 0 0)", "ansi256") 1`] = `"\x1B[38;5;16m"`;
+
+exports[`color("lab(50% 62.5 62.5)", "css") 1`] = `"lab(50% 62.5 62.5)"`;
+
+exports[`color("lab(75% -40 20)", "css") 1`] = `"lab(75% -40 20)"`;
+
+exports[`color("lab(100% 0 0)", "css") 1`] = `"lab(100% 0 0)"`;
+
+exports[`color("lab(0% 0 0)", "css") 1`] = `"lab(0% 0 0)"`;

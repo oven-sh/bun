@@ -1213,6 +1213,24 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
             true
         }
+        // A libc `getaddrinfo` completion the work pool posted back but
+        // `tick()` never dispatched. Free the `WorkTask`, the
+        // `GetAddrInfoRequest`, and the `DNSLookup` chain so their
+        // `JSPromiseStrong` handles drop while the JSC VM is still live;
+        // re-queuing would strand them past worker VM dealloc.
+        #[cfg(not(windows))]
+        task_tag::GetAddrInfoRequestTask => {
+            let wt = task.ptr.cast::<get_addr_info_request::Task>();
+            // SAFETY: tag identifies pointee; `ctx` is the heap request
+            // `WorkTask::create_on_js_thread` stored.
+            let ctx = unsafe { (*wt).ctx };
+            // SAFETY: `ctx` was `heap::into_raw`'d in `GetAddrInfoRequest::init`
+            // and the work-pool `run` has completed (it posted this entry).
+            unsafe { crate::dns_jsc::GetAddrInfoRequest::release_for_shutdown(ctx) };
+            // SAFETY: paired with `create_on_js_thread` heap::alloc.
+            unsafe { get_addr_info_request::Task::destroy(wt) };
+            true
+        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

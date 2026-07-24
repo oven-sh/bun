@@ -2652,6 +2652,18 @@ fn transpile_source_code_inner(
                     return Err(crate::Error::ParseError);
                 }
 
+                // Mark the entry point as loaded as soon as it has parsed
+                // successfully, before any of the early `Ok(...)` returns below
+                // (bytecode, empty-cjs, runtime-transpiler-cache hit, etc.).
+                // `has_loaded` is what flips the loader fallback for unknown
+                // extensions (`transpile_file`'s `synchronous_loader` block) from
+                // `Tsx` to `File`; leaving it unset on a cache hit made a second
+                // run of `bun entry.ts` parse `import x from "./a.c"` as JS.
+                if is_main {
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    unsafe { (*jsc_vm).has_loaded = true };
+                }
+
                 let source = &parse_result.source;
 
                 // Raw JSON: hand the source bytes straight to JSC.
@@ -3048,11 +3060,6 @@ fn transpile_source_code_inner(
                         drop(module_info.take());
                     }
                     print_result?;
-                }
-
-                if is_main {
-                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                    unsafe { (*jsc_vm).has_loaded = true };
                 }
 
                 // `module_info.asDeserialized()`: finalize the

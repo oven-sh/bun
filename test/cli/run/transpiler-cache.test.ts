@@ -223,6 +223,41 @@ describe("transpiler cache", () => {
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
   });
+  test("cache hit on the entry point does not change loader selection for unknown-extension imports", () => {
+    // The runtime-transpiler-cache early return used to skip marking the VM's
+    // `has_loaded` flag, so on a warm run (>= MINIMUM_CACHE_SIZE entry file
+    // served from cache) an ESM `import x from "./file.c"` fell into the
+    // "potentially the main module" loader fallback and tried to parse the
+    // C source as TSX instead of using the file loader.
+    writeFileSync(join(temp_dir, "impl.c"), "#include <stdio.h>\nint main() { return 0; }\n");
+    // Entry file large enough to be cached, importing an unknown-extension file.
+    const code = 'import src from "./impl.c";\nconsole.log(typeof src === "string" && src.endsWith("impl.c") ? "file-loader-ok" : src);\n';
+    writeFileSync(join(temp_dir, "entry.ts"), code + "//" + Buffer.alloc(50 * 1024, "x").toString() + "\n");
+
+    const run = (label: string) => {
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), "entry.ts"],
+        cwd: temp_dir,
+        env,
+      });
+      const stderr = result.stderr.toString();
+      const stdout = result.stdout.toString().trim();
+      if (!result.success) throw new Error(`${label}: ${stderr}\n${stdout}`);
+      return { stdout, stderr };
+    };
+
+    const cold = run("cold run");
+    expect(cold.stdout).toBe("file-loader-ok");
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBe(1);
+
+    // On the warm run the entry point is restored from cache; the `.c` import
+    // must still go through the file loader.
+    const warm = run("warm run (cache hit)");
+    expect(warm.stderr).not.toContain("Unexpected #include");
+    expect(warm.stdout).toBe("file-loader-ok");
+    expect(newCacheCount()).toBe(0);
+  });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;

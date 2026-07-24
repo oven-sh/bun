@@ -18,6 +18,7 @@
 // clang-format off
 
 
+#include <cstdio>
 #include <string>
 #include <charconv>
 #include <string_view>
@@ -418,16 +419,19 @@ public:
 
         /* Terminate on misleading idleTimeout values */
         if (behavior.idleTimeout && behavior.idleTimeout < 8) {
+            fputs("Error: idleTimeout must be either 0 or greater than 8!\n", stderr);
             std::terminate();
         }
 
         /* Maximum idleTimeout is 16 minutes */
         if (behavior.idleTimeout > 240 * 4) {
+            fputs("Error: idleTimeout must not be greater than 960 seconds!\n", stderr);
             std::terminate();
         }
 
         /* Maximum maxLifetime is 4 hours */
         if (behavior.maxLifetime > 240) {
+            fputs("Error: maxLifetime must not be greater than 240 minutes!\n", stderr);
             std::terminate();
         }
 

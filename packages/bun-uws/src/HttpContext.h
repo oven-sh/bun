@@ -27,6 +27,7 @@
 #include "WebSocketData.h"
 #include "SocketKinds.h"
 
+#include <cstdio>
 #include <string>
 #include <map>
 #include <string_view>
@@ -464,6 +465,7 @@ private:
 
             /* Returning from a request handler without responding or attaching an onAborted handler is ill-use */
             if (!((HttpResponse<SSL> *) s)->hasResponded() && !httpResponseData->onAborted && !httpResponseData->socketData) {
+                fputs("Error: Returning from a request handler without responding or attaching an abort handler is forbidden!\n", stderr);
                 std::terminate();
             }
 

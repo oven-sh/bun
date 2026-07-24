@@ -16,6 +16,7 @@
  */
 
 #pragma once
+#include <cstdio>
 #include <map>
 #include <list>
 #include <unordered_set>
@@ -106,6 +107,7 @@ private:
 
     void checkIteratingSubscriber(Subscriber *s) {
         if (iteratingSubscriber == s) {
+            fputs("Error: WebSocket must not subscribe or unsubscribe to topics while iterating its topics!\n", stderr);
             std::terminate();
         }
     }

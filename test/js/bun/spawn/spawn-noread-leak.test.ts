@@ -65,8 +65,6 @@ test("unread 'pipe' stdio does not leak the PipeReader buffer", async () => {
       `(+${deltaMB.toFixed(1)} MB over ${MEASURE_BATCHES * BATCH} spawns)`,
   );
 
-  expect(badExit).toBe(0);
-
   // Release builds sit at ~0-1 MB delta across all platforms when nothing
   // leaks; a retained 16 KB buffer over 600 spawns shows as ~10 MB. ASAN
   // quarantine holds the freed buffers so the delta there (~50 MB) is
@@ -75,4 +73,5 @@ test("unread 'pipe' stdio does not leak the PipeReader buffer", async () => {
   // multiplier on the ratio assertion encoded the same thing).
   const limitMB = isASAN ? 100 : 5;
   expect(deltaMB).toBeLessThan(limitMB);
+  expect(badExit).toBe(0);
 });

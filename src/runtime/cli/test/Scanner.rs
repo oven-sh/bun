@@ -3,15 +3,13 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
-#[cfg(not(windows))]
-use bun_core::ZStr;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
-use bun_sys::{self, Fd};
+use bun_sys::Fd;
 
 declare_scope!(jest, hidden);
 
@@ -38,7 +36,6 @@ pub struct Scanner<'a> {
 pub(crate) type Fifo = VecDeque<ScanEntry>;
 
 pub struct ScanEntry {
-    pub relative_dir: Fd,
     // `'static` is sound here: borrows from FileSystem.dirname_store, a
     // process-lifetime arena that is never reset.
     pub dir_path: &'static [u8],
@@ -133,7 +130,7 @@ impl<'a> Scanner<'a> {
         let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
 
         let root = self
-            .read_dir_with_name(path, None)
+            .read_dir_with_name(path)
             .map_err(|_| ScanError::OutOfMemory)?;
 
         if let EntriesOption::Err(root_err) = root {
@@ -163,8 +160,6 @@ impl<'a> Scanner<'a> {
         // you typed "." and we already scanned it
         if !self.has_iterated {
             if let EntriesOption::Entries(entries) = root {
-                let fd = entries.fd;
-                debug_assert!(fd != Fd::INVALID);
                 // Collect first so `self.next(…)` doesn't overlap the
                 // `entries.data` borrow.
                 // this branch is taken when the resolver already has
@@ -185,64 +180,27 @@ impl<'a> Scanner<'a> {
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr }, fd);
+                    self.next(unsafe { &mut *entry_ptr }, Fd::INVALID);
                 }
             }
         }
 
         while let Some(entry) = self.dirs_to_scan.pop_front() {
-            debug_assert!(entry.relative_dir.is_valid());
-            #[cfg(not(windows))]
-            {
-                let dir = entry.relative_dir;
-
-                let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let path2 = self.fs().abs_buf(&parts2, &mut self.open_dir_buf);
-                let path2_len = path2.len();
-                self.open_dir_buf[path2_len] = 0;
-                let name_len = entry.name.slice().len();
-                // SAFETY: open_dir_buf[path2_len] == 0 written immediately above
-                let path_z = unsafe {
-                    ZStr::from_raw(
-                        self.open_dir_buf.as_ptr().add(path2_len - name_len),
-                        name_len,
-                    )
-                };
-                // bun.openDir → sys.openat(dir, pathZ, O.DIRECTORY|O.CLOEXEC|O.RDONLY, 0).stdDir()
-                let Ok(child_fd) = bun_sys::open_dir_at(dir, path_z.as_bytes()) else {
-                    continue;
-                };
-                let child_dir = bun_sys::Dir::from_fd(child_fd);
-                let path2 = self
-                    .fs()
-                    .dirname_store
-                    .append_slice(&self.open_dir_buf[..path2_len])
-                    .map_err(|_| ScanError::OutOfMemory)?;
-                FileSystem::set_max_fd(child_dir.fd.native());
-                let _ = self
-                    .read_dir_with_name(path2, Some(child_dir))
-                    .map_err(|_| ScanError::OutOfMemory)?;
-            }
-            #[cfg(windows)]
-            {
-                let fs = self.fs();
-                let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
-                let path2 = fs.abs_buf_z(&parts2, &mut self.open_dir_buf);
-                let Ok(child_fd) = bun_sys::open_dir_no_renaming_or_deleting_windows(
-                    Fd::INVALID,
-                    path2.as_bytes(),
-                ) else {
-                    continue;
-                };
-                let child_dir = bun_sys::Dir::from_fd(child_fd);
-                let stored = fs
-                    .dirname_store
-                    .append_slice(path2.as_bytes())
-                    .map_err(|_| ScanError::OutOfMemory)?;
-                let _ = self
-                    .read_dir_with_name(stored, Some(child_dir))
-                    .map_err(|_| ScanError::OutOfMemory)?;
-            }
+            let parts2: [&[u8]; 2] = [entry.dir_path, entry.name.slice()];
+            let path2_len = self.fs().abs_buf(&parts2, &mut self.open_dir_buf).len();
+            let path2 = self
+                .fs()
+                .dirname_store
+                .append_slice(&self.open_dir_buf[..path2_len])
+                .map_err(|_| ScanError::OutOfMemory)?;
+            // `read_directory_with_iterator` opens the directory itself and,
+            // because we pass `store_fd=false` and no handle, closes it before
+            // returning, so the walk does not accumulate one open fd per
+            // visited subdirectory (#3833). Open failures come back as
+            // `EntriesOption::Err`, which we ignore like the old open-then-skip.
+            let _ = self
+                .read_dir_with_name(path2)
+                .map_err(|_| ScanError::OutOfMemory)?;
         }
 
         Ok(())
@@ -251,14 +209,12 @@ impl<'a> Scanner<'a> {
     fn read_dir_with_name(
         &mut self,
         name: &[u8],
-        handle: Option<bun_sys::Dir>,
     ) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
-        let raw = handle.map(bun_sys::Dir::into_raw);
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, raw, 0, true, iter)
+            .read_directory_with_iterator(name, None, 0, false, iter)
             .map_err(Into::into)
     }
 
@@ -354,7 +310,7 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub fn next(&mut self, entry: &mut fs::Entry, fd: Fd) {
+    pub fn next(&mut self, entry: &mut fs::Entry, _fd: Fd) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
@@ -395,7 +351,6 @@ impl<'a> Scanner<'a> {
                 self.search_count += 1;
 
                 self.dirs_to_scan.push_back(ScanEntry {
-                    relative_dir: fd,
                     // SAFETY: StringOrTinyString is repr(C) POD ([u8;31] + u8) with
                     // no Drop. Upstream type lacks Clone/Copy, so bitwise-copy here.
                     name: unsafe { core::ptr::read(&raw const entry.base_) },

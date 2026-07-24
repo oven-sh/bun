@@ -23,6 +23,7 @@
 // THE SOFTWARE.
 
 use bun_collections::BoundedArray;
+use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
 
 /// used in matchBrace to determine the size of the stack buffer used in the stack fallback allocator
@@ -119,6 +120,96 @@ struct Wildcard {
     brace_depth: u8,
 }
 
+/// Whether the `[` at `glob[open]` has an unescaped `]` later in the pattern.
+/// An unclosed `[` is a literal byte, not the start of a bracket class, so it
+/// must not hide a following `}` or `,` from `escape_literal_braces`'s scan;
+/// bash, picomatch, and minimatch all keep `{a,[}` an expansion. This only
+/// decides the escaping: whether the `[` branch itself can match is up to
+/// `match_brace`, whose own unclosed-`[` handling is unchanged.
+fn bracket_has_closing(glob: &[u8], open: usize) -> bool {
+    let mut j = open + 1;
+    while j < glob.len() {
+        match glob[j] {
+            b']' => return true,
+            b'\\' => j += 1,
+            _ => {}
+        }
+        j += 1;
+    }
+    false
+}
+
+/// Brace groups only expand when they contain at least one unescaped top-level
+/// comma; `{a}`, `{}`, and unclosed `{...` are taken literally, matching bash,
+/// picomatch, and minimatch. Returns a rewritten pattern with each such `{`/`}`
+/// escaped, or `None` if no brace needs rewriting.
+///
+/// The rewritten bytes are for the matcher only: they must never be handed to
+/// `GlobWalker::build_pattern_components`, which treats `\` as a path
+/// separator on Windows and would split the pattern at the inserted escapes.
+/// `r#match` applies this itself, so walker components and every other caller
+/// of `r#match` get the behavior without seeing the rewritten form.
+pub fn escape_literal_braces(glob: &[u8]) -> Option<Vec<u8>> {
+    strings::index_of_char(glob, b'{')?;
+
+    let mut stack: SmallVec<[(u32, bool); 8]> = SmallVec::new();
+    let mut literal: SmallVec<[u32; 8]> = SmallVec::new();
+    let mut in_brackets = false;
+    // `bracket_has_closing` walks the same escape-aware path this loop does,
+    // so once it finds no `]` after one `[` there is none after any later `[`
+    // either; remembering that keeps a long run of unclosed `[` linear.
+    let mut no_closing_bracket = false;
+    let mut i: usize = 0;
+    while i < glob.len() {
+        match glob[i] {
+            b'{' if !in_brackets => stack.push((i as u32, false)),
+            b'}' if !in_brackets => {
+                if let Some((open, has_comma)) = stack.pop() {
+                    if !has_comma {
+                        literal.push(open);
+                        literal.push(i as u32);
+                    }
+                }
+            }
+            b',' if !in_brackets => {
+                if let Some(top) = stack.last_mut() {
+                    top.1 = true;
+                }
+            }
+            b'[' if !in_brackets && !no_closing_bracket => {
+                if bracket_has_closing(glob, i) {
+                    in_brackets = true;
+                } else {
+                    no_closing_bracket = true;
+                }
+            }
+            b']' => in_brackets = false,
+            b'\\' => i += 1,
+            _ => {}
+        }
+        i += 1;
+    }
+    for (open, _) in stack.drain(..) {
+        literal.push(open);
+    }
+
+    if literal.is_empty() {
+        return None;
+    }
+
+    literal.sort_unstable();
+    let mut out = Vec::with_capacity(glob.len() + literal.len());
+    let mut prev: usize = 0;
+    for &pos in literal.iter() {
+        let pos = pos as usize;
+        out.extend_from_slice(&glob[prev..pos]);
+        out.push(b'\\');
+        prev = pos;
+    }
+    out.extend_from_slice(&glob[prev..]);
+    Some(out)
+}
+
 /// This function checks returns a boolean value if the pathname `path` matches
 /// the pattern `glob`.
 ///
@@ -149,6 +240,17 @@ struct Wildcard {
 // TODO: consider just taking arena and resetting to initial state,
 // all usages of this function pass in Arena.arena()
 pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
+    match escape_literal_braces(glob) {
+        Some(escaped) => match_preprocessed(&escaped, path),
+        None => match_preprocessed(glob, path),
+    }
+}
+
+/// `r#match` without the `escape_literal_braces` pass. Only for callers that
+/// hold a pattern already returned by `escape_literal_braces` (or for which it
+/// returned `None`) and match it many times; everything else should use
+/// `r#match`.
+pub fn match_preprocessed(glob: &[u8], path: &[u8]) -> MatchResult {
     let mut state = State::default();
 
     let mut negated = false;

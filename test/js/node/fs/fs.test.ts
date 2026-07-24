@@ -5799,3 +5799,73 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// Recursive rm must delete every deletable child depth-first and only then
+// surface a failure removing the top directory itself, matching Node/libuv and
+// POSIX `rm -rf`. Requires root so the harness can hand the subtree to an
+// unprivileged uid whose top directory lives in a parent it cannot write.
+it.skipIf(!isLinux || (process.getuid?.() ?? -1) !== 0)(
+  "fs.rmSync(recursive) removes deletable children even when the top dir cannot be removed",
+  async () => {
+    const NOBODY = 65534;
+    // One subtree per entry point: the sync `fs.rmSync` and the async
+    // `fs.promises.rm` both funnel through the same native recursive walk.
+    using dir = tempDir("rm-partial-eacces", {
+      "sync/a": "x",
+      "sync/b": "x",
+      "sync/sub/c": "x",
+      "async/a": "x",
+      "async/b": "x",
+      "async/sub/c": "x",
+    });
+    const root = String(dir);
+
+    // Parent stays root-owned and searchable but not writable by `nobody`;
+    // each subtree is handed to `nobody` and made writable.
+    fs.chmodSync(root, 0o755);
+    for (const top of ["sync", "async"]) {
+      for (const f of ["a", "b", "sub/c", "sub", ""]) {
+        fs.chownSync(join(root, top, f), NOBODY, NOBODY);
+      }
+      fs.chmodSync(join(root, top), 0o777);
+    }
+
+    const script = `
+      const fs = require("node:fs");
+      const { join } = require("node:path");
+      const root = ${JSON.stringify(root)};
+      const sync = join(root, "sync"), async = join(root, "async");
+      (async () => {
+        process.seteuid(${NOBODY});
+        let syncCode = "ok";
+        try { fs.rmSync(sync, { recursive: true }); } catch (e) { syncCode = e.code; }
+        let asyncCode = "ok";
+        try { await fs.promises.rm(async, { recursive: true }); } catch (e) { asyncCode = e.code; }
+        process.seteuid(0);
+        process.stdout.write(JSON.stringify({
+          syncCode,
+          syncLeft: fs.readdirSync(sync, { recursive: true }).sort(),
+          asyncCode,
+          asyncLeft: fs.readdirSync(async, { recursive: true }).sort(),
+        }));
+      })();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Each top dir removal still fails (its parent is not writable), but every
+    // deletable child must be gone. Fall back to stderr if the child crashed
+    // before writing its JSON result, so failures self-diagnose.
+    const result = stdout.trim() ? JSON.parse(stdout.trim()) : { crashed: stderr };
+    expect({ result, exitCode }).toEqual({
+      result: { syncCode: "EACCES", syncLeft: [], asyncCode: "EACCES", asyncLeft: [] },
+      exitCode: 0,
+    });
+  },
+);

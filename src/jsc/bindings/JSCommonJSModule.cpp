@@ -1122,6 +1122,15 @@ void populateESMExports(
                 RETURN_IF_EXCEPTION(scope, );
                 if (!has) continue;
 
+                // Without __esModule, skip JS accessor properties. Node's
+                // cjs-module-lexer never discovers these for plain CJS, so
+                // it never invokes them; invoking them here triggers user
+                // side effects (e.g. deprecation warnings) at import time.
+                // https://github.com/oven-sh/bun/issues/6747
+                if (slot.isAccessor()) {
+                    continue;
+                }
+
                 if (slot.attributes() & PropertyAttribute::DontEnum) {
                     // Allow DontEnum properties which are not getter/setters
                     // https://github.com/oven-sh/bun/issues/4432

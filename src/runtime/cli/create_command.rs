@@ -833,12 +833,8 @@ impl CreateCommand {
                     }
                 }
 
-                let mut dev_dependencies: Option<bun_ast::Expr> = None;
-                let mut dependencies: Option<bun_ast::Expr> = None;
-
                 if let Some(q) = package_json_expr.as_property(b"devDependencies") {
                     let property = q.expr;
-
                     if property.data.is_e_object()
                         && property
                             .data
@@ -848,23 +844,12 @@ impl CreateCommand {
                             .len_u32()
                             > 0
                     {
-                        if property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                        {
-                            has_dependencies = true;
-                            dev_dependencies = Some(q.expr);
-                        }
+                        has_dependencies = true;
                     }
                 }
 
                 if let Some(q) = package_json_expr.as_property(b"dependencies") {
                     let property = q.expr;
-
                     if property.data.is_e_object()
                         && property
                             .data
@@ -874,21 +859,9 @@ impl CreateCommand {
                             .len_u32()
                             > 0
                     {
-                        if property
-                            .data
-                            .e_object()
-                            .expect("infallible: variant checked")
-                            .properties
-                            .len_u32()
-                            > 0
-                        {
-                            has_dependencies = true;
-                            dependencies = Some(q.expr);
-                        }
+                        has_dependencies = true;
                     }
                 }
-
-                let _ = (dev_dependencies, dependencies);
 
                 mod injection_prefill {
                     pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {

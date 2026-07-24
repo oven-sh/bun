@@ -215,26 +215,46 @@ impl GarbageCollectionController {
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
+    /// Growth (relative to the post-GC baseline) before we nudge another
+    /// async collection. Bounded so a tiny heap still waits for real work
+    /// and a huge live set does not push RSS several hundred MB past the
+    /// live size between nudges.
+    #[inline]
+    fn growth_threshold(prev: usize) -> usize {
+        const FLOOR: usize = 1024 * 1024;
+        const CEILING: usize = 32 * 1024 * 1024;
+        (prev / 8).clamp(FLOOR, CEILING)
+    }
+
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
 
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {
-                // When memory usage is not stable, run the GC more.
+                // One debounced collect. Go back to Pending rather than
+                // re-arming the 16 ms timer: under sustained allocation the
+                // `!= prev` re-arm made this a collect_async()-every-16 ms
+                // loop, which on a large live heap turns into ~40 % of
+                // main-thread time spent in eden GC pauses. Let Pending's
+                // growth check decide when the next nudge is warranted.
+                self.gc_timer_state = GCTimerState::Pending;
                 if this_heap_size != prev {
-                    self.schedule_gc_timer();
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
-                } else {
-                    self.gc_timer_state = GCTimerState::Pending;
                 }
                 vm.collect_async();
                 self.gc_last_heap_size = this_heap_size;
             }
             GCTimerState::Pending => {
-                if this_heap_size != prev {
+                if this_heap_size < prev {
+                    // The async collect we just requested (or a sweep) freed
+                    // blocks. Track the low-water mark so the growth check
+                    // below measures allocation since the post-GC baseline,
+                    // not since the pre-GC peak.
+                    self.gc_last_heap_size = this_heap_size;
+                } else if this_heap_size > prev.saturating_add(Self::growth_threshold(prev)) {
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
 
-                    if this_heap_size > prev * 2 {
+                    if this_heap_size > prev.saturating_mul(2) {
                         self.perform_gc();
                     } else {
                         self.schedule_gc_timer();
@@ -242,7 +262,7 @@ impl GarbageCollectionController {
                 }
             }
             GCTimerState::Scheduled => {
-                if this_heap_size > prev * 2 {
+                if this_heap_size > prev.saturating_mul(2) {
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
                     self.perform_gc();
                 }

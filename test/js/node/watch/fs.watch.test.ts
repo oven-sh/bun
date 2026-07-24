@@ -14,7 +14,7 @@ import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
@@ -112,9 +112,11 @@ describe("fs.watch", () => {
     });
 
     watcher.on("error", e => (err = e));
+    // The AbortSignal.timeout(3000) hang guard only emits 'close'; reaching it
+    // with fewer than 2 change events means no events were ever delivered.
     watcher.on("close", () => {
       clearInterval(interval);
-      done(err);
+      done(err ?? (count < 2 ? new Error(`timed out after ${count} change events`) : undefined));
     });
 
     const interval = repeat(() => {
@@ -131,15 +133,13 @@ describe("fs.watch", () => {
     } catch {}
     const controller = new AbortController();
     const watcher = fs.watch(root, { recursive: true, signal: controller.signal });
-    let err: Error | undefined = undefined;
-    const fn = mock();
-    watcher.on("error", fn);
-    watcher.on("close", fn);
+    // Node only emits 'close' when the signal aborts. The abort reason never
+    // surfaces as an 'error' event, even when it is a custom Error.
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    watcher.on("error", err => reject(new Error(`unexpected 'error' event: ${err}`)));
+    watcher.on("close", () => resolve());
     controller.abort(new Error("potato"));
-
-    await Bun.sleep(10);
-    expect(fn).toHaveBeenCalledTimes(2);
-    expect(fn.mock.calls[0][0].message).toBe("potato");
+    await promise;
   });
 
   test("add file/folder to subfolder", done => {
@@ -169,9 +169,10 @@ describe("fs.watch", () => {
       }
     });
     watcher.on("error", e => (err = e));
+    // Same hang guard as "add file/folder to folder" above.
     watcher.on("close", () => {
       clearInterval(interval);
-      done(err);
+      done(err ?? (count < 2 ? new Error(`timed out after ${count} change events`) : undefined));
     });
 
     const interval = repeat(() => {
@@ -412,23 +413,19 @@ describe("fs.watch", () => {
     }
   });
 
-  test("calling close from error event should not throw", done => {
+  // Node routes an AbortSignal abort straight to close(): only 'close' is
+  // emitted, never a spurious 'error' (AbortError). The re-entrant-close
+  // coverage this test used to provide via the 'error' event is kept by
+  // "calling close from close event should not throw" below.
+  test("aborting the signal emits only 'close', never 'error'", async () => {
     const filepath = path.join(testDir, "close.txt");
-    try {
-      const ac = new AbortController();
-      const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
-      watcher.once("error", err => {
-        try {
-          watcher.close();
-          done();
-        } catch (e: any) {
-          done("Should not error when calling close from error event");
-        }
-      });
-      ac.abort();
-    } catch (e: any) {
-      done(e);
-    }
+    const ac = new AbortController();
+    const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    watcher.on("error", err => reject(new Error(`unexpected 'error' event: ${err}`)));
+    watcher.on("close", () => resolve());
+    ac.abort();
+    await promise;
   });
 
   test("calling close from close event should not throw", done => {
@@ -456,11 +453,10 @@ describe("fs.watch", () => {
     const filepath = path.join(testDir, "abort.txt");
 
     const ac = new AbortController();
-    const promise = new Promise((resolve, reject) => {
-      const watcher = fs.watch(filepath, { signal: ac.signal });
-      watcher.once("error", err => (err.message === "The operation was aborted." ? resolve(undefined) : reject(err)));
-      watcher.once("close", () => reject());
-    });
+    const watcher = fs.watch(filepath, { signal: ac.signal });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    watcher.once("error", err => reject(new Error(`unexpected 'error' event: ${err}`)));
+    watcher.once("close", () => resolve());
     await Bun.sleep(10);
     ac.abort();
     await promise;
@@ -470,11 +466,11 @@ describe("fs.watch", () => {
     const filepath = path.join(testDir, "abort.txt");
 
     const signal = AbortSignal.abort();
-    await new Promise((resolve, reject) => {
-      const watcher = fs.watch(filepath, { signal });
-      watcher.once("error", err => (err.message === "The operation was aborted." ? resolve(undefined) : reject(err)));
-      watcher.once("close", () => reject());
-    });
+    const watcher = fs.watch(filepath, { signal });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    watcher.once("error", err => reject(new Error(`unexpected 'error' event: ${err}`)));
+    watcher.once("close", () => resolve());
+    await promise;
   });
 
   test("should work with symlink", async () => {
@@ -1442,19 +1438,19 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
         await gotClose;
       }
 
-      // Phase 2: abort path under GC pressure.
+      // Phase 2: abort path under GC pressure. Aborting the signal must emit
+      // only 'close' (Node never emits 'error' for an abort).
       for (let i = 0; i < 3; i++) {
         const ac = new AbortController();
         const watcher = fs.watch(dir, { signal: ac.signal }, () => {});
-        const gotAbort = new Promise((resolve, reject) => {
-          watcher.once("error", err =>
-            err.message === "The operation was aborted." ? resolve() : reject(err),
-          );
+        const gotClose = new Promise((resolve, reject) => {
+          watcher.once("error", err => reject(err));
+          watcher.once("close", resolve);
         });
         Bun.gc(true);
         ac.abort();
         Bun.gc(true);
-        await gotAbort;
+        await gotClose;
       }
 
       // Phase 3: double-close and close-from-inside-listener under GC.

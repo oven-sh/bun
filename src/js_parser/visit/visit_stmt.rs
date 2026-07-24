@@ -161,7 +161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
         p.visit_expr(&mut data.value);
-        stmts.push(Stmt::assign(lhs, data.value));
+        stmts.push(Stmt::assign(p.alloc, lhs, data.value));
         p.record_usage(p.module_ref);
         Ok(())
     }
@@ -478,10 +478,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     VecExt::append(&mut p.cur_scope().generated, temp_id);
 
                     let value_expr = *expr;
-                    stmts.push(Stmt::alloc(
+                    stmts.push(Stmt::alloc(p.alloc, 
                         S::Local {
                             kind: S::Kind::KConst,
-                            decls: G::DeclList::from_slice(&[G::Decl {
+                            decls: p.alloc.vec_from_slice(&[G::Decl {
                                 binding: Binding::alloc(
                                     p.arena,
                                     B::Identifier { r#ref: temp_id },
@@ -489,7 +489,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ),
                                 value: Some(value_expr),
                             }]),
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         stmt.loc,
                     ));
@@ -512,7 +512,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if p.current_scope().parent.is_none() && p.will_wrap_module_in_try_catch_for_using {
                     stmts.reserve(2);
 
-                    let mut decls = G::DeclList::init_capacity(1);
+                    let mut decls = p.alloc.vec_with_capacity(1);
                     VecExt::append(
                         &mut decls,
                         G::Decl {
@@ -528,7 +528,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     stmts.push(p.s(
                         S::Local {
                             decls,
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         stmt.loc,
                     ));
@@ -699,10 +699,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         break 'brk temp_id;
                                     };
 
-                                    stmts.push(Stmt::alloc(
+                                    stmts.push(Stmt::alloc(p.alloc, 
                                         S::Local {
                                             kind: S::Kind::KConst,
-                                            decls: G::DeclList::from_slice(&[G::Decl {
+                                            decls: p.alloc.vec_from_slice(&[G::Decl {
                                                 binding: Binding::alloc(
                                                     p.arena,
                                                     B::Identifier { r#ref: ref_to_use },
@@ -710,7 +710,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 ),
                                                 value: Some(e),
                                             }]),
-                                            ..Default::default()
+                                            ..S::Local::empty(p.alloc)
                                         },
                                         stmt.loc,
                                     ));
@@ -855,7 +855,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // stmt still observes the write because `data` is an arena
                             // backref shared with the pushed copy.
                             let class_expr =
-                                p.new_expr(core::mem::take(&mut class.class), stmt.loc);
+                                p.new_expr(core::mem::replace(&mut class.class, G::Class::empty(p.alloc)), stmt.loc);
                             data.value = js_ast::StmtOrExpr::Expr(
                                 p.wrap_value_for_server_component_reference(class_expr, b"default"),
                             );
@@ -926,7 +926,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.reserve(3);
             stmts.push(*stmt);
             let func_name = data.func.name.expect("infallible: name checked");
-            stmts.push(Stmt::assign(
+            stmts.push(Stmt::assign(p.alloc, 
                 p.new_expr(
                     E::Dot {
                         target: Expr::init_identifier(enclosing_namespace_arg_ref, stmt.loc),
@@ -967,11 +967,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     S::Local {
                         kind: S::Kind::KVar,
                         is_export: true,
-                        decls: G::DeclList::from_slice(&[G::Decl {
+                        decls: p.alloc.vec_from_slice(&[G::Decl {
                             binding,
                             value: Some(wrapped),
                         }]),
-                        ..Default::default()
+                        ..S::Local::empty(p.alloc)
                     },
                     stmt.loc,
                 ));
@@ -1094,7 +1094,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let original_name = p.symbols[class_name_ref.inner_index() as usize]
                 .original_name
                 .slice();
-            stmts.push(Stmt::assign(
+            stmts.push(Stmt::assign(p.alloc, 
                 p.new_expr(
                     E::Dot {
                         target: Expr::init_identifier(
@@ -1159,10 +1159,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // here so its provenance is a child of the active Unique borrow.
                     let wrapper = p.to_expr_wrapper_namespace;
                     let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-                    let lhs = Binding::to_expr(&d.binding, ctx, wrapper);
+                    let lhs = Binding::to_expr(p.alloc, &d.binding, ctx, wrapper);
                     stmts.push(p.s(
                         S::SExpr {
-                            value: Expr::assign(lhs, val),
+                            value: Expr::assign(p.alloc, lhs, val),
                             ..Default::default()
                         },
                         stmt.loc,
@@ -1435,7 +1435,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 last.needs_decl = false;
                                 let last_loc = last.loc_ref.loc;
 
-                                let mut decls = G::DeclList::init_capacity(1);
+                                let mut decls = p.alloc.vec_with_capacity(1);
                                 let ref_ = match bin.left.data {
                                     js_ast::ExprData::ECommonjsExportIdentifier(id) => id.ref_,
                                     _ => unreachable!(),
@@ -1474,7 +1474,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         is_export: false,
                                         was_commonjs_export: true,
                                         decls,
-                                        ..Default::default()
+                                        ..S::Local::empty(p.alloc)
                                     },
                                     stmt.loc,
                                 );
@@ -1744,7 +1744,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if data.no.is_none()
                         || !SideEffects::should_keep_stmt_in_dead_control_flow(
                             data.no.unwrap(),
-                            p.arena,
+                            p.alloc,
                         )
                     {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
@@ -1766,7 +1766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 } else {
                     // The test is falsy
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.arena) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(data.yes, p.alloc) {
                         if effects.side_effects == SideEffects::CouldHaveSideEffects {
                             // Keep the condition if it could have side effects (but is still known to be truthy)
                             if let Some(test_) = SideEffects::simplify_unused_expr(p, data.test_) {
@@ -1894,7 +1894,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let js_ast::binding::Data::BIdentifier(b_id) = decl.binding.data {
                             if let Some(val) = decl.value {
                                 let id_ref = b_id.r#ref;
-                                stmts.push(Stmt::assign(
+                                stmts.push(Stmt::assign(p.alloc, 
                                     Expr::init_identifier(id_ref, decl.binding.loc),
                                     val,
                                 ));
@@ -1963,7 +1963,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .slice();
                     let temp_ref = p.generate_temp_ref(Some(id_original_name));
 
-                    let mut first_decls = G::DeclList::init_capacity(1);
+                    let mut first_decls = p.alloc.vec_with_capacity(1);
                     VecExt::append(
                         &mut first_decls,
                         G::Decl {
@@ -1975,7 +1975,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: init2.kind,
                             decls: first_decls,
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         loc,
                     );
@@ -2261,7 +2261,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let assign_target = if is_assign_target {
                 // "Enum.Name = value"
-                Expr::assign(
+                Expr::assign(p.alloc, 
                     p.new_expr(
                         E::Dot {
                             target: Expr::init_identifier(data.arg, value.loc),
@@ -2275,7 +2275,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             } else {
                 // "Enum['Name'] = value"
-                Expr::assign(
+                Expr::assign(p.alloc, 
                     p.new_expr(
                         E::Index {
                             target: Expr::init_identifier(data.arg, value.loc),
@@ -2295,7 +2295,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 value_exprs.push(assign_target);
             } else {
                 // "Enum[assignTarget] = 'Name'"
-                value_exprs.push(Expr::assign(
+                value_exprs.push(Expr::assign(p.alloc, 
                     p.new_expr(
                         E::Index {
                             target: Expr::init_identifier(data.arg, value.loc),

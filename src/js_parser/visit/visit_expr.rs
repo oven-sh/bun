@@ -15,7 +15,7 @@ use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast as js_ast;
 use bun_ast::flags as Flags;
-use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
+use bun_ast::{E, Expr, ExprNodeIndex, G, Stmt, Symbol};
 
 // Local short-hands used heavily in the visitor bodies.
 use js_ast::ExprData as Data;
@@ -415,7 +415,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // That would reduce the amount of allocations a little
                 if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
-                    let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
+                    let mut args = p.alloc.vec_with_capacity(2 + children_count as usize);
                     VecExt::append(&mut args, tag);
 
                     let num_props = e_.properties.len_u32();
@@ -426,8 +426,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             &mut args,
                             p.new_expr(
                                 E::Object {
-                                    properties: bun_alloc::AstAlloc::take(&mut e_.properties),
-                                    ..Default::default()
+                                    properties: p.alloc.take(&mut e_.properties),
+                                    ..E::Object::empty(p.alloc)
                                 },
                                 expr.loc,
                             ),
@@ -488,7 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             },
                             was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
-                            ..Default::default()
+                            ..E::Call::empty(p.alloc)
                         },
                         expr.loc,
                     );
@@ -585,19 +585,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             key: Some(children_key),
                             value: Some(p.new_expr(
                                 E::Array {
-                                    items: bun_alloc::AstAlloc::take(&mut e_.children),
+                                    items: p.alloc.take(&mut e_.children),
                                     is_single_line: children_single_line,
-                                    ..Default::default()
+                                    ..E::Array::empty(p.alloc)
                                 },
                                 e_.close_tag_loc,
                             )),
-                            ..Default::default()
+                            ..G::Property::empty(p.alloc)
                         });
                     } else if e_.children.len_u32() == 1 {
                         props.push(G::Property {
                             key: Some(children_key),
                             value: Some(e_.children.slice()[0]),
-                            ..Default::default()
+                            ..G::Property::empty(p.alloc)
                         });
                     }
 
@@ -609,15 +609,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         2usize + usize::from(maybe_key_value.is_some())
                     };
-                    let mut args = ExprNodeList::init_capacity(args_len);
+                    let mut args = p.alloc.vec_with_capacity(args_len);
                     VecExt::append(&mut args, tag);
 
                     VecExt::append(
                         &mut args,
                         p.new_expr(
                             E::Object {
-                                properties: bun_alloc::AstAlloc::take(props),
-                                ..Default::default()
+                                properties: p.alloc.take(props),
+                                ..E::Object::empty(p.alloc)
                             },
                             expr.loc,
                         ),
@@ -675,7 +675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             },
                             was_jsx_element: true,
                             close_paren_loc: e_.close_tag_loc,
-                            ..Default::default()
+                            ..E::Call::empty(p.alloc)
                         },
                         expr.loc,
                     );
@@ -800,7 +800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            *e = e_.fold(p.arena, expr.loc);
+            *e = e_.fold(p.alloc, expr.loc);
             return;
         }
     }
@@ -1192,7 +1192,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: e_.value.loc,
                         data: prefill::data::ZERO,
                     }
-                    .join_with_comma(e_.value);
+                    .join_with_comma(p.alloc, e_.value);
                 }
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
@@ -1253,7 +1253,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if p.options.features.minify_syntax {
-                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.arena) {
+                            if let Some(exp) = Expr::maybe_simplify_not(&e_.value, p.alloc) {
                                 *e = exp;
                                 return;
                             }
@@ -1315,7 +1315,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !matches!(e_.op, Op::UnDelete | Op::UnTypeof) {
                         if let Data::EBinary(comma) = &e_.value.data {
                             if comma.op == Op::BinComma {
-                                *e = comma.left.join_with_comma(p.new_expr(
+                                *e = comma.left.join_with_comma(p.alloc, p.new_expr(
                                     E::Unary {
                                         op: e_.op,
                                         value: comma.right,
@@ -1447,7 +1447,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: variant checked")
                             .was_originally_macro
                     {
-                        if let Some(obj) = e_.target.get(&e_.name) {
+                        if let Some(obj) = e_.target.get(p.alloc, &e_.name) {
                             *e = obj;
                             return;
                         }
@@ -1487,7 +1487,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                     *e = SideEffects::simplify_unused_expr(p, e_.test_)
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
-                        .join_with_comma(e_.yes);
+                        .join_with_comma(p.alloc, e_.yes);
                     return;
                 }
 
@@ -1497,7 +1497,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_call_target && e_.yes.has_value_for_this_in_call() {
                     *e = p
                         .new_expr(E::Number::new(0.0), e_.test_.loc)
-                        .join_with_comma(e_.yes);
+                        .join_with_comma(p.alloc, e_.yes);
                     return;
                 }
 
@@ -1515,7 +1515,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if side_effects.side_effects == SideEffects::CouldHaveSideEffects {
                     *e = SideEffects::simplify_unused_expr(p, e_.test_)
                         .unwrap_or_else(|| p.new_expr(E::Missing {}, e_.test_.loc))
-                        .join_with_comma(e_.no);
+                        .join_with_comma(p.alloc, e_.no);
                     return;
                 }
 
@@ -1525,7 +1525,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if is_call_target && e_.no.has_value_for_this_in_call() {
                     *e = p
                         .new_expr(E::Number::new(0.0), e_.test_.loc)
-                        .join_with_comma(e_.no);
+                        .join_with_comma(p.alloc, e_.no);
                     return;
                 }
                 *e = e_.no;
@@ -1637,7 +1637,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && spread_item_count > 0
             && in_.assign_target == js_ast::AssignTarget::None
         {
-            if let Ok(items) = e_.inline_spread_of_array_literals(p.arena, spread_item_count) {
+            if let Ok(items) = e_.inline_spread_of_array_literals(p.alloc, spread_item_count) {
                 e_.items = items;
             }
         }
@@ -2320,7 +2320,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         if p.options.features.minify_syntax {
             if let Some(minified) = js_ast::known_global::KnownGlobal::minify_global_constructor(
-                p.arena,
+                p.alloc,
                 &mut *e_,
                 &p.symbols,
                 expr.loc,

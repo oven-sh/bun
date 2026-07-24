@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind: js_ast::s::Kind::KVar,
                 decls,
                 is_export: opts.is_export,
-                ..Default::default()
+                ..S::Local::empty(p.alloc)
             },
             loc,
         ))
@@ -190,7 +190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 kind: js_ast::s::Kind::KConst,
                 decls,
                 is_export: opts.is_export,
-                ..Default::default()
+                ..S::Local::empty(p.alloc)
             },
             loc,
         ))
@@ -560,7 +560,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: js_ast::s::Kind::KVar,
                             decls,
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         init_loc,
                     ));
@@ -576,7 +576,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         S::Local {
                             kind: js_ast::s::Kind::KConst,
                             decls,
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         init_loc,
                     ));
@@ -1935,7 +1935,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // of the declared bindings. That "export var" statement will later
                 // cause identifiers to be transformed into property accesses.
                 if opts.is_namespace_scope && opts.is_export {
-                    let mut decls: G::DeclList = bun_alloc::AstAlloc::vec();
+                    let mut decls: G::DeclList = p.alloc.vec();
                     match &stmt.data {
                         js_ast::StmtData::SLocal(local) => {
                             let mut _decls = bun_alloc::ArenaVec::<G::Decl>::with_capacity_in(
@@ -1945,7 +1945,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             for decl in local.decls.slice() {
                                 Self::extract_decls_for_binding(decl.binding, &mut _decls)?;
                             }
-                            decls = G::DeclList::from_bump_vec(_decls);
+                            decls = p.alloc.vec_from_iter(_decls);
                         }
                         _ => {}
                     }
@@ -1956,7 +1956,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 kind: js_ast::LocalKind::KVar,
                                 is_export: true,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::empty(p.alloc)
                             },
                             loc,
                         )));

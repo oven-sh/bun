@@ -8,7 +8,7 @@ use bun_collections::{HashMap, VecExt};
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, is_eval_or_arguments};
-use bun_ast::g::{DeclList, Property, PropertyKind};
+use bun_ast::g::{Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
@@ -69,13 +69,13 @@ enum RewriteKind {
 //    raw arena pointers; copying the raw pointers is intentional). ──
 
 #[inline]
-fn prop_copy(p: &Property) -> Property {
+fn prop_copy(alloc: bun_alloc::AstAlloc, p: &Property) -> Property {
     Property {
         initializer: p.initializer,
         kind: p.kind,
         flags: p.flags,
         class_static_block: p.class_static_block,
-        ts_decorators: bun_alloc::AstAlloc::vec(),
+        ts_decorators: alloc.vec(),
         key: p.key,
         value: p.value,
         // SAFETY: this duplicates ownership of any heap allocation inside
@@ -161,7 +161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
-        let list = ExprNodeList::from_arena_slice(a);
+        let list = self.alloc.vec_from_slice(a);
         self.call_runtime(l, name, list)
     }
 
@@ -175,11 +175,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// Single var declaration statement.
     fn var_decl(&mut self, ref_: Ref, value: Option<Expr>, l: bun_ast::Loc) -> Stmt {
         let binding = self.b(B::Identifier { r#ref: ref_ }, l);
-        let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
+        let decls = self.alloc.vec_from_slice(&[G::Decl { binding, value }]);
         self.s(
             S::Local {
                 decls,
-                ..Default::default()
+                ..S::Local::empty(self.alloc)
             },
             l,
         )
@@ -196,7 +196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Stmt {
         let b1 = self.b(B::Identifier { r#ref: r1 }, l);
         let b2 = self.b(B::Identifier { r#ref: r2 }, l);
-        let decls = DeclList::from_slice(&[
+        let decls = self.alloc.vec_from_slice(&[
             G::Decl {
                 binding: b1,
                 value: v1,
@@ -209,7 +209,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.s(
             S::Local {
                 decls,
-                ..Default::default()
+                ..S::Local::empty(self.alloc)
             },
             l,
         )
@@ -218,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// recordUsage + Expr.assign.
     fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
         self.record_usage(ref_);
-        Expr::assign(
+        Expr::assign(self.alloc, 
             self.new_expr(
                 E::Identifier {
                     ref_,
@@ -243,9 +243,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::New {
                 target,
-                args: bun_alloc::AstAlloc::vec(),
+                args: self.alloc.vec(),
                 close_parens_loc: l,
-                ..Default::default()
+                ..E::New::empty(self.alloc)
             },
             l,
         )
@@ -264,9 +264,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.new_expr(
             E::New {
                 target,
-                args: bun_alloc::AstAlloc::vec(),
+                args: self.alloc.vec(),
                 close_parens_loc: l,
-                ..Default::default()
+                ..E::New::empty(self.alloc)
             },
             l,
         )
@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             l,
         );
         let stmts = bump.alloc_slice_copy(&[stmt]);
-        let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts);
+        let stmts_list = self.alloc.vec_from_slice(stmts);
         let sb = bump.alloc(G::ClassStaticBlock {
             loc: l,
             stmts: stmts_list,
@@ -291,7 +291,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Property {
             kind: PropertyKind::ClassStaticBlock,
             class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
-            ..Default::default()
+            ..G::Property::empty(self.alloc)
         }
     }
 
@@ -801,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 new_args.push(*arg);
                             }
                             e.target = call_target;
-                            e.args = ExprNodeList::from_bump_vec(new_args);
+                            e.args = self.alloc.vec_from_iter(new_args);
                             return;
                         }
                     }
@@ -908,8 +908,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.temp_refs_to_declare.truncate(baseline);
         Some(self.s(
             S::Local {
-                decls: DeclList::from_bump_vec(capture_decls),
-                ..Default::default()
+                decls: self.alloc.vec_from_iter(capture_decls),
+                ..S::Local::empty(self.alloc)
             },
             loc,
         ))
@@ -1168,7 +1168,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // exit, freeing the buffer that `E::Array { items }` (Phase-2/5 below)
         // still pointed at → use-after-poison in `expr_can_be_removed_if_unused`.
         let mut class_decorators: ExprNodeList =
-            bun_alloc::AstAlloc::take(&mut class.ts_decorators);
+            p.alloc.take(&mut class.ts_decorators);
         let class_decorators_len = class_decorators.len_u32() as usize;
 
         let init_ref = p.new_sym(js_ast::symbol::Kind::Other, b"_init");
@@ -1205,11 +1205,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Move ownership into the AST node — `class_decorators` is not read
             // again on this branch (Phase-5's else-arm only runs when
             // `class_dec_ref` is `None`, i.e. `class_decorators_len == 0`).
-            let items = bun_alloc::AstAlloc::take(&mut class_decorators);
+            let items = p.alloc.take(&mut class_decorators);
             let arr = p.new_expr(
                 E::Array {
                     items,
-                    ..Default::default()
+                    ..E::Array::empty(p.alloc)
                 },
                 loc,
             );
@@ -1256,7 +1256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let arr = p.new_expr(
                     E::Array {
                         items,
-                        ..Default::default()
+                        ..E::Array::empty(p.alloc)
                     },
                     loc,
                 );
@@ -1593,7 +1593,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     let setter_fn_args = bump.alloc(G::Arg {
                         binding: setter_binding,
-                        ..Default::default()
+                        ..G::Arg::empty(p.alloc)
                     });
                     let set_fn = G::Fn {
                         args: bun_ast::StoreSlice::new_mut(core::slice::from_mut(setter_fn_args)),
@@ -1611,14 +1611,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         value: Some(p.new_expr(E::Function { func: get_fn }, loc)),
                         kind: PropertyKind::Get,
                         flags: getter_flags,
-                        ..Default::default()
+                        ..G::Property::empty(p.alloc)
                     });
                     new_properties.push(Property {
                         key: prop.key,
                         value: Some(p.new_expr(E::Function { func: set_fn }, loc)),
                         kind: PropertyKind::Set,
                         flags: getter_flags,
-                        ..Default::default()
+                        ..G::Property::empty(p.alloc)
                     });
 
                     let init_val = prop
@@ -1692,7 +1692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.new_expr(
                     E::Array {
                         items,
-                        ..Default::default()
+                        ..E::Array::empty(p.alloc)
                     },
                     loc,
                 )
@@ -1874,7 +1874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            let dec_args_list = ExprNodeList::from_bump_vec(dec_args);
+            let dec_args_list = p.alloc.vec_from_iter(dec_args);
             let raw_element = p.call_runtime(loc, b"__decorateElement", dec_args_list);
             let element = if let Some(fn_ref) = private_method_fn_ref {
                 p.assign_to(fn_ref, raw_element, loc)
@@ -1884,7 +1884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Categorize the element
             if k >= 4 {
-                let mut prop_shallow = prop_copy(prop);
+                let mut prop_shallow = prop_copy(p.alloc, prop);
                 if is_private {
                     if let Some(ps_ref) = private_storage_ref {
                         prop_shallow.key = Some(p.new_expr(
@@ -1958,7 +1958,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     has_instance_private_methods = true;
                 }
             } else {
-                let new_prop = prop_copy(prop);
+                let new_prop = prop_copy(p.alloc, prop);
                 new_properties.push(new_prop);
                 if prop.flags.contains(Flags::Property::IsStatic) {
                     static_non_field_elements.push(element);
@@ -2059,11 +2059,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // `class_dec_ref` is `None` ⇒ `class_decorators_len == 0`, so
                 // this is an empty list. Still `take` (not `ptr::read`) so the
                 // local can never own a second copy of a live buffer.
-                let items = bun_alloc::AstAlloc::take(&mut class_decorators);
+                let items = p.alloc.take(&mut class_decorators);
                 p.new_expr(
                     E::Array {
                         items,
-                        ..Default::default()
+                        ..E::Array::empty(p.alloc)
                     },
                     loc,
                 )
@@ -2080,7 +2080,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             });
 
-            let cls_dec_list = ExprNodeList::from_bump_vec(cls_dec_args);
+            let cls_dec_list = p.alloc.vec_from_iter(cls_dec_args);
             let dec_call = p.call_runtime(loc, b"__decorateElement", cls_dec_list);
             suffix_exprs.push(p.assign_to(class_name_ref, dec_call, class_name_loc));
         }
@@ -2139,8 +2139,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             suffix_exprs.push(p.new_expr(
                                 E::Call {
                                     target: iife_body,
-                                    args: bun_alloc::AstAlloc::vec(),
-                                    ..Default::default()
+                                    args: p.alloc.vec(),
+                                    ..E::Call::empty(p.alloc)
                                 },
                                 loc,
                             ));
@@ -2165,7 +2165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let Some(init_val) = entry.prop.initializer {
                             run_args.push(init_val);
                         }
-                        let run_args_list = ExprNodeList::from_bump_vec(run_args);
+                        let run_args_list = p.alloc.vec_from_iter(run_args);
                         let run_init_call =
                             p.call_runtime(loc, b"__runInitializers", run_args_list);
 
@@ -2184,7 +2184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         } else {
                             let cn_e = p.use_ref(class_name_ref, class_name_loc);
                             let assign_target = p.member_target(cn_e, &entry.prop);
-                            suffix_exprs.push(Expr::assign(assign_target, run_init_call));
+                            suffix_exprs.push(Expr::assign(p.alloc, assign_target, run_init_call));
                         }
 
                         // Extra initializer
@@ -2249,7 +2249,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(init_val) = entry.prop.initializer {
                     run_args.push(init_val);
                 }
-                let run_args_list = ExprNodeList::from_bump_vec(run_args);
+                let run_args_list = p.alloc.vec_from_iter(run_args);
                 let run_init_call = p.call_runtime(loc, b"__runInitializers", run_args_list);
 
                 if entry.is_accessor || entry.is_private {
@@ -2270,7 +2270,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     let t_e = p.new_expr(E::This {}, loc);
                     let mt = p.member_target(t_e, &entry.prop);
-                    constructor_inject_stmts.push(Stmt::assign(mt, run_init_call));
+                    constructor_inject_stmts.push(Stmt::assign(p.alloc, mt, run_init_call));
                 }
 
                 // Extra initializer
@@ -2354,12 +2354,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     );
                     let spread = p.new_expr(E::Spread { value: inner }, loc);
                     let arg_slice = bump.alloc_slice_copy(&[spread]);
-                    let call_args = ExprNodeList::from_arena_slice(arg_slice);
+                    let call_args = p.alloc.vec_from_slice(arg_slice);
                     let call = p.new_expr(
                         E::Call {
                             target,
                             args: call_args,
-                            ..Default::default()
+                            ..E::Call::empty(p.alloc)
                         },
                         loc,
                     );
@@ -2397,7 +2397,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         flags: Flags::Property::IsMethod.into(),
                         key,
                         value,
-                        ..Default::default()
+                        ..G::Property::empty(p.alloc)
                     },
                 );
             }
@@ -2466,7 +2466,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 });
                                 if let Some(val) = decl_item.value {
                                     p.record_usage(ref_);
-                                    comma_parts.push(Expr::assign(
+                                    comma_parts.push(Expr::assign(p.alloc, 
                                         p.new_expr(
                                             E::Identifier {
                                                 ref_,
@@ -2516,11 +2516,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Emit var declarations
             if !expr_var_decls.is_empty() {
-                let decls = DeclList::from_bump_vec(expr_var_decls);
+                let decls = p.alloc.vec_from_iter(expr_var_decls);
                 let var_decl_stmt = p.s(
                     S::Local {
                         decls,
-                        ..Default::default()
+                        ..S::Local::empty(p.alloc)
                     },
                     loc,
                 );
@@ -2575,12 +2575,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 class_name_loc,
             ));
-            let decls = DeclList::from_slice(&[G::Decl { binding, value }]);
+            let decls = p.alloc.vec_from_slice(&[G::Decl { binding, value }]);
             out.push(p.s(
                 S::Local {
                     kind: S::Kind::KLet,
                     decls,
-                    ..Default::default()
+                    ..S::Local::empty(p.alloc)
                 },
                 loc,
             ));

@@ -31,7 +31,7 @@ use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
 use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
-use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, Flags, G, LocRef, S, Stmt};
 
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
@@ -202,7 +202,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 allow_ts_decorators: class_opts.allow_ts_decorators,
                 class_has_extends: extends.is_some(),
                 has_argument_decorators: false,
-                ..Default::default()
+                ..PropertyOpts::empty(p.alloc)
             };
 
             // Parse decorators for this property
@@ -263,7 +263,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let has_any_decorators = has_decorators || class_opts.ts_decorators.len() > 0;
         // `Expr: Copy` — safe arena-slice → owned Vec (one memcpy, no double-drop).
-        let ts_decorators = ExprNodeList::from_arena_slice(class_opts.ts_decorators);
+        let ts_decorators = p.alloc.vec_from_slice(class_opts.ts_decorators);
         Ok(G::Class {
             class_name: name,
             extends,
@@ -369,7 +369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let close_paren_loc = p.lexer.loc();
         p.lexer.expect(T::TCloseParen)?;
         Ok(ExprListLoc {
-            list: ExprNodeList::from_arena_slice(&args),
+            list: p.alloc.vec_from_slice(&args),
             loc: close_paren_loc,
         })
     }
@@ -469,7 +469,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.lexer.next()?;
                 let rhs = p.parse_expr(Level::Comma)?;
-                item = Expr::assign(item, rhs);
+                item = Expr::assign(p.alloc, item, rhs);
             }
 
             items_list.push(item);
@@ -537,7 +537,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc: item.loc,
                     }),
                     default: tuple.expr,
-                    ..Default::default()
+                    ..G::Arg::empty(p.alloc)
                 });
             }
 
@@ -605,8 +605,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(p.new_expr(
                 E::Call {
                     target: async_expr,
-                    args: ExprNodeList::from_arena_slice(items),
-                    ..Default::default()
+                    args: p.alloc.vec_from_slice(items),
+                    ..E::Call::empty(p.alloc)
                 },
                 loc,
             ));
@@ -621,7 +621,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return Err(crate::Error::SyntaxError);
             }
 
-            let mut value = Expr::join_all_with_comma(items);
+            let mut value = Expr::join_all_with_comma(p.alloc, items);
             p.mark_expr_as_parenthesized(&mut value);
             return Ok(value);
         }
@@ -806,7 +806,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     kind: js_ast::LocalKind::KLet,
                                     decls,
                                     is_export: opts.is_export,
-                                    ..Default::default()
+                                    ..S::Local::empty(p.alloc)
                                 },
                                 token_range.loc,
                             )),
@@ -856,7 +856,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             kind: js_ast::LocalKind::KUsing,
                             decls,
                             is_export: false,
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         token_range.loc,
                     )),
@@ -911,7 +911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     kind: js_ast::LocalKind::KAwaitUsing,
                                     decls,
                                     is_export: false,
-                                    ..Default::default()
+                                    ..S::Local::empty(p.alloc)
                                 },
                                 token_range.loc,
                             )),
@@ -1306,7 +1306,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
 
-        Ok(G::DeclList::from_arena_slice(&decls))
+        Ok(p.alloc.vec_from_slice(&decls))
     }
 
     pub fn parse_path(&mut self) -> Result<ParsedPath<'a>, Error> {
@@ -1493,7 +1493,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
-                                stmt = Stmt::alloc(
+                                stmt = Stmt::alloc(p.alloc, 
                                     S::Directive {
                                         value: bun_ast::StoreStr::new(bytes),
                                     },
@@ -1578,7 +1578,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let arg_binding = p.b(B::Identifier { r#ref: async_ref }, async_range.loc);
                         let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                             binding: arg_binding,
-                            ..Default::default()
+                            ..G::Arg::empty(p.alloc)
                         });
                         let _ = p
                             .push_scope_for_parse_pass(
@@ -1613,7 +1613,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let args: &'a mut [G::Arg] =
                                 p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                                     binding: arg_binding,
-                                    ..Default::default()
+                                    ..G::Arg::empty(p.alloc)
                                 });
                             p.lexer.next()?;
 

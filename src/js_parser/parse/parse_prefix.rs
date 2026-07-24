@@ -12,7 +12,7 @@ use bun_ast::e::UnaryFlags;
 use bun_ast::expr::EFlags;
 use bun_ast::g::{Arg, PropertyKind};
 use bun_ast::op::Level;
-use bun_ast::{self as js_ast, B, E, Expr, ExprData, ExprNodeList, G, OpCode, scope, symbol};
+use bun_ast::{self as js_ast, B, E, Expr, ExprData, G, OpCode, scope, symbol};
 
 type PResult<T> = crate::CrateResult<T>;
 
@@ -257,7 +257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
             let args = p.arena.alloc_slice_fill_iter([Arg {
                 binding,
-                ..Default::default()
+                ..G::Arg::empty(p.alloc)
             }]);
 
             let _ = p
@@ -695,7 +695,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let call_args = p.parse_call_args()?;
             (call_args.list, call_args.loc)
         } else {
-            (bun_alloc::AstAlloc::vec(), bun_ast::Loc::EMPTY)
+            (p.alloc.vec(), bun_ast::Loc::EMPTY)
         };
 
         Ok(p.new_expr(
@@ -703,7 +703,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 target,
                 args,
                 close_parens_loc,
-                ..Default::default()
+                ..E::New::empty(p.alloc)
             },
             loc,
         ))
@@ -782,14 +782,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // In this case, we can't distinguish between the two yet
             self_errors.merge_into(errors.unwrap());
         }
-        let items_list = ExprNodeList::from_arena_slice(&items);
+        let items_list = p.alloc.vec_from_slice(&items);
         Ok(p.new_expr(
             E::Array {
                 items: items_list,
                 comma_after_spread,
                 is_single_line,
                 close_bracket_loc,
-                ..Default::default()
+                ..E::Array::empty(p.alloc)
             },
             loc,
         ))
@@ -816,7 +816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 properties.push(G::Property {
                     kind: PropertyKind::Spread,
                     value: Some(value),
-                    ..Default::default()
+                    ..G::Property::empty(p.alloc)
                 });
 
                 // Commas are not allowed here when destructuring
@@ -825,7 +825,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             } else {
                 // This property may turn out to be a type in TypeScript, which should be ignored
-                let mut property_opts = PropertyOpts::default();
+                let mut property_opts = PropertyOpts::empty(p.alloc);
                 if let Some(prop) = p.parse_property(
                     PropertyKind::Normal,
                     &mut property_opts,
@@ -870,14 +870,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // BumpVec → Vec via arena slice; see pfx_t_open_bracket.
-        let properties_list = G::PropertyList::from_bump_vec(properties);
+        let properties_list = p.alloc.vec_from_iter(properties);
         Ok(p.new_expr(
             E::Object {
                 properties: properties_list,
                 comma_after_spread,
                 is_single_line,
                 close_brace_loc,
-                ..Default::default()
+                ..E::Object::empty(p.alloc)
             },
             loc,
         ))

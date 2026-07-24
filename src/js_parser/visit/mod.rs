@@ -879,7 +879,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody)
                         .expect("unreachable");
-                    csb.stmts = Vec::from_bump_vec(list);
+                    csb.stmts = self.alloc.vec_from_iter(list);
                     self.pop_scope();
 
                     self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
@@ -1117,7 +1117,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(k) => j + k + 1,
                                 None => j,
                             };
-                            stmts.insert(insert_at, Stmt::assign(dot, arg_ident));
+                            stmts.insert(insert_at, Stmt::assign(self.alloc, dot, arg_ident));
 
                             // O(N)
                             // `Vec::insert` opens a 1-slot gap at j and writes the
@@ -1140,7 +1140,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 j,
                                 G::Property {
                                     key: Some(field_ident),
-                                    ..Default::default()
+                                    ..G::Property::empty(self.alloc)
                                 },
                             );
                             j += 1;
@@ -1381,13 +1381,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 );
 
                 if let_decls.len() > 0 {
-                    let decls = G::DeclList::from_bump_vec(let_decls);
+                    let decls = p.alloc.vec_from_iter(let_decls);
                     let loc = decls.at(0).value.unwrap().loc;
                     before.push(p.s(
                         S::Local {
                             kind: LocalKind::KLet,
                             decls,
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         loc,
                     ));
@@ -1401,13 +1401,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             before.push(new);
                         }
                     } else {
-                        let decls = G::DeclList::from_bump_vec(var_decls);
+                        let decls = p.alloc.vec_from_iter(var_decls);
                         let loc = decls.at(0).value.unwrap().loc;
                         before.push(p.s(
                             S::Local {
                                 kind: LocalKind::KVar,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::empty(p.alloc)
                             },
                             loc,
                         ));
@@ -1422,7 +1422,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut end: usize = 0;
                 for idx in 0..visited.len() {
                     let item = visited[idx];
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.arena) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.alloc) {
                         continue;
                     }
 
@@ -1567,7 +1567,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         for stmt in stmts.iter().copied() {
             if is_control_flow_dead
                 && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
+                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.alloc)
             {
                 // Strip unnecessary statements if the control flow is dead here
                 continue;
@@ -1719,7 +1719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .does_not_affect_tree_shaking
                                     && s_expr.does_not_affect_tree_shaking;
                                 prev_expr.value =
-                                    Expr::join_with_comma(prev_expr.value, s_expr.value);
+                                    prev_expr.value.join_with_comma(p.alloc, s_expr.value);
                                 continue;
                             }
                         } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
@@ -1771,7 +1771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
                                 s_switch.test_ =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test_);
+                                    prev_expr.value.join_with_comma(p.alloc, s_switch.test_);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1785,7 +1785,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test_ = Expr::join_with_comma(prev_expr.value, s_if.test_);
+                                s_if.test_ = prev_expr.value.join_with_comma(p.alloc, s_if.test_);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -1804,8 +1804,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                ret.value = Some(Expr::join_with_comma(
-                                    prev_expr.value,
+                                ret.value = Some(prev_expr.value.join_with_comma(
+                                    p.alloc,
                                     ret.value.unwrap(),
                                 ));
                                 output[prev_idx] = stmt;
@@ -1831,8 +1831,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if !prev_stmt.is_super_call() {
                                 output[prev_idx] = p.s(
                                     S::Throw {
-                                        value: Expr::join_with_comma(
-                                            prev_expr.value,
+                                        value: prev_expr.value.join_with_comma(
+                                            p.alloc,
                                             s_throw.value,
                                         ),
                                     },

@@ -74,6 +74,7 @@ impl LinkerContext<'_> {
         // SAFETY: `Worker::create` initializes `arena` to point at
         // `worker.heap`; valid for the worker's lifetime.
         let arena: &Bump = worker.arena();
+        let ast_alloc: bun_alloc::AstAlloc = worker.alloc();
 
         // ── raw SoA column pointers (root provenance) ─────────────────────
         // `split_raw()` derives `*mut [T]` directly from the buffer base with
@@ -169,16 +170,17 @@ impl LinkerContext<'_> {
             meta.sorted_and_filtered_export_aliases,
             js_meta::SortedAndFilteredExportAliases,
             id
-        ) = bun_alloc::AstAlloc::vec_from_iter(
+        ) = ast_alloc.vec_from_iter(
             export_aliases
                 .iter()
-                .map(|s| bun_alloc::AstAlloc::vec_from_slice(*s).into_boxed_slice()),
+                .map(|s| ast_alloc.vec_from_slice(*s).into_boxed_slice()),
         );
 
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
         c.create_exports_for_file(
             arena,
+            ast_alloc,
             id,
             // SAFETY: `resolved_exports` points at one slot of the
             // `meta.resolved_exports` SoA column; `imports_to_bind` is a
@@ -372,6 +374,7 @@ impl LinkerContext<'_> {
     pub fn create_exports_for_file(
         &self,
         arena: &Bump,
+        ast_alloc: bun_alloc::AstAlloc,
         id: u32,
         resolved_exports: &mut ResolvedExports,
         imports_to_bind: &[RefImportData],
@@ -399,7 +402,7 @@ impl LinkerContext<'_> {
         let mut properties =
             bun_alloc::ArenaVec::<G::Property>::with_capacity_in(export_aliases.len(), arena);
 
-        let mut ns_export_symbol_uses = PartSymbolUseMap::default();
+        let mut ns_export_symbol_uses = PartSymbolUseMap::new_in(ast_alloc);
         ns_export_symbol_uses
             .ensure_total_capacity(export_aliases.len())
             .expect("OOM");
@@ -440,7 +443,7 @@ impl LinkerContext<'_> {
         }
         let loc = Loc::EMPTY;
         // todo: investigate if preallocating this array is faster
-        let mut ns_export_dependencies = bun_ast::DependencyList::init_capacity(re_exports_count);
+        let mut ns_export_dependencies = ast_alloc.vec_with_capacity(re_exports_count);
         for &alias in export_aliases {
             let exp = resolved_exports.get_mut(alias).unwrap();
             let mut exp_data = exp.data;
@@ -463,7 +466,7 @@ impl LinkerContext<'_> {
             let value: Expr = 'brk: {
                 if let Some(symbol) = self.graph.symbols.get_const(exp_data.import_ref) {
                     if symbol.namespace_alias.is_some() {
-                        break 'brk Expr::init(
+                        break 'brk Expr::init(ast_alloc, 
                             E::ImportIdentifier {
                                 ref_: exp_data.import_ref,
                                 ..Default::default()
@@ -473,7 +476,7 @@ impl LinkerContext<'_> {
                     }
                 }
 
-                Expr::init(
+                Expr::init(ast_alloc, 
                     E::Identifier {
                         ref_: exp_data.import_ref,
                         ..Default::default()
@@ -505,7 +508,7 @@ impl LinkerContext<'_> {
                     },
                     loc,
                 )),
-                ..Default::default()
+                ..G::Property::empty(ast_alloc)
             });
             ns_export_symbol_uses
                 .put_assume_capacity(exp_data.import_ref, SymbolUse { count_estimate: 1 });
@@ -524,7 +527,7 @@ impl LinkerContext<'_> {
             }
         }
 
-        let mut declared_symbols = DeclaredSymbolList::default();
+        let mut declared_symbols = DeclaredSymbolList::empty(ast_alloc);
         let exports_ref = self.graph.ast.items_exports_ref()[id as usize];
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
@@ -545,15 +548,15 @@ impl LinkerContext<'_> {
             emit_export_stmt!(Stmt::allocate(
                 arena,
                 S::Local {
-                    decls: G::DeclList::from_slice(&[G::Decl {
+                    decls: ast_alloc.vec_from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             arena,
                             bun_ast::b::Identifier { r#ref: exports_ref },
                             loc,
                         ),
-                        value: Some(Expr::allocate(arena, E::Object::default(), loc)),
+                        value: Some(Expr::allocate(arena, E::Object::empty(ast_alloc), loc)),
                     }]),
-                    ..Default::default()
+                    ..S::Local::empty(ast_alloc)
                 },
                 loc,
             ));
@@ -581,18 +584,18 @@ impl LinkerContext<'_> {
                         arena,
                         E::Call {
                             target: Expr::init_identifier(export_ref, loc),
-                            args: bun_ast::ExprNodeList::from_slice(&[
+                            args: ast_alloc.vec_from_slice(&[
                                 Expr::init_identifier(exports_ref, loc),
                                 Expr::allocate(
                                     arena,
                                     E::Object {
-                                        properties: G::PropertyList::move_from_list(owned_props),
-                                        ..Default::default()
+                                        properties: ast_alloc.vec_from_iter(owned_props),
+                                        ..E::Object::empty(ast_alloc)
                                     },
                                     loc,
                                 ),
                             ]),
-                            ..Default::default()
+                            ..E::Call::empty(ast_alloc)
                         },
                         loc,
                     ),
@@ -621,7 +624,7 @@ impl LinkerContext<'_> {
         // access to the exports object and should NOT see the "__esModule" flag.
         if force_include_exports_for_entry_point {
             let to_common_js_ref = self.runtime_function(b"__toCommonJS");
-            emit_export_stmt!(Stmt::assign(
+            emit_export_stmt!(Stmt::assign(ast_alloc, 
                 Expr::allocate(
                     arena,
                     E::Dot {
@@ -636,11 +639,11 @@ impl LinkerContext<'_> {
                     arena,
                     E::Call {
                         target: Expr::init_identifier(to_common_js_ref, Loc::EMPTY),
-                        args: bun_ast::ExprNodeList::from_slice(&[Expr::init_identifier(
+                        args: ast_alloc.vec_from_slice(&[Expr::init_identifier(
                             exports_ref,
                             Loc::EMPTY,
                         )]),
-                        ..Default::default()
+                        ..E::Call::empty(ast_alloc)
                     },
                     Loc::EMPTY,
                 ),
@@ -681,7 +684,7 @@ impl LinkerContext<'_> {
                 // Make sure this is trimmed if unused even if tree shaking is disabled
                 force_tree_shaking: true,
 
-                ..Default::default()
+                ..Part::empty(ast_alloc)
             };
 
             // Pull in the "__export" symbol if it was used

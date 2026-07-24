@@ -6,14 +6,13 @@ use core::mem::offset_of;
 use std::fmt::Write as _;
 
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
-use bun_collections::VecExt;
 
 use bun_ast::{Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
-use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
+use bun_ast::{LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
 
 use crate::AstBuilder::AstBuilder;
@@ -163,7 +162,14 @@ fn task_callback(
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);
-    let mut ab = AstBuilder::init(bump, &source, ctx.transpiler().options.hot_module_reloading)?;
+    let worker = Worker::get(ctx);
+    let alloc = worker.alloc();
+    let mut ab = AstBuilder::init(
+        bump,
+        alloc,
+        &source,
+        ctx.transpiler().options.hot_module_reloading,
+    )?;
 
     match &task.data {
         Data::ClientReferenceProxy(data) => generate_client_reference_proxy(ctx, data, &mut ab)?,
@@ -325,9 +331,11 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: bun_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
+            args: b
+                .alloc
+                .vec_from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
             close_parens_loc: Loc::EMPTY,
-            ..Default::default()
+            ..E::New::empty(b.alloc)
         });
 
         // registerClientReference(
@@ -339,7 +347,7 @@ fn generate_client_reference_proxy(
         let arrow_body_stmts: &mut [Stmt] = b.bump.alloc_slice_copy(&[throw_stmt]);
         let value = b.new_expr(E::Call {
             target: register_client_reference,
-            args: ExprNodeList::from_slice(&[
+            args: b.alloc.vec_from_slice(&[
                 b.new_expr(E::Arrow {
                     body: G::FnBody {
                         stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
@@ -350,7 +358,7 @@ fn generate_client_reference_proxy(
                 module_path,
                 b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
             ]),
-            ..Default::default()
+            ..E::Call::empty(b.alloc)
         });
 
         if is_default {
@@ -367,7 +375,7 @@ fn generate_client_reference_proxy(
             // export const Component = registerClientReference(...);
             let export_ref = b.new_symbol(symbol::Kind::Other, key)?;
             b.append_stmt(S::Local {
-                decls: G::DeclList::from_slice(&[G::Decl {
+                decls: b.alloc.vec_from_slice(&[G::Decl {
                     binding: Binding::alloc(
                         b.bump,
                         B::Identifier { r#ref: export_ref },
@@ -377,7 +385,7 @@ fn generate_client_reference_proxy(
                 }]),
                 is_export: true,
                 kind: S::Kind::KConst,
-                ..Default::default()
+                ..S::Local::empty(b.alloc)
             })?;
         }
     }

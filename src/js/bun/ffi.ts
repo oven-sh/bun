@@ -17,6 +17,9 @@ const FFIType = {
   "15": 15,
   "16": 16,
   "17": 17,
+  "18": 18,
+  "19": 19,
+  "20": 20,
   bool: 11,
   c_int: 5,
   c_uint: 6,
@@ -45,6 +48,7 @@ const FFIType = {
   uint64_t: 8,
   uint8_t: 2,
   usize: 8,
+  size_t: 8,
   "void*": 12,
   ptr: 12,
   pointer: 12,
@@ -336,6 +340,11 @@ ffiWrappers[FFIType.function] = `{
   return ptr;
 }`;
 
+// Node-API arguments are passed through as raw JSValues. `napi_value` is read
+// directly on the native side, and `napi_env` is substituted there for the
+// module's env, so neither must go through the default `val|0` coercion.
+ffiWrappers[FFIType.napi_env] = ffiWrappers[FFIType.napi_value] = "val";
+
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
   var paramNames = new Array(params.length);
@@ -496,19 +505,27 @@ function cc(options) {
   const result = ccFn(options);
   if (Error.isError(result)) throw result;
 
+  // `source` may be an array of files; use the first one for stack-trace labels.
+  const displayPath = $isJSArray(path) ? path[0] : path;
+
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
+    // `cc` nests the symbol definitions under `options.symbols` (unlike
+    // `dlopen`/`linkSymbols`, where `options` is the symbol map itself), so we
+    // must read from `options.symbols[key]` — otherwise the `cstring` return
+    // wrapper is never applied and the function returns a raw pointer.
+    const definition = options.symbols?.[key];
+    if (definition?.args?.length || FFIType[definition?.returns as string] === FFIType.cstring) {
       result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
+        definition.args ?? [],
+        definition.returns ?? FFIType.void,
         symbol,
         // in stacktraces:
         // instead of
         //    "/usr/lib/sqlite3.so"
         // we want
         //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+        displayPath.includes("/") ? `${key} (${displayPath.split("/").pop()})` : `${key} (${displayPath})`,
       );
     } else {
       // consistentcy

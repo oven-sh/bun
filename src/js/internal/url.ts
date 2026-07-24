@@ -1,23 +1,24 @@
 function urlToHttpOptions(url) {
+  if (url === null || (typeof url !== "object" && typeof url !== "function")) {
+    throw $ERR_INVALID_ARG_TYPE("url", "object", url);
+  }
+  const { hostname, pathname, port, username, password, search } = url;
   const options = {
+    __proto__: null,
     ...url,
     protocol: url.protocol,
-    hostname:
-      typeof url.hostname === "string" && url.hostname.startsWith("[") ? url.hostname.slice(1, -1) : url.hostname,
+    hostname: typeof hostname === "string" && hostname.startsWith("[") ? hostname.slice(1, -1) : hostname,
     hash: url.hash,
-    search: url.search,
-    pathname: url.pathname,
-    path: `${url.pathname || ""}${url.search || ""}`,
+    search: search,
+    pathname: pathname,
+    path: `${pathname || ""}${search || ""}`,
     href: url.href,
   };
-  const port = url.port;
   if (port !== "") {
     options.port = Number(port);
   }
-  const username = url.username;
-  let password;
-  if (username || (password = url.password)) {
-    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password ?? url.password)}`;
+  if (username || password) {
+    options.auth = `${decodeURIComponent(username)}:${decodeURIComponent(password)}`;
   }
   return options;
 }

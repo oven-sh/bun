@@ -33,18 +33,7 @@ function checkInt(buf, value, offset, min, max, byteLength) {
   checkBounds(buf, offset, byteLength);
 }
 
-function writeU_Int8(buf, value, offset, min, max) {
-  // `checkInt()` can not be used here because it checks two entries.
-  validateNumber(offset, "offset");
-  if (value > max || value < min) {
-    throw $ERR_OUT_OF_RANGE("value", `>= ${min} and <= ${max}`, value);
-  }
-  if (buf[offset] === undefined) boundsError(offset, buf.length - 1);
-}
-
 export default {
   boundsError,
-  checkBounds,
   checkInt,
-  writeU_Int8,
 };

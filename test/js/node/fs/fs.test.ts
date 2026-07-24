@@ -5856,6 +5856,10 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
     ["crypto.randomBytes", `require("crypto").randomBytes(8, () => { throw new Error("boom"); })`],
     ["crypto.randomFill", `require("crypto").randomFill(Buffer.alloc(8), () => { throw new Error("boom"); })`],
     ["crypto.hkdf", `require("crypto").hkdf("sha256", "key", "salt", "info", 16, () => { throw new Error("boom"); })`],
+    [
+      "crypto.sign",
+      `const { generateKeyPairSync, sign } = require("crypto"); const { privateKey } = generateKeyPairSync("ed25519"); sign(null, Buffer.from("d"), privateKey, () => { throw new Error("boom"); })`,
+    ],
   ];
 
   it.concurrent.each(cases)("%s", async (_name, snippet) => {

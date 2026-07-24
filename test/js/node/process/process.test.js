@@ -2274,7 +2274,18 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
   });
   first.send("boom");
 
-  // Second connection is served normally; its echo stops the server.
+  // Wait for the reported throw before connecting again, so the second
+  // connection provably exercises serve-after-throw.
+  let stderrText = "";
+  const errReader = proc.stderr.getReader();
+  const errDecoder = new TextDecoder();
+  while (!stderrText.includes("ws-boom")) {
+    const { value, done } = await errReader.read();
+    if (done) throw new Error("stderr ended before the throw was reported: " + stderrText);
+    stderrText += errDecoder.decode(value);
+  }
+
+  // Second connection is served normally, after the throw.
   const echoed = await new Promise((resolve, reject) => {
     const ws = new WebSocket("ws://127.0.0.1:" + port);
     ws.onopen = () => ws.send("after");
@@ -2285,9 +2296,13 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
   expect(echoed).toBe("echo:after");
   first.close();
 
-  // The server would keep serving forever; tear it down ourselves. stdout
-  // was consumed by the port reader above.
+  // The server would keep serving forever; tear it down ourselves, then
+  // drain the remaining stderr through the same reader.
   proc.kill();
-  const [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("ws-boom");
+  while (true) {
+    const { done } = await errReader.read();
+    if (done) break;
+  }
+  await proc.exited;
+  expect(stderrText).toContain("ws-boom");
 });

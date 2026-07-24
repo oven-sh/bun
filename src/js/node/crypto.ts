@@ -238,7 +238,7 @@ Object.assign(Sign.prototype, {
 });
 
 crypto_exports.Sign = Sign;
-crypto_exports.sign = sign;
+crypto_exports.sign = guardLastCallback(sign);
 
 function createSign(algorithm, options?) {
   return new Sign(algorithm, options);
@@ -269,7 +269,7 @@ Object.assign(Verify.prototype, {
 });
 
 crypto_exports.Verify = Verify;
-crypto_exports.verify = verify;
+crypto_exports.verify = guardLastCallback(verify);
 
 function createVerify(algorithm, options?) {
   return new Verify(algorithm, options);

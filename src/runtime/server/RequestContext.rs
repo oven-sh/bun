@@ -617,10 +617,21 @@ where
 
     pub fn set_cookies(&mut self, cookie_map: Option<*mut CookieMap>) {
         // S008: `CookieMap` is an `opaque_ffi!` ZST — safe `*const → &` deref.
+        let map = cookie_map.map(|p| bun_opaque::opaque_deref(p.cast_const()));
+        if self.flags.has_written_status() || self.flags.aborted() || self.resp.is_none() {
+            // Response head already committed (or request is over): this map's
+            // changes can never reach the wire. Mark it so JS-level set()/
+            // delete() throw ERR_HTTP_HEADERS_SENT instead of silently
+            // succeeding. Drop any previously stored ref.
+            if let Some(m) = map {
+                m.set_headers_written();
+            }
+            drop(self.cookies.take());
+            return;
+        }
         // `new_ref` takes a ref for storage. Assigning replaces (and so
         // drops/unrefs) the old one.
-        self.cookies =
-            cookie_map.map(|p| CookieMapRef::new_ref(bun_opaque::opaque_deref(p.cast_const())));
+        self.cookies = map.map(CookieMapRef::new_ref);
     }
 
     pub fn set_timeout_handler(&mut self) {
@@ -1398,6 +1409,12 @@ where
         }
 
         this.detach_response();
+        // Connection is gone: later set()/delete() on this map can never reach
+        // the wire. Mark it so JS throws ERR_HTTP_HEADERS_SENT, then release
+        // the ref taken in `set_cookies`.
+        if let Some(cookies) = this.cookies.take() {
+            cookies.set_headers_written();
+        }
         let any_js_calls = core::cell::Cell::new(false);
         // SAFETY: BACKREF, just asserted Some
         let server = this.server();
@@ -1416,7 +1433,7 @@ where
         }
 
         if let Some(request) = this.request_weakref.get() {
-            request.request_context = AnyRequestContext::NULL;
+            request.request_context = AnyRequestContext::DETACHED;
             if shim::iec_trigger(
                 &request.internal_event_callback,
                 request::EventType::Abort,
@@ -1508,11 +1525,15 @@ where
 
         self.request_body_readable_stream_ref.deinit();
 
-        // Releases the ref taken in `set_cookies` (via `CookieMapRef::drop`).
-        drop(self.cookies.take());
+        // Request is over: later set()/delete() on this map can never reach the
+        // wire. Mark it so JS throws ERR_HTTP_HEADERS_SENT, then release the
+        // ref taken in `set_cookies` (via `CookieMapRef::drop`).
+        if let Some(cookies) = self.cookies.take() {
+            cookies.set_headers_written();
+        }
 
         if let Some(request) = self.request_weakref.get() {
-            request.request_context = AnyRequestContext::NULL;
+            request.request_context = AnyRequestContext::DETACHED;
             // we can already clean this strong refs
             shim::iec_deinit(&request.internal_event_callback);
             self.request_weakref.deref();

@@ -29,6 +29,11 @@ type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CtxTag {
     None = 0,
+    /// Was attached to a live `RequestContext` that has since been torn down
+    /// (response sent / aborted / upgraded). Distinguished from `None` so
+    /// `req.cookies` can tell a request that never had a response (clones,
+    /// `new Request(...)`) from one whose response head is already committed.
+    Detached,
     Http,
     Https,
     DebugHttp,
@@ -48,6 +53,16 @@ impl AnyRequestContext {
         tag: CtxTag::None,
         ptr: core::ptr::null_mut(),
     };
+
+    pub const DETACHED: Self = Self {
+        tag: CtxTag::Detached,
+        ptr: core::ptr::null_mut(),
+    };
+
+    #[inline]
+    pub fn is_detached(self) -> bool {
+        self.tag == CtxTag::Detached
+    }
 }
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
@@ -112,7 +127,7 @@ macro_rules! dispatch {
             }};
         }
         match this.tag {
-            CtxTag::None => $default,
+            CtxTag::None | CtxTag::Detached => $default,
             CtxTag::Http => arm!(HttpCtx),
             CtxTag::Https => arm!(HttpsCtx),
             CtxTag::DebugHttp => arm!(DebugHttpCtx),

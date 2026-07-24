@@ -81,36 +81,69 @@
 using namespace JSC;
 using namespace Zig;
 
+// Exception scope for the N-API C ABI boundary: addon C callers can't satisfy JSC's
+// exception-check discipline, so acknowledge pending checks on entry and exit instead
+// of simulating a throw. A real exception still surfaces as napi_pending_exception.
+class NapiBoundaryScope : public JSC::ExceptionScope {
+public:
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+    NapiBoundaryScope(JSC::VM& vm, JSC::ExceptionEventLocation location)
+        : JSC::ExceptionScope(vm, location)
+    {
+        (void)exception();
+    }
+    ~NapiBoundaryScope()
+    {
+        (void)exception();
+    }
+#else
+    ALWAYS_INLINE NapiBoundaryScope(JSC::VM& vm)
+        : JSC::ExceptionScope(vm)
+    {
+    }
+#endif
+    NapiBoundaryScope(const NapiBoundaryScope&) = delete;
+    NapiBoundaryScope(NapiBoundaryScope&&) = default;
+};
+
+#if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
+#define DECLARE_NAPI_BOUNDARY_SCOPE(vm__) \
+    NapiBoundaryScope((vm__), JSC::ExceptionEventLocation(EXCEPTION_SCOPE_POSITION_FOR_ASAN(vm__), __FUNCTION__, __FILE__, __LINE__))
+#else
+#define DECLARE_NAPI_BOUNDARY_SCOPE(vm__) NapiBoundaryScope((vm__))
+#endif
+
 // Every NAPI function should use this at the start. It does the following:
 // - if NAPI_VERBOSE is 1, log that the function was called
 // - if env is nullptr, return napi_invalid_arg
 // - if there is a pending exception, return napi_pending_exception
 // No do..while is used as this declares a variable that other macros need to use
-#define NAPI_PREAMBLE(_env)                                             \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    /* You should not use this throw scope directly -- if you need */   \
-    /* to throw or clear exceptions, make your own scope */             \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
+#define NAPI_PREAMBLE(_env)                                                       \
+    NAPI_LOG_CURRENT_FUNCTION;                                                    \
+    NAPI_CHECK_ARG(_env, _env);                                                   \
+    /* You should not use this scope directly -- if you need */                   \
+    /* to throw or clear exceptions, make your own scope */                       \
+    auto napi_preamble_throw_scope__ = DECLARE_NAPI_BOUNDARY_SCOPE((_env)->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env)
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.
-#define NAPI_PREAMBLE_NO_THROW_SCOPE(_env) \
-    do {                                   \
-        NAPI_LOG_CURRENT_FUNCTION;         \
-        NAPI_CHECK_ARG(_env, _env);        \
-    } while (0)
+// No do..while is used as this declares a variable that must outlive any inner ThrowScope.
+#define NAPI_PREAMBLE_NO_THROW_SCOPE(_env)                                           \
+    NAPI_LOG_CURRENT_FUNCTION;                                                       \
+    NAPI_CHECK_ARG(_env, _env);                                                      \
+    auto napi_preamble_boundary_scope__ = DECLARE_NAPI_BOUNDARY_SCOPE((_env)->vm()); \
+    (void)napi_preamble_boundary_scope__
 
 // Like NAPI_PREAMBLE but does NOT return napi_pending_exception when the env
 // has a stashed napi_throw* exception. Mirrors Node.js's CHECK_ENV_NOT_IN_GC
 // for pure value constructors/accessors that are safe to call while an
-// exception is pending. Still declares a throw scope so NAPI_RETURN_SUCCESS
-// can assert and VM-level exceptions from JSC internals are caught.
-#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                            \
-    NAPI_LOG_CURRENT_FUNCTION;                                          \
-    NAPI_CHECK_ARG(_env, _env);                                         \
-    auto napi_preamble_throw_scope__ = DECLARE_THROW_SCOPE(_env->vm()); \
+// exception is pending. Still declares a scope so NAPI_RETURN_SUCCESS can
+// assert and VM-level exceptions from JSC internals are caught.
+#define NAPI_PREAMBLE_NO_PENDING_CHECK(_env)                                      \
+    NAPI_LOG_CURRENT_FUNCTION;                                                    \
+    NAPI_CHECK_ARG(_env, _env);                                                   \
+    auto napi_preamble_throw_scope__ = DECLARE_NAPI_BOUNDARY_SCOPE((_env)->vm()); \
     NAPI_RETURN_IF_VM_EXCEPTION(_env)
 
 // Return an error code if arg is null. Only use for input validation.
@@ -357,10 +390,14 @@ napi_status Napi::defineProperty(napi_env env, JSC::JSObject* to, const napi_pro
         if (property.getter) {
             auto name = makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string());
             descriptor.setGetter(NapiClass::create(vm, env, name, property.getter, dataPtr, 0, nullptr));
+            // Each NapiClass::create opens and closes a throw scope; the check between
+            // them is required for JSC's exception-check discipline.
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
         }
         if (property.setter) {
             auto name = makeString("set "_s, propertyName.isSymbol() ? String() : propertyName.string());
             descriptor.setSetter(NapiClass::create(vm, env, name, property.setter, dataPtr, 0, nullptr));
+            RETURN_IF_EXCEPTION(scope, napi_pending_exception);
         }
     } else if (property.method != nullptr) {
         WTF::String name;

@@ -1,7 +1,18 @@
 import { semver, write } from "bun";
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isLinux, isPosix, isWindows, nodeExe, runBunInstall, shellExe, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isLinux,
+  isPosix,
+  isWindows,
+  nodeExe,
+  runBunInstall,
+  shellExe,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, fork, spawn, spawnSync } from "node:child_process";
 import { getEventListeners, once, setMaxListeners } from "node:events";
 import { promisify } from "node:util";

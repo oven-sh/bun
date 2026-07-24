@@ -452,10 +452,16 @@ impl String {
     }
     /// `bun.String.init(WTFStringImpl)` / `WTFString.adopt` — wrap a raw
     /// `*mut WTFStringImplStruct`, **adopting** the existing +1 ref (no inc).
-    /// Inverse of [`leak_wtf_impl`]. Null → `String::EMPTY`.
+    /// Inverse of [`leak_wtf_impl`]. Null / zero-length → `String::EMPTY`.
     #[inline]
     pub fn adopt_wtf_impl(wtf: WTFStringImpl) -> Self {
         if wtf.is_null() {
+            return Self::EMPTY;
+        }
+        // SAFETY: non-null per the guard above.
+        if unsafe { (*wtf).length() } == 0 {
+            // Release the adopted +1; no-op on WTF's static empty singleton.
+            unsafe { (*wtf).deref() };
             return Self::EMPTY;
         }
         Self(bun_alloc::String {
@@ -1128,6 +1134,12 @@ impl From<WTFStringImpl> for String {
     #[inline]
     fn from(wtf: WTFStringImpl) -> Self {
         debug_assert!(!wtf.is_null());
+        // `Bun::toJS(BunString)` asserts a `WTFStringImpl`-tagged string is
+        // never empty; mirror the C++ `Bun::toString(StringImpl*)` guard.
+        // SAFETY: caller guarantees non-null (debug-asserted above).
+        if unsafe { (*wtf).length() } == 0 {
+            return Self::EMPTY;
+        }
         Self(bun_alloc::String {
             tag: Tag::WTFStringImpl,
             value: StringImpl {

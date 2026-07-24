@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1234,5 +1234,117 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Node's sigintHandlersWrap (lib/vm.js): a breakOnSigint run detaches the
+// caller's SIGINT listeners beforehand and re-attaches them afterwards, so the
+// script cannot observe or remove them and they do not fire on the interrupting
+// signal. The delivered-signal case is covered by
+// test/js/node/test/parallel/test-vm-sigint-existing-handler.js.
+describe.concurrent("breakOnSigint saves and restores process SIGINT listeners", () => {
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  const variants: [string, string][] = [
+    ["vm.runInThisContext", `vm.runInThisContext(code, { breakOnSigint: true })`],
+    ["Script#runInThisContext", `new vm.Script(code).runInThisContext({ breakOnSigint: true })`],
+    ["vm.runInContext", `vm.runInContext(code, vm.createContext({ process }), { breakOnSigint: true })`],
+    ["Script#runInContext", `new vm.Script(code).runInContext(vm.createContext({ process }), { breakOnSigint: true })`],
+    ["vm.runInNewContext", `vm.runInNewContext(code, { process }, { breakOnSigint: true })`],
+    ["Script#runInNewContext", `new vm.Script(code).runInNewContext({ process }, { breakOnSigint: true })`],
+  ];
+
+  test.each(variants)("%s: listeners are detached during the run and re-attached after", async (_, call) => {
+    const result = await run(`
+      const vm = require("vm");
+      const before = () => {};
+      process.on("SIGINT", before);
+      const code = 'process.removeAllListeners("SIGINT"); process.listenerCount("SIGINT");';
+      const during = ${call};
+      const after = process.listeners("SIGINT");
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify({ during, restored: after.length === 1 && after[0] === before }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ during: 0, restored: true }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a once() listener keeps its once-ness across the run", async () => {
+    const result = await run(`
+      let called = 0;
+      process.once("SIGINT", () => called++);
+      require("vm").runInThisContext("1 + 1", { breakOnSigint: true });
+      process.emit("SIGINT");
+      process.emit("SIGINT");
+      console.log(JSON.stringify({ called, remaining: process.listenerCount("SIGINT") }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ called: 1, remaining: 0 }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("listeners added inside the run precede the restored ones", async () => {
+    const result = await run(`
+      process.on("SIGINT", function before() {});
+      require("vm").runInThisContext('process.on("SIGINT", function mid() {})', { breakOnSigint: true });
+      const names = process.listeners("SIGINT").map(l => l.name);
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify(names));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify(["mid", "before"]));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("listeners are restored when the script throws", async () => {
+    const result = await run(`
+      const h = () => {};
+      process.on("SIGINT", h);
+      try { require("vm").runInThisContext('throw new Error("boom")', { breakOnSigint: true }); } catch {}
+      const ok = process.listeners("SIGINT").length === 1 && process.listeners("SIGINT")[0] === h;
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify({ restored: ok }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ restored: true }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("no detaching without breakOnSigint", async () => {
+    const result = await run(`
+      const h = () => {};
+      process.on("SIGINT", h);
+      const during = require("vm").runInThisContext('process.listenerCount("SIGINT")');
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify({ during }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ during: 1 }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  // No way to send CTRL_C_EVENT to a child from JS on Windows.
+  test.skipIf(isWindows)("a delivered SIGINT after the run reaches the restored listener", async () => {
+    const result = await run(`
+      process.on("SIGINT", () => { process.stdout.write("listener\\n"); process.exit(0); });
+      require("vm").runInThisContext('process.removeAllListeners("SIGINT")', { breakOnSigint: true });
+      process.kill(process.pid, "SIGINT");
+      setTimeout(() => { process.stdout.write("survived\\n"); process.exit(7); }, 1500);
+    `);
+    expect({ stdout: result.stdout, exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({
+      stdout: "listener\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

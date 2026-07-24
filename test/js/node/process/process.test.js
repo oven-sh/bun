@@ -270,6 +270,74 @@ it("process.env.TZ", () => {
   expect(Intl.DateTimeFormat().resolvedOptions().timeZone).toBe(realOrigTimezone);
 });
 
+// https://github.com/oven-sh/bun/issues/2786
+it("process.env.TZ reverts on delete / empty / invalid instead of staying stuck", async () => {
+  // Run in a child so TZ manipulation cannot leak into other tests. TZ is
+  // unset at startup so "initial" and every revert target the host zone.
+  const fixture = `
+    const d = new Date("2018-07-14T12:34:56Z");
+    const snap = () => ({ zone: new Intl.DateTimeFormat().resolvedOptions().timeZone, offset: d.getTimezoneOffset() });
+    const initial = snap();
+    const target = initial.zone === "Asia/Tokyo" ? "America/Los_Angeles" : "Asia/Tokyo";
+
+    process.env.TZ = target;
+    const afterSet = { ...snap(), enumerable: Object.keys(process.env).includes("TZ") };
+
+    delete process.env.TZ;
+    const afterDelete = { ...snap(), value: process.env.TZ };
+
+    process.env.TZ = target;
+    const afterReSet = { ...snap(), spread: { ...process.env }.TZ };
+
+    process.env.TZ = "Not/A/Real/Zone";
+    const afterInvalid = snap();
+
+    process.env.TZ = target;
+    process.env.TZ = "";
+    const afterEmpty = snap();
+
+    process.env.TZ = target;
+    process.env.TZ = undefined;
+    const afterUndefined = snap();
+
+    // Guard against the JSProcessEnv classInfo falling out of the
+    // structured-clone plain-object allow-list. Windows wraps process.env in
+    // a Proxy, which structured clone rejects independently of this change.
+    const cloneIsPlainObject = process.platform === "win32"
+      ? "skipped"
+      : Object.getPrototypeOf(structuredClone(process.env)) === Object.prototype;
+
+    process.stdout.write(JSON.stringify({ initial, target, afterSet, afterDelete, afterReSet, afterInvalid, afterEmpty, afterUndefined, cloneIsPlainObject }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, TZ: undefined },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = stdout ? JSON.parse(stdout) : { stderr };
+  expect({ ...out, exitCode }).toEqual({
+    initial: out.initial,
+    target: out.target,
+    afterSet: { zone: out.target, offset: expect.any(Number), enumerable: true },
+    // Previously stayed at `target`: the accessor was removed and the WTF
+    // override never cleared.
+    afterDelete: { ...out.initial, value: undefined },
+    // Previously a plain data write; the setter never fired again after delete.
+    // The var stays enumerable after re-set so {...process.env} carries it.
+    afterReSet: { zone: out.target, offset: out.afterSet?.offset, spread: out.target },
+    // Unresolvable and empty both drop the override rather than keeping the
+    // previous zone.
+    afterInvalid: out.initial,
+    afterEmpty: out.initial,
+    afterUndefined: out.initial,
+    cloneIsPlainObject: isWindows ? "skipped" : true,
+    exitCode: 0,
+  });
+  expect(out.afterSet.zone).not.toBe(out.initial.zone);
+});
+
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });

@@ -48,6 +48,9 @@ const ArrayPrototypeIncludes = Array.prototype.includes;
 const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
+const NumberParseInt = Number.parseInt;
+const StringPrototypeIndexOf = String.prototype.indexOf;
+const StringPrototypeSlice = String.prototype.slice;
 const MathMin = Math.min;
 
 const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
@@ -3489,7 +3492,7 @@ function Server(options?, connectionListener?) {
   this._usingWorkers = false;
   this.workers = [];
   this._unref = false;
-  this.listeningId = 1;
+  this._listeningId = 1;
 
   this[bunSocketServerOptions] = undefined;
   // Server option coercion matches Node's Server constructor:
@@ -3533,6 +3536,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
+  this._listeningId++;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3755,6 +3759,8 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     throw $ERR_SERVER_ALREADY_LISTEN();
   }
 
+  this._listeningId++;
+
   if (onListen != null) {
     this.once("listening", onListen);
   }
@@ -3775,6 +3781,25 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       }
     } else {
       options[kSocketClass] = Socket;
+    }
+
+    if (typeof hostname === "string" && hostname !== "" && path == null && fd == null && isIP(hostname) === 0) {
+      lookupAndListen(
+        this,
+        port,
+        hostname,
+        backlog,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        fd,
+        tls,
+        contexts,
+        onListen,
+      );
+      return this;
     }
 
     listenInCluster(
@@ -3955,6 +3980,85 @@ function emitListeningNextTick(self) {
 }
 
 let cluster;
+// fe80::/10: first byte 0xfe, top two bits of the second byte 10.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2230
+function isIpv6LinkLocal(ip) {
+  if (!isIPv6(ip)) return false;
+  const firstColon = StringPrototypeIndexOf.$call(ip, ":");
+  if (firstColon === 0) return false; // "::..." - first group is zero
+  const firstGroup = NumberParseInt(StringPrototypeSlice.$call(ip, 0, firstColon), 16);
+  return (firstGroup & 0xffc0) === 0xfe80;
+}
+
+// Return the first non IPv6 link-local address if present, otherwise the
+// first address.
+function filterOnlyValidAddress(addresses) {
+  for (const address of addresses) {
+    if (!isIpv6LinkLocal(address.address)) {
+      return address;
+    }
+  }
+  return addresses[0];
+}
+
+// Node resolves a non-IP listen host through dns.lookup({ all: true }) and
+// binds the first address that is not IPv6 link-local; the lookup goes
+// through node:dns so user mocks and custom resolvers observe it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259
+function lookupAndListen(
+  server,
+  port,
+  hostname,
+  backlog,
+  exclusive,
+  ipv6Only,
+  reusePort,
+  readableAll,
+  writableAll,
+  fd,
+  tls,
+  contexts,
+  onListen,
+) {
+  if (dns === undefined) dns = require("node:dns");
+  const listeningId = server._listeningId;
+  dns.lookup(hostname, { all: true }, (err, addresses) => {
+    if (listeningId !== server._listeningId) {
+      return;
+    }
+    if (err) {
+      server.emit("error", err);
+      return;
+    }
+    const validAddress = filterOnlyValidAddress(addresses);
+    const family = validAddress?.family || 4;
+    try {
+      listenInCluster(
+        server,
+        validAddress.address,
+        port,
+        family,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        undefined,
+        undefined,
+        null,
+        validAddress.address,
+        tls,
+        contexts,
+        onListen,
+      );
+    } catch (listenErr) {
+      emitErrorNextTick(server, formatListenError(listenErr, validAddress.address, port));
+    }
+  });
+}
+
 function listenInCluster(
   server,
   address,

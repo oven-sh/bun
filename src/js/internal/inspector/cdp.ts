@@ -290,22 +290,21 @@ const SOURCE_MAPPING_URL_COMMENT = "//# sourceMappingURL=";
 // it describes the generated text, which a CDP client never sees. Only a
 // marker that starts its line is accepted (matching JSC's and V8's comment
 // scanners), so a literal inside a string or template is not mistaken for a
-// directive; the scan walks backwards so a string-literal match after the
-// real trailing directive does not mask it.
+// directive.
 function ownSourceMappingURL(source: string): string {
-  let at = source.length;
-  while (true) {
-    at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT, at - 1);
-    if (at < 0) return "";
-    const lineStart = source.lastIndexOf("\n", at - 1) + 1;
-    if (source.slice(lineStart, at).trim() === "") break;
-    if (at === 0) return "";
-  }
+  const at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT);
+  if (at < 0) return "";
+  const lineStart = source.lastIndexOf("\n", at) + 1;
+  if (source.slice(lineStart, at).trim() !== "") return "";
   const end = source.indexOf("\n", at);
   return source.slice(at + SOURCE_MAPPING_URL_COMMENT.length, end < 0 ? source.length : end).trim();
 }
 
+// Null-proto so a key not present as an own property does not fall through to
+// Object.prototype: the in-process Session runs this adapter on the user's
+// main thread, where Object.prototype may have been tampered with.
 const SCOPE_TYPE_MAP: Record<string, string> = {
+  __proto__: null,
   global: "global",
   with: "with",
   closure: "closure",
@@ -313,25 +312,27 @@ const SCOPE_TYPE_MAP: Record<string, string> = {
   functionName: "local",
   globalLexicalEnvironment: "script",
   nestedLexical: "block",
-};
+} as any;
 
 // JSC reports the async boundary itself as the top frame of an async stack
 // (`setTimeout`, `then`, ...). V8 has no such frame; it names the boundary in
 // `description`. Boundaries without a V8 counterpart are left undescribed.
 const ASYNC_BOUNDARY_DESCRIPTIONS: Record<string, string> = {
+  __proto__: null,
   setTimeout: "Timeout",
   setInterval: "Timeout",
   setImmediate: "Immediate",
   then: "Promise.then",
   catch: "Promise.catch",
   finally: "Promise.finally",
-};
+} as any;
 
 // No "log" entry: JSC reports console.warn/error/info/debug as
 // { type: "log", level: "warning"/"error"/... }, so a type-level match on "log"
 // would mask the level. #translateConsoleMessage falls through to
 // CONSOLE_LEVEL_MAP for those and for console.log itself.
 const CONSOLE_TYPE_MAP: Record<string, string> = {
+  __proto__: null,
   dir: "dir",
   dirxml: "dirxml",
   table: "table",
@@ -344,15 +345,16 @@ const CONSOLE_TYPE_MAP: Record<string, string> = {
   timing: "timeEnd",
   profile: "profile",
   profileEnd: "profileEnd",
-};
+} as any;
 
 const CONSOLE_LEVEL_MAP: Record<string, string> = {
+  __proto__: null,
   log: "log",
   info: "info",
   warning: "warning",
   error: "error",
   debug: "debug",
-};
+} as any;
 
 // Per-server, shared by every CDP session attached to one inspected context.
 interface DisconnectNotifyState {
@@ -551,11 +553,11 @@ class InspectorCDPAdapter {
       );
       return;
     }
-    // Primitive / thrown: nothing to await. Primitives already carry
-    // value regardless of returnByValue; a thrown non-primitive comes
-    // back as an objectId (the first step forced returnByValue:false),
-    // which DevTools/vscode-js-debug inspect via exceptionDetails, so
-    // we do not re-serialize it to honour the client's returnByValue.
+    // Primitive / thrown: nothing to await. Primitives already carry value
+    // regardless of returnByValue; a thrown non-primitive comes back as an
+    // objectId (the first step forced returnByValue:false), which
+    // DevTools/vscode-js-debug inspect via exceptionDetails, so we do not
+    // re-serialize it to honour the client's returnByValue.
     this.#replyToClient(id, this.#translateResult(method, result));
   }
 

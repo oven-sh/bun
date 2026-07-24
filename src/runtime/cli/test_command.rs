@@ -3047,15 +3047,24 @@ impl TestCommand {
             vm.exit_handler.exit_code = 1;
         }
         if reporter.jest.node_test_module_used {
-            // Run `process.on('exit')` handlers like `bun run` does. Node's test
-            // harness verifies mustCall() counts from one, so skipping them made
-            // those assertions silently pass. Must precede the GC-root release
-            // below: handlers are user JS and may touch still-live state.
+            // Node parity: a node test process exits only when its loop drains,
+            // and node's test harness verifies mustCall() counts from a
+            // `process.on('exit')` handler. `on_before_exit()` spins while
+            // `is_event_loop_alive()`, which cannot tell one file's handles
+            // from another's; gate the drain on single-file runs (the vendored
+            // node suite and run() children both spawn one file per process) so
+            // a leaked handle from an earlier file cannot wedge a mixed
+            // multi-file run. Must precede the GC-root release below; handlers
+            // are user JS and may touch still-live state.
+            let drain = reporter.summary().files <= 1;
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe {
+                if drain {
+                    (*vm_ptr).on_before_exit();
+                }
                 (*vm_ptr).global().handle_rejected_promises();
                 (*vm_ptr).on_exit();
             });
@@ -3375,15 +3384,6 @@ impl TestCommand {
                 let el = vm.event_loop();
                 // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
                 unsafe { (*el).tick_immediate_tasks(vm) };
-
-                // Node parity: a node test file exits only when its loop drains.
-                // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
-                // it early-returns when unhandled_error_counter > 0, which is fine
-                // here since such a file already failed. bun:test-only files keep
-                // exit-after-tests.
-                if reporter.jest.node_test_module_used {
-                    vm.on_before_exit();
-                }
                 drop(buntest_strong);
             }
 

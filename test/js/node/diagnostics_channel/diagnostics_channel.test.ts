@@ -1,7 +1,7 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -342,7 +342,121 @@ describe("Channel", () => {
 describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
-  test.todo("TODO");
+
+  const traceEvents = ["start", "end", "asyncStart", "asyncEnd", "error"] as const;
+
+  function recordEvents(name: string) {
+    const tc = tracingChannel(name);
+    const events: string[] = [];
+    for (const event of traceEvents) {
+      tc[event].subscribe(() => {
+        events.push(event);
+      });
+    }
+    return { tc, events };
+  }
+
+  async function recordWarnings<T>(fn: () => T): Promise<[T, string[]]> {
+    const warnings: string[] = [];
+    const onWarning = (warning: Error) => warnings.push(warning.message);
+    process.on("warning", onWarning);
+    try {
+      const result = fn();
+      // process.emitWarning() defers the "warning" event to the next tick
+      await new Promise<void>(resolve => process.nextTick(resolve));
+      return [result, warnings];
+    } finally {
+      process.off("warning", onWarning);
+    }
+  }
+
+  test("tracePromise returns a non-thenable as-is", async () => {
+    const { tc, events } = recordEvents("tracing1");
+    const context: any = {};
+
+    const [result, warnings] = await recordWarnings(() =>
+      tc.tracePromise(function sync42() {
+        return 42;
+      }, context),
+    );
+
+    expect(result).toBe(42);
+    expect(events).toEqual(["start", "end"]);
+    expect(context).toEqual({ result: 42 });
+    expect(warnings).toEqual(["tracePromise was called with the function 'sync42', which returned a non-thenable."]);
+  });
+
+  test("tracePromise returns undefined as-is", async () => {
+    const { tc, events } = recordEvents("tracing2");
+
+    const [result, warnings] = await recordWarnings(() => tc.tracePromise(() => undefined));
+
+    expect(result).toBeUndefined();
+    expect(events).toEqual(["start", "end"]);
+    expect(warnings).toEqual([
+      "tracePromise was called with the function '<anonymous>', which returned a non-thenable.",
+    ]);
+  });
+
+  test("tracePromise publishes async events for a promise", async () => {
+    const { tc, events } = recordEvents("tracing3");
+    const context: any = {};
+
+    const [promise, warnings] = await recordWarnings(() => tc.tracePromise(async () => "resolved", context));
+    expect(promise).toBeInstanceOf(Promise);
+    expect(warnings).toEqual([]);
+
+    await expect(promise).resolves.toBe("resolved");
+    expect(events).toEqual(["start", "end", "asyncStart", "asyncEnd"]);
+    expect(context).toEqual({ result: "resolved" });
+  });
+
+  test("tracePromise calls then() directly on custom thenables", async () => {
+    const { tc, events } = recordEvents("tracing4");
+    const context: any = {};
+    const thenable = {
+      then(onFulfilled: (value: string) => void) {
+        onFulfilled("from thenable");
+        return "not a promise";
+      },
+    };
+
+    const [result, warnings] = await recordWarnings(() => tc.tracePromise(() => thenable, context));
+
+    // The thenable settled synchronously, so the async events land before "end"
+    expect(result).toBe("not a promise");
+    expect(events).toEqual(["start", "asyncStart", "asyncEnd", "end"]);
+    expect(context).toEqual({ result: "from thenable" });
+    expect(warnings).toEqual([]);
+  });
+
+  test("tracePromise publishes error for a rejected promise", async () => {
+    const { tc, events } = recordEvents("tracing5");
+    const context: any = {};
+    const expected = new Error("rejected");
+
+    const promise = tc.tracePromise(() => Promise.reject(expected), context);
+    expect(events).toEqual(["start", "end"]);
+
+    await expect(promise).rejects.toThrow("rejected");
+    expect(events).toEqual(["start", "end", "error", "asyncStart", "asyncEnd"]);
+    expect(context.error).toBe(expected);
+  });
+
+  test("tracePromise rethrows a synchronous error without async events", () => {
+    const { tc, events } = recordEvents("tracing6");
+    const context: any = {};
+    const expected = new Error("threw");
+
+    expect(() =>
+      tc.tracePromise(() => {
+        throw expected;
+      }, context),
+    ).toThrow("threw");
+
+    expect(events).toEqual(["start", "error", "end"]);
+    expect(context.error).toBe(expected);
+  });
 });
 
 const mocks = new Map();

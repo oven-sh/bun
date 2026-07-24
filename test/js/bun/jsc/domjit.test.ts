@@ -11,6 +11,10 @@ import vm from "node:vm";
 
 const dirStats = statSync(import.meta.dir);
 const buffer = new BigInt64Array(16);
+// non-zero bytes at offset 8 so read.i8 sign-extends and each width decodes a
+// distinct value (read.* must agree with DataView on LE targets)
+new Uint8Array(buffer.buffer).set([0x81, 0x02, 0x03, 0x04], 8);
+const dv = new DataView(buffer.buffer);
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const encodedTest = new Uint8Array([116, 101, 115, 116]); // "test"
@@ -62,8 +66,10 @@ describe("DOMJIT", () => {
       expect([...buf]).toEqual([116, 101, 115, 116]);
     });
     test(`Crypto.timingSafeEqual x${iter}`, () => {
+      const a = new Uint8Array([1, 2, 3, 4]);
+      const b = new Uint8Array([1, 2, 3, 4]);
       let last = false;
-      for (let i = 0; i < iter; i++) last = crypto.timingSafeEqual(buf, buf);
+      for (let i = 0; i < iter; i++) last = crypto.timingSafeEqual(a, b);
       expect(last).toBe(true);
     });
     test(`Crypto.randomUUID x${iter}`, () => {
@@ -135,18 +141,19 @@ describe("DOMJIT", () => {
       }
       expect(Number.isFinite(ptr(buffer))).toBe(true);
       expect({ intptr, rptr, f64, i64, u64, i8, i16, i32, u8, u16, u32 }).toEqual({
-        intptr: 0,
-        rptr: 0,
-        f64: 0,
-        i64: 0n,
-        u64: 0n,
-        i8: 0,
-        i16: 0,
-        i32: 0,
-        u8: 0,
-        u16: 0,
-        u32: 0,
+        intptr: Number(dv.getBigInt64(8, true)),
+        rptr: Number(dv.getBigUint64(8, true)),
+        f64: dv.getFloat64(8, true),
+        i64: dv.getBigInt64(8, true),
+        u64: dv.getBigUint64(8, true),
+        i8: dv.getInt8(8),
+        i16: dv.getInt16(8, true),
+        i32: dv.getInt32(8, true),
+        u8: dv.getUint8(8),
+        u16: dv.getUint16(8, true),
+        u32: dv.getUint32(8, true),
       });
+      expect(i8).toBe(-127);
     });
   }
 

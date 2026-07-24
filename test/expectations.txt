@@ -37,10 +37,6 @@
 # setImmediate after this PR's added module loads at process startup shift
 # the heap layout. The robust fix is gcUntil() rather than a single tick,
 # but the file is a verbatim upstream port. Quarantined on the failing
-# linux-x64-musl matrix only; still runs everywhere else (build 63145:
-# alpine 3.23 x64 + x64-baseline only).
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
-
 # Both tests mock _handle.setKeepAlive and assert it receives SECONDS
 # (libuv's uv_tcp_keepalive convention). In Bun, _handle is the public
 # Bun.Socket whose setKeepAlive is documented in MILLISECONDS, so net.ts

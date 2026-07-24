@@ -113,8 +113,11 @@ describe("bundler", () => {
 
   // CLI backend: exercise each --compile-autoload-* flag at least once. The
   // pairs mirror the API tests above so the same independence checks apply.
+  // autoloadBunfig:true and autoloadDotenv:true below are defaults, so they
+  // cannot be behaviorally distinguished from omitting the flag; they are
+  // passed here only to keep parity with the old suite's CLI flag coverage.
   itBundled("compile/AutoloadDotenvDisabledTsconfigEnabledCLI", {
-    compile: { autoloadDotenv: false, autoloadTsconfig: true },
+    compile: { autoloadDotenv: false, autoloadBunfig: true, autoloadTsconfig: true },
     backend: "cli",
     files: { "/entry.ts": probeEntry },
     runtimeFiles: probeRuntimeFiles,
@@ -122,19 +125,11 @@ describe("bundler", () => {
   });
 
   itBundled("compile/AutoloadBunfigDisabledPackageJsonEnabledCLI", {
-    compile: { autoloadBunfig: false, autoloadPackageJson: true },
+    compile: { autoloadDotenv: true, autoloadBunfig: false, autoloadPackageJson: true },
     backend: "cli",
     files: { "/entry.ts": probeEntry },
     runtimeFiles: probeRuntimeFiles,
     run: { stdout: "dotenv=from_dotenv tsconfig=off pkgjson=pkg-utils", setCwd: true },
-  });
-
-  itBundled("compile/AutoloadDotenvBunfigEnabledCLI", {
-    compile: { autoloadDotenv: true, autoloadBunfig: true },
-    backend: "cli",
-    files: { "/entry.ts": probeEntry },
-    runtimeFiles: probeRuntimeFiles,
-    run: { stdout: "PRELOAD\ndotenv=from_dotenv tsconfig=off pkgjson=off", setCwd: true },
   });
 
   // CLI regression test for #25640.

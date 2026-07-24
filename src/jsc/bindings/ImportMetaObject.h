@@ -25,7 +25,7 @@ class ImportMetaObject final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetPrototype;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
     /// Must be called with a valid url string (for `import.meta.url`)
     static ImportMetaObject* create(JSC::JSGlobalObject* globalObject, const String& url);
@@ -70,9 +70,8 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForImportMeta = std::forward<decltype(space)>(space); });
     }
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, bool isBake = false);
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
-    static JSValue getPrototype(JSObject*, JSC::JSGlobalObject* globalObject);
 
     WTF::String url;
     LazyProperty<JSObject, JSCell> requireProperty;

@@ -14,7 +14,7 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
-use bun_io::{BufferedReader, ReadState};
+use bun_io::{BufferedReader, FilePollFlag, PosixFlags, ReadState};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 

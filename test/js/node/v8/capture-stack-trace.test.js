@@ -1121,3 +1121,121 @@ test("lazy error-info materialization does not store an empty stack value when t
   });
   expect(exitCode).toBe(0);
 });
+
+// Deleting the property has to bring the default formatter back, and a formatter assigned
+// afterwards has to take effect. source-map-support, jest and stack-utils all do this.
+// Runs in a subprocess because `delete Error.prepareStackTrace` mutates realm-wide state.
+test("delete Error.prepareStackTrace restores the default formatter", async () => {
+  const fixture = [
+    `const out = {};`,
+    `Error.prepareStackTrace = () => "ONE";`,
+    `out.withFormatter = new Error().stack;`,
+
+    `delete Error.prepareStackTrace;`,
+    `out.typeofAfterDelete = typeof Error.prepareStackTrace;`,
+    `out.headerAfterDelete = new Error("after delete").stack.split("\\n")[0];`,
+    `out.hasFramesAfterDelete = /\\n\\s+at /.test(new Error("after delete").stack);`,
+
+    `Error.prepareStackTrace = () => "TWO";`,
+    `out.afterReassign = new Error().stack;`,
+
+    `delete Error.prepareStackTrace;`,
+    `const captured = new Error("captured");`,
+    `Error.captureStackTrace(captured);`,
+    `out.capturedHeader = captured.stack.split("\\n")[0];`,
+
+    `console.log(JSON.stringify(out));`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout || "null"), exitCode }).toEqual({
+    out: {
+      withFormatter: "ONE",
+      typeofAfterDelete: "undefined",
+      headerAfterDelete: "Error: after delete",
+      hasFramesAfterDelete: true,
+      afterReassign: "TWO",
+      capturedHeader: "Error: captured",
+    },
+    exitCode: 0,
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/23493
+// error-callsites replaces Error.prepareStackTrace with a JS accessor, then depd assigns
+// through that setter and expects its formatter to receive the CallSite array.
+test("an Error.prepareStackTrace accessor installed with defineProperty is honored", async () => {
+  const fixture = [
+    `let installed;`,
+    `Object.defineProperty(Error, "prepareStackTrace", {`,
+    `  configurable: true,`,
+    `  enumerable: true,`,
+    `  get: () => (err, callsites) => installed(err, callsites),`,
+    `  set: fn => { installed = fn; },`,
+    `});`,
+
+    `Error.prepareStackTrace = (err, callsites) => callsites;`,
+    `const obj = {};`,
+    `function captureHere() { Error.captureStackTrace(obj); }`,
+    `captureHere();`,
+
+    `console.log(JSON.stringify({`,
+    `  isArray: Array.isArray(obj.stack),`,
+    `  topFrame: typeof obj.stack?.[0]?.getFunctionName === "function" ? obj.stack[0].getFunctionName() : null,`,
+    `}));`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout || "null"), exitCode }).toEqual({
+    out: { isArray: true, topFrame: "captureHere" },
+    exitCode: 0,
+  });
+});
+
+// Reading the property runs whatever getter is installed on it. If that getter throws,
+// .stack throws that error (as Node does) and a subsequent read returns undefined
+// instead of storing an empty JSValue. https://github.com/oven-sh/bun/issues/34095
+test("a throwing Error.prepareStackTrace getter propagates out of .stack", async () => {
+  const fixture = [
+    `Object.defineProperty(Error, "prepareStackTrace", {`,
+    `  configurable: true,`,
+    `  get() { throw new Error("boom from getter"); },`,
+    `});`,
+
+    `const e = new Error("x");`,
+    `let first = "no-throw";`,
+    `try { void e.stack; } catch (err) { first = err.message; }`,
+    `console.log(JSON.stringify({ first, secondType: typeof e.stack }));`,
+  ].join("\n");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ out: JSON.parse(stdout || "null"), signalCode: proc.signalCode, exitCode }).toEqual({
+    out: { first: "boom from getter", secondType: "undefined" },
+    signalCode: null,
+    exitCode: 0,
+  });
+});

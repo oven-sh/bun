@@ -819,31 +819,59 @@ impl BunTest {
         let [value] = callframe.arguments_as_array::<1>();
 
         let was_error = !value.is_empty_or_undefined_or_null();
+        // A second done() is a no-op, matching Bun 1.2.20.
+        // In Jest it is "Expected done to be called once, but it was called multiple times."
+        // Vitest does not support done callbacks.
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
-        if unsafe { (*this).called } {
-            // in Bun 1.2.20, this is a no-op
-            // in Jest, this is "Expected done to be called once, but it was called multiple times."
-            // Vitest does not support done callbacks
-        } else {
-            // error is only reported for the first done() call
-            if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
-            }
-        }
+        let first_call = !unsafe { (*this).called };
         // SAFETY: see above — `this` is a live `*mut DoneCallback`.
         let ref_in = unsafe {
             (*this).called = true;
             (*this).r#ref.take()
         };
-        let Some(ref_in) = ref_in else {
-            return Ok(JSValue::UNDEFINED);
-        };
         // `this.ref` was already taken above.
         // RefPtr<T> currently has NO Drop impl, so decrement the
         // intrusive count explicitly at scope exit. Without this the
         // paired promise then/catch path never sees has_one_ref()==true and the RefData leaks.
-        let ref_in = scopeguard::guard(ref_in, |r: RefDataPtr| r.deref());
+        let ref_in = ref_in.map(|r| scopeguard::guard(r, |r: RefDataPtr| r.deref()));
+
+        // error is only reported for the first done() call
+        if first_call && was_error {
+            // `done(error)` is a failure of the entry that owns this callback,
+            // not a stray unhandled exception. Attribute it there (like the
+            // promise-catch path) so a failing hook fails its dependent tests.
+            let strong = match ref_in.as_ref() {
+                Some(r) => r.buntest_weak.upgrade(),
+                // The body threw before a ref could be attached; whenever and
+                // however this done() fires, it has no attributable owner.
+                // SAFETY: `this` is the live `*mut DoneCallback`; see above.
+                None if unsafe { (*this).orphaned } => None,
+                // Not orphaned and no ref: `run_test_callback` attaches the ref
+                // only after the callback returns, so done() must be running
+                // synchronously inside it and the active entry is the owner.
+                None => clone_active_strong(),
+            };
+            match strong {
+                Some(strong) => {
+                    let phase = match ref_in.as_ref() {
+                        Some(r) => r.phase.clone(),
+                        None => strong.get().get_current_state_data(),
+                    };
+                    // `strong.get()` is re-derived; the `get_current_state_data` borrow ended above.
+                    strong.get().on_uncaught_exception(global_this, Some(value), false, &phase);
+                }
+                None => {
+                    // Orphaned, or no live BunTest: report it generically, keeping
+                    // the hook-demotion guard in `jest::on_unhandled_rejection`.
+                    let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                }
+            }
+        }
+
+        let Some(ref_in) = ref_in else {
+            return Ok(JSValue::UNDEFINED);
+        };
 
         // dupe the ref and enqueue a task to call the done callback.
         // this makes it so if you do something else after calling done(), the next test doesn't start running until the next tick.
@@ -1202,11 +1230,16 @@ impl BunTest {
         // second `RefDataPtr` here would over-count and the done-callback path
         // would never observe `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
-        if !done_callback.is_empty() && !result.is_empty() {
+        if !done_callback.is_empty() {
             if let Some(dcb_data) = DoneCallback::from_js(done_callback) {
                 // SAFETY: `dcb_data` is the live `*mut DoneCallback` from `from_js`;
                 // single-threaded JS VM, GC roots `done_callback` for this frame.
-                if unsafe { (*dcb_data).called } {
+                if result.is_empty() {
+                    // The body threw, so no ref is attached. A later done(error)
+                    // from this callback (the body may have handed it to a timer
+                    // or microtask before throwing) has no attributable owner.
+                    unsafe { (*dcb_data).orphaned = true };
+                } else if unsafe { (*dcb_data).called } {
                     // done callback already called or the callback errored; add result immediately
                 } else {
                     let r = Self::ref_(this_strong, cfg_data.clone());

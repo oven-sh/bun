@@ -1030,16 +1030,14 @@ fn step_sequence_one(
         // which each own a whole ConcurrentGroup and so never overlap with a
         // test body; preload beforeEach/afterEach re-run per test and do not
         // need persistence.
-        let is_preload_all_hook =
+        //
+        // The flag is not scoped to `run_test_callback`: an async hook that
+        // awaits a macrotask returns a pending promise here and its
+        // continuation runs from the event loop later. Each call to this
+        // function overwrites the flag for the entry it is about to run, so
+        // the next non-preload entry clears it.
+        global_this.bun_vm().as_mut().is_running_preload_hook =
             next_item.added_in_phase == AddedInPhase::Preload && sequence.test_entry.is_none();
-        if is_preload_all_hook {
-            global_this.bun_vm().as_mut().is_running_preload_hook = true;
-        }
-        let _restore_preload_hook = scopeguard::guard((), move |()| {
-            if is_preload_all_hook {
-                global_this.bun_vm().as_mut().is_running_preload_hook = false;
-            }
-        });
 
         if BunTest::run_test_callback(
             buntest_strong,

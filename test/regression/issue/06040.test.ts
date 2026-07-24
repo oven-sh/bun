@@ -159,12 +159,15 @@ describe.concurrent("spyOn is scoped to the test file that installed it", () => 
   });
 
   test("a spy installed inside a preload beforeAll persists across files", async () => {
+    // The spyOn() is after a macrotask await so the install runs from the
+    // event loop after run_test_callback has returned, not in its sync prefix.
     using dir = tempDir("spyon-preload-beforeall", {
       "MyModule.ts": moduleSource,
       "preload.ts": `
         import { beforeAll, spyOn } from "bun:test";
         import { MyClass } from "./MyModule";
         beforeAll(async () => {
+          await new Promise(r => setImmediate(r));
           spyOn(MyClass.prototype, "myMethod").mockImplementation(() => "FromPreload");
         });
       `,

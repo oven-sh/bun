@@ -1220,7 +1220,7 @@ if (cluster.isPrimary) {
   // seq 0; the real cluster round-trip below must still complete.
   process.send({ cmd: "NODE_CLUSTER", ack: 0.5 });
   const server = require("node:net").createServer();
-  server.listen(0, "127.0.0.1", () => process.send("sent"));
+  server.listen(0, "127.0.0.1", () => { server.close(); process.send("sent"); });
 }
 `,
   });

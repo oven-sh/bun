@@ -6,8 +6,8 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    AstAlloc, BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place,
-    PrimitiveValue, PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
+    BuiltinTag, Effect, HirVec, InstructionValue, JsxAttribute, JsxTag, Place, PrimitiveValue,
+    PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::{E, Expr, G, Loc, Ref};
@@ -16,9 +16,9 @@ use super::expr::lower_expression;
 use super::helpers::{lower_expression_to_temporary, lower_identifier, lower_value_to_temporary};
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
-fn estring_to_store_str(s: &E::EString) -> StoreStr {
+fn estring_to_store_str(alloc: bun_alloc::AstAlloc, s: &E::EString) -> StoreStr {
     if s.is_utf16 {
-        super::helpers::arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
+        super::helpers::arena_str(alloc, &bun_core::strings::to_utf8_alloc(s.slice16()))
     } else {
         StoreStr::new(s.slice8())
     }
@@ -58,7 +58,7 @@ pub(super) fn lower_jsx_element_name(
             }
         }
         ExprData::EString(s) => {
-            let name = estring_to_store_str(&s);
+            let name = estring_to_store_str(builder.alloc(), &s);
             let bytes = name.slice();
             if let Some(idx) = bytes.iter().position(|&b| b == b':') {
                 let namespace = &bytes[..idx];
@@ -82,7 +82,7 @@ pub(super) fn lower_jsx_element_name(
                     builder,
                     InstructionValue::Primitive {
                         value: PrimitiveValue::String(
-                            crate::diagnostics::JsString::from_wtf8_bytes(bytes),
+                            crate::diagnostics::JsString::from_wtf8_bytes(builder.alloc(), bytes),
                         ),
                         loc,
                     },
@@ -247,8 +247,8 @@ pub(super) fn lower_jsx_call(
         _ => false,
     };
 
-    let mut props: HirVec<JsxAttribute> = AstAlloc::vec();
-    let mut children: HirVec<Place> = AstAlloc::vec();
+    let mut props: HirVec<JsxAttribute> = builder.alloc().vec();
+    let mut children: HirVec<Place> = builder.alloc().vec();
 
     if is_automatic {
         let ExprData::EObject(obj) = &props_arg.unwrap().data else {
@@ -309,7 +309,7 @@ pub(super) fn lower_jsx_call(
                 continue;
             };
             let _key_loc = convert_loc(key_expr.loc);
-            let name = estring_to_store_str(key_str);
+            let name = estring_to_store_str(builder.alloc(), key_str);
             let Some(value_expr) = prop.value.as_ref() else {
                 continue;
             };
@@ -351,7 +351,7 @@ pub(super) fn lower_jsx_call(
                         continue;
                     };
                     let _key_loc = convert_loc(key_expr.loc);
-                    let name = estring_to_store_str(key_str);
+                    let name = estring_to_store_str(builder.alloc(), key_str);
                     let Some(value_expr) = prop.value.as_ref() else {
                         continue;
                     };

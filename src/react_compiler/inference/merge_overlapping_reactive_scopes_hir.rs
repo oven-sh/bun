@@ -96,7 +96,7 @@ fn is_mutable(env: &Environment, id: EvaluationOrder, identifier_id: IdentifierI
 fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
     let mut scope_starts_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::new();
     let mut scope_ends_map: HashMap<EvaluationOrder, Vec<ScopeId>> = HashMap::new();
-    let mut place_scopes: IdMap<IdentifierId, ScopeId> = IdMap::new();
+    let mut place_scopes: IdMap<IdentifierId, ScopeId> = IdMap::new_in(env.alloc);
 
     let mut collect_place_scope = |identifier_id: IdentifierId, env: &Environment| {
         let scope_id = match env.identifiers[identifier_id.0 as usize].scope {
@@ -275,7 +275,7 @@ fn get_overlapping_reactive_scopes(
     mut scope_info: ScopeInfo,
 ) -> DisjointSet<ScopeId> {
     let mut state = TraversalState {
-        joined: DisjointSet::<ScopeId>::new(),
+        joined: DisjointSet::<ScopeId>::new_in(env.alloc),
         active_scopes: Vec::new(),
     };
 
@@ -347,7 +347,8 @@ pub fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env: &mut E
     // When scope.range is updated, ALL identifiers referencing that range object
     // automatically see the new values. We use MutableRangeId to identify which
     // identifiers share the same logical range as a root scope.
-    let mut original_root_range_ids: IdMap<ScopeId, crate::hir::MutableRangeId> = IdMap::new();
+    let mut original_root_range_ids: IdMap<ScopeId, crate::hir::MutableRangeId> =
+        IdMap::new_in(env.alloc);
     for (_, root_id) in &scope_groups {
         if !original_root_range_ids.contains_key(*root_id) {
             let range_id = env.scopes[root_id.0 as usize].range.id;

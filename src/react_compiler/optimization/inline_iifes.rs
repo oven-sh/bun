@@ -49,9 +49,9 @@ use crate::hir::cfg_utils::{
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
-    GotoVariant, HirFunction, HirVec, IdentifierId, IdentifierName, Instruction, InstructionId,
-    InstructionKind, InstructionValue, LValue, Place, Terminal,
+    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE, GotoVariant,
+    HirFunction, HirVec, IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind,
+    InstructionValue, LValue, Place, Terminal,
 };
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
@@ -63,7 +63,7 @@ pub fn inline_immediately_invoked_function_expressions(
     env: &mut Environment,
 ) {
     // Track all function expressions that are assigned to a temporary
-    let mut functions: IdMap<IdentifierId, FunctionId> = IdMap::new();
+    let mut functions: IdMap<IdentifierId, FunctionId> = IdMap::new_in(env.alloc);
     // Functions that are inlined (by identifier id of the callee)
     let mut inlined_functions: HashSet<IdentifierId> = HashSet::new();
 
@@ -133,16 +133,16 @@ pub fn inline_immediately_invoked_function_expressions(
 
                     // Create a new block which will contain code following the IIFE call
                     let continuation_block_id = env.next_block_id();
-                    let continuation_instructions = AstAlloc::vec_from_slice(
-                        &func.body.blocks[&block_id].instructions[ii + 1..],
-                    );
+                    let continuation_instructions = env
+                        .alloc
+                        .vec_from_slice(&func.body.blocks[&block_id].instructions[ii + 1..]);
                     let continuation_terminal = func.body.blocks[&block_id].terminal.clone();
                     let continuation_block = BasicBlock {
                         id: continuation_block_id,
                         instructions: continuation_instructions,
                         kind: block_kind,
-                        phis: AstAlloc::vec(),
-                        preds: crate::collections::IndexSet::new(),
+                        phis: env.alloc.vec(),
+                        preds: crate::collections::IndexSet::new_in(env.alloc),
                         terminal: continuation_terminal,
                     };
                     func.body
@@ -302,7 +302,8 @@ pub fn inline_immediately_invoked_function_expressions(
 
         // If terminals have changed then blocks may have become newly unreachable.
         // Re-run minification of the graph (incl reordering instruction ids).
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        func.body.blocks =
+            get_reverse_postordered_blocks(env.alloc, &func.body, &func.instructions);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
         mark_predecessors(&mut func.body);
         merge_consecutive_blocks(func, &mut env.functions);
@@ -421,7 +422,8 @@ fn promote_temporary(env: &mut Environment, identifier_id: IdentifierId) {
     buf[0] = b'#';
     buf[1] = b't';
     buf[2..2 + digits.len()].copy_from_slice(digits);
-    env.identifiers[identifier_id.0 as usize].name = Some(IdentifierName::Promoted(
-        crate::hir::StoreStr::new(bun_ast::data_store_dupe_str(&buf[..2 + digits.len()])),
-    ));
+    env.identifiers[identifier_id.0 as usize].name =
+        Some(IdentifierName::Promoted(crate::hir::StoreStr::new(
+            bun_ast::data_store_dupe_str(env.alloc, &buf[..2 + digits.len()]),
+        )));
 }

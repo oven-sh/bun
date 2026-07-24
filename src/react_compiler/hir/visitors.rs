@@ -8,10 +8,9 @@ use std::collections::HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
-    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction, HirVec,
-    IdentifierId, Instruction, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
-    ManualMemoDependencyRoot, ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place,
-    PlaceOrSpread, ScopeId, Terminal,
+    ArrayElement, ArrayPatternElement, BasicBlock, BlockId, HirFunction, HirVec, IdentifierId,
+    Instruction, InstructionKind, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot,
+    ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, ScopeId, Terminal,
 };
 
 // =============================================================================
@@ -721,7 +720,9 @@ pub fn map_instruction_value_operands(
                 }
             }
             if let Some(children) = children {
-                *children = AstAlloc::vec_from_iter(children.iter().map(|p| f(p.clone())));
+                *children = env
+                    .alloc
+                    .vec_from_iter(children.iter().map(|p| f(p.clone())));
             }
         }
         InstructionValue::ObjectExpression { properties, .. } => {
@@ -740,23 +741,29 @@ pub fn map_instruction_value_operands(
             }
         }
         InstructionValue::ArrayExpression { elements, .. } => {
-            *elements = AstAlloc::vec_from_iter(elements.iter().map(|element| match element {
-                ArrayElement::Place(place) => ArrayElement::Place(f(place.clone())),
-                ArrayElement::Spread(spread) => {
-                    let mut spread = spread.clone();
-                    spread.place = f(spread.place.clone());
-                    ArrayElement::Spread(spread)
-                }
-                ArrayElement::Hole => ArrayElement::Hole,
-            }));
+            *elements = env
+                .alloc
+                .vec_from_iter(elements.iter().map(|element| match element {
+                    ArrayElement::Place(place) => ArrayElement::Place(f(place.clone())),
+                    ArrayElement::Spread(spread) => {
+                        let mut spread = spread.clone();
+                        spread.place = f(spread.place.clone());
+                        ArrayElement::Spread(spread)
+                    }
+                    ArrayElement::Hole => ArrayElement::Hole,
+                }));
         }
         InstructionValue::JsxFragment { children, .. } => {
-            *children = AstAlloc::vec_from_iter(children.iter().map(|e| f(e.clone())));
+            *children = env
+                .alloc
+                .vec_from_iter(children.iter().map(|e| f(e.clone())));
         }
         InstructionValue::ObjectMethod { lowered_func, .. }
         | InstructionValue::FunctionExpression { lowered_func, .. } => {
             let func = &mut env.functions[lowered_func.func.0 as usize];
-            func.context = AstAlloc::vec_from_iter(func.context.iter().map(|d| f(d.clone())));
+            func.context = env
+                .alloc
+                .vec_from_iter(func.context.iter().map(|d| f(d.clone())));
         }
         InstructionValue::TaggedTemplateExpression { tag, .. } => {
             *tag = f(tag.clone());
@@ -765,7 +772,9 @@ pub fn map_instruction_value_operands(
             *val = f(val.clone());
         }
         InstructionValue::TemplateLiteral { subexprs, .. } => {
-            *subexprs = AstAlloc::vec_from_iter(subexprs.iter().map(|s| f(s.clone())));
+            *subexprs = env
+                .alloc
+                .vec_from_iter(subexprs.iter().map(|s| f(s.clone())));
         }
         InstructionValue::Await { value: val, .. } => {
             *val = f(val.clone());
@@ -832,7 +841,8 @@ pub fn map_call_arguments(args: &mut HirVec<PlaceOrSpread>, f: &mut impl FnMut(P
 pub fn map_pattern_operands(pattern: &mut Pattern, f: &mut impl FnMut(Place) -> Place) {
     match pattern {
         Pattern::Array(arr) => {
-            arr.items = AstAlloc::vec_from_iter(arr.items.iter().map(|item| match item {
+            let alloc = *arr.items.allocator();
+            arr.items = alloc.vec_from_iter(arr.items.iter().map(|item| match item {
                 ArrayPatternElement::Place(place) => ArrayPatternElement::Place(f(place.clone())),
                 ArrayPatternElement::Spread(spread) => {
                     let mut spread = spread.clone();

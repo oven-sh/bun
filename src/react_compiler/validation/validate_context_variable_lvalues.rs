@@ -50,7 +50,7 @@ pub fn validate_context_variable_lvalues_with_errors(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut identifier_kinds: IdentifierKinds = IdMap::new();
+    let mut identifier_kinds: IdentifierKinds = IdMap::new_in(*func.instructions.allocator());
     validate_context_variable_lvalues_impl(
         func,
         &mut identifier_kinds,

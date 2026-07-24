@@ -83,7 +83,7 @@ pub fn compute_post_dominator_tree(
     include_throws_as_exit_node: bool,
 ) -> Result<PostDominator, CompilerDiagnostic> {
     let graph = build_reverse_graph(func, next_block_id_counter, include_throws_as_exit_node);
-    let mut nodes = compute_immediate_dominators(&graph)?;
+    let mut nodes = compute_immediate_dominators(func.body.blocks.allocator(), &graph)?;
 
     // When include_throws_as_exit_node is false, nodes that flow into a throw
     // terminal and don't reach the exit won't be in the node map. Add them
@@ -109,10 +109,11 @@ fn build_reverse_graph(
     next_block_id_counter: u32,
     include_throws_as_exit_node: bool,
 ) -> Graph {
+    let alloc = func.body.blocks.allocator();
     let exit_id = BlockId(next_block_id_counter);
 
     // Build initial nodes with reversed edges
-    let mut raw_nodes: IdMap<BlockId, Node> = IdMap::default();
+    let mut raw_nodes: IdMap<BlockId, Node> = IdMap::new_in(alloc);
 
     // Create exit node
     raw_nodes.insert(
@@ -158,7 +159,7 @@ fn build_reverse_graph(
     postorder.reverse();
 
     let mut nodes = Vec::with_capacity(postorder.len());
-    let mut node_index = IdMap::default();
+    let mut node_index = IdMap::new_in(alloc);
     for (idx, id) in postorder.into_iter().enumerate() {
         let mut node = raw_nodes.remove(id).unwrap();
         node.index = idx;
@@ -195,9 +196,10 @@ fn dfs_postorder(
 // =============================================================================
 
 fn compute_immediate_dominators(
+    alloc: bun_alloc::AstAlloc,
     graph: &Graph,
 ) -> Result<IdMap<BlockId, BlockId>, CompilerDiagnostic> {
-    let mut doms: IdMap<BlockId, BlockId> = IdMap::default();
+    let mut doms: IdMap<BlockId, BlockId> = IdMap::new_in(alloc);
     doms.insert(graph.entry, graph.entry);
 
     let mut changed = true;

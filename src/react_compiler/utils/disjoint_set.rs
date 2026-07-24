@@ -20,9 +20,9 @@ pub struct DisjointSet<K: Copy + Eq + Hash> {
 }
 
 impl<K: Copy + Eq + Hash> DisjointSet<K> {
-    pub fn new() -> Self {
+    pub fn new_in(alloc: bun_alloc::AstAlloc) -> Self {
         DisjointSet {
-            entries: IndexMap::new(),
+            entries: IndexMap::new_in(alloc),
         }
     }
 

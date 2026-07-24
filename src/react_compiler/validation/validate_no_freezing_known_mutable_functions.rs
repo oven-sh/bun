@@ -54,7 +54,7 @@ fn check_no_freezing_known_mutable_functions(
     env: &Environment,
 ) -> Vec<CompilerDiagnostic> {
     // Maps an identifier to the mutation effect that makes it "known mutable"
-    let mut context_mutation_effects: IdMap<IdentifierId, MutationInfo> = IdMap::new();
+    let mut context_mutation_effects: IdMap<IdentifierId, MutationInfo> = IdMap::new_in(env.alloc);
     let mut diagnostics: Vec<CompilerDiagnostic> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {

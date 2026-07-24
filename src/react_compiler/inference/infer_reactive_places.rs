@@ -65,7 +65,7 @@ pub fn infer_reactive_places(
     // The post-dominator frontier (and thus the set of control-test identifiers
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
-    let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
+    let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new_in(env.alloc);
     for &block_id in &block_ids {
         let frontier = post_dominator_frontier(func, &post_dominators, block_id);
         let mut tests = Vec::new();

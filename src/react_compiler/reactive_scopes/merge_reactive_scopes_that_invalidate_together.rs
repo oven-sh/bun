@@ -37,14 +37,15 @@ pub fn merge_reactive_scopes_that_invalidate_together(
 ) -> Result<(), CompilerError> {
     // Pass 1: find last usage of each declaration
     let visitor = FindLastUsageVisitor { env: &*env };
-    let mut last_usage: IdMap<DeclarationId, EvaluationOrder> = IdMap::new();
+    let mut last_usage: IdMap<DeclarationId, EvaluationOrder> = IdMap::new_in(env.alloc);
     visit_reactive_function(func, &visitor, &mut last_usage);
 
     // Pass 2+3: merge scopes
+    let alloc = env.alloc;
     let mut transform = MergeTransform {
         env,
         last_usage,
-        temporaries: IdMap::new(),
+        temporaries: IdMap::new_in(alloc),
     };
     let mut state: Option<HirVec<ReactiveScopeDependency>> = None;
     transform_reactive_function(func, &mut transform, &mut state)
@@ -460,7 +461,7 @@ fn can_merge_scopes(
         .map(|(_key, decl)| ReactiveScopeDependency {
             identifier: decl.identifier,
             reactive: true,
-            path: crate::hir_vec![],
+            path: crate::hir_vec![env.alloc],
             loc: None,
         })
         .collect();

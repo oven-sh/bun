@@ -17,8 +17,8 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern,
+    ArrayPatternElement, BlockId, BlockKind, HirFunction, HirVec, IdentifierId, InstructionKind,
+    InstructionValue, ObjectPropertyOrSpread, Pattern,
 };
 
 /// Implements dead-code elimination, eliminating instructions whose values are unused.
@@ -241,7 +241,7 @@ fn rewrite_instruction(
                             ObjectPropertyOrSpread::Property(p) => {
                                 if is_id_or_name_used(state, &env.identifiers, p.place.identifier) {
                                     next_properties
-                                        .get_or_insert_with(AstAlloc::vec)
+                                        .get_or_insert_with(|| env.alloc.vec())
                                         .push(prop.clone());
                                 }
                             }

@@ -40,7 +40,7 @@ pub(crate) fn lower_expression(
             loc,
         }),
         Data::EString(lit) => Ok(InstructionValue::Primitive {
-            value: PrimitiveValue::String(convert_js_string(*lit)),
+            value: PrimitiveValue::String(convert_js_string(builder.alloc(), *lit)),
             loc,
         }),
         Data::EUndefined(_) => {
@@ -78,7 +78,9 @@ pub(crate) fn lower_expression(
             if is_member {
                 let lowered = lower_member_expression(builder, &call.target, None)?;
                 let property = lower_value_to_temporary(builder, lowered.value)?;
-                let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
+                let args = builder
+                    .alloc()
+                    .vec_from_iter(lower_arguments(builder, &call.args)?);
                 Ok(InstructionValue::MethodCall {
                     receiver: lowered.object,
                     property,
@@ -87,7 +89,9 @@ pub(crate) fn lower_expression(
                 })
             } else {
                 let callee = lower_expression_to_temporary(builder, &call.target)?;
-                let args = AstAlloc::vec_from_iter(lower_arguments(builder, &call.args)?);
+                let args = builder
+                    .alloc()
+                    .vec_from_iter(lower_arguments(builder, &call.args)?);
                 Ok(InstructionValue::CallExpression { callee, args, loc })
             }
         }
@@ -121,7 +125,7 @@ pub(crate) fn lower_expression(
         )
         .map_err(CompilerError::from),
         Data::EObject(obj) => {
-            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = builder.alloc().vec();
             for prop in obj.properties.iter() {
                 use ast::flags::Property as PF;
                 if matches!(prop.kind, G::PropertyKind::Spread) {
@@ -164,7 +168,7 @@ pub(crate) fn lower_expression(
             Ok(InstructionValue::ObjectExpression { properties, loc })
         }
         Data::EArray(arr) => {
-            let mut elements: HirVec<ArrayElement> = AstAlloc::vec();
+            let mut elements: HirVec<ArrayElement> = builder.alloc().vec();
             for element in arr.items.iter() {
                 match &element.data {
                     Data::EMissing(_) => {
@@ -184,7 +188,9 @@ pub(crate) fn lower_expression(
         }
         Data::ENew(new_expr) => {
             let callee = lower_expression_to_temporary(builder, &new_expr.target)?;
-            let args = AstAlloc::vec_from_iter(lower_arguments(builder, &new_expr.args)?);
+            let args = builder
+                .alloc()
+                .vec_from_iter(lower_arguments(builder, &new_expr.args)?);
             Ok(InstructionValue::NewExpression { callee, args, loc })
         }
         Data::ETemplate(tmpl) => lower_template(builder, tmpl, loc),
@@ -261,7 +267,7 @@ pub(crate) fn lower_expression(
                     loc,
                 },
             )?;
-            let mut args: HirVec<PlaceOrSpread> = AstAlloc::vec();
+            let mut args: HirVec<PlaceOrSpread> = builder.alloc().vec();
             args.push(PlaceOrSpread::Place(lower_expression_to_temporary(
                 builder, &i.expr,
             )?));
@@ -1239,12 +1245,12 @@ fn lower_template(
         return Ok(InstructionValue::TaggedTemplateExpression { tag, value, loc });
     }
 
-    let mut subexprs: HirVec<Place> = AstAlloc::vec_with_capacity(parts.len());
-    let mut quasis: HirVec<TemplateQuasi> = AstAlloc::vec_with_capacity(parts.len() + 1);
-    quasis.push(convert_template_contents(&tmpl.head, loc)?);
+    let mut subexprs: HirVec<Place> = builder.alloc().vec_with_capacity(parts.len());
+    let mut quasis: HirVec<TemplateQuasi> = builder.alloc().vec_with_capacity(parts.len() + 1);
+    quasis.push(convert_template_contents(builder.alloc(), &tmpl.head, loc)?);
     for part in parts {
         subexprs.push(lower_expression_to_temporary(builder, &part.value)?);
-        quasis.push(convert_template_contents(&part.tail, loc)?);
+        quasis.push(convert_template_contents(builder.alloc(), &part.tail, loc)?);
     }
     Ok(InstructionValue::TemplateLiteral {
         subexprs,
@@ -1254,13 +1260,14 @@ fn lower_template(
 }
 
 fn convert_template_contents(
+    alloc: bun_alloc::AstAlloc,
     c: &E::TemplateContents,
     loc: Option<SourceLocation>,
 ) -> Result<TemplateQuasi, CompilerError> {
     match c {
         E::TemplateContents::Cooked(s) => {
             let cooked = if s.is_utf16 {
-                arena_utf8_from_utf16(s.slice16(), loc)?
+                arena_utf8_from_utf16(alloc, s.slice16(), loc)?
             } else {
                 StoreStr::new(s.slice8())
             };
@@ -1277,10 +1284,11 @@ fn convert_template_contents(
 }
 
 fn arena_utf8_from_utf16(
+    alloc: bun_alloc::AstAlloc,
     units: &[u16],
     loc: Option<SourceLocation>,
 ) -> Result<StoreStr, CompilerError> {
-    let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(units.len() * 3);
+    let mut buf: HirVec<u8> = alloc.vec_with_capacity(units.len() * 3);
     for r in char::decode_utf16(units.iter().copied()) {
         let c = r.map_err(|_| cold_todo("non-utf16 template", loc))?;
         let mut tmp = [0u8; 4];
@@ -1472,7 +1480,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
 // Conversion helpers
 // =============================================================================
 
-fn convert_js_string(s: StoreRef<E::EString>) -> JsString {
+fn convert_js_string(alloc: bun_alloc::AstAlloc, s: StoreRef<E::EString>) -> JsString {
     if s.get().next.is_none() {
         return JsString::new(s);
     }
@@ -1485,7 +1493,7 @@ fn convert_js_string(s: StoreRef<E::EString>) -> JsString {
         joined.extend_from_slice(seg.slice8());
         cur = seg.next.as_ref().map(|r| r.get());
     }
-    JsString::from_wtf8_bytes(&joined)
+    JsString::from_wtf8_bytes(alloc, &joined)
 }
 
 fn unsupported_node(node_type: &'static str, loc: Option<SourceLocation>) -> InstructionValue {

@@ -20,7 +20,7 @@ use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
 use crate::diagnostics::ErrorCategory;
 use crate::hir::ArrayElement;
-use crate::hir::AstAlloc;
+
 use crate::hir::DependencyPathEntry;
 use crate::hir::Effect;
 use crate::hir::EvaluationOrder;
@@ -104,10 +104,10 @@ pub fn drop_manual_memoization(
     let optionals = find_optional_places(func)?;
     let mut sidemap = IdentifierSidemap {
         functions: HashSet::new(),
-        manual_memos: IdMap::new(),
+        manual_memos: IdMap::new_in(env.alloc),
         react: HashSet::new(),
         maybe_deps: HashMap::new(),
-        maybe_deps_lists: IdMap::new(),
+        maybe_deps_lists: IdMap::new_in(env.alloc),
         optionals,
     };
     let mut next_manual_memo_id: u32 = 0;
@@ -117,7 +117,7 @@ pub fn drop_manual_memoization(
     // - (if validation is enabled) collect manual memoization markers
     //
     // queued_inserts maps InstructionId -> new Instruction to insert after that instruction
-    let mut queued_inserts: IdMap<InstructionId, Instruction> = IdMap::new();
+    let mut queued_inserts: IdMap<InstructionId, Instruction> = IdMap::new_in(env.alloc);
 
     // Collect all block instruction lists up front to avoid borrowing func immutably
     // while needing to mutate it
@@ -168,7 +168,7 @@ pub fn drop_manual_memoization(
                 if let Some(insert_instr) = queued_inserts.remove(instr_id) {
                     if next_instructions.is_none() {
                         next_instructions =
-                            Some(AstAlloc::vec_from_slice(&block.instructions[..i]));
+                            Some(env.alloc.vec_from_slice(&block.instructions[..i]));
                     }
                     let ni = next_instructions.as_mut().unwrap();
                     ni.push(instr_id);
@@ -226,7 +226,8 @@ fn process_manual_memo_call(
     let loc = func.instructions[instr_id.0 as usize].value.loc().cloned();
 
     // Replace the instruction value with the memoization replacement
-    let replacement = get_manual_memoization_replacement(&fn_place, loc.clone(), manual_memo.kind);
+    let replacement =
+        get_manual_memoization_replacement(env.alloc, &fn_place, loc.clone(), manual_memo.kind);
     func.instructions[instr_id.0 as usize].value = replacement;
 
     if is_validation_enabled {
@@ -400,7 +401,7 @@ pub fn collect_maybe_memo_dependencies(
             root: ManualMemoDependencyRoot::Global {
                 identifier_name: crate::hir::StoreStr::new(binding.name()),
             },
-            path: hir_vec![],
+            path: hir_vec![env.alloc],
             loc: loc.clone(),
         }),
         InstructionValue::PropertyLoad {
@@ -439,7 +440,7 @@ pub fn collect_maybe_memo_dependencies(
                         value: place.clone(),
                         constant: false,
                     },
-                    path: hir_vec![],
+                    path: hir_vec![env.alloc],
                     loc: place.loc.clone(),
                 })
             } else {
@@ -473,6 +474,7 @@ pub fn collect_maybe_memo_dependencies(
 // =============================================================================
 
 fn get_manual_memoization_replacement(
+    alloc: bun_alloc::AstAlloc,
     fn_place: &Place,
     loc: Option<SourceLocation>,
     kind: ManualMemoKind,
@@ -481,7 +483,7 @@ fn get_manual_memoization_replacement(
         // Replace with Call fn() - invoke the memo function directly
         InstructionValue::CallExpression {
             callee: fn_place.clone(),
-            args: hir_vec![],
+            args: hir_vec![alloc],
             loc,
         }
     } else {
@@ -622,7 +624,7 @@ fn extract_manual_memoization_args(
     }
 
     let deps_info = maybe_deps_list.unwrap();
-    let mut deps_list: HirVec<ManualMemoDependency> = AstAlloc::vec();
+    let mut deps_list: HirVec<ManualMemoDependency> = env.alloc.vec();
     for dep in &deps_info.deps {
         let maybe_dep = sidemap.maybe_deps.get(&dep.identifier);
         if let Some(d) = maybe_dep {

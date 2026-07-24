@@ -27,7 +27,7 @@ use crate::utils::DisjointSet;
 /// of scopes that must be merged.
 fn find_scopes_to_merge(func: &HirFunction, env: &Environment) -> DisjointSet<ScopeId> {
     let mut object_method_decls: HashSet<IdentifierId> = HashSet::new();
-    let mut merged_scopes = DisjointSet::<ScopeId>::new();
+    let mut merged_scopes = DisjointSet::<ScopeId>::new_in(env.alloc);
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
@@ -86,7 +86,7 @@ pub fn align_object_method_scopes(func: &mut HirFunction, env: &mut Environment)
                     let func_id = lowered_func.func;
                     let mut inner_func = std::mem::replace(
                         &mut env.functions[func_id.0 as usize],
-                        crate::ssa::enter_ssa::placeholder_function(),
+                        crate::ssa::enter_ssa::placeholder_function(env.alloc),
                     );
                     align_object_method_scopes(&mut inner_func, env);
                     env.functions[func_id.0 as usize] = inner_func;

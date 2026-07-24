@@ -56,7 +56,7 @@ pub fn prune_non_escaping_scopes(
 ) -> Result<(), crate::diagnostics::CompilerError> {
     // First build up a map of which instructions are involved in creating which values,
     // and which values are returned.
-    let mut state = CollectState::new();
+    let mut state = CollectState::new(env.alloc);
     for param in &func.params {
         let place = match param {
             crate::hir::ParamPattern::Place(p) => p,
@@ -77,7 +77,7 @@ pub fn prune_non_escaping_scopes(
     let mut transform = PruneScopesTransform {
         env,
         pruned_scopes: HashSet::new(),
-        reassignments: IdMap::new(),
+        reassignments: IdMap::new_in(env.alloc),
     };
     let mut memoized_state = memoized;
     transform_reactive_function(func, &mut transform, &mut memoized_state)
@@ -143,15 +143,17 @@ struct CollectState {
     identifiers: IdMap<DeclarationId, IdentifierNode>,
     scopes: IdMap<ScopeId, ScopeNode>,
     escaping_values: IndexSet<DeclarationId>,
+    alloc: bun_alloc::AstAlloc,
 }
 
 impl CollectState {
-    fn new() -> Self {
+    fn new(alloc: bun_alloc::AstAlloc) -> Self {
         CollectState {
-            definitions: IdMap::new(),
-            identifiers: IdMap::new(),
-            scopes: IdMap::new(),
-            escaping_values: IndexSet::new(),
+            alloc,
+            definitions: IdMap::new_in(alloc),
+            identifiers: IdMap::new_in(alloc),
+            scopes: IdMap::new_in(alloc),
+            escaping_values: IndexSet::new_in(alloc),
         }
     }
 
@@ -162,8 +164,8 @@ impl CollectState {
             IdentifierNode {
                 level: MemoizationLevel::Never,
                 memoized: false,
-                dependencies: IndexSet::new(),
-                scopes: IndexSet::new(),
+                dependencies: IndexSet::new_in(self.alloc),
+                scopes: IndexSet::new_in(self.alloc),
                 seen: false,
             },
         );
@@ -920,8 +922,8 @@ impl<'a> CollectDependenciesVisitor<'a> {
                 .or_insert_with(|| IdentifierNode {
                     level: MemoizationLevel::Never,
                     memoized: false,
-                    dependencies: IndexSet::new(),
-                    scopes: IndexSet::new(),
+                    dependencies: IndexSet::new_in(env.alloc),
+                    scopes: IndexSet::new_in(env.alloc),
                     seen: false,
                 });
             node.level = join_aliases(node.level, lv.level);
@@ -1100,7 +1102,7 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
     let mut memoized = HashSet::new();
 
     // We need mutable access to the nodes, so we clone the state into mutable structures
-    let mut identifier_nodes: IdMap<DeclarationId, IdentNodeTuple> = IdMap::new();
+    let mut identifier_nodes: IdMap<DeclarationId, IdentNodeTuple> = IdMap::new_in(state.alloc);
     for (id, node) in state.identifiers.iter() {
         identifier_nodes.insert(
             id,
@@ -1114,7 +1116,7 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
         );
     }
 
-    let mut scope_nodes: IdMap<ScopeId, (Vec<DeclarationId>, bool)> = IdMap::new();
+    let mut scope_nodes: IdMap<ScopeId, (Vec<DeclarationId>, bool)> = IdMap::new_in(state.alloc);
     for (id, node) in state.scopes.iter() {
         scope_nodes.insert(id, (node.dependencies.clone(), node.seen));
     }

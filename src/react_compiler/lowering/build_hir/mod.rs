@@ -19,10 +19,9 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
 use crate::hir::{
-    AstAlloc, BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType,
-    ReturnVariant, SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding,
-    environment::Environment,
+    BlockKind, Effect, EvaluationOrder, HirFunction, HirVec, IdentifierId, InstructionKind,
+    InstructionValue, ParamPattern, Place, PrimitiveValue, ReactFunctionType, ReturnVariant,
+    SourceLocation, SpreadPattern, StoreStr, Terminal, VariableBinding, environment::Environment,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
@@ -87,7 +86,7 @@ pub fn lower(
     let context_identifiers = find_context_identifiers(func, host, env)?;
 
     // For top-level functions, context is empty (no captured refs)
-    let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
+    let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new_in(env.alloc);
 
     let (hir_func, _used_refs, _child_bindings) = lower_inner(
         func,
@@ -154,7 +153,7 @@ pub(super) fn lower_inner<'h>(
     builder.push_scope(func.body().loc);
 
     // Build context places from the captured refs
-    let mut context: HirVec<Place> = AstAlloc::vec();
+    let mut context: HirVec<Place> = builder.alloc().vec();
     for (&ref_, ctx_loc) in context_map {
         let identifier = builder.resolve_binding(ref_)?;
         context.push(Place {
@@ -166,7 +165,7 @@ pub(super) fn lower_inner<'h>(
     }
 
     // Process parameters
-    let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();
+    let mut hir_params: HirVec<ParamPattern> = builder.alloc().vec();
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
@@ -255,7 +254,7 @@ pub(super) fn lower_inner<'h>(
     }
 
     // Lower the body
-    let mut directives: HirVec<StoreStr> = AstAlloc::vec();
+    let mut directives: HirVec<StoreStr> = builder.alloc().vec();
     let expr_body = arrow_expression_body(func);
     match expr_body {
         Some(expr) => {
@@ -380,6 +379,7 @@ fn arrow_expression_body<'a>(func: &FunctionNode<'a>) -> Option<&'a Expr> {
 /// stack so `RefTag::SourceContentsSlice` references resolve to the same
 /// `Symbol` refs the outer builder sees.
 pub(super) fn gather_captured_context<'h>(
+    alloc: bun_alloc::AstAlloc,
     host: &'h dyn Host,
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
@@ -450,10 +450,10 @@ pub(super) fn gather_captured_context<'h>(
     let mut sorted: Vec<_> = captured.into_iter().collect();
     sorted.sort_unstable_by_key(|(_, (pos, _))| *pos);
 
-    sorted
-        .into_iter()
-        .map(|(ref_, (_, loc))| (ref_, loc))
-        .collect()
+    IndexMap::from_iter_in(
+        alloc,
+        sorted.into_iter().map(|(ref_, (_, loc))| (ref_, loc)),
+    )
 }
 
 struct CaptureWalker<'h> {

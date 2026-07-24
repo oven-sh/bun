@@ -15,7 +15,7 @@ use std::collections::HashSet;
 
 use crate::collections::IdMap;
 use crate::collections::IndexMap;
-use crate::hir::AstAlloc;
+
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::EvaluationOrder;
@@ -118,7 +118,7 @@ fn collect_scope_rewrites(func: &HirFunction, env: &mut Environment) -> Vec<Term
     });
 
     let mut rewrites: Vec<TerminalRewriteInfo> = Vec::new();
-    let mut fallthroughs: IdMap<ScopeId, BlockId> = IdMap::new();
+    let mut fallthroughs: IdMap<ScopeId, BlockId> = IdMap::new_in(env.alloc);
     let mut active_items: Vec<ScopeId> = Vec::new();
 
     for i in 0..items.len() {
@@ -198,6 +198,7 @@ fn handle_rewrite(
     source_block: &BasicBlock,
     context: &mut RewriteContext,
 ) {
+    let alloc = *source_block.instructions.allocator();
     let terminal: Terminal = match terminal_info {
         TerminalRewriteInfo::StartScope {
             block_id,
@@ -223,7 +224,7 @@ fn handle_rewrite(
     };
 
     let curr_block_id = context.next_block_id;
-    let mut preds = crate::collections::IndexSet::new();
+    let mut preds = crate::collections::IndexSet::new_in(alloc);
     for &p in &context.next_preds {
         preds.insert(p);
     }
@@ -231,15 +232,14 @@ fn handle_rewrite(
     context.rewrites.push(BasicBlock {
         kind: source_block.kind,
         id: curr_block_id,
-        instructions: AstAlloc::vec_from_slice(
-            &source_block.instructions[context.instr_slice_idx..idx],
-        ),
+        instructions: alloc
+            .vec_from_slice(&source_block.instructions[context.instr_slice_idx..idx]),
         preds,
         // Only the first rewrite should reuse source block phis
         phis: if context.rewrites.is_empty() {
             source_block.phis.clone()
         } else {
-            AstAlloc::vec()
+            alloc.vec()
         },
         terminal,
     });
@@ -267,8 +267,8 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
     let mut queued_rewrites = collect_scope_rewrites(func, env);
 
     // Step 2: Apply rewrites by splitting blocks
-    let mut rewritten_final_blocks: IdMap<BlockId, BlockId> = IdMap::new();
-    let mut next_blocks: IndexMap<BlockId, BasicBlock> = IndexMap::new();
+    let mut rewritten_final_blocks: IdMap<BlockId, BlockId> = IdMap::new_in(env.alloc);
+    let mut next_blocks: IndexMap<BlockId, BasicBlock> = IndexMap::new_in(env.alloc);
 
     // Reverse so we can pop from the end while traversing in ascending order
     queued_rewrites.reverse();
@@ -303,7 +303,7 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
         }
 
         if !context.rewrites.is_empty() {
-            let mut final_preds = crate::collections::IndexSet::new();
+            let mut final_preds = crate::collections::IndexSet::new_in(env.alloc);
             for &p in &context.next_preds {
                 final_preds.insert(p);
             }
@@ -312,10 +312,10 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
                 kind: block.kind,
                 preds: final_preds,
                 terminal: block.terminal.clone(),
-                instructions: AstAlloc::vec_from_slice(
-                    &block.instructions[context.instr_slice_idx..],
-                ),
-                phis: AstAlloc::vec(),
+                instructions: env
+                    .alloc
+                    .vec_from_slice(&block.instructions[context.instr_slice_idx..]),
+                phis: env.alloc.vec(),
             };
             let final_block_id = final_block.id;
             context.rewrites.push(final_block);
@@ -351,7 +351,7 @@ pub fn build_reactive_scope_terminals_hir(func: &mut HirFunction, env: &mut Envi
     }
 
     // Step 4: Fixup HIR to restore RPO, correct predecessors, renumber instructions
-    func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+    func.body.blocks = get_reverse_postordered_blocks(env.alloc, &func.body, &func.instructions);
     mark_predecessors(&mut func.body);
     mark_instruction_ids(&mut func.body, &mut func.instructions);
 

@@ -20,8 +20,8 @@ use crate::hir::object_shape::{
 };
 use crate::hir::visitors::{each_lvalue, each_operand};
 use crate::hir::{
-    ArrayPatternElement, AstAlloc, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier,
-    IdentifierId, IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
+    ArrayPatternElement, BinaryOperator, FunctionId, HirFunction, HirVec, Identifier, IdentifierId,
+    IdentifierName, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
     LoweredFunction, NonLocalBinding, ObjectPropertyKey, ObjectPropertyOrSpread, ParamPattern,
     Pattern, PropertyLiteral, PropertyNameKind, ReactFunctionType, SourceLocation, StoreStr,
     Terminal, Type, TypeId,
@@ -43,6 +43,7 @@ pub fn infer_types(
     // Pre-compute custom hook type for property resolution fallback
     let custom_hook_type = env.get_custom_hook_type_opt();
     let mut unifier = Unifier::new(
+        env.alloc,
         enable_treat_ref_like_identifiers_as_refs,
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
@@ -311,7 +312,7 @@ fn get_name(names: &IdMap<IdentifierId, StoreStr>, id: IdentifierId) -> StoreStr
 /// Array-destructure index → property key. Static table covers every index a
 /// shape registry can name (only `"0"`/`"1"` exist today); larger indices are
 /// arena-allocated so the lookup string is preserved exactly.
-fn index_property_literal(i: usize) -> PropertyLiteral {
+fn index_property_literal(alloc: bun_alloc::AstAlloc, i: usize) -> PropertyLiteral {
     static INDEX_STRINGS: [&[u8]; 32] = [
         b"0", b"1", b"2", b"3", b"4", b"5", b"6", b"7", b"8", b"9", b"10", b"11", b"12", b"13",
         b"14", b"15", b"16", b"17", b"18", b"19", b"20", b"21", b"22", b"23", b"24", b"25", b"26",
@@ -329,7 +330,7 @@ fn index_property_literal(i: usize) -> PropertyLiteral {
         buf[pos] = b'0' + (n % 10) as u8;
         n /= 10;
     }
-    PropertyLiteral::String(StoreStr::new(AstAlloc::vec_from_slice(&buf[pos..]).leak()))
+    PropertyLiteral::String(StoreStr::new(alloc.vec_from_slice(&buf[pos..]).leak()))
 }
 
 // =============================================================================
@@ -400,14 +401,14 @@ fn generate(
         }
     }
 
-    let mut names: IdMap<IdentifierId, StoreStr> = IdMap::new();
-    let mut return_types: HirVec<Type> = AstAlloc::vec();
+    let mut names: IdMap<IdentifierId, StoreStr> = IdMap::new_in(env.alloc);
+    let mut return_types: HirVec<Type> = env.alloc.vec();
 
     for (_block_id, block) in &func.body.blocks {
         // Phis
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, &env.identifiers);
-            let operands = AstAlloc::vec_from_iter(
+            let operands = env.alloc.vec_from_iter(
                 phi.operands
                     .values()
                     .map(|p| get_type(p.identifier, &env.identifiers)),
@@ -470,7 +471,10 @@ fn generate_for_function_id(
     unifier: &mut Unifier,
 ) -> Result<(), CompilerDiagnostic> {
     // Take the function out temporarily to avoid borrow conflicts
-    let inner = std::mem::replace(&mut functions[func_id.0 as usize], placeholder_function());
+    let inner = std::mem::replace(
+        &mut functions[func_id.0 as usize],
+        placeholder_function(*types.allocator()),
+    );
 
     // Process params for component inner functions
     if inner.fn_type == ReactFunctionType::Component {
@@ -502,13 +506,13 @@ fn generate_for_function_id(
 
     // TS creates a fresh `names` Map per recursive `generate` call, so inner
     // functions don't inherit or pollute the outer function's name mappings.
-    let mut inner_names: IdMap<IdentifierId, StoreStr> = IdMap::new();
-    let mut inner_return_types: HirVec<Type> = AstAlloc::vec();
+    let mut inner_names: IdMap<IdentifierId, StoreStr> = IdMap::new_in(unifier.alloc);
+    let mut inner_return_types: HirVec<Type> = unifier.alloc.vec();
 
     for (_block_id, block) in &inner.body.blocks {
         for phi in &block.phis {
             let left = get_type(phi.place.identifier, identifiers);
-            let operands = AstAlloc::vec_from_iter(
+            let operands = unifier.alloc.vec_from_iter(
                 phi.operands
                     .values()
                     .map(|p| get_type(p.identifier, identifiers)),
@@ -780,7 +784,7 @@ fn generate_instruction_types(
                                     object_type: Box::new(value_type),
                                     object_name,
                                     property_name: PropertyNameKind::Literal {
-                                        value: index_property_literal(i),
+                                        value: index_property_literal(unifier.alloc, i),
                                     },
                                 },
                                 shapes,
@@ -1055,6 +1059,7 @@ fn resolve_identifier(
 // =============================================================================
 
 struct Unifier {
+    alloc: bun_alloc::AstAlloc,
     substitutions: HashMap<TypeId, Type>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
@@ -1063,11 +1068,13 @@ struct Unifier {
 
 impl Unifier {
     fn new(
+        alloc: bun_alloc::AstAlloc,
         enable_treat_ref_like_identifiers_as_refs: bool,
         custom_hook_type: Option<Type>,
         enable_treat_set_identifiers_as_state_setters: bool,
     ) -> Self {
         Unifier {
+            alloc,
             substitutions: HashMap::new(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
@@ -1255,7 +1262,7 @@ impl Unifier {
     fn try_resolve_type(&mut self, v: &Type, ty: &Type) -> Option<Type> {
         match ty {
             Type::Phi { operands } => {
-                let mut new_operands = AstAlloc::vec();
+                let mut new_operands = self.alloc.vec();
                 for operand in operands {
                     if let Type::TypeVar { id } = operand {
                         if let Type::TypeVar { id: v_id } = v {
@@ -1344,7 +1351,9 @@ impl Unifier {
 
         if let Type::Phi { operands } = ty {
             return Type::Phi {
-                operands: AstAlloc::vec_from_iter(operands.iter().map(|o| self.get(o))),
+                operands: self
+                    .alloc
+                    .vec_from_iter(operands.iter().map(|o| self.get(o))),
             };
         }
 

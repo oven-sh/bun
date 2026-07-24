@@ -11,7 +11,7 @@ use crate::collections::{IndexMap, IndexSet};
 use crate::diagnostics::{
     CompilerError, CompilerErrorDetail, ErrorCategory, Position, SourceLocation,
 };
-use bun_alloc::{AstAlloc, AstVec};
+use bun_alloc::AstVec;
 use bun_ast::{
     ClauseItem, ImportKind, ImportRecord, Loc, LocRef, S, Stmt, StoreSlice, StoreStr, Symbol,
 };
@@ -53,6 +53,7 @@ pub struct ProgramContext {
     pub renames: Vec<crate::hir::environment::BindingRename>,
 
     // Internal state
+    alloc: bun_alloc::AstAlloc,
     already_compiled: IndexSet<u32>,
     known_referenced_names: IndexSet<String>,
     imports: IndexMap<&'static str, IndexMap<&'static str, NonLocalImportSpecifier>>,
@@ -60,6 +61,7 @@ pub struct ProgramContext {
 
 impl ProgramContext {
     pub fn new(
+        alloc: bun_alloc::AstAlloc,
         opts: ReactCompilerOptions,
         filename: Option<String>,
         code: Option<String>,
@@ -67,6 +69,7 @@ impl ProgramContext {
     ) -> Self {
         let react_runtime_module = get_react_compiler_runtime_module(opts.target.as_deref());
         Self {
+            alloc,
             opts,
             filename,
             source_filename: None,
@@ -78,9 +81,9 @@ impl ProgramContext {
             instrument_gating_name: None,
             hook_guard_name: None,
             renames: Vec::new(),
-            already_compiled: IndexSet::new(),
-            known_referenced_names: IndexSet::new(),
-            imports: IndexMap::new(),
+            already_compiled: IndexSet::new_in(alloc),
+            known_referenced_names: IndexSet::new_in(alloc),
+            imports: IndexMap::new_in(alloc),
         }
     }
 
@@ -189,9 +192,10 @@ impl ProgramContext {
             imported: specifier,
         };
 
+        let alloc = self.alloc;
         self.imports
             .entry(module)
-            .or_default()
+            .or_insert_with(|| IndexMap::new_in(alloc))
             .insert(specifier, binding);
 
         binding
@@ -236,7 +240,8 @@ pub(crate) fn validate_restricted_imports(
         Some(b) if !b.is_empty() => b,
         _ => return None,
     };
-    let restricted: IndexSet<&[u8]> = blocklisted.iter().map(|s| s.as_bytes()).collect();
+    let restricted: crate::collections::FxHashSet<&[u8]> =
+        blocklisted.iter().map(|s| s.as_bytes()).collect();
     let mut error = CompilerError::new();
 
     for import in import_records {
@@ -296,6 +301,7 @@ pub(crate) fn add_imports_to_program(
     if context.imports.is_empty() {
         return;
     }
+    let alloc = context.alloc;
 
     let mut new_stmts: Vec<Stmt> = Vec::new();
     let mut sorted_modules: Vec<_> = context.imports.iter().collect();
@@ -315,12 +321,13 @@ pub(crate) fn add_imports_to_program(
         let (import_record_index, namespace_ref) =
             host.add_import_record(module_name.as_bytes(), ImportKind::Stmt);
 
-        let mut items: AstVec<ClauseItem> = AstAlloc::vec_with_capacity(sorted_imports.len());
+        let mut items: AstVec<ClauseItem> = alloc.vec_with_capacity(sorted_imports.len());
         for spec in &sorted_imports {
-            items.push(make_import_specifier(spec));
+            items.push(make_import_specifier(alloc, spec));
         }
 
         new_stmts.push(Stmt::alloc(
+            alloc,
             S::Import {
                 namespace_ref,
                 default_name: None,
@@ -342,9 +349,9 @@ pub(crate) fn add_imports_to_program(
 }
 
 /// Create a `ClauseItem` AST node from a NonLocalImportSpecifier.
-fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
+fn make_import_specifier(alloc: bun_alloc::AstAlloc, spec: &NonLocalImportSpecifier) -> ClauseItem {
     ClauseItem {
-        alias: arena_str(spec.imported.as_bytes()),
+        alias: arena_str(alloc, spec.imported.as_bytes()),
         alias_loc: Loc::EMPTY,
         name: LocRef {
             loc: Loc::EMPTY,
@@ -354,8 +361,8 @@ fn make_import_specifier(spec: &NonLocalImportSpecifier) -> ClauseItem {
     }
 }
 
-fn arena_str(bytes: &[u8]) -> StoreStr {
-    let mut v: AstVec<u8> = AstAlloc::vec_with_capacity(bytes.len());
+fn arena_str(alloc: bun_alloc::AstAlloc, bytes: &[u8]) -> StoreStr {
+    let mut v: AstVec<u8> = alloc.vec_with_capacity(bytes.len());
     v.extend_from_slice(bytes);
     StoreStr::new(v.leak())
 }

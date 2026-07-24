@@ -44,7 +44,7 @@ pub fn infer_reactive_scope_variables(
 
     // Phase 2: assign scopes
     // Maps each group root identifier to the ScopeId assigned to that group.
-    let mut scopes: IdMap<IdentifierId, ScopeState> = IdMap::new();
+    let mut scopes: IdMap<IdentifierId, ScopeState> = IdMap::new_in(env.alloc);
 
     scope_identifiers.for_each(|identifier_id, group_id| {
         let ident_range = env.identifiers[identifier_id.0 as usize]
@@ -273,8 +273,8 @@ pub(crate) fn find_disjoint_mutable_values(
     func: &HirFunction,
     env: &Environment,
 ) -> DisjointSet<IdentifierId> {
-    let mut scope_identifiers = DisjointSet::<IdentifierId>::new();
-    let mut declarations: IdMap<DeclarationId, IdentifierId> = IdMap::new();
+    let mut scope_identifiers = DisjointSet::<IdentifierId>::new_in(env.alloc);
+    let mut declarations: IdMap<DeclarationId, IdentifierId> = IdMap::new_in(env.alloc);
 
     let enable_forest = env.config.enable_forest;
 

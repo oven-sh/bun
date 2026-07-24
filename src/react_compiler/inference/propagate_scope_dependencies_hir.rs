@@ -20,7 +20,7 @@ use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
+    BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
     GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
     InstructionValue, MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
     ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
@@ -46,7 +46,7 @@ pub fn propagate_scope_dependencies_hir(func: &mut HirFunction, env: &mut Enviro
         let (working, registry) =
             collect_hoistable_and_propagate(func, env, &temporaries, &hoistable_objects);
         // Convert to scope-keyed map with full dependency paths
-        let mut keyed: IdMap<ScopeId, Vec<ReactiveScopeDependency>> = IdMap::new();
+        let mut keyed: IdMap<ScopeId, Vec<ReactiveScopeDependency>> = IdMap::new_in(env.alloc);
         for (_block_id, block) in &func.body.blocks {
             if let Terminal::Scope {
                 scope,
@@ -130,7 +130,7 @@ fn find_temporaries_used_outside_declaring_scope(
     func: &HirFunction,
     env: &Environment,
 ) -> HashSet<DeclarationId> {
-    let mut declarations: IdMap<DeclarationId, ScopeId> = IdMap::new();
+    let mut declarations: IdMap<DeclarationId, ScopeId> = IdMap::new_in(env.alloc);
     let mut pruned_scopes: HashSet<ScopeId> = HashSet::default();
     let mut traversal = ScopeBlockTraversal::new();
     let mut used_outside_declaring_scope: HashSet<DeclarationId> = HashSet::default();
@@ -230,7 +230,7 @@ fn collect_temporaries_sidemap(
     env: &Environment,
     used_outside_declaring_scope: &HashSet<DeclarationId>,
 ) -> IdMap<IdentifierId, ReactiveScopeDependency> {
-    let mut temporaries = IdMap::new();
+    let mut temporaries = IdMap::new_in(env.alloc);
     collect_temporaries_sidemap_impl(
         func,
         env,
@@ -315,7 +315,7 @@ fn collect_temporaries_sidemap_impl(
                             ReactiveScopeDependency {
                                 identifier: place.identifier,
                                 reactive: place.reactive,
-                                path: hir_vec![],
+                                path: hir_vec![env.alloc],
                                 loc: *loc,
                             },
                         );
@@ -340,7 +340,7 @@ fn collect_temporaries_sidemap_impl(
                             ReactiveScopeDependency {
                                 identifier: place.identifier,
                                 reactive: place.reactive,
-                                path: hir_vec![],
+                                path: hir_vec![env.alloc],
                                 loc: *loc,
                             },
                         );
@@ -391,7 +391,7 @@ fn get_property(
         ReactiveScopeDependency {
             identifier: object.identifier,
             reactive: object.reactive,
-            path: hir_vec![DependencyPathEntry {
+            path: hir_vec![_env.alloc; DependencyPathEntry {
                 property: property_name.clone(),
                 optional,
                 loc,
@@ -426,8 +426,8 @@ fn collect_optional_chain_sidemap(func: &HirFunction, env: &Environment) -> Opti
     let mut ctx = OptionalTraversalContext {
         seen_optionals: HashSet::default(),
         processed_instrs_in_optional: HashSet::default(),
-        temporaries_read_in_optional: IdMap::new(),
-        hoistable_objects: IdMap::new(),
+        temporaries_read_in_optional: IdMap::new_in(env.alloc),
+        hoistable_objects: IdMap::new_in(env.alloc),
     };
 
     traverse_function_optional(func, env, &mut ctx);
@@ -596,7 +596,7 @@ fn traverse_optional_block(
                 return None;
             }
 
-            let mut path: HirVec<DependencyPathEntry> = hir_vec![];
+            let mut path: HirVec<DependencyPathEntry> = hir_vec![env.alloc];
             for i in 1..maybe_test_block.instructions.len() {
                 let curr_instr = &func.instructions[maybe_test_block.instructions[i].0 as usize];
                 let prev_instr =
@@ -793,15 +793,17 @@ struct PropertyPathNode {
 }
 
 struct PropertyPathRegistry {
+    alloc: bun_alloc::AstAlloc,
     nodes: Vec<PropertyPathNode>,
     roots: IdMap<IdentifierId, usize>,
 }
 
 impl PropertyPathRegistry {
-    fn new() -> Self {
+    fn new(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
+            alloc,
             nodes: Vec::new(),
-            roots: IdMap::new(),
+            roots: IdMap::new_in(alloc),
         }
     }
 
@@ -821,7 +823,7 @@ impl PropertyPathRegistry {
             full_path: ReactiveScopeDependency {
                 identifier: identifier_id,
                 reactive,
-                path: hir_vec![],
+                path: hir_vec![self.alloc],
                 loc,
             },
             has_optional: false,
@@ -984,6 +986,7 @@ fn in_range(id: EvaluationOrder, range: &MutableRange) -> bool {
 }
 
 fn get_maybe_non_null_in_instruction(
+    alloc: bun_alloc::AstAlloc,
     value: &InstructionValue,
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
 ) -> Option<ReactiveScopeDependency> {
@@ -995,7 +998,7 @@ fn get_maybe_non_null_in_instruction(
                 .unwrap_or_else(|| ReactiveScopeDependency {
                     identifier: object.identifier,
                     reactive: object.reactive,
-                    path: hir_vec![],
+                    path: hir_vec![alloc],
                     loc: object.loc,
                 }),
         ),
@@ -1014,7 +1017,8 @@ fn get_maybe_non_null_in_instruction(
 /// The `temporaries` map is shared across recursive calls (matching TS behavior where
 /// the same Map is passed to recursive invocations for inner functions).
 fn get_assumed_invoked_functions(func: &HirFunction, env: &Environment) -> HashSet<FunctionId> {
-    let mut temporaries: IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> = IdMap::new();
+    let mut temporaries: IdMap<IdentifierId, (FunctionId, HashSet<FunctionId>)> =
+        IdMap::new_in(env.alloc);
     get_assumed_invoked_functions_impl(func, env, &mut temporaries)
 }
 
@@ -1168,7 +1172,7 @@ fn collect_non_nulls_in_blocks(
         }
     }
 
-    let mut nodes: IdMap<BlockId, BlockInfo> = IdMap::new();
+    let mut nodes: IdMap<BlockId, BlockInfo> = IdMap::new_in(env.alloc);
 
     for (block_id, block) in &func.body.blocks {
         let mut assumed = known_non_null.clone();
@@ -1181,7 +1185,9 @@ fn collect_non_nulls_in_blocks(
 
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
-            if let Some(path) = get_maybe_non_null_in_instruction(&instr.value, ctx.temporaries) {
+            if let Some(path) =
+                get_maybe_non_null_in_instruction(env.alloc, &instr.value, ctx.temporaries)
+            {
                 let path_ident = path.identifier;
                 if is_immutable_at_instr(path_ident, instr.id, env, ctx) {
                     let node_idx = registry.get_or_create_property(&path);
@@ -1210,7 +1216,7 @@ fn collect_non_nulls_in_blocks(
                                 let sub_dep = ReactiveScopeDependency {
                                     identifier: val.identifier,
                                     reactive: val.reactive,
-                                    path: AstAlloc::vec_from_slice(&dep.path[..i]),
+                                    path: env.alloc.vec_from_slice(&dep.path[..i]),
                                     loc: dep.loc,
                                 };
                                 let node_idx = registry.get_or_create_property(&sub_dep);
@@ -1358,7 +1364,7 @@ fn propagate_non_null(
         }
     }
 
-    let mut result = IdMap::new();
+    let mut result = IdMap::new_in(registry.alloc);
     for id in block_ids {
         if let Some(set) = working[id.0 as usize].take() {
             result.insert(id, set);
@@ -1459,7 +1465,7 @@ fn collect_hoistable_and_propagate(
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     hoistable_from_optionals: &IdMap<BlockId, ReactiveScopeDependency>,
 ) -> (IdMap<BlockId, BTreeSet<usize>>, PropertyPathRegistry) {
-    let mut registry = PropertyPathRegistry::new();
+    let mut registry = PropertyPathRegistry::new(env.alloc);
     let assumed_invoked_fns = get_assumed_invoked_functions(func, env);
     let known_immutable_identifiers: HashSet<IdentifierId> = if func.fn_type
         == ReactFunctionType::Component
@@ -1562,7 +1568,8 @@ impl ReactiveScopeDependencyTreeHIR {
         hoistable_objects: impl Iterator<Item = &'a ReactiveScopeDependency>,
         _env: &Environment,
     ) -> Self {
-        let mut hoistable_roots: IdMap<IdentifierId, (HoistableNode, bool)> = IdMap::new();
+        let alloc = _env.alloc;
+        let mut hoistable_roots: IdMap<IdentifierId, (HoistableNode, bool)> = IdMap::new_in(alloc);
 
         // Sort hoistable objects so that entries with optional first path come
         // before non-optional ones. This matches the TS behavior where
@@ -1616,15 +1623,16 @@ impl ReactiveScopeDependencyTreeHIR {
 
         Self {
             hoistable_roots,
-            dep_roots: IndexMap::new(),
+            dep_roots: IndexMap::new_in(alloc),
         }
     }
 
     fn add_dependency(&mut self, dep: ReactiveScopeDependency, _env: &Environment) {
+        let alloc = _env.alloc;
         let root = self.dep_roots.entry(dep.identifier).or_insert_with(|| {
             (
                 DependencyNode {
-                    properties: IndexMap::new(),
+                    properties: IndexMap::new_in(alloc),
                     access_type: PropertyAccessType::UnconditionalAccess,
                     loc: dep.loc,
                 },
@@ -1669,7 +1677,7 @@ impl ReactiveScopeDependencyTreeHIR {
                 .or_insert_with(|| {
                     Box::new(DependencyNodeEntry {
                         node: DependencyNode {
-                            properties: IndexMap::new(),
+                            properties: IndexMap::new_in(alloc),
                             access_type,
                             loc: entry.loc,
                         },
@@ -1708,7 +1716,7 @@ fn collect_minimal_deps_in_subtree(
         results.push(ReactiveScopeDependency {
             identifier: root_id,
             reactive,
-            path: AstAlloc::vec_from_slice(path),
+            path: node.properties.allocator().vec_from_slice(path),
             loc: node.loc,
         });
     } else {
@@ -1755,15 +1763,16 @@ struct DependencyCollectionContext<'a> {
 
 impl<'a> DependencyCollectionContext<'a> {
     fn new(
+        alloc: bun_alloc::AstAlloc,
         temporaries: &'a IdMap<IdentifierId, ReactiveScopeDependency>,
         processed_instrs_in_optional: &'a HashSet<ProcessedInstr>,
     ) -> Self {
         Self {
-            declarations: IdMap::new(),
-            reassignments: IdMap::new(),
+            declarations: IdMap::new_in(alloc),
+            reassignments: IdMap::new_in(alloc),
             scope_stack: Vec::new(),
             dep_stack: Vec::new(),
-            deps: IndexMap::new(),
+            deps: IndexMap::new_in(alloc),
             temporaries,
             processed_instrs_in_optional,
             inner_fn_context: None,
@@ -1850,7 +1859,7 @@ impl<'a> DependencyCollectionContext<'a> {
             .unwrap_or_else(|| ReactiveScopeDependency {
                 identifier: place.identifier,
                 reactive: place.reactive,
-                path: hir_vec![],
+                path: hir_vec![env.alloc],
                 loc: place.loc,
             });
         self.visit_dependency(dep, env);
@@ -1910,7 +1919,7 @@ impl<'a> DependencyCollectionContext<'a> {
             ReactiveScopeDependency {
                 identifier: dep.identifier,
                 reactive: dep.reactive,
-                path: hir_vec![],
+                path: hir_vec![env.alloc],
                 loc: dep.loc,
             }
         } else {
@@ -1936,7 +1945,7 @@ impl<'a> DependencyCollectionContext<'a> {
                     &ReactiveScopeDependency {
                         identifier: place.identifier,
                         reactive: place.reactive,
-                        path: hir_vec![],
+                        path: hir_vec![env.alloc],
                         loc: place.loc,
                     },
                     env,
@@ -2155,7 +2164,8 @@ fn collect_dependencies(
     temporaries: &IdMap<IdentifierId, ReactiveScopeDependency>,
     processed_instrs_in_optional: &HashSet<ProcessedInstr>,
 ) -> IndexMap<ScopeId, Vec<ReactiveScopeDependency>> {
-    let mut ctx = DependencyCollectionContext::new(temporaries, processed_instrs_in_optional);
+    let mut ctx =
+        DependencyCollectionContext::new(env.alloc, temporaries, processed_instrs_in_optional);
 
     // Declare params
     for param in &func.params {

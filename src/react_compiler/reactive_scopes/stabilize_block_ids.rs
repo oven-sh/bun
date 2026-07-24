@@ -25,12 +25,12 @@ use crate::reactive_scopes::visitors::{
 /// TS: `stabilizeBlockIds`
 pub fn stabilize_block_ids(func: &mut ReactiveFunction, env: &mut Environment) {
     // Pass 1: Collect referenced labels (preserving insertion order to match TS Set behavior)
-    let mut referenced: IndexSet<BlockId> = IndexSet::new();
+    let mut referenced: IndexSet<BlockId> = IndexSet::new_in(env.alloc);
     let collector = CollectReferencedLabels { env: &*env };
     visit_reactive_function(func, &collector, &mut referenced);
 
     // Build mappings: referenced block IDs -> sequential IDs (insertion-order deterministic)
-    let mut mappings: IdMap<BlockId, BlockId> = IdMap::new();
+    let mut mappings: IdMap<BlockId, BlockId> = IdMap::new_in(env.alloc);
     for block_id in &referenced {
         let len = mappings.len() as u32;
         mappings.entry(*block_id).or_insert(BlockId(len));

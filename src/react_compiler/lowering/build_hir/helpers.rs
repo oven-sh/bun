@@ -11,8 +11,8 @@ use super::expr::lower_reorderable_expression;
 use super::lower_expression;
 
 #[inline]
-pub(super) fn arena_str(bytes: &[u8]) -> StoreStr {
-    StoreStr::new(ast::data_store_dupe_str(bytes))
+pub(super) fn arena_str(alloc: bun_alloc::AstAlloc, bytes: &[u8]) -> StoreStr {
+    StoreStr::new(ast::data_store_dupe_str(alloc, bytes))
 }
 
 struct WriteBytes<'a>(&'a mut HirVec<u8>);
@@ -181,7 +181,7 @@ pub(super) fn promote_temporary(builder: &mut HirBuilder, identifier_id: Identif
         buf[start..len].reverse();
     }
     env.identifiers[identifier_id.0 as usize].name =
-        Some(IdentifierName::Promoted(arena_str(&buf[..len])));
+        Some(IdentifierName::Promoted(arena_str(env.alloc, &buf[..len])));
 }
 
 pub(super) fn lower_value_to_temporary(
@@ -283,7 +283,7 @@ pub(super) fn lower_arguments(
     builder: &mut HirBuilder,
     args: &[Expr],
 ) -> Result<HirVec<PlaceOrSpread>, CompilerError> {
-    let mut result = AstAlloc::vec();
+    let mut result = builder.alloc().vec();
     for arg in args {
         match &arg.data {
             Data::ESpread(spread) => {
@@ -599,7 +599,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EArray(pattern) => {
-            let mut items: HirVec<ArrayPatternElement> = AstAlloc::vec();
+            let mut items: HirVec<ArrayPatternElement> = builder.alloc().vec();
             let mut followups: Vec<(Place, &Expr)> = Vec::new();
 
             let force_temporaries = if kind == InstructionKind::Reassign {
@@ -746,7 +746,7 @@ pub(super) fn lower_assignment(
         }
 
         Data::EObject(pattern) => {
-            let mut properties: HirVec<ObjectPropertyOrSpread> = AstAlloc::vec();
+            let mut properties: HirVec<ObjectPropertyOrSpread> = builder.alloc().vec();
             let mut followups: Vec<(Place, &Expr, Option<&Expr>)> = Vec::new();
 
             let force_temporaries = if kind == InstructionKind::Reassign {
@@ -1134,7 +1134,10 @@ pub(super) fn lower_object_property_key(
     match &key.data {
         Data::EString(s) => {
             let name = if s.is_utf16 {
-                arena_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
+                arena_str(
+                    builder.alloc(),
+                    &bun_core::strings::to_utf8_alloc(s.slice16()),
+                )
             } else if s.next.is_some() {
                 return Err(cold_todo("rope property key", convert_loc(key.loc)));
             } else {
@@ -1143,7 +1146,7 @@ pub(super) fn lower_object_property_key(
             Ok(Some(ObjectPropertyKey::String { name }))
         }
         Data::ENumber(n) if !computed => {
-            let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
+            let mut buf: HirVec<u8> = builder.alloc().vec_with_capacity(24);
             core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value())).ok();
             Ok(Some(ObjectPropertyKey::Identifier {
                 name: StoreStr::new(buf.leak()),

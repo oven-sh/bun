@@ -26,7 +26,7 @@ use crate::utils::DisjointSet;
 pub fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environment) {
     // Maps an identifier to the scope it should be assigned to (or None to remove scope)
     let mut scope_mapping: HashMap<IdentifierId, Option<ScopeId>> = HashMap::new();
-    let mut merged_scopes = DisjointSet::<ScopeId>::new();
+    let mut merged_scopes = DisjointSet::<ScopeId>::new_in(env.alloc);
 
     // Phase 1: Walk instructions and collect scope relationships
     for (_block_id, block) in &func.body.blocks {
@@ -63,7 +63,7 @@ pub fn align_method_call_scopes(func: &mut HirFunction, env: &mut Environment) {
                     let func_id = lowered_func.func;
                     let mut inner_func = std::mem::replace(
                         &mut env.functions[func_id.0 as usize],
-                        crate::ssa::enter_ssa::placeholder_function(),
+                        crate::ssa::enter_ssa::placeholder_function(env.alloc),
                     );
                     align_method_call_scopes(&mut inner_func, env);
                     env.functions[func_id.0 as usize] = inner_func;

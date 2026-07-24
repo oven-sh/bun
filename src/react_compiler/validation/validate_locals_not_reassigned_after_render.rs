@@ -92,7 +92,7 @@ fn get_context_reassignment(
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
     // Maps identifiers to the place that they reassign
-    let mut reassigning_functions: IdMap<IdentifierId, Place> = IdMap::new();
+    let mut reassigning_functions: IdMap<IdentifierId, Place> = IdMap::new_in(env.alloc);
 
     for (_block_id, block) in &func.body.blocks {
         for &instruction_id in &block.instructions {

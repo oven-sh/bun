@@ -83,7 +83,7 @@ pub fn outline_functions(
             Action::Recurse(function_id) => {
                 let mut inner_func = std::mem::replace(
                     &mut env.functions[function_id.0 as usize],
-                    placeholder_function(),
+                    placeholder_function(env.alloc),
                 );
                 outline_functions(&mut inner_func, env, fbt_operands);
                 env.functions[function_id.0 as usize] = inner_func;
@@ -95,7 +95,7 @@ pub fn outline_functions(
                 // First recurse into the inner function (depth-first)
                 let mut inner_func = std::mem::replace(
                     &mut env.functions[function_id.0 as usize],
-                    placeholder_function(),
+                    placeholder_function(env.alloc),
                 );
                 outline_functions(&mut inner_func, env, fbt_operands);
                 env.functions[function_id.0 as usize] = inner_func;

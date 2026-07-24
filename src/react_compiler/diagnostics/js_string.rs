@@ -33,24 +33,25 @@ impl JsString {
     /// Arena-allocate an `EString` from WTF-8 input. ASCII stays 8-bit;
     /// non-ASCII is widened to UTF-16 to match the parser's `EString`
     /// encoding convention (so `eql_string`/`hash` agree across sources).
-    pub fn from_wtf8_bytes(bytes: &[u8]) -> Self {
+    pub fn from_wtf8_bytes(alloc: AstAlloc, bytes: &[u8]) -> Self {
         let s = if strings::first_non_ascii(bytes).is_none() {
-            E::EString::init(bun_ast::data_store_dupe_str(bytes))
+            E::EString::init(bun_ast::data_store_dupe_str(alloc, bytes))
         } else {
-            let mut buf: AstVec<u16> = AstAlloc::vec_with_capacity(bytes.len());
+            let mut buf: AstVec<u16> = alloc.vec_with_capacity(bytes.len());
             buf.extend(core::iter::repeat_n(0u16, bytes.len()));
             let n = strings::convert_utf8_to_utf16_in_buffer(&mut buf, bytes).len();
             buf.truncate(n);
             E::EString::init_utf16(buf.leak())
         };
-        Self(expr::data::Store::append(s))
+        Self(expr::data::Store::append(alloc, s))
     }
 
     /// Arena-allocate an `EString` from UTF-16 code units.
-    pub fn from_code_units(units: &[u16]) -> Self {
-        Self(expr::data::Store::append(E::EString::init_utf16(
-            AstAlloc::vec_from_slice(units).leak(),
-        )))
+    pub fn from_code_units(alloc: AstAlloc, units: &[u16]) -> Self {
+        Self(expr::data::Store::append(
+            alloc,
+            E::EString::init_utf16(alloc.vec_from_slice(units).leak()),
+        ))
     }
 
     #[inline]
@@ -87,18 +88,6 @@ impl JsString {
             .filter(|&&b| b & 0xC0 != 0x80)
             .map(|&b| if b >= 0xF0 { 2 } else { 1 })
             .sum()
-    }
-}
-
-impl From<&str> for JsString {
-    fn from(s: &str) -> Self {
-        Self::from_wtf8_bytes(s.as_bytes())
-    }
-}
-
-impl From<String> for JsString {
-    fn from(s: String) -> Self {
-        Self::from_wtf8_bytes(s.as_bytes())
     }
 }
 

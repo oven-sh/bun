@@ -3649,9 +3649,20 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       console.error(hookError);
       counts.failed++;
     }
-    if (signal?.aborted) {
+    if (preAborted) {
+      // node reports per-file testAborted verdicts for a signal already
+      // aborted at run() time (mirrors runFiles' reportAbortedFile loop);
+      // republishChildEvent counts testAborted as cancelled.
+      const abortedError = makeTestFailure("This operation was aborted", "testAborted");
+      for (const file of files) {
+        const fileNode = new TestNode(file, callerRoot, kDefaultOptions, false, false);
+        fileNode.filePath = file;
+        activeRunFile = file;
+        reportFailedImportNode(fileNode, abortedError);
+      }
+    } else if (signal?.aborted) {
       counts.failed++;
-      if (!preAborted) reporter.emitMessage("test:interrupted", { __proto__: null, nesting: 0, tests: [] });
+      reporter.emitMessage("test:interrupted", { __proto__: null, nesting: 0, tests: [] });
     }
 
     const durationMs = roundDurationMs(performance.now() - started);

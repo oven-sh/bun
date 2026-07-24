@@ -3401,9 +3401,10 @@ async function executeStandaloneQueue(root: TestNode, signal?: AbortSignal): Pro
     // Node's root Test.postRun cancels each pending subtest; matches the
     // suite-level setupFailed path in runStandaloneEntry.
     for (const entry of standaloneQueue) {
-      activeRunFile = entry.node.filePath ?? null;
-      if (entry.importError !== undefined) reportFailedImportNode(entry.node, entry.importError);
-      else reportCancelledNode(entry.node);
+      const { node, importError } = entry;
+      activeRunFile = node.filePath ?? null;
+      if (importError !== undefined) reportFailedImportNode(node, importError);
+      else reportCancelledNode(node);
     }
   }
   standaloneQueue.length = 0;
@@ -3715,10 +3716,10 @@ function standaloneSinkImpl(
 }
 
 async function runStandaloneEntry(entry: StandaloneEntry) {
-  const { node, fn, isSuite, mode } = entry;
+  const { node, fn, isSuite, mode, importError } = entry;
   activeRunFile = node.filePath ?? null;
-  if (entry.importError !== undefined) {
-    reportFailedImportNode(node, entry.importError);
+  if (importError !== undefined) {
+    reportFailedImportNode(node, importError);
     return;
   }
   if (mode === "skip") {

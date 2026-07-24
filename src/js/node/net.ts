@@ -143,6 +143,7 @@ const kAttach = Symbol("kAttach");
 const kCloseRawConnection = Symbol("kCloseRawConnection");
 const kpendingRead = Symbol("kpendingRead");
 const kupgraded = Symbol("kupgraded");
+const kflushPendingDuplexTLS = Symbol("kflushPendingDuplexTLS");
 const ksocket = Symbol("ksocket");
 const khandlers = Symbol("khandlers");
 const kclosed = Symbol("closed");
@@ -834,6 +835,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const handle = self._handle || socket.listener;
     if (handle && typeof handle.onconnection === "function") {
       handle.onconnection(0, socket);
+    } else {
+      // Only the standalone wrap lands here, where `self` is the wrapping
+      // Socket (never a Server) and so the only receiver that can hold this.
+      self[kflushPendingDuplexTLS]?.();
     }
   },
   handshake(socket, success, verifyError) {
@@ -1217,6 +1222,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (self[kupgraded]) {
       self.connecting = false;
       SocketHandlers2.drain!(socket);
+      self[kflushPendingDuplexTLS]?.();
     }
   },
   data(socket, buffer) {
@@ -1480,6 +1486,38 @@ function traceConnectEnd(req) {
   }
 }
 
+function onDuplexTLSData(state, chunk) {
+  const { pending } = state;
+  if (pending) pending.push(chunk);
+  else state.events[0](chunk);
+}
+
+function flushPendingDuplexTLS(state) {
+  const { events, pending: chunks } = state;
+  if (!chunks) return;
+  // Keep buffering until the replay finishes: a chunk the engine's output
+  // synchronously echoes back into the duplex must not overtake queued ones.
+  // It lands on `chunks` itself, so the loop delivers it in arrival order.
+  for (let i = 0; i < chunks.length; i++) events[0](chunks[i]);
+  state.pending = null;
+  state.self[kflushPendingDuplexTLS] = undefined;
+  // Drop the back-reference: the duplex's long-lived 'data' listener holds
+  // `state`, which must not pin the wrapping socket after the flush.
+  state.self = undefined;
+}
+
+// The native SSL engine behind an upgraded Duplex is created by a deferred
+// event-loop task. Buffer 'data' that arrives before it exists (as the
+// GC-owned Buffers they already are) and replay it from the `open` handler.
+function wireDuplexToTLS(self, connection, events) {
+  const state = { self, events, pending: [] as Buffer[] | null };
+  connection.on("data", onDuplexTLSData.bind(null, state));
+  connection.on("end", events[1]);
+  connection.on("drain", events[2]);
+  connection.on("close", events[3]);
+  self[kflushPendingDuplexTLS] = flushPendingDuplexTLS.bind(null, state);
+}
+
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   return kConnectDispatch(self, req, {
@@ -1577,6 +1615,7 @@ function Socket(options?) {
   this._parentWrap = null;
   this[kpendingRead] = undefined;
   this[kupgraded] = null;
+  this[kflushPendingDuplexTLS] = undefined;
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
@@ -2010,10 +2049,7 @@ Socket.prototype.connect = function connect(...args) {
             tls,
             socket: this[khandlers],
           });
-          connection.on("data", events[0]);
-          connection.on("end", events[1]);
-          connection.on("drain", events[2]);
-          connection.on("close", events[3]);
+          wireDuplexToTLS(this, connection, events);
           this._handle = result;
         } else {
           // upgradeTLS requires an established socket; a socket that is still
@@ -2060,10 +2096,7 @@ Socket.prototype.connect = function connect(...args) {
                   tls,
                   socket: this[khandlers],
                 });
-                connection.on("data", events[0]);
-                connection.on("end", events[1]);
-                connection.on("drain", events[2]);
-                connection.on("close", events[3]);
+                wireDuplexToTLS(this, connection, events);
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
@@ -2361,10 +2394,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
       socket: serverHandlersFor(this),
       isServer: true,
     });
-    connection.on("data", events[0]);
-    connection.on("end", events[1]);
-    connection.on("drain", events[2]);
-    connection.on("close", events[3]);
+    wireDuplexToTLS(this, connection, events);
     this[kupgraded] = connection;
     this._handle = result;
     return;

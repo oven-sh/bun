@@ -3451,19 +3451,27 @@ impl VirtualMachine {
                 // (so Bun.serve keeps serving after a handler error). Take
                 // the fatal path here like Mode::Throw — Node's default has
                 // been throw since v15, and an uncaughtException listener can
-                // still claim it.
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
-                if self.uncaught_exception_fatal(
-                    global_object,
-                    wrapped,
-                    UncaughtExceptionOrigin::Rejection,
-                ) {
-                    drain(self);
-                    return;
-                }
-                if self.event_loop_mut().drain_microtasks().is_err() {
-                    return;
+                // still claim it. Watch/hot mode skips the uncaught machinery
+                // entirely: the reload path (report_exception_in_hot_reloaded
+                // _module_if_needed) routes every reloaded entry rejection
+                // through here, and the reload driver owns recovery — the
+                // plain counter/print tail below keeps the watcher ticking.
+                if self.hot_reload == 0 {
+                    let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
+                        global_object,
+                        reason,
+                    );
+                    if self.uncaught_exception_fatal(
+                        global_object,
+                        wrapped,
+                        UncaughtExceptionOrigin::Rejection,
+                    ) {
+                        drain(self);
+                        return;
+                    }
+                    if self.event_loop_mut().drain_microtasks().is_err() {
+                        return;
+                    }
                 }
             }
             Mode::None => {
@@ -3490,13 +3498,19 @@ impl VirtualMachine {
                 return;
             }
             Mode::Strict => {
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
-                let _ = self.uncaught_exception_fatal(
-                    global_object,
-                    wrapped,
-                    UncaughtExceptionOrigin::Rejection,
-                );
+                // Watch/hot mode: the reload driver owns recovery (see the
+                // Mode::Bun comment); skip the uncaught machinery.
+                if self.hot_reload == 0 {
+                    let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
+                        global_object,
+                        reason,
+                    );
+                    let _ = self.uncaught_exception_fatal(
+                        global_object,
+                        wrapped,
+                        UncaughtExceptionOrigin::Rejection,
+                    );
+                }
                 let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
@@ -3509,15 +3523,20 @@ impl VirtualMachine {
                     drain(self);
                     return;
                 }
-                let wrapped =
-                    wrap_unhandled_rejection_error_for_uncaught_exception(global_object, reason);
-                if self.uncaught_exception_fatal(
-                    global_object,
-                    wrapped,
-                    UncaughtExceptionOrigin::Rejection,
-                ) {
-                    drain(self);
-                    return;
+                // Watch/hot mode: see the Mode::Bun comment.
+                if self.hot_reload == 0 {
+                    let wrapped = wrap_unhandled_rejection_error_for_uncaught_exception(
+                        global_object,
+                        reason,
+                    );
+                    if self.uncaught_exception_fatal(
+                        global_object,
+                        wrapped,
+                        UncaughtExceptionOrigin::Rejection,
+                    ) {
+                        drain(self);
+                        return;
+                    }
                 }
                 // continue to default handler — but RETURN if this drain
                 // errors (the VM is dead; don't bump the counter or invoke the

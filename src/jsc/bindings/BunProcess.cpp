@@ -1207,6 +1207,14 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
+extern "C" bool Bun__hasUncaughtExceptionCaptureCallback(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))
+        return false;
+    JSValue cb = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject)->processObject()->getUncaughtExceptionCaptureCallback();
+    return !cb.isEmpty() && cb.isCell();
+}
+
 extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue exception, int isRejection)
 {
     if (!lexicalGlobalObject->inherits(Zig::GlobalObject::info()))

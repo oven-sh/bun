@@ -275,7 +275,9 @@ inline JSC::EncodedJSValue JSEventEmitter::addListener(JSC::JSGlobalObject* lexi
     args.append(argument0.value());
     args.append(argument1.value());
 
-    JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.emitForBindings(WTF::move(newListenerEventType), WTF::move(args)); }));
+    // node parity: a throwing `newListener` handler aborts the registration and
+    // the throw propagates out of `.on()`.
+    impl.emitPropagatingExceptions(newListenerEventType, args);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     // then, add the listener

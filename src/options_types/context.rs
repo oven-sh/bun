@@ -529,6 +529,62 @@ pub struct DebuggerEnable {
     pub set_breakpoint_on_first_line: bool,
 }
 
+/// Process-wide default for `fetch()`'s record/replay store. Set by
+/// `--fetch-cache` / `[fetch] cache` in bunfig; a per-call `store` option
+/// overrides it.
+#[derive(Clone, Default)]
+pub enum FetchStoreConfig {
+    #[default]
+    None,
+    Dir {
+        path: Box<[u8]>,
+    },
+    Memory {
+        ttl_ms: u32,
+        max: u32,
+    },
+}
+
+impl FetchStoreConfig {
+    /// Parse the `--fetch-cache=` value / bunfig string form:
+    /// `"memory"` or a directory path. Relative paths are resolved against
+    /// the current cwd here (startup time) so a later `process.chdir()` does
+    /// not retarget the store.
+    pub fn parse(value: &[u8]) -> Self {
+        if value.is_empty() {
+            return FetchStoreConfig::None;
+        }
+        if value == b"memory" {
+            return FetchStoreConfig::Memory { ttl_ms: 0, max: 0 };
+        }
+        FetchStoreConfig::Dir {
+            path: resolve_against_cwd(value),
+        }
+    }
+}
+
+/// Resolve `path` to absolute against the process cwd. Shared by the CLI /
+/// bunfig parser and the per-call `store: { path }` option so both freeze the
+/// directory at the moment the user names it.
+pub fn resolve_against_cwd(path: &[u8]) -> Box<[u8]> {
+    if bun_paths::is_absolute(path) {
+        return path.to_vec().into_boxed_slice();
+    }
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd = match bun_sys::getcwd(&mut cwd_buf) {
+        Ok(len) => &cwd_buf[..len],
+        Err(_) => return path.to_vec().into_boxed_slice(),
+    };
+    let mut out = bun_paths::path_buffer_pool::get();
+    bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+        cwd,
+        &mut out,
+        &[path],
+    )
+    .to_vec()
+    .into_boxed_slice()
+}
+
 pub struct RuntimeOptions {
     pub smol: bool,
     pub debugger: Debugger,
@@ -539,6 +595,7 @@ pub struct RuntimeOptions {
     pub preconnect: Vec<Box<[u8]>>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
+    pub fetch_store: FetchStoreConfig,
     pub dns_result_order: Box<[u8]>,
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
@@ -603,6 +660,7 @@ impl Default for RuntimeOptions {
             preconnect: Vec::new(),
             experimental_http2_fetch: false,
             experimental_http3_fetch: false,
+            fetch_store: FetchStoreConfig::None,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
             preserve_symlinks_main: false,

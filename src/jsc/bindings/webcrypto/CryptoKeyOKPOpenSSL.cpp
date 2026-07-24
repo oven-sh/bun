@@ -279,19 +279,24 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
     if (version > 1)
         return nullptr;
 
+    auto reportKeyTypeMismatch = [&] {
+        if (keyTypeMismatch && parsesAsPrivateKeyInfo(keyData))
+            *keyTypeMismatch = true;
+    };
+
     // Read AlgorithmIdentifier SEQUENCE; its only content is the 5-byte OID
     // (RFC 8410: the parameters MUST be absent)
     if (keyData.size() - index < 1 || keyData[index++] != SequenceMark)
         return nullptr;
     auto algorithmLength = readDERLength(keyData, index);
-    if (!algorithmLength || *algorithmLength != 5 || keyData.size() - index < 5)
+    if (!algorithmLength || *algorithmLength != 5 || keyData.size() - index < 5) {
+        // a well-formed key of another type lands here (RSA and EC
+        // AlgorithmIdentifiers are longer), so keep the richer error
+        reportKeyTypeMismatch();
         return nullptr;
+    }
 
     // Read OID
-    auto reportKeyTypeMismatch = [&] {
-        if (keyTypeMismatch && parsesAsPrivateKeyInfo(keyData))
-            *keyTypeMismatch = true;
-    };
     if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte) {
         reportKeyTypeMismatch();
         return nullptr;

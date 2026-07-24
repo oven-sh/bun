@@ -31,6 +31,7 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
+    safe fn JSC__VM__collectAsyncFull(vm: &VM);
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -104,6 +105,10 @@ impl VM {
 
     pub fn collect_async(&self) {
         JSC__VM__collectAsync(self)
+    }
+
+    pub fn collect_async_full(&self) {
+        JSC__VM__collectAsyncFull(self)
     }
 
     pub fn set_execution_forbidden(&self, forbidden: bool) {

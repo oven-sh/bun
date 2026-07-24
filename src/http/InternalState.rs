@@ -53,6 +53,10 @@ pub struct InternalState<'a> {
     /// the post-redirect target). Captured on the HTTP thread at the failure
     /// so the JS side never dereferences the client's borrowed URL buffers.
     pub dns_hostname: Option<Box<[u8]>>,
+    /// Owned copy of the uSockets handshake-failure sentinel when `fail` is
+    /// `TLSHandshakeFailed`. Carries the OpenSSL reason string so the JS
+    /// side can report Node's `ERR_SSL_*` code instead of a generic failure.
+    pub tls_handshake_error: Option<crate::TLSHandshakeError>,
     pub request_stage: HTTPStage,
     pub response_stage: HTTPStage,
     pub certificate_info: Option<CertificateInfo>,
@@ -140,6 +144,7 @@ impl Default for InternalState<'_> {
             fail: None,
             dns_error: 0,
             dns_hostname: None,
+            tls_handshake_error: None,
             request_stage: HTTPStage::Pending,
             response_stage: HTTPStage::Pending,
             certificate_info: None,

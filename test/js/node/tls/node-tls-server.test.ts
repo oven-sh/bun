@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -974,7 +974,6 @@ it("ALPNCallback returning an offered protocol completes the handshake with it",
 // holds that flight until the on_handshake callback returns.
 // Covers test/js/node/test/parallel/test-tls-close-error.js.
 it("client verify-reject prevents the server seeing a completed handshake", async () => {
-  const { bunExe, bunEnv } = require("harness");
   const keys = join(import.meta.dir, "..", "test", "fixtures", "keys");
   const script = `
     const tls = require("tls");
@@ -984,27 +983,32 @@ it("client verify-reject prevents the server seeing a completed handshake", asyn
       cert: fs.readFileSync(${JSON.stringify(join(keys, "agent1-cert.pem"))}),
     });
     let events = [];
+    let serverDone;
     server.on("secureConnection", s => {
       events.push(["secureConnection", s.authorized]);
       s.end();
+      serverDone?.();
     });
-    server.on("tlsClientError", err => events.push(["tlsClientError", err.code ?? err.message]));
-    const dial = rejectUnauthorized =>
-      new Promise(done => {
-        events = [];
-        const c = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized });
-        c.on("secureConnect", () => events.push(["client-secureConnect", c.authorized]));
-        c.on("error", e => events.push(["client-error", e.code ?? e.message]));
+    server.on("tlsClientError", err => {
+      events.push(["tlsClientError", err.code ?? err.message]);
+      serverDone?.();
+    });
+    const dial = async rejectUnauthorized => {
+      events = [];
+      const serverTerminal = new Promise(r => (serverDone = r));
+      const c = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized });
+      c.on("secureConnect", () => events.push(["client-secureConnect", c.authorized]));
+      c.on("error", e => events.push(["client-error", e.code ?? e.message]));
+      const clientClosed = new Promise(r =>
         c.on("close", hadError => {
           events.push(["client-close", hadError]);
-          // Give the server a turn to observe the client's close.
-          setImmediate(() => setImmediate(() => {
-            console.log(JSON.stringify(events));
-            c.destroy();
-            done();
-          }));
-        });
-      });
+          r();
+        }),
+      );
+      await Promise.all([serverTerminal, clientClosed]);
+      console.log(JSON.stringify(events));
+      c.destroy();
+    };
     server.listen(0, "127.0.0.1", async () => {
       await dial(true);
       await dial(false);

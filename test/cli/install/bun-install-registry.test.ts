@@ -3663,7 +3663,10 @@ describe("hoisting", async () => {
       },
     ];
     for (const { dependencies, expected, situation } of peerTests) {
-      test.todoIf(isFlaky && isMacOS && situation === "peer ^1.0.2")(
+      // `peer *` matches every a-dep version already in the tree, so the hoisted
+      // choice depends on manifest-fetch completion order; observed flaking to
+      // "1.0.9" on Windows (11 aarch64, 2019 x64) and debian aarch64.
+      test.todoIf(isFlaky && (situation === "peer *" || (isMacOS && situation === "peer ^1.0.2")))(
         `it should hoist ${expected} when ${situation}`,
         async () => {
           await writeFile(

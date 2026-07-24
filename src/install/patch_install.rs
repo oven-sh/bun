@@ -366,7 +366,8 @@ impl PatchTask {
                                 _ => Authorization::NoAuthorization,
                             },
                         )?
-                        .unwrap_or_else(|| unreachable!());
+                        .unwrap_or_else(|| unreachable!())
+                        .as_ptr();
                     if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
                         package_manager::enqueue_network_task(manager, network_task);

@@ -1,5 +1,6 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::cell::Cell;
+use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
@@ -615,18 +616,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
-                // reshaped for borrowck — `extract` borrows
-                // `task.callback`; the body also calls `&mut self` methods on
-                // `task` (`reset_streaming_for_retry`,
-                // `discard_unused_streaming_state`) which only touch disjoint
-                // fields. Detach via raw pointer (mirroring the
-                // `PackageManifest` arm above) so those calls don't overlap.
-                let extract_ptr: *mut ExtractTarball = extract;
-                // SAFETY: `extract` lives in `task.callback`, which outlives
-                // this match arm; the methods called on `task` below never
-                // touch `task.callback` (see `NetworkTask::reset_streaming_*`
-                // / `discard_unused_streaming_state`).
-                let extract = unsafe { &mut *extract_ptr };
+                // `extract` borrows `task.callback`; the streaming helpers
+                // below are associated fns over disjoint `task.*` fields so
+                // the borrow can stay live.
+                //
                 // Streaming extraction never pushes its NetworkTask to
                 // `async_network_task_queue` once committed — the
                 // extract Task published by `TarballStream.finish()`
@@ -665,7 +658,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for
                         // the retry attempt.
-                        task.reset_streaming_for_retry();
+                        NetworkTask::reset_streaming_for_retry(
+                            task.streaming_committed,
+                            &mut task.tarball_stream,
+                            &mut task.response,
+                        );
                         enqueue::enqueue_network_task(manager, task_ptr);
 
                         if manager.options.log_level.is_verbose() {
@@ -693,7 +690,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 // pre-created Task goes back to the pool and the stream
                 // buffers are freed. The buffered `enqueueExtractNPMPackage`
                 // path below allocates its own Task.
-                task.discard_unused_streaming_state(manager);
+                NetworkTask::discard_unused_streaming_state(
+                    task.streaming_committed,
+                    &mut task.tarball_stream,
+                    &mut task.streaming_extract_task,
+                    &mut manager.preallocated_resolve_tasks,
+                );
 
                 let Some(metadata) = task.response.metadata.as_ref() else {
                     let err = task
@@ -1336,52 +1338,40 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
                     let dep_id = clone.dep_id;
-                    // reshaped for borrowck — copy the small `String` handles
-                    // + behavior bit so
-                    // the `&manager.lockfile` borrow doesn't extend across the
-                    // `&mut manager` calls (`has_created_network_task`,
-                    // `enqueue_git_checkout`) below; detach the slice backing
-                    // through `string_buf_ptr` (matching the
-                    // `PackageManifest`-arm `name` detach pattern above).
+                    // Copy the small `String` handles + behavior bit so the
+                    // `&manager.lockfile` borrow doesn't extend across the
+                    // `&mut manager` calls below.
                     let (dep_name_handle, is_required) = {
                         let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
                         (dep.name, dep.behavior.is_required())
                     };
-                    // SAFETY: `clone.res.tag == Git` — git-clone tasks are only
+                    // `clone.res.tag == Git` — git-clone tasks are only
                     // enqueued for git resolutions; `value.git` is the active arm.
                     let git = *clone.res.git();
-                    // SAFETY: `string_bytes` lives as long as `manager.lockfile`
-                    // and is not reallocated while resolve tasks are draining.
-                    let string_buf = unsafe {
-                        bun_ptr::detach_lifetime(manager.lockfile.buffers.string_bytes.as_slice())
-                    };
-                    let dep_name = dep_name_handle.slice(string_buf);
-                    let committish = git.committish.slice(string_buf);
-                    let repo = git.repo.slice(string_buf);
 
                     use crate::repository_real::RepositoryExt as _;
                     let resolved = crate::repository_real::Repository::find_commit(
                         manager.env_mut(),
                         manager.log_mut(),
                         repo_fd,
-                        dep_name,
-                        committish,
+                        manager.lockfile.str(&dep_name_handle),
+                        manager.lockfile.str(&git.committish),
                         task.id,
                     )?;
 
-                    let checkout_id = Task::Id::for_git_checkout(repo, &resolved);
+                    let checkout_id =
+                        Task::Id::for_git_checkout(manager.lockfile.str(&git.repo), &resolved);
 
                     if manager.has_created_network_task(checkout_id, is_required) {
                         continue;
                     }
 
-                    // reshaped for borrowck — split nested `&mut manager`.
                     let queued = enqueue::enqueue_git_checkout(
                         manager,
                         checkout_id,
                         repo_fd,
                         dep_id,
-                        dep_name,
+                        dep_name_handle,
                         &clone.res,
                         &resolved,
                         None,
@@ -1754,8 +1744,8 @@ pub fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool
         .is_some_and(|e| e.failed)
 }
 
-pub fn generate_network_task_for_tarball<'a>(
-    this: &'a mut PackageManager,
+pub fn generate_network_task_for_tarball(
+    this: &mut PackageManager,
     task_id: Task::Id,
     url: &[u8],
     is_required: bool,
@@ -1763,7 +1753,7 @@ pub fn generate_network_task_for_tarball<'a>(
     package: &Package,
     patch_name_and_version_hash: Option<u64>,
     authorization: Authorization,
-) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
+) -> Result<Option<NonNull<NetworkTask>>, ForTarballError> {
     if has_created_network_task(this, task_id, is_required) {
         return Ok(None);
     }
@@ -1892,9 +1882,10 @@ pub fn generate_network_task_for_tarball<'a>(
         }
     }
 
-    // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
-    // sole live handle (see above) and outlives nothing past this return.
-    Ok(Some(unsafe { &mut *net_ptr }))
+    // `net_ptr` is the sole live handle to the freshly-vended pool slot; return
+    // it by pointer so the caller can schedule it alongside other `&mut
+    // PackageManager` borrows without overlapping `this`.
+    Ok(Some(NonNull::new(net_ptr).expect("pool slot is non-null")))
 }
 
 // ──────────────────────────────────────────────────────────────────────────

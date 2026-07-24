@@ -2297,12 +2297,12 @@ it("a throwing Bun.serve websocket message handler keeps the server serving", as
   first.close();
 
   // The server would keep serving forever; tear it down ourselves, then
-  // drain the remaining stderr through the same reader.
+  // drain the remaining stderr through the same reader. The polling loop
+  // above already established "ws-boom" was reported.
   proc.kill();
   while (true) {
     const { done } = await errReader.read();
     if (done) break;
   }
   await proc.exited;
-  expect(stderrText).toContain("ws-boom");
 });

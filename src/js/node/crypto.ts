@@ -11,11 +11,14 @@ const { defineCustomPromisifyArgs } = require("internal/promisify");
 // overloads (randomBytes(size), randomInt(max)) and native validation of a
 // non-callable callback are unchanged.
 function guardLastCallback(native) {
-  return function wrapped() {
+  function wrapped() {
     const last = arguments.length - 1;
     if (last >= 0 && $isCallable(arguments[last])) arguments[last] = guardCallback(arguments[last]);
     return native.$apply(this, arguments);
-  };
+  }
+  Object.$defineProperty(wrapped, "name", { value: native.name, configurable: true });
+  Object.$defineProperty(wrapped, "length", { value: native.length, configurable: true });
+  return wrapped;
 }
 const Writable = require("internal/streams/writable");
 const { CryptoHasher } = Bun;

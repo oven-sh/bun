@@ -885,7 +885,7 @@ async function runTests() {
   }
 
   if (vendorTests?.length) {
-    for (const { cwd: vendorPath, packageManager, testRunner, testPaths } of vendorTests) {
+    for (const { cwd: vendorPath, packageManager, testRunner, testPaths, testArgs } of vendorTests) {
       if (!testPaths.length) {
         continue;
       }
@@ -915,7 +915,7 @@ async function runTests() {
 
         if (testRunner === "bun") {
           await runTest(title, index =>
-            spawnBunTest(execPath, testPath, { cwd: vendorPath, env: { TEST_SERIAL_ID: index } }),
+            spawnBunTest(execPath, testPath, { cwd: vendorPath, args: testArgs, env: { TEST_SERIAL_ID: index } }),
           );
         } else {
           const testRunnerPath = join(cwd, "test", "runners", `${testRunner}.ts`);
@@ -925,7 +925,7 @@ async function runTests() {
           await runTest(title, () =>
             spawnBunTest(execPath, testPath, {
               cwd: vendorPath,
-              args: ["--preload", testRunnerPath],
+              args: ["--preload", testRunnerPath, ...testArgs],
             }),
           );
         }
@@ -1965,6 +1965,7 @@ function getTests(cwd) {
  * @property {string} [testRunner]
  * @property {string[]} [testExtensions]
  * @property {boolean | Record<string, boolean | string>} [skipTests]
+ * @property {Record<string, string>} [skipTestNames]
  */
 
 /**
@@ -1973,6 +1974,7 @@ function getTests(cwd) {
  * @property {string} packageManager
  * @property {string} testRunner
  * @property {string[]} testPaths
+ * @property {string[]} testArgs
  */
 
 /**
@@ -2007,7 +2009,17 @@ async function getVendorTests(cwd) {
 
   return Promise.all(
     relevantVendors.map(
-      async ({ package: name, repository, tag, testPath, testExtensions, testRunner, packageManager, skipTests }) => {
+      async ({
+        package: name,
+        repository,
+        tag,
+        testPath,
+        testExtensions,
+        testRunner,
+        packageManager,
+        skipTests,
+        skipTestNames,
+      }) => {
         const vendorPath = join(cwd, "vendor", name);
 
         if (!existsSync(vendorPath)) {
@@ -2079,11 +2091,24 @@ async function getVendorTests(cwd) {
               filters.some(filter => join(vendorPath, filename).replace(/\\/g, "/").includes(filter)),
           );
 
+        // skipTestNames filters out individual tests by name (vs skipTests which drops whole
+        // files), so a single timing-sensitive upstream test doesn't cost the rest of its file.
+        // `bun test -t` is a regex, so a negative lookahead that rejects any title containing a
+        // skip key leaves everything else matched. --pass-with-no-tests keeps a file that's
+        // fully filtered from exiting 1 and being annotated as a failure.
+        const testArgs = [];
+        const skipNames = skipTestNames ? Object.keys(skipTestNames) : [];
+        if (skipNames.length) {
+          const escaped = skipNames.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+          testArgs.push("--test-name-pattern", `^(?!.*(?:${escaped}))`, "--pass-with-no-tests");
+        }
+
         return {
           cwd: vendorPath,
           packageManager: packageManager || "bun",
           testRunner: testRunner || "bun",
           testPaths,
+          testArgs,
         };
       },
     ),

@@ -57,7 +57,6 @@
 #include <wtf/URL.h>
 #include "ErrorCode.h"
 #include "NodeValidator.h"
-#include <JavaScriptCore/PropertyNameArray.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -230,25 +229,32 @@ static const HashTableValue JSEventPrototypeTableValues[] = {
     { "BUBBLING_PHASE"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
 };
 
-// node prints events as `<constructor name> { type, defaultPrevented, cancelable, timeStamp }`
-// and collapses them to the bare constructor name once the depth budget is spent.
+// node collapses an event to its bare constructor name once the depth budget
+// is spent (`util.inspect(new Event('x'), { depth: -1 })` is `'Event'`, not
+// `'[Event]'`). Returning `this` for every other depth hands the value back to
+// the inspector unchanged, so Bun's own richer event formatting is untouched.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L200
 JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
-    auto* event = JSEvent::toWrapped(vm, callFrame->thisValue());
+    JSValue thisValue = callFrame->thisValue();
+    auto* event = JSEvent::toWrapped(vm, thisValue);
     if (!event) [[unlikely]] {
         return Bun::ERR::INVALID_THIS(throwScope, lexicalGlobalObject, "Event"_s);
     }
-    JSObject* thisObject = callFrame->thisValue().getObject();
+
+    double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!(depth < 0)) {
+        return JSValue::encode(thisValue);
+    }
 
     // Subclasses print their own name, so this reads `this.constructor.name`
     // rather than the wrapper's class name.
     String name = "Event"_s;
-    JSValue constructorValue = thisObject->get(lexicalGlobalObject, vm.propertyNames->constructor);
+    JSValue constructorValue = thisValue.getObject()->get(lexicalGlobalObject, vm.propertyNames->constructor);
     RETURN_IF_EXCEPTION(throwScope, {});
     if (constructorValue.isObject()) {
         JSValue nameValue = constructorValue.getObject()->get(lexicalGlobalObject, vm.propertyNames->name);
@@ -258,61 +264,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * 
             RETURN_IF_EXCEPTION(throwScope, {});
         }
     }
-
-    double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    if (!(depth >= 0)) {
-        return JSValue::encode(jsString(vm, name));
-    }
-
-    JSObject* options = callFrame->argument(1).toObject(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    PropertyNameArrayBuilder optionNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-    options->getPropertyNames(lexicalGlobalObject, optionNames, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    JSObject* newOptions = constructEmptyObject(lexicalGlobalObject);
-    Identifier depthIdentifier = Identifier::fromString(vm, "depth"_s);
-    JSValue innerDepth = jsNull();
-    for (size_t i = 0; i < optionNames.size(); i++) {
-        auto propertyName = optionNames[i];
-        JSValue value = options->get(lexicalGlobalObject, propertyName);
-        RETURN_IF_EXCEPTION(throwScope, {});
-        if (propertyName == depthIdentifier) {
-            // `depth: null` means unlimited and must stay null.
-            if (!value.isUndefinedOrNull()) {
-                double outerDepth = value.toNumber(lexicalGlobalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                innerDepth = jsNumber(outerDepth - 1);
-            }
-            continue;
-        }
-        newOptions->putDirect(vm, propertyName, value, 0);
-    }
-    newOptions->putDirect(vm, depthIdentifier, innerDepth, 0);
-
-    auto* context = globalObject->scriptExecutionContext();
-    JSObject* fields = constructEmptyObject(lexicalGlobalObject);
-    fields->putDirect(vm, Identifier::fromString(vm, "type"_s), jsString(vm, event->type().string()), 0);
-    fields->putDirect(vm, Identifier::fromString(vm, "defaultPrevented"_s), jsBoolean(event->defaultPrevented()), 0);
-    fields->putDirect(vm, Identifier::fromString(vm, "cancelable"_s), jsBoolean(event->cancelable()), 0);
-    fields->putDirect(vm, Identifier::fromString(vm, "timeStamp"_s),
-        jsNumber(context ? event->timeStampForBindings(*context) : 0.0), 0);
-
-    JSFunction* utilInspect = globalObject->utilInspectFunction();
-    auto callData = JSC::getCallData(utilInspect);
-    MarkedArgumentBuffer arguments;
-    arguments.append(fields);
-    arguments.append(newOptions);
-    JSValue inspectResult = JSC::profiledCall(globalObject, ProfilingReason::API, utilInspect, callData, jsUndefined(), arguments);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    auto* inspectString = inspectResult.toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto inspectStringView = inspectString->view(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(jsString(vm, makeString(name, ' ', inspectStringView.data))));
+    return JSValue::encode(jsString(vm, name));
 }
 
 const ClassInfo JSEventPrototype::s_info = { "Event"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventPrototype) };

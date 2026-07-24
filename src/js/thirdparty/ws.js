@@ -795,18 +795,20 @@ class BunWebSocketMocked extends EventEmitter {
   #extensions;
   #bufferedAmount = 0;
   #binaryType = "arraybuffer";
+  #maxPayload = 0;
 
   #onclose;
   #onerror;
   #onmessage;
   #onopen;
 
-  constructor(url, protocol, extensions, binaryType) {
+  constructor(url, protocol, extensions, binaryType, maxPayload) {
     super();
     this.#ws = null;
     this.#state = ReadyState_CONNECTING;
     this.#url = url;
     this.#bufferedAmount = 0;
+    this.#maxPayload = maxPayload > 0 ? maxPayload : 0;
     binaryType = binaryType || "arraybuffer";
     if (binaryType !== "nodebuffer" && binaryType !== "blob" && binaryType !== "arraybuffer") {
       throw new TypeError("binaryType must be either 'blob', 'arraybuffer' or 'nodebuffer'");
@@ -844,6 +846,25 @@ class BunWebSocketMocked extends EventEmitter {
 
   #message(ws, message) {
     this.#ws = ws;
+
+    const maxPayload = this.#maxPayload;
+    if (maxPayload > 0) {
+      const byteLength = typeof message === "string" ? Buffer.byteLength(message) : message.byteLength;
+      if (byteLength > maxPayload) {
+        const error = new RangeError("Max payload size exceeded");
+        error.code = "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH";
+        // Match ws's receiverOnError: mark CLOSING before emitting so the
+        // listener sees readyState CLOSING (send/close become no-ops), then
+        // always send the 1009 frame (error before close; survives a throw).
+        this.#state = ReadyState_CLOSING;
+        try {
+          this.emit("error", error);
+        } finally {
+          this.#ws?.close(1009, "");
+        }
+        return;
+      }
+    }
 
     let isBinary = false;
     if (typeof message === "string") {
@@ -1355,7 +1376,7 @@ class WebSocketServer extends EventEmitter {
         ? this.options.handleProtocols(protocols, request)
         : protocols.values().next().value;
     }
-    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer");
+    const ws = new BunWebSocketMocked(request.url, protocol, extensions, "nodebuffer", this.options.maxPayload);
 
     const headers = ["HTTP/1.1 101 Switching Protocols", "Upgrade: websocket", "Connection: Upgrade"];
     this.emit("headers", headers, request);

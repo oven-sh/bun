@@ -102,11 +102,13 @@ impl GarbageCollectionController {
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
-        let env = vm.env_loader_opt();
-
+        // Read from the process environment, not `vm.env_loader_opt()`: init
+        // runs from `ensure_waker` before `Transpiler::init` populates the
+        // dotenv loader, so loader reads here always came back empty and the
+        // BUN_GC_* knobs were silently ignored.
         let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<i32>(timer) {
+        if let Some(parsed) = bun_core::env_var::BUN_GC_TIMER_INTERVAL::get() {
+            if let Ok(parsed) = i32::try_from(parsed) {
                 if parsed > 0 {
                     gc_timer_interval = parsed;
                 }
@@ -114,16 +116,14 @@ impl GarbageCollectionController {
         }
         self.gc_timer_interval = gc_timer_interval;
 
-        if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
-            if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
-                if parsed >= 0 {
-                    crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
-                        .store(parsed, core::sync::atomic::Ordering::Relaxed);
-                }
+        if let Some(parsed) = bun_core::env_var::BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS::get() {
+            if let Ok(parsed) = c_int::try_from(parsed) {
+                crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
+                    .store(parsed, core::sync::atomic::Ordering::Relaxed);
             }
         }
 
-        self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
+        self.disabled = bun_core::env_var::BUN_GC_TIMER_DISABLE::get().unwrap_or(false);
     }
 
     /// A completed HTTP transaction asked us to look at the heap. We do not act here: the
@@ -220,15 +220,25 @@ impl GarbageCollectionController {
 
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {
-                // When memory usage is not stable, run the GC more.
+                // When memory usage is not stable, keep watching at the fast cadence.
                 if this_heap_size != prev {
                     self.schedule_gc_timer();
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
                 } else {
                     self.gc_timer_state = GCTimerState::Pending;
                 }
-                vm.collect_async();
-                self.gc_last_heap_size = this_heap_size;
+                // Only force a collection when the heap grew meaningfully since
+                // the last one. An unconditional collect here fires every ~16ms
+                // under a steady request load (any heap-size jitter re-arms the
+                // timer), and each forced eden GC re-marks the remembered set:
+                // O(live heap) work per 16ms once a large long-lived object is
+                // dirtied, which can eat 30%+ of request CPU. Steady state
+                // belongs to JSC's allocation-based heuristics plus the 1s/30s
+                // repeating timer; this path only reacts to real growth.
+                if this_heap_size > prev.saturating_add(prev / 4) {
+                    vm.collect_async();
+                    self.gc_last_heap_size = this_heap_size;
+                }
             }
             GCTimerState::Pending => {
                 if this_heap_size != prev {

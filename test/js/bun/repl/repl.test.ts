@@ -1,7 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { chmodSync, statSync } from "node:fs";
+import { chmodSync, statSync, symlinkSync } from "node:fs";
 import path from "path";
 
 // Helper to run REPL with piped stdin (non-TTY mode) and capture output
@@ -936,6 +936,93 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("true\n");
       expect(exitCode).toBe(0);
     });
+  });
+});
+
+// `bun --interactive` is Node.js compat for `node --interactive`: it forces
+// the REPL even when stdin is not a TTY. Before this was wired up, bun printed
+// the help text and exited immediately, so the parent's stdin writes in
+// test/js/node/test/parallel/test-repl-close.js raced the closing pipe and hit
+// EPIPE on Windows.
+describe.concurrent("bun --interactive", () => {
+  async function runInteractive(input: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive"],
+      stdin: Buffer.from(input),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stripAnsi(stdout), stderr: stripAnsi(stderr), exitCode };
+  }
+
+  test("starts the REPL instead of printing help", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive(".exit\n");
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).not.toContain("Usage: bun <command>");
+    expect(stderr).not.toMatch(/unrecognized|unknown/i);
+    expect(exitCode).toBe(0);
+  });
+
+  test("reads piped stdin and evaluates an expression", async () => {
+    const { stdout, exitCode } = await runInteractive("6133 * 7\n.exit\n");
+    expect(stdout).toContain("42931");
+    expect(exitCode).toBe(0);
+  });
+
+  test("handles `await null;` then .exit without an uncaught error (test-repl-close)", async () => {
+    const { stdout, stderr, exitCode } = await runInteractive("await null;\n.exit\n");
+    expect(stdout + stderr).not.toMatch(/Uncaught Error/);
+    // The evaluated result is printed as `null` on its own line; match that
+    // rather than the echoed input (which also contains the substring "null").
+    expect(stdout).toMatch(/\nnull\r?\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("-e still wins over --interactive", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive", "-e", "console.log('from eval')"],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stripAnsi(stdout), exitCode }).toEqual({ stdout: "from eval\n", exitCode: 0 });
+    expect(stripAnsi(stdout + stderr)).not.toContain("Welcome to Bun");
+  });
+
+  test("a script positional still wins over --interactive", async () => {
+    using dir = tempDir("interactive-positional", {
+      "script.js": `console.log("from script");`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--interactive", "script.js"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stripAnsi(stdout), exitCode }).toEqual({ stdout: "from script\n", exitCode: 0 });
+    expect(stripAnsi(stdout + stderr)).not.toContain("Welcome to Bun");
+  });
+
+  test.skipIf(isWindows)("node shim: --interactive starts the REPL instead of erroring", async () => {
+    using dir = tempDir("interactive-node-shim", {});
+    const link = path.join(String(dir), "node");
+    symlinkSync(bunExe(), link);
+    await using proc = Bun.spawn({
+      cmd: [link, "--interactive"],
+      stdin: Buffer.from(".exit\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...bunEnv, TERM: "dumb", NO_COLOR: "1" },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stripAnsi(stderr)).not.toContain("does not support a repl");
+    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(exitCode).toBe(0);
   });
 });
 

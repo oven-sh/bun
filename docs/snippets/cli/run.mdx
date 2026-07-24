@@ -66,6 +66,10 @@ bun run <file or script>
   Use less memory, but run garbage collection more often
 </ParamField>
 
+<ParamField path="--interactive" type="boolean">
+  Start a REPL even if stdin is not a TTY (like <code>node --interactive</code>)
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>

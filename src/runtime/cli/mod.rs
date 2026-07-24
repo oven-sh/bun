@@ -1444,6 +1444,17 @@ pub mod command {
             Global::exit(1);
         }
 
+        // `node --interactive` forces the REPL even when stdin is not a TTY.
+        // A script positional or -e/-p still win; bare `--interactive` enters
+        // the REPL instead of printing help.
+        if tag == Tag::AutoCommand
+            && ctx.runtime_options.interactive
+            && ctx.positionals.is_empty()
+            && ctx.runtime_options.eval.script.is_empty()
+        {
+            return super::repl_command::ReplCommand::exec(ctx);
+        }
+
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
             return run_command::RunCommand::exec_eval(ctx);
         }
@@ -1506,6 +1517,14 @@ pub mod command {
     #[inline(never)]
     fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::RunAsNodeCommand, log)?;
+        // `node --interactive` forces the REPL; route the shim the same way
+        // instead of hitting the "does not support a repl" error.
+        if ctx.runtime_options.interactive
+            && ctx.positionals.is_empty()
+            && ctx.runtime_options.eval.script.is_empty()
+        {
+            return super::repl_command::ReplCommand::exec(ctx);
+        }
         run_command::RunCommand::exec_as_if_node(ctx)
     }
 

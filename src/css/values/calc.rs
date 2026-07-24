@@ -443,13 +443,9 @@ impl<V: CalcValue> Calc<V> {
                 Self::parse_math_fn(
                     i,
                     (),
-                    |_, a, b| {
-                        // Floored modulo: result takes the sign of the divisor.
-                        // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
-                        // dividend) and `rem_euclid` is non-negative, so neither matches for
-                        // negative `b` — use the explicit floor formula.
-                        a - b * (a / b).floor()
-                    },
+                    // CSS Values 4: rem(A, B) takes the sign of A (truncated division),
+                    // which is exactly Rust's `%` on f32.
+                    |_, a, b| a % b,
                     |_, a, b| MathFunction::Rem {
                         dividend: a,
                         divisor: b,

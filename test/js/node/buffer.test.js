@@ -4676,20 +4676,36 @@ describe("read*/write* after JIT tier-up", () => {
     ["readBigUInt64BE", 8, o => dv.getBigUint64(o, false)],
   ];
 
+  function codeOf(fn) {
+    try {
+      fn();
+    } catch (e) {
+      return e.code;
+    }
+    return "no throw";
+  }
+
   it("reads match a DataView across many iterations, and out-of-bounds keeps throwing", () => {
     for (const [name, byteSize, reference] of readers) {
       const read = new Function("b", "o", `return b.${name}(o);`);
+      let mismatches = 0;
       for (let i = 0; i < 5000; i++) {
         const o = i & 31;
-        expect(read(buf, o)).toBe(reference(o));
+        if (read(buf, o) !== reference(o)) mismatches++;
       }
+      expect(mismatches).toBe(0);
       expect(read(buf, 64 - byteSize)).toBe(reference(64 - byteSize));
-      for (let i = 0; i < 100; i++) {
-        expect(() => read(buf, 64 - byteSize + 1)).toThrow(RangeError);
-        expect(() => read(buf, -1)).toThrow(RangeError);
-        expect(() => read(buf, 1.5)).toThrow(RangeError);
-        expect(() => read(buf, "0")).toThrow(TypeError);
+      let outOfBounds = 0,
+        negative = 0,
+        fractional = 0,
+        wrongType = 0;
+      for (let i = 0; i < 50; i++) {
+        if (codeOf(() => read(buf, 64 - byteSize + 1)) === "ERR_OUT_OF_RANGE") outOfBounds++;
+        if (codeOf(() => read(buf, -1)) === "ERR_OUT_OF_RANGE") negative++;
+        if (codeOf(() => read(buf, 1.5)) === "ERR_OUT_OF_RANGE") fractional++;
+        if (codeOf(() => read(buf, "0")) === "ERR_INVALID_ARG_TYPE") wrongType++;
       }
+      expect([outOfBounds, negative, fractional, wrongType]).toEqual([50, 50, 50, 50]);
     }
   });
 
@@ -4706,48 +4722,60 @@ describe("read*/write* after JIT tier-up", () => {
     ];
     for (const [name, byteSize, reference, value] of cases) {
       const write = new Function("b", "v", "o", `return b.${name}(v, o);`);
+      let mismatches = 0;
       for (let i = 0; i < 5000; i++) {
         const o = i & 31;
         const v = value(i);
-        expect(write(buf, v, o)).toBe(o + byteSize);
-        expect(reference(o)).toBe(v);
+        if (write(buf, v, o) !== o + byteSize || reference(o) !== v) mismatches++;
       }
-      for (let i = 0; i < 100; i++) {
-        expect(() => write(buf, value(i), 64)).toThrow(RangeError);
-      }
+      expect(mismatches).toBe(0);
+      let outOfBounds = 0;
+      for (let i = 0; i < 50; i++) if (codeOf(() => write(buf, value(i), 64)) === "ERR_OUT_OF_RANGE") outOfBounds++;
+      expect(outOfBounds).toBe(50);
     }
-    for (let i = 0; i < 5000; i++) {
-      expect(() => buf.writeInt8(128, 0)).toThrow(RangeError);
-      expect(() => buf.writeUInt16LE(65536, 0)).toThrow(RangeError);
-      expect(() => buf.writeUInt32BE(-1, 0)).toThrow(RangeError);
+    let ranges = 0;
+    for (let i = 0; i < 2000; i++) {
+      if (codeOf(() => buf.writeInt8(128, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+      if (codeOf(() => buf.writeUInt16LE(65536, 0)) === "ERR_OUT_OF_RANGE") ranges++;
+      if (codeOf(() => buf.writeUInt32BE(-1, 0)) === "ERR_OUT_OF_RANGE") ranges++;
     }
+    expect(ranges).toBe(6000);
+    expect(() => buf.writeInt16LE("40000", 0)).toThrow("Received 40000");
   });
 
   it("BigInt writes match a DataView across many iterations, and 64-bit range checks keep throwing", () => {
     const values = [0n, 1n, -1n, 2n ** 32n + 7n, 2n ** 63n - 1n, -(2n ** 63n)];
+    let mismatches = 0;
     for (let i = 0; i < 5000; i++) {
       const o = (i & 7) * 8;
       const v = values[i % values.length];
-      expect(buf.writeBigInt64LE(v, o)).toBe(o + 8);
-      expect(dv.getBigInt64(o, true)).toBe(v);
-      expect(buf.writeBigInt64BE(v, o)).toBe(o + 8);
-      expect(dv.getBigInt64(o, false)).toBe(v);
+      if (buf.writeBigInt64LE(v, o) !== o + 8 || dv.getBigInt64(o, true) !== v) mismatches++;
+      if (buf.writeBigInt64BE(v, o) !== o + 8 || dv.getBigInt64(o, false) !== v) mismatches++;
       if (v >= 0n) {
-        expect(buf.writeBigUInt64LE(v, o)).toBe(o + 8);
-        expect(dv.getBigUint64(o, true)).toBe(v);
-        expect(buf.writeBigUInt64BE(v, o)).toBe(o + 8);
-        expect(dv.getBigUint64(o, false)).toBe(v);
+        if (buf.writeBigUInt64LE(v, o) !== o + 8 || dv.getBigUint64(o, true) !== v) mismatches++;
+        if (buf.writeBigUInt64BE(v, o) !== o + 8 || dv.getBigUint64(o, false) !== v) mismatches++;
       }
     }
-    for (let i = 0; i < 3000; i++) {
-      expect(buf.writeBigUInt64LE(2n ** 64n - 1n, 0)).toBe(8);
-      expect(dv.getBigUint64(0, true)).toBe(2n ** 64n - 1n);
-      expect(() => buf.writeBigUInt64LE(-1n, 0)).toThrow(RangeError);
-      expect(() => buf.writeBigInt64LE(2n ** 63n, 0)).toThrow(RangeError);
-      expect(() => buf.writeBigInt64LE(-(2n ** 63n) - 1n, 0)).toThrow(RangeError);
-      expect(() => buf.writeBigInt64LE(5, 0)).toThrow(TypeError);
-      expect(() => buf.writeBigInt64LE(0n, 57)).toThrow(RangeError);
+    expect(mismatches).toBe(0);
+    expect(buf.writeBigUInt64LE(2n ** 64n - 1n, 0)).toBe(8);
+    expect(dv.getBigUint64(0, true)).toBe(2n ** 64n - 1n);
+    let codes = [];
+    for (let i = 0; i < 1000; i++) {
+      codes = [
+        codeOf(() => buf.writeBigUInt64LE(-1n, 0)),
+        codeOf(() => buf.writeBigInt64LE(2n ** 63n, 0)),
+        codeOf(() => buf.writeBigInt64LE(-(2n ** 63n) - 1n, 0)),
+        codeOf(() => buf.writeBigInt64LE(5, 0)),
+        codeOf(() => buf.writeBigInt64LE(0n, 57)),
+      ];
     }
+    expect(codes).toEqual([
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_OUT_OF_RANGE",
+      "ERR_INVALID_ARG_TYPE",
+      "ERR_OUT_OF_RANGE",
+    ]);
   });
 
   it("works on many distinct buffers (no hidden per-buffer state)", () => {

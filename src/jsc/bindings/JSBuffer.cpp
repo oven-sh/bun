@@ -3064,19 +3064,13 @@ template<typename I> void write_int64_be(uint8_t* buffer, I value)
     buffer[7] = val[0];
 }
 
-// Fixed-width read* / write* (readInt8 ... writeDoubleBE, plus the BigInt64 reads).
-//
-// These are ordinary host functions, but each is also registered with JSC's BufferAccessorRegistry
-// and carries BufferAccessorIntrinsic (see JSBufferPrototype::finishCreation), so the DFG / FTL
-// compile call sites into a bounds-checked load / store on the receiver's storage and OSR-exit back
-// here for anything they do not speculate. That makes these functions the single source of truth for
-// error behavior: they follow lib/internal/buffer.js's checkBounds() / checkInt() / boundsError() and
-// the fast-path guards of the JS implementation they replace, so the errors (code, message and the
-// order in which arguments are validated) are unchanged.
+// Fixed-width read* / write* (readInt8 ... writeDoubleBE, plus the BigInt64 reads). JSC JITs call
+// sites of these (BufferAccessorIntrinsic) and OSR-exits back here for anything it doesn't speculate,
+// so these functions own the error behavior: they follow lib/internal/buffer.js exactly.
 namespace {
 
-// The receiver check: like the old JS fast path plus $checkBufferRead(), any ArrayBufferView receiver is
-// accepted (byte-length semantics); anything else is ERR_INVALID_ARG_TYPE("buf").
+// Any ArrayBufferView receiver is accepted (byte-length semantics); anything else is
+// ERR_INVALID_ARG_TYPE("buf").
 static JSC::JSArrayBufferView* bufferAccessReceiver(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue)
 {
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(thisValue);
@@ -3097,10 +3091,8 @@ static bool bufferAccessCheckOffsetType(JSC::JSGlobalObject* lexicalGlobalObject
     return true;
 }
 
-// boundsError(offset, byteLength - byteSize) after the fast path failed: reports the same
-// ERR_OUT_OF_RANGE("offset", "an integer" / ">= 0 and <= N") / ERR_BUFFER_OUT_OF_BOUNDS as
-// lib/internal/buffer.js. Returns the byte offset for a value that turns out to be in range
-// (a non-int32 but integral double, e.g. a large offset into a >2GB view).
+// boundsError(offset, byteLength - byteSize): the same ERR_OUT_OF_RANGE / ERR_BUFFER_OUT_OF_BOUNDS as
+// lib/internal/buffer.js. Returns the offset when it is in range after all (an integral double).
 static std::optional<size_t> bufferAccessCheckOffsetBounds(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetValue, size_t byteLength, size_t byteSize)
 {
     double offset = offsetValue.asNumber();
@@ -3238,7 +3230,8 @@ static JSC::EncodedJSValue bufferWrite(JSC::JSGlobalObject* lexicalGlobalObject,
             return !(number < static_cast<double>(std::numeric_limits<T>::min()) || number > static_cast<double>(std::numeric_limits<T>::max()));
     };
     auto throwValueOutOfRange = [&] {
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, static_cast<double>(std::numeric_limits<T>::min()), static_cast<double>(std::numeric_limits<T>::max()), valueValue);
+        // Node reports the coerced number ("Received 40000" for the string "40000"), not the argument.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, static_cast<double>(std::numeric_limits<T>::min()), static_cast<double>(std::numeric_limits<T>::max()), jsNumber(number));
     };
 
     size_t offset;
@@ -3570,62 +3563,62 @@ static const HashTableValue JSBufferPrototypeTableValues[]
         this->putDirect(vm, alias_ident, original, PropertyAttribute::Builtin | 0);              \
     } while (false);
 
-// Registers the fixed-width read* / write* host functions with JSC's DFG/FTL, so a call to one of
-// them on a Buffer (Uint8Array) receiver compiles down to a bounds-checked load / store
-// (BufferReadInt / BufferReadFloat / BufferWrite) that OSR-exits back to the host function for
-// anything it does not speculate. Process-global (the descriptor is a property of the function
-// pointer), so this only has to happen once, before any of the functions is reachable from JS.
+// The accessor descriptor JSC's DFG needs, derived from the same template arguments the host
+// function is instantiated with so the two cannot disagree.
+template<typename T, bool isLittleEndian, bool isWrite>
+static void registerBufferAccessor(JSC::NativeFunction function)
+{
+    JSC::DFG::DataViewData data {};
+    data.byteSize = sizeof(T);
+    data.isSigned = std::is_signed_v<T> && !std::is_floating_point_v<T>;
+    data.isFloatingPoint = std::is_floating_point_v<T>;
+    data.isResizable = false;
+    data.isLittleEndian = triState(isLittleEndian);
+    JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite });
+}
+
+// Process-global (the descriptor belongs to the function pointer): once, before the functions are
+// reachable from JS.
 static void registerBufferAccessorsWithJSC()
 {
     static std::once_flag registered;
     std::call_once(registered, [] {
-        auto registerAccessor = [](JSC::NativeFunction function, uint8_t byteSize, bool isSigned, bool isFloatingPoint, bool isLittleEndian, bool isWrite) {
-            JSC::DFG::DataViewData data {};
-            data.byteSize = byteSize;
-            data.isSigned = isSigned;
-            data.isFloatingPoint = isFloatingPoint;
-            data.isResizable = false;
-            data.isLittleEndian = triState(isLittleEndian);
-            JSC::registerBufferAccessor(JSC::toTagged(function), { data, isWrite });
-        };
-        constexpr bool read = false;
-        constexpr bool write = true;
-        registerAccessor(jsBufferPrototypeFunction_readInt8, 1, true, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readUInt8, 1, false, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readInt16LE, 2, true, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readInt16BE, 2, true, false, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readUInt16LE, 2, false, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readUInt16BE, 2, false, false, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readInt32LE, 4, true, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readInt32BE, 4, true, false, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readUInt32LE, 4, false, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readUInt32BE, 4, false, false, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readFloatLE, 4, false, true, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readFloatBE, 4, false, true, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readDoubleLE, 8, false, true, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readDoubleBE, 8, false, true, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readBigInt64LE, 8, true, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readBigInt64BE, 8, true, false, false, read);
-        registerAccessor(jsBufferPrototypeFunction_readBigUInt64LE, 8, false, false, true, read);
-        registerAccessor(jsBufferPrototypeFunction_readBigUInt64BE, 8, false, false, false, read);
-        registerAccessor(jsBufferPrototypeFunction_writeInt8, 1, true, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeUInt8, 1, false, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeInt16LE, 2, true, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeInt16BE, 2, true, false, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeUInt16LE, 2, false, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeUInt16BE, 2, false, false, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeInt32LE, 4, true, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeInt32BE, 4, true, false, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeUInt32LE, 4, false, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeUInt32BE, 4, false, false, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeFloatLE, 4, false, true, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeFloatBE, 4, false, true, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeDoubleLE, 8, false, true, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeDoubleBE, 8, false, true, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeBigInt64LE, 8, true, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeBigInt64BE, 8, true, false, false, write);
-        registerAccessor(jsBufferPrototypeFunction_writeBigUInt64LE, 8, false, false, true, write);
-        registerAccessor(jsBufferPrototypeFunction_writeBigUInt64BE, 8, false, false, false, write);
+        registerBufferAccessor<int8_t, true, false>(jsBufferPrototypeFunction_readInt8);
+        registerBufferAccessor<uint8_t, true, false>(jsBufferPrototypeFunction_readUInt8);
+        registerBufferAccessor<int16_t, true, false>(jsBufferPrototypeFunction_readInt16LE);
+        registerBufferAccessor<int16_t, false, false>(jsBufferPrototypeFunction_readInt16BE);
+        registerBufferAccessor<uint16_t, true, false>(jsBufferPrototypeFunction_readUInt16LE);
+        registerBufferAccessor<uint16_t, false, false>(jsBufferPrototypeFunction_readUInt16BE);
+        registerBufferAccessor<int32_t, true, false>(jsBufferPrototypeFunction_readInt32LE);
+        registerBufferAccessor<int32_t, false, false>(jsBufferPrototypeFunction_readInt32BE);
+        registerBufferAccessor<uint32_t, true, false>(jsBufferPrototypeFunction_readUInt32LE);
+        registerBufferAccessor<uint32_t, false, false>(jsBufferPrototypeFunction_readUInt32BE);
+        registerBufferAccessor<float, true, false>(jsBufferPrototypeFunction_readFloatLE);
+        registerBufferAccessor<float, false, false>(jsBufferPrototypeFunction_readFloatBE);
+        registerBufferAccessor<double, true, false>(jsBufferPrototypeFunction_readDoubleLE);
+        registerBufferAccessor<double, false, false>(jsBufferPrototypeFunction_readDoubleBE);
+        registerBufferAccessor<int64_t, true, false>(jsBufferPrototypeFunction_readBigInt64LE);
+        registerBufferAccessor<int64_t, false, false>(jsBufferPrototypeFunction_readBigInt64BE);
+        registerBufferAccessor<uint64_t, true, false>(jsBufferPrototypeFunction_readBigUInt64LE);
+        registerBufferAccessor<uint64_t, false, false>(jsBufferPrototypeFunction_readBigUInt64BE);
+        registerBufferAccessor<int8_t, true, true>(jsBufferPrototypeFunction_writeInt8);
+        registerBufferAccessor<uint8_t, true, true>(jsBufferPrototypeFunction_writeUInt8);
+        registerBufferAccessor<int16_t, true, true>(jsBufferPrototypeFunction_writeInt16LE);
+        registerBufferAccessor<int16_t, false, true>(jsBufferPrototypeFunction_writeInt16BE);
+        registerBufferAccessor<uint16_t, true, true>(jsBufferPrototypeFunction_writeUInt16LE);
+        registerBufferAccessor<uint16_t, false, true>(jsBufferPrototypeFunction_writeUInt16BE);
+        registerBufferAccessor<int32_t, true, true>(jsBufferPrototypeFunction_writeInt32LE);
+        registerBufferAccessor<int32_t, false, true>(jsBufferPrototypeFunction_writeInt32BE);
+        registerBufferAccessor<uint32_t, true, true>(jsBufferPrototypeFunction_writeUInt32LE);
+        registerBufferAccessor<uint32_t, false, true>(jsBufferPrototypeFunction_writeUInt32BE);
+        registerBufferAccessor<float, true, true>(jsBufferPrototypeFunction_writeFloatLE);
+        registerBufferAccessor<float, false, true>(jsBufferPrototypeFunction_writeFloatBE);
+        registerBufferAccessor<double, true, true>(jsBufferPrototypeFunction_writeDoubleLE);
+        registerBufferAccessor<double, false, true>(jsBufferPrototypeFunction_writeDoubleBE);
+        registerBufferAccessor<int64_t, true, true>(jsBufferPrototypeFunction_writeBigInt64LE);
+        registerBufferAccessor<int64_t, false, true>(jsBufferPrototypeFunction_writeBigInt64BE);
+        registerBufferAccessor<uint64_t, true, true>(jsBufferPrototypeFunction_writeBigUInt64LE);
+        registerBufferAccessor<uint64_t, false, true>(jsBufferPrototypeFunction_writeBigUInt64BE);
     });
 }
 

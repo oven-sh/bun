@@ -2216,6 +2216,32 @@ it("304 not modified with 0 content-length does not cause a request timeout", as
   server.stop(true);
 });
 
+// RFC 9112 §6.3: a 1xx/204/304 response is terminated by the first empty line
+// after the header fields, regardless of any Transfer-Encoding or Content-Length
+// header. Bytes following the header block are not part of this response's body.
+it.concurrent.each([
+  [204, "No Content"],
+  [304, "Not Modified"],
+])("%d with Transfer-Encoding: chunked ignores the chunked body", async (status, reason) => {
+  using server = Bun.listen({
+    socket: {
+      open(socket) {
+        socket.write(`HTTP/1.1 ${status} ${reason}\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n`);
+        socket.flush();
+        setTimeout(() => socket.end(), 9999).unref();
+      },
+      data() {},
+      close() {},
+    },
+    port: 0,
+    hostname: "127.0.0.1",
+  });
+
+  const response = await fetch(`http://${server.hostname}:${server.port}/`);
+  expect(response.status).toBe(status);
+  expect(await response.text()).toBe("");
+});
+
 describe("http/1.1 response body length", () => {
   // issue #6932 (support response without Content-Length and Transfer-Encoding) + some regression tests
 

@@ -58,6 +58,10 @@ export const cares: Dependency = {
     commit: CARES_COMMIT,
   }),
 
+  // Merge hosts-file lines into the hostname's entry, not into whichever
+  // entry already owns the line's IP. Rationale in the patch header.
+  patches: ["patches/cares/hosts-file-merge-by-hostname.patch"],
+
   build: cfg => ({
     kind: "direct",
     pic: true,

@@ -158,11 +158,24 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieMapDOMConstructo
             Vector<Vector<String>> seqSeq;
 
             PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-            JSObject::getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
+            object->methodTable()->getOwnPropertyNames(object, lexicalGlobalObject, propertyNames, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(throwScope, {});
 
             for (const auto& propertyName : propertyNames) {
-                JSValue value = object->get(lexicalGlobalObject, propertyName);
+                // WebIDL record<K, V>: skip keys whose descriptor is not enumerable.
+                // Filtering here instead of passing DontEnumPropertiesMode::Exclude avoids
+                // an observable extra [[GetOwnProperty]] on ProxyObject records.
+                PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+                bool hasProperty = object->methodTable()->getOwnPropertySlot(object, lexicalGlobalObject, propertyName, slot);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (!hasProperty || (slot.attributes() & PropertyAttribute::DontEnum))
+                    continue;
+
+                JSValue value;
+                if (!slot.isTaintedByOpaqueObject()) [[likely]]
+                    value = slot.getValue(lexicalGlobalObject, propertyName);
+                else
+                    value = object->get(lexicalGlobalObject, propertyName);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 auto valueStr = value.toString(lexicalGlobalObject)->value(lexicalGlobalObject);

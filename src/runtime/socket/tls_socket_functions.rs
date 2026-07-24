@@ -417,13 +417,16 @@ pub(super) fn set_max_send_fragment(
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
     let size = arg.coerce_to_int64(global)?;
-    if !(512..=16384).contains(&size) {
+    if size < 0 {
         return Ok(JSValue::FALSE);
     }
 
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::FALSE);
     };
+    // No range gate here: Node returns SSL_set_max_send_fragment's own verdict,
+    // and BoringSSL clamps out-of-range sizes into [512, 16384] and reports
+    // success (vendor/boringssl/ssl/ssl_lib.cc, SSL_set_max_send_fragment).
     Ok(JSValue::from(
         ffi::SSL_set_max_send_fragment(
             boringssl::SSL::opaque_ref(ssl_ptr),

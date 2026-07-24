@@ -2770,11 +2770,7 @@ impl JSValue {
     /// serialization that needs asymmetric matchers substituted into `self`,
     /// call [`Self::jest_substitute_asymmetric_matchers`] after a successful
     /// match.
-    pub fn jest_deep_match(
-        self,
-        subset: JSValue,
-        global: &JSGlobalObject,
-    ) -> JsResult<bool> {
+    pub fn jest_deep_match(self, subset: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
         host_fn::from_js_host_call_generic(global, || {
             JSC__JSValue__jestDeepMatch(self, subset, global)
         })

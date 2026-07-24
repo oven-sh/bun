@@ -918,9 +918,7 @@ describe("small chunked body decode", () => {
 
   async function serve(extraHeader: string, body: Buffer, expected: Buffer): Promise<void> {
     const reply = Buffer.concat([
-      Buffer.from(
-        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n" + extraHeader + "\r\n",
-      ),
+      Buffer.from("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n" + extraHeader + "\r\n"),
       chunked(body),
     ]);
     const sockets = new Set<import("node:net").Socket>();

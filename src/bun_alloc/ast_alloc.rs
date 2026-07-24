@@ -249,12 +249,46 @@ unsafe impl Sync for AstAlloc {}
 /// `Vec` whose backing buffer lives in an [`AstArena`].
 pub type AstVec<T> = Vec<T, AstAlloc>;
 
-/// `Box` whose header lives in an [`AstArena`]. `AstAlloc::deallocate` is a
-/// no-op, so the header is reclaimed by arena reset rather than `Drop`. As
-/// with any arena-backed value, **`T::drop` is not guaranteed to run**: a `T`
-/// that owns a global-heap allocation, refcount, or fd will leak it. Use only
-/// for AST-lifetime payloads whose own storage is also arena-backed.
-pub type AstBox<T> = Box<T, AstAlloc>;
+/// Arena-owned box. `AstAlloc::deallocate` is a no-op, so storing the 8-byte
+/// allocator handle alongside the pointer (as `Box<T, AstAlloc>` would) buys
+/// nothing: a bare `NonNull<T>` is behaviourally identical and keeps
+/// size-sensitive embedders (`Symbol.namespace_alias`) at one word. As with
+/// any arena-backed value, **`T::drop` is not guaranteed to run**: a `T` that
+/// owns a global-heap allocation, refcount, or fd will leak it.
+#[repr(transparent)]
+pub struct AstBox<T: ?Sized>(NonNull<T>);
+
+const _: () = assert!(core::mem::size_of::<Option<AstBox<u8>>>() == core::mem::size_of::<usize>());
+
+// SAFETY: same contract as `StoreRef` (arena-backed raw pointer; moved only
+// together with the owning `AstArena`).
+unsafe impl<T: ?Sized + Send> Send for AstBox<T> {}
+// SAFETY: see the `Send` impl.
+unsafe impl<T: ?Sized + Sync> Sync for AstBox<T> {}
+
+impl<T: ?Sized> core::ops::Deref for AstBox<T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        // SAFETY: points into a live `AstArena` for the box's documented
+        // lifetime (arena ownership; see the type doc).
+        unsafe { self.0.as_ref() }
+    }
+}
+impl<T: ?Sized> core::ops::DerefMut for AstBox<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: exclusive access to the arena slot for the borrow's
+        // duration (single-threaded AST visitor contract).
+        unsafe { self.0.as_mut() }
+    }
+}
+impl<T: ?Sized> AstBox<T> {
+    #[inline]
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.as_ptr()
+    }
+}
 
 impl AstAlloc {
     /// Mutable access to the arena's allocation state.
@@ -454,7 +488,7 @@ impl AstAlloc {
     /// See [`AstBox`] for the drop-safety contract.
     #[inline]
     pub fn boxed<T>(self, value: T) -> AstBox<T> {
-        Box::new_in(value, self)
+        AstBox(NonNull::from(self.arena().alloc(value)))
     }
 }
 

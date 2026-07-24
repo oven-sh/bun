@@ -13,6 +13,7 @@
 //   - expect(proxy).toEqual(expect.arrayContaining([...])) -> UBSan null deref
 
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import vm from "vm";
 
 describe("isArray + Proxy crash fixes", () => {
@@ -87,5 +88,42 @@ describe("isArray + Proxy crash fixes", () => {
     expect(() => {
       expect([1, 2, 3]).toEqual(expect.arrayContaining(proxyExpected));
     }).toThrow(); // assertion fails, no crash
+  });
+
+  test("vm.compileFunction propagates isArray() error for revoked Proxy", () => {
+    const rp = Proxy.revocable([], {});
+    rp.revoke();
+    // The isArray() exception must propagate directly, not be overwritten by the
+    // downstream [[Get]] in determineSpecificType ("No more operations are allowed").
+    const msg = "Array.isArray cannot be called on a Proxy that has been revoked";
+    expect(() => vm.compileFunction("return 1", rp.proxy)).toThrow(msg);
+    expect(() => vm.compileFunction("return 1", [], { contextExtensions: rp.proxy })).toThrow(msg);
+  });
+
+  // BUN_JSC_validateExceptionChecks=1 aborts if the isArray() exception isn't
+  // checked before determineSpecificType's scope is entered. No-op on builds
+  // without exception-scope verification (child exits 0 either way).
+  test("vm.compileFunction Proxy validation checks isArray() exception", async () => {
+    const src = `
+      import vm from "node:vm";
+      const rp = Proxy.revocable([], {}); rp.revoke();
+      for (const params of [new Proxy([], {}), rp.proxy]) {
+        try { vm.compileFunction("return 1", params); } catch {}
+        try { vm.compileFunction("return 1", [], { contextExtensions: params }); } catch {}
+      }
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: "ok\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

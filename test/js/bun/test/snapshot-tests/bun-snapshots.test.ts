@@ -33,6 +33,20 @@ test("ArrayBuffer values are serialized like typed arrays", () => {
   `);
 });
 
+// https://github.com/oven-sh/bun/issues/3521
+test("property matchers do not mutate the received object", () => {
+  const date = new Date(0);
+  const obj = { id: 42, when: date, nested: { name: "abc" } };
+  expect(obj).toMatchSnapshot({
+    id: expect.any(Number),
+    when: expect.any(Date),
+    nested: { name: expect.any(String) },
+  });
+  expect(obj.id).toBe(42);
+  expect(obj.when).toBe(date);
+  expect(obj.nested.name).toBe("abc");
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

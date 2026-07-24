@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { ptr, read } from "bun:ffi";
 import crypto from "crypto";
 import { statSync } from "fs";
+import { isDebug } from "harness";
 import vm from "node:vm";
 
 const dirStats = statSync(import.meta.dir);
@@ -24,7 +25,11 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{1
 // a repeat so the FTLFunctionCall compiled during the previous tier actually
 // executes. 200000 clears the bytecode-scaled thresholdForFTLOptimizeAfterWarmUp
 // for every callback here (FFI's ~1K-bytecode body is the worst case).
-const tiers = [1000, 10000, 200000, 200000];
+// Debug builds can't reach 200K within the default 5s per-test budget; they get
+// DFG coverage here and CI's release/release-ASAN lanes carry FTL.
+const top = isDebug ? 50000 : 200000;
+const tiers = [1000, 10000, top, top];
+const vmIter = isDebug ? 20000 : 100000;
 
 describe("DOMJIT", () => {
   const buf = new Uint8Array(4);
@@ -163,13 +168,14 @@ describe("DOMJIT", () => {
   describe("in NodeVM", () => {
     // "a".repeat is very slow in debug JSC; repros for #13320 used a >1024-byte string.
     const longStr = Buffer.alloc(1030, "a").toString();
-    // One pass at 100000 covers FTL; the old 1000000-iter encoder.encode loop was the
+    // The vm script is a single CodeBlock, so one pass of these loops reaches
+    // FTLForOSREntry mid-run; the old 1000000-iter encoder.encode loop was the
     // single slowest thing in this file under ASAN and added no extra tier coverage.
     const code = `
     const buf = new Uint8Array(4);
     const encoder = new TextEncoder();
     const decoder = new TextDecoder();
-    const iter = 100000;
+    const iter = ${vmIter};
     for (let i = 0; i < iter; i++) performance.now();
     for (let i = 0; i < iter; i++) encoder.encode("test");
     for (let i = 0; i < iter; i++) encoder.encode(longStr);

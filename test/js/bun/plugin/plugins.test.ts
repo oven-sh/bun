@@ -196,6 +196,25 @@ plugin({
   },
 });
 
+declare global {
+  var bufferSourceContents: any;
+}
+
+plugin({
+  name: "buffer source contents",
+  setup(builder) {
+    globalThis.bufferSourceContents = "";
+    builder.onResolve({ filter: /.*/, namespace: "buffer-source" }, ({ path }) => ({
+      namespace: "buffer-source",
+      path,
+    }));
+    builder.onLoad({ filter: /.*/, namespace: "buffer-source" }, () => ({
+      contents: globalThis.bufferSourceContents,
+      loader: "js",
+    }));
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import { bunEnv, bunExe, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
@@ -327,6 +346,41 @@ describe("dynamic import", () => {
     const result = await import("async-obj:hello42");
     expect(result.foo).toBe(42);
     expect(result.default).toBe(43);
+  });
+});
+
+describe("onLoad contents accepts BufferSource", () => {
+  const source = new TextEncoder().encode("export default 'hello';");
+
+  it("accepts ArrayBuffer", async () => {
+    const ab = new ArrayBuffer(source.byteLength);
+    new Uint8Array(ab).set(source);
+    globalThis.bufferSourceContents = ab;
+    const result = await import("buffer-source:arraybuffer");
+    expect(result.default).toBe("hello");
+  });
+
+  it("accepts SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(source.byteLength);
+    new Uint8Array(sab).set(source);
+    globalThis.bufferSourceContents = sab;
+    const result = await import("buffer-source:sharedarraybuffer");
+    expect(result.default).toBe("hello");
+  });
+
+  it("accepts Uint8Array backed by SharedArrayBuffer", async () => {
+    const sab = new SharedArrayBuffer(source.byteLength);
+    new Uint8Array(sab).set(source);
+    globalThis.bufferSourceContents = new Uint8Array(sab);
+    const result = await import("buffer-source:u8-over-sab");
+    expect(result.default).toBe("hello");
+  });
+
+  it("rejects plain objects", async () => {
+    globalThis.bufferSourceContents = { byteLength: 3 };
+    await expect(import("buffer-source:bad-object")).rejects.toThrow(
+      'Expected "contents" to be a string, ArrayBufferView, ArrayBuffer, or SharedArrayBuffer',
+    );
   });
 });
 

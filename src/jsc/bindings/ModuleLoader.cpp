@@ -303,11 +303,16 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
             result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
             result.value.sourceText.value = contentsValue;
+        } else if (JSC::JSArrayBuffer* jsBuffer = dynamicDowncast<JSC::JSArrayBuffer>(contentsValue)) {
+            if (auto* buffer = jsBuffer->impl()) {
+                result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(buffer->data()), buffer->byteLength() };
+                result.value.sourceText.value = contentsValue;
+            }
         }
     }
 
     if (result.value.sourceText.value.isEmpty()) [[unlikely]] {
-        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string or an ArrayBufferView"_s));
+        throwException(globalObject, scope, createError(globalObject, "Expected \"contents\" to be a string, ArrayBufferView, ArrayBuffer, or SharedArrayBuffer"_s));
         result.value.error = scope.exception();
         (void)scope.tryClearException();
         return result;

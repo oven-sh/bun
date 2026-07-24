@@ -766,6 +766,64 @@ describe("Bun.build", () => {
       expect(await html?.text()).toContain("<meta name='injected-by-plugin' content='true'>");
     },
   );
+
+  describe("onLoad contents accepts BufferSource", () => {
+    const source = new TextEncoder().encode("export default 'hello';");
+
+    const buildWith = async (contents: any) => {
+      using dir = tempDir("onload-buffer-source", {
+        "entry.ts": `import x from "virtual:m"; console.log(x);`,
+      });
+      return await Bun.build({
+        entrypoints: [join(String(dir), "entry.ts")],
+        throw: false,
+        plugins: [
+          {
+            name: "buffer-source",
+            setup(b) {
+              b.onResolve({ filter: /^virtual:m$/ }, a => ({ path: a.path, namespace: "v" }));
+              b.onLoad({ filter: /.*/, namespace: "v" }, () => ({ contents, loader: "js" }));
+            },
+          },
+        ],
+      });
+    };
+
+    test("accepts ArrayBuffer", async () => {
+      const ab = new ArrayBuffer(source.byteLength);
+      new Uint8Array(ab).set(source);
+      const res = await buildWith(ab);
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
+    test("accepts SharedArrayBuffer", async () => {
+      const sab = new SharedArrayBuffer(source.byteLength);
+      new Uint8Array(sab).set(source);
+      const res = await buildWith(sab);
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
+    test("accepts Uint8Array backed by SharedArrayBuffer", async () => {
+      const sab = new SharedArrayBuffer(source.byteLength);
+      new Uint8Array(sab).set(source);
+      const res = await buildWith(new Uint8Array(sab));
+      expect(res.logs).toEqual([]);
+      expect(res.success).toBe(true);
+      expect(await res.outputs[0].text()).toContain('"hello"');
+    });
+
+    test("rejects plain objects", async () => {
+      const res = await buildWith({ byteLength: 3 });
+      expect(res.success).toBe(false);
+      expect(res.logs[0].message).toBe(
+        'onLoad plugins must return an object with "contents" as a string, Uint8Array, or ArrayBuffer',
+      );
+    });
+  });
 });
 
 test.concurrent("macro with nested object", async () => {

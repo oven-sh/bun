@@ -1,0 +1,591 @@
+# Per-site classification of the 586 lifetime-erasure sites.
+# Format: file:line | bucket | source | note
+# bucket: arena / ffi-backref / heap-stable / static / stack-local / growable-vec / other
+# source: traced (individually verified) / heuristic (grep-classified, spot-checked)
+#
+src/crash_handler/lib.rs:1571 | stack-local | traced | msg in -> ! fn; process aborts
+src/crash_handler/lib.rs:1874 | stack-local | traced | BoundedArray<u8,4096> msg_buf; consumed in-frame
+src/crash_handler/lib.rs:3154 | stack-local | traced | err_name; consumed by TraceString in-frame
+src/crash_handler/lib.rs:3876 | stack-local | traced | msg in -> ! fn
+src/crash_handler/lib.rs:3890 | static | traced | C string; caller contract outlives dlopen
+src/io/source.rs:350 | other | heuristic | 
+src/io/source.rs:462 | other | heuristic | 
+src/io/lib.rs:2126 | static | heuristic | 
+src/js_parser_jsc/Macro.rs:94 | arena | heuristic | 
+src/sql_jsc/mysql/JSMySQLQuery.rs:112 | ffi-backref | heuristic | 
+src/sql_jsc/mysql/JSMySQLQuery.rs:115 | ffi-backref | heuristic | 
+src/sql_jsc/mysql/MySQLConnection.rs:739 | heap-stable | traced | self.password field (heap conn)
+src/sql_jsc/mysql/MySQLConnection.rs:740 | growable-vec | traced | SAFE: writer hits write_buffer; backing untouched
+src/sql_jsc/mysql/MySQLConnection.rs:741 | heap-stable | traced | self.auth_data field
+src/sql_jsc/mysql/MySQLConnection.rs:1024 | heap-stable | traced | self.user field
+src/sql_jsc/mysql/MySQLConnection.rs:1025 | heap-stable | traced | self.database field
+src/sql_jsc/mysql/MySQLConnection.rs:1026 | static | traced | auth-plugin byte literals
+src/sql_jsc/mysql/MySQLConnection.rs:1058 | stack-local | traced | scrambled_buf stack array
+src/sql_jsc/mysql/MySQLConnection.rs:1080 | stack-local | traced | scrambled_buf [0u8;32]
+src/sql_jsc/mysql/MySQLConnection.rs:1714 | growable-vec | traced | SAFE: skip() index-only; growth outside process_packets
+src/sql_jsc/mysql/MySQLValue.rs:270 | other | heuristic | 
+src/sql_jsc/mysql/MySQLValue.rs:278 | other | heuristic | 
+src/sql_jsc/mysql/MySQLValue.rs:286 | other | heuristic | 
+src/bundler/ThreadPool.rs:406 | other | traced | dangling placeholder BackRef (overwritten)
+src/bundler/ThreadPool.rs:408 | other | traced | dangling placeholder BackRef (overwritten)
+src/bundler/ThreadPool.rs:496 | arena | traced | (doc) worker ThreadLocalArena
+src/bundler/ThreadPool.rs:504 | arena | traced | self.arena → worker ThreadLocalArena
+src/bundler/ThreadPool.rs:646 | ffi-backref | traced | BackRef to heap BundleV2 (outlives workers)
+src/bundler/ThreadPool.rs:660 | arena | traced | BackRef to self.heap ThreadLocalArena
+src/bundler/ThreadPool.rs:667 | arena | traced | self.arena → worker ThreadLocalArena
+src/bundler/ThreadPool.rs:676 | ffi-backref | traced | BackRef to heap BundleV2 (outlives workers)
+src/bundler/ThreadPool.rs:721 | arena | traced | self.arena → worker ThreadLocalArena
+src/bundler/transpiler.rs:1435 | arena | heuristic | 
+src/bundler/transpiler.rs:1487 | arena | heuristic | 
+src/bundler/transpiler.rs:2147 | arena | heuristic | 
+src/bundler/transpiler.rs:3112 | arena | heuristic | 
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1128 | heap-stable | traced | options_buf Box<[u8]> self-ref
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1132 | heap-stable | traced | same Box
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1136 | heap-stable | traced | same Box
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1140 | heap-stable | traced | same Box
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1144 | heap-stable | traced | same Box
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1196 | ffi-backref | traced | BackRef to JSGlobalObject
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1688 | ffi-backref | traced | BackRef to self (JSC-owned)
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1755 | growable-vec | traced | SAFE: skip() index-only; byte_list grown outside decode
+src/sql_jsc/postgres/PostgresSQLConnection.rs:1795 | ffi-backref | traced | BackRef to self (JSC-owned)
+src/sql_jsc/postgres/PostgresSQLConnection.rs:2674 | static | traced | b"SCRAM-SHA-256" literal
+src/sql_jsc/postgres/PostgresSQLConnection.rs:2675 | stack-local | traced | mechanism_buf stack array
+src/sql_jsc/postgres/PostgresSQLConnection.rs:2799 | growable-vec | traced | SAFE: payload frozen; writer hits disjoint write_buffer
+src/sql_jsc/postgres/PostgresSQLConnection.rs:2932 | stack-local | traced | final_password_buf stack array
+src/ptr/lib.rs:207 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:214 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:221 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:234 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:241 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:250 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:294 | other | traced | (helper def; exclude from counts)
+src/ptr/lib.rs:296 | other | traced | (helper def; exclude from counts)
+src/css_jsc/css_internals.rs:107 | arena | heuristic | 
+src/css_jsc/css_internals.rs:316 | arena | heuristic | 
+src/bundler/LinkerContext.rs:2242 | other | heuristic | 
+src/bundler/LinkerContext.rs:2249 | other | heuristic | 
+src/bundler/LinkerContext.rs:3452 | other | heuristic | 
+src/bundler/LinkerContext.rs:3478 | other | heuristic | 
+src/bundler/ParseTask.rs:222 | static | heuristic | 
+src/bundler/ParseTask.rs:2243 | arena | heuristic | 
+src/bundler/Chunk.rs:1100 | other | heuristic | 
+src/bundler/Chunk.rs:1379 | arena | heuristic | 
+src/bundler/Graph.rs:157 | arena | heuristic | 
+src/bundler/linker_context/computeChunks.rs:563 | other | heuristic | 
+src/sql/mysql/protocol/ColumnDefinition41.rs:144 | other | heuristic | 
+src/bundler/linker_context/MetafileBuilder.rs:417 | static | heuristic | 
+src/http_types/URLPath.rs:176 | other | heuristic | 
+src/sql/mysql/protocol/AuthSwitchRequest.rs:47 | other | heuristic | 
+src/sql/mysql/protocol/AuthSwitchRequest.rs:50 | other | heuristic | 
+src/bundler/linker_context/computeCrossChunkDependencies.rs:50 | arena | heuristic | 
+src/bundler/linker_context/computeCrossChunkDependencies.rs:53 | arena | heuristic | 
+src/bundler/linker_context/computeCrossChunkDependencies.rs:56 | other | heuristic | 
+src/bundler/linker_context/computeCrossChunkDependencies.rs:63 | other | heuristic | 
+src/bundler/linker_context/scanImportsAndExports.rs:731 | other | heuristic | 
+src/bundler/linker_context/scanImportsAndExports.rs:741 | other | heuristic | 
+src/bundler/linker_context/scanImportsAndExports.rs:742 | other | heuristic | 
+src/bundler/linker_context/scanImportsAndExports.rs:1316 | other | heuristic | 
+src/bundler/linker_context/findImportedFilesInCSSOrder.rs:306 | arena | heuristic | 
+src/bundler/linker_context/findImportedFilesInCSSOrder.rs:603 | other | heuristic | 
+src/bundler/linker_context/generateCompileResultForHtmlChunk.rs:400 | other | heuristic | 
+src/bundler/linker_context/generateCodeForLazyExport.rs:438 | arena | heuristic | 
+src/bundler/linker_context/generateCodeForLazyExport.rs:495 | arena | heuristic | 
+src/bundler/linker_context/postProcessCSSChunk.rs:149 | static | heuristic | 
+src/bundler/linker_context/generateChunksInParallel.rs:223 | other | heuristic | 
+src/bundler/linker_context/generateChunksInParallel.rs:246 | other | heuristic | 
+src/bundler/linker_context/generateChunksInParallel.rs:268 | other | heuristic | 
+src/bundler/linker_context/generateChunksInParallel.rs:603 | static | heuristic | 
+src/bundler/linker_context/postProcessHTMLChunk.rs:40 | static | heuristic | 
+src/bundler/linker_context/doStep5.rs:496 | arena | heuristic | 
+src/bundler/linker_context/generateCodeForFileInChunkJS.rs:279 | other | heuristic | 
+src/bundler/linker_context/generateCodeForFileInChunkJS.rs:679 | arena | heuristic | 
+src/bundler/linker_context/postProcessJSChunk.rs:843 | arena | heuristic | 
+src/bundler/linker_context/postProcessJSChunk.rs:1374 | other | heuristic | 
+src/sql/postgres/protocol/Authentication.rs:129 | static | heuristic | 
+src/sql/postgres/protocol/Authentication.rs:136 | other | heuristic | 
+src/sql/shared/Data.rs:84 | other | heuristic | 
+src/sql/shared/Data.rs:87 | other | heuristic | 
+src/sql/shared/Data.rs:90 | other | heuristic | 
+src/bun_core/string/StringJoiner.rs:108 | static | heuristic | 
+src/bun_core/string/StringJoiner.rs:288 | static | heuristic | 
+src/bun_core/string/StringJoiner.rs:301 | static | heuristic | 
+src/sql/shared/StackReader.rs:101 | other | heuristic | 
+src/sql/shared/StackReader.rs:111 | other | heuristic | 
+src/bun_core/lib.rs:198 | other | heuristic | 
+src/bundler/bundle_v2.rs:615 | ffi-backref | traced | RawSlice key into EntryPointMap.owned_paths Box<[u8]>
+src/bundler/bundle_v2.rs:942 | arena | traced | arena.alloc_slice_copy
+src/bundler/bundle_v2.rs:1477 | arena | traced | interned_slice helper
+src/bundler/bundle_v2.rs:1548 | arena | traced | &Arena itself (graph.heap)
+src/bundler/bundle_v2.rs:2375 | arena | traced | arena.alloc_slice_copy
+src/bundler/bundle_v2.rs:2710 | other | traced | dangling placeholder BackRef; overwritten at 2833
+src/bundler/bundle_v2.rs:2748 | ffi-backref | traced | BackRef into this.framework (boxed BundleV2 field)
+src/bundler/bundle_v2.rs:2766 | ffi-backref | traced | BackRef to this.graph.heap arena-owner slot
+src/bundler/bundle_v2.rs:2833 | arena | traced | this.arena().alloc(ThreadPool)
+src/bundler/bundle_v2.rs:2868 | arena | traced | detach_lifetime_mut(arena.alloc(value))
+src/bundler/bundle_v2.rs:3211 | arena | traced | &Arena for AstBuilder::init
+src/bundler/bundle_v2.rs:4346 | ffi-backref | traced | &*code.source_code Box<[u8]>; heap-stable
+src/bundler/bundle_v2.rs:4524 | ffi-backref | traced | &mut Log disjoint heap fields
+src/bundler/bundle_v2.rs:5556 | ffi-backref | traced | &*free_list.last() Box<[u8]>; Vec moves irrelevant
+src/bundler/bundle_v2.rs:5600 | arena | traced | &Arena for path_with_pretty_initialized
+src/bundler/bundle_v2.rs:6029 | arena | traced | arena.alloc_slice_copy
+src/bundler/bundle_v2.rs:6246 | stack-local | traced | &mut resolve_result loop-local split-borrow
+src/bundler/bundle_v2.rs:7592 | static | traced | BackRef::new(&[]) 'static empty slice
+src/bundler/LinkerGraph.rs:270 | arena | heuristic | 
+src/bundler/LinkerGraph.rs:292 | arena | heuristic | 
+src/bundler/LinkerGraph.rs:689 | other | heuristic | 
+src/bundler/LinkerGraph.rs:691 | other | heuristic | 
+src/bundler/LinkerGraph.rs:710 | other | heuristic | 
+src/watcher/Watcher.rs:523 | static | heuristic | 
+src/watcher/Watcher.rs:596 | static | heuristic | 
+src/picohttp/lib.rs:332 | static | heuristic | 
+src/picohttp/lib.rs:554 | static | heuristic | 
+src/http/HTTPContext.rs:403 | other | heuristic | 
+src/http/HTTPContext.rs:409 | other | heuristic | 
+src/http/HTTPContext.rs:864 | static | heuristic | 
+src/bundler/analyze_transpiled_module.rs:319 | other | traced | comment line; describes 323-329
+src/bundler/analyze_transpiled_module.rs:323 | ffi-backref | traced | RawSlice into co-stored duped_raw Box<[u8]> owner
+src/bundler/analyze_transpiled_module.rs:324 | ffi-backref | traced | same Box
+src/bundler/analyze_transpiled_module.rs:325 | ffi-backref | traced | same Box
+src/bundler/analyze_transpiled_module.rs:326 | ffi-backref | traced | same Box
+src/bundler/analyze_transpiled_module.rs:327 | ffi-backref | traced | same Box
+src/bundler/analyze_transpiled_module.rs:328 | ffi-backref | traced | same Box
+src/bundler/analyze_transpiled_module.rs:329 | ffi-backref | traced | same Box
+src/bundler/analyze_transpiled_module.rs:446 | ffi-backref | traced | RawSlice into Box<ModuleInfo> Vecs; box leaked into owner
+src/bundler/analyze_transpiled_module.rs:447 | ffi-backref | traced | same Box<ModuleInfo>
+src/bundler/analyze_transpiled_module.rs:448 | ffi-backref | traced | same Box<ModuleInfo>
+src/bundler/analyze_transpiled_module.rs:449 | ffi-backref | traced | same Box<ModuleInfo>
+src/bundler/analyze_transpiled_module.rs:451 | ffi-backref | traced | same Box<ModuleInfo>
+src/bundler/analyze_transpiled_module.rs:454 | ffi-backref | traced | same Box<ModuleInfo>
+src/bundler/analyze_transpiled_module.rs:459 | ffi-backref | traced | same Box<ModuleInfo>
+src/http/HTTPThread.rs:485 | other | heuristic | 
+src/http/h3_client/ClientContext.rs:206 | ffi-backref | heuristic | 
+src/http/h3_client/ClientContext.rs:221 | ffi-backref | heuristic | 
+src/http/h3_client/ClientContext.rs:234 | ffi-backref | heuristic | 
+src/http/h3_client/encode.rs:205 | other | heuristic | 
+src/http/InternalState.rs:152 | growable-vec | traced | SAFE: stored alongside original_request_body owner
+src/http/lib.rs:382 | growable-vec | traced | SAFE: deep-copied by clone_metadata before backing freed
+src/http/lib.rs:387 | growable-vec | traced | SAFE: same
+src/http/lib.rs:480 | ffi-backref | traced | fn def: &mut MutableString caller-owned body_out_str
+src/http/lib.rs:1591 | ffi-backref | traced | SAFE(no realloc): state.reset()→Vec::clear; SB-aliasing noted
+src/http/lib.rs:2408 | heap-stable | traced | self.header_buf: &'a [u8] caller buffer
+src/http/lib.rs:2519 | stack-local | traced | self.request_content_len_buf: [u8;11] inline array
+src/http/lib.rs:2543 | heap-stable | traced | self.url.pathname; URL<'a> caller buffer
+src/http/lib.rs:2547 | static | traced | SHARED_REQUEST_HEADERS_BUF per-thread static
+src/http/lib.rs:2934 | growable-vec | traced | SAFE: request_body cursor; Vec untouched until state.reset
+src/http/lib.rs:2953 | growable-vec | traced | SAFE: same
+src/http/lib.rs:3054 | growable-vec | traced | SAFE: cursor re-slice; backing unchanged in send loop
+src/http/lib.rs:3376 | growable-vec | traced | SAFE: cursor re-slice
+src/http/lib.rs:3434 | growable-vec | traced | SAFE: cursor re-slice
+src/http/lib.rs:3513 | growable-vec | traced | SAFE: cursor re-slice
+src/http/lib.rs:3680 | growable-vec | traced | SAFE: re-seated after every drain_front; consumed synchronously
+src/http/lib.rs:3698 | growable-vec | traced | SAFE: same
+src/http/lib.rs:3730 | growable-vec | traced | SAFE: same
+src/http/lib.rs:3747 | growable-vec | traced | SAFE: deep-copied by clone_metadata before buffer mutated
+src/http/lib.rs:3752 | growable-vec | traced | SAFE: cursor re-slice
+src/http/lib.rs:4070 | arena | traced | StringBuilder bump-arena; owner moved into same struct
+src/http/H2Client.rs:133 | static | heuristic | 
+src/http/h2_client/ClientSession.rs:671 | other | heuristic | 
+src/http/h2_client/ClientSession.rs:714 | stack-local | heuristic | 
+src/http/h2_client/ClientSession.rs:811 | stack-local | heuristic | 
+src/js_parser/p.rs:6313 | other | heuristic | 
+src/http/h2_client/encode.rs:321 | other | heuristic | 
+src/http/AsyncHTTP.rs:621 | other | heuristic | 
+src/http/Signals.rs:61 | other | heuristic | 
+src/http/Signals.rs:79 | other | heuristic | 
+src/js_parser/visit/mod.rs:284 | other | heuristic | 
+src/js_parser/visit/mod.rs:412 | other | heuristic | 
+src/ast/lib.rs:482 | other | heuristic | 
+src/ast/lib.rs:1525 | static | heuristic | 
+src/ast/new_store.rs:401 | other | heuristic | 
+src/js_parser/parse/mod.rs:753 | arena | heuristic | 
+src/js_parser/parse/mod.rs:802 | arena | heuristic | 
+src/js_parser/parse/mod.rs:838 | arena | heuristic | 
+src/js_parser/parse/mod.rs:898 | arena | heuristic | 
+src/js_parser/parse/mod.rs:1318 | arena | heuristic | 
+src/bundler/barrel_imports.rs:378 | other | heuristic | 
+src/bundler/barrel_imports.rs:380 | other | heuristic | 
+src/bundler/barrel_imports.rs:404 | other | heuristic | 
+src/collections/lib.rs:168 | other | heuristic | 
+src/spawn/static_pipe_writer.rs:169 | other | heuristic | 
+src/spawn/static_pipe_writer.rs:227 | other | heuristic | 
+src/jsc/CppTask.rs:56 | other | heuristic | 
+src/jsc/JSGlobalObject.rs:49 | ffi-backref | heuristic | 
+src/jsc/ConsoleObject.rs:1496 | other | heuristic | 
+src/jsc/ConsoleObject.rs:1791 | other | heuristic | 
+src/jsc/ConsoleObject.rs:1870 | other | heuristic | 
+src/jsc/ConsoleObject.rs:2520 | other | heuristic | 
+src/jsc/ModuleLoader.rs:82 | other | heuristic | 
+src/jsc/virtual_machine_exports.rs:211 | ffi-backref | heuristic | 
+src/jsc/WorkTask.rs:64 | ffi-backref | heuristic | 
+src/jsc/WorkTask.rs:68 | ffi-backref | heuristic | 
+src/jsc/PosixSignalHandle.rs:162 | other | heuristic | 
+src/install/PackageInstaller.rs:959 | growable-vec | traced | SAFE: re-snapshot fn; lockfile.packages columns
+src/install/PackageInstaller.rs:967 | growable-vec | traced | SAFE: RawSlice metas; re-snapshotted by fix_cached_lockfile_package_slices
+src/install/PackageInstaller.rs:968 | growable-vec | traced | SAFE: RawSlice names; re-snapshotted
+src/install/PackageInstaller.rs:969 | growable-vec | traced | SAFE: RawSlice pkg_name_hashes; re-snapshotted
+src/install/PackageInstaller.rs:970 | growable-vec | traced | SAFE: RawSlice bins; re-snapshotted
+src/install/PackageInstaller.rs:971 | growable-vec | traced | SAFE: RawSlice resolutions; re-snapshotted
+src/install/PackageInstaller.rs:972 | growable-vec | traced | SAFE: RawSlice pkg_dependencies; re-snapshotted
+src/router/lib.rs:1097 | static | heuristic | 
+src/router/lib.rs:1103 | static | heuristic | 
+src/install/isolated_install.rs:1995 | other | heuristic | 
+src/install/isolated_install.rs:2069 | arena | heuristic | 
+src/install/NetworkTask.rs:330 | static | heuristic | 
+src/install/NetworkTask.rs:594 | static | heuristic | 
+src/install/NetworkTask.rs:629 | static | heuristic | 
+src/install/NetworkTask.rs:635 | stack-local | heuristic | 
+src/install/NetworkTask.rs:691 | other | heuristic | 
+src/install/NetworkTask.rs:830 | static | heuristic | 
+src/install/NetworkTask.rs:842 | static | heuristic | 
+src/install/lockfile.rs:1170 | growable-vec | traced | SAFE(fragile): version_buf into string_bytes; see report §3
+src/install/lockfile.rs:2004 | growable-vec | traced | (str_detached def) per-caller; all callers SAFE
+src/install/lockfile.rs:2013 | growable-vec | traced | (str_detached def) per-caller; all callers SAFE
+src/install/lockfile.rs:2015 | growable-vec | traced | (str_detached def) per-caller; all callers SAFE
+src/install/lockfile.rs:2016 | growable-vec | traced | (str_detached def) per-caller; all callers SAFE
+src/install/lockfile.rs:2779 | other | heuristic | 
+src/install/lockfile.rs:2807 | other | heuristic | 
+src/install/PackageManagerTask.rs:304 | ffi-backref | heuristic | 
+src/install/hoisted_install.rs:344 | growable-vec | traced | SAFE: initial PackageInstaller RawSlice snapshot; refreshed via fix_cached
+src/install/hoisted_install.rs:354 | growable-vec | traced | SAFE: same
+src/install/hoisted_install.rs:355 | growable-vec | traced | SAFE: same
+src/install/hoisted_install.rs:356 | growable-vec | traced | SAFE: same
+src/install/hoisted_install.rs:357 | growable-vec | traced | SAFE: same
+src/install/hoisted_install.rs:358 | growable-vec | traced | SAFE: same
+src/install/hoisted_install.rs:359 | growable-vec | traced | SAFE: same
+src/threading/ThreadPool.rs:554 | stack-local | traced | &wait_context on caller frame (joined before return)
+src/threading/ThreadPool.rs:609 | stack-local | traced | CURRENT worker Thread on own stack
+src/threading/ThreadPool.rs:740 | ffi-backref | traced | &ThreadPool; join() gates worker lifetime
+src/threading/ThreadPool.rs:804 | ffi-backref | traced | &ThreadPool; join() gates worker lifetime
+src/threading/ThreadPool.rs:891 | stack-local | traced | CURRENT worker Thread on own stack
+src/threading/ThreadPool.rs:985 | stack-local | traced | caller worker stack Thread during unregister
+src/threading/ThreadPool.rs:997 | stack-local | traced | peer worker stack Thread blocked in join_event.wait
+src/threading/ThreadPool.rs:1022 | stack-local | traced | peer worker stack Thread blocked in join_event.wait
+src/threading/ThreadPool.rs:1070 | ffi-backref | traced | &ThreadPool; registration bounded by pool join()
+src/install/PackageManager/PackageJSONEditor.rs:105 | arena | heuristic | 
+src/install/PackageManager/PackageJSONEditor.rs:770 | arena | heuristic | 
+src/watcher/WindowsWatcher.rs:181 | stack-local | traced | self.watcher.buf fixed DWORD-aligned kernel buffer
+src/watcher/WindowsWatcher.rs:357 | other | heuristic | 
+src/watcher/WindowsWatcher.rs:477 | other | heuristic | 
+src/install/PackageManager/PopulateManifestCache.rs:186 | other | heuristic | 
+src/install/PackageManager/PopulateManifestCache.rs:241 | ffi-backref | traced | BackRef into this.options Scope; disjoint from manifests mutation
+src/threading/Mutex.rs:102 | ffi-backref | heuristic | 
+src/resolver/package_json.rs:483 | arena | heuristic | 
+src/resolver/package_json.rs:993 | static | heuristic | 
+src/install/PackageManager/UpdateRequest.rs:85 | other | heuristic | 
+src/install/PackageManager/UpdateRequest.rs:276 | other | heuristic | 
+src/resolver/lib.rs:1883 | arena | traced | EntryStore BSSList singleton
+src/resolver/lib.rs:1905 | heap-stable | traced | Box<[u8]> key owned by DirEntry.data
+src/install/PackageManager/runTasks.rs:1064 | other | heuristic | 
+src/install/PackageManager/runTasks.rs:1356 | growable-vec | traced | SAFE: find_commit/enqueue_git_checkout never resize string_bytes
+src/install/PackageManager/runTasks.rs:1836 | other | heuristic | 
+src/install/PackageManager/PackageManagerEnqueue.rs:2 | other | traced | use-decl for detach_lifetime (not a call)
+src/install/PackageManager/PackageManagerEnqueue.rs:1568 | growable-vec | traced | SAFE: copied to filename_store before any resize
+src/install/PackageManager/PackageManagerEnqueue.rs:1907 | ffi-backref | traced | BackRef::new(this) into GitCloneRequest parent
+src/install/PackageManager/PackageManagerEnqueue.rs:2382 | growable-vec | traced | SAFE: name_str used only at 2387, no mutation between
+src/install/PackageManager/PackageManagerEnqueue.rs:2384 | ffi-backref | traced | BackRef into this.options Scope; disjoint from manifests
+src/install/PackageManager/PackageManagerEnqueue.rs:2725 | static | traced | global_link_dir_path: process-lifetime path
+src/install/PackageManager/PackageManagerEnqueue.rs:2726 | growable-vec | traced | SAFE: copied into stack buffers before read_package_json_from_disk
+src/resolver/resolver.rs:117 | static | traced | threadlocal join-path buffer
+src/resolver/resolver.rs:4118 | static | traced | bufs! threadlocal path buffer
+src/resolver/resolver.rs:4172 | static | traced | dirname slice into threadlocal path buffer
+src/resolver/resolver.rs:4183 | arena | traced | entries.dir dirname_store arena
+src/resolver/resolver.rs:4207 | static | traced | root_path slice of threadlocal path buffer
+src/resolver/resolver.rs:4217 | arena | traced | entries.dir dirname_store arena
+src/resolver/resolver.rs:4412 | arena | traced | dirname_store 'static dir path
+src/resolver/resolver.rs:5127 | heap-stable | traced | Box<[u8]> in self.opts
+src/resolver/resolver.rs:5142 | heap-stable | traced | Box<[u8]> in self.opts.extra_cjs_extensions
+src/resolver/resolver.rs:5647 | arena | traced | BSSMap DirEntry process-lifetime
+src/resolver/resolver.rs:5708 | heap-stable | traced | Box<[u8]> in self.opts
+src/resolver/resolver.rs:5721 | heap-stable | traced | Box<[u8]> in self.opts.extra_cjs_extensions
+src/resolver/resolver.rs:5860 | arena | traced | BSSMap DirEntry process-lifetime
+src/resolver/resolver.rs:5936 | arena | traced | DirEntry process-lifetime
+src/resolver/resolver.rs:6357 | heap-stable | traced | heap-alloc'd TSConfig; freed after walk
+src/resolver/resolver.rs:6386 | heap-stable | traced | heap-alloc'd parent TSConfig
+src/css/values/url.rs:107 | arena | heuristic | 
+src/ast/binding.rs:155 | arena | heuristic | 
+src/jsc/any_task_job.rs:75 | ffi-backref | heuristic | 
+src/install/lockfile/Package.rs:1667 | growable-vec | traced | SAFE: append() writes pre-reserved region, no realloc; SB-aliasing noted
+src/install/PackageManager/ProgressStrings.rs:130 | other | heuristic | 
+src/css/declaration.rs:161 | arena | heuristic | 
+src/install/lockfile/OverrideMap.rs:443 | growable-vec | traced | SAFE: same allocate()-then-append() pattern
+src/runtime/socket/udp_socket.rs:568 | ffi-backref | heuristic | 
+src/runtime/server/RequestContext.rs:316 | ffi-backref | traced | C++ AbortSignal intrusive RefPtr
+src/runtime/server/RequestContext.rs:325 | ffi-backref | traced | C++ AbortSignal intrusive RefPtr
+src/runtime/server/RequestContext.rs:336 | ffi-backref | traced | C++ AbortSignal; dropped before final unref
+src/runtime/server/RequestContext.rs:379 | ffi-backref | traced | ByteStream kept alive by response_body_readable_stream_ref
+src/runtime/server/RequestContext.rs:953 | stack-local | traced | &should_deinit_context Cell on caller frame
+src/runtime/server/RequestContext.rs:1308 | ffi-backref | traced | back-ref to owning heap Server
+src/runtime/server/RequestContext.rs:1623 | heap-stable | traced | self.blob backing bytes (context-owned heap)
+src/runtime/server/RequestContext.rs:1927 | ffi-backref | traced | back-ref to VirtualMachine via server
+src/runtime/server/RequestContext.rs:3191 | ffi-backref | traced | heap ByteStream (m_ctx)
+src/runtime/server/RequestContext.rs:3794 | heap-stable | traced | self.blob backing bytes
+src/runtime/server/RequestContext.rs:3939 | ffi-backref | traced | uWS on_data chunk buffer (caller-owned)
+src/runtime/server/RequestContext.rs:3946 | ffi-backref | traced | heap ByteStream (m_ctx)
+src/runtime/server/RequestContext.rs:3963 | ffi-backref | traced | heap ByteStream (m_ctx)
+src/runtime/socket/Listener.rs:1759 | other | heuristic | 
+src/runtime/server/AnyRequestContext.rs:205 | other | heuristic | 
+src/runtime/server/WebSocketServerContext.rs:120 | ffi-backref | heuristic | 
+src/runtime/server/WebSocketServerContext.rs:121 | ffi-backref | heuristic | 
+src/runtime/server/FileRoute.rs:593 | ffi-backref | heuristic | 
+src/runtime/server/mod.rs:162 | other | heuristic | 
+src/runtime/server/mod.rs:163 | other | heuristic | 
+src/runtime/server/mod.rs:173 | ffi-backref | heuristic | 
+src/runtime/server/mod.rs:174 | ffi-backref | heuristic | 
+src/runtime/server/mod.rs:948 | other | heuristic | 
+src/runtime/server/mod.rs:1075 | other | heuristic | 
+src/runtime/server/mod.rs:1126 | other | heuristic | 
+src/runtime/server/mod.rs:1214 | other | heuristic | 
+src/runtime/server/mod.rs:2003 | ffi-backref | heuristic | 
+src/runtime/server/mod.rs:2421 | other | heuristic | 
+src/runtime/server/mod.rs:2587 | other | heuristic | 
+src/runtime/server/server_body.rs:1107 | other | heuristic | 
+src/runtime/server/server_body.rs:1141 | other | heuristic | 
+src/runtime/server/server_body.rs:2801 | other | heuristic | 
+src/runtime/server/server_body.rs:2889 | other | heuristic | 
+src/runtime/server/server_body.rs:3169 | other | heuristic | 
+src/runtime/server/server_body.rs:3187 | other | heuristic | 
+src/runtime/server/server_body.rs:3286 | other | heuristic | 
+src/runtime/server/NodeHTTPResponse.rs:1083 | ffi-backref | heuristic | 
+src/runtime/server/NodeHTTPResponse.rs:2504 | ffi-backref | heuristic | 
+src/jsc/ConcurrentPromiseTask.rs:62 | ffi-backref | heuristic | 
+src/jsc/AsyncModule.rs:471 | other | heuristic | 
+src/jsc/AsyncModule.rs:985 | growable-vec | traced | SAFE: only local msg Vec mutated between detach and reads
+src/jsc/AsyncModule.rs:1205 | heap-stable | traced | Box<[u8]> string_buf; never reassigned
+src/jsc/AsyncModule.rs:1208 | heap-stable | traced | Box<[u8]> string_buf; never reassigned
+src/jsc/RuntimeTranspilerStore.rs:321 | arena | heuristic | 
+src/runtime/dns_jsc/dns.rs:645 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:786 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:885 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:1035 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:1374 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:1678 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:1801 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:1956 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/dns_jsc/dns.rs:4030 | ffi-backref | traced | BackRef to VirtualMachine
+src/jsc/VirtualMachine.rs:571 | ffi-backref | traced | BackRef to VirtualMachine
+src/jsc/VirtualMachine.rs:2230 | heap-stable | traced | caller-owned path; doc'd to outlive VM
+src/jsc/VirtualMachine.rs:2905 | arena | traced | (doc) resolver process-lifetime arena
+src/jsc/VirtualMachine.rs:3992 | arena | traced | specifier argv/resolver-arena
+src/jsc/VirtualMachine.rs:4057 | arena | traced | source dir re-slice argv/resolver-arena
+src/jsc/VirtualMachine.rs:4063 | arena | traced | source bytes argv/resolver-arena
+src/jsc/VirtualMachine.rs:4151 | arena | traced | query_string re-slice of specifier
+src/jsc/VirtualMachine.rs:4158 | arena | traced | result_path.text resolver arena
+src/jsc/VirtualMachine.rs:5916 | stack-local | traced | BackRef to stack errors_to_append Vec
+src/css/css_parser.rs:1012 | arena | traced | &'static Bump; arena outlives DeclarationList
+src/css/css_parser.rs:1463 | arena | heuristic | 
+src/css/css_parser.rs:2139 | arena | heuristic | 
+src/css/css_parser.rs:4206 | static | heuristic | 
+src/runtime/webcore/Body.rs:801 | ffi-backref | heuristic | 
+src/runtime/webcore/Body.rs:1449 | ffi-backref | heuristic | 
+src/runtime/webcore/Body.rs:2182 | other | heuristic | 
+src/runtime/test_runner/bun_test.rs:672 | other | heuristic | 
+src/runtime/webcore/FileReader.rs:651 | other | heuristic | 
+src/runtime/webcore/FileReader.rs:755 | other | heuristic | 
+src/runtime/webcore/FileReader.rs:764 | other | heuristic | 
+src/runtime/webcore/FileReader.rs:766 | other | heuristic | 
+src/jsc/web_worker.rs:549 | ffi-backref | heuristic | 
+src/runtime/socket/SocketAddress.rs:220 | other | heuristic | 
+src/runtime/webcore/s3/credentials_jsc.rs:259 | other | heuristic | 
+src/runtime/webcore/s3/credentials_jsc.rs:269 | other | heuristic | 
+src/runtime/webcore/s3/credentials_jsc.rs:281 | other | heuristic | 
+src/runtime/webcore/ReadableStream.rs:337 | ffi-backref | heuristic | 
+src/runtime/webcore/ReadableStream.rs:346 | ffi-backref | heuristic | 
+src/runtime/webcore/ReadableStream.rs:400 | ffi-backref | heuristic | 
+src/runtime/webcore/ReadableStream.rs:530 | other | heuristic | 
+src/runtime/webcore/ReadableStream.rs:547 | other | heuristic | 
+src/runtime/webcore/ReadableStream.rs:1043 | ffi-backref | heuristic | 
+src/runtime/webcore/ReadableStream.rs:1106 | ffi-backref | heuristic | 
+src/runtime/webcore/ReadableStream.rs:1142 | ffi-backref | heuristic | 
+src/runtime/dns_jsc/cares_jsc.rs:733 | ffi-backref | heuristic | 
+src/runtime/webcore/Blob.rs:3497 | ffi-backref | traced | JSC ArrayBuffer byte_slice GC-rooted
+src/runtime/webcore/Blob.rs:3523 | heap-stable | traced | Blob store shared_view ref-counted
+src/runtime/webcore/Blob.rs:3580 | ffi-backref | traced | JSC typed-array buf.slice GC-rooted
+src/runtime/webcore/Blob.rs:3947 | heap-stable | traced | DOMFormData ZigStringSlice::Static bytes
+src/runtime/webcore/Blob.rs:3996 | heap-stable | traced | content_type literal or Blob-store
+src/runtime/webcore/Blob.rs:4048 | heap-stable | traced | Blob store shared_view ref-counted
+src/runtime/webcore/Blob.rs:4651 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/webcore/Blob.rs:4930 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/webcore/Blob.rs:5231 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/webcore/Blob.rs:5839 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/bake/FrameworkRouter.rs:263 | other | heuristic | 
+src/runtime/bake/FrameworkRouter.rs:335 | other | heuristic | 
+src/runtime/bake/FrameworkRouter.rs:336 | other | heuristic | 
+src/runtime/bake/FrameworkRouter.rs:355 | other | heuristic | 
+src/runtime/bake/FrameworkRouter.rs:356 | other | heuristic | 
+src/runtime/bake/FrameworkRouter.rs:1693 | other | heuristic | 
+src/runtime/webcore/fetch/FetchTasklet.rs:322 | other | heuristic | 
+src/runtime/webcore/fetch/FetchTasklet.rs:2380 | static | heuristic | 
+src/runtime/webcore/blob/Store.rs:356 | arena | heuristic | 
+src/runtime/webcore/blob/Store.rs:455 | arena | heuristic | 
+src/runtime/bake/DevServer.rs:543 | ffi-backref | heuristic | 
+src/runtime/bake/DevServer.rs:696 | arena | heuristic | 
+src/runtime/bake/DevServer.rs:2823 | other | heuristic | 
+src/runtime/bake/DevServer.rs:3025 | other | heuristic | 
+src/runtime/jsc_hooks.rs:5030 | static | heuristic | 
+src/runtime/webcore/s3/client.rs:306 | ffi-backref | traced | BackRef to VirtualMachine singleton
+src/runtime/webcore/s3/client.rs:330 | heap-stable | traced | heap task Box sign_result.url
+src/runtime/webcore/s3/client.rs:334 | growable-vec | traced | SAFE: headers.buf write-once; no append after
+src/runtime/webcore/s3/client.rs:339 | heap-stable | traced | heap task Box proxy_url
+src/runtime/webcore/s3/client.rs:540 | ffi-backref | traced | BackRef to heap S3 task
+src/runtime/webcore/s3/client.rs:541 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/webcore/s3/client.rs:895 | heap-stable | traced | RawSlice into heap task.path
+src/runtime/webcore/s3/client.rs:1013 | ffi-backref | traced | BackRef to VirtualMachine singleton
+src/runtime/webcore/s3/client.rs:1040 | heap-stable | traced | heap task Box sign_result.url
+src/runtime/webcore/s3/client.rs:1044 | growable-vec | traced | SAFE: headers.buf write-once
+src/runtime/webcore/s3/client.rs:1049 | heap-stable | traced | heap task Box proxy_url
+src/runtime/webcore/s3/client.rs:1156 | growable-vec | traced | SAFE: chunk moved-out stack local; on_data read-only
+src/runtime/webcore/s3/client.rs:1163 | growable-vec | traced | SAFE: same
+src/runtime/webcore/s3/client.rs:1243 | ffi-backref | traced | BackRef to JSGlobalObject
+src/runtime/webcore/S3File.rs:588 | ffi-backref | heuristic | 
+src/runtime/webcore/S3File.rs:615 | ffi-backref | heuristic | 
+src/runtime/webcore/S3File.rs:642 | ffi-backref | heuristic | 
+src/runtime/webcore/ResumableSink.rs:159 | ffi-backref | heuristic | 
+src/runtime/server/ServerWebSocket.rs:344 | ffi-backref | heuristic | 
+src/runtime/server/ServerWebSocket.rs:694 | other | heuristic | 
+src/runtime/server/ServerWebSocket.rs:732 | other | heuristic | 
+src/runtime/server/ServerWebSocket.rs:764 | other | heuristic | 
+src/runtime/server/ServerWebSocket.rs:800 | other | heuristic | 
+src/runtime/webcore/Sink.rs:471 | other | heuristic | 
+src/runtime/webcore/Sink.rs:497 | other | heuristic | 
+src/runtime/webcore/Sink.rs:505 | other | heuristic | 
+src/runtime/timer/WTFTimer.rs:268 | other | heuristic | 
+src/runtime/api/filesystem_router.rs:206 | arena | traced | arena.alloc_slice_copy; arena boxed into returned struct
+src/runtime/api/filesystem_router.rs:223 | arena | heuristic | 
+src/runtime/api/filesystem_router.rs:325 | other | heuristic | 
+src/runtime/api/filesystem_router.rs:402 | other | heuristic | 
+src/runtime/api/filesystem_router.rs:612 | other | heuristic | 
+src/runtime/api/filesystem_router.rs:799 | static | heuristic | 
+src/runtime/api/JSTranspiler.rs:773 | arena | heuristic | 
+src/runtime/api/JSTranspiler.rs:987 | arena | heuristic | 
+src/runtime/api/JSTranspiler.rs:1340 | arena | heuristic | 
+src/runtime/api/JSTranspiler.rs:1535 | arena | heuristic | 
+src/runtime/api/JSTranspiler.rs:1725 | arena | heuristic | 
+src/runtime/api/BunObject.rs:1000 | other | heuristic | 
+src/runtime/api/BunObject.rs:1374 | other | heuristic | 
+src/runtime/webcore/s3/simple_request.rs:463 | static | heuristic | 
+src/runtime/webcore/s3/simple_request.rs:637 | ffi-backref | heuristic | 
+src/runtime/webcore/s3/simple_request.rs:661 | static | heuristic | 
+src/runtime/webcore/s3/simple_request.rs:665 | static | heuristic | 
+src/runtime/webcore/s3/simple_request.rs:669 | static | heuristic | 
+src/runtime/webcore/s3/simple_request.rs:674 | other | heuristic | 
+src/runtime/valkey_jsc/js_valkey.rs:207 | ffi-backref | traced | BackRef to JSValkeyClient (JSC-owned)
+src/runtime/valkey_jsc/js_valkey.rs:288 | ffi-backref | traced | same
+src/runtime/valkey_jsc/js_valkey.rs:628 | heap-stable | traced | BackRef to heap URL; scopeguard-destroyed
+src/runtime/valkey_jsc/js_valkey.rs:1048 | ffi-backref | traced | BackRef to self
+src/runtime/valkey_jsc/js_valkey.rs:1370 | ffi-backref | traced | BackRef to self
+src/runtime/valkey_jsc/js_valkey.rs:1579 | ffi-backref | traced | BackRef to self
+src/runtime/valkey_jsc/js_valkey.rs:1637 | ffi-backref | traced | BackRef to self
+src/runtime/valkey_jsc/js_valkey.rs:1827 | ffi-backref | traced | BackRef to this
+src/runtime/valkey_jsc/js_valkey.rs:1932 | ffi-backref | traced | BackRef to this
+src/runtime/valkey_jsc/js_valkey.rs:1960 | ffi-backref | traced | BackRef to this
+src/runtime/valkey_jsc/js_valkey.rs:1985 | ffi-backref | traced | BackRef to this
+src/runtime/api/bun/js_bun_spawn_bindings.rs:801 | other | heuristic | 
+src/runtime/api/bun/js_bun_spawn_bindings.rs:836 | other | heuristic | 
+src/runtime/api/bun/js_bun_spawn_bindings.rs:1287 | ffi-backref | heuristic | 
+src/runtime/api/bun/js_bun_spawn_bindings.rs:2178 | heap-stable | traced | ZBox heap data; stable across storage.push
+src/runtime/api/js_bundle_completion_task.rs:127 | ffi-backref | heuristic | 
+src/runtime/api/js_bundle_completion_task.rs:129 | ffi-backref | heuristic | 
+src/runtime/api/bun/subprocess.rs:366 | other | heuristic | 
+src/runtime/api/bun/subprocess.rs:973 | other | heuristic | 
+src/runtime/api/bun/subprocess.rs:1064 | other | heuristic | 
+src/runtime/api/bun/subprocess.rs:1274 | other | heuristic | 
+src/runtime/api/bun/SSLContextCache.rs:128 | ffi-backref | heuristic | 
+src/runtime/webcore/fetch.rs:132 | arena | heuristic | 
+src/runtime/webcore/fetch.rs:465 | other | heuristic | 
+src/runtime/webcore/fetch.rs:1094 | other | heuristic | 
+src/runtime/webcore/fetch.rs:1103 | other | heuristic | 
+src/runtime/webcore/fetch.rs:1622 | other | heuristic | 
+src/runtime/webcore/fetch.rs:1922 | other | heuristic | 
+src/runtime/webcore/fetch.rs:1928 | other | heuristic | 
+src/runtime/webcore/streams.rs:440 | ffi-backref | heuristic | 
+src/runtime/webcore/streams.rs:598 | ffi-backref | heuristic | 
+src/runtime/webcore/streams.rs:1551 | ffi-backref | heuristic | 
+src/runtime/webcore/streams.rs:1769 | ffi-backref | heuristic | 
+src/runtime/api/bun/subprocess/SubprocessPipeReader.rs:380 | other | heuristic | 
+src/runtime/node/node_fs_stat_watcher.rs:191 | ffi-backref | heuristic | 
+src/runtime/node/node_fs_stat_watcher.rs:1035 | ffi-backref | heuristic | 
+src/runtime/node/node_fs_stat_watcher.rs:1171 | ffi-backref | heuristic | 
+src/runtime/node/node_fs.rs:699 | ffi-backref | heuristic | 
+src/runtime/node/node_fs.rs:1283 | ffi-backref | heuristic | 
+src/runtime/node/node_fs.rs:2360 | ffi-backref | heuristic | 
+src/runtime/node/node_fs.rs:2451 | static | heuristic | 
+src/runtime/node/node_fs.rs:6548 | other | heuristic | 
+src/runtime/node/node_fs.rs:7158 | other | heuristic | 
+src/runtime/node/dir_iterator.rs:225 | other | heuristic | 
+src/runtime/node/dir_iterator.rs:323 | other | heuristic | 
+src/runtime/node/dir_iterator.rs:428 | other | heuristic | 
+src/runtime/node/dir_iterator.rs:492 | other | heuristic | 
+src/runtime/node/dir_iterator.rs:515 | other | heuristic | 
+src/runtime/node/dir_iterator.rs:844 | other | heuristic | 
+src/runtime/cli/test_command.rs:2175 | heap-stable | traced | ctx.test_options (process-lifetime CLI ctx)
+src/runtime/cli/test_command.rs:2185 | heap-stable | traced | ctx.test_options.path_ignore_patterns
+src/runtime/cli/test_command.rs:2202 | stack-local | traced | Vec in never-returning frame
+src/runtime/cli/test_command.rs:2224 | stack-local | traced | Vec in never-returning frame
+src/runtime/cli/test_command.rs:2226 | stack-local | traced | Vec in never-returning frame
+src/runtime/cli/test_command.rs:2228 | stack-local | traced | Vec in never-returning frame
+src/runtime/cli/test_command.rs:2233 | stack-local | traced | Vec in never-returning frame
+src/runtime/cli/test_command.rs:2247 | heap-stable | traced | &ctx.test_options (process-lifetime)
+src/runtime/cli/test_command.rs:2383 | stack-local | traced | Vec in never-returning frame
+src/runtime/cli/test_command.rs:2446 | heap-stable | traced | ctx.positionals (process-lifetime)
+src/runtime/cli/test_command.rs:2475 | stack-local | traced | Vec<Box> in frame
+src/runtime/cli/test_command.rs:2486 | stack-local | traced | Vec in never-returning frame
+src/runtime/node/node_process.rs:471 | static | heuristic | 
+src/runtime/node/node_process.rs:480 | other | heuristic | 
+src/runtime/shell/subproc.rs:229 | arena | heuristic | 
+src/runtime/shell/subproc.rs:233 | static | heuristic | 
+src/runtime/bake/production.rs:1522 | ffi-backref | heuristic | 
+src/runtime/bake/production.rs:1543 | ffi-backref | heuristic | 
+src/runtime/node/zlib/NativeZstd.rs:107 | ffi-backref | heuristic | 
+src/runtime/image/Image.rs:762 | other | heuristic | 
+src/runtime/image/Image.rs:774 | other | heuristic | 
+src/runtime/node/fs_events.rs:558 | other | heuristic | 
+src/runtime/node/fs_events.rs:858 | other | heuristic | 
+src/runtime/node/fs_events.rs:894 | other | heuristic | 
+src/runtime/node/zlib/NativeBrotli.rs:150 | ffi-backref | heuristic | 
+src/runtime/node/zlib/NativeZlib.rs:95 | ffi-backref | heuristic | 
+src/runtime/shell/states/Binary.rs:28 | arena | traced | ast::Binary node
+src/runtime/shell/states/Assigns.rs:50 | arena | traced | assigns slice
+src/runtime/shell/states/CondExpr.rs:41 | arena | traced | ast::CondExpr node
+src/runtime/api/bun/Terminal.rs:467 | ffi-backref | heuristic | 
+src/runtime/bake/dev_server/incremental_graph.rs:760 | heap-stable | traced | ArrayHashMap key Box<[u8]>; sibling-graph only mutated
+src/runtime/bake/dev_server/incremental_graph.rs:1155 | heap-stable | traced | key Box; sibling-graph read-only trace
+src/runtime/bake/dev_server/incremental_graph.rs:1227 | heap-stable | traced | key Box; sibling-graph read-only trace
+src/runtime/bake/dev_server/incremental_graph.rs:1355 | heap-stable | traced | key Box; free_file_content touches value only
+src/runtime/bake/dev_server/incremental_graph.rs:1414 | heap-stable | traced | gop.key_ptr Box; only first_dep/first_import/stale_files mutated
+src/runtime/bake/dev_server/incremental_graph.rs:1484 | heap-stable | traced | key Box; free_file_content + value-slot write only
+src/runtime/bake/dev_server/incremental_graph.rs:1526 | heap-stable | traced | key Box; relative_path + SerializedFailure copy only
+src/runtime/bake/dev_server/incremental_graph.rs:1624 | heap-stable | traced | key Box; invalidate() never mutates bundled_files
+src/runtime/bake/dev_server/incremental_graph.rs:1644 | heap-stable | traced | key Box; consumed by entry_points.append_css
+src/runtime/bake/dev_server/incremental_graph.rs:1658 | heap-stable | traced | key Box; consumed by entry_points.append_*
+src/runtime/shell/states/Subshell.rs:40 | arena | traced | ast::Subshell node
+src/runtime/api/bun/h2_frame_parser.rs:2083 | ffi-backref | heuristic | 
+src/runtime/api/bun/h2_frame_parser.rs:5421 | ffi-backref | heuristic | 
+src/runtime/api/bun/h2_frame_parser.rs:9405 | arena | heuristic | 
+src/runtime/api/bun/h2_frame_parser.rs:9408 | arena | heuristic | 
+src/runtime/api/bun/h2_frame_parser.rs:9410 | arena | heuristic | 
+src/runtime/api/bun/h2_frame_parser.rs:9417 | arena | heuristic | 
+src/runtime/api/bun/h2_frame_parser.rs:9419 | arena | heuristic | 
+src/runtime/cli/mod.rs:511 | static | heuristic | 
+src/runtime/shell/states/Cmd.rs:211 | arena | traced | ast::Cmd node
+src/runtime/cli/filter_arg.rs:271 | other | heuristic | 
+src/runtime/cli/filter_arg.rs:273 | other | heuristic | 
+src/runtime/shell/builtin/seq.rs:36 | static | heuristic | 
+src/runtime/shell/builtin/seq.rs:61 | static | heuristic | 
+src/runtime/shell/builtin/seq.rs:66 | static | heuristic | 
+src/runtime/shell/builtin/seq.rs:76 | static | heuristic | 
+src/runtime/shell/builtin/seq.rs:81 | static | heuristic | 
+src/runtime/api/bun/subprocess/Writable.rs:42 | other | heuristic | 
+src/runtime/shell/states/Async.rs:49 | arena | traced | ast::Async node
+src/runtime/shell/states/If.rs:69 | arena | traced | ast::If node
+src/runtime/shell/states/If.rs:94 | arena | traced | n.cond stmt slice
+src/runtime/shell/states/If.rs:106 | arena | traced | n.then stmt slice
+src/runtime/shell/states/If.rs:115 | arena | traced | n.else_parts[0]
+src/runtime/shell/states/If.rs:121 | arena | traced | n.else_parts[0]
+src/runtime/shell/states/If.rs:135 | arena | traced | n.else_parts[then_idx]
+src/runtime/shell/states/If.rs:145 | arena | traced | n.else_parts[last]
+src/runtime/shell/states/If.rs:152 | arena | traced | n.else_parts[idx]
+src/runtime/cli/create_command.rs:155 | static | heuristic | 
+src/runtime/shell/builtin/mv.rs:257 | other | heuristic | 
+src/runtime/shell/builtin/rm.rs:321 | other | heuristic | 
+src/runtime/shell/builtin/rm.rs:322 | other | heuristic | 
+src/runtime/shell/states/Pipeline.rs:54 | arena | traced | ast::Pipeline node

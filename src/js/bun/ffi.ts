@@ -76,21 +76,28 @@ const nativeLinkSymbols = ffi.linkSymbols;
 const nativeDLOpen = ffi.dlopen;
 const nativeCallback = ffi.callback;
 const closeCallback = ffi.closeCallback;
+const closeJSCCallback = ffi.closeJSCCallback;
 delete ffi.callback;
 delete ffi.closeCallback;
+delete ffi.closeJSCCallback;
 
 class JSCallback {
   constructor(cb, options) {
     const result = nativeCallback(options, cb);
     if (Error.isError(result)) throw result;
-    const { ctx, ptr } = result;
+    const { ctx, ptr, jsc } = result;
     this.#ctx = ctx;
+    // JavaScriptCore-native FFI callback: the engine cell (JSFFICallback) owns the JIT'd
+    // C-callable trampoline and roots the JS function; keeping a reference here keeps the
+    // native entry point valid for as long as this JSCallback is alive.
+    this.#jsc = jsc;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;
   }
 
   ptr;
   #ctx;
+  #jsc;
   #threadsafe;
 
   get threadsafe() {
@@ -104,11 +111,15 @@ class JSCallback {
 
   close() {
     const ctx = this.#ctx;
+    const jsc = this.#jsc;
     this.ptr = null;
     this.#ctx = null;
+    this.#jsc = null;
 
     if (ctx) {
       closeCallback(ctx);
+    } else if (jsc) {
+      closeJSCCallback(jsc);
     }
   }
 
@@ -336,6 +347,38 @@ ffiWrappers[FFIType.function] = `{
   return ptr;
 }`;
 
+// Wraps a native symbol for JS consumption. `shouldWrap` comes from the native side (dlopen /
+// linkSymbols report which symbols are engine-native): JavaScriptCore-native FFI functions do
+// argument conversion, arity handling and result boxing in the engine itself -- and their call
+// sites are compiled into DFG/FTL CallFFI nodes -- so they get NO per-argument coercion shim;
+// only a `cstring` return still gets the CString wrap. Everything else (napi_env/napi_value
+// signatures, threadsafe callbacks, or the BUN_FEATURE_FLAG_DISABLE_JSC_FFI escape hatch) goes
+// through the TinyCC-era FFIBuilder.
+function wrapSymbol(symbol, params, returnType, name, shouldWrap: boolean) {
+  if (!shouldWrap) {
+    if (FFIType[returnType as string] === FFIType.cstring) {
+      // Only a cstring return needs a JS wrapper; the arrow (a plain function object) carries
+      // .native/.ptr as own properties like any other symbol.
+      const wrapped = (...args) => new __GlobalBunCString(symbol(...args));
+      Object.defineProperty(wrapped, "name", { value: name });
+      wrapped.ptr = symbol.ptr;
+      wrapped.native = symbol;
+      return wrapped;
+    }
+    // The engine-native symbol IS its own .native / carries .ptr as engine intrinsics; writing
+    // an own property here would transition the cell's Structure and slow polymorphic call sites.
+    return symbol;
+  }
+
+  if (params?.length || FFIType[returnType as string] === FFIType.cstring) {
+    return FFIBuilder(params ?? [], returnType, symbol, name);
+  }
+
+  // consistentcy
+  symbol.native = symbol;
+  return symbol;
+}
+
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;
   var paramNames = new Array(params.length);
@@ -448,24 +491,24 @@ function dlopen(path, options) {
   const result = nativeDLOpen(path, options);
   if (Error.isError(result)) throw result;
 
+  // The native side reports which symbols are engine-native (need no JS coercion wrapper).
+  const jscSymbols = result.jscSymbols;
+  delete result.jscSymbols;
+
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
-      result.symbols[key] = FFIBuilder(
-        options[key].args ?? [],
-        options[key].returns ?? FFIType.void,
-        symbol,
-        // in stacktraces:
-        // instead of
-        //    "/usr/lib/sqlite3.so"
-        // we want
-        //    "sqlite3_get_version() - sqlit3.so"
-        path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
-      );
-    } else {
-      // consistentcy
-      result.symbols[key].native = result.symbols[key];
-    }
+    result.symbols[key] = wrapSymbol(
+      symbol,
+      options[key]?.args ?? [],
+      options[key]?.returns ?? FFIType.void,
+      // in stacktraces:
+      // instead of
+      //    "/usr/lib/sqlite3.so"
+      // we want
+      //    "sqlite3_get_version() - sqlit3.so"
+      path.includes("/") ? `${key} (${path.split("/").pop()})` : `${key} (${path})`,
+      !(jscSymbols && jscSymbols[key] === true),
+    );
   }
 
   // Bind it because it's a breaking change to not do so
@@ -533,14 +576,18 @@ function linkSymbols(options) {
   const result = nativeLinkSymbols(options);
   if (Error.isError(result)) throw result;
 
+  const jscSymbols = result.jscSymbols;
+  delete result.jscSymbols;
+
   for (let key in result.symbols) {
     var symbol = result.symbols[key];
-    if (options[key]?.args?.length || FFIType[options[key]?.returns as string] === FFIType.cstring) {
-      result.symbols[key] = FFIBuilder(options[key].args ?? [], options[key].returns ?? FFIType.void, symbol, key);
-    } else {
-      // consistentcy
-      result.symbols[key].native = result.symbols[key];
-    }
+    result.symbols[key] = wrapSymbol(
+      symbol,
+      options[key]?.args ?? [],
+      options[key]?.returns ?? FFIType.void,
+      key,
+      !(jscSymbols && jscSymbols[key] === true),
+    );
   }
 
   return result;

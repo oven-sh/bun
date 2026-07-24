@@ -125,6 +125,68 @@ unsafe extern "C" {
         add_ptr_property: bool,
         input_function_ptr: *mut c_void,
     ) -> JSValue;
+
+    /// JavaScriptCore-native FFI (src/jsc/bindings/JSCFFIBridge.cpp): creates a
+    /// `JSC::JSFFIFunction` for `target` with the given ABIType tags. Returns an
+    /// empty value with an exception pending on failure. Replaces the TinyCC-JIT'd
+    /// trampoline (see `Function::compile`) for eligible signatures.
+    fn Bun__CreateJSCFFIFunction(
+        global: *const JSGlobalObject,
+        symbol_name: *const ZigString,
+        arg_types: *const u8,
+        arg_count: u32,
+        return_type: u8,
+        target: *mut c_void,
+    ) -> JSValue;
+
+    /// JavaScriptCore-native FFI: creates a non-threadsafe `JSC::JSFFICallback`
+    /// wrapping `callable`; its read-only `.ptr` is the native entry point.
+    fn Bun__CreateJSCFFICallback(
+        global: *const JSGlobalObject,
+        callable: JSValue,
+        arg_types: *const u8,
+        arg_count: u32,
+        return_type: u8,
+    ) -> JSValue;
+}
+
+/// Whether bun:ffi should build the JavaScriptCore-native FFI object (engine-JIT'd stubs,
+/// engine-side argument coercion, DFG/FTL `CallFFI` integration) instead of the TinyCC-compiled
+/// trampoline. Enabled unless the `BUN_FEATURE_FLAG_DISABLE_JSC_FFI` escape hatch is set; the
+/// per-symbol eligibility checks (napi_env/napi_value, threadsafe) are the callers' concern.
+#[inline]
+fn jsc_ffi_enabled() -> bool {
+    !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_JSC_FFI
+        .get()
+        .unwrap_or(false)
+}
+
+/// Creates the JSC-native FFI function for `function` bound to `target` and returns it, or
+/// `None` if this symbol must take the TinyCC path (see `Function::can_use_jsc_ffi`). An
+/// engine-side failure surfaces as a returned exception value the caller propagates.
+fn create_jsc_ffi_function(
+    global: &JSGlobalObject,
+    symbol_name: &ZigString,
+    function: &Function,
+    target: *mut c_void,
+) -> JSValue {
+    let arg_types: Vec<u8> = function.arg_types.iter().map(|t| *t as u8).collect();
+    // SAFETY: `global` is a live JSC handle; `arg_types` is a valid slice for `arg_types.len()`
+    // elements; `target` is the resolved native entry point owned by the (kept-open) library.
+    unsafe {
+        Bun__CreateJSCFFIFunction(
+            global,
+            symbol_name,
+            if arg_types.is_empty() {
+                core::ptr::null()
+            } else {
+                arg_types.as_ptr()
+            },
+            u32::try_from(arg_types.len()).expect("int cast"),
+            function.return_type as u8,
+            target,
+        )
+    }
 }
 
 /// Raw extern fn pointers fed to the TCC-JIT'd C trampolines via `add_symbol`.
@@ -639,6 +701,15 @@ impl CompileC {
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
+                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+            }
+        }
+
+        // Bundled N-API headers (`<bun-cc>/node`), so `#include <node_api.h>`
+        // works in addition to `#include <node/node_api.h>` (resolved via the
+        // `<bun-cc>` sysinclude path above).
+        if let Some(node_dir) = CompilerRT::node_dir() {
+            if state.add_sys_include_path(node_dir).is_err() {
                 bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
             }
         }
@@ -1252,6 +1323,18 @@ impl FFI {
         JSValue::UNDEFINED
     }
 
+    /// Closes a JavaScriptCore-native FFI callback (`JSC::JSFFICallback`, created by
+    /// `Bun__CreateJSCFFICallback`). Idempotent; the engine keeps the trampoline code alive with
+    /// the cell so native code that still holds the pointer does not jump into freed memory.
+    pub fn close_jsc_callback(_global_this: &JSGlobalObject, callback: JSValue) -> JSValue {
+        unsafe extern "C" {
+            fn Bun__JSCFFICallbackClose(callback: JSValue);
+        }
+        // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
+        unsafe { Bun__JSCFFICallbackClose(callback) };
+        JSValue::UNDEFINED
+    }
+
     pub fn callback(
         global_this: &JSGlobalObject,
         interface: JSValue,
@@ -1285,6 +1368,48 @@ impl FFI {
         // TODO: WeakRefHandle that automatically frees it?
         func.base_name = Some(ZBox::from_bytes(b""));
         js_callback.ensure_still_alive();
+
+        // JavaScriptCore-native FFI callback (non-threadsafe): the engine JITs the C-callable
+        // trampoline and owns the JS function; no TinyCC state and no Rust-side Function box.
+        if func.can_use_jsc_ffi() {
+            let arg_types: Vec<u8> = func.arg_types.iter().map(|t| *t as u8).collect();
+            // SAFETY: `global_this` is a live JSC handle; `js_callback` is a callable JSValue kept
+            // alive above; `arg_types` is valid for `arg_types.len()` elements.
+            let cb = unsafe {
+                Bun__CreateJSCFFICallback(
+                    global_this,
+                    js_callback,
+                    if arg_types.is_empty() {
+                        core::ptr::null()
+                    } else {
+                        arg_types.as_ptr()
+                    },
+                    u32::try_from(arg_types.len()).expect("int cast"),
+                    func.return_type as u8,
+                )
+            };
+            if cb.is_empty() {
+                return Ok(if global_this.has_exception() {
+                    global_this.take_exception(JsError::Thrown)
+                } else {
+                    ZigString::init(b"Failed to create FFI callback").to_error_instance(global_this)
+                });
+            }
+            // Shape the JS class already consumes: { ptr, ctx } -- plus `jsc`, the engine cell the
+            // JSCallback object keeps alive; `ctx` is null so close() takes the JSC branch.
+            let ptr_value = cb
+                .get_own(global_this, &bun_core::String::borrow_utf8(b"ptr"))?
+                .unwrap_or(JSValue::UNDEFINED);
+            let result = create_object_2(
+                global_this,
+                &ZigString::static_(b"ptr"),
+                &ZigString::static_(b"ctx"),
+                ptr_value,
+                JSValue::NULL,
+            );
+            result.put(global_this, ZigString::static_(b"jsc").slice(), cb);
+            return Ok(result);
+        }
 
         if func
             .compile_callback(global_this, js_callback, func.threadsafe)
@@ -1534,6 +1659,10 @@ impl FFI {
 
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 
+        // Per-symbol map (name -> true) of symbols served by the JavaScriptCore-native FFI, so the
+        // JS glue knows which ones need no coercion wrapper without sniffing the function objects.
+        let jsc_symbols = JSValue::create_empty_object(global, symbols.len());
+
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
             // Reshaped for borrowck — clone base_name to drop &function borrow
@@ -1552,6 +1681,34 @@ impl FFI {
                 };
 
                 function.symbol_from_dynamic_library = Some(resolved_symbol);
+            }
+
+            // JavaScriptCore-native FFI: no TinyCC trampoline for this symbol at all.
+            if function.can_use_jsc_ffi() {
+                let target = function
+                    .symbol_from_dynamic_library
+                    .expect("symbol was resolved above");
+                let str = ZigString::init(function_name.as_bytes());
+                let cb = create_jsc_ffi_function(global, &str, function, target);
+                if cb.is_empty() {
+                    // The engine threw (invalid signature / executable-memory OOM); return the
+                    // pending exception value, matching how the TinyCC failure paths return errors.
+                    let ret = if global.has_exception() {
+                        global.take_exception(JsError::Thrown)
+                    } else {
+                        global.to_invalid_arguments(format_args!(
+                            "Failed to create FFI function for symbol \"{}\" in \"{}\"",
+                            BStr::new(function_name.as_bytes()),
+                            BStr::new(name)
+                        ))
+                    };
+                    dylib.close();
+                    return ret;
+                }
+                // `cb` is rooted by the `symbolsValue` cached own-property set below.
+                obj.put(global, str.slice(), cb);
+                jsc_symbols.put(global, str.slice(), JSValue::TRUE);
+                continue;
             }
 
             if let Err(err) = function.compile(napi_env) {
@@ -1599,6 +1756,12 @@ impl FFI {
 
         let js_object = lib.to_js(global);
         symbols_value_set_cached(js_object, global, obj);
+        // Tell the JS glue which symbols are engine-native (no wrapper needed).
+        js_object.put(
+            global,
+            ZigString::static_(b"jscSymbols").slice(),
+            jsc_symbols,
+        );
         js_object
     }
 
@@ -1642,6 +1805,9 @@ impl FFI {
 
         let napi_env = make_napi_env_if_needed(symbols.values(), global);
 
+        // Per-symbol map (name -> true) of symbols served by the JavaScriptCore-native FFI (see open()).
+        let jsc_symbols = JSValue::create_empty_object(global, symbols.len());
+
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
 
@@ -1651,6 +1817,27 @@ impl FFI {
                     BStr::new(function_name.as_bytes())
                 ));
                 return ret;
+            }
+
+            // JavaScriptCore-native FFI: no TinyCC trampoline for this symbol at all.
+            if function.can_use_jsc_ffi() {
+                let target = function.symbol_from_dynamic_library.expect("checked above");
+                let name = ZigString::init(function_name.as_bytes());
+                let cb = create_jsc_ffi_function(global, &name, function, target);
+                if cb.is_empty() {
+                    return if global.has_exception() {
+                        global.take_exception(JsError::Thrown)
+                    } else {
+                        global.to_invalid_arguments(format_args!(
+                            "Failed to create FFI function for symbol \"{}\"",
+                            BStr::new(function_name.as_bytes())
+                        ))
+                    };
+                }
+                // `cb` is rooted by the `symbolsValue` cached own-property set below.
+                obj.put(global, name.slice(), cb);
+                jsc_symbols.put(global, name.slice(), JSValue::TRUE);
+                continue;
             }
 
             if let Err(err) = function.compile(napi_env) {
@@ -1695,6 +1882,12 @@ impl FFI {
 
         let js_object = lib.to_js(global);
         symbols_value_set_cached(js_object, global, obj);
+        // Tell the JS glue which symbols are engine-native (no wrapper needed).
+        js_object.put(
+            global,
+            ZigString::static_(b"jscSymbols").slice(),
+            jsc_symbols,
+        );
         js_object
     }
 }
@@ -1936,6 +2129,14 @@ impl Function {
             }
         }
         self.return_type == ABIType::NapiValue
+    }
+
+    /// The JavaScriptCore-native FFI path handles every signature that neither touches N-API
+    /// (napi_env/napi_value need Bun's handle-scope bracketing, still done by the TinyCC path)
+    /// nor is a threadsafe callback (foreign-thread invocation is not yet supported by the
+    /// engine-side callback trampoline), unless the global escape hatch disables it.
+    pub(crate) fn can_use_jsc_ffi(&self) -> bool {
+        jsc_ffi_enabled() && !self.needs_handle_scope() && !self.threadsafe
     }
 
     fn fail(&mut self, msg: &'static [u8]) {
@@ -2552,6 +2753,9 @@ struct CompilerRT;
 // Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
 // `static mut` + leak.
 static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+// `<COMPILER_RT_DIR>/node` — the bundled N-API headers, so `cc()` sources can
+// `#include <node_api.h>` (node-gyp style) as well as `#include <node/node_api.h>`.
+static COMPILER_RT_NODE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 
 struct CompilerRtSources;
 impl CompilerRtSources {
@@ -2563,6 +2767,24 @@ impl CompilerRtSources {
         ("tgmath.h", include_bytes!("./ffi-tgmath.h")),
         ("stddef.h", include_bytes!("./ffi-stddef.h")),
         ("varargs.h", b"// empty"),
+    ];
+
+    /// N-API headers, written to `<bun-cc>/node/` so that
+    /// `#include <node/node_api.h>` works out of the box for `cc()`
+    /// sources using `napi_env`/`napi_value` — no system Node.js install
+    /// required. These are the same headers Bun's own napi bindings build
+    /// against.
+    const NODE_HEADERS: &'static [(&'static str, &'static [u8])] = &[
+        ("node_api.h", include_bytes!("../napi/node_api.h")),
+        (
+            "node_api_types.h",
+            include_bytes!("../napi/node_api_types.h"),
+        ),
+        ("js_native_api.h", include_bytes!("../napi/js_native_api.h")),
+        (
+            "js_native_api_types.h",
+            include_bytes!("../napi/js_native_api_types.h"),
+        ),
     ];
 }
 
@@ -2594,11 +2816,35 @@ impl CompilerRT {
         };
         // `ZBox::from_bytes` panics on OOM.
         let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
+
+        // Bundle the N-API headers under `<bun-cc>/node/`. `<bun-cc>` is on the
+        // sysinclude path, so `#include <node/node_api.h>` resolves; the `node/`
+        // dir is also added so `#include <node_api.h>` (node-gyp style) works.
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
+        else {
+            return;
+        };
+        for (name, source) in CompilerRtSources::NODE_HEADERS {
+            let name_z = ZBox::from_bytes(name.as_bytes());
+            let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
+        }
+        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
+            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
+        }
     }
 
     pub(crate) fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
         COMPILER_RT_DIR
+            .get()
+            .map(|b| b.as_zstr())
+            .filter(|d| !d.is_empty())
+    }
+
+    /// `<bun-cc>/node` — where the bundled N-API headers live.
+    pub(crate) fn node_dir() -> Option<&'static ZStr> {
+        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
+        COMPILER_RT_NODE_DIR
             .get()
             .map(|b| b.as_zstr())
             .filter(|d| !d.is_empty())

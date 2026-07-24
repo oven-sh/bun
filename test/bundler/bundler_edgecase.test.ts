@@ -1671,7 +1671,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "{\n  Y: [Function: Y],\n} 2 1",
+      stdout: "{\n  Y: [Function: Y] {\n    Z: 1,\n  },\n} 2 1",
     },
   });
   itBundled("edgecase/TypeScriptNamespaceSiblingClass", {
@@ -1695,7 +1695,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: "{\n  Y: [class Y],\n} 2 1",
+      stdout: "{\n  Y: [class Y] {\n    Z: 1,\n  },\n} 2 1",
     },
   });
   itBundled("edgecase/TypeScriptNamespaceSiblingEnum", {

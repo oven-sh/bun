@@ -1600,11 +1600,11 @@ mod _async_tasks {
 
         pub fn create_mini(
             cp_args: args::Cp,
-            // `EventLoopHandle::Mini` stores `*mut MiniEventLoop<'static>` (a
+            // `EventLoopHandle::Mini` stores `*mut MiniEventLoop` (a
             // non-owning erased backref, see `bun_event_loop::AnyEventLoop`). Taking the
             // raw pointer here avoids forcing every caller's `MiniEventLoop` borrow to be
             // `'static`; the task never outlives the loop.
-            mini: *mut MiniEventLoop<'static>,
+            mini: *mut MiniEventLoop,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
             let mut task = Box::new(Self {

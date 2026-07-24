@@ -193,9 +193,10 @@ pub(crate) trait CompressionContext {
     /// # Safety
     /// The stored raw pointers persist past the slice borrows. Callers must
     /// guarantee the backing memory of `in_`/`out` remains valid and
-    /// unmoved until the next `do_work()` completes; see the
-    /// `CompressionStream::write[_sync]` call sites below for the pinned
-    /// `ArrayBuffer` contract that discharges this.
+    /// unmoved until the next `do_work()` completes. The
+    /// `CompressionStream::write[_sync]` call sites below discharge this via
+    /// pinning (async path) or call-frame rooting + synchronous `do_work`
+    /// (sync path).
     unsafe fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
     fn set_flush(&mut self, flush: i32);
     fn do_work(&mut self);
@@ -692,8 +693,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.ref_();
 
         this.stream().with_mut(|s| {
-            // SAFETY: `in_`/`out` are slices into pinned JS `ArrayBuffer`s;
-            // `do_work` runs synchronously below before either is unpinned.
+            // SAFETY: `in_`/`out` are slices into JS `ArrayBuffer`s rooted by
+            // the call frame (`arguments[1]`/`[4]`); `do_work` runs
+            // synchronously below without entering JS, so neither backing
+            // store can move or detach.
             unsafe { s.set_buffers(in_, out) };
             s.set_flush(i32::try_from(flush).expect("int cast"));
         });

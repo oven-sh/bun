@@ -146,8 +146,11 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
 void MessagePort::start()
 {
-    if (m_started || !isEntangled())
+    if (!isEntangled())
         return;
+    // Node's port state: start() is the sole "receiving" gate. Removing the last
+    // 'message' listener flips m_started back to false (stop()); a later start()
+    // must resume, so this is not a one-shot latch.
     m_started = true;
 
     auto* context = scriptExecutionContext();
@@ -279,7 +282,7 @@ void MessagePort::peerClosed()
     // Deliver whatever the peer sent before it closed, then fire 'close'. Node orders
     // them that way, and registerCloseContext()'s retroactive notify can land before any
     // drain is scheduled -- e.g. on('close') registered before on('message').
-    if (m_started && m_hasMessageEventListener)
+    if (m_started)
         flushQueuedMessagesBeforeClose();
     // Fire 'close' (guarded against a double dispatch) and release this side's loop refs
     // so the loop can idle, matching node.
@@ -514,15 +517,17 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
+    // Node only fires [kNewListener] (and so start()) when the add actually lands;
+    // an already-aborted signal or a duplicate both return false here and must not
+    // start the port. Mirrors the `result` gate in removeEventListener below.
+    auto result = EventTarget::addEventListener(eventType, WTF::move(listener), options);
+    if (!result)
+        return false;
     if (eventType == eventNames().messageEvent) {
-        start();
         m_hasMessageEventListener = true;
-        // start() no-ops after the first call; re-attach so a listener re-added after a
-        // pause re-schedules the drain for messages buffered meanwhile.
-        if (m_started && isEntangled()) {
-            if (auto* context = scriptExecutionContext())
-                m_pipe->attach(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
-        }
+        // start() re-attaches each time, so a listener added after a pause
+        // re-schedules the drain for messages buffered meanwhile.
+        start();
     } else if (eventType == eventNames().closeEvent) {
         m_hasCloseEventListener.store(true, std::memory_order_release);
         if (isEntangled()) {
@@ -532,14 +537,21 @@ bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListene
                 m_pipe->registerCloseContext(m_side, context->identifier(), ThreadSafeWeakPtr<MessagePort> { *this });
         }
     }
-    return EventTarget::addEventListener(eventType, WTF::move(listener), options);
+    return result;
 }
 
 bool MessagePort::removeEventListener(const AtomString& eventType, EventListener& listener, const EventListenerOptions& options)
 {
     auto result = EventTarget::removeEventListener(eventType, listener, options);
-    if (!hasEventListeners(eventNames().messageEvent))
+    if (eventType == eventNames().messageEvent && !hasEventListeners(eventNames().messageEvent)) {
         m_hasMessageEventListener = false;
+        // Node stops the port when the last 'message' listener goes away; further
+        // messages buffer for receiveMessageOnPort until start() (or a new listener).
+        // A removeEventListener for a callback that was never registered is a no-op
+        // (`result` is false) and must not stop an explicitly-start()ed port.
+        if (result)
+            m_started = false;
+    }
     if (!hasEventListeners(eventNames().closeEvent))
         m_hasCloseEventListener.store(false, std::memory_order_release);
     return result;

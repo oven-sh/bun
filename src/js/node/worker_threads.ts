@@ -240,9 +240,11 @@ function injectFakeEmitter(Class) {
   function removeAllListeners(type) {
     const map = registryFor(this, false);
     if (!map) return this;
+    let removedMessage = false;
     const removeType = t => {
       const byListener = map.get(t);
       if (byListener) {
+        if (t === "message" && byListener.size > 0) removedMessage = true;
         for (const w of byListener.values()) this.removeEventListener(t, w);
         map.delete(t);
       }
@@ -254,6 +256,11 @@ function injectFakeEmitter(Class) {
     } else {
       removeType(type);
     }
+    // Node's NodeEventTarget.removeAllListeners never fires [kRemoveListener], so a
+    // MessagePort stays receiving. The per-wrapper removeEventListener above stopped
+    // it; restore with start(). Guarded by this.start so non-MessagePort targets
+    // (Worker) are unaffected.
+    if (removedMessage && typeof this.start === "function") this.start();
     return this;
   }
 

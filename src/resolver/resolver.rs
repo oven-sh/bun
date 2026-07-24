@@ -2420,9 +2420,8 @@ impl<'a> Resolver<'a> {
                             let mut primary = Path::init(unremapped_import_path);
                             primary.is_disabled = true;
                             let mut flags = ResultFlags::IS_MISSING_OPTIONAL_PEER;
-                            flags.set_is_from_node_modules(
-                                source_dir_info.is_inside_node_modules(),
-                            );
+                            flags
+                                .set_is_from_node_modules(source_dir_info.is_inside_node_modules());
                             return ResultUnion::Success(Result {
                                 path_pair: PathPair {
                                     primary,

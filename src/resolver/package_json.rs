@@ -741,7 +741,10 @@ impl PackageJSON {
                     let Some(entry) = prop.value.as_object() else {
                         continue;
                     };
-                    if !matches!(entry.get(b"optional"), Some(js_ast::E::JsonValue::Boolean(true))) {
+                    if !matches!(
+                        entry.get(b"optional"),
+                        Some(js_ast::E::JsonValue::Boolean(true))
+                    ) {
                         continue;
                     }
                     let key = prop.key.slice();

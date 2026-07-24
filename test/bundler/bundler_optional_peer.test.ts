@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test";
+import { describe } from "bun:test";
 import { itBundled } from "./expectBundled";
 
 // When a package declares an optional peer dependency via `peerDependenciesMeta`

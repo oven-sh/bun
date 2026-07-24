@@ -667,7 +667,14 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey, (JSGlobalObject * gl
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->publicKey()));
+    JSValue key = thisObject->publicKey();
+    RETURN_IF_EXCEPTION(scope, {});
+    if (key.isEmpty()) [[unlikely]] {
+        // The lazy initializer caches nullptr when computePublicKey threw; re-run it so
+        // every access throws the same error instead of returning an empty JSValue.
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSX509Certificate::computePublicKey(thisObject->view(), globalObject)));
+    }
+    return JSValue::encode(key);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_raw, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

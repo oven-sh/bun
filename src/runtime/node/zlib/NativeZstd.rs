@@ -195,14 +195,18 @@ mod _impl {
                 write_js_callback.with_async_context_if_needed(global),
             );
 
+            // `u64::MAX` is `ZSTD_CONTENTSIZE_UNKNOWN`. `ZSTD_CCtx_setPledgedSrcSize`
+            // takes a u64, so the only bound is what a JS number represents exactly.
             let mut pledged_src_size: u64 = u64::MAX;
             if pledged_src_size_value.is_number() {
-                pledged_src_size = u64::from(validators::validate_uint32(
+                pledged_src_size = u64::try_from(validators::validate_integer(
                     global,
                     pledged_src_size_value,
-                    format_args!("pledgedSrcSize"),
-                    false,
-                )?);
+                    "pledgedSrcSize",
+                    Some(0),
+                    Some(jsc::MAX_SAFE_INTEGER),
+                )?)
+                .expect("infallible: validated range");
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()

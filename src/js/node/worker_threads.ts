@@ -746,7 +746,7 @@ if (
 }
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
-  if (!res) return undefined;
+  if (res === undefined || res === null) return undefined;
   return {
     message: res,
   };

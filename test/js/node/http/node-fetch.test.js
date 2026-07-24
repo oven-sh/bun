@@ -294,19 +294,42 @@ describe("node-fetch honours the agent option", () => {
     }
   });
 
-  test("decompresses gzip responses", async () => {
+  test.each([
+    ["gzip", "gzip", b => zlib.gzipSync(b)],
+    ["deflate (zlib-wrapped)", "deflate", b => zlib.deflateSync(b)],
+    ["deflate (raw)", "deflate", b => zlib.deflateRawSync(b)],
+    ["br", "br", b => zlib.brotliCompressSync(b)],
+  ])("decompresses %s responses", async (_label, enc, encode) => {
     const { agent } = makeAgent();
     try {
       await withServer(
         (req, res) => {
-          res.writeHead(200, { "content-encoding": "gzip" });
-          res.end(zlib.gzipSync("compressed body"));
+          res.writeHead(200, { "content-encoding": enc });
+          res.end(encode("compressed body"));
         },
         async port => {
           const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
           expect(await res.text()).toBe("compressed body");
         },
       );
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("honours the agent carried on a Request input", async () => {
+    const { agent, calls } = makeAgent();
+    try {
+      await withServer(
+        (req, res) => res.end("ok"),
+        async port => {
+          const request = new Request(`http://127.0.0.1:${port}/`, { agent });
+          expect(request.agent).toBe(agent);
+          const res = await fetch2(request);
+          expect(await res.text()).toBe("ok");
+        },
+      );
+      expect(calls()).toBe(1);
     } finally {
       agent.destroy();
     }

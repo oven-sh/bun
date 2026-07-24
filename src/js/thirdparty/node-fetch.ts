@@ -125,6 +125,7 @@ var ResponsePrototype = Response.prototype;
 
 class Request extends WebRequest {
   [kUrl]?: string;
+  agent: any;
 
   constructor(input, init) {
     // node-fetch is relaxed with the URL, for example, it allows "/" as a valid URL.
@@ -136,6 +137,7 @@ class Request extends WebRequest {
     } else {
       super(input, init);
     }
+    this.agent = init?.agent ?? (input != null && typeof input === "object" ? input.agent : undefined);
   }
 
   get url() {
@@ -336,25 +338,48 @@ function fetchWithAgent(url, init, counter) {
       }
 
       const out = new PassThrough();
+      bodyStream = out;
+      out.once("close", removeAbort);
+      const pumpErr = (err: any) => {
+        if (err) out.destroy(err);
+      };
+
       const codings = (responseHeaders.get("content-encoding") || "").toLowerCase();
       let decoder: any;
+      let isDeflate = false;
       if (compress && method !== "HEAD" && status !== 204 && status !== 304) {
         if (codings === "gzip" || codings === "x-gzip")
           decoder = zlib.createGunzip({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
-        else if (codings === "deflate" || codings === "x-deflate")
-          decoder = zlib.createInflate({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
+        else if (codings === "deflate" || codings === "x-deflate") isDeflate = true;
         else if (codings === "br") decoder = zlib.createBrotliDecompress();
-        if (decoder) {
+        if (decoder || isDeflate) {
           responseHeaders.delete("content-encoding");
           responseHeaders.delete("content-length");
         }
       }
-      const chain = decoder ? [res, decoder, out] : [res, out];
-      pipeline(chain, err => {
-        if (err) out.destroy(err);
-      });
-      bodyStream = out;
-      out.once("close", removeAbort);
+      if (isDeflate) {
+        // Some servers send raw deflate (no zlib header) under
+        // Content-Encoding: deflate; node-fetch picks the decoder from the
+        // first byte, so do the same.
+        const raw = new PassThrough();
+        pipeline(res, raw, pumpErr);
+        let chosen = false;
+        const choose = chunk => {
+          if (chosen) return;
+          chosen = true;
+          const zopts = { flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH };
+          const inflate =
+            chunk && (chunk[0] & 0x0f) === 0x08 ? zlib.createInflate(zopts) : zlib.createInflateRaw(zopts);
+          if (chunk) raw.unshift(chunk);
+          pipeline(raw, inflate, out, pumpErr);
+        };
+        raw.once("data", choose);
+        raw.once("end", () => {
+          if (!chosen) out.end();
+        });
+      } else {
+        pipeline(decoder ? [res, decoder, out] : [res, out], pumpErr);
+      }
 
       let response: Response;
       try {
@@ -429,9 +454,11 @@ async function fetch(
 ) {
   // Native fetch has no `agent`; when one is supplied, fall back to the
   // node:http path so custom agents (proxy agents, overridden
-  // createConnection, pooling) are actually used.
-  if (init != null && init.agent != null && init.agent !== false) {
-    return fetchWithAgent(url, init, init.counter || 0);
+  // createConnection, pooling) are actually used. node-fetch also lets the
+  // agent ride on a Request input.
+  const agent = init?.agent ?? (url != null && typeof url === "object" ? url.agent : undefined);
+  if (agent != null && agent !== false) {
+    return fetchWithAgent(url, init == null ? { agent } : init.agent == null ? { ...init, agent } : init, init?.counter || 0);
   }
   // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
   // This is needed for libraries like `form-data` that use CombinedStream which extends

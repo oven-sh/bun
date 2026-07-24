@@ -804,6 +804,35 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
         }
+
+        // A concurrent import may leave this entry Fetching with no record; drive
+        // the fetch synchronously so a sync-completable module reaches Fetched
+        // before loadModuleSync links it. Async fetches (TLA, plugin) stay pending.
+        if (entry->status() == JSC::ModuleRegistryEntry::Status::Fetching && !entry->record()) {
+            JSPromise* fetchPromise = entry->ensureFetchPromise(globalObject);
+            JSPromise* modulePromise = entry->ensureModulePromise(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (modulePromise->status() == JSPromise::Status::Pending && fetchPromise->status() == JSPromise::Status::Pending) {
+                JSC::VM::SynchronousModuleQueue queue;
+                queue.prev = vm.m_synchronousModuleQueue;
+                vm.m_synchronousModuleQueue = &queue;
+                JSPromise* src = loader->fetch(globalObject, keyValue, nullptr, nullptr);
+                bool settled = false;
+                if (!scope.exception()) {
+                    if (src->status() == JSPromise::Status::Fulfilled) {
+                        fetchPromise->fulfillPromise(vm, src->result());
+                        settled = true;
+                    } else if (src->status() == JSPromise::Status::Rejected) {
+                        fetchPromise->rejectPromise(vm, src->result());
+                        settled = true;
+                    }
+                    if (settled && !scope.exception())
+                        JSC::JSModuleLoader::drainSynchronousModuleQueue(globalObject);
+                }
+                vm.m_synchronousModuleQueue = queue.prev;
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);

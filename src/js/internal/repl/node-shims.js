@@ -374,43 +374,10 @@ function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
 }
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
-// Bun only implements the single-callback set/clear API; emulate Node's
-// additive API with a dispatcher list. The shim occupies the exclusive slot
-// for the process lifetime once the first REPL starts — see repl.js
-// setupExceptionCapture() for the rationale.
+// node:domain needs the same stacking behaviour, so the dispatcher lives in
+// a shared module both can install into.
 
-let captureCallbacks = null;
-
-function addUncaughtExceptionCaptureCallback(cb) {
-  if (!captureCallbacks) {
-    captureCallbacks = [];
-    try {
-      process.setUncaughtExceptionCaptureCallback(err => {
-        // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator]
-        // and this runs while reporting that very error, so an unsafe iteration here
-        // replaces the user's exception with "{} is not iterable".
-        for (let i = 0; i < captureCallbacks.length; i++) {
-          if (captureCallbacks[i](err)) return;
-        }
-        // No callback claimed it: Node's aux API falls through to the
-        // regular 'uncaughtException' flow (with the origin arg), then to
-        // the native fatal handler.
-        if (process.emit("uncaughtException", err, "uncaughtException")) return;
-        try {
-          process.stderr.write(`Uncaught ${util.inspect(err)}\n`);
-        } catch {}
-        process.exit(1);
-      });
-    } catch {
-      // A user capture callback already occupies the exclusive slot. Node's
-      // additive API coexists with it natively; without that engine support,
-      // defer to the user's callback and don't push (the dispatcher isn't
-      // wired, so a queued cb would never fire).
-      return;
-    }
-  }
-  captureCallbacks.push(cb);
-}
+const { addUncaughtExceptionCaptureCallback } = require("internal/uncaught_exception_capture");
 
 export default {
   addUncaughtExceptionCaptureCallback,

@@ -354,6 +354,7 @@ unsafe extern "C" {
         err: JSValue,
         is_rejection: c_int,
     ) -> c_int;
+    safe fn Bun__hasUncaughtExceptionCaptureCallback(global: &JSGlobalObject) -> bool;
     safe fn Bun__handleUnhandledRejection(
         global: &JSGlobalObject,
         reason: JSValue,
@@ -1353,6 +1354,19 @@ impl VirtualMachine {
         }
 
         if isBunTest.load(core::sync::atomic::Ordering::Relaxed) {
+            // node parity: `process.setUncaughtExceptionCaptureCallback` takes over
+            // fatal-exception handling for the whole process, including inside the
+            // test runner. Without this the callback is silently dead under
+            // `bun test` and the exception is reported as a test failure instead.
+            if Bun__hasUncaughtExceptionCaptureCallback(global_object)
+                && Bun__handleUncaughtException(
+                    global_object,
+                    err.to_error().unwrap_or(err),
+                    if is_rejection { 1 } else { 0 },
+                ) > 0
+            {
+                return true;
+            }
             self.unhandled_error_counter += 1;
             (self.on_unhandled_rejection)(self, global_object, err);
             return true;

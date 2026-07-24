@@ -338,6 +338,10 @@ pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
     pub const BUILD: usize = 0;
+    /// Set when an explicit `||` union contains a branch that is entirely the
+    /// ANY comparator (`*`, `x`, `>=0.0.0`, ...). node-semver collapses such a
+    /// range to `*` before applying the prerelease rule.
+    pub const MATCH_ALL_BRANCH: usize = 2;
 }
 
 pub struct Group {
@@ -436,6 +440,7 @@ impl Group {
         let range = &self.head.head.range;
         if self.head.next.is_none()
             && self.head.head.next.is_none()
+            && !self.flags.is_set(Flags::MATCH_ALL_BRANCH)
             && range.has_left()
             && range.left.op == RangeOp::Eql
             && !range.has_right()
@@ -470,6 +475,7 @@ impl Group {
     pub fn is_exact(&self) -> bool {
         self.head.next.is_none()
             && self.head.head.next.is_none()
+            && !self.flags.is_set(Flags::MATCH_ALL_BRANCH)
             && !self.head.head.range.has_right()
             && self.head.head.range.left.op == RangeOp::Eql
     }
@@ -486,7 +492,8 @@ impl Group {
 
     #[inline]
     pub fn eql(&self, rhs: &Group) -> bool {
-        self.head.eql(&rhs.head)
+        self.flags.is_set(Flags::MATCH_ALL_BRANCH) == rhs.flags.is_set(Flags::MATCH_ALL_BRANCH)
+            && self.head.eql(&rhs.head)
     }
 
     pub fn to_version(&self) -> Version {
@@ -550,6 +557,11 @@ impl Group {
     #[inline]
     pub fn satisfies(&self, version: Version, group_buf: &[u8], version_buf: &[u8]) -> bool {
         if version.tag.has_pre() {
+            // node-semver collapses a `||`-union containing a match-all branch
+            // to `*`, which then rejects every prerelease (see range.js L57-67).
+            if self.flags.is_set(Flags::MATCH_ALL_BRANCH) {
+                return false;
+            }
             self.head.satisfies_pre(version, group_buf, version_buf)
         } else {
             self.head.satisfies(version, group_buf, version_buf)
@@ -818,6 +830,8 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
     let mut count: u32 = 0;
     let mut skip_round;
     let mut is_or = false;
+    let mut saw_or_separator = false;
+    let mut branch_has_non_any = false;
 
     while i < input.len() {
         skip_round = false;
@@ -883,11 +897,23 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             b'|' => {
                 i += 1;
 
+                let is_double = i < input.len() && input[i] == b'|';
                 while i < input.len() && input[i] == b'|' {
                     i += 1;
                 }
                 while i < input.len() && input[i] == b' ' {
                     i += 1;
+                }
+                // node-semver only splits on `||`; a lone `|` is loose-mode
+                // garbage dropped before the collapse step, not a separator.
+                if is_double {
+                    if !branch_has_non_any {
+                        list.flags.set_value(Flags::MATCH_ALL_BRANCH, true);
+                    }
+                    saw_or_separator = true;
+                    branch_has_non_any = false;
+                } else {
+                    branch_has_non_any = true;
                 }
                 is_or = true;
                 token.tag = TokenTag::None;
@@ -916,11 +942,15 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 while i < input.len() && input[i] != b' ' && input[i] != b'|' {
                     i += 1;
                 }
+                // node-semver loose mode drops these tokens via `.filter(c => c.length)`
+                // before the collapse-to-`*` step, so a garbage-only branch is not ANY.
+                branch_has_non_any = true;
                 skip_round = true;
             }
         }
 
         if !skip_round {
+            let has_real_operand = matches!(input.get(i), Some(b'0'..=b'9' | b'x' | b'X' | b'*'));
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             let version = parse_result.version.min();
             if version.tag.has_build() {
@@ -1052,6 +1082,12 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     },
                 };
 
+                // npm's hyphen-range grammar only accepts a `[v=\s]*` prefix;
+                // an operator-prefixed left side is not a hyphen range there.
+                if !range.is_match_all() || !matches!(token.tag, TokenTag::Version | TokenTag::Gte)
+                {
+                    branch_has_non_any = true;
+                }
                 if is_or {
                     list.or_range(&range)?;
                 } else {
@@ -1066,29 +1102,42 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 // covers a leading "--foo" (treat "--foo" the same as "-foo", example:
                 // foo/bar@1.2.3@--canary.24) as well as a dangling "-" after a skipped
                 // tag, like "1 || - foo".
+                branch_has_non_any = true;
                 token.wildcard = Wildcard::None;
                 continue;
-            } else if count == 0 && token.tag == TokenTag::Version {
-                match parse_result.wildcard {
-                    Wildcard::None => {
-                        list.or_version(version)?;
-                    }
-                    _ => {
-                        list.or_range(&token.to_range(&parse_result.version))?;
-                    }
-                }
-            } else if count == 0 {
-                list.and_range(&token.to_range(&parse_result.version))?;
-            } else if is_or {
-                list.or_range(&token.to_range(&parse_result.version))?;
+            } else if count == 0
+                && token.tag == TokenTag::Version
+                && parse_result.wildcard == Wildcard::None
+            {
+                branch_has_non_any = true;
+                list.or_version(version)?;
             } else {
-                list.and_range(&token.to_range(&parse_result.version))?;
+                let range = token.to_range(&parse_result.version);
+                // An operator whose operand is not a real version or wildcard
+                // char (`^`, `~`, `>=`, `^v`, `vv`, ...) is dropped by
+                // node-semver loose mode before the collapse step.
+                if !range.is_match_all() || !has_real_operand || !parse_result.valid {
+                    branch_has_non_any = true;
+                }
+                if count == 0 && token.tag == TokenTag::Version {
+                    list.or_range(&range)?;
+                } else if count == 0 {
+                    list.and_range(&range)?;
+                } else if is_or {
+                    list.or_range(&range)?;
+                } else {
+                    list.and_range(&range)?;
+                }
             }
 
             is_or = false;
             count += 1;
             token.wildcard = Wildcard::None;
         }
+    }
+
+    if saw_or_separator && !branch_has_non_any {
+        list.flags.set_value(Flags::MATCH_ALL_BRANCH, true);
     }
 
     Ok(list)

@@ -1484,7 +1484,33 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let needs_install = self.force_install
+        // A URL/local tarball is re-fetched under `--force`, and also when the
+        // dependency was explicitly named on the command line (`bun i <url>`,
+        // `bun update <name>`): the bytes behind the same cache key may have
+        // changed. Only on the initial install-phase pass (`NEEDS_VERIFY`); the
+        // post-extraction callback installs from the freshly refreshed cache.
+        // Skipped when this run already fetched the tarball (the resolve phase
+        // re-downloads it when `bun update` invalidates the resolution) — the
+        // cache is fresh, so install from it instead of re-enqueueing into the
+        // already-drained task.
+        let force_refresh_tarball = NEEDS_VERIFY
+            && resolution.tag.is_tarball_cache_keyed_by_url()
+            && (self.force_install
+                || self
+                    .manager_mut()
+                    .dependency_is_update_request(dependency_id))
+            && {
+                let url = match resolution.tag {
+                    resolution::Tag::RemoteTarball => {
+                        resolution.remote_tarball().slice(string_buf!())
+                    }
+                    _ => resolution.local_tarball().slice(string_buf!()),
+                };
+                !self.manager_mut().tarball_task_enqueued_this_run(url)
+            };
+
+        let needs_install = force_refresh_tarball
+            || self.force_install
             || self.skip_verify_installed_version_number
             || !NEEDS_VERIFY
             || remove_patch
@@ -1497,6 +1523,7 @@ impl<'a> PackageInstaller<'a> {
                     self.manager_mut(),
                     package_id,
                     resolution.tag,
+                    force_refresh_tarball,
                 )
             {
                 debug_assert!(resolution.can_enqueue_install_task());

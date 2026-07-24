@@ -167,6 +167,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
         // Self-borrow into `self.source` — see `buffer` field invariant.
         self.buffer = RawSlice::new(self.source.slice());
+        let empty = self.buffer.is_empty();
         #[cfg(windows)]
         {
             let r = self.writer.start_with_current_pipe();
@@ -177,6 +178,22 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                 // SAFETY: `self` is the live `Self` we ref'd at the top of
                 // `start()`; the caller's `IntrusiveRc` keeps it alive and
                 // `started` is false so no other site re-derefs.
+                unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
+            } else if empty {
+                // Nothing to write: WindowsBufferedWriter::write() returned
+                // without issuing a uv_write for the zero-length buffer, so the
+                // pipe would stay open and the child would block on stdin.
+                // Close the write end now so the child reads EOF. Mirror
+                // `on_write`'s POSIX `release_start_ref` path (clear `started`,
+                // close, deref) so start()'s `+1` is balanced; `on_close_io`
+                // replaces stdin with `Ignore`, so `take_pending_start_writer`
+                // can never re-release it. The trailing deref may free `self`;
+                // this is the last access (same contract as PipeWriter.rs's
+                // on_poll tail call).
+                self.started = false;
+                self.writer.close();
+                // SAFETY: start()'s +1 was live; `started` cleared so no other
+                // site re-derefs.
                 unsafe { RefCount::<Self>::deref(std::ptr::from_mut::<Self>(self)) };
             }
             return r;
@@ -203,6 +220,17 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                         if let Some(poll) = self.writer.handle.get_poll() {
                             poll.set_flag(bun_io::FilePollFlag::Socket);
                         }
+                    }
+                    if empty {
+                        // Nothing to write: PosixBufferedWriter's on_poll
+                        // returns without closing for a zero-length buffer, so
+                        // the pipe would stay open and the child would block on
+                        // stdin. Drive the drained path now so the write end
+                        // closes and the child reads EOF. `on_write(.., Drained)`
+                        // may free `self` via on_close -> on_close_io ->
+                        // finalize; this is the last access (same contract as
+                        // PipeWriter.rs's on_poll tail call).
+                        self.on_write(0, WriteStatus::Drained);
                     }
                     bun_sys::Result::Ok(())
                 }

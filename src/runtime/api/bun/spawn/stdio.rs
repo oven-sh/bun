@@ -552,8 +552,15 @@ impl Stdio {
         }
 
         if let Some(array_buffer) = value.as_array_buffer(global) {
-            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer
-            if array_buffer.byte_slice().is_empty() {
+            // Change in Bun v1.0.34: don't throw for empty ArrayBuffer.
+            // At stdin let it fall through to `Stdio::ArrayBuffer` so the child
+            // sees the same fd type as for a non-empty buffer (pipe on
+            // macOS/Windows via `StaticPipeWriter::start` which closes the
+            // zero-byte write end immediately; memfd on Linux via
+            // `use_memfd`), matching Node's spawnSync `{input: Buffer.alloc(0)}`.
+            // Other slots have no reader wired for `Stdio::ArrayBuffer`, so keep
+            // them as Ignore.
+            if i != 0 && array_buffer.byte_slice().is_empty() {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
             }
@@ -636,7 +643,11 @@ impl Stdio {
         }
 
         // Nothing to write: treat an empty blob the same as "ignore"
-        // (/dev/null at fds 0-2, left closed at extra slots).
+        // (/dev/null at fds 0-2, left closed at extra slots). This diverges
+        // from the empty-ArrayBuffer stdin case above, which now keeps the
+        // pipe; `extract_blob` is also called from the shell's redirect path
+        // (`Cmd.rs`) where a synchronous `on_close_io` inside `start()` would
+        // alias the `&mut subproc.stdin` held at the call site.
         if blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());

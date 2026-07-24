@@ -486,7 +486,13 @@ describe("execArgv option", async () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
-      out: { partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError", numeric: "string", freeze: "TypeError", extensibleAfterFreeze: true },
+      out: {
+        partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY",
+        symbol: "TypeError",
+        numeric: "string",
+        freeze: "TypeError",
+        extensibleAfterFreeze: true,
+      },
       stderr: "",
       exitCode: 0,
     });

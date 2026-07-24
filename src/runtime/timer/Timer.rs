@@ -418,6 +418,18 @@ impl All {
         };
 
         let Some(timer) = timer else { return Ok(()) };
+        // Node's unenroll: a timer cleared by clearTimeout/clearInterval reads
+        // back `_idleTimeout === -1` (a naturally fired one keeps its duration).
+        // SAFETY: timer points to a live TimerObjectInternals
+        if kind != Kind::SetImmediate
+            && let Some(js_timer) = unsafe { (*timer).this_value.get().try_get() }
+        {
+            crate::jsc::generated::JSTimeout::idle_timeout_set_cached(
+                js_timer,
+                global_this,
+                JSValue::js_number(-1.0),
+            );
+        }
         // SAFETY: timer points to a live TimerObjectInternals
         unsafe { (*timer).cancel(vm) };
         Ok(())

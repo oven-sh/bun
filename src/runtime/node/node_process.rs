@@ -449,9 +449,9 @@ mod _impl {
                     format!("{code}: process.cwd failed with error {label}{hint}, uv_cwd");
                 let err = bun_jsc::SystemError {
                     errno: core::ffi::c_int::from(e.errno).wrapping_neg(),
-                    code: BunString::static_(code),
-                    message: BunString::clone_utf8(message.as_bytes()),
-                    syscall: BunString::static_("uv_cwd"),
+                    code: BunString::static_(code).into(),
+                    message: BunString::clone_utf8(message.as_bytes()).into(),
+                    syscall: BunString::static_("uv_cwd").into(),
                     ..Default::default()
                 };
                 Err(global_object.throw_value(err.to_error_instance(global_object)))

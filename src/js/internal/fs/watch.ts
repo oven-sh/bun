@@ -173,6 +173,16 @@ class FSWatcher extends EventEmitter {
       throw e;
     }
     this._handle = new FSEvent(this);
+
+    // Native AbortSignals are wired up by the native watch() call above. An
+    // AbortSignal-shaped object (polyfill, cross-realm) passes the shape check
+    // there but has no native hook, so honour its pre-aborted state here the
+    // way Node's lib/internal/fs/watchers.js does. Real AbortSignals are
+    // handled by the native layer and skipped here.
+    const signal = options?.signal;
+    if (signal?.aborted && !$isAbortSignal(signal)) {
+      process.nextTick(() => this.close());
+    }
   }
 
   #onEvent(eventType, filenameOrError) {

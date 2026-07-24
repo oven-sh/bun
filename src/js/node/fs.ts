@@ -31,6 +31,18 @@ function ensureCallback(callback) {
   return callback;
 }
 
+// Node's checkAborted for the callback API: if the signal is already aborted,
+// deliver AbortError via the callback on the next tick and return true so the
+// caller can skip the native call.
+function callbackAborted(options, callback) {
+  const signal = options?.signal;
+  if (signal?.aborted) {
+    process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+    return true;
+  }
+  return false;
+}
+
 // Micro-optimization: avoid creating a new function for every call
 // bind() is slightly more optimized in JSC
 // This code is equivalent to:
@@ -62,6 +74,8 @@ var access = function access(path, mode, callback) {
     }
 
     ensureCallback(callback);
+
+    if (callbackAborted(options, callback)) return;
 
     fs.appendFile(path, data, options).then(nullcallback(callback), callback);
   },
@@ -334,6 +348,8 @@ var access = function access(path, mode, callback) {
     callback ||= options;
     ensureCallback(callback);
 
+    if (callbackAborted(options, callback)) return;
+
     fs.readFile(path, options).then(function (data) {
       callback(null, data);
     }, callback);
@@ -341,6 +357,8 @@ var access = function access(path, mode, callback) {
   writeFile = function writeFile(path, data, options, callback) {
     callback ||= options;
     ensureCallback(callback);
+
+    if (callbackAborted(options, callback)) return;
 
     fs.writeFile(path, data, options).then(nullcallback(callback), callback);
   },
@@ -381,11 +399,7 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
-    const signal = options?.signal;
-    if (signal?.aborted) {
-      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
-      return;
-    }
+    if (callbackAborted(options, callback)) return;
 
     fs.stat(path, options).then(function (stats) {
       callback(null, stats);

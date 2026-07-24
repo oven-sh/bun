@@ -536,3 +536,105 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expectNodeAbortError(writeErr, signal.reason);
   });
 });
+
+// node's validateAbortSignal accepts any object with an `aborted` property, so
+// abort-controller polyfills and cross-realm signals work. Bun's timers.promises,
+// child_process and events already accept these; fs.readFile/writeFile must too.
+describe("readFile/writeFile accept AbortSignal-shaped objects", () => {
+  const duck = {
+    aborted: false,
+    reason: undefined,
+    addEventListener() {},
+    removeEventListener() {},
+    onabort: null,
+  };
+
+  test("fsPromises.readFile", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-read", { "f.txt": "hello" });
+    expect(await fsPromises.readFile(join(dir, "f.txt"), { signal: duck, encoding: "utf8" })).toBe("hello");
+  });
+
+  test("fsPromises.writeFile and appendFile", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-write", {});
+    const p = join(dir, "f.txt");
+    await fsPromises.writeFile(p, "a", { signal: duck });
+    await fsPromises.appendFile(p, "b", { signal: duck });
+    expect(await fsPromises.readFile(p, "utf8")).toBe("ab");
+  });
+
+  test("callback fs.readFile and fs.writeFile", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-cb", { "f.txt": "hello" });
+    const readErr = await new Promise(resolve => fs.readFile(join(dir, "f.txt"), { signal: duck }, resolve));
+    expect(readErr).toBeNull();
+    const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal: duck }, resolve));
+    expect(writeErr).toBeNull();
+  });
+
+  test("fs.watch", () => {
+    const dir = tempDirWithFiles("fs-duck-signal-watch", { "f.txt": "hello" });
+    const w = fs.watch(dir, { signal: duck });
+    w.close();
+  });
+
+  test("fs.watch with a pre-aborted signal-shaped object closes on nextTick", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-watch-aborted", { "f.txt": "hello" });
+    const aborted = { aborted: true, reason: new Error("stop"), addEventListener() {}, removeEventListener() {} };
+    const w = fs.watch(dir, { signal: aborted });
+    const { promise, resolve, reject } = Promise.withResolvers();
+    w.on("close", resolve);
+    w.on("error", reject);
+    await promise;
+  });
+
+  // node's fs.readFile checks `signal.aborted` on the object itself (not via a
+  // brand check), so a pre-aborted polyfill signal rejects with AbortError.
+  test("a pre-aborted signal-shaped object rejects with AbortError", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-preaborted", { "f.txt": "hello" });
+    const reason = new Error("stop");
+    const aborted = { aborted: true, reason, addEventListener() {}, removeEventListener() {} };
+    for (const op of [
+      () => fsPromises.readFile(join(dir, "f.txt"), { signal: aborted }),
+      () => fsPromises.writeFile(join(dir, "o.txt"), "x", { signal: aborted }),
+      () => fsPromises.appendFile(join(dir, "o.txt"), "x", { signal: aborted }),
+    ]) {
+      let err;
+      try {
+        await op();
+      } catch (e) {
+        err = e;
+      }
+      expect({ name: err?.name, code: err?.code, cause: err?.cause }).toEqual({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        cause: reason,
+      });
+    }
+    expect(fs.existsSync(join(dir, "o.txt"))).toBe(false);
+  });
+
+  test("callback readFile/writeFile/appendFile with a pre-aborted signal-shaped object", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-preaborted-cb", { "f.txt": "hello" });
+    const reason = new Error("stop");
+    const aborted = { aborted: true, reason, addEventListener() {}, removeEventListener() {} };
+    const expected = { name: "AbortError", code: "ABORT_ERR", cause: reason };
+    const readErr = await new Promise(resolve => fs.readFile(join(dir, "f.txt"), { signal: aborted }, resolve));
+    expect({ name: readErr?.name, code: readErr?.code, cause: readErr?.cause }).toEqual(expected);
+    const writeErr = await new Promise(resolve => fs.writeFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve));
+    expect({ name: writeErr?.name, code: writeErr?.code, cause: writeErr?.cause }).toEqual(expected);
+    const appendErr = await new Promise(resolve =>
+      fs.appendFile(join(dir, "o.txt"), "x", { signal: aborted }, resolve),
+    );
+    expect({ name: appendErr?.name, code: appendErr?.code, cause: appendErr?.cause }).toEqual(expected);
+    expect(fs.existsSync(join(dir, "o.txt"))).toBe(false);
+  });
+
+  test("values that fail node's shape check still throw ERR_INVALID_ARG_TYPE", async () => {
+    const dir = tempDirWithFiles("fs-duck-signal-reject", { "f.txt": "hello" });
+    for (const signal of [{}, 42, "x"]) {
+      await expectReject(() => fsPromises.readFile(join(dir, "f.txt"), { signal }), { code: "ERR_INVALID_ARG_TYPE" });
+      await expectReject(() => fsPromises.writeFile(join(dir, "o.txt"), "x", { signal }), {
+        code: "ERR_INVALID_ARG_TYPE",
+      });
+    }
+  });
+});

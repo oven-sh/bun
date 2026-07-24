@@ -667,10 +667,14 @@ impl<'a> Arguments<'a> {
                         // `opaque_ffi!` ZST handle; `opaque_ref` is the
                         // centralised deref proof.
                         signal = Some(AbortSignal::opaque_ref(signal_obj));
-                    } else {
-                        return Err(ctx.throw_invalid_arguments(format_args!(
-                            "signal is not of type AbortSignal"
-                        )));
+                    } else if !signal_.is_object() || signal_.get(ctx, "aborted")?.is_none() {
+                        // node's validateAbortSignal accepts any object with an
+                        // `aborted` property (polyfills, cross-realm signals).
+                        return Err(ctx.throw_invalid_argument_type_value(
+                            b"options.signal",
+                            b"AbortSignal",
+                            signal_,
+                        ));
                     }
                 }
 

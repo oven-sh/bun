@@ -400,6 +400,15 @@ describe("read / write", () => {
     expect(["settled", "NotAllowedError"]).toContain(outcome);
   });
 
+  // writeText() must supersede an in-flight write() the same way write() does,
+  // or the earlier write lands after and overwrites.
+  test("writeText() supersedes an in-flight write()", async () => {
+    const { promise: rep } = Promise.withResolvers<string>();
+    const first = navigator.clipboard.write([new ClipboardItem({ "text/plain": rep })]);
+    navigator.clipboard.writeText("later").catch(() => {});
+    await expectDOMException(first, "AbortError");
+  });
+
   // Regression: a superseded writer must retire the collect still armed on its
   // items. The collect completion holds a Ref back to the writer, so dropping
   // the items without retiring leaves writer, item and the GC-guarded

@@ -92,6 +92,12 @@ void Clipboard::writeText(const String& data, Ref<DeferredPromise>&& promise)
         return;
     }
 
+    // Upstream routes writeText through write(), so it inherits supersession.
+    // This shortcut must too, or an earlier still-collecting write() lands
+    // after this one and overwrites it.
+    if (RefPtr previousItemWriter = std::exchange(m_activeItemWriter, nullptr))
+        previousItemWriter->invalidate();
+
     auto request = ClipboardRequest::create([promise, protectedThis = Ref { *this }](JSC::JSGlobalObject&, std::span<const ClipboardRepresentation>, const String& failureMessage) mutable {
         if (!failureMessage.isNull()) {
             promise->reject(ExceptionCode::NotAllowedError, failureMessage);
@@ -321,8 +327,11 @@ void Clipboard::ItemWriter::invalidate()
 {
     if (RefPtr promise = std::exchange(m_promise, nullptr))
         promise->reject(ExceptionCode::AbortError);
-    releaseItems();
+    // releaseItems re-enters detachFromClipboard via the collect completion;
+    // null m_clipboard first so that path cannot ref a mid-destruction
+    // Clipboard when ~Clipboard drives invalidate.
     m_clipboard = nullptr;
+    releaseItems();
 }
 
 // Retires any collect still outstanding on our items and drops them. Both are

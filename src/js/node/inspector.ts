@@ -1072,7 +1072,7 @@ class Session extends EventEmitter {
   #coverageBaseline: Map<string, number> = new Map();
   #adapter: any = undefined;
   // Resolvers for in-flight in-process commands, keyed by client command id.
-  #pendingResults: Map<number, (err: any, result?: any) => void> = new Map();
+  #pendingResults: Map<number, (err: any, result?: any) => void> = new SafeMap();
   #nextCommandId = 1;
   #dispatchingClientCommand = false;
 
@@ -1103,9 +1103,9 @@ class Session extends EventEmitter {
     const { id, error, method } = parsed;
     try {
       if (id !== undefined) {
-        const done = this.#pendingResults.$get(id);
+        const done = this.#pendingResults.get(id);
         if (done === undefined) return;
-        this.#pendingResults.$delete(id);
+        this.#pendingResults.delete(id);
         if (error) done({ code: error.code, message: error.message });
         else done(null, parsed.result ?? {});
         return;
@@ -1156,7 +1156,7 @@ class Session extends EventEmitter {
   #postInProcess(method: string, params: object | undefined, done: (err: any, result?: any) => void) {
     const adapter = this.#inProcessAdapter();
     const id = this.#nextCommandId++;
-    this.#pendingResults.$set(id, done);
+    this.#pendingResults.set(id, done);
     const message = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
     const wasDispatching = this.#dispatchingClientCommand;
     this.#dispatchingClientCommand = true;
@@ -1204,7 +1204,7 @@ class Session extends EventEmitter {
       // with "Inspector error -32000: Execution context was destroyed."
       // (ERR_INSPECTOR_COMMAND), like any in-flight command at teardown.
       const pending = this.#pendingResults;
-      this.#pendingResults = new Map();
+      this.#pendingResults = new SafeMap();
       for (const done of pending.values()) {
         process.nextTick(done, { code: -32000, message: "Execution context was destroyed." });
       }

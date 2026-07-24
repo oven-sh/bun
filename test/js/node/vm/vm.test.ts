@@ -1236,3 +1236,81 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A PromiseReactionJob's realm is the handler's realm (HTML HostEnqueuePromiseJob),
+// so the job must land on the handler's realm's microtask queue. For a handler
+// from the host realm attached to a context promise, the reaction runs on the
+// host queue (the event loop drains it). For a context-realm handler attached
+// to a host promise, the reaction is stranded on the context's own queue until
+// the next evaluation in that context drains it.
+//
+// The fix is a JavaScriptCore change (oven-sh/WebKit#277). Marked todo until the
+// WEBKIT_VERSION bump lands; a passing .todo then forces these to be enabled.
+describe.todo('microtaskMode: "afterEvaluate" promise reaction routing', () => {
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("host .then handler on a fulfilled context promise runs on the host queue", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const c = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+      const p = vm.runInContext("Promise.resolve('v')", c);
+      p.then(v => console.log("then:" + v));
+      setImmediate(() => console.log("done"));
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: "then:v\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("host .catch handler on a rejected context promise runs on the host queue", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const c = vm.createContext({}, { microtaskMode: "afterEvaluate" });
+      const p = vm.runInContext("Promise.reject(new Error('boom'))", c);
+      p.catch(e => console.log("catch:" + e.message));
+      setImmediate(() => console.log("done"));
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: "catch:boom\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("host .then handler on a pending context promise runs once it settles from the host", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      const c = vm.createContext({ setImmediate }, { microtaskMode: "afterEvaluate" });
+      const p = vm.runInContext("new Promise(r => setImmediate(() => r('v2')))", c);
+      p.then(v => console.log("then:" + v));
+      setImmediate(() => setImmediate(() => console.log("done")));
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: "then:v2\ndone\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("context .then handler on a host promise is stranded until the context is drained", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const vm = require("node:vm");
+      let resolve;
+      const hostPromise = new Promise(r => { resolve = r; });
+      const log = [];
+      const c = vm.createContext({ hostPromise, mark: () => log.push("mark") }, { microtaskMode: "afterEvaluate" });
+      vm.runInContext("hostPromise.then(() => mark())", c);
+      resolve("ok");
+      setImmediate(() => {
+        log.push("before-drain");
+        vm.runInContext("", c);
+        log.push("after-drain");
+        console.log(log.join(","));
+      });
+    `);
+    expect({ stdout, stderr }).toEqual({ stdout: "before-drain,mark,after-drain\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});

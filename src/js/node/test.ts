@@ -721,6 +721,7 @@ function reviveSerializedValue(value: unknown) {
   if (value !== null && typeof value === "object") {
     const tag = (value as { _bunTag?: unknown })._bunTag;
     if (tag === "nf") return Number((value as { v: string }).v);
+    if (tag === "bi") return BigInt((value as { v: string }).v);
     if (tag === "v") return (value as { v: unknown }).v;
   }
   return value;
@@ -967,6 +968,7 @@ function serializeExtraValue(value: unknown) {
   const t = typeof value;
   // JSON emits null for non-finite numbers; tag so the parent revives.
   if (t === "number" && !Number.isFinite(value)) return { __proto__: null, _bunTag: "nf", v: String(value) };
+  if (t === "bigint") return { __proto__: null, _bunTag: "bi", v: String(value) };
   if (t !== "symbol" && t !== "function") {
     try {
       JSON.stringify(value);

@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { gcTick, tempDir, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -213,12 +213,23 @@ describe("HTMLRewriter", () => {
       await withPartialBodyServer(async (url, release) => {
         const res = await fetch(url);
         const transformed = rewriter().transform(res);
-        // Start the read BEFORE the upstream fails. This is the one shape
+        // Start reading BEFORE the upstream fails. This is the one shape
         // (readable attached, no pending promise) where the error must reach
-        // the attached stream; discarding it would strand this read forever.
-        const read = settle(transformed.body.getReader().read());
+        // the attached stream; discarding it would strand the reader forever.
+        // The transform streams, so reads may first be satisfied by the
+        // rewritten bytes that arrived before the failure; the stream must
+        // then reject with the upstream error, never complete cleanly.
+        const reader = transformed.body.getReader();
+        const settled = settle(
+          (async () => {
+            for (;;) {
+              const { done } = await reader.read();
+              if (done) throw new Error("stream closed cleanly after a truncated upstream");
+            }
+          })(),
+        );
         release();
-        expect(await read).toEqual(rejectedWithConnectionError);
+        expect(await settled).toEqual(rejectedWithConnectionError);
       });
     });
 
@@ -1259,5 +1270,463 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(savedElement.tagName).toBeUndefined();
     expect(savedEndTag.name).toBeUndefined();
     expect(savedComment.text).toBeNull();
+  });
+});
+
+// Shared by the two "HTMLRewriter streaming" describe blocks below.
+const encoder = new TextEncoder();
+const CHUNK_A = `<!DOCTYPE html><html><body><p id="a">one</p>`;
+const CHUNK_B = `<p id="b">two</p></body></html>`;
+const REWRITTEN = CHUNK_A.replace(`id="a"`, `id="a" rewritten="1"`) + CHUNK_B.replace(`id="b"`, `id="b" rewritten="1"`);
+
+// HTMLRewriter must drive lol-html's chunked `write()` from the source
+// stream instead of buffering the whole input first, and the transformed
+// Response's body must be a real stream while the source is still
+// producing. Every test below uses a "gate": the upstream refuses to emit
+// its final chunk and close until the behavior under test has already been
+// observed. A buffer-everything implementation therefore deadlocks
+// (deterministic failure) rather than flaking, and the gate also
+// guarantees the source is never complete before `transform()` runs.
+describe.concurrent("HTMLRewriter streaming", () => {
+  // An upstream whose body emits CHUNK_A, then refuses to emit CHUNK_B and
+  // close until `gate` resolves.
+  function gatedUpstream(gate) {
+    return Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(encoder.encode(CHUNK_A));
+              await controller.flush();
+              await gate;
+              controller.write(encoder.encode(CHUNK_B));
+              controller.close();
+            },
+          }),
+          { headers: { "content-type": "text/html" } },
+        );
+      },
+    });
+  }
+
+  function rewriter() {
+    return new HTMLRewriter().on("p", {
+      element(element) {
+        element.setAttribute("rewritten", "1");
+      },
+    });
+  }
+
+  it("element handlers fire as source chunks arrive, not only at end-of-stream", async () => {
+    const sawFirstElement = Promise.withResolvers();
+    const gate = Promise.withResolvers();
+    using upstream = gatedUpstream(gate.promise);
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    const seen = [];
+    const rw = new HTMLRewriter().on("p", {
+      element(element) {
+        seen.push(element.getAttribute("id"));
+        if (element.getAttribute("id") === "a") sawFirstElement.resolve();
+      },
+    });
+
+    const out = rw.transform(await fetch(upstream.url));
+    const textPromise = out.text();
+    // A buffer-everything implementation deadlocks here: the handler only
+    // fires after the source closes, and the source only closes after the
+    // handler has fired.
+    await sawFirstElement.promise;
+    expect(seen).toEqual(["a"]);
+    gate.resolve();
+    expect(await textPromise).toBe(CHUNK_A + CHUNK_B);
+    expect(seen).toEqual(["a", "b"]);
+  });
+
+  it(".body of a transformed streaming response yields the rewritten output", async () => {
+    // https://github.com/oven-sh/bun/issues/19305
+    const gate = Promise.withResolvers();
+    using upstream = gatedUpstream(gate.promise);
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    const out = rewriter().transform(await fetch(upstream.url));
+    // The gate is still shut, so the source body is provably incomplete
+    // when `.body` is materialized. Opening it only afterwards rules out
+    // the already-buffered fast path.
+    const reader = out.body.getReader();
+    gate.resolve();
+
+    const decoder = new TextDecoder();
+    let text = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    text += decoder.decode();
+    expect(text).toBe(REWRITTEN);
+  });
+
+  it("Bun.serve streams a transformed response through to the client", async () => {
+    const gate = Promise.withResolvers();
+    using upstream = gatedUpstream(gate.promise);
+    using proxy = Bun.serve({
+      port: 0,
+      // Bounds the failure: without streaming the proxy never finishes
+      // the response and this turns into a fast, explicit error.
+      idleTimeout: 5,
+      async fetch() {
+        return rewriter().transform(await fetch(upstream.url));
+      },
+    });
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    // Headers arriving proves the proxy already handed the Locked body to
+    // the server while the upstream was still gated open.
+    const response = await fetch(proxy.url);
+    gate.resolve();
+    expect(await response.text()).toBe(REWRITTEN);
+    expect(response.status).toBe(200);
+  });
+
+  it("Bun.serve streams a transformed Bun.file() response through to the client", async () => {
+    // https://github.com/oven-sh/bun/issues/6068
+    // A Bun.file() body is a file-backed Blob the bufferer reads
+    // asynchronously, a different source path from the piped upstream
+    // above; the server is handed the pending body before the read lands.
+    using dir = tempDir("htmlrewriter-file", { "page.html": CHUNK_A + CHUNK_B });
+    using proxy = Bun.serve({
+      port: 0,
+      // Bounds the failure: without the output stream hooks the server
+      // pipes a ByteStream nothing ever writes to.
+      idleTimeout: 5,
+      fetch() {
+        return rewriter().transform(new Response(Bun.file(path.join(String(dir), "page.html"))));
+      },
+    });
+
+    const response = await fetch(proxy.url);
+    expect(await response.text()).toBe(REWRITTEN);
+    expect(response.status).toBe(200);
+  });
+
+  it("a Bun.serve proxy delivers rewritten bytes before the upstream ends (TTFB)", async () => {
+    const gate = Promise.withResolvers();
+    using upstream = gatedUpstream(gate.promise);
+    using proxy = Bun.serve({
+      port: 0,
+      async fetch() {
+        return rewriter().transform(await fetch(upstream.url));
+      },
+    });
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    const response = await fetch(proxy.url);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let received = "";
+    // The upstream cannot finish until the gate opens, and the gate only
+    // opens once the client has already received rewritten output. A
+    // buffer-then-transform implementation deadlocks on the first read.
+    while (!received.includes(`id="a" rewritten="1"`)) {
+      const { done, value } = await reader.read();
+      if (done) {
+        throw new Error(
+          `proxy response closed before any rewritten output arrived; received: ${JSON.stringify(received)}`,
+        );
+      }
+      received += decoder.decode(value, { stream: true });
+    }
+    gate.resolve();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += decoder.decode(value, { stream: true });
+    }
+    received += decoder.decode();
+    expect(received).toBe(REWRITTEN);
+  });
+
+  it("two concurrent transforms with failed handlers each report their own error", async () => {
+    // A `lolhtml::write` on a source chunk can now fail long before the
+    // source ends, and lol-html poisons the rewriter after a failed
+    // `write` (`end()` on it panics). A second transform failing, or
+    // reporting, in that window must neither drive `end()` on the
+    // poisoned rewriter nor leave this one with an empty or clobbered
+    // error message.
+    const gate1 = Promise.withResolvers();
+    const gate2 = Promise.withResolvers();
+    using upstream1 = gatedUpstream(gate1.promise);
+    using upstream2 = gatedUpstream(gate2.promise);
+    using _openGatesOnExit = {
+      [Symbol.dispose]: () => {
+        gate1.resolve();
+        gate2.resolve();
+      },
+    };
+
+    function throwingTransform(upstream, id) {
+      const threw = Promise.withResolvers();
+      const rw = new HTMLRewriter().on("p", {
+        element() {
+          threw.resolve();
+          throw new Error(`boom-${id}`);
+        },
+      });
+      const settled = fetch(upstream.url)
+        .then(response => rw.transform(response).text())
+        .then(
+          text => ({ outcome: "resolved", text }),
+          error => ({ outcome: "rejected", message: error?.message }),
+        );
+      return { settled, threw: threw.promise };
+    }
+
+    const first = throwingTransform(upstream1, "1");
+    const second = throwingTransform(upstream2, "2");
+    // Both handlers have thrown on their first (ungated) chunk, so both
+    // transforms hold a failed lol-html write while their source is open.
+    await Promise.all([first.threw, second.threw]);
+
+    // Let the second report first, then the first.
+    gate2.resolve();
+    const secondResult = await second.settled;
+    gate1.resolve();
+    const firstResult = await first.settled;
+
+    expect(secondResult.outcome).toBe("rejected");
+    expect(firstResult.outcome).toBe("rejected");
+    // On this mid-stream (asynchronous) path the handler's thrown value is
+    // not recoverable: the VM's capture slot is only armed for the
+    // synchronous `transform()` window, so the reported message is
+    // lol-html's generic one rather than `boom-N` (identical to `main`'s
+    // async path). The clobbering this test exists to catch is one
+    // transform reporting the OTHER's error; assert that directly, which
+    // holds for both the specific and generic message shapes.
+    expect(secondResult.message.length).toBeGreaterThan(0);
+    expect(firstResult.message.length).toBeGreaterThan(0);
+    expect(firstResult.message).not.toContain("boom-2");
+    expect(secondResult.message).not.toContain("boom-1");
+  });
+
+  it("an element handler throwing mid-stream rejects a streaming .body reader", async () => {
+    const gate = Promise.withResolvers();
+    using upstream = gatedUpstream(gate.promise);
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    // `p#a` (first chunk) is rewritten; `p#b` (second chunk, behind the
+    // gate) throws.
+    const rw = new HTMLRewriter().on("p", {
+      element(element) {
+        if (element.getAttribute("id") === "b") throw new Error("handler-boom");
+        element.setAttribute("rewritten", "1");
+      },
+    });
+    const out = rw.transform(await fetch(upstream.url));
+    const reader = out.body.getReader();
+
+    // First prove the output is streaming: drain until the rewritten
+    // first chunk is visible while the upstream is still gated open. A
+    // buffer-everything implementation deadlocks on the first read here.
+    const decoder = new TextDecoder();
+    let received = "";
+    while (!received.includes(`id="a" rewritten="1"`)) {
+      const { done, value } = await reader.read();
+      if (done) {
+        throw new Error(`output closed before any rewritten bytes arrived; received: ${JSON.stringify(received)}`);
+      }
+      received += decoder.decode(value, { stream: true });
+    }
+
+    // Now let the second chunk through; its handler throws and the
+    // already-attached reader must observe the failure. The error is the
+    // original thrown `Error` when the VM's synchronous capture slot
+    // happens to be armed, and lol-html's `HTMLRewriterError` otherwise,
+    // so only assert that a real (non-empty) error was delivered.
+    const settled = (async () => {
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) return { outcome: "resolved" };
+      }
+    })().catch(error => ({ outcome: "rejected", message: error?.message }));
+    gate.resolve();
+    const result = await settled;
+    expect(result.outcome).toBe("rejected");
+    expect(result.message.length).toBeGreaterThan(0);
+  });
+
+  it("a handler throw rejects consumers without waiting for the source to end", async () => {
+    // Unlike every other test here, the gate stays SHUT for the whole
+    // assertion, so the source never ends on its own. A failed `write`
+    // poisons the rewriter and drops every later source chunk, so waiting
+    // for the source's end to report the error strands `.text()` (and
+    // every other consumer) for as long as the upstream stays open. The
+    // only way `settled` can settle below is the immediate report.
+    const gate = Promise.withResolvers();
+    using upstream = gatedUpstream(gate.promise);
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    const rw = new HTMLRewriter().on("p", {
+      element() {
+        throw new Error("boom-early");
+      },
+    });
+    const settled = fetch(upstream.url)
+      .then(response => rw.transform(response).text())
+      .then(
+        text => ({ outcome: "resolved", text }),
+        error => ({ outcome: "rejected", message: error?.message }),
+      );
+    const result = await settled;
+    expect(result.outcome).toBe("rejected");
+    expect(result.message.length).toBeGreaterThan(0);
+    // Only the `using` disposer above opens the gate, after the assertions.
+  });
+});
+
+// These two tests use async element handlers, which block `lolhtml::write`
+// by spinning the full event loop (`wait_for_promise`) for the duration of
+// the handler's await. Running them concurrently with other server/fetch
+// tests nests that spin inside theirs and can corrupt an unrelated
+// in-flight response, so they get their own sequential block.
+describe("HTMLRewriter streaming with async handlers", () => {
+  it("an async element handler on a chunk delivered mid-stream does not stall the HTTP client", async () => {
+    // The source's pipe handler runs inside
+    // `FetchTasklet::on_progress_update`, which holds the tasklet's mutex
+    // until `ByteStream::on_data` returns, and the singleton HTTP-client
+    // thread takes that SAME mutex before delivering the next chunk. So
+    // lol-html's `write` (which an async handler suspends by spinning the
+    // full event loop) must never run inside that callback; if it did,
+    // the handler's inner `fetch` below could never complete and every
+    // in-flight fetch in the process would stall.
+    //
+    // The first chunk deliberately contains no matched element, and the
+    // chunk that does (`p#a`) is gated until after `transform()` has
+    // returned, which guarantees it is delivered through the pipe path
+    // and never the synchronous pre-buffered prefix.
+    const PRELUDE = `<!DOCTYPE html><html><body>`;
+    const P_A = CHUNK_A.slice(PRELUDE.length);
+    const gate1 = Promise.withResolvers();
+    const gate2 = Promise.withResolvers();
+    const sourceClosed = Promise.withResolvers();
+    using upstream = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(encoder.encode(PRELUDE));
+              await controller.flush();
+              await gate1.promise;
+              controller.write(encoder.encode(P_A));
+              await controller.flush();
+              await gate2.promise;
+              controller.write(encoder.encode(CHUNK_B));
+              controller.close();
+              sourceClosed.resolve();
+            },
+          }),
+          { headers: { "content-type": "text/html" } },
+        );
+      },
+    });
+    // A separate server for the handler's round trip: sharing the streaming
+    // source's host:port can reuse its pooled connection before its chunked
+    // trailer is drained (mid-spin), which reads as a malformed response.
+    using sidecar = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    using _openGatesOnExit = {
+      [Symbol.dispose]: () => {
+        gate1.resolve();
+        gate2.resolve();
+      },
+    };
+
+    const seen = [];
+    const rw = new HTMLRewriter().on("p", {
+      async element(element) {
+        seen.push(element.getAttribute("id"));
+        element.setAttribute("rewritten", "1");
+        if (element.getAttribute("id") === "a") {
+          gate2.resolve();
+          await sourceClosed.promise;
+          // An independent round trip through the HTTP client. If this
+          // handler were running inside the source fetch tasklet's
+          // critical section, the HTTP-client thread would be parked on
+          // that mutex and this could never complete.
+          await fetch(sidecar.url).then(response => response.arrayBuffer());
+        }
+      },
+    });
+
+    const textPromise = rw.transform(await fetch(upstream.url)).text();
+    // `transform()` has returned, so `p#a`'s chunk must arrive through
+    // the pipe path.
+    gate1.resolve();
+    expect(await textPromise).toBe(REWRITTEN);
+    expect(seen).toEqual(["a", "b"]);
+  });
+
+  it("an async element handler that spans a source chunk boundary still produces correct output", async () => {
+    // `lolhtml::HTMLRewriter::write` blocks on an async handler by
+    // spinning the full event loop (`wait_for_promise`), during which the
+    // source can deliver its remaining chunks and finish. lol-html is not
+    // re-entrant: those arrivals must be queued and fed by the suspended
+    // `write` once it resumes, never fed re-entrantly.
+    //
+    // The handler on `p#a` (the first chunk) opens the upstream's gate
+    // itself and then awaits a full independent HTTP round trip, so the
+    // second chunk and the source's end both arrive while `write` is
+    // still suspended on the first. This also proves input streaming: a
+    // buffer-everything implementation only runs the handler after the
+    // source closes, but the source cannot close until the handler opens
+    // the gate, so it deadlocks.
+    const gate = Promise.withResolvers();
+    const sourceClosed = Promise.withResolvers();
+    using upstream = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write(encoder.encode(CHUNK_A));
+              await controller.flush();
+              await gate.promise;
+              controller.write(encoder.encode(CHUNK_B));
+              controller.close();
+              sourceClosed.resolve();
+            },
+          }),
+          { headers: { "content-type": "text/html" } },
+        );
+      },
+    });
+    // A separate server for the handler's round trip: sharing the streaming
+    // source's host:port can reuse its pooled connection before its chunked
+    // trailer is drained (mid-spin), which reads as a malformed response.
+    using sidecar = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+    using _openGateOnExit = { [Symbol.dispose]: () => gate.resolve() };
+
+    const seen = [];
+    const rw = new HTMLRewriter().on("p", {
+      async element(element) {
+        seen.push(element.getAttribute("id"));
+        element.setAttribute("rewritten", "1");
+        if (element.getAttribute("id") === "a") {
+          gate.resolve();
+          await sourceClosed.promise;
+          // A full independent round trip forces enough event-loop work
+          // that the second chunk (already written) has reached the
+          // suspended transform's pipe by the time the handler resumes.
+          await fetch(sidecar.url).then(response => response.arrayBuffer());
+        }
+      },
+    });
+
+    expect(await rw.transform(await fetch(upstream.url)).text()).toBe(REWRITTEN);
+    expect(seen).toEqual(["a", "b"]);
   });
 });

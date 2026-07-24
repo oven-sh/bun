@@ -41,7 +41,9 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
-JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
+JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, JSValue errorValue);
+
+JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process, JSValue errorValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -240,49 +242,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
     // JavaScript stack
     {
-        JSObject* javascriptStack = constructEmptyObject(globalObject, globalObject->objectPrototype());
+        JSValue javascriptStack = constructReportJavaScriptStack(vm, globalObject, errorValue);
         RETURN_IF_EXCEPTION(scope, {});
-
-        javascriptStack->putDirect(vm, vm.propertyNames->message, jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
-
-        WTF::Vector<StackFrame> stackFrames;
-        vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
-
-        String name = "Error"_s;
-        String message = "JavaScript Callstack"_s;
-        OrdinalNumber line = OrdinalNumber::beforeFirst();
-        OrdinalNumber column = OrdinalNumber::beforeFirst();
-        WTF::String sourceURL;
-
-        WTF::String stackProperty = Bun::formatStackTrace(
-            vm, globalObject, globalObject, name, message,
-            line, column,
-            sourceURL, stackFrames, nullptr);
-
-        WTF::String stack;
-        size_t firstLine = stackProperty.find('\n');
-        if (firstLine != WTF::notFound) {
-            stack = stackProperty.substring(firstLine + 1);
-        }
-
-        JSArray* stackArray = constructEmptyArray(globalObject, nullptr);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        stack.split('\n', [&](const WTF::StringView& line) {
-            stackArray->push(globalObject, jsString(vm, line.toString().trim(isASCIIWhitespace)));
-            RETURN_IF_EXCEPTION(scope, );
-        });
-        RETURN_IF_EXCEPTION(scope, {});
-
-        javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
-
-        JSObject* errorProperties = constructEmptyObject(globalObject, globalObject->objectPrototype());
-        RETURN_IF_EXCEPTION(scope, {});
-        errorProperties->putDirect(vm, Identifier::fromString(vm, "code"_s), jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
-        javascriptStack->putDirect(vm, Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
-
         report->putDirect(vm, Identifier::fromString(vm, "javascriptStack"_s), javascriptStack, 0);
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // JavaScript heap

@@ -42,6 +42,7 @@
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -1056,6 +1057,7 @@ static const NeverDestroyed<String>* getSignalNames()
 
     return signalNames;
 }
+static constexpr size_t numSignalNames = 32;
 
 static void loadSignalNumberMap()
 {
@@ -2104,7 +2106,109 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlob
     return false;
 }
 
-static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName)
+JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, JSValue errorValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String stackString;
+    bool haveErrorObject = errorValue.isObject();
+    if (haveErrorObject) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto* errorObject = errorValue.getObject();
+        JSValue stackValue = errorObject->get(globalObject, vm.propertyNames->stack);
+        if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+            return {};
+        if (stackValue && stackValue.isString()) {
+            stackString = asString(stackValue)->value(globalObject);
+            if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                return {};
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (haveErrorObject && stackString.isNull()) {
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("No stack."_s)), 0);
+        JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        stackArray->push(globalObject, JSC::jsString(vm, String("Unavailable."_s)));
+        RETURN_IF_EXCEPTION(scope, {});
+        javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
+        javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
+        return javascriptStack;
+    }
+
+    if (!haveErrorObject) {
+        WTF::Vector<JSC::StackFrame> stackFrames;
+        vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+        String name = "Error"_s;
+        String msg = "JavaScript Callstack"_s;
+        OrdinalNumber line = OrdinalNumber::beforeFirst();
+        OrdinalNumber column = OrdinalNumber::beforeFirst();
+        WTF::String sourceURL;
+        stackString = Bun::formatStackTrace(
+            vm, globalObject, globalObject, name, msg,
+            line, column,
+            sourceURL, stackFrames, nullptr);
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
+        errorProperties->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
+    }
+
+    size_t firstNewline = stackString.find('\n');
+    if (haveErrorObject) {
+        WTF::String messageLine = firstNewline == WTF::notFound ? stackString : stackString.substring(0, firstNewline);
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, messageLine), 0);
+    }
+
+    if (firstNewline != WTF::notFound) {
+        JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, {});
+        WTF::String rest = stackString.substring(firstNewline + 1);
+        rest.split('\n', [&](const WTF::StringView& line) {
+            stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
+            RETURN_IF_EXCEPTION(scope, );
+        });
+        RETURN_IF_EXCEPTION(scope, {});
+        javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
+    }
+
+    if (haveErrorObject) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto* errorObject = errorValue.getObject();
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        errorObject->methodTable()->getOwnPropertyNames(errorObject, globalObject, names, DontEnumPropertiesMode::Exclude);
+        if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+            return {};
+        for (const auto& name : names) {
+            if (name == vm.propertyNames->stack || name == vm.propertyNames->message) continue;
+            if (parseIndex(name)) continue;
+            JSValue v = errorObject->get(globalObject, name);
+            if (catchScope.exception()) {
+                if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                    return {};
+                continue;
+            }
+            JSString* str = v.toString(globalObject);
+            if (catchScope.exception()) {
+                if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                    return {};
+                continue;
+            }
+            errorProperties->putDirect(vm, name, str, 0);
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
+    return javascriptStack;
+}
+
+static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName, JSValue errorValue)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if !OS(WINDOWS)
@@ -2343,52 +2447,6 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         return uvthreadResourceUsage;
     };
 
-    auto constructJavaScriptStack = [&]() -> JSC::JSValue {
-        JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
-
-        // TODO: allow errors as an argument
-        {
-            WTF::Vector<JSC::StackFrame> stackFrames;
-            vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
-            String name = "Error"_s;
-            String message = "JavaScript Callstack"_s;
-            OrdinalNumber line = OrdinalNumber::beforeFirst();
-            OrdinalNumber column = OrdinalNumber::beforeFirst();
-            WTF::String sourceURL;
-            WTF::String stackProperty = Bun::formatStackTrace(
-                vm, globalObject, globalObject, name, message,
-                line, column,
-                sourceURL, stackFrames, nullptr);
-
-            WTF::String stack;
-            // first line after "Error:"
-            size_t firstLine = stackProperty.find('\n');
-            if (firstLine != WTF::notFound) {
-                stack = stackProperty.substring(firstLine + 1);
-            }
-
-            JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            stack.split('\n', [&](const WTF::StringView& line) {
-                stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
-                RETURN_IF_EXCEPTION(scope, );
-            });
-            RETURN_IF_EXCEPTION(scope, {});
-
-            javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
-        }
-
-        JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-        RETURN_IF_EXCEPTION(scope, {});
-        errorProperties->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
-        javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
-        return javascriptStack;
-    };
-
     auto constructSharedObjects = [&]() -> JSC::JSValue {
         JSC::JSObject* sharedObjects = JSC::constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2453,8 +2511,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         report->putDirect(vm, JSC::Identifier::fromString(vm, "header"_s), constructHeader(), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptStack"_s), constructJavaScriptStack(), 0);
+        JSValue javascriptStack = constructReportJavaScriptStack(vm, globalObject, errorValue);
         RETURN_IF_EXCEPTION(scope, {});
+        report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptStack"_s), javascriptStack, 0);
         report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptHeap"_s), constructJavaScriptHeap(), 0);
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "nativeStack"_s), constructNativeStack(), 0);
@@ -2482,47 +2541,161 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     }
 #else // OS(WINDOWS)
     // Forward declaration - implemented in BunProcessReportObjectWindows.cpp
-    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process);
+    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process, JSValue errorValue);
 
     // Get the Process object - needed for accessing report settings
     Process* process = globalObject->processObject();
 
-    return constructReportObjectWindows(vm, globalObject, process);
+    return constructReportObjectWindows(vm, globalObject, process, errorValue);
 #endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    // TODO: node:vm
-    return JSValue::encode(constructReportObjectComplete(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject), String()));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue err = callFrame->argument(0);
+    if (!err.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, err, "err"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, defaultGlobalObject(globalObject), String(), err)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // TODO:
-    return JSValue::encode(callFrame->argument(0));
+
+    JSValue file = callFrame->argument(0);
+    JSValue err = callFrame->argument(1);
+
+    if (!file.isNull() && file.isObject() && !file.isCallable()) {
+        err = file;
+        file = jsUndefined();
+    } else if (!file.isUndefined()) {
+        Bun::V::validateString(scope, globalObject, file, "file"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!err.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, err, "err"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    return JSValue::encode(file);
+}
+
+#define DEFINE_REPORT_BOOLEAN_ACCESSOR(fnName, field, argName)                                                                                                                    \
+    JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                                   \
+    {                                                                                                                                                                             \
+        auto* process = defaultGlobalObject(globalObject)->processObject();                                                                                                       \
+        return JSValue::encode(jsBoolean(process->field));                                                                                                                        \
+    }                                                                                                                                                                             \
+    JSC_DEFINE_CUSTOM_SETTER(processReport_set##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
+    {                                                                                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                                                     \
+        JSValue value = JSValue::decode(encodedValue);                                                                                                                            \
+        Bun::V::validateBoolean(scope, globalObject, value, argName);                                                                                                             \
+        RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
+        defaultGlobalObject(globalObject)->processObject()->field = value.asBoolean();                                                                                            \
+        return true;                                                                                                                                                              \
+    }
+
+#define DEFINE_REPORT_STRING_ACCESSOR(fnName, field, argName)                                                                                                                     \
+    JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                                   \
+    {                                                                                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
+        auto* process = defaultGlobalObject(globalObject)->processObject();                                                                                                       \
+        return JSValue::encode(jsString(vm, process->field));                                                                                                                     \
+    }                                                                                                                                                                             \
+    JSC_DEFINE_CUSTOM_SETTER(processReport_set##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
+    {                                                                                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                                                     \
+        JSValue value = JSValue::decode(encodedValue);                                                                                                                            \
+        Bun::V::validateString(scope, globalObject, value, argName);                                                                                                              \
+        RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
+        WTF::String str = value.toWTFString(globalObject);                                                                                                                        \
+        RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
+        defaultGlobalObject(globalObject)->processObject()->field = str;                                                                                                          \
+        return true;                                                                                                                                                              \
+    }
+
+DEFINE_REPORT_BOOLEAN_ACCESSOR(Compact, m_reportCompact, "compact"_s)
+DEFINE_REPORT_BOOLEAN_ACCESSOR(ReportOnFatalError, m_reportOnFatalError, "trigger"_s)
+DEFINE_REPORT_BOOLEAN_ACCESSOR(ReportOnSignal, m_reportOnSignal, "trigger"_s)
+DEFINE_REPORT_BOOLEAN_ACCESSOR(ReportOnUncaughtException, m_reportReportOnUncaughtException, "trigger"_s)
+DEFINE_REPORT_BOOLEAN_ACCESSOR(ExcludeEnv, m_reportExcludeEnv, "excludeEnv"_s)
+DEFINE_REPORT_BOOLEAN_ACCESSOR(ExcludeNetwork, m_reportExcludeNetwork, "excludeNetwork"_s)
+DEFINE_REPORT_STRING_ACCESSOR(Directory, m_reportDirectory, "directory"_s)
+DEFINE_REPORT_STRING_ACCESSOR(Filename, m_reportFilename, "filename"_s)
+
+#undef DEFINE_REPORT_BOOLEAN_ACCESSOR
+#undef DEFINE_REPORT_STRING_ACCESSOR
+
+JSC_DEFINE_CUSTOM_GETTER(processReport_getSignal, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* process = defaultGlobalObject(globalObject)->processObject();
+    return JSValue::encode(jsString(vm, process->m_reportSignal));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(processReport_setSignal, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = JSValue::decode(encodedValue);
+    Bun::V::validateString(scope, globalObject, value, "signal"_s);
+    RETURN_IF_EXCEPTION(scope, false);
+    WTF::String str = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    // Validate against the full known-name table rather than signalNameToNumberMap; on
+    // Windows the latter only contains the seven libuv-registerable console signals, which
+    // would reject the "SIGUSR2" default that Node (via os.constants.signals) accepts.
+    auto isKnownName = [](const WTF::String& s) {
+        auto signalNames = getSignalNames();
+        for (size_t i = 0; i < numSignalNames; i++) {
+            if (s == signalNames[i]) return true;
+        }
+        return false;
+    };
+    if (!isKnownName(str)) {
+        WTF::String upper = str.convertToUppercaseWithoutLocale();
+        if (isKnownName(upper)) {
+            Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, value, true);
+        } else {
+            Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, value);
+        }
+        return false;
+    }
+    defaultGlobalObject(globalObject)->processObject()->m_reportSignal = str;
+    return true;
 }
 
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    auto process = uncheckedDowncast<Process>(processObject);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::jsEmptyString(vm), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsEmptyString(vm), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "getReport"_s), JSC::JSFunction::create(vm, globalObject, 0, String("getReport"_s), Process_functionGetReport, ImplementationVisibility::Public), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnFatalError"_s), JSC::jsBoolean(false), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnSignal"_s), JSC::jsBoolean(false), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnUncaughtException"_s), JSC::jsBoolean(process->m_reportOnUncaughtException), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsBoolean(false), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
+    auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    unsigned accessorAttrs = PropertyAttribute::CustomAccessor | 0;
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::CustomGetterSetter::create(vm, processReport_getCompact, processReport_setCompact), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::CustomGetterSetter::create(vm, processReport_getDirectory, processReport_setDirectory), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::CustomGetterSetter::create(vm, processReport_getExcludeEnv, processReport_setExcludeEnv), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "excludeNetwork"_s), JSC::CustomGetterSetter::create(vm, processReport_getExcludeNetwork, processReport_setExcludeNetwork), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::CustomGetterSetter::create(vm, processReport_getFilename, processReport_setFilename), accessorAttrs);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "getReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("getReport"_s), Process_functionGetReport, ImplementationVisibility::Public), 0);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "reportOnFatalError"_s), JSC::CustomGetterSetter::create(vm, processReport_getReportOnFatalError, processReport_setReportOnFatalError), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "reportOnSignal"_s), JSC::CustomGetterSetter::create(vm, processReport_getReportOnSignal, processReport_setReportOnSignal), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "reportOnUncaughtException"_s), JSC::CustomGetterSetter::create(vm, processReport_getReportOnUncaughtException, processReport_setReportOnUncaughtException), accessorAttrs);
+    report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "signal"_s), JSC::CustomGetterSetter::create(vm, processReport_getSignal, processReport_setSignal), accessorAttrs);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 2, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
     RETURN_IF_EXCEPTION(scope, {});
     return report;
 }

@@ -1331,6 +1331,143 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // When bundling, a top-level `class X {}` statement is rewritten to
+  // `var X = class {}` so the binding can merge into an adjacent `var`
+  // declaration chain, matching esbuild. A standalone class statement would
+  // otherwise break the chain and produce larger output.
+  // https://github.com/oven-sh/bun/issues/32652
+  itBundled("minify/ClassStatementChainsWithVarDeclarations", {
+    files: {
+      "/entry.js": /* js */ `
+        export const A = 1;
+        export class B { v() { return 42; } }
+        export const C = 2;
+        console.log(A, new B().v(), C);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // The class became an anonymous class expression chained into the vars.
+      expect(code).toContain("var A=1,B=class{");
+      // No standalone `class B {}` statement survives to break the chain.
+      expect(code).not.toContain("class B{");
+    },
+    run: { stdout: "1 42 2" },
+  });
+
+  // If the class body refers to its own name, the conversion keeps a named
+  // class expression (whose name is an immutable binding), so re-assigning the
+  // outer binding does not change what the method returns.
+  itBundled("minify/ClassSelfReferenceKeepsNamedExpression", {
+    files: {
+      "/entry.js": /* js */ `
+        export class B { self() { return B; } }
+        const inst = new B();
+        const Original = B;
+        B = 123;
+        console.log(inst.self() === Original);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("B=class B{");
+    },
+    run: { stdout: "true" },
+  });
+
+  // Function statements are hoisted and are not shorter as expressions, so
+  // they stay statements (matching esbuild) and are never chained.
+  itBundled("minify/FunctionStatementNotConvertedToExpression", {
+    files: {
+      "/entry.js": /* js */ `
+        export const A = 1;
+        export function B() { return 5; }
+        export const C = 2;
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("function B(");
+      expect(code).not.toContain("B=function");
+      expect(code).not.toContain("B=class");
+    },
+  });
+
+  // Under --keep-names the class expression keeps its name instead of being
+  // emitted anonymously (the name-drop is suppressed, mirroring the
+  // class-expression path in the visitor), so `.name` is preserved.
+  itBundled("minify/ClassStatementKeepsNameWithKeepNames", {
+    files: {
+      "/entry.js": /* js */ `
+        export class B { m() { return 1; } }
+        console.log(B.name, new B().m());
+      `,
+    },
+    keepNames: true,
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("B=class B{");
+    },
+    run: { stdout: "B 1" },
+  });
+
+  // A direct `eval` may reference the class by name at runtime, so the class
+  // expression must keep its (immutable inner) name even when the body has no
+  // static self-reference. Dropping it would make `eval("B")` resolve to the
+  // reassignable outer binding instead of the class.
+  itBundled("minify/ClassStatementKeepsNameWithDirectEval", {
+    files: {
+      "/entry.js": /* js */ `
+        export class B { self() { return eval("B"); } }
+        const inst = new B();
+        const Original = B;
+        B = 999;
+        console.log(inst.self() === Original);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("B=class B{");
+    },
+    run: { stdout: "true" },
+  });
+
+  // The converted `var X = class {}` must remain tree-shakeable: an unused
+  // top-level class is still dropped entirely.
+  itBundled("minify/UnusedConvertedClassIsTreeShaken", {
+    files: {
+      "/entry.js": /* js */ `
+        class Unused { m() { return 1; } }
+        export const A = 1;
+        console.log(A);
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).not.toContain("Unused");
+      expect(code).not.toContain("class");
+    },
+    run: { stdout: "1" },
+  });
 });
 
 // The runtime transpiler (`bun run`/`bun test`) implicitly enables

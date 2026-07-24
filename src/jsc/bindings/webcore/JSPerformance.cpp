@@ -133,11 +133,12 @@ JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject,
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
     IGNORE_WARNINGS_BEGIN("frame-address")
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { functionPerformanceNowBody(vm) };
+    OPERATION_RETURN(throwScope, functionPerformanceNowBody(vm));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsPerformancePrototypeFunction_markResourceTiming, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

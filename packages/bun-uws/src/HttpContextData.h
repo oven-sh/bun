@@ -44,6 +44,11 @@ struct HttpFlags {
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
     bool httpAllowHalfOpen: 1 = false;
+    /* Bun.serve graceful stop: set once the listen socket is closed. Every new
+     * request (on a keep-alive socket that survived the idle-close sweep) is
+     * answered 503 + Connection: close before routing, so a stopped server
+     * never dispatches work that arrived after stop(). */
+    bool draining: 1 = false;
 };
 
 template <bool SSL>

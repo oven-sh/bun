@@ -1581,12 +1581,34 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
+        let already_terminated = self.flags.contains(ServerFlags::TERMINATED);
         let Some(listener) = self.listener.take() else {
             if Self::HAS_H3 && self.h3_app.is_some() {
                 self.unref();
                 self.notify_inspector_server_stopped();
                 if abrupt {
                     self.flags.insert(ServerFlags::TERMINATED);
+                }
+            }
+            // A prior graceful stop already took the listener. An abrupt stop
+            // still needs to tear down surviving connections so a "graceful
+            // then force" shutdown can complete. Gate on the pre-call
+            // `TERMINATED` so the H3 arm's insert above does not mask this for
+            // an SSL+http3 server's TCP app.
+            if abrupt && !already_terminated {
+                self.unref();
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.app = None;
+                }
+                self.flags.insert(ServerFlags::TERMINATED);
+                if let Some(app) = self.app {
+                    self.deinit_running.set(true);
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).close();
+                    self.deinit_running.set(false);
+                }
+                if let Some(ws) = self.config.websocket.as_mut() {
+                    ws.handler.server = None;
                 }
             }
             return;
@@ -1620,6 +1642,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !abrupt {
             // S012: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             bun_opaque::opaque_deref_mut(listener).close();
+            // Close every idle keep-alive connection (no in-flight work, not
+            // counted in `pending_requests`, and with `idleTimeout: 0` would
+            // otherwise hold their fds forever) and mark the uWS context
+            // draining so any request that later reaches a surviving socket
+            // is answered 503 + Connection: close before routing. node:http's
+            // `server.close()` calls `closeIdleConnections()` itself and then
+            // keeps non-idle sockets serviceable per Node semantics, so skip.
+            if self.config.on_node_http_request.is_empty() {
+                if let Some(app) = self.app {
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).start_draining();
+                }
+            }
         } else if !self.flags.contains(ServerFlags::TERMINATED) {
             if let Some(ws) = self.config.websocket.as_mut() {
                 ws.handler.app = None;

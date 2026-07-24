@@ -826,6 +826,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
+    if constexpr (checkPrototypes) {
+        // Distinct WeakMaps, WeakSets and Promises are never equal - their
+        // contents cannot be inspected. node tests this on the LEFT operand
+        // only, which makes the comparison asymmetric: a Proxy wrapping a
+        // promise equals that promise, but only with the proxy on the left.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L449-L451
+        uint8_t leftType = c1->type();
+        if (leftType == JSC::JSWeakMapType || leftType == JSC::JSWeakSetType || leftType == JSC::JSPromiseType) {
+            return false;
+        }
+    }
+
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
@@ -948,8 +960,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     }
 
     if constexpr (isStrict && !skipPrototypeIdentity) {
-        if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
-            return false;
+        // A Proxy is transparent to this comparison: its traps forward
+        // [[GetPrototypeOf]] and own-property enumeration to the target, but
+        // JSC reports the proxy's own class name, which would reject every
+        // proxy/target pair. node compares prototypes, never class names.
+        if (!o1->isProxy() && !o2->isProxy()) {
+            if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
+                return false;
+            }
         }
     }
 
@@ -1821,15 +1839,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     }
     default:
         break;
-    }
-
-    if constexpr (checkPrototypes) {
-        // node never considers distinct WeakMaps, WeakSets, or Promises equal
-        // (their contents cannot be inspected).
-        if (c1Type == JSC::JSWeakMapType || c1Type == JSC::JSWeakSetType || c1Type == JSC::JSPromiseType
-            || c2Type == JSC::JSWeakMapType || c2Type == JSC::JSWeakSetType || c2Type == JSC::JSPromiseType) {
-            return false;
-        }
     }
 
     // Symbol and BigInt wrapper objects are plain ObjectType in JSC, so they are not

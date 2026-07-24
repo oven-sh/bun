@@ -5,7 +5,7 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
-const { SafeMap, SafeSet } = require("internal/primordials");
+const { SafeSet, SafeMap } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { Buffer } = require("node:buffer");
 const { pathToFileURL } = require("node:url");
@@ -179,10 +179,7 @@ function waitForDebugger() {
 // the calling thread. All in-process sessions share the one native channel;
 // each session owns an adapter and matches replies by command id.
 let InspectorCDPAdapter: any;
-// SafeSet/SafeMap for every module-level collection iterated on the user's
-// main thread: for..of over the built-ins routes through user-tamperable
-// prototype iterators.
-const inProcessAdapters = new SafeSet<any>();
+const inProcessAdapters: Set<any> = new SafeSet();
 let drainScheduled = false;
 // JSC broadcasts every backend reply to every attached frontend, so backend
 // command ids must be unique across all in-process adapters and above the
@@ -492,13 +489,13 @@ class NetworkRequestEntry {
 // enable()/disable() cannot disturb another's buffered requests.
 class NetworkState {
   // Insertion-ordered: the oldest entry is evicted first once the total cap is hit.
-  requests = new SafeMap<string, NetworkRequestEntry>();
+  requests: Map<string, NetworkRequestEntry> = new SafeMap();
   maxResourceBufferSize = kDefaultMaxResourceBufferSize;
   maxTotalBufferSize = kDefaultMaxTotalBufferSize;
   totalBufferSize = 0;
 }
 
-const networkEnabledSessions = new SafeMap<Session, NetworkState>();
+const networkEnabledSessions: Map<Session, NetworkState> = new SafeMap();
 
 function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
   if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
@@ -849,7 +846,7 @@ guardEventParams(Network);
 // --- DOMStorage domain ------------------------------------------------------
 // Mirrors src/inspector/dom_storage_agent.cc: validate then emit. Only the
 // event surface exists; there is no storage backend to inspect.
-const domStorageEnabledSessions = new SafeSet<Session>();
+const domStorageEnabledSessions: Set<Session> = new SafeSet();
 
 function emitDOMStorageEvent(method: string, params: object) {
   for (const session of domStorageEnabledSessions) emitToSession(session, method, params);
@@ -1075,7 +1072,7 @@ class Session extends EventEmitter {
   #coverageBaseline: Map<string, number> = new Map();
   #adapter: any = undefined;
   // Resolvers for in-flight in-process commands, keyed by client command id.
-  #pendingResults: Map<number, (err: any, result?: any) => void> = new Map();
+  #pendingResults: Map<number, (err: any, result?: any) => void> = new SafeMap();
   #nextCommandId = 1;
   #dispatchingClientCommand = false;
 
@@ -1106,9 +1103,9 @@ class Session extends EventEmitter {
     const { id, error, method } = parsed;
     try {
       if (id !== undefined) {
-        const done = this.#pendingResults.$get(id);
+        const done = this.#pendingResults.get(id);
         if (done === undefined) return;
-        this.#pendingResults.$delete(id);
+        this.#pendingResults.delete(id);
         if (error) done({ code: error.code, message: error.message });
         else done(null, parsed.result ?? {});
         return;
@@ -1159,7 +1156,7 @@ class Session extends EventEmitter {
   #postInProcess(method: string, params: object | undefined, done: (err: any, result?: any) => void) {
     const adapter = this.#inProcessAdapter();
     const id = this.#nextCommandId++;
-    this.#pendingResults.$set(id, done);
+    this.#pendingResults.set(id, done);
     const message = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
     const wasDispatching = this.#dispatchingClientCommand;
     this.#dispatchingClientCommand = true;
@@ -1207,7 +1204,7 @@ class Session extends EventEmitter {
       // with "Inspector error -32000: Execution context was destroyed."
       // (ERR_INSPECTOR_COMMAND), like any in-flight command at teardown.
       const pending = this.#pendingResults;
-      this.#pendingResults = new Map();
+      this.#pendingResults = new SafeMap();
       for (const done of pending.values()) {
         process.nextTick(done, { code: -32000, message: "Execution context was destroyed." });
       }
@@ -1290,14 +1287,17 @@ class Session extends EventEmitter {
         // Node's dispatcher delivers these as Maybe<int>, so clamp to finite
         // non-negative int32 and fall through to the defaults otherwise: NaN
         // would disable eviction and a negative would evict the entry just
-        // written.
+        // written. Gate on the ToInt32-converted value so a finite input
+        // above 2^31 cannot wrap negative past the sign check.
         const maxTotal = (params as any)?.maxTotalBufferSize;
         const maxResource = (params as any)?.maxResourceBufferSize;
-        if (typeof maxTotal === "number" && Number.isFinite(maxTotal) && maxTotal >= 0) {
-          state.maxTotalBufferSize = maxTotal | 0;
+        if (typeof maxTotal === "number" && Number.isFinite(maxTotal)) {
+          const v = maxTotal | 0;
+          if (v >= 0) state.maxTotalBufferSize = v;
         }
-        if (typeof maxResource === "number" && Number.isFinite(maxResource) && maxResource >= 0) {
-          state.maxResourceBufferSize = maxResource | 0;
+        if (typeof maxResource === "number" && Number.isFinite(maxResource)) {
+          const v = maxResource | 0;
+          if (v >= 0) state.maxResourceBufferSize = v;
         }
         networkEnabledSessions.set(this, state);
         return {};
@@ -1451,10 +1451,11 @@ class Session extends EventEmitter {
       // addHeapSnapshotChunk events and then answers the command. There is no
       // allocation-tracking timeline to keep, so start/stopTrackingHeapObjects
       // reduce to "no-op" and "emit a snapshot" respectively.
+      // collectGarbage falls through to kInProcess so it maps onto Heap.gc
+      // via the adapter, matching the remote path (and Node).
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
       case "HeapProfiler.startTrackingHeapObjects":
-      case "HeapProfiler.collectGarbage":
         return {};
 
       case "HeapProfiler.takeHeapSnapshot":

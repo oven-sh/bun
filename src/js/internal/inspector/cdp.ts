@@ -8,6 +8,11 @@
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
 const { pathToFileURL, fileURLToPath } = require("node:url");
+// The in-process node:inspector Session instantiates this adapter on the user's
+// main thread, so the fields iterated via for..of (#scriptIdsByUrl,
+// #preParseBreakpoints, DisconnectNotifyState.adapters) use SafeMap/SafeSet so
+// a tampered Map/Set prototype iterator cannot drop or hijack those loops.
+const { SafeMap, SafeSet } = require("internal/primordials");
 const { Buffer } = require("node:buffer");
 const { basename, isAbsolute } = require("node:path");
 
@@ -283,9 +288,10 @@ const SOURCE_MAPPING_URL_COMMENT = "//# sourceMappingURL=";
 
 // The original file's own sourceMappingURL, if it has one. Bun's is stripped:
 // it describes the generated text, which a CDP client never sees. Only a
-// marker at start-of-line (after whitespace) counts, approximating the
-// comment-directive scan engines use — a raw lastIndexOf would also match
-// inside string literals and block comments.
+// marker that starts its line is accepted (matching JSC's and V8's comment
+// scanners), so a literal inside a string or template is not mistaken for a
+// directive; the scan walks backwards so a string-literal match after the
+// real trailing directive does not mask it.
 function ownSourceMappingURL(source: string): string {
   let at = source.length;
   while (true) {
@@ -369,13 +375,13 @@ class InspectorCDPAdapter {
   #scripts = new Map<string, ScriptRecord>();
   // Every spelling of a script's URL, so a console message or a breakpoint
   // request that names one can be matched back to its sourcemap.
-  #scriptIdsByUrl = new Map<string, string>();
+  #scriptIdsByUrl: Map<string, string> = new SafeMap();
   // By-URL breakpoints set before their script parsed, keyed by the
   // breakpointId the client was given. When the script arrives with a source
   // map they are re-set through it (V8 re-resolves by-URL breakpoints at
   // scriptParsed the same way); the client keeps the original id, so events
   // and removeBreakpoint are mapped through jscId.
-  #preParseBreakpoints = new Map<
+  #preParseBreakpoints: Map<
     string,
     {
       jscId: string;
@@ -386,7 +392,7 @@ class InspectorCDPAdapter {
       condition: string | undefined;
       resolved: boolean;
     }
-  >();
+  > = new SafeMap();
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
@@ -430,7 +436,7 @@ class InspectorCDPAdapter {
     this.#writeToClient = writeToClient;
     this.#isWaitingForDebugger = isWaitingForDebugger;
     this.#disconnectNotify = disconnectNotify;
-    (disconnectNotify.adapters ??= new Set()).add(this);
+    (disconnectNotify.adapters ??= new SafeSet()).add(this);
     this.#allocateBackendId = allocateBackendId;
   }
 
@@ -458,8 +464,6 @@ class InspectorCDPAdapter {
     // socket closes; drop the per-session state (script records now carry
     // full source text + mappings) so a closed session retains O(1).
     this.#scripts.$clear();
-    // Plain methods: these two are SafeMaps (null prototype — the $-intrinsic
-    // private-name lookup cannot reach them).
     this.#scriptIdsByUrl.clear();
     this.#preParseBreakpoints.clear();
     this.#breakpointIdAliases.$clear();
@@ -616,7 +620,7 @@ class InspectorCDPAdapter {
     }
     const breakpointId = result.breakpointId;
     if (typeof breakpointId === "string") {
-      this.#preParseBreakpoints.$set(breakpointId, {
+      this.#preParseBreakpoints.set(breakpointId, {
         jscId: breakpointId,
         url,
         urlRegex,
@@ -966,9 +970,9 @@ class InspectorCDPAdapter {
       case "Debugger.removeBreakpoint": {
         // The client removes by the id it was originally given; a re-set
         // breakpoint lives in JSC under a newer id.
-        const tracked = this.#preParseBreakpoints.$get(params.breakpointId);
+        const tracked = this.#preParseBreakpoints.get(params.breakpointId);
         if (tracked) {
-          this.#preParseBreakpoints.$delete(params.breakpointId);
+          this.#preParseBreakpoints.delete(params.breakpointId);
           this.#breakpointIdAliases.$delete(tracked.jscId);
           this.#sendToBackend(method, { breakpointId: tracked.jscId }, id, method);
           return;
@@ -1018,7 +1022,7 @@ class InspectorCDPAdapter {
         // The line the client names is a line of the original file. Resolve it
         // through the map of the script it refers to; a breakpoint set before
         // that script is parsed has no map yet and is passed through.
-        const known = url ? this.#scriptIdsByUrl.$get(url) : urlRegex ? this.#scriptIdMatching(urlRegex) : undefined;
+        const known = url ? this.#scriptIdsByUrl.get(url) : urlRegex ? this.#scriptIdMatching(urlRegex) : undefined;
         const generated = this.#toGeneratedLocation({
           scriptId: known,
           lineNumber: params.lineNumber ?? 0,
@@ -1294,8 +1298,8 @@ class InspectorCDPAdapter {
           mappings: source === undefined ? undefined : decoded!.mappings,
           map: undefined,
         });
-        if (url) this.#scriptIdsByUrl.$set(url, params.scriptId);
-        if (cdpUrl) this.#scriptIdsByUrl.$set(cdpUrl, params.scriptId);
+        if (url) this.#scriptIdsByUrl.set(url, params.scriptId);
+        if (cdpUrl) this.#scriptIdsByUrl.set(cdpUrl, params.scriptId);
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
@@ -1487,7 +1491,7 @@ class InspectorCDPAdapter {
     const description = boundary ? ASYNC_BOUNDARY_DESCRIPTIONS[boundary.functionName ?? ""] : undefined;
     const translated: AnyObject = {
       callFrames: (boundary ? frames.slice(1) : frames).map((frame: AnyObject) => {
-        const scriptId = frame.scriptId ?? this.#scriptIdsByUrl.$get(frame.url ?? "") ?? "";
+        const scriptId = frame.scriptId ?? this.#scriptIdsByUrl.get(frame.url ?? "") ?? "";
         // JSC counts these lines and columns from 1; CDP counts from 0.
         const location = this.#toOriginalLocation({
           scriptId,
@@ -1517,7 +1521,7 @@ class InspectorCDPAdapter {
 
     if (message.source !== "console-api" && level === "error") {
       const reported = this.#toOriginalLocation({
-        scriptId: this.#scriptIdsByUrl.$get(message.url ?? ""),
+        scriptId: this.#scriptIdsByUrl.get(message.url ?? ""),
         lineNumber: Math.max((message.line ?? 1) - 1, 0),
         columnNumber: Math.max((message.column ?? 1) - 1, 0),
       }) as AnyObject;

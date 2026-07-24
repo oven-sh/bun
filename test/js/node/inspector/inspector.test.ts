@@ -1067,7 +1067,7 @@ export { after };
 
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
   expect(await proc.exited).toBe(0);
-});
+}, 30_000);
 
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();

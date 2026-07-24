@@ -7651,7 +7651,7 @@ impl NodeFS {
             let fs = FileSystem::get();
             let parts = [fs.top_level_dir, path_slice];
             let inbuf_len = inbuf.len();
-            let Some(joined) = fs.abs_buf_checked(&parts, &mut inbuf[..inbuf_len - 1]) else {
+            let Some(joined) = fs.abs_buf_checked_posix(&parts, &mut inbuf[..inbuf_len - 1]) else {
                 return Err(sys::Error {
                     errno: E::ENAMETOOLONG as _,
                     syscall: sys::Tag::realpath,

@@ -1,6 +1,6 @@
 use crate as css;
 use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
-use crate::declaration::DeclarationBlock;
+use crate::declaration::{DeclarationBlock, DeclarationList};
 use crate::error::MinifyErr;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
@@ -36,18 +36,17 @@ impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub fn hash_key(&self) -> u64 {
+        use core::hash::Hash;
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
-        // property-id tag bytes.
+        // Hash the full `PropertyId` (tag + prefix + custom-name bytes) so
+        // distinct custom properties don't collide into one dedup bucket.
         for decl in self.declarations.declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         for decl in self.declarations.important_declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         hasher.final_()
     }
@@ -460,42 +459,24 @@ impl<R> StyleRule<R> {
     }
 
     /// Returns whether this rule is a duplicate of another rule.
-    /// This means it has the same selectors and properties.
+    /// This means it has the same selectors and defines the same properties.
     #[inline]
     pub fn is_duplicate(&self, other: &Self) -> bool {
-        self.declarations.len() == other.declarations.len()
-            && self.selectors.eql(&other.selectors)
-            && 'brk: {
-                let mut len = self
-                    .declarations
-                    .declarations
-                    .len()
-                    .min(other.declarations.declarations.len());
-                // len is the min of the two lengths, so truncation is intended.
-                for (a, b) in self.declarations.declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.declarations[..len])
-                {
-                    // `PropertyId`'s `PartialEq` is a tag+prefix compare.
-                    if a.property_id() != b.property_id() {
-                        break 'brk false;
-                    }
-                }
-                len = self
-                    .declarations
-                    .important_declarations
-                    .len()
-                    .min(other.declarations.important_declarations.len());
-                for (a, b) in self.declarations.important_declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.important_declarations[..len])
-                {
-                    if a.property_id() != b.property_id() {
-                        break 'brk false;
-                    }
-                }
-                true
-            }
+        let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(a, b)| a.property_id() == b.property_id())
+        };
+        self.selectors.eql(&other.selectors)
+            && same_property_ids(
+                &self.declarations.declarations,
+                &other.declarations.declarations,
+            )
+            && same_property_ids(
+                &self.declarations.important_declarations,
+                &other.declarations.important_declarations,
+            )
     }
 }
 

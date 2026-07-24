@@ -54,9 +54,6 @@ impl Declaration {
 
 impl Declaration {
     pub(crate) fn eql(&self, other: &Self) -> bool {
-        // `PropertyId` carries its own tag+prefix `PartialEq` (see
-        // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
-        // byte-slice equality.
         self.property_id == other.property_id && self.value == other.value
     }
 }
@@ -122,8 +119,7 @@ impl SupportsCondition {
 
     pub fn eql(&self, other: &SupportsCondition) -> bool {
         // Hand-expanded because `#[derive(CssEql)]` would require
-        // `PropertyId: CssEql` (it only provides the custom tag+prefix
-        // `PartialEq`). Tag mismatch → false, then field-wise structural eq.
+        // `PropertyId: CssEql` (it only provides `PartialEq`).
         match (self, other) {
             (Self::Not(a), Self::Not(b)) => a.eql(b),
             (Self::And(a), Self::And(b)) | (Self::Or(a), Self::Or(b)) => {

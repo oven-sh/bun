@@ -1502,7 +1502,27 @@ pub(crate) fn join_windows_t<'a, T: PathCharCwd>(
             joined_len = buf_size;
         }
     }
-    normalize_windows_t(&buf2[0..joined_len], buf)
+    // Skip normalization when reserved device names are present: `..` inside a
+    // path like `\share\CON:..\..\x` must not be resolved away.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L626-L652
+    let joined = &buf2[0..joined_len];
+    let backslash = T::from_u8(CHAR_BACKWARD_SLASH);
+    let has_reserved_part = joined.split(|&c| c == backslash).any(|part| {
+        index_of_char_t(part, T::from_u8(CHAR_COLON), 0)
+            .is_some_and(|ci| is_windows_reserved_name_t(&part[0..ci]))
+    });
+    if has_reserved_part {
+        for (dst, &src) in buf[0..joined_len].iter_mut().zip(joined.iter()) {
+            *dst = if src == T::from_u8(CHAR_FORWARD_SLASH) {
+                backslash
+            } else {
+                src
+            };
+        }
+        return &buf[0..joined_len];
+    }
+
+    normalize_windows_t(joined, buf)
 }
 
 pub(crate) fn join_posix_js_t<T: PathCharCwd>(
@@ -1529,8 +1549,9 @@ pub(crate) fn join_js_t<T: PathCharCwd>(
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    let mut buf_len: usize = if is_windows { 8 } else { 0 };
+    // Adding 10 bytes when Windows for the possible UNC root plus the leading
+    // `.\` win32 normalize can prepend.
+    let mut buf_len: usize = if is_windows { 10 } else { 0 };
     for path in paths {
         buf_len += if !path.is_empty() {
             path.len() + 1
@@ -1792,8 +1813,40 @@ pub(crate) fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]
     &buf[0..buf_size]
 }
 
-/// Based on Node v21.6.1 path.win32.normalize
-/// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L308
+/// Index of the first `needle` at or after `from`.
+fn index_of_char_t<T: PathCharCwd>(haystack: &[T], needle: T, from: usize) -> Option<usize> {
+    haystack[from..].iter().position(|&c| c == needle).map(|i| i + from)
+}
+
+/// Node's `WINDOWS_RESERVED_NAMES` membership test, case-insensitive.
+/// The `COM¹`/`LPT²` spellings carry U+00B9/U+00B2/U+00B3, which is one code
+/// unit in WTF-16 and the two bytes `C2 B9` in UTF-8.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L72-L84
+fn is_windows_reserved_name_t<T: PathCharCwd>(device_part: &[T]) -> bool {
+    if device_part.len() == 3 {
+        return eql_ignore_case_t(device_part, l::<T>(b"CON"))
+            || eql_ignore_case_t(device_part, l::<T>(b"PRN"))
+            || eql_ignore_case_t(device_part, l::<T>(b"AUX"))
+            || eql_ignore_case_t(device_part, l::<T>(b"NUL"));
+    }
+    if device_part.len() < 4
+        || !(eql_ignore_case_t(&device_part[0..3], l::<T>(b"COM"))
+            || eql_ignore_case_t(&device_part[0..3], l::<T>(b"LPT")))
+    {
+        return false;
+    }
+    match &device_part[3..] {
+        [only] => {
+            let c = only.as_u32();
+            (u32::from(b'1')..=u32::from(b'9')).contains(&c) || matches!(c, 0xB9 | 0xB2 | 0xB3)
+        }
+        [hi, lo] if !T::IS_U16 => hi.as_u32() == 0xC2 && matches!(lo.as_u32(), 0xB9 | 0xB2 | 0xB3),
+        _ => false,
+    }
+}
+
+/// Based on Node v26.3.0 path.win32.normalize
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L346
 pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
     // validateString of `path` is performed in pub fn normalize.
     let len = path.len();
@@ -1820,8 +1873,15 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
         };
     }
 
+    // Node prepends `.\` to some results (CVE-2024-36139 and reserved device
+    // names). Reserving the two leading slots up front keeps that a write
+    // instead of a shift of the whole result.
+    const PFX: usize = 2;
+
+    let colon_index = index_of_char_t(path, T::from_u8(CHAR_COLON), 0);
+
     let mut root_end: usize = 0;
-    // Backed by buf.
+    // Backed by buf at PFX.
     // Borrowck: track device length instead of slice into buf.
     let mut device_len: Option<usize> = None;
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
@@ -1830,104 +1890,155 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
     let mut buf_offset: usize;
     let mut buf_size: usize;
 
-    if is_sep_t(byte0) {
-        // Possible UNC root
+    'root: {
+        if is_sep_t(byte0) {
+            // Possible UNC root
 
-        // If we started with a separator, we know we at least have an absolute
-        // path of some kind (UNC or otherwise)
-        _is_absolute = true;
+            // If we started with a separator, we know we at least have an absolute
+            // path of some kind (UNC or otherwise)
+            _is_absolute = true;
 
-        if is_sep_t(path[1]) {
-            // Matched double path separator at beginning
-            let mut j: usize = 2;
-            let mut last: usize = j;
-            // Match 1 or more non-path separators
-            while j < len && !is_sep_t(path[j]) {
-                j += 1;
-            }
-            if j < len && j != last {
-                let first_part = &path[last..j];
-                // Matched!
-                last = j;
-                // Match 1 or more path separators
-                while j < len && is_sep_t(path[j]) {
+            if is_sep_t(path[1]) {
+                // Matched double path separator at beginning
+                let mut j: usize = 2;
+                let mut last: usize = j;
+                // Match 1 or more non-path separators
+                while j < len && !is_sep_t(path[j]) {
                     j += 1;
                 }
                 if j < len && j != last {
+                    let first_part = &path[last..j];
                     // Matched!
                     last = j;
-                    // Match 1 or more non-path separators
-                    while j < len && !is_sep_t(path[j]) {
+                    // Match 1 or more path separators
+                    while j < len && is_sep_t(path[j]) {
                         j += 1;
                     }
-                    if j == len {
-                        // We matched a UNC root only
-                        // Return the normalized version of the UNC root since there
-                        // is nothing left to process
+                    if j < len && j != last {
+                        // Matched!
+                        last = j;
+                        // Match 1 or more non-path separators
+                        while j < len && !is_sep_t(path[j]) {
+                            j += 1;
+                        }
+                        if j == len || j != last {
+                            if first_part.len() == 1
+                                && (first_part[0] == T::from_u8(CHAR_DOT)
+                                    || first_part[0] == T::from_u8(CHAR_QUESTION_MARK))
+                            {
+                                // We matched a device root (e.g. \\.\PHYSICALDRIVE0)
 
-                        // Translated from the following JS code:
-                        //   return `\\\\${firstPart}\\${StringPrototypeSlice(path, last)}\\`;
-                        buf_size = 2;
-                        buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += first_part.len();
-                        memmove(&mut buf[buf_offset..buf_size], first_part);
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += len - last;
-                        memmove(&mut buf[buf_offset..buf_size], &path[last..len]);
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        return &buf[0..buf_size];
-                    }
-                    if j != last {
-                        // We matched a UNC root with leftovers
+                                // Translated from the following JS code:
+                                //   device = `\\\\${firstPart}`;
+                                //   rootEnd = 4;
+                                buf[PFX] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                buf[PFX + 1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                buf[PFX + 2] = first_part[0];
+                                device_len = Some(3);
+                                root_end = 4;
 
-                        // Translated from the following JS code:
-                        //   device =
-                        //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
-                        //   rootEnd = j;
-                        buf_size = 2;
-                        buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += first_part.len();
-                        memmove(&mut buf[buf_offset..buf_size], first_part);
-                        buf_offset = buf_size;
-                        buf_size += 1;
-                        buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                        buf_offset = buf_size;
-                        buf_size += j - last;
-                        memmove(&mut buf[buf_offset..buf_size], &path[last..j]);
+                                // Special case: handle \\?\COM1: or similar reserved
+                                // device paths.
+                                if let Some(ci) = colon_index.filter(|&ci| ci >= 4) {
+                                    let possible_device = &path[4..ci + 1];
+                                    if is_windows_reserved_name_t(
+                                        &possible_device[0..possible_device.len() - 1],
+                                    ) {
+                                        // Translated from the following JS code:
+                                        //   device = `\\\\?\\${possibleDevice}`;
+                                        //   rootEnd = 4 + possibleDevice.length;
+                                        buf[PFX] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                        buf[PFX + 1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                        buf[PFX + 2] = T::from_u8(CHAR_QUESTION_MARK);
+                                        buf[PFX + 3] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                        buf_size = 4 + possible_device.len();
+                                        memmove(
+                                            &mut buf[PFX + 4..PFX + buf_size],
+                                            possible_device,
+                                        );
+                                        device_len = Some(buf_size);
+                                        root_end = buf_size;
+                                    }
+                                }
+                                break 'root;
+                            }
+                            if j == len {
+                                // We matched a UNC root only
+                                // Return the normalized version of the UNC root since there
+                                // is nothing left to process
 
-                        device_len = Some(buf_size);
-                        root_end = j;
+                                // Translated from the following JS code:
+                                //   return `\\\\${firstPart}\\${StringPrototypeSlice(path, last)}\\`;
+                                buf_size = 2;
+                                buf[PFX] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                buf[PFX + 1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                buf_offset = buf_size;
+                                buf_size += first_part.len();
+                                memmove(&mut buf[PFX + buf_offset..PFX + buf_size], first_part);
+                                buf_offset = buf_size;
+                                buf_size += 1;
+                                buf[PFX + buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                buf_offset = buf_size;
+                                buf_size += len - last;
+                                memmove(
+                                    &mut buf[PFX + buf_offset..PFX + buf_size],
+                                    &path[last..len],
+                                );
+                                buf_offset = buf_size;
+                                buf_size += 1;
+                                buf[PFX + buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                return &buf[PFX..PFX + buf_size];
+                            }
+                            // We matched a UNC root with leftovers
+
+                            // Translated from the following JS code:
+                            //   device =
+                            //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
+                            //   rootEnd = j;
+                            buf_size = 2;
+                            buf[PFX] = T::from_u8(CHAR_BACKWARD_SLASH);
+                            buf[PFX + 1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                            buf_offset = buf_size;
+                            buf_size += first_part.len();
+                            memmove(&mut buf[PFX + buf_offset..PFX + buf_size], first_part);
+                            buf_offset = buf_size;
+                            buf_size += 1;
+                            buf[PFX + buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+                            buf_offset = buf_size;
+                            buf_size += j - last;
+                            memmove(&mut buf[PFX + buf_offset..PFX + buf_size], &path[last..j]);
+
+                            device_len = Some(buf_size);
+                            root_end = j;
+                        }
                     }
                 }
+            } else {
+                root_end = 1;
             }
-        } else {
-            root_end = 1;
-        }
-    } else if is_windows_device_root_t(byte0) && path[1] == T::from_u8(CHAR_COLON) {
-        // Possible device root
-        buf[0] = byte0;
-        buf[1] = T::from_u8(CHAR_COLON);
-        device_len = Some(2);
-        root_end = 2;
-        if len > 2 && is_sep_t(path[2]) {
-            // Treat separator following drive name as an absolute path
-            // indicator
-            _is_absolute = true;
-            root_end = 3;
+        } else if let Some(ci) = colon_index.filter(|&ci| ci > 0) {
+            if is_windows_device_root_t(byte0) && ci == 1 {
+                // Possible device root
+                buf[PFX] = byte0;
+                buf[PFX + 1] = T::from_u8(CHAR_COLON);
+                device_len = Some(2);
+                root_end = 2;
+                if len > 2 && is_sep_t(path[2]) {
+                    // Treat separator following drive name as an absolute path
+                    // indicator
+                    _is_absolute = true;
+                    root_end = 3;
+                }
+            } else if is_windows_reserved_name_t(&path[0..ci]) {
+                memmove(&mut buf[PFX..PFX + ci + 1], &path[0..ci + 1]);
+                device_len = Some(ci + 1);
+                root_end = ci + 1;
+            }
         }
     }
 
-    buf_offset = device_len.unwrap_or(0) + (_is_absolute as usize);
-    // Backed by buf at an offset of  device.len + 1 if _isAbsolute is true.
+    buf_offset = PFX + device_len.unwrap_or(0) + (_is_absolute as usize);
+    // Backed by buf at an offset of PFX + device.len + 1 if _isAbsolute is true.
     let mut tail_len = if root_end < len {
         normalize_string_t::<T, { Platform::Windows }>(
             &path[root_end..len],
@@ -1951,6 +2062,55 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
     }
 
     buf_size = buf_offset + tail_len;
+
+    // If the original path was not absolute and we could not resolve it relative
+    // to a particular device, `tail` must not have become something Windows would
+    // read as an absolute path. See CVE-2024-36139.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L437-L456
+    if !_is_absolute && device_len.is_none() {
+        if let Some(first_colon) = colon_index {
+            let mut needs_dot = tail_len >= 2
+                && is_windows_device_root_t(buf[buf_offset])
+                && buf[buf_offset + 1] == T::from_u8(CHAR_COLON);
+            let mut index = first_colon;
+            while !needs_dot {
+                if index == len - 1 || is_sep_t(path[index + 1]) {
+                    needs_dot = true;
+                    break;
+                }
+                match index_of_char_t(path, T::from_u8(CHAR_COLON), index + 1) {
+                    Some(next) => index = next,
+                    None => break,
+                }
+            }
+            if needs_dot {
+                // `device` is None and the path is relative, so the tail already
+                // starts at PFX.
+                buf[0] = T::from_u8(CHAR_DOT);
+                buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                return &buf[0..buf_size];
+            }
+        }
+    }
+
+    // Translated from the following JS code:
+    //   const colonIndex = StringPrototypeIndexOf(path, ':');
+    //   if (isWindowsReservedName(path, colonIndex)) {
+    //     return `.\\${device ?? ''}${tail}`;
+    //   }
+    // `slice(0, -1)` drops the last code unit when there is no colon.
+    if is_windows_reserved_name_t(match colon_index {
+        Some(ci) => &path[0..ci],
+        None => &path[0..len - 1],
+    }) {
+        // A reserved device name never starts with a separator, so the path is
+        // relative and `device` (when present) sits immediately after PFX.
+        debug_assert!(!_is_absolute);
+        buf[0] = T::from_u8(CHAR_DOT);
+        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+        return &buf[0..buf_size];
+    }
+
     // Translated from the following JS code:
     //   if (device === undefined) {
     //     return isAbsolute ? `\\${tail}` : tail;
@@ -1961,7 +2121,7 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
         // Prepend the separator.
         buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
     }
-    &buf[0..buf_size]
+    &buf[PFX..buf_size]
 }
 
 pub(crate) fn normalize_posix_js_t<T: PathCharCwd>(
@@ -2944,7 +3104,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
     } else {
         i64::try_from(paths.len() - 1).expect("int cast")
     };
-    while i_i64 > -2 {
+    'paths: while i_i64 > -2 {
         // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
         // because path may be long.
         // Borrowck: `path` may alias paths[], tmp_buf, or buf2,
@@ -3110,6 +3270,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
         let byte0 = if len > 0 { path!()[0] } else { T::default() };
 
         // Try to match a root
+        'root: {
         if len == 1 {
             if is_sep_t(byte0) {
                 // `path` contains just a path separator
@@ -3156,7 +3317,30 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                                 // it, and building the UNC string below would
                                 // overwrite tmpBuf which backs resolvedDevice.
                                 i_i64 -= 1;
-                                continue;
+                                continue 'paths;
+                            }
+
+                            // Translated from the following JS code:
+                            //   } else {
+                            //     // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
+                            //     device = `\\\\${firstPart}`;
+                            //     rootEnd = 4;
+                            //   }
+                            // `firstPart` is a single `.` or `?` here, so the
+                            // device is always 3 chars and the root always 4.
+                            let first_part_is_device_root = first_part_end - first_part_start == 1
+                                && (path!()[first_part_start] == T::from_u8(CHAR_DOT)
+                                    || path!()[first_part_start]
+                                        == T::from_u8(CHAR_QUESTION_MARK));
+                            if first_part_is_device_root {
+                                tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                tmp_buf[2] = path!()[first_part_start];
+                                device_ptr = tmp_buf.as_ptr();
+                                device_len = 3;
+                                device_in_tmp = true;
+                                root_end = 4;
+                                break 'root;
                             }
 
                             // Translated from the following JS code:
@@ -3228,6 +3412,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 _is_absolute = true;
                 root_end = 3;
             }
+        }
         }
 
         if device_len > 0 {
@@ -3376,8 +3561,9 @@ pub(crate) fn resolve_js_t<T: PathCharCwd>(
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
-    // Adding 8 bytes when Windows for the possible UNC root.
-    let mut buf_len: usize = if is_windows { 8 } else { 0 };
+    // Adding 10 bytes when Windows for the possible UNC root plus the leading
+    // `.\` win32 normalize can prepend.
+    let mut buf_len: usize = if is_windows { 10 } else { 0 };
     for path in paths {
         buf_len += if buf_len > 0 && !path.is_empty() {
             path.len() + 1

@@ -3876,11 +3876,12 @@ function addTest(
       child.ownTags = ownTags;
       if (mode === "skip" || options.skip) {
         // Report at execution turn (on the same chain as non-skip siblings)
-        // so the event stream keeps declaration order.
-        runningNode.subtestChain = runningNode.subtestChain.then(
+        // so the event stream keeps declaration order; the returned promise
+        // resolves after the directive lands, like a real subtest's.
+        const chained = (runningNode.subtestChain = runningNode.subtestChain.then(
           reportDirectiveOnlyNode.bind(undefined, child, "skip"),
-        );
-        return Promise.resolve(undefined);
+        ));
+        return chained.then(returnUndefined);
       }
       const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
       if (ownTodo) child.todoFlag = true;
@@ -4003,9 +4004,12 @@ function addSuite(
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
     if (mode === "skip" || options.skip) {
-      // Report at execution turn so the event stream keeps declaration order.
-      runningNode.subtestChain = runningNode.subtestChain.then(reportDirectiveOnlyNode.bind(undefined, suite, "skip"));
-      return Promise.resolve(undefined);
+      // Report at execution turn so the event stream keeps declaration order;
+      // the returned promise resolves after the directive lands.
+      const chained = (runningNode.subtestChain = runningNode.subtestChain.then(
+        reportDirectiveOnlyNode.bind(undefined, suite, "skip"),
+      ));
+      return chained.then(returnUndefined);
     }
     const ownTodo = mode === "todo" || (options.todo !== undefined && options.todo !== false);
     if (ownTodo) suite.todoFlag = true;

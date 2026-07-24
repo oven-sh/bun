@@ -757,7 +757,7 @@ impl<'a> LinkerContext<'a> {
         // `self.graph.ast_arena` again.
         // SAFETY: `self.graph.ast_arena` is not accessed for the guard's
         // lifetime except via the thread-local `ACTIVE` slot.
-        let _scope = unsafe { (*(&raw mut self.graph.ast_arena)).enter() };
+        let _scope = unsafe { bun_alloc::AstArena::enter_raw(&raw mut self.graph.ast_arena) };
 
         // SAFETY: forwarded; see fn-level contract.
         unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };

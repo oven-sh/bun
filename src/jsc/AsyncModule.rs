@@ -1190,7 +1190,7 @@ impl AsyncModule {
         // Install the arena that backs `parse_result.ast` as the active
         // `AstAlloc` for the link + print below.
         // SAFETY: `self.ast_arena` outlives `_scope` (field vs. stack local).
-        let _scope = unsafe { (*(&raw mut self.ast_arena)).enter() };
+        let _scope = unsafe { bun_alloc::AstArena::enter_raw(&raw mut self.ast_arena) };
         let arena: &'static bun_alloc::Arena = bun_alloc::AstAlloc.arena();
         // Take `parse_result` by value via `mem::take`, then restore below, to
         // satisfy borrowck around `linker.link(&mut parse_result)` while

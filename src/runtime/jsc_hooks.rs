@@ -2213,7 +2213,7 @@ fn transpile_source_code_inner(
             // being defused on the AsyncModule path.
             // SAFETY: `arena_guard.1` is the `AstArena` just moved in; the
             // guard outlives `_ast_scope` by declaration order.
-            let _ast_scope = unsafe { (*(&raw mut arena_guard.1)).enter() };
+            let _ast_scope = unsafe { bun_alloc::AstArena::enter_raw(&raw mut arena_guard.1) };
             // ── Watcher fd / package_json lookup ────────────────────────────
             let mut fd: Option<bun_sys::Fd> = None;
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;

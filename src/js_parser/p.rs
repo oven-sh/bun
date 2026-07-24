@@ -8058,7 +8058,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // Filtered out; free the global-heap maps and clear the
                         // alias in `parts[idx]` so a re-scan never sees freed handles.
                         drop(core::mem::take(&mut part.symbol_uses));
-                        drop(core::mem::take(&mut part.import_symbol_property_uses));
+                        let _ = core::mem::take(&mut part.import_symbol_property_uses);
                         // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
                         unsafe {
                             let slot = parts.as_mut_ptr().add(idx);

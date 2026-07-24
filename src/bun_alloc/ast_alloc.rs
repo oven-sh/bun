@@ -202,6 +202,22 @@ impl AstArena {
         }
     }
 
+    /// [`Self::enter`] via a raw pointer, for callers that must split-borrow
+    /// the arena field away from the rest of its owning struct (e.g. a
+    /// `&mut Worker` used throughout a parse while its `ast_arena` field stays
+    /// installed). The returned scope borrows `*this` for `'static`; the
+    /// caller guarantees that borrow is actually exclusive for the guard's
+    /// lifetime.
+    ///
+    /// # Safety
+    /// `this` must point to a live `AstArena` that is not reset, dropped, or
+    /// re-entered for the returned guard's entire lifetime.
+    #[inline]
+    pub unsafe fn enter_raw(this: *mut AstArena) -> AstScope<'static> {
+        // SAFETY: caller contract.
+        unsafe { (*this).enter() }
+    }
+
     /// A zero-sized [`AstAlloc`] handle. Allocates into whichever arena is
     /// installed in the calling thread's [`ACTIVE`] slot (see
     /// [`Self::enter`]); the value itself carries no state.

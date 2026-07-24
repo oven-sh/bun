@@ -2675,7 +2675,7 @@ pub mod parse_worker {
         // SAFETY: split borrow — `ast_arena` is a field disjoint from everything
         // `get_source_code` / `run_with_source_code` / `unget` touch, and Worker
         // is heap-pinned so the arena address is stable for the scope's lifetime.
-        let _scope = unsafe { (*(&raw mut worker.ast_arena)).enter() };
+        let _scope = unsafe { bun_alloc::AstArena::enter_raw(&raw mut *worker.ast_arena) };
         // `defer worker.unget()` — handled at function exit (scopeguard
         // would alias the `&mut worker` borrows below).
         scoped_log!(

@@ -2229,9 +2229,6 @@ enum StreamState {
   Closed = 1 << 3, // 01000 = 8
   StreamResponded = 1 << 4, // 10000 = 16
   WritableClosed = 1 << 5, // 100000 = 32
-  // The native side fully closed and freed the stream (state 7 delivered): there is
-  // nothing left to send on the wire for it.
-  NativeClosed = 1 << 6, // 1000000 = 64
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2645,10 +2642,11 @@ class Http2Stream extends Duplex {
     // leave a retained stream pinning the store.
     this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
+    // node only submits an RST_STREAM from destroy when the stream was not closed yet: close()
+    // already sent one (and a natively closed stream has nothing left to reset).
+    const wasClosed = (this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0;
     this.push(null);
-    // A pushed stream's request was synthesized by the server, so its local (writable) half is
-    // closed by definition — closing it is not an abort and nothing must be sent on the wire.
-    if (!ending && !this[kPush]) {
+    if (!ending) {
       // If the writable side of the Http2Stream is still open, emit the
       // 'aborted' event and set the aborted flag.
       if (!this.aborted) {
@@ -2700,14 +2698,7 @@ class Http2Stream extends Duplex {
     // will destroy if it has been closed and there are no other open or
     // pending streams. Delay with setImmediate so we don't do it on the
     // nghttp2 stack.
-    if (
-      session &&
-      typeof this.#id === "number" &&
-      !this[kNeverAnnounced] &&
-      // A cleanly closed stream the native side already freed has nothing to send:
-      // the deferred rstStream would be a guaranteed no-op host call per request.
-      (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
-    ) {
+    if (session && typeof this.#id === "number" && !this[kNeverAnnounced] && !wasClosed) {
       setImmediate(rstNextTick.bind(session, this.#id, rstCode));
     }
 
@@ -4074,7 +4065,6 @@ class ServerHttp2Session extends Http2Session {
       }
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
@@ -4912,13 +4902,9 @@ class ClientHttp2Session extends Http2Session {
     binaryType: "buffer",
     streamStart(self: ClientHttp2Session, stream_id: number) {
       if (!self) return;
+      // Pushed (even-id) streams never reach this dispatch: the parser registers them from the
+      // PUSH_PROMISE itself and streamPush creates their JS stream object.
       self.#connections++;
-      if (stream_id % 2 === 0) {
-        // A pushed (even-id) stream announced by the server: its context object must be a stream,
-        // not a session. Returned to the native caller, which stores it as the stream context.
-        const stream = new ClientHttp2Stream(stream_id, self, null);
-        return stream;
-      }
     },
     streamPush(
       self: ClientHttp2Session,
@@ -4949,6 +4935,9 @@ class ClientHttp2Session extends Http2Session {
       }
       const pushedStream = new ClientHttp2Stream(pushId, self, headers);
       pushedStream[kPush] = true;
+      // node ends the writable half of a pushed stream at creation: the client can never send
+      // on a promised stream (RFC 9113 §5.1), and close() must not treat it as an abort.
+      pushedStream.end();
       pushedStream.once("close", () => {
         self.#reservedStreamsCount--;
       });
@@ -5009,7 +4998,6 @@ class ClientHttp2Session extends Http2Session {
 
       // 7 = closed, in this case we already send everything and received everything
       if (state === 7) {
-        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
         if (stream.readable && !stream.rstCode) {

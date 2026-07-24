@@ -147,11 +147,18 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  let emptyErr: string;
+  try {
+    JSON.parse("");
+    expect.unreachable();
+  } catch (e: any) {
+    emptyErr = e.message;
+  }
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
     ascii: { a: 1, b: "two" },
     utf8: { s: "wörld" },
-    emptyErr: "Unexpected end of JSON input",
+    emptyErr,
   });
   expect(exitCode).toBe(0);
 });

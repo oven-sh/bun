@@ -454,7 +454,8 @@ fn message_with_type_and_level_(
     // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
     // time. We do this the slightly annoying way to avoid assigning a pointer.
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
-        || message_type == MessageType::Assert;
+        || message_type == MessageType::Assert
+        || message_type == MessageType::Trace;
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
@@ -477,7 +478,9 @@ fn message_with_type_and_level_(
         return Ok(());
     }
 
-    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+    let enable_colors = if matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Trace
+    {
         Output::enable_ansi_colors_stderr()
     } else {
         Output::enable_ansi_colors_stdout()
@@ -496,7 +499,7 @@ fn message_with_type_and_level_(
     // long-lived `&mut ConsoleObject` across the re-derive in the empty-`Log`
     // arm below.
     let raw_writer: &mut bun_core::io::Writer = unsafe {
-        if matches!(level, MessageLevel::Warning | MessageLevel::Error) {
+        if matches!(level, MessageLevel::Warning | MessageLevel::Error) || message_type == MessageType::Trace {
             (*console).error_writer()
         } else {
             (*console).writer()
@@ -575,6 +578,19 @@ fn message_with_type_and_level_(
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
             }
+        }
+    }
+
+    // console.trace prints "Trace: <message>" (or just "Trace" with no args),
+    // matching Node, with the stack trace appended below. The label goes through
+    // FormatOptions so it lands after the console.group indent rather than
+    // before it.
+    if message_type == MessageType::Trace {
+        if print_length > 0 {
+            print_options.prefix = b"Trace: ";
+        } else {
+            let _ = formatter::write_indent_n(u32::from(default_indent), writer);
+            let _ = writer.write_all(b"Trace\n");
         }
     }
 
@@ -1257,6 +1273,9 @@ pub struct FormatOptions {
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
+    /// Label emitted immediately after the indent, before the formatted values
+    /// (used by `console.trace` for its "Trace: " prefix).
+    pub prefix: &'static [u8],
 }
 
 impl Default for FormatOptions {
@@ -1271,6 +1290,7 @@ impl Default for FormatOptions {
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
+            prefix: b"",
         }
     }
 }
@@ -1443,6 +1463,7 @@ pub fn format2(
         if fmt.write_indent(writer).is_err() {
             return Ok(());
         }
+        let _ = writer.write_all(options.prefix);
 
         if matches!(tag.tag, TagPayload::String) {
             if options.enable_colors {
@@ -1507,6 +1528,7 @@ pub fn format2(
     if fmt.write_indent(writer).is_err() {
         return Ok(());
     }
+    let _ = writer.write_all(options.prefix);
 
     let mut any = false;
     if options.enable_colors {

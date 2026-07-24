@@ -1173,12 +1173,56 @@ pub(super) fn set_session(
         {
             return Err(global.throw_value(get_ssl_exception(global, b"SSL_set_session error")));
         }
+        // A TLS 1.3 handshake drops the offered session from the SSL once it
+        // resumes it, taking the ticket with it, so keep a copy for
+        // `getTLSTicket()`.
+        this.set_tls_ticket(
+            session_ticket(ffi::SSL_SESSION::opaque_ref(session)).map(Box::from),
+            false,
+        );
         Ok(JSValue::UNDEFINED)
     } else {
         Err(global.throw(format_args!(
             "Expected session to be a string, Buffer or TypedArray"
         )))
     }
+}
+
+/// The ticket `session` carries, borrowed from it (BoringSSL lends the bytes
+/// for the session's lifetime).
+fn session_ticket(session: &ffi::SSL_SESSION) -> Option<&[u8]> {
+    let mut ticket: *const u8 = core::ptr::null();
+    let mut length: usize = 0;
+    ffi::SSL_SESSION_get0_ticket(session, &mut ticket, &mut length);
+    if ticket.is_null() || length == 0 {
+        return None;
+    }
+    // SAFETY: SSL_SESSION_get0_ticket wrote a `length`-byte buffer owned by the session.
+    Some(unsafe { bun_core::ffi::slice(ticket, length) })
+}
+
+/// A NewSessionTicket arrived: its ticket replaces the one this connection held,
+/// as OpenSSL's session swap does. The dispatch only carries the serialized
+/// session; one without a ticket leaves the previous one in place.
+pub(super) fn remember_new_session_ticket(this: &This, serialized_session: &[u8]) {
+    let mut tmp: *const u8 = serialized_session.as_ptr();
+    // SAFETY: tmp/serialized_session.len() describe the readable i2d_SSL_SESSION output parked by uSockets.
+    let session = unsafe {
+        ffi::d2i_SSL_SESSION(
+            core::ptr::null_mut(),
+            &raw mut tmp,
+            c_long::try_from(serialized_session.len()).expect("int cast"),
+        )
+    };
+    if session.is_null() {
+        return;
+    }
+    // SAFETY: `s` is the +1 SSL_SESSION reference returned by d2i_SSL_SESSION; we own it.
+    let _guard = scopeguard::guard(session, |s| unsafe { ffi::SSL_SESSION_free(s) });
+    let Some(ticket) = session_ticket(ffi::SSL_SESSION::opaque_ref(session)) else {
+        return;
+    };
+    this.set_tls_ticket(Some(Box::from(ticket)), true);
 }
 
 pub(super) fn get_tls_ticket(
@@ -1189,26 +1233,20 @@ pub(super) fn get_tls_ticket(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    let session = ffi::SSL_get_session(boringssl::SSL::opaque_ref(ssl_ptr));
-    if session.is_null() {
-        return Ok(JSValue::UNDEFINED);
-    }
-    let mut ticket: *const u8 = core::ptr::null();
-    let mut length: usize = 0;
-    // The pointer is only valid while the connection is in use so we need to copy it
-    ffi::SSL_SESSION_get0_ticket(
-        ffi::SSL_SESSION::opaque_ref(session),
-        &mut ticket,
-        &mut length,
-    );
-
-    if ticket.is_null() || length == 0 {
-        return Ok(JSValue::UNDEFINED);
+    let ssl = boringssl::SSL::opaque_ref(ssl_ptr);
+    let session = ffi::SSL_get_session(ssl);
+    if !session.is_null()
+        && let Some(ticket) = session_ticket(ffi::SSL_SESSION::opaque_ref(session))
+    {
+        return jsc::ArrayBuffer::create_buffer(global, ticket);
     }
 
-    // SAFETY: SSL_SESSION_get0_ticket guarantees `ticket` points to `length` bytes owned by the session.
-    let slice = unsafe { bun_core::ffi::slice(ticket, length) };
-    jsc::ArrayBuffer::create_buffer(global, slice)
+    // TLS 1.3 keeps only authentication data in the session `SSL_get_session()`
+    // returns, so answer from the ticket we remembered instead.
+    let Some(ticket) = this.tls_ticket_in_use(ffi::SSL_session_reused(ssl) == 1) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    jsc::ArrayBuffer::create_buffer(global, ticket)
 }
 
 pub(super) fn renegotiate(

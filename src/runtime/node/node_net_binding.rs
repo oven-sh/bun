@@ -150,6 +150,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             server_name: JsCell::new(None),
+            tls_ticket: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),

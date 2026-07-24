@@ -275,6 +275,10 @@ pub struct NewSocket<const SSL: bool> {
     pub local_binding: JsCell<Option<(Box<[u8]>, u16)>>,
     pub protos: JsCell<Option<Box<[u8]>>>,
     pub server_name: JsCell<Option<Box<[u8]>>>,
+    /// The TLS session ticket this connection holds, for the TLS 1.3 handshakes
+    /// where BoringSSL keeps none in the session `SSL_get_session()` returns.
+    /// Goes through `set_tls_ticket`; freed with the socket.
+    pub tls_ticket: JsCell<Option<Box<[u8]>>>,
     pub buffered_data_for_node_net: JsCell<Vec<u8>>,
     pub bytes_written: Cell<u64>,
 
@@ -1870,6 +1874,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         if handlers.vm.is_shutting_down() {
             return Ok(());
         }
+        // `getTLSTicket()` answers from this whether or not JS listens for
+        // 'session'. Servers cache sessions here too, and Node's ticket is a
+        // client-side concept, so only clients record one.
+        if SSL && !this.acts_as_tls_server() {
+            tls_socket_functions::remember_new_session_ticket(Self::as_tls(&this), session);
+        }
         let callback = handlers.on_session();
         if callback.is_empty() {
             return Ok(());
@@ -3174,6 +3184,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         this_ref.server_name.set(None); // Box::<[u8]> drops
+        this_ref.tls_ticket.set(None); // Box::<[u8]> drops
 
         if let Some(connection) = this_ref.connection.with_mut(|c| c.take()) {
             drop(connection);
@@ -3478,6 +3489,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
+            tls_ticket: JsCell::new(None),
             flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
@@ -3581,6 +3593,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             local_binding: JsCell::new(None),
             protos: JsCell::new(None),
             server_name: JsCell::new(None),
+            tls_ticket: JsCell::new(None),
             // is_active so the chained `raw.onClose` → `markInactive` path
             // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
             // alive. active_connections=1 was already on raw_handlers from
@@ -3659,6 +3672,25 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: only called from the `if SSL` branch; `NewSocket<SSL>` and
         // `NewSocket<true>` are the same monomorphisation when `SSL == true`.
         unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
+    }
+
+    /// Remember the ticket of the session this connection holds; `None` forgets
+    /// it. A NewSessionTicket's ticket is this connection's whatever the
+    /// handshake did, one `setSession()` offered only while it was resumed.
+    pub(super) fn set_tls_ticket(&self, ticket: Option<Box<[u8]>>, from_new_session: bool) {
+        self.tls_ticket.set(ticket);
+        self.update_flags(|f| f.set(Flags::TLS_TICKET_FROM_NEW_SESSION, from_new_session));
+    }
+
+    /// The remembered ticket, when the session it belongs to is the one in use.
+    pub(super) fn tls_ticket_in_use(&self, session_reused: bool) -> Option<&[u8]> {
+        let ticket = self.tls_ticket.get().as_deref()?;
+        (session_reused
+            || self
+                .flags
+                .get()
+                .contains(Flags::TLS_TICKET_FROM_NEW_SESSION))
+        .then_some(ticket)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3997,6 +4029,10 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
+        /// The ticket in `tls_ticket` came from a NewSessionTicket rather than
+        /// from `setSession()`, so it is this connection's ticket whether or not
+        /// the handshake ended up resuming a session.
+        const TLS_TICKET_FROM_NEW_SESSION = 1 << 15;
     }
 }
 
@@ -4513,6 +4549,7 @@ pub fn js_upgrade_duplex_to_tls(
         server_name: JsCell::new(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
+        tls_ticket: JsCell::new(None),
         flags: Cell::new(initial_flags),
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),

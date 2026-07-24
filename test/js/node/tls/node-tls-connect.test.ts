@@ -739,6 +739,136 @@ it("delivers 'session' even when the data handler destroys the socket immediatel
   await once(server, "close");
 });
 
+describe("getTLSTicket()", () => {
+  // A TLS 1.3 handshake keeps only authentication data in the session BoringSSL
+  // hands back from SSL_get_session(): resumption drops the session the client
+  // offered, and a NewSessionTicket's ticket never lands there. Node holds both.
+  async function listen(version: "TLSv1.2" | "TLSv1.3", onConnection?: (socket: TLSSocket) => void) {
+    const server = tls.createServer({ ...COMMON_CERT_, minVersion: version, maxVersion: version }, socket => {
+      onConnection?.(socket);
+      socket.end("x");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    return server;
+  }
+
+  // A fresh connection: reports the ticket as of the handshake and as of the
+  // first NewSessionTicket, plus the session to resume with. Both tickets are
+  // read synchronously, where Node's own test-tls-ticket.js reads them.
+  async function harvest(port: number) {
+    const { promise, resolve, reject } = Promise.withResolvers<{
+      atHandshake: Buffer | undefined;
+      atSession: Buffer | undefined;
+      session: Buffer;
+    }>();
+    let atHandshake: Buffer | undefined;
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+      atHandshake = client.getTLSTicket();
+    });
+    client.on("error", reject);
+    // Servers send more than one ticket; the first is the one we resume with.
+    client.once("session", (session: Buffer) => resolve({ atHandshake, atSession: client.getTLSTicket(), session }));
+    client.resume();
+    try {
+      return await promise;
+    } finally {
+      await close(client);
+    }
+  }
+
+  // Offers `session`, reporting what the handshake made of it. The ticket is
+  // read before any NewSessionTicket of this connection can replace it.
+  async function resume(port: number, session: Buffer) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ reused: boolean; ticket: Buffer | undefined }>();
+    const client = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, session }, () =>
+      resolve({ reused: client.isSessionReused(), ticket: client.getTLSTicket() }),
+    );
+    client.on("error", reject);
+    client.resume();
+    try {
+      return await promise;
+    } finally {
+      await close(client);
+    }
+  }
+
+  // A socket that already errored destroyed itself, and its 'close' is spent.
+  async function close(client: TLSSocket) {
+    if (client.destroyed) return;
+    client.end();
+    await once(client, "close");
+  }
+
+  it("reports the offered ticket on a resumed TLSv1.3 connection", async () => {
+    await using server = await listen("TLSv1.3");
+    const port = (server.address() as AddressInfo).port;
+
+    const first = await harvest(port);
+    // TLS 1.3 sends the ticket after the handshake, so there is none to report
+    // until the NewSessionTicket arrives.
+    expect(first.atHandshake).toBeUndefined();
+    expect(first.atSession).toBeInstanceOf(Buffer);
+
+    const second = await resume(port, first.session);
+    expect(second.reused).toBe(true);
+    expect(second.ticket).toEqual(first.atSession);
+  });
+
+  it("reports the ticket on a TLSv1.2 connection", async () => {
+    await using server = await listen("TLSv1.2");
+    const port = (server.address() as AddressInfo).port;
+
+    const first = await harvest(port);
+    // TLS 1.2 sends the ticket during the handshake.
+    expect(first.atHandshake).toBeInstanceOf(Buffer);
+    expect(first.atSession).toEqual(first.atHandshake);
+
+    const second = await resume(port, first.session);
+    expect(second.reused).toBe(true);
+    expect(second.ticket).toEqual(first.atHandshake);
+  });
+
+  it("reports no ticket when a TLSv1.3 handshake does not resume the offered session", async () => {
+    // A second server cannot decrypt the first one's ticket, so the handshake
+    // is full: the offered session is not the one in use and its ticket is not
+    // this connection's.
+    await using first = await listen("TLSv1.3");
+    await using second = await listen("TLSv1.3");
+
+    const harvested = await harvest((first.address() as AddressInfo).port);
+    expect(harvested.atSession).toBeInstanceOf(Buffer);
+
+    const rejected = await resume((second.address() as AddressInfo).port, harvested.session);
+    expect(rejected.reused).toBe(false);
+    expect(rejected.ticket).toBeUndefined();
+  });
+
+  it("reports no ticket on a server socket", async () => {
+    // The ticket is a client-side concept: a server never reports one, and a
+    // server caching its own session must not start one.
+    const tickets: (Buffer | undefined)[] = [];
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const record = (socket: TLSSocket) => {
+      tickets.push(socket.getTLSTicket());
+      // Read again once the peer is done: by then the server has minted and
+      // cached its own session, which is where a ticket could creep in.
+      socket.on("end", () => {
+        tickets.push(socket.getTLSTicket());
+        if (tickets.length === 4) resolve();
+      });
+    };
+    await using server = await listen("TLSv1.3", record);
+    const port = (server.address() as AddressInfo).port;
+
+    const first = await harvest(port);
+    const second = await resume(port, first.session);
+    // The server did resume, so it saw the client's ticket and still reports none.
+    expect(second.reused).toBe(true);
+    await promise;
+    expect(tickets).toEqual([undefined, undefined, undefined, undefined]);
+  });
+});
+
 it("a write before 'secureConnect' still reports the handshake's own failure", async () => {
   // An early write drives the handshake from inside SSL_write. The fatal
   // reason that write hit used to be dropped, so the handshake dispatch had

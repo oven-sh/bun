@@ -601,6 +601,7 @@ impl Listener {
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
+            tls_ticket: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -647,6 +648,7 @@ impl Listener {
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
+            tls_ticket: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1162,6 +1164,9 @@ impl Listener {
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
                             .set(ssl_taken.as_mut().and_then(|s| s.take_server_name()));
+                        // Same as `connect_finish`'s prev branch: the ticket
+                        // belonged to the connection being replaced.
+                        prev.set_tls_ticket(None, false);
                         prev
                     } else {
                         TLSSocket::new(TLSSocket {
@@ -1174,6 +1179,7 @@ impl Listener {
                             server_name: JsCell::new(
                                 ssl_taken.as_mut().and_then(|s| s.take_server_name()),
                             ),
+                            tls_ticket: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
@@ -1260,6 +1266,7 @@ impl Listener {
                             local_binding: JsCell::new(local_binding.clone()),
                             protos: JsCell::new(None),
                             server_name: JsCell::new(None),
+                            tls_ticket: JsCell::new(None),
                             owned_ssl_ctx: Cell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
@@ -1487,6 +1494,9 @@ fn connect_finish<const IS_SSL: bool>(
         prev.protos.set(ssl.as_mut().and_then(|s| s.take_protos()));
         prev.server_name
             .set(ssl.as_mut().and_then(|s| s.take_server_name()));
+        // The ticket belonged to the connection just detached, not to the one
+        // this wrapper is about to make.
+        prev.set_tls_ticket(None, false);
         if let Some(old) = prev.owned_ssl_ctx.get() {
             // SAFETY: FFI — old is the previous owned SSL_CTX ref on this reused socket
             unsafe { boring_sys::SSL_CTX_free(old) };
@@ -1502,6 +1512,7 @@ fn connect_finish<const IS_SSL: bool>(
             local_binding: JsCell::new(local_binding),
             protos: JsCell::new(ssl.as_mut().and_then(|s| s.take_protos())),
             server_name: JsCell::new(ssl.as_mut().and_then(|s| s.take_server_name())),
+            tls_ticket: JsCell::new(None),
             owned_ssl_ctx: Cell::new(owned_ssl_ctx.map(|p| p.as_ptr())),
             flags: Cell::new(SocketFlags::default()),
             this_value: JsCell::new(jsc::JsRef::empty()),

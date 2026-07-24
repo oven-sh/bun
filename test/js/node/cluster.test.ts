@@ -1199,3 +1199,27 @@ if (cluster.isPrimary) {
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 });
+
+test("a malformed external ack from a worker does not crash the primary", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    if (m !== "sent") return;
+    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 100);
+  });
+} else {
+  // Externally framed cluster-shaped messages with non-numeric acks used to
+  // reach a bare asInt32() in the primary's ack settlement.
+  process.send({ cmd: "NODE_CLUSTER", ack: null });
+  process.send({ cmd: "NODE_CLUSTER", ack: "not-a-number" });
+  process.send({ cmd: "NODE_CLUSTER", ack: {} });
+  process.send("sent");
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("primary alive");
+});

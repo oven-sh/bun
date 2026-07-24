@@ -2,7 +2,17 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isMacOS,
+  isMacOSVersionAtLeast,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2186,4 +2196,52 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     signalCode: null,
     exitCode: 0,
   });
+});
+
+it("new Database() does not leak the sqlite3 handle when open fails", async () => {
+  using dir = tempDir("sqlite-open-fail", {});
+  const badPath = path.join(String(dir), "nonexistent", "x.sqlite");
+
+  // The failed open must still surface the real SQLite error code after the
+  // handle has been released.
+  expect(() => new Database(badPath)).toThrow(expect.objectContaining({ code: "SQLITE_CANTOPEN" }));
+
+  // sqlite3_open_v2 returns a handle that must be sqlite3_close()'d even on
+  // failure; previously it leaked (~3.5 KB/attempt). ASAN's quarantine hides
+  // this in RSS, so assert on LSAN bytes there and on RSS for release builds.
+  const iters = 2000;
+  const src = `
+    import { Database } from "bun:sqlite";
+    const step = () => { try { new Database(${JSON.stringify(badPath)}); } catch {} };
+    for (let i = 0; i < 200; i++) step();
+    Bun.gc(true);
+    const start = process.memoryUsage.rss();
+    for (let i = 0; i < ${iters}; i++) step();
+    Bun.gc(true);
+    console.log(((process.memoryUsage.rss() - start) / 1024 / 1024).toFixed(1));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: {
+      ...bunEnv,
+      ASAN_OPTIONS: "detect_leaks=1:symbolize=0:quarantine_size_mb=0:allow_user_segv_handler=1:disable_coredump=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const growthMB = parseFloat(stdout.trim());
+  expect(Number.isFinite(growthMB)).toBe(true);
+
+  const lsan = stderr.match(/SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/);
+  if (lsan) {
+    // Unfixed: ~2.8 MB in ~16000 allocations. Fixed: a single ~124 byte
+    // startup allocation unrelated to sqlite.
+    expect(Number(lsan[1])).toBeLessThan(100_000);
+  } else if (!isASAN && !isDebug) {
+    // Unfixed: ~7 MB over 2000 iterations. Fixed: allocator noise.
+    expect(growthMB).toBeLessThan(4);
+    expect(exitCode).toBe(0);
+  }
 });

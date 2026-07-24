@@ -1815,7 +1815,10 @@ pub(crate) fn normalize_posix_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]
 
 /// Index of the first `needle` at or after `from`.
 fn index_of_char_t<T: PathCharCwd>(haystack: &[T], needle: T, from: usize) -> Option<usize> {
-    haystack[from..].iter().position(|&c| c == needle).map(|i| i + from)
+    haystack[from..]
+        .iter()
+        .position(|&c| c == needle)
+        .map(|i| i + from)
 }
 
 /// Node's `WINDOWS_RESERVED_NAMES` membership test, case-insensitive.
@@ -1952,10 +1955,7 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
                                         buf[PFX + 2] = T::from_u8(CHAR_QUESTION_MARK);
                                         buf[PFX + 3] = T::from_u8(CHAR_BACKWARD_SLASH);
                                         buf_size = 4 + possible_device.len();
-                                        memmove(
-                                            &mut buf[PFX + 4..PFX + buf_size],
-                                            possible_device,
-                                        );
+                                        memmove(&mut buf[PFX + 4..PFX + buf_size], possible_device);
                                         device_len = Some(buf_size);
                                         root_end = buf_size;
                                     }
@@ -3271,148 +3271,149 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
 
         // Try to match a root
         'root: {
-        if len == 1 {
-            if is_sep_t(byte0) {
-                // `path` contains just a path separator
-                root_end = 1;
-                _is_absolute = true;
-            }
-        } else if is_sep_t(byte0) {
-            // Possible UNC root
-
-            // If we started with a separator, we know we at least have an
-            // absolute path of some kind (UNC or otherwise)
-            _is_absolute = true;
-
-            if is_sep_t(path!()[1]) {
-                // Matched double path separator at the beginning
-                let mut j: usize = 2;
-                let mut last: usize = j;
-                // Match 1 or more non-path separators
-                while j < len && !is_sep_t(path!()[j]) {
-                    j += 1;
+            if len == 1 {
+                if is_sep_t(byte0) {
+                    // `path` contains just a path separator
+                    root_end = 1;
+                    _is_absolute = true;
                 }
-                if j < len && j != last {
-                    let first_part_start = last;
-                    let first_part_end = j;
-                    // Matched!
-                    last = j;
-                    // Match 1 or more path separators
-                    while j < len && is_sep_t(path!()[j]) {
+            } else if is_sep_t(byte0) {
+                // Possible UNC root
+
+                // If we started with a separator, we know we at least have an
+                // absolute path of some kind (UNC or otherwise)
+                _is_absolute = true;
+
+                if is_sep_t(path!()[1]) {
+                    // Matched double path separator at the beginning
+                    let mut j: usize = 2;
+                    let mut last: usize = j;
+                    // Match 1 or more non-path separators
+                    while j < len && !is_sep_t(path!()[j]) {
                         j += 1;
                     }
                     if j < len && j != last {
+                        let first_part_start = last;
+                        let first_part_end = j;
                         // Matched!
                         last = j;
-                        // Match 1 or more non-path separators
-                        while j < len && !is_sep_t(path!()[j]) {
+                        // Match 1 or more path separators
+                        while j < len && is_sep_t(path!()[j]) {
                             j += 1;
                         }
-                        if j == len || j != last {
-                            // We matched a UNC root
-
-                            if resolved_device_len > 0 {
-                                // resolvedDevice is already set to a drive
-                                // letter (`X:`). A UNC device can never match
-                                // it, and building the UNC string below would
-                                // overwrite tmpBuf which backs resolvedDevice.
-                                i_i64 -= 1;
-                                continue 'paths;
+                        if j < len && j != last {
+                            // Matched!
+                            last = j;
+                            // Match 1 or more non-path separators
+                            while j < len && !is_sep_t(path!()[j]) {
+                                j += 1;
                             }
+                            if j == len || j != last {
+                                // We matched a UNC root
 
-                            // Translated from the following JS code:
-                            //   } else {
-                            //     // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
-                            //     device = `\\\\${firstPart}`;
-                            //     rootEnd = 4;
-                            //   }
-                            // `firstPart` is a single `.` or `?` here, so the
-                            // device is always 3 chars and the root always 4.
-                            let first_part_is_device_root = first_part_end - first_part_start == 1
-                                && (path!()[first_part_start] == T::from_u8(CHAR_DOT)
-                                    || path!()[first_part_start]
-                                        == T::from_u8(CHAR_QUESTION_MARK));
-                            if first_part_is_device_root {
+                                if resolved_device_len > 0 {
+                                    // resolvedDevice is already set to a drive
+                                    // letter (`X:`). A UNC device can never match
+                                    // it, and building the UNC string below would
+                                    // overwrite tmpBuf which backs resolvedDevice.
+                                    i_i64 -= 1;
+                                    continue 'paths;
+                                }
+
+                                // Translated from the following JS code:
+                                //   } else {
+                                //     // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
+                                //     device = `\\\\${firstPart}`;
+                                //     rootEnd = 4;
+                                //   }
+                                // `firstPart` is a single `.` or `?` here, so the
+                                // device is always 3 chars and the root always 4.
+                                let first_part_is_device_root = first_part_end - first_part_start
+                                    == 1
+                                    && (path!()[first_part_start] == T::from_u8(CHAR_DOT)
+                                        || path!()[first_part_start]
+                                            == T::from_u8(CHAR_QUESTION_MARK));
+                                if first_part_is_device_root {
+                                    tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                    tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                    tmp_buf[2] = path!()[first_part_start];
+                                    device_ptr = tmp_buf.as_ptr();
+                                    device_len = 3;
+                                    device_in_tmp = true;
+                                    root_end = 4;
+                                    break 'root;
+                                }
+
+                                // Translated from the following JS code:
+                                //   device =
+                                //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
+                                //   rootEnd = j;
+                                // path may alias tmp_buf (cwd branch); use
+                                // ptr::copy (memmove semantics).
+                                buf_size = 2;
                                 tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
                                 tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                                tmp_buf[2] = path!()[first_part_start];
+                                buf_offset = buf_size;
+                                let first_part_len = first_part_end - first_part_start;
+                                buf_size += first_part_len;
+                                if buf_size > tmp_buf.len() {
+                                    return Err(bun_sys::Error::from_code(
+                                        bun_sys::E::ENAMETOOLONG,
+                                        bun_sys::Tag::TODO,
+                                    ));
+                                }
+                                // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                                unsafe {
+                                    core::ptr::copy(
+                                        path_ptr.add(first_part_start),
+                                        tmp_buf.as_mut_ptr().add(buf_offset),
+                                        first_part_len,
+                                    );
+                                }
+                                buf_offset = buf_size;
+                                buf_size += 1;
+                                tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                let slice_len = j - last;
+                                buf_offset = buf_size;
+                                buf_size += slice_len;
+                                if buf_size > tmp_buf.len() {
+                                    return Err(bun_sys::Error::from_code(
+                                        bun_sys::E::ENAMETOOLONG,
+                                        bun_sys::Tag::TODO,
+                                    ));
+                                }
+                                // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
+                                unsafe {
+                                    core::ptr::copy(
+                                        path_ptr.add(last),
+                                        tmp_buf.as_mut_ptr().add(buf_offset),
+                                        slice_len,
+                                    );
+                                }
+
                                 device_ptr = tmp_buf.as_ptr();
-                                device_len = 3;
+                                device_len = buf_size;
                                 device_in_tmp = true;
-                                root_end = 4;
-                                break 'root;
+                                root_end = j;
                             }
-
-                            // Translated from the following JS code:
-                            //   device =
-                            //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
-                            //   rootEnd = j;
-                            // path may alias tmp_buf (cwd branch); use
-                            // ptr::copy (memmove semantics).
-                            buf_size = 2;
-                            tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            buf_offset = buf_size;
-                            let first_part_len = first_part_end - first_part_start;
-                            buf_size += first_part_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
-                                core::ptr::copy(
-                                    path_ptr.add(first_part_start),
-                                    tmp_buf.as_mut_ptr().add(buf_offset),
-                                    first_part_len,
-                                );
-                            }
-                            buf_offset = buf_size;
-                            buf_size += 1;
-                            tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            let slice_len = j - last;
-                            buf_offset = buf_size;
-                            buf_size += slice_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
-                                core::ptr::copy(
-                                    path_ptr.add(last),
-                                    tmp_buf.as_mut_ptr().add(buf_offset),
-                                    slice_len,
-                                );
-                            }
-
-                            device_ptr = tmp_buf.as_ptr();
-                            device_len = buf_size;
-                            device_in_tmp = true;
-                            root_end = j;
                         }
                     }
+                } else {
+                    root_end = 1;
                 }
-            } else {
-                root_end = 1;
+            } else if is_windows_device_root_t(byte0) && path!()[1] == T::from_u8(CHAR_COLON) {
+                // Possible device root
+                device_buf = [byte0, T::from_u8(CHAR_COLON)];
+                device_ptr = device_buf.as_ptr();
+                device_len = 2;
+                root_end = 2;
+                if len > 2 && is_sep_t(path!()[2]) {
+                    // Treat separator following the drive name as an absolute path
+                    // indicator
+                    _is_absolute = true;
+                    root_end = 3;
+                }
             }
-        } else if is_windows_device_root_t(byte0) && path!()[1] == T::from_u8(CHAR_COLON) {
-            // Possible device root
-            device_buf = [byte0, T::from_u8(CHAR_COLON)];
-            device_ptr = device_buf.as_ptr();
-            device_len = 2;
-            root_end = 2;
-            if len > 2 && is_sep_t(path!()[2]) {
-                // Treat separator following the drive name as an absolute path
-                // indicator
-                _is_absolute = true;
-                root_end = 3;
-            }
-        }
         }
 
         if device_len > 0 {

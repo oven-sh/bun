@@ -580,6 +580,14 @@ describe("execArgv option", async () => {
     await once(w, "exit");
   });
 
+  it("accepts node's whole-token aliases from process.execArgv", async () => {
+    // `bun -pe X` reports ["-pe", X] verbatim (pinned in process.test.js), so
+    // the round-trip must accept -pe; it parses as -p (accepted-but-unhonored,
+    // a no-op in a worker).
+    const w = new Worker("1", { eval: true, execArgv: ["-pe", "1+1"] });
+    await once(w, "exit");
+  });
+
   it("rejects chained or glued boolean short flags like node", () => {
     // node rejects any short token it cannot match whole; there is no
     // chaining in worker execArgv validation (verified on v26.3.0).

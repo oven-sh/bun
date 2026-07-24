@@ -6,6 +6,7 @@ const argv = process.argv;
 
 // `import` cannot be used in this file and only Bun builtin modules can be used.
 const path = require("node:path");
+const { getBrowserOpenCommand } = require("internal/openInBrowser");
 
 const env = Bun.env;
 
@@ -378,19 +379,7 @@ yourself with Bun.serve().
 
         case "o\n":
           const url = server.url.toString();
-
-          if (process.platform === "darwin") {
-            // TODO: copy the AppleScript from create-react-app or Vite.
-            Bun.spawn(["open", url]).exited.catch(() => {});
-          } else if (process.platform === "win32") {
-            Bun.spawn(["start", url]).exited.catch(() => {});
-          } else if (process.platform === "android") {
-            Bun.spawn(["/system/bin/am", "start", "-a", "android.intent.action.VIEW", "-d", url]).exited.catch(
-              () => {},
-            );
-          } else {
-            Bun.spawn(["xdg-open", url]).exited.catch(() => {});
-          }
+          Bun.spawn(getBrowserOpenCommand(process.platform, url)).exited.catch(() => {});
           break;
 
         case "h\n":

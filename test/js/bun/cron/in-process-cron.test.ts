@@ -451,8 +451,11 @@ describe.concurrent("Bun.cron (in-process) — firing", () => {
     const stderrP = proc.stderr.text();
     const waitFor = async (file: string) => {
       while (!(await Bun.file(m(file)).exists())) {
-        if (proc.exitCode !== null)
-          throw new Error(`subprocess exited ${proc.exitCode} before ${file}: ${await stderrP}`);
+        // A panic in the child aborts via SIGABRT, which leaves exitCode null
+        // (only signalCode is set) — check both so a crash fails fast instead
+        // of spinning until the test timeout.
+        if (proc.exitCode !== null || proc.signalCode !== null)
+          throw new Error(`subprocess exited ${proc.exitCode ?? proc.signalCode} before ${file}: ${await stderrP}`);
         await Bun.sleep(10);
       }
     };

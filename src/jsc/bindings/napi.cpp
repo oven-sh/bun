@@ -1039,6 +1039,11 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
 {
     auto* globalObject = toJS(env);
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Node's NAPI_PREAMBLE: throwing while an exception is already pending must not replace the
+    // pending exception; report napi_pending_exception and leave the first one alone.
+    NAPI_RETURN_IF_EXCEPTION_WITH_SCOPE(env, scope);
 
     if (!msg_utf8) {
         return napi_set_last_error(env, napi_invalid_arg);
@@ -1048,6 +1053,7 @@ static napi_status throwErrorWithCStrings(napi_env env, const char* code_utf8, c
     WTF::String message = WTF::String::fromUTF8(msg_utf8);
 
     JSC::ErrorInstance* error = createErrorWithCode(vm, globalObject, code, message, type);
+    RETURN_IF_EXCEPTION(scope, napi_set_last_error(env, napi_pending_exception));
     env->scheduleException(error);
     return napi_set_last_error(env, napi_ok);
 }

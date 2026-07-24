@@ -917,3 +917,71 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     signalCode: proc.signalCode,
   }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
 });
+
+// bust_entries_cache used to drop the BSSMap key, orphaning the backing slot
+// and the heap DirEntry it pointed at. The next lookup then allocated a fresh
+// slot + DirEntry, skipping the in_place reuse — so every reload() leaked one
+// DirEntry + EntryMap per directory and appended N Entry/FilenameStore slots
+// per directory entry, unbounded.
+it("reload() should not leak directory entry caches", async () => {
+  // The DirEntry/EntryStore/FilenameStore leak scales with the number of
+  // directory entries seen by readdir — not with the number of routes — so
+  // most files deliberately do NOT match `fileExtensions`. That keeps the
+  // route count (and any unrelated per-route/reload overhead) small while the
+  // directory-entry signal stays large. Long names push past the inline
+  // small-string limit so the old code had to hit FilenameStore on every
+  // re-read.
+  const files: Record<string, string> = {};
+  for (let d = 0; d < 4; d++) {
+    files[`directory_with_a_long_name_${d}/index.tsx`] = "export default 0;\n";
+    for (let f = 0; f < 100; f++) {
+      files[`directory_with_a_long_name_${d}/asset_with_a_long_file_name_number_${f}.txt`] = "x\n";
+    }
+  }
+  using dir = tempDir("fsrouter-reload-leak", files);
+
+  const script = /* js */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(String(dir))},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+
+    // Settle any one-time growth from the first few scans.
+    for (let i = 0; i < 20; i++) router.reload();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+
+    for (let i = 0; i < 400; i++) router.reload();
+    Bun.gc(true);
+    const after = process.memoryUsage.rss();
+
+    console.log(JSON.stringify({
+      before,
+      after,
+      deltaKB: Math.round((after - before) / 1024),
+      routes: Object.keys(router.routes).length,
+    }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", script],
+    // ASAN's quarantine retains freed allocations (default 256 MB) so the
+    // per-reload freed EntryMap/snapshot buffers inflate RSS under bun-asan.
+    // Disable it in the child so the RSS delta reflects retained allocations.
+    env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  const { deltaKB, routes } = JSON.parse(stdout.trim());
+  expect(routes).toBe(4);
+  // Before the fix this grew by ~100 MB over 400 reloads (4 DirEntries +
+  // ~400 Entry structs + ~800 FilenameStore strings orphaned per reload) and
+  // eventually aborted once the BSSMap/EntryStore overflow lists filled up.
+  // After, those allocations are reused in place and RSS is flat.
+  expect(deltaKB).toBeLessThan(32 * 1024);
+  expect(exitCode).toBe(0);
+}, 30_000);

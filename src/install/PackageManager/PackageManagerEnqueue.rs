@@ -292,11 +292,8 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-        let resolved_tiny = StringOrTinyString::init_append_if_needed(
-            this.lockfile.str(&repository.resolved),
-            &mut crate::network_task::filename_store_appender(),
-        )
-        .expect("unreachable");
+        let resolved_tiny =
+            crate::network_task::intern_in_filename_store(this.lockfile.str(&repository.resolved));
         let task = enqueue_git_checkout(
             this,
             checkout_id,
@@ -1237,11 +1234,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     id,
                     alias,
                     &res,
-                    StringOrTinyString::init_append_if_needed(
-                        &resolved,
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable"),
+                    crate::network_task::intern_in_filename_store(&resolved),
                     None,
                 );
                 this.task_batch.push(ThreadPool::Batch::from(task));

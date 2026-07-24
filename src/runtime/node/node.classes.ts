@@ -138,6 +138,7 @@ export default [
     configurable: false,
     klass: {},
     JSType: "0b11101110",
+    inspectCustom: ["_idleTimeout", "_idleStart", "_onTimeout", "_repeat", "_destroyed"],
     proto: {
       ref: {
         fn: "doRef",

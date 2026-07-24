@@ -14,6 +14,12 @@ namespace WebStreams {
 // depth < 0 returns `thisValue`; otherwise `${name} ${inspect(data, {...options, depth-1})}`.
 JSC::EncodedJSValue customInspect(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::JSValue thisValue, ASCIILiteral name, JSC::JSObject* data);
 
+// Reads each `propNames[i]` off `thisValue` via [[Get]] into a plain object,
+// then defers to `customInspect`. Used by the `inspectCustom: string[]`
+// codegen path and hand-written DOM classes whose state lives behind
+// prototype accessors.
+JSC::EncodedJSValue customInspectGetters(JSC::JSGlobalObject*, JSC::CallFrame*, JSC::JSValue thisValue, ASCIILiteral name, const ASCIILiteral* propNames, unsigned propCount);
+
 // Installs the host function on a prototype under Symbol.for("nodejs.util.inspect.custom").
 void installInspectCustom(JSC::VM&, JSC::JSObject* prototype, JSC::NativeFunction);
 

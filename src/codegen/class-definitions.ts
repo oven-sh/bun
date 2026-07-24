@@ -247,7 +247,16 @@ export class ClassDefinition {
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
-  inspectCustom?: boolean;
+  /**
+   * Installs `[Symbol.for("nodejs.util.inspect.custom")]` on the prototype.
+   * - `true`: implementer must provide `inspectCustom(depth, options, inspect)` in Rust.
+   * - `string[]`: generated C++ reads each named getter from `this` and renders
+   *   `ClassName { prop: value, ... }` via `util.inspect`; no Rust required.
+   * - `{ extern }`: install the named `JSC_DEFINE_HOST_FUNCTION` (declared in
+   *   hand-written C++) as the symbol method; codegen emits only the extern
+   *   declaration and the `putDirect` call.
+   */
+  inspectCustom?: boolean | string[] | { extern: string };
 
   callbacks?: Record<string, string>;
 
@@ -295,7 +304,7 @@ export function define(
     ...rest
   } = {} as Partial<ClassDefinition>,
 ): ClassDefinition {
-  if (inspectCustom) {
+  if (inspectCustom === true) {
     proto.inspectCustom = {
       fn: "inspectCustom",
       length: 2,
@@ -304,6 +313,7 @@ export function define(
     };
   }
   return new ClassDefinition({
+    inspectCustom,
     ...rest,
     call,
     overridesToJS,

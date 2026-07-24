@@ -2174,6 +2174,26 @@ pub mod formatter {
             Self::get_advanced(value, global_this, TagOptions::empty())
         }
 
+        /// `Object.getOwnPropertyDescriptor(value, "constructor")?.value?.prototype === value`,
+        /// the same gate `util.inspect` uses so a class's prototype object is
+        /// rendered as a plain object instead of being fed to its own
+        /// brand-checked `[nodejs.util.inspect.custom]`.
+        fn is_constructor_prototype(
+            value: JSValue,
+            global_this: &JSGlobalObject,
+        ) -> JsResult<bool> {
+            let Some(constructor) = value.get_own_truthy(global_this, "constructor")? else {
+                return Ok(false);
+            };
+            if !constructor.is_cell() {
+                return Ok(false);
+            }
+            let Some(prototype) = constructor.get(global_this, "prototype")? else {
+                return Ok(false);
+            };
+            Ok(prototype == value)
+        }
+
         pub fn get_advanced(
             value: JSValue,
             global_this: &JSGlobalObject,
@@ -2232,6 +2252,20 @@ pub mod formatter {
                 });
             }
 
+            // DOMWrapper types (Response, Blob, Headers, ReadableStream, ...)
+            // route to `print_private` first so the native runtime formatter
+            // gets right of first refusal; `print_private` itself consults
+            // `[nodejs.util.inspect.custom]` when the hook declines. Web
+            // platform classes carrying that symbol for `util.inspect` would
+            // otherwise short-circuit here and lose Bun's richer console
+            // rendering (e.g. `Response (N bytes)`).
+            if js_type == jsc::JSType::DOMWrapper {
+                return Ok(TagResult {
+                    tag: TagPayload::Private,
+                    cell: js_type,
+                });
+            }
+
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
@@ -2244,7 +2278,10 @@ pub mod formatter {
                             ..Default::default()
                         });
                     }
-                    Ok(Some(callback_value)) if callback_value.is_callable() => {
+                    Ok(Some(callback_value))
+                        if callback_value.is_callable()
+                            && !Tag::is_constructor_prototype(value, global_this)? =>
+                    {
                         return Ok(TagResult {
                             tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
                                 function: callback_value,
@@ -2255,13 +2292,6 @@ pub mod formatter {
                     }
                     _ => {}
                 }
-            }
-
-            if js_type == jsc::JSType::DOMWrapper {
-                return Ok(TagResult {
-                    tag: TagPayload::Private,
-                    cell: js_type,
-                });
             }
 
             // If we check an Object has a method table and it does not it will crash
@@ -3921,6 +3951,10 @@ pub mod formatter {
                 // A custom inspector that returns its own `this` would recurse
                 // forever; re-tag without the custom hook so it falls through to
                 // default formatting (mirrors util.inspect's `ret !== context`).
+                // `print_private`'s own probe compares against
+                // `custom_formatted_object.this` for the same reason; leaving
+                // it set to `result` here is what suppresses re-entry there
+                // without blanket-disabling custom inspect for nested values.
                 let tag = if result == self.custom_formatted_object.this {
                     Tag::get_advanced(result, self.global_this, TagOptions::DISABLE_INSPECT_CUSTOM)?
                 } else {
@@ -4664,6 +4698,9 @@ pub mod formatter {
 
             // `DOMFormData` is a C++-backed WebCore type — no `JsClass` derive,
             // so use its dedicated `from_js` FFI downcast instead of `value.as_`.
+            // Ordered before the generic custom-inspect probe so Bun's native
+            // `toJSON`-driven rendering keeps priority (same as the runtime hook
+            // does for Response/Headers above).
             if crate::DOMFormData::from_js(value).is_some() {
                 if let Some(to_json_function) = value.get(self.global_this, "toJSON")? {
                     let prev_quote_keys = self.quote_keys;
@@ -4675,15 +4712,34 @@ pub mod formatter {
                         .unwrap_or_else(|err| self.global_this.take_exception(err));
                     return self.print_as::<C>(Tag::Object, writer_, result, jsc::JSType::Object);
                 }
+            }
 
-                // this case should never happen
-                return self.print_as::<C>(
-                    Tag::Undefined,
-                    writer_,
-                    JSValue::UNDEFINED,
-                    jsc::JSType::Cell,
-                );
-            } else if js_type != jsc::JSType::DOMWrapper {
+            // The runtime hook declined. `get_tag` sends DOMWrapper values here
+            // unconditionally so the hook above retains priority; any
+            // `[nodejs.util.inspect.custom]` the value carries is consulted now,
+            // covering ReadableStream / AbortSignal / CryptoKey / etc.
+            // Re-entry on the exact value a custom inspector just returned (the
+            // `ret === this` opt-out) is suppressed by comparing against
+            // `custom_formatted_object.this`, which `print_custom_formatted_object`
+            // leaves pointing at that value; this keeps custom inspect active
+            // for *nested* values of the same format pass.
+            if !self.disable_inspect_custom && value != self.custom_formatted_object.this {
+                if let Some(callback) =
+                    value.fast_get(self.global_this, jsc::BuiltinName::InspectCustom)?
+                {
+                    if callback.is_callable()
+                        && !Tag::is_constructor_prototype(value, self.global_this)?
+                    {
+                        self.custom_formatted_object = CustomFormattedObject {
+                            function: callback,
+                            this: value,
+                        };
+                        return self.print_custom_formatted_object::<C>(writer_);
+                    }
+                }
+            }
+
+            if js_type != jsc::JSType::DOMWrapper {
                 if *remove_before_recurse {
                     *remove_before_recurse = false;
                     let _ = self.map.remove(&value);

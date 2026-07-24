@@ -16,6 +16,21 @@ export default [
     overridesToJS: true,
     memoryCost: true,
     values: ["stream"],
+    inspectCustom: [
+      "method",
+      "url",
+      "headers",
+      "destination",
+      "referrer",
+      "referrerPolicy",
+      "mode",
+      "credentials",
+      "cache",
+      "redirect",
+      "integrity",
+      "bodyUsed",
+      "signal",
+    ],
     proto: {
       text: { fn: "getText", async: true },
       json: { fn: "getJSON", async: true },
@@ -93,6 +108,7 @@ export default [
       },
     },
     values: ["stream"],
+    inspectCustom: ["status", "statusText", "headers", "body", "bodyUsed", "ok", "redirected", "type", "url"],
     proto: {
       url: {
         getter: "getURL",
@@ -155,6 +171,7 @@ export default [
     estimatedSize: true,
     values: ["stream"],
     overridesToJS: true,
+    inspectCustom: { extern: "JSBlob__inspectCustom" },
     proto: {
       text: { fn: "getText", async: true },
       json: { fn: "getJSON", async: true },

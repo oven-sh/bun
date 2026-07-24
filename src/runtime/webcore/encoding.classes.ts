@@ -8,6 +8,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     klass: {},
+    inspectCustom: ["encoding", "fatal", "ignoreBOM"],
     proto: {
       encoding: {
         getter: "getEncoding",

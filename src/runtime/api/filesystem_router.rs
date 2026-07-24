@@ -20,7 +20,6 @@ pub mod kind_enum {
 }
 
 use bun_paths::strings;
-use core::ops::Range;
 
 use bun_alloc::Arena as ArenaAllocator;
 use bun_ast as Log;
@@ -640,10 +639,10 @@ impl FileSystemRouter {
             this.base_dir.unwrap(),
         );
         result.pathname = match url_path.into_owned_buffer() {
-            Some(decoded) => decoded.into_boxed_slice(),
-            None => path.into_vec().into_boxed_slice(),
+            Some(decoded) => ZigStringSlice::init_owned(decoded),
+            None => path,
         };
-        debug_assert_eq!(result.pathname.len(), pathname_len);
+        debug_assert_eq!(result.pathname.slice().len(), pathname_len);
 
         // Ownership transfers to the GC wrapper (freed via
         // `MatchedRouteClass__finalize`); the leak lives once in `to_js_boxed`.
@@ -703,27 +702,19 @@ impl FileSystemRouter {
     }
 }
 
-/// Dynamic-route parameter stored as an offset range into
-/// [`MatchedRoute::pathname`], so `MatchedRoute` owns its request bytes outright
-/// rather than borrowing them.
-struct MatchedParam {
-    /// Slices the route template (resolver-interned, process lifetime).
-    name: &'static [u8],
-    /// Range into `MatchedRoute::pathname`.
-    value: Range<u32>,
-}
-
 #[bun_jsc::JsClass(no_construct, no_constructor)]
 pub struct MatchedRoute {
     /// Owns the full request pathname (possibly percent-decoded). `query_string`
-    /// and each `params[_].value` are offset ranges into this buffer.
-    pathname: Box<[u8]>,
-    query_string: Range<u32>,
+    /// and each `params[_].value` are `StringPointer` offsets into this buffer's
+    /// `slice()`. Kept as a `ZigStringSlice` so a WTF-backed input stays a
+    /// ref-holding borrow instead of an owned copy.
+    pathname: ZigStringSlice,
+    query_string: bun_url::api::StringPointer,
     /// Route name, like `"posts/[id]"` — resolver-interned, process lifetime.
     name: &'static [u8],
     /// Absolute filesystem path — resolver-interned, process lifetime.
     file_path: &'static [u8],
-    params: Vec<MatchedParam>,
+    params: Vec<route_param::StoredParam>,
 
     // R-2: lazily populated by `get_query`/`get_params` (now `&self`).
     pub query_string_map: JsCell<Option<QueryStringMap>>,
@@ -741,24 +732,8 @@ impl MatchedRoute {
 
     #[inline]
     fn query_string(&self) -> &[u8] {
-        &self.pathname[self.query_string.start as usize..self.query_string.end as usize]
-    }
-
-    #[inline]
-    fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(&self.pathname, b"/")
-    }
-
-    /// Materialize `params` as slices borrowing `self.pathname` for the
-    /// `CombinedScanner` API.
-    fn params_list(&self) -> route_param::List<'_> {
-        self.params
-            .iter()
-            .map(|p| route_param::Param {
-                name: p.name,
-                value: &self.pathname[p.value.start as usize..p.value.end as usize],
-            })
-            .collect()
+        let p = self.query_string;
+        &self.pathname.slice()[p.offset as usize..][..p.length as usize]
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -768,32 +743,32 @@ impl MatchedRoute {
 
     /// Build a `MatchedRoute` from a router `Match`. `match_.query_string` and every
     /// `match_.params[_].value` are sub-slices of `match_.pathname`; they are recorded
-    /// here as offset ranges so this struct can own the pathname buffer outright. The
-    /// caller moves that buffer in as `pathname` once `match_`'s borrow of it has been
-    /// released (see the call site).
+    /// here as `StringPointer` offsets so this struct can own the pathname buffer
+    /// outright. The caller moves that buffer in as `pathname` once `match_`'s borrow
+    /// of it has been released (see the call site).
     pub fn init(
         match_: &RouterMatch<'_>,
         origin: Option<BackRef<RefString>>,
         asset_prefix: Option<BackRef<RefString>>,
         base_dir: BackRef<RefString>,
     ) -> Box<MatchedRoute> {
-        fn range_in(outer: &[u8], inner: &[u8]) -> Range<u32> {
+        fn ptr_in(outer: &[u8], inner: &[u8]) -> bun_url::api::StringPointer {
             match bun_core::range_of_slice_in_buffer(inner, outer) {
-                Some([off, len]) => off..off + len,
+                Some([offset, length]) => bun_url::api::StringPointer { offset, length },
                 None => {
                     debug_assert!(inner.is_empty());
-                    0..0
+                    bun_url::api::StringPointer::default()
                 }
             }
         }
 
-        let query_string = range_in(match_.pathname, match_.query_string);
-        let params: Vec<MatchedParam> = match_
+        let query_string = ptr_in(match_.pathname, match_.query_string);
+        let params: Vec<route_param::StoredParam> = match_
             .params
             .iter()
-            .map(|p| MatchedParam {
+            .map(|p| route_param::StoredParam {
                 name: p.name,
-                value: range_in(match_.pathname, p.value),
+                value: ptr_in(match_.pathname, p.value),
             })
             .collect();
 
@@ -808,7 +783,7 @@ impl MatchedRoute {
         }
 
         Box::new(MatchedRoute {
-            pathname: Box::default(),
+            pathname: ZigStringSlice::EMPTY,
             query_string,
             name: match_.name,
             file_path: match_.file_path,
@@ -841,7 +816,7 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_pathname(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(zs_to_js(&this.pathname, global_this))
+        Ok(zs_to_js(this.pathname.slice(), global_this))
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -934,13 +909,8 @@ impl MatchedRoute {
         }
 
         if this.param_map.get().is_none() {
-            let params = this.params_list();
-            let scanner = CombinedScanner::init(
-                b"",
-                this.pathname_without_leading_slash(),
-                this.name,
-                &params,
-            );
+            let scanner =
+                CombinedScanner::init(b"", this.pathname.slice(), this.name, &this.params);
             this.param_map
                 .set(QueryStringMap::init_with_scanner(scanner)?);
         }
@@ -961,12 +931,11 @@ impl MatchedRoute {
 
         if this.query_string_map.get().is_none() {
             if !this.params.is_empty() {
-                let params = this.params_list();
                 let scanner = CombinedScanner::init(
                     this.query_string(),
-                    this.pathname_without_leading_slash(),
+                    this.pathname.slice(),
                     this.name,
-                    &params,
+                    &this.params,
                 );
                 this.query_string_map
                     .set(QueryStringMap::init_with_scanner(scanner)?);

@@ -991,7 +991,11 @@ describe("Socket fd adoption", () => {
   });
 
   it("throws ERR_INVALID_FD_TYPE for an fd that cannot be fstat'ed", () => {
-    for (const opts of [{ fd: 0x7ffff, writable: true }, { fd: 0x7ffff }]) {
+    // On Windows the constructor leaves a bare { fd } inert (no fstat) so
+    // connect({ fd }) can route it through the named-pipe open path; only
+    // { fd, writable: true } is required to fstat.
+    const cases = isWindows ? [{ fd: 0x7ffff, writable: true }] : [{ fd: 0x7ffff, writable: true }, { fd: 0x7ffff }];
+    for (const opts of cases) {
       let error: any;
       try {
         new Socket(opts);

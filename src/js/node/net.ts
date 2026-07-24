@@ -345,6 +345,14 @@ const SocketHandlers: SocketHandler = {
     if (!self) return;
 
     self._unrefTimer();
+    // An fd-adopted socket constructed with readable: false has its readable
+    // side already ended; a later resume()/read()/on('data') can restart the
+    // native read. Drop those bytes and re-pause rather than destroy the
+    // write side with ERR_STREAM_PUSH_AFTER_EOF.
+    if (self._readableState?.ended) {
+      socket.pause();
+      return;
+    }
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
       socket.pause();
@@ -450,7 +458,9 @@ const SocketHandlers: SocketHandler = {
       self[kBytesWritten] = socket.bytesWritten;
       // Node does not emit 'connect' for a Socket constructed over an
       // already-connected fd (new net.Socket({ fd })): the handle is opened
-      // synchronously in the constructor, before any listener can exist.
+      // synchronously in the constructor, before any listener can exist. A
+      // later connect(port, host) on the same instance goes through
+      // SocketHandlers2, which emits 'connect' without consulting this flag.
       if (!self[kAdoptedFd]) {
         // this is not actually emitted on nodejs when socket used on the connection
         // this is already emmited on non-TLS socket and on TLS socket is emmited secureConnect after handshake
@@ -1626,18 +1636,24 @@ function Socket(options?) {
 
   if (hasFd) {
     const { fd } = options;
-    let stats;
-    try {
-      stats = require("node:fs").fstatSync(fd);
-    } catch {
-      // Node: createHandle -> uv_guess_handle returns UV_UNKNOWN_HANDLE
-      // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
-      throw $ERR_INVALID_FD_TYPE("UNKNOWN");
-    }
     const optionsReadable = options.readable;
     const optionsWritable = options.writable;
-    if (stats.isSocket()) {
-      if (optionsWritable === true && optionsReadable !== true) {
+    // On Windows us_socket_from_fd is a no-op and fstat on a child_process
+    // extra-stdio fd fails, so the constructor leaves a bare { fd } inert and
+    // Socket.prototype.connect({ fd }) routes it through the named-pipe open
+    // path instead.
+    let stats;
+    if (process.platform !== "win32" || optionsWritable === true) {
+      try {
+        stats = require("node:fs").fstatSync(fd);
+      } catch {
+        // Node: createHandle -> uv_guess_handle returns UV_UNKNOWN_HANDLE
+        // for an fd it cannot fstat, then throws ERR_INVALID_FD_TYPE.
+        throw $ERR_INVALID_FD_TYPE("UNKNOWN");
+      }
+    }
+    if (process.platform !== "win32" && stats.isSocket()) {
+      if (optionsWritable === true && optionsReadable === false) {
         // stdio-style write-only adoption (new Socket({ fd: 2, readable: false,
         // writable: true })): keep synchronous write(2) so data survives an
         // immediate process.exit().
@@ -1668,11 +1684,12 @@ function Socket(options?) {
         // pushes into an already-ended readable (ERR_STREAM_PUSH_AFTER_EOF).
         if (optionsReadable === false) this._handle?.pause?.();
       }
-    } else if (optionsWritable === true) {
+    } else if (stats && optionsWritable === true) {
       // Adopt pipe/character-device/file fds with synchronous writes so data
       // survives an immediate process.exit() (node's effective semantics for
-      // stdio-style sockets).
-      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isFile()) {
+      // stdio-style sockets). On Windows the socketpair form of stdio (which
+      // lands here) is also write-only sync.
+      if (stats.isFIFO() || stats.isCharacterDevice() || stats.isFile() || (isWindows && stats.isSocket())) {
         this[kSyncWriteFd] = fd;
         this._write = fdSyncWrite;
         this._writev = fdSyncWritev;

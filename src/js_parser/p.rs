@@ -980,6 +980,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     (state.is_await_target && self.fn_or_arrow_data_visit.try_body_count != 0)
                         || state.is_then_catch_target,
                 );
+            self.import_records.items_mut()[import_record_index as usize]
+                .flags
+                .set(bun_ast::ImportRecordFlags::PHASE_DEFER, state.phase_defer);
             self.import_records_for_current_part
                 .push(import_record_index);
 
@@ -988,6 +991,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     expr: arg,
                     import_record_index,
                     options: state.import_options,
+                    phase_defer: state.phase_defer,
                 },
                 state.loc,
             );
@@ -1011,6 +1015,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 expr: arg,
                 options: state.import_options,
                 import_record_index: u32::MAX,
+                phase_defer: state.phase_defer,
             },
             state.loc,
         )

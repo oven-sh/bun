@@ -6027,6 +6027,9 @@ pub mod macho {
     pub struct LoadCommand {
         pub hdr: load_command,
         pub data: RawSlice,
+        /// Byte offset of this command within the buffer passed to
+        /// `LoadCommandIterator::new`.
+        pub offset: usize,
     }
     impl LoadCommand {
         #[inline]
@@ -6061,6 +6064,7 @@ pub mod macho {
         index: u32,
         buf_ptr: *const u8,
         buf_len: usize,
+        offset: usize,
     }
     impl LoadCommandIterator {
         /// `buffer` must remain live (no realloc/free) for the lifetime of the
@@ -6072,6 +6076,7 @@ pub mod macho {
                 index: 0,
                 buf_ptr: buffer.as_ptr(),
                 buf_len: buffer.len(),
+                offset: 0,
             }
         }
 
@@ -6096,10 +6101,12 @@ pub mod macho {
                     ptr: self.buf_ptr,
                     len: cmdsize,
                 },
+                offset: self.offset,
             };
             // SAFETY: advancing within the original buffer; bounds checked above.
             self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
             self.buf_len -= cmdsize;
+            self.offset += cmdsize;
             self.index += 1;
             Some(lc)
         }

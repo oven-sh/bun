@@ -51,11 +51,14 @@ impl MachoFile {
         obj_file: &[u8],
         blob_to_embed_length: usize,
     ) -> Result<Box<MachoFile>, MachoError> {
+        // --compile-executable-path accepts arbitrary files; reject short input
+        // here instead of letting the header slice panic.
+        if obj_file.len() < size_of::<macho::mach_header_64>() {
+            return Err(MachoError::InvalidObject);
+        }
         let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
         data.extend_from_slice(obj_file);
 
-        // data.len() >= sizeof(mach_header_64) is assumed by caller (obj_file is a Mach-O);
-        // the slice index panics on a short input rather than reading OOB.
         let header: macho::mach_header_64 =
             read_struct(&data[..size_of::<macho::mach_header_64>()]);
 

@@ -1230,3 +1230,48 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(exitCode).toBe(0);
   }
 }, 60_000);
+
+test.each([
+  ["bun-linux-x64", "ELF", "out"],
+  ["bun-darwin-x64", "standalone module graph", "out"],
+  // build_command.rs appends .exe to --outfile for Windows targets.
+  ["bun-windows-x64", "PE", "out.exe"],
+] as const)(
+  "compile --compile-executable-path with an invalid template (%s) fails without spurious fd errors",
+  async (target, errFragment, outName) => {
+    // When inject() rejects the template (ELF/Mach-O/PE parse failure), the
+    // caller must stop instead of continuing with Fd::INVALID, which used to
+    // surface as "failed to get path for fd: ... /proc/self/fd/-2147483648".
+    using dir = tempDir("compile-bad-exe-template", {
+      "entry.js": `console.log("ok");`,
+      "bad": "\0",
+    });
+    const cwd = String(dir);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        `--target=${target}`,
+        "--compile-executable-path",
+        join(cwd, "bad"),
+        join(cwd, "entry.js"),
+        "--outfile",
+        join(cwd, "out"),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const combined = stdout + stderr;
+    expect(combined).toContain(errFragment);
+    expect(combined).not.toContain("/proc/self/fd/");
+    expect(combined).not.toContain("-2147483648");
+    expect(combined).not.toContain("failed to get path for fd");
+    expect(combined).not.toContain("Failed to get temp file path");
+    expect(await Bun.file(join(cwd, outName)).exists()).toBe(false);
+    expect(exitCode).toBe(1);
+  },
+);

@@ -185,11 +185,15 @@ test("mysql: byte-at-a-time framing drives the buffered-reader resume path throu
     socket.on("error", () => {});
   });
 
-  await using db = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
-  const rows = await db`SELECT a, b`.simple();
-  expect(rows).toEqual([
-    { a: "one", b: "1" },
-    { a: "two", b: "2" },
-  ]);
-  server.close();
+  const db = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+  try {
+    const rows = await db`SELECT a, b`.simple();
+    expect(rows).toEqual([
+      { a: "one", b: "1" },
+      { a: "two", b: "2" },
+    ]);
+  } finally {
+    await db.close({ timeout: 0 });
+    server.close();
+  }
 });

@@ -2,8 +2,10 @@ import { heapStats } from "bun:jsc";
 
 // This file is meant to be able to run in node and bun
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
+// run far higher under ASAN; widen the threshold to avoid false positives.
+// harness.ts sets BUN_TEST_IS_ASAN in bunEnv when the parent test process is
+// ASAN-instrumented (covers both CI's `bun-asan` and local `bun bd` debug builds).
+const isASAN = process.env.BUN_TEST_IS_ASAN === "1";
 const http2 = require("http2");
 const { TLS_OPTIONS, nodeEchoServer } = require("./http2-helpers.cjs");
 function getHeapStats() {

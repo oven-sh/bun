@@ -5,7 +5,7 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
-const { SafeSet } = require("internal/primordials");
+const { SafeSet, SafeMap } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { Buffer } = require("node:buffer");
 const { pathToFileURL } = require("node:url");
@@ -178,7 +178,7 @@ function waitForDebugger() {
 // the calling thread. All in-process sessions share the one native channel;
 // each session owns an adapter and matches replies by command id.
 let InspectorCDPAdapter: any;
-const inProcessAdapters = new Set<any>();
+const inProcessAdapters: Set<any> = new SafeSet();
 let drainScheduled = false;
 // JSC broadcasts every backend reply to every attached frontend, so backend
 // command ids must be unique across all in-process adapters and above the
@@ -487,13 +487,13 @@ class NetworkRequestEntry {
 // enable()/disable() cannot disturb another's buffered requests.
 class NetworkState {
   // Insertion-ordered: the oldest entry is evicted first once the total cap is hit.
-  requests = new Map<string, NetworkRequestEntry>();
+  requests: Map<string, NetworkRequestEntry> = new SafeMap();
   maxResourceBufferSize = kDefaultMaxResourceBufferSize;
   maxTotalBufferSize = kDefaultMaxTotalBufferSize;
   totalBufferSize = 0;
 }
 
-const networkEnabledSessions = new Map<Session, NetworkState>();
+const networkEnabledSessions: Map<Session, NetworkState> = new SafeMap();
 
 function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
   if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
@@ -512,13 +512,13 @@ function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs:
     }
     if (oldest === undefined) break;
     state.totalBufferSize -= oldestEntry!.bufferSize;
-    state.requests.$delete(oldest);
+    state.requests.delete(oldest);
   }
 }
 
 function dropNetworkEntry(state: NetworkState, requestId: string, entry: NetworkRequestEntry) {
   state.totalBufferSize -= entry.bufferSize;
-  state.requests.$delete(requestId);
+  state.requests.delete(requestId);
 }
 
 function concatBlobs(blobs: Uint8Array[]) {
@@ -728,8 +728,8 @@ const Network = {
 function sessionRequestWillBeSent(session, state, ctx) {
   const { requestId, request } = ctx;
   // A duplicate requestId drops the whole event for that session.
-  if (state.requests.$has(requestId)) return;
-  state.requests.$set(
+  if (state.requests.has(requestId)) return;
+  state.requests.set(
     requestId,
     new NetworkRequestEntry(request.hasPostData, ctx.requestIsUTF8, state.maxResourceBufferSize),
   );
@@ -744,7 +744,7 @@ function sessionRequestWillBeSent(session, state, ctx) {
 
 function sessionResponseReceived(session, state, ctx) {
   const { requestId, response } = ctx;
-  const entry = state.requests.$get(requestId);
+  const entry = state.requests.get(requestId);
   if (entry === undefined) return;
   entry.responseIsUTF8 = response.charset === "utf-8";
   emitToSession(session, "Network.responseReceived", {
@@ -759,7 +759,7 @@ function sessionLoadingFinished(session, state, ctx) {
   const { requestId } = ctx;
   // Node emits before the lookup, so an unknown requestId still reaches the frontend.
   emitToSession(session, "Network.loadingFinished", { requestId, timestamp: ctx.timestamp });
-  const entry = state.requests.$get(requestId);
+  const entry = state.requests.get(requestId);
   if (entry === undefined) return;
   if (entry.isStreaming) dropNetworkEntry(state, requestId, entry);
   else entry.isResponseFinished = true;
@@ -773,12 +773,12 @@ function sessionLoadingFailed(session, state, ctx) {
     type: ctx.type,
     errorText: ctx.errorText,
   });
-  const entry = state.requests.$get(requestId);
+  const entry = state.requests.get(requestId);
   if (entry !== undefined) dropNetworkEntry(state, requestId, entry);
 }
 
 function sessionDataSent(_session, state, ctx) {
-  const entry = state.requests.$get(ctx.requestId);
+  const entry = state.requests.get(ctx.requestId);
   if (entry === undefined) return;
   if (ctx.finished) {
     entry.isRequestFinished = true;
@@ -789,7 +789,7 @@ function sessionDataSent(_session, state, ctx) {
 
 function sessionDataReceived(session, state, ctx) {
   const { requestId, data } = ctx;
-  const entry = state.requests.$get(requestId);
+  const entry = state.requests.get(requestId);
   if (entry === undefined) return;
   // Buffer until a frontend asks to stream, then emit live.
   if (entry.isStreaming) {
@@ -844,7 +844,7 @@ guardEventParams(Network);
 // --- DOMStorage domain ------------------------------------------------------
 // Mirrors src/inspector/dom_storage_agent.cc: validate then emit. Only the
 // event surface exists; there is no storage backend to inspect.
-const domStorageEnabledSessions = new Set<Session>();
+const domStorageEnabledSessions: Set<Session> = new SafeSet();
 
 function emitDOMStorageEvent(method: string, params: object) {
   for (const session of domStorageEnabledSessions) emitToSession(session, method, params);
@@ -1192,11 +1192,11 @@ class Session extends EventEmitter {
     this.#connected = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
-    networkEnabledSessions.$delete(this);
-    domStorageEnabledSessions.$delete(this);
+    networkEnabledSessions.delete(this);
+    domStorageEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
     if (this.#adapter !== undefined) {
-      inProcessAdapters.$delete(this.#adapter);
+      inProcessAdapters.delete(this.#adapter);
       this.#adapter = undefined;
       // Node's contract: every callback still waiting on a reply is failed
       // with "Inspector error -32000: Execution context was destroyed."
@@ -1294,26 +1294,26 @@ class Session extends EventEmitter {
         if (typeof maxResource === "number" && Number.isFinite(maxResource) && maxResource >= 0) {
           state.maxResourceBufferSize = maxResource | 0;
         }
-        networkEnabledSessions.$set(this, state);
+        networkEnabledSessions.set(this, state);
         return {};
       }
 
       case "Network.disable":
-        networkEnabledSessions.$delete(this);
+        networkEnabledSessions.delete(this);
         return {};
 
       case "DOMStorage.enable":
-        domStorageEnabledSessions.$add(this);
+        domStorageEnabledSessions.add(this);
         return {};
 
       case "DOMStorage.disable":
-        domStorageEnabledSessions.$delete(this);
+        domStorageEnabledSessions.delete(this);
         return {};
 
       case "Network.streamResourceContent": {
-        const state = networkEnabledSessions.$get(this);
+        const state = networkEnabledSessions.get(this);
         const requestId = (params as any)?.requestId;
-        const entry = state?.requests.$get(requestId);
+        const entry = state?.requests.get(requestId);
         if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
         entry.isStreaming = true;
         const buffered = concatBlobs(entry.responseDataBlobs);
@@ -1325,9 +1325,9 @@ class Session extends EventEmitter {
       }
 
       case "Network.getResponseBody": {
-        const state = networkEnabledSessions.$get(this);
+        const state = networkEnabledSessions.get(this);
         const requestId = (params as any)?.requestId;
-        const entry = state?.requests.$get(requestId);
+        const entry = state?.requests.get(requestId);
         if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
         if (entry.isStreaming) return $ERR_INSPECTOR_COMMAND("-32602: Response body of the request is been streamed");
         if (!entry.isResponseFinished) return $ERR_INSPECTOR_COMMAND("-32602: Response data is not finished yet");
@@ -1338,9 +1338,9 @@ class Session extends EventEmitter {
       }
 
       case "Network.getRequestPostData": {
-        const state = networkEnabledSessions.$get(this);
+        const state = networkEnabledSessions.get(this);
         const requestId = (params as any)?.requestId;
-        const entry = state?.requests.$get(requestId);
+        const entry = state?.requests.get(requestId);
         if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
         if (!entry.isRequestFinished) return $ERR_INSPECTOR_COMMAND("-32602: Request data is not finished yet");
         if (!entry.requestIsUTF8) return $ERR_INSPECTOR_COMMAND("-32000: Unable to serialize binary request body");
@@ -1446,10 +1446,11 @@ class Session extends EventEmitter {
       // addHeapSnapshotChunk events and then answers the command. There is no
       // allocation-tracking timeline to keep, so start/stopTrackingHeapObjects
       // reduce to "no-op" and "emit a snapshot" respectively.
+      // collectGarbage falls through to kInProcess so it maps onto Heap.gc
+      // via the adapter, matching the remote path (and Node).
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
       case "HeapProfiler.startTrackingHeapObjects":
-      case "HeapProfiler.collectGarbage":
         return {};
 
       case "HeapProfiler.takeHeapSnapshot":

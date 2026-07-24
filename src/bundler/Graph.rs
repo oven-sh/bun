@@ -212,7 +212,6 @@ impl<'a> Graph<'a> {
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
     }
-
 }
 
 // The resolver

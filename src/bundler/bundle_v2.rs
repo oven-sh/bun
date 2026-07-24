@@ -2158,7 +2158,8 @@ pub mod bv2_impl {
                         let loader: Loader = 'brk: {
                             let record_loader = self.graph.ast.items_import_records()
                                 [import_record.importer_source_index as usize]
-                                .as_slice()[import_record.import_record_index as usize]
+                                .as_slice()
+                                [import_record.import_record_index as usize]
                                 .loader;
                             if let Some(out_loader) = record_loader {
                                 break 'brk out_loader;

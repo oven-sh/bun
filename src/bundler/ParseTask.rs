@@ -2225,7 +2225,10 @@ pub mod parse_worker {
         let worker_ctx = this.ctx;
 
         let loader = {
-            let loaders = &this.transpiler_for_target(task.known_target).options.loaders;
+            let loaders = &this
+                .transpiler_for_target(task.known_target)
+                .options
+                .loaders;
             task.loader
                 .or_else(|| task.path.loader(loaders))
                 .unwrap_or(Loader::File)
@@ -2317,7 +2320,8 @@ pub mod parse_worker {
         } else {
             known_uses_other
         };
-        let (resolver, transpiler): (*mut Resolver, *mut Transpiler<'static>) = if known_uses_other {
+        let (resolver, transpiler): (*mut Resolver, *mut Transpiler<'static>) = if known_uses_other
+        {
             debug_assert!(final_uses_other);
             let t: *mut Transpiler<'static> = &raw mut **data
                 .other_transpiler
@@ -2414,8 +2418,7 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is live; `macro_context` is a field disjoint from
         // `options` (borrowed as `topts`) and `resolver`. `'static` erasure: the
         // context is worker-owned and outlives the parse.
-        opts.macro_context =
-            Some(unsafe { (*transpiler).macro_context.as_mut() }.unwrap());
+        opts.macro_context = Some(unsafe { (*transpiler).macro_context.as_mut() }.unwrap());
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();

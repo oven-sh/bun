@@ -679,6 +679,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
+                (*resolver).note_query_result(err_);
                 scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_cares::<T>(
@@ -819,6 +820,7 @@ impl GetHostByAddrInfoRequest {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
+                (*resolver).note_query_result(err_);
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_addr_cares(
                         (*this).cache.pos_in_pending(),
@@ -1070,6 +1072,7 @@ impl GetNameInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
+                (*resolver).note_query_result(err_);
                 scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_name_info_cares(
@@ -1542,6 +1545,7 @@ impl GetAddrInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
+                (*resolver).note_query_result(err_);
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_cares(
                         (*this).cache.pos_in_pending(),
@@ -2480,6 +2484,32 @@ pub mod internal {
     #[inline]
     fn global_cache() -> &'static bun_threading::Guarded<GlobalCache> {
         &GLOBAL_CACHE
+    }
+
+    /// Drop every cached `getaddrinfo` result after a network-config change so
+    /// the connect path doesn't serve stale addresses for the rest of the TTL.
+    /// Completed entries with no outstanding refs are freed; in-flight entries
+    /// are marked invalid so they won't be served once they resolve.
+    pub(crate) fn invalidate_global_cache() {
+        let mut cache = global_cache().lock();
+        let mut i = 0;
+        while i < cache.len {
+            let entry = cache.cache[i];
+            // SAFETY: entries 0..len are valid heap Requests; lock is held.
+            unsafe {
+                if (*entry).refcount == 0 && (*entry).result.is_some() {
+                    Request::deinit(entry);
+                    cache.len -= 1;
+                    if i < cache.len {
+                        cache.cache[i] = cache.cache[cache.len];
+                    }
+                    continue;
+                }
+                (*entry).valid = false;
+            }
+            i += 1;
+        }
+        DNS_CACHE_SIZE.store(cache.len, Ordering::Relaxed);
     }
 
     // we just hardcode a STREAM socktype
@@ -3672,6 +3702,19 @@ pub struct Resolver {
     pub vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
     pub polls: JsCell<PollsMap>,
     pub options: Cell<c_ares::ChannelOptions>,
+    /// `false` once `setServers()` succeeds; gates config-change reinit so a
+    /// user-pinned server list is never overwritten by a network change.
+    pub is_servers_default: Cell<bool>,
+    /// `false` when the last c-ares query completed with `ECONNREFUSED`;
+    /// consumed by `ensure_servers()` for Node-parity loopback recovery.
+    pub query_last_ok: Cell<bool>,
+    /// Snapshot of `config_watcher::generation()` when `channel` was created.
+    pub config_generation: Cell<u64>,
+    /// Last `setLocalAddress()` IPv4 (host order); replayed after
+    /// `reset_channel()` so a config-change recreate doesn't drop the binding.
+    pub local_ip4: Cell<Option<u32>>,
+    /// Last `setLocalAddress()` IPv6; see `local_ip4`.
+    pub local_ip6: Cell<Option<[u8; 16]>>,
 
     pub event_loop_timer: JsCell<EventLoopTimer>,
 
@@ -4030,6 +4073,11 @@ impl Resolver {
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
+            is_servers_default: Cell::new(true),
+            query_last_ok: Cell::new(true),
+            config_generation: Cell::new(super::config_watcher::generation()),
+            local_ip4: Cell::new(None),
+            local_ip6: Cell::new(None),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::DNSResolver,
             )),
@@ -4120,7 +4168,10 @@ impl Resolver {
         self.event_loop_timer
             .with_mut(|t| t.state = EventLoopTimerState::PENDING);
 
-        if let Ok(channel) = self.get_channel_or_error(vm.global()) {
+        // Not `get_channel()`: that can reset+re-init (and throw on init
+        // failure, which the timer dispatch cannot propagate). The timer only
+        // pokes timeouts on the existing channel.
+        if let Some(channel) = self.channel.get() {
             if self.any_requests_pending() {
                 // SAFETY: `channel` is the live c-ares channel owned by `self`.
                 c_ares::ares_process_fd(
@@ -4723,14 +4774,134 @@ impl Resolver {
     }
 
     pub fn get_channel(&self) -> ChannelResult<'_> {
+        if self.channel.get().is_some() {
+            self.check_config_change();
+            self.ensure_servers();
+        }
         if self.channel.get().is_none() {
+            // Snapshot before init: on Windows the watcher can bump GENERATION
+            // off-thread between init's config read and the store below.
+            let gen_before = super::config_watcher::generation();
             let opts = self.options.get();
             if let Some(err) = c_ares::Channel::init(self, opts) {
                 return ChannelResult::Err(err);
             }
+            self.config_generation.set(gen_before);
+            self.query_last_ok.set(true);
+            self.replay_local_address();
+            super::config_watcher::install(self.vm());
         }
         // SAFETY: channel set by init() on success
         ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
+    }
+
+    /// OS config-change reinit: if the watcher has bumped the generation since
+    /// this channel was created and the user hasn't pinned servers, drop the
+    /// channel so the caller recreates it against fresh system config.
+    fn check_config_change(&self) {
+        let current = super::config_watcher::generation();
+        if self.config_generation.get() == current {
+            return;
+        }
+        self.config_generation.set(current);
+        if !self.is_servers_default.get() {
+            return;
+        }
+        bun_output::scoped_log!(DNSResolver, "check_config_change: recreating channel");
+        self.reset_channel();
+    }
+
+    /// Node-parity `ChannelWrap::EnsureServers` (nodejs/node#13076, #61453):
+    /// if the previous query hit `ECONNREFUSED`, servers are still the system
+    /// default, and the channel's only server is loopback (c-ares' fallback
+    /// when resolv.conf was empty/unreadable at init), drop the channel so the
+    /// next init re-reads system config. Fallback path for platforms where the
+    /// config watcher can't register.
+    fn ensure_servers(&self) {
+        if self.query_last_ok.get() || !self.is_servers_default.get() {
+            return;
+        }
+        let Some(channel) = self.channel.get() else {
+            return;
+        };
+        if !Self::channel_servers_are_loopback_fallback(channel) {
+            return;
+        }
+        bun_output::scoped_log!(DNSResolver, "ensure_servers: recreating channel");
+        self.reset_channel();
+    }
+
+    fn channel_servers_are_loopback_fallback(channel: *mut c_ares::Channel) -> bool {
+        let mut head: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
+        // SAFETY: `channel` is a live handle; `head` is a stack out-param.
+        if unsafe { c_ares::ares_get_servers_ports(channel, &raw mut head) } != c_ares::ARES_SUCCESS
+        {
+            return false;
+        }
+        scopeguard::defer! {
+            // SAFETY: allocated by `ares_get_servers_ports`.
+            unsafe { c_ares::ares_free_data(head.cast()) }
+        };
+        // SAFETY: c-ares returns a well-formed singly-linked list on success.
+        let Some(first) = (unsafe { head.as_ref() }) else {
+            return false;
+        };
+        if !first.next.is_null() {
+            return false;
+        }
+        const V4_LOOPBACK: [u8; 4] = [127, 0, 0, 1];
+        const V6_LOOPBACK: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+        match first.family {
+            // SAFETY: AF_INET ⇒ addr union holds a 4-byte in_addr.
+            f if f == netc::AF_INET => unsafe {
+                *first.addr_ptr().cast::<[u8; 4]>() == V4_LOOPBACK
+            },
+            // SAFETY: AF_INET6 ⇒ addr union holds a 16-byte in6_addr.
+            f if f == netc::AF_INET6 => unsafe {
+                *first.addr_ptr().cast::<[u8; 16]>() == V6_LOOPBACK
+            },
+            _ => false,
+        }
+    }
+
+    /// Destroy the current c-ares channel so the next `get_channel()` call
+    /// re-reads system config. Pending queries are cancelled first so user
+    /// callbacks see `ECANCELLED` (same as `Resolver.cancel()`) rather than
+    /// `EDESTRUCTION`. Both `ares_cancel` and `ares_destroy` synchronously
+    /// re-enter `&self` via `sock_state_cb` / query callbacks, which is why
+    /// this runs on the JS thread rather than via `ares_reinit()` (whose
+    /// background thread would call our `sock_state_cb` off-thread).
+    fn reset_channel(&self) {
+        if let Some(channel) = self.channel.take() {
+            // SAFETY: `channel` is the live handle owned by this resolver.
+            c_ares::ares_cancel(unsafe { &mut *channel });
+            // SAFETY: `channel` is the live handle owned by this resolver.
+            unsafe { c_ares::Channel::destroy(channel) };
+        }
+    }
+
+    /// Reapply `setLocalAddress()` bindings after the channel was (re)created;
+    /// `ares_set_local_ip4/ip6` write directly onto the channel, so a
+    /// `reset_channel()` would otherwise silently drop them.
+    fn replay_local_address(&self) {
+        let Some(channel) = self.channel.get() else {
+            return;
+        };
+        if let Some(ip4) = self.local_ip4.get() {
+            // SAFETY: `channel` is the live handle owned by this resolver.
+            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip4);
+        }
+        if let Some(ip6) = self.local_ip6.get() {
+            // SAFETY: `channel` is live; `ip6` is the 16-byte in6_addr.
+            unsafe { c_ares::ares_set_local_ip6(channel, ip6.as_ptr()) };
+        }
+    }
+
+    /// Record the outcome of a c-ares query for `ensure_servers()`.
+    #[inline]
+    pub(crate) fn note_query_result(&self, err: Option<c_ares::Error>) {
+        self.query_last_ok
+            .set(err != Some(c_ares::Error::ECONNREFUSED));
     }
 
     fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
@@ -5640,49 +5811,49 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_channel_local_addresses(
-            self.get_channel_or_error(global_this)?,
-            global_this,
-            callframe,
-        )
-    }
-
-    fn set_channel_local_addresses(
-        channel: *mut c_ares::Channel,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             return Err(global_this.throw_not_enough_arguments("setLocalAddress", 1, 0));
         }
 
-        let first_af = Self::set_channel_local_address(channel, global_this, arguments[0])?;
+        // Parse and validate all arguments before mutating any state or
+        // touching the channel: `get_channel()` can destroy the channel on a
+        // config-change bump, and the coercions can re-enter it via `toString`.
+        let (first_af, first_addr) = Self::parse_local_address(global_this, arguments[0])?;
+        let second = if arguments.len() >= 2 && !arguments[1].is_undefined() {
+            let (second_af, second_addr) = Self::parse_local_address(global_this, arguments[1])?;
+            if first_af == second_af {
+                return match first_af {
+                    x if x == c_ares::AF::INET => Err(global_this.throw_invalid_arguments(
+                        format_args!("Cannot specify two IPv4 addresses."),
+                    )),
+                    x if x == c_ares::AF::INET6 => Err(global_this.throw_invalid_arguments(
+                        format_args!("Cannot specify two IPv6 addresses."),
+                    )),
+                    _ => unreachable!(),
+                };
+            }
+            Some((second_af, second_addr))
+        } else {
+            None
+        };
 
-        if arguments.len() < 2 || arguments[1].is_undefined() {
-            return Ok(JSValue::UNDEFINED);
+        // All coercions done; commit and apply.
+        self.commit_local_address(first_af, first_addr);
+        if let Some((af, addr)) = second {
+            self.commit_local_address(af, addr);
         }
-
-        let second_af = Self::set_channel_local_address(channel, global_this, arguments[1])?;
-
-        if first_af != second_af {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        match first_af {
-            x if x == c_ares::AF::INET => Err(global_this
-                .throw_invalid_arguments(format_args!("Cannot specify two IPv4 addresses."))),
-            x if x == c_ares::AF::INET6 => Err(global_this
-                .throw_invalid_arguments(format_args!("Cannot specify two IPv6 addresses."))),
-            _ => unreachable!(),
-        }
+        let _ = self.get_channel_or_error(global_this)?;
+        self.replay_local_address();
+        Ok(JSValue::UNDEFINED)
     }
 
-    fn set_channel_local_address(
-        channel: *mut c_ares::Channel,
+    /// Coerce one `setLocalAddress` argument to `(family, 16-byte addr)`.
+    /// Runs JS; must not be called while a raw `*mut Channel` is held.
+    fn parse_local_address(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<c_int> {
+    ) -> JsResult<(c_int, [u8; 16])> {
         let str_ = value.to_slice(global_this)?;
         // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline.
@@ -5691,34 +5862,18 @@ impl Resolver {
         slice.push(0);
 
         let mut addr = [0u8; 16];
-
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
-        if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
-        } == 1
-        {
-            let ip = u32::from_be_bytes([addr[0], addr[1], addr[2], addr[3]]);
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            c_ares::ares_set_local_ip4(unsafe { &mut *channel }, ip);
-            return Ok(c_ares::AF::INET);
-        }
-
-        // SAFETY: FFI; `slice` is NUL-terminated above; `addr` is a 16-byte stack buffer.
-        if unsafe {
-            c_ares::ares_inet_pton(
-                c_ares::AF::INET6,
-                slice.as_ptr().cast::<c_char>(),
-                addr.as_mut_ptr().cast(),
-            )
-        } == 1
-        {
-            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
-            unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
-            return Ok(c_ares::AF::INET6);
+        for af in [c_ares::AF::INET, c_ares::AF::INET6] {
+            // SAFETY: FFI; `slice` is NUL-terminated; `addr` is a 16-byte stack buffer.
+            if unsafe {
+                c_ares::ares_inet_pton(
+                    af,
+                    slice.as_ptr().cast::<c_char>(),
+                    addr.as_mut_ptr().cast(),
+                )
+            } == 1
+            {
+                return Ok((af, addr));
+            }
         }
 
         Err(jsc::Error::INVALID_IP_ADDRESS.throw(
@@ -5730,24 +5885,22 @@ impl Resolver {
         ))
     }
 
+    fn commit_local_address(&self, af: c_int, addr: [u8; 16]) {
+        if af == c_ares::AF::INET {
+            self.local_ip4.set(Some(u32::from_be_bytes([
+                addr[0], addr[1], addr[2], addr[3],
+            ])));
+        } else {
+            self.local_ip6.set(Some(addr));
+        }
+    }
+
     fn set_channel_servers(
-        channel: *mut c_ares::Channel,
+        &self,
+        is_global: bool,
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
-        if channel != Self::get_channel_from_vm(global_this)?
-            // SAFETY: `channel` is a live handle returned by `ares_init_options`.
-            && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0
-        {
-            return Err(global_this
-                .err(
-                    jsc::Error::DNS_SET_SERVERS_FAILED,
-                    format_args!("Failed to set servers: there are pending queries"),
-                )
-                .throw());
-        }
-
         let arguments = callframe.arguments();
         if arguments.is_empty() {
             return Err(global_this.throw_not_enough_arguments("setServers", 1, 0));
@@ -5758,20 +5911,10 @@ impl Resolver {
             return Err(global_this.throw_invalid_argument_type("setServers", "servers", "array"));
         }
 
+        // Build the full list before fetching the channel: `get_channel()`
+        // can destroy it on a config-change bump, and the per-element
+        // coercions below can re-enter it via user getters/toString.
         let mut triples_iterator = argument.array_iterator(global_this)?;
-
-        if triples_iterator.len == 0 {
-            // SAFETY: FFI; channel is a live initialized ares_channel; null clears the server list.
-            let r = unsafe { c_ares::ares_set_servers_ports(channel, ptr::null_mut()) };
-            if r != c_ares::ARES_SUCCESS {
-                let err = c_ares::Error::get(r).unwrap();
-                return Err(global_this.throw_value(global_this.create_error_instance(
-                    format_args!("ares_set_servers_ports error: {}", err.label()),
-                )));
-            }
-            return Ok(JSValue::UNDEFINED);
-        }
-
         let mut entries: Vec<c_ares::struct_ares_addr_port_node> =
             Vec::with_capacity(triples_iterator.len as usize);
 
@@ -5845,9 +5988,29 @@ impl Resolver {
             entries[i - 1].next = next;
         }
 
+        // All JS coercions done; now fetch the channel. No user JS runs past
+        // this point so the raw pointer stays valid.
+        let channel = self.get_channel_or_error(global_this)?;
+
+        // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
+        // SAFETY: `channel` is a live handle returned by `ares_init_options`.
+        if !is_global && c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
+            return Err(global_this
+                .err(
+                    jsc::Error::DNS_SET_SERVERS_FAILED,
+                    format_args!("Failed to set servers: there are pending queries"),
+                )
+                .throw());
+        }
+
+        let head = if entries.is_empty() {
+            ptr::null_mut()
+        } else {
+            entries.as_mut_ptr()
+        };
         // SAFETY: FFI; channel is live; entries form a valid singly-linked list (next ptrs set above)
         // and remain alive for the duration of the call (c-ares copies them internally).
-        let r = unsafe { c_ares::ares_set_servers_ports(channel, entries.as_mut_ptr()) };
+        let r = unsafe { c_ares::ares_set_servers_ports(channel, head) };
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
             return Err(
@@ -5858,6 +6021,7 @@ impl Resolver {
             );
         }
 
+        self.is_servers_default.set(false);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -5866,11 +6030,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_channel_servers(
-            Self::get_channel_from_vm(global_this)?,
-            global_this,
-            callframe,
-        )
+        global_resolver(global_this).set_channel_servers(true, global_this, callframe)
     }
 
     #[host_fn(method)]
@@ -5879,11 +6039,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        Self::set_channel_servers(
-            self.get_channel_or_error(global_this)?,
-            global_this,
-            callframe,
-        )
+        self.set_channel_servers(false, global_this, callframe)
     }
 
     // FFI shim emitted by `export_host_fn!` below (JS2Native link name).

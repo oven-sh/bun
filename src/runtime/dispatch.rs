@@ -688,6 +688,15 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
             crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
+        #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+        poll_tag::DNS_CONFIG => {
+            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
+            crate::dns_jsc::config_watcher::on_poll(unsafe { &mut *poll });
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        poll_tag::DNS_CONFIG => {
+            debug_assert!(false, "DnsConfig poll on unsupported target");
+        }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).

@@ -19,7 +19,7 @@ const gitEnv = {
 };
 
 async function run(cwd: string, cmd: string[], what: string) {
-  await using proc = Bun.spawn({ cmd, cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+  await using proc = Bun.spawn({ cmd, cwd, env: gitEnv, stdout: "ignore", stderr: "pipe" });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) {
     throw new Error(`${what} failed in ${cwd}:\n${stderr}`);

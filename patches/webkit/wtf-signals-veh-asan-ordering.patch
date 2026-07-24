@@ -1,0 +1,35 @@
+diff --git a/Source/WTF/wtf/win/SignalsWin.cpp b/Source/WTF/wtf/win/SignalsWin.cpp
+index 28be55d821..1a4d61778d 100644
+--- a/Source/WTF/wtf/win/SignalsWin.cpp
++++ b/Source/WTF/wtf/win/SignalsWin.cpp
+@@ -107,7 +107,13 @@ LONG WINAPI vectoredHandler(struct _EXCEPTION_POINTERS *exceptionInfo)
+ 
+     PlatformRegisters& registers = *(exceptionInfo->ContextRecord);
+ 
+-    long result = EXCEPTION_EXECUTE_HANDLER;
++    // The unclaimed default MUST be EXCEPTION_CONTINUE_SEARCH so an exception no
++    // WTF handler owns proceeds down the chain (e.g. to AddressSanitizers
++    // shadow committer). EXCEPTION_EXECUTE_HANDLER is not a valid vectored-handler
++    // return value; the dispatcher treats it as CONTINUE_EXECUTION, re-executing
++    // the faulting instruction with nothing resolved and re-entering this handler
++    // in an unbounded re-fault loop.
++    long result = EXCEPTION_CONTINUE_SEARCH;
+     handlers.forEachHandler(signal, [&] (const SignalHandler& handler) {
+         switch (handler(signal, sigInfo, registers)) {
+         case SignalAction::Handled:
+@@ -152,7 +158,15 @@ void SignalHandlers::finalize()
+ 
+     for (unsigned i = 0; i < numberOfSignals; ++i) {
+         if (handlers.numberOfHandlers[i]) {
++#if ASAN_ENABLED
++            // AddressSanitizer's runtime relies on its own vectored handler seeing
++            // access violations first (it commits shadow pages lazily and unpoisons
++            // the dispatch context for handlers behind it). Register behind it so we
++            // never read exception context before ASAN has unpoisoned that stack.
++            AddVectoredExceptionHandler(0, vectoredHandler);
++#else
+             AddVectoredExceptionHandler(1, vectoredHandler);
++#endif
+             break;
+         }
+     }

@@ -1088,6 +1088,7 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
   const der = (...parts: string[]) => {
     const body = parts.join("");
     const length = body.length / 2;
+    if (length > 0xff) throw new Error("der helper only encodes lengths up to 0xff");
     const lengthHex = length < 0x80 ? length.toString(16).padStart(2, "0") : "81" + length.toString(16);
     return fromHex("30" + lengthHex + body);
   };

@@ -14,6 +14,7 @@
 #include "node/crypto/CryptoUtil.h"
 #include "ncrypto.h"
 #include "openssl/base.h"
+#include "openssl/base64.h"
 #include "openssl/bio.h"
 #include "openssl/err.h"
 #include "openssl/pem.h"
@@ -24,11 +25,39 @@ namespace Bun {
 
 using namespace JSC;
 
+static constexpr std::string_view kPemBegin = "-----BEGIN CERTIFICATE-----\n";
+static constexpr std::string_view kPemEnd = "-----END CERTIFICATE-----";
+static constexpr size_t kPemLineWidth = 72;
+
+// Bundled roots are stored as DER so the TLS path can skip PEM parsing;
+// re-encode to PEM here for tls.rootCertificates / getCACertificates('bundled').
+static WTF::String derToPEMString(const unsigned char* der, size_t derLen)
+{
+    size_t b64Len;
+    if (!EVP_EncodedLength(&b64Len, derLen) || b64Len == 0)
+        return {};
+    Vector<uint8_t, 2048> b64(b64Len);
+    size_t written = EVP_EncodeBlock(b64.mutableSpan().data(), der, derLen);
+
+    size_t newlines = (written + kPemLineWidth - 1) / kPemLineWidth;
+    WTF::StringBuilder pem;
+    pem.reserveCapacity(kPemBegin.size() + written + newlines + kPemEnd.size());
+    pem.append(std::span { kPemBegin });
+    for (size_t off = 0; off < written; off += kPemLineWidth) {
+        size_t n = std::min(kPemLineWidth, written - off);
+        pem.append(std::span { reinterpret_cast<const char*>(b64.span().data()) + off, n });
+        pem.append('\n');
+    }
+    pem.append(std::span { kPemEnd });
+    return pem.toString();
+}
+
 JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     VM& vm = globalObject->vm();
 
-    struct us_cert_string_t* out;
+    const struct us_cert_der_t* out;
     auto size = us_raw_root_certs(&out);
     if (size < 0) {
         return JSValue::encode(jsUndefined());
@@ -36,11 +65,12 @@ JSC_DEFINE_HOST_FUNCTION(getBundledRootCertificates, (JSC::JSGlobalObject * glob
     auto rootCertificates = JSC::JSArray::create(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), size);
     for (auto i = 0; i < size; i++) {
         auto raw = out[i];
-        auto str = WTF::String::fromUTF8(std::span { raw.str, raw.len });
+        auto str = derToPEMString(raw.der, raw.len);
         rootCertificates->putDirectIndex(globalObject, i, JSC::jsString(vm, str));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSC::objectConstructorFreeze(globalObject, rootCertificates)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(getExtraCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

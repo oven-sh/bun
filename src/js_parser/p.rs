@@ -450,6 +450,13 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub module_scope_directive_loc: bun_ast::Loc,
     pub is_control_flow_dead: bool,
 
+    /// True while visiting the unbraced body of `if`/`else`/`while`/`do`/`for`
+    /// via `visit_single_stmt`. Those statements don't introduce a lexical
+    /// scope, so `current_scope == module_scope` still holds inside them even
+    /// though the body is not a top-level module statement. Checks that mean
+    /// "is this a direct child of the module stmt list" must also consult this.
+    pub is_inside_single_stmt_body: bool,
+
     /// We must be careful to avoid revisiting nodes that have scopes.
     pub is_revisit_for_substitution: bool,
 
@@ -8777,6 +8784,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             scope_order_to_visit: &[],
             module_scope_directive_loc: bun_ast::Loc::default(),
             is_control_flow_dead: false,
+            is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,

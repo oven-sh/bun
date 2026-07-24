@@ -5,6 +5,7 @@
 // real owner drops, BoringSSL's ex_data free callback tombstones the entry.
 import { expect, test } from "bun:test";
 import { once } from "node:events";
+import http2 from "node:http2";
 import tls from "node:tls";
 // @ts-expect-error - debug-only export
 import { sslCtxLiveCount } from "bun:internal-for-testing";
@@ -170,6 +171,75 @@ test("Bun.connect with inline ca shares SSL_CTX across calls", async () => {
       },
     });
     await promise;
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/31881: node:http2 churn (a new
+// session per request, firebase-admin's pattern) over the weak cache, with GC
+// pressure interleaved so reclaim/tombstone/rebuild overlap the session
+// lifecycle on the event loop. Debug builds additionally assert (in
+// bun_ssl_ctx_cache_on_free) that every last-ref SSL_CTX_free stays on the
+// owning JS thread, the invariant that keeps getOrCreate's up_ref from
+// resurrecting a dying ctx.
+test("node:http2 session churn with GC shares one SSL_CTX and completes every request", async () => {
+  const server = http2.createSecureServer({ ...tlsCerts });
+  server.on("stream", stream => {
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const { port } = server.address() as import("net").AddressInfo;
+
+  const clientOpts = { ca: tlsCerts.cert, rejectUnauthorized: false };
+
+  async function oneSession() {
+    const session = http2.connect(`https://localhost:${port}`, clientOpts);
+    // Armed before anything can fail so the finally below never misses the event.
+    const closed = once(session, "close");
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    session.once("error", reject);
+    const req = session.request({ ":path": "/" });
+    req.once("error", reject);
+    let statusCode: number | undefined;
+    req.once("response", headers => {
+      statusCode = headers[":status"] as unknown as number;
+    });
+    // Resolve on full request completion, not just headers.
+    req.once("end", () => {
+      if (statusCode == null) reject(new Error("request ended without a :status header"));
+      else resolve(statusCode);
+    });
+    req.resume();
+    req.end();
+    try {
+      return await promise;
+    } finally {
+      session.close();
+      await closed;
+    }
+  }
+
+  try {
+    // Warm: server CTX + first client CTX + any lazy defaults.
+    expect(await oneSession()).toBe(200);
+    Bun.gc(true);
+    await new Promise<void>(r => setImmediate(r));
+    const before = sslCtxLiveCount();
+
+    for (let round = 0; round < 6; round++) {
+      const statuses = await Promise.all([oneSession(), oneSession(), oneSession(), oneSession(), oneSession()]);
+      expect(statuses).toEqual([200, 200, 200, 200, 200]);
+      Bun.gc(true);
+      await new Promise<void>(r => setImmediate(r));
+    }
+
+    // 30 sessions later: same client config = same digest = no per-session
+    // CTX growth (headroom for defaults lazily built mid-run).
+    expect(sslCtxLiveCount() - before).toBeLessThanOrEqual(2);
+  } finally {
+    server.close();
+    await once(server, "close");
   }
 });
 

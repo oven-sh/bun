@@ -1899,6 +1899,15 @@ Socket.prototype.connect = function connect(...args) {
       connection = socket;
     }
     if (fd) {
+      // Adopting an existing fd completes synchronously inside doConnect():
+      // us_socket_from_fd / WindowsNamedPipe::open fire SocketHandlers.open
+      // inline, which clears `connecting` and emits "connect" before
+      // doConnect() returns. Set `connecting` first so the synchronous open
+      // can clear it; setting it afterwards (as the host/path branch does
+      // below) would clobber the already-completed connection and leave every
+      // subsequent write buffered in _pendingData waiting for a "connect"
+      // event that already fired.
+      this.connecting = true;
       doConnect(this._handle, {
         data: this,
         fd: fd,
@@ -1926,7 +1935,9 @@ Socket.prototype.connect = function connect(...args) {
         // attached stays buffered instead of being emitted to nobody.
         if (!this.isPaused()) this.read(0);
       });
-      this.connecting = true;
+      // Already set above for the fd path (before doConnect so a synchronous
+      // open can clear it).
+      if (!fd) this.connecting = true;
     }
     if (fd) {
       return this;

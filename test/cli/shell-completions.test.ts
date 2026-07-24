@@ -9,7 +9,7 @@
 // and most other flags that had been added since the scripts were last
 // hand-edited.
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const fishBin = Bun.which("fish");

@@ -559,14 +559,42 @@ async function runOneFile(
   reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
   reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
 
-  const proc = Bun.spawn({
-    cmd: args,
-    cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
-    stdout: "pipe",
-    stderr: "pipe",
-    signal: opts.signal,
-  });
+  let proc;
+  try {
+    proc = Bun.spawn({
+      cmd: args,
+      cwd: opts.cwd as string,
+      env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+      stdout: "pipe",
+      stderr: "pipe",
+      signal: opts.signal,
+    });
+  } catch (err) {
+    // Bun.spawn throws synchronously on e.g. a nonexistent cwd; report it as a
+    // file-level fail (like the isolation:'none' twin's import catch) rather
+    // than let runFiles' outer catch destroy the whole stream.
+    const error = makeTestFailure((err as Error)?.message ?? String(err), "testCodeFailure");
+    fileCounts.tests++;
+    fileCounts.failed++;
+    fileCounts.topLevel++;
+    reporter.emitMessage("test:complete", {
+      __proto__: null,
+      ...fileNode,
+      type: undefined,
+      testNumber: ordinal,
+      details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error },
+    });
+    reporter.emitMessage("test:start", { __proto__: null, ...fileNode });
+    reporter.emitMessage("test:fail", {
+      __proto__: null,
+      ...fileNode,
+      type: undefined,
+      testNumber: ++state.verdictNumber,
+      details: { __proto__: null, duration_ms: 0, type: "test", error },
+    });
+    addRunCounts(counts, fileCounts);
+    return;
+  }
   state.childProc = proc;
   state.fileNode = fileNode;
 

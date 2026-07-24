@@ -28,6 +28,7 @@ using namespace JSC;
 
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
+extern "C" bool Bun__isEnvKeyConditional(JSGlobalObject* globalObject, size_t index);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
@@ -59,6 +60,32 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
     JSValue result = jsString(vm, Zig::toStringCopy(value));
     thisObject->putDirect(vm, propertyName, result, 0);
     return JSValue::encode(result);
+}
+
+// Non-caching variant for keys auto-loaded from `.env*` files. Installed as a
+// CustomAccessor with DontEnum so enumerating process.env matches Node's
+// OS-only view; the accessor stays in place until user code writes to the key
+// (jsSetterEnvironmentVariable promotes to an enumerable data property).
+JSC_DEFINE_CUSTOM_GETTER(jsGetterConditionalEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* thisObject = dynamicDowncast<JSObject>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    ZigString name = toZigString(propertyName.publicName());
+    ZigString value = { nullptr, 0 };
+
+    if (name.len == 0) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    if (!Bun__getEnvValue(globalObject, &name, &value)) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -759,7 +786,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     }
 
 #if OS(WINDOWS)
-    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);
+    JSArray* keyArray = constructEmptyArray(globalObject, nullptr, 0);
     RETURN_IF_EXCEPTION(scope, {});
 #endif
 
@@ -795,15 +822,22 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     };
 
     auto* cached_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterEnvironmentVariable, nullptr);
+    auto* conditional_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterConditionalEnvironmentVariable, jsSetterEnvironmentVariable);
     auto* proxy_getter_setter = JSC::CustomGetterSetter::create(vm, jsGetterProxyEnvironmentVariable, jsSetterProxyEnvironmentVariable);
 
     for (size_t i = 0; i < count; i++) {
         unsigned char* chars;
         size_t len = Bun__getEnvKey(list, i, &chars);
+        bool conditional = Bun__isEnvKeyConditional(globalObject, i);
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
-        keyArray->putByIndexInline(globalObject, (unsigned)i, jsString(vm, name), false);
+        // keyArray backs the Windows Proxy's ownKeys() trap; skip conditional
+        // keys to keep DontEnum semantics through the Proxy.
+        if (!conditional) {
+            keyArray->push(globalObject, jsString(vm, name));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 #endif
         if (name == TZ) {
             hasTZ = true;
@@ -849,7 +883,18 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // time) and then sets it onto the object, subsequent calls to the
         // getter will not go through the getter and instead will just do the
         // property lookup.
-        object->putDirectCustomAccessor(vm, identifier, cached_getter_setter, JSC::PropertyAttribute::CustomValue | 0);
+        //
+        // Keys that exist only because Bun auto-discovered a `.env*` file are
+        // added `DontEnum` so `Object.keys`/`for..in`/`{ ...process.env }` match
+        // Node's OS-only view. Direct reads still work; `jsSetterEnvironmentVariable`
+        // promotes to an enumerable data property on first write.
+        if (conditional) {
+            object->putDirectCustomAccessor(vm, identifier, conditional_getter_setter,
+                JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | 0);
+        } else {
+            object->putDirectCustomAccessor(vm, identifier, cached_getter_setter,
+                JSC::PropertyAttribute::CustomValue | 0);
+        }
     }
 
     unsigned int TZAttrs = JSC::PropertyAttribute::CustomAccessor | 0;

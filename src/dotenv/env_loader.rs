@@ -449,6 +449,7 @@ impl Loader {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
                     value: ccache_path.clone(),
+                    conditional: false,
                 };
             }
             let c_gop = self
@@ -456,7 +457,10 @@ impl Loader {
                 .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
-                *c_gop.value_ptr = HashTableValue { value: ccache_path };
+                *c_gop.value_ptr = HashTableValue {
+                    value: ccache_path,
+                    conditional: false,
+                };
             }
         }
         Ok(())
@@ -611,7 +615,7 @@ impl Loader {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false>(str, &mut self.map, &mut value_buffer)
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -870,7 +874,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true, true>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                )?;
             }
         }
 
@@ -917,7 +925,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true, false>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                )?;
             }
         }
 
@@ -1207,7 +1219,12 @@ impl<'a> Parser<'a> {
         Ok(Some(self.value_buffer.as_slice()))
     }
 
-    fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn _parse<
+        const OVERRIDE: bool,
+        const IS_PROCESS: bool,
+        const EXPAND: bool,
+        const CONDITIONAL: bool,
+    >(
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
@@ -1231,7 +1248,10 @@ impl<'a> Parser<'a> {
                 }
                 // else: previous value freed by Drop on assignment below
             }
-            *entry.value_ptr = HashTableValue { value: value_owned };
+            *entry.value_ptr = HashTableValue {
+                value: value_owned,
+                conditional: CONDITIONAL,
+            };
         }
         if !IS_PROCESS && EXPAND {
             // borrowck — index-based iteration: clone the value bytes, run
@@ -1243,9 +1263,7 @@ impl<'a> Parser<'a> {
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
                 if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
+                    map.map.values_mut()[idx].value = Box::from(expanded);
                 }
                 idx += 1;
             }
@@ -1258,7 +1276,12 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    pub(crate) fn parse_bytes<
+        const OVERRIDE: bool,
+        const IS_PROCESS: bool,
+        const EXPAND: bool,
+        const CONDITIONAL: bool,
+    >(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1272,7 +1295,7 @@ impl<'a> Parser<'a> {
             src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
+        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND, CONDITIONAL>(map)
     }
 }
 
@@ -1281,6 +1304,13 @@ pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
+    /// Set for keys that exist only because Bun auto-discovered a `.env*` file,
+    /// not because the OS environment, `--env-file`, or an explicit `put()`
+    /// supplied them. `createEnvironmentVariablesMap` adds these with
+    /// `DontEnum` so tooling that re-reads `.env.{mode}` itself (Vite's
+    /// `loadEnv`, dotenv-flow, etc.) does not mistake them for process-level
+    /// overrides when enumerating `process.env`.
+    pub conditional: bool,
 }
 
 // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
@@ -1411,6 +1441,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         )
     }
@@ -1428,6 +1459,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         );
     }
@@ -1437,6 +1469,7 @@ impl Map {
         let gop = self.map.get_or_put(key)?;
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
+            conditional: false,
         };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
@@ -1471,6 +1504,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         )?;
         Ok(())

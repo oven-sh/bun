@@ -2327,6 +2327,7 @@ impl TestCommand {
             *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
             *node_env_entry.value_ptr = DotEnv::HashTableValue {
                 value: Box::<[u8]>::from(b"test" as &[u8]),
+                conditional: false,
             };
         }
 

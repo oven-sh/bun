@@ -139,6 +139,10 @@ process.env.BAR; // => "hello$FOO"
 
 Bun reads `.env` files automatically, so `dotenv` and `dotenv-expand` are unnecessary.
 
+### Enumeration
+
+Values that Bun auto-loads from `.env` files are readable via `process.env.NAME` but are **not enumerable**: `Object.keys(process.env)`, `for..in`, and `{ ...process.env }` list only variables from the OS environment and from explicit `--env-file` arguments. This keeps `process.env` enumeration Node-compatible so tools with their own `.env.{mode}` loading (such as Vite's `loadEnv`) do not mistake Bun's auto-loaded values for shell-provided overrides. Assigning to such a key from JavaScript promotes it to an enumerable own property.
+
 ## Reading environment variables
 
 Read the current environment variables from `process.env`.

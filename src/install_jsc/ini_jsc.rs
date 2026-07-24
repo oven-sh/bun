@@ -71,6 +71,7 @@ impl IniTestingAPIs {
                     &keyslice,
                     dotenv::map::Entry {
                         value: slice.into_boxed_slice(),
+                        conditional: false,
                     },
                 )?;
             }

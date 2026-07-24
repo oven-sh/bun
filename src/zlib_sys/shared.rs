@@ -1,17 +1,5 @@
 use core::ffi::{CStr, c_char, c_int, c_uint, c_ulong, c_void};
 
-// #define Z_BINARY   0
-// #define Z_TEXT     1
-// #define Z_ASCII    Z_TEXT   /* for compatibility with 1.2.2 and earlier */
-// #define Z_UNKNOWN  2
-#[repr(C)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum DataType {
-    Binary = 0,
-    Text = 1,
-    Unknown = 2,
-}
-
 // #define Z_OK            0
 // #define Z_STREAM_END    1
 // #define Z_NEED_DICT     2
@@ -115,21 +103,23 @@ pub struct struct_internal_state {
 //
 //   (S1) `internal_state` is null, or points to a live state allocated by
 //        zlib for *this* stream (only zlib itself ever writes this field).
-//   (S2) `alloc_func`/`free_func` are `None` (= null → zlib installs its
-//        defaults) or `Some(valid fn ptr)`. `Option<extern fn>` already
-//        makes an invalid non-null value unconstructible in safe Rust.
-//   (B)  `next_in` is null or readable for `avail_in` bytes; `next_out` is
-//        null or writable for `avail_out` bytes. Established by
-//        [`set_input`]/[`set_output`]; the caller's `unsafe` promise there
-//        is what makes [`inflate`]/[`deflate`]/[`deflate_params`]/
-//        [`input`] safe methods.
+//   (S2) `alloc_func`/`free_func` are both `None` (= null → zlib installs
+//        its paired defaults) or a matched pair where `free_func` can free
+//        what `alloc_func` allocates. Established by [`with_allocator`].
+//   (B)  `next_in` is null, or readable for `avail_in` bytes and not
+//        mutated through any other pointer while the window is live;
+//        `next_out` is null or writable for `avail_out` bytes. Established
+//        by [`set_input`]/[`set_output`]; the caller's `unsafe` promise
+//        there is what makes [`inflate`]/[`deflate`]/[`deflate_params`]/
+//        [`input_at`] safe methods.
 //
+// [`with_allocator`]: zStream_struct::with_allocator
 // [`set_input`]: zStream_struct::set_input
 // [`set_output`]: zStream_struct::set_output
 // [`inflate`]: zStream_struct::inflate
 // [`deflate`]: zStream_struct::deflate
 // [`deflate_params`]: zStream_struct::deflate_params
-// [`input`]: zStream_struct::input
+// [`input_at`]: zStream_struct::input_at
 // ---------------------------------------------------------------------------
 
 // https://zlib.net/manual.html#Stream
@@ -161,8 +151,9 @@ pub struct zStream_struct {
     /// private data object passed to zalloc and zfree
     user_data: *mut c_void,
 
-    /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
-    pub data_type: DataType,
+    /// For deflate: `Z_BINARY`/`Z_TEXT`/`Z_UNKNOWN`. For inflate: a bitfield
+    /// (unused bits + 64/128/256 flags), so this cannot be a Rust enum.
+    data_type: c_int,
 
     /// Adler-32 or CRC-32 value of the uncompressed data
     pub adler: c_ulong,
@@ -174,9 +165,8 @@ pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
 
 // SAFETY: `#[repr(C)]` POD — raw pointers, integers, `Option<extern fn>`
-// allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
-// is the documented pre-`inflateInit`/`deflateInit` state and satisfies
-// invariants (S1)/(S2)/(B).
+// allocators. All-zero is the documented pre-`inflateInit`/`deflateInit`
+// state and satisfies invariants (S1)/(S2)/(B).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
 
 impl Default for zStream_struct {
@@ -187,10 +177,15 @@ impl Default for zStream_struct {
 }
 
 impl zStream_struct {
-    /// A zeroed stream with the given allocator thunks. `None`/`None` leaves
-    /// them null so zlib installs its own defaults at `*Init*` time.
+    /// A zeroed stream with the given allocator pair.
+    ///
+    /// # Safety
+    /// `free` must be able to free memory returned by `alloc`; this is the
+    /// only place a caller vouches for invariant (S2). zlib defaults a null
+    /// `zalloc` and null `zfree` independently, so passing only one of the
+    /// two yields a cross-allocator free in `*_end()`.
     #[inline]
-    pub fn with_allocator(alloc: alloc_func, free: free_func) -> Self {
+    pub unsafe fn with_allocator(alloc: alloc_func, free: free_func) -> Self {
         Self {
             alloc_func: alloc,
             free_func: free,
@@ -208,15 +203,17 @@ impl zStream_struct {
         self.avail_out
     }
 
-    /// The unconsumed input window `next_in[..avail_in]`. Safe by invariant
-    /// (B); empty when no input is set.
+    /// Byte `i` of the unconsumed input window, or `None` past `avail_in`.
+    /// Safe by invariant (B); a raw-pointer byte read carries no aliasing
+    /// assertion beyond "readable", matching [`set_input`](Self::set_input)'s
+    /// contract exactly.
     #[inline(always)]
-    pub fn input(&self) -> &[u8] {
-        if self.avail_in == 0 || self.next_in.is_null() {
-            return &[];
+    pub fn input_at(&self, i: uInt) -> Option<u8> {
+        if i >= self.avail_in || self.next_in.is_null() {
+            return None;
         }
-        // SAFETY: invariant (B) — `next_in` readable for `avail_in` bytes.
-        unsafe { core::slice::from_raw_parts(self.next_in, self.avail_in as usize) }
+        // SAFETY: invariant (B) — `next_in` readable for `avail_in > i` bytes.
+        Some(unsafe { self.next_in.add(i as usize).read() })
     }
 
     /// zlib's `msg`: a NUL-terminated static string on error, null otherwise.
@@ -233,13 +230,14 @@ impl zStream_struct {
     /// Point the input window at `ptr[..len]`.
     ///
     /// # Safety
-    /// `ptr` must be readable for `len` bytes and remain so until the stream
-    /// has consumed it (`avail_in() == 0`), the window is replaced by another
-    /// `set_input`, or the stream is dropped. This is the *only* place a
-    /// caller vouches for invariant (B) on the input side; every method that
-    /// reads the window ([`inflate`](Self::inflate),
-    /// [`deflate`](Self::deflate), [`deflate_params`](Self::deflate_params),
-    /// [`input`](Self::input)) relies on it.
+    /// `ptr[..len]` must be valid for reads, and not mutated through any
+    /// other pointer, until the stream has consumed it (`avail_in() == 0`),
+    /// the window is replaced by another `set_input`, or the stream is
+    /// dropped. This is the *only* place a caller vouches for invariant (B)
+    /// on the input side; every method that reads the window
+    /// ([`inflate`](Self::inflate), [`deflate`](Self::deflate),
+    /// [`deflate_params`](Self::deflate_params),
+    /// [`input_at`](Self::input_at)) relies on it.
     #[inline(always)]
     pub unsafe fn set_input(&mut self, ptr: *const u8, len: uInt) {
         self.next_in = ptr;

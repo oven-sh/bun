@@ -9,7 +9,7 @@ use bun_collections::VecExt as _;
 
 #[allow(non_camel_case_types, unused_imports)]
 pub use bun_zlib_sys::{
-    Byte, Bytef, DataType, FlushValue, ReturnCode, gzFile, raw::compressBound, raw::zlibVersion,
+    Byte, Bytef, FlushValue, ReturnCode, gzFile, raw::compressBound, raw::zlibVersion,
     struct_gzFile_s, uInt, uLong, uLongf, voidpf, z_stream, z_streamp, zStream_struct,
 };
 
@@ -44,7 +44,9 @@ mod ZlibAllocator {
 /// A zeroed `z_stream` wired to the mimalloc zone allocator.
 #[inline]
 fn new_zstream() -> zStream_struct {
-    zStream_struct::with_allocator(Some(ZlibAllocator::alloc), Some(ZlibAllocator::free))
+    // SAFETY: invariant (S2) — `ZlibAllocator::{alloc, free}` are a matched
+    // mimalloc-zone pair minted by `c_thunks_for_zone!`.
+    unsafe { zStream_struct::with_allocator(Some(ZlibAllocator::alloc), Some(ZlibAllocator::free)) }
 }
 
 /// Safe CRC-32 over an arbitrary-length slice. zlib's `crc32` takes a 32-bit
@@ -342,7 +344,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
         let mut zlib_reader = Box::new(Self {
             input,
             list_ptr: list,
-            zlib: zStream_struct::with_allocator(Some(zlib_mi_malloc), Some(zlib_mi_free)),
+            // SAFETY: invariant (S2) — matched mimalloc alloc/free pair.
+            zlib: unsafe {
+                zStream_struct::with_allocator(Some(zlib_mi_malloc), Some(zlib_mi_free))
+            },
             state: ZlibCompressorArrayListState::Uninitialized,
         });
 

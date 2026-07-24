@@ -470,19 +470,15 @@ impl Context {
                 return self.do_work_deflate();
             }
             UNZIP => {
-                let input = self.state.input();
-                let mut next_expected_header_byte: Option<u8> = None;
-                if !input.is_empty() {
-                    next_expected_header_byte = input.first().copied();
-                }
+                let mut next_expected_header_byte = self.state.input_at(0);
                 if self.gzip_id_bytes_read == 0 {
                     let Some(b) = next_expected_header_byte else {
                         return self.do_work_inflate();
                     };
                     if b == Self::GZIP_HEADER_ID1 {
                         self.gzip_id_bytes_read = 1;
-                        next_expected_header_byte = input.get(1).copied();
-                        if input.len() == 1 {
+                        next_expected_header_byte = self.state.input_at(1);
+                        if self.state.avail_in() == 1 {
                             // The only available byte was already read.
                             return self.do_work_inflate();
                         }
@@ -536,7 +532,7 @@ impl Context {
         while self.state.avail_in() > 0
             && self.mode == c::NodeMode::GUNZIP
             && self.err == c::ReturnCode::StreamEnd
-            && self.state.input().first() != Some(&0)
+            && self.state.input_at(0) != Some(0)
         {
             // Bytes remain in input buffer. Perhaps this is another compressed member in the same archive, or just trailing garbage.
             // Trailing zero bytes are okay, though, since they are frequently used for padding.

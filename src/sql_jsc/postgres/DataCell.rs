@@ -513,9 +513,11 @@ fn parse_array(
                             }
                             let element = &slice[0..current_idx];
                             if is_float || array_type == types::Tag::float8_array {
-                                array.push(SQLDataCell::float8(
-                                    bun_core::parse_double(element).unwrap_or(f64::NAN),
-                                ));
+                                let mut value = bun_core::parse_double(element).unwrap_or(f64::NAN);
+                                if array_type == types::Tag::float4_array {
+                                    value = value as f32 as f64;
+                                }
+                                array.push(SQLDataCell::float8(value));
                                 slice = try_slice(slice, current_idx);
                                 continue;
                             }
@@ -787,8 +789,10 @@ pub(crate) fn from_bytes(
             if binary && bytes.len() == 4 {
                 Ok(SQLDataCell::float8(parse_binary_float4(bytes)? as f64))
             } else {
+                // float4 text is the shortest round-trip decimal for an f32, so
+                // narrow to f32 before widening to match the binary wire value.
                 Ok(SQLDataCell::float8(
-                    bun_core::parse_double(bytes).unwrap_or(f64::NAN),
+                    bun_core::parse_double(bytes).unwrap_or(f64::NAN) as f32 as f64,
                 ))
             }
         }

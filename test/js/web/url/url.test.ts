@@ -98,6 +98,8 @@ describe("url", () => {
     expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
     expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
     expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
+    // Bracketed hosts go to the IPv6 parser, never IDNA.
+    expect(() => new URL("http://[::\u180E1]/")).toThrow();
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";

@@ -158,6 +158,11 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     if (at != notFound)
         hostStart = authorityStart + at + 1;
 
+    // A '['-prefixed host goes straight to the IPv6 parser and never runs
+    // domain-to-ASCII; leave it untouched so the parser sees the original.
+    if (hostStart < view.length() && view[hostStart] == '[')
+        return {};
+
     auto hostView = view.substring(hostStart, authorityEnd - hostStart);
     if (!Bun::containsUnicode16IDNADeltaSource(hostView))
         return {};

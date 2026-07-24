@@ -4395,13 +4395,14 @@ console.log("boop");
 `,
     );
   });
-  it("does not preserve use strict (for now)", () => {
+  it("preserves use strict", () => {
     expect(
       new Bun.Transpiler().transformSync(`"use strict";
   console.log("boop");
   `),
     ).toBe(
-      `console.log("boop");
+      `"use strict";
+console.log("boop");
 `,
     );
   });

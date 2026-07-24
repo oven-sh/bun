@@ -7876,6 +7876,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
+        directives: bun_ast::StoreSlice<bun_ast::StoreStr>,
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -8337,7 +8338,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let char_freq: Option<js_ast::CharFreq> = self.compute_character_frequency();
 
-        let module_scope_strict = self.module_scope().strict_mode;
         // Scope is not `Clone` (Vec/HashMap members), so move it out and leave
         // a default in `*self.module_scope`. `to_ast` is terminal — the parser
         // does not touch `module_scope` afterwards.
@@ -8395,11 +8395,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             export_keyword: self.esm_export_keyword,
             top_level_symbols_to_parts,
             char_freq,
-            directive: if module_scope_strict == js_ast::StrictModeKind::ExplicitStrictMode {
-                Some(bun_ast::StoreStr::new(b"use strict"))
-            } else {
-                None
-            },
+            directives,
             nested_scope_slot_counts,
 
             require_ref,

@@ -1481,12 +1481,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
                                     p.module_scope_directive_loc = stmt.loc;
+                                    // At module scope, keep "use strict" as an
+                                    // SDirective like other directives so the
+                                    // prologue list preserves source order; it
+                                    // is stripped into `Ast.directives` before
+                                    // the visit pass.
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(b"use strict"),
+                                        },
+                                        stmt.loc,
+                                    );
+                                } else {
+                                    skip = true;
                                 }
                             } else if str_.eql_comptime(b"use asm") {
                                 skip = true;

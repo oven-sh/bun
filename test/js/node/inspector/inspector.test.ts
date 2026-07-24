@@ -1397,14 +1397,29 @@ test("Session.post matches node's return and throw contract", async () => {
 });
 
 test("pending posts at disconnect settle with node's -32000 error", async () => {
-  const session = new inspector.Session();
-  session.connect();
-  const { promise, resolve } = Promise.withResolvers<any>();
-  session.post("Runtime.evaluate", { expression: "new Promise(() => {})", awaitPromise: true }, err => resolve(err));
-  session.disconnect();
-  const err = await promise;
-  expect(err?.code).toBe("ERR_INSPECTOR_COMMAND");
-  expect(err?.message).toBe("Inspector error -32000: Execution context was destroyed.");
+  // Runtime.evaluate routes through JSC's InjectedScript, so this runs in a
+  // child under inspectorChildEnv (see the comment on that helper).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Runtime.evaluate", { expression: "new Promise(() => {})", awaitPromise: true }, err => {
+  console.log(JSON.stringify({ code: err?.code, message: err?.message }));
+});
+session.disconnect();`,
+    ],
+    env: inspectorChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(JSON.parse(stdout.trim())).toEqual({
+    code: "ERR_INSPECTOR_COMMAND",
+    message: "Inspector error -32000: Execution context was destroyed.",
+  });
 });
 
 test("session.disconnect() from a paused listener detaches after the dispatch, not mid-pause", async () => {

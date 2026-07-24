@@ -275,22 +275,18 @@ const linuxShared: LinuxSharedFields = {
 /** Raise the process limits so builds and tests aren't capped. */
 const openFiles = 1048576;
 const processes = 1048576;
-const unlimitedLimits = [
-  "core",
-  "data",
-  "fsize",
-  "memlock",
-  "rss",
-  "stack",
-  "cpu",
-  "as",
-  "locks",
-  "sigpending",
-  "msgqueue",
-];
 
-/** /etc/security/limits.d — the counted limits plus everything unlimited,
- * for root and every user. Shared by every linux image. */
+// ONLY nofile and nproc are raised, to the counted values above — the two
+// limits CI actually hits (fd-heavy tests EMFILE at the stock 1024; the
+// suite spawns many processes). Nothing is set to "unlimited". In
+// particular RLIMIT_STACK must stay finite: an unlimited stack switches the
+// process to the kernel's legacy bottom-up mmap layout, which breaks ASAN's
+// shadow-memory placement and JSC/bun's stack-bounds logic (bun segfaults in
+// thread spawn). Everything else runs at the distro's stock defaults, which
+// is what the working images always ran with.
+
+/** /etc/security/limits.d — nofile/nproc for root and every user (pam
+ * login sessions). Shared by every linux image. */
 const limitsFile =
   [
     ...["root", "*"].flatMap(who => [
@@ -298,20 +294,15 @@ const limitsFile =
       `${who} hard nofile ${openFiles}`,
       `${who} soft nproc ${processes}`,
       `${who} hard nproc ${processes}`,
-      ...unlimitedLimits.flatMap(limit => [`${who} soft ${limit} unlimited`, `${who} hard ${limit} unlimited`]),
     ]),
   ].join("\n") + "\n";
 
-/** systemd default limits, as a system.conf.d drop-in with its own
- * [Manager] header (systemd >= 256 ships no /etc/systemd/system.conf, and
- * DefaultLimit lines with no section header are ignored). */
+/** systemd default limits for services (buildkite-agent, dockerd), as a
+ * system.conf.d drop-in with its own [Manager] header (systemd >= 256 ships
+ * no /etc/systemd/system.conf, and DefaultLimit lines with no section
+ * header are ignored). nofile/nproc only — see the note above. */
 const systemdLimits =
-  [
-    "[Manager]",
-    `DefaultLimitNOFILE=${openFiles}`,
-    `DefaultLimitNPROC=${processes}`,
-    ...unlimitedLimits.map(limit => `DefaultLimit${limit.toUpperCase()}=infinity`),
-  ].join("\n") + "\n";
+  ["[Manager]", `DefaultLimitNOFILE=${openFiles}`, `DefaultLimitNPROC=${processes}`].join("\n") + "\n";
 
 /** Write `content` to `path` verbatim (single-quoted heredoc: no expansion). */
 function writeFile(path: string, content: string): string {
@@ -326,7 +317,7 @@ function aptSystemSetup(packages: LinuxPackages): string[] {
     `DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends --fix-missing ${[...packages.buildEssentials, ...packages.qemu].join(" ")}`,
     // alsa for the audio tests (the t64 name post-time_t transition).
     "DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends libasound2t64",
-    writeFile("/etc/security/limits.d/99-unlimited.conf", limitsFile),
+    writeFile("/etc/security/limits.d/99-bun-limits.conf", limitsFile),
     writeFile("/etc/systemd/system.conf.d/99-bun-limits.conf", systemdLimits),
     // pam_limits applies the limits.d values to login sessions.
     "grep -qxF 'session optional pam_limits.so' /etc/pam.d/common-session || echo 'session optional pam_limits.so' >> /etc/pam.d/common-session",
@@ -339,14 +330,14 @@ function aptSystemSetup(packages: LinuxPackages): string[] {
  * thing raising limits for rc-started services (no systemd, no pam);
  * without it fd-heavy tests EMFILE at the OpenRC default of 1024. */
 function apkSystemSetup(packages: LinuxPackages): string[] {
-  const rcUlimit = ["c", "d", "e", "f", "i", "l", "m", "n", "q", "r", "s", "t", "u", "v", "x"]
-    .map(flag => (flag === "n" ? `-n ${openFiles}` : flag === "u" ? `-u ${processes}` : `-${flag} unlimited`))
-    .join(" ");
+  // nofile/nproc only (see the limits note above): -s unlimited here would
+  // hand rc-started services an unlimited stack, the same legacy-mmap hazard.
+  const rcUlimit = `-n ${openFiles} -u ${processes}`;
   return [
     "apk update",
     `apk add --no-cache --no-interactive --no-progress ${packages.common.join(" ")}`,
     `apk add --no-cache --no-interactive --no-progress ${[...packages.buildEssentials, ...packages.qemu].join(" ")}`,
-    writeFile("/etc/security/limits.d/99-unlimited.conf", limitsFile),
+    writeFile("/etc/security/limits.d/99-bun-limits.conf", limitsFile),
     `grep -qxF 'rc_ulimit="${rcUlimit}"' /etc/rc.conf || echo 'rc_ulimit="${rcUlimit}"' >> /etc/rc.conf`,
   ];
 }

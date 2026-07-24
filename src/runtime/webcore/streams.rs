@@ -384,11 +384,12 @@ pub enum Writable {
     Done,
     Owned(BlobSizeType),
     /// The bytes were accepted, but the transport is now backed up. `to_js()`
-    /// reports `-(len + 1)` so the JS write loop can detect backpressure
-    /// without conflating it with `Pending` (FileSink on Windows returns a
-    /// Promise on every write — `Promise < 0` is false, so `readStreamIntoSink`
-    /// keeps its main-branch behavior for non-HTTP sinks). The drain itself is
-    /// awaited via `flush(true)` → `pending_flush`.
+    /// reports `-(len + 1)` so the JS write loop can detect backpressure without
+    /// conflating it with `Pending` (a Promise, which FileSink returns for every
+    /// write on Windows, and `Promise < 0` is false). The drain itself is awaited
+    /// via `flush(true)` → `pending_flush`. Only `readStreamIntoSink` understands
+    /// the sentinel, so a sink reachable from user code must not report it for
+    /// writes that code issues directly.
     Backpressure(BlobSizeType),
     OwnedAndDone(BlobSizeType),
     TemporaryAndDone(BlobSizeType),

@@ -438,10 +438,15 @@ impl FileSink {
 
                 FileSink::run_pending(this);
 
+                // `run_pending` resolves the flush promise and drains microtasks, so a
+                // suspended stream pump can buffer more bytes before this returns. POSIX
+                // `end()` closes the fd at once, so re-read instead of using the snapshot.
+                let has_pending_data = (*this).writer.get().has_pending_data();
+
                 // this.done == true means ended was called
                 let ended_and_done = (*this).done.get() && status == WriteStatus::EndOfFile;
 
-                if (*this).done.get() && status == WriteStatus::Drained {
+                if (*this).done.get() && status == WriteStatus::Drained && !has_pending_data {
                     // if we call end/endFromJS and we have some pending returned from .flush() we should call writer.end()
                     (*this).writer.with_mut(|w| w.end());
                 } else if ended_and_done && !has_pending_data {
@@ -1009,7 +1014,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, accepted)
     }
 
     #[inline]
@@ -1025,7 +1030,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, accepted)
     }
 
     pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
@@ -1036,7 +1041,7 @@ impl FileSink {
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
         let accepted = self.bytes_accepted(buffered_before, &rc);
-        self.to_result(rc, accepted)
+        self.write_result(rc, accepted)
     }
 
     pub fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
@@ -1337,6 +1342,36 @@ impl FileSink {
                 });
                 streams::Writable::Pending(self.pending.as_ptr())
             }
+        }
+    }
+
+    /// `to_result`, plus the backpressure signal the `readStreamIntoSink` pump
+    /// needs. The destination itself decides: once it refuses bytes (`EAGAIN`
+    /// from `write(2)`, a `uv_write` already in flight on Windows) report
+    /// `Backpressure` so the pump awaits `flush(true)` instead of reading the
+    /// rest of the stream into memory. The writer then holds at most the one
+    /// chunk the kernel would not take.
+    ///
+    /// Only that pump understands the negative sentinel, so this must never reach
+    /// a write user JS issued. `readable_stream` is set by exactly one caller,
+    /// `assign_to_stream`, i.e. `Bun.spawn({ stdin: <ReadableStream> })` — and in
+    /// that case `proc.stdin` is the stream, not this sink (spawn caches it), so
+    /// the sink has no JS handle. Every sink that does have one (`proc.stdin` for
+    /// `stdin: "pipe"`, `Bun.file().writer()`) has no stream attached and keeps
+    /// `write()`'s number-or-Promise contract.
+    fn write_result(&self, write_result: WriteResult, accepted: u64) -> streams::Writable {
+        let result = self.to_result(write_result, accepted);
+        if !self.readable_stream.with_mut(|s| s.has()) || !self.writer.get().is_backed_up() {
+            return result;
+        }
+        match result {
+            // Finished or failed: `Backpressure` would park the pump on a drain
+            // that is never coming.
+            streams::Writable::Done
+            | streams::Writable::Err(_)
+            | streams::Writable::OwnedAndDone(_)
+            | streams::Writable::TemporaryAndDone(_) => result,
+            _ => streams::Writable::Backpressure(accepted),
         }
     }
 

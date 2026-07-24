@@ -155,8 +155,9 @@ crypto_exports.KeyObject = KeyObject;
 
 crypto_exports.generateKey = guardLastCallback(generateKey);
 crypto_exports.generateKeySync = generateKeySync;
-defineCustomPromisifyArgs(generateKeyPair, ["publicKey", "privateKey"]);
-crypto_exports.generateKeyPair = guardLastCallback(generateKeyPair);
+const generateKeyPairGuarded = guardLastCallback(generateKeyPair);
+defineCustomPromisifyArgs(generateKeyPairGuarded, ["publicKey", "privateKey"]);
+crypto_exports.generateKeyPair = generateKeyPairGuarded;
 crypto_exports.generateKeyPairSync = generateKeyPairSync;
 
 crypto_exports.createSecretKey = createSecretKey;

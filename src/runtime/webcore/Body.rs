@@ -678,6 +678,14 @@ impl Value {
 }
 
 impl Value {
+    /// `new Response(arrayBuffer)` borrows the buffer above this size (see
+    /// [`from_js_maybe_borrow`]). Below it the copy is cheap and the spec
+    /// snapshot semantics are preserved exactly; `new Request` and outbound
+    /// `fetch()` always copy. Matches the uWS cork buffer
+    /// (`LoopData::CORK_BUFFER_SIZE`): a body that fits the cork buffer is
+    /// memcpy'd on the send path anyway.
+    pub const ARRAY_BUFFER_BORROW_THRESHOLD: usize = 16 * 1024;
+
     // We may not have all the data yet
     // So we can't know for sure if it's empty or not
     // We CAN know that it is definitely empty.
@@ -735,6 +743,7 @@ impl Value {
             Value::InternalBlob(b) => b.memory_cost(),
             Value::WTFStringImpl(s) => wtf_impl(s).memory_cost(),
             Value::Locked(l) => l.size_hint() as usize,
+            Value::Blob(b) => b.shared_view().len(),
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -745,6 +754,12 @@ impl Value {
             Value::InternalBlob(b) => b.slice_const().len(),
             Value::WTFStringImpl(s) => wtf_impl(s).byte_slice().len(),
             Value::Locked(l) => l.size_hint() as usize,
+            // `shared_view` is empty for file/S3 stores (whose `size` is
+            // `MAX_SIZE` until stat'd) so only bytes-backed stores are
+            // reported. A borrowed-ArrayBuffer store's bytes are already
+            // reported by the source ArrayBuffer; the heap-snapshot and GC
+            // estimate should still reflect that the body retains them.
+            Value::Blob(b) => b.shared_view().len(),
             // Value::InlineBlob(b) => b.slice_const().len(),
             _ => 0,
         }
@@ -860,6 +875,21 @@ impl Value {
     }
 
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Value> {
+        Self::from_js_maybe_borrow::<false>(global_this, value)
+    }
+
+    /// `BORROW_ARRAY_BUFFER`: when true, an ArrayBuffer/view body at or above
+    /// [`ARRAY_BUFFER_BORROW_THRESHOLD`] is wrapped in a `Blob` that borrows
+    /// the live storage instead of `.to_vec()`ing it. Only the `Response`
+    /// constructor takes this path (via [`body::extract_for_response`]);
+    /// `Request`, outbound `fetch()`, and `HTMLRewriter.transform()` keep the
+    /// spec snapshot semantics so mutating a buffer after handing it to
+    /// `fetch()` cannot change what goes on the wire, and a rewriter handler
+    /// cannot mutate its own source mid-parse.
+    pub fn from_js_maybe_borrow<const BORROW_ARRAY_BUFFER: bool>(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+    ) -> JsResult<Value> {
         value.ensure_still_alive();
 
         if value.is_empty_or_undefined_or_null() {
@@ -886,6 +916,20 @@ impl Value {
 
                 if bytes.is_empty() {
                     return Ok(Value::Empty);
+                }
+
+                // Above the cork-buffer size, borrow the ArrayBuffer's storage
+                // instead of `.to_vec()`ing it. A `Bun.serve` fetch handler
+                // that returns `new Response(sharedBuffer)` otherwise pays one
+                // body-sized memcpy + allocation per request, and under
+                // backpressure that per-connection copy is held until the
+                // socket drains, so N slow clients x an M-byte body costs
+                // N*M bytes of RSS. `init_pinned_array_buffer` rejects
+                // resizable/growable and shared buffers.
+                if BORROW_ARRAY_BUFFER && bytes.len() >= Self::ARRAY_BUFFER_BORROW_THRESHOLD {
+                    if let Some(store) = blob::Store::init_pinned_array_buffer(value) {
+                        return Ok(Value::Blob(Blob::init_with_store(store, global_this)));
+                    }
                 }
 
                 // The global allocator aborts on OOM, so a "Failed to clone
@@ -1142,6 +1186,20 @@ impl Value {
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
                 debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
+                // Snapshot a borrowed JS ArrayBuffer into owned storage so the
+                // returned Blob is immutable and its Store never carries the
+                // non-atomic `JSC::ArrayBuffer` ref/pin off this thread
+                // (e.g. via `URL.createObjectURL` + cross-Worker revoke).
+                if new_blob
+                    .store()
+                    .is_some_and(|s| s.bytes_borrow_js_array_buffer())
+                {
+                    // SAFETY: VirtualMachine::get() returns the live per-thread VM.
+                    let global = VirtualMachine::get().global();
+                    let owned = Blob::init(new_blob.shared_view().to_vec(), global);
+                    new_blob.detach();
+                    return owned;
+                }
                 new_blob
             }
             Value::InternalBlob(ib) => {
@@ -1193,9 +1251,29 @@ impl Value {
         }
     }
 
+    /// Move the `Value::Blob` payload into an `AnyBlob`, snapshotting a
+    /// borrowed JS ArrayBuffer into owned storage so the pin cannot escape
+    /// the Body. Consumers that may re-enter user JS while holding
+    /// `.slice()` (HTMLRewriter, `ValueBufferer`, outbound fetch) go through
+    /// this; `RequestContext`'s send path uses [`use_as_any_blob_for_render`]
+    /// to keep the borrow.
+    #[inline]
+    fn take_blob_snapshot_if_borrowed(b: &mut Blob) -> AnyBlob {
+        let b = core::mem::take(b);
+        if b.store().is_some_and(|s| s.bytes_borrow_js_array_buffer()) {
+            let owned = InternalBlob {
+                bytes: b.shared_view().to_vec(),
+                was_string: false,
+            };
+            b.detach();
+            return AnyBlob::InternalBlob(owned);
+        }
+        AnyBlob::Blob(b)
+    }
+
     pub fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::Blob(b) => Self::take_blob_snapshot_if_borrowed(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
                 if wtf_impl(str).can_use_as_utf8() {
@@ -1226,7 +1304,7 @@ impl Value {
         // emptied/residual variant (no-op for taken Blob/InternalBlob, releases
         // the +1 for the UTF-8-converted WTFStringImpl arm, deinit for Locked).
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::Blob(b) => Self::take_blob_snapshot_if_borrowed(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => 'brk: {
                 let str = *str;
@@ -1260,7 +1338,7 @@ impl Value {
         let was_null = matches!(self, Value::Null);
         // see `use_as_any_blob` — match by `&mut` to avoid E0509.
         let any_blob: AnyBlob = match self {
-            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::Blob(b) => Self::take_blob_snapshot_if_borrowed(b),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(s) => {
                 let s = *s;
@@ -1275,6 +1353,29 @@ impl Value {
             _ => AnyBlob::Blob(Blob::default()),
         };
 
+        *self = if was_null { Value::Null } else { Value::Used };
+        any_blob
+    }
+
+    /// `use_as_any_blob_allow_non_utf8_string` without the borrowed-store
+    /// snapshot: the `Bun.serve` send path (`RequestContext::do_render_with_
+    /// body`) is the sole caller, since it never re-enters user JS while the
+    /// `AnyBlob.slice()` is live and its lifetime is single-thread-only.
+    pub fn use_as_any_blob_for_render(&mut self) -> AnyBlob {
+        let was_null = matches!(self, Value::Null);
+        let any_blob: AnyBlob = match self {
+            Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
+            Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
+            Value::WTFStringImpl(s) => {
+                let s = *s;
+                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
+                AnyBlob::WTFStringImpl(s)
+            }
+            Value::Locked(l) => l
+                .to_any_blob_allow_promise()
+                .unwrap_or(AnyBlob::Blob(Blob::default())),
+            _ => AnyBlob::Blob(Blob::default()),
+        };
         *self = if was_null { Value::Null } else { Value::Used };
         any_blob
     }
@@ -1536,6 +1637,16 @@ impl Value {
         }
 
         if let Value::Blob(b) = self {
+            // `dupe_with_content_type` shares the StoreRef. Snapshot a
+            // borrowed JS ArrayBuffer so the clone (a second Response, or a
+            // Request built via `new Request(url, response)`) never carries
+            // the pin outside this body.
+            if b.store().is_some_and(|s| s.bytes_borrow_js_array_buffer()) {
+                return Ok(Value::Blob(Blob::init(
+                    b.shared_view().to_vec(),
+                    global_this,
+                )));
+            }
             return Ok(Value::Blob(b.dupe_with_content_type(false)));
         }
 
@@ -1569,6 +1680,19 @@ type ArrayBufferJSSink = sink::JSSink<ArrayBufferSink>;
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
     let body_value = Value::from_js(global_this, value)?;
+    if let Value::Blob(b) = &body_value {
+        debug_assert!(!b.is_heap_allocated()); // owned by Body
+    }
+    Ok(Body::new(body_value))
+}
+
+/// `extract` with the large-ArrayBuffer borrow path enabled (see
+/// [`Value::from_js_maybe_borrow`]). The `Response` constructor is the sole
+/// caller: it is the only body-init surface where the borrow is useful
+/// (`Bun.serve` slices the Store directly) and where a handler mutating the
+/// source buffer mid-consume is not a hazard.
+pub(crate) fn extract_for_response(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
+    let body_value = Value::from_js_maybe_borrow::<true>(global_this, value)?;
     if let Value::Blob(b) = &body_value {
         debug_assert!(!b.is_heap_allocated()); // owned by Body
     }

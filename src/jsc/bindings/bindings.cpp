@@ -3283,6 +3283,51 @@ CPP_DECL void JSC__JSValue__unpinArrayBuffer(JSC::EncodedJSValue v)
     }
 }
 
+// Retain `v`'s backing JSC::ArrayBuffer natively (ref() + pin()) and write
+// the view's byte range out, so a Blob `Store::Bytes` can borrow its storage
+// without touching the JS cell on release. `vector()`/`data()` is read AFTER
+// `possiblySharedBuffer()` materializes (see the same ordering discipline in
+// `JSC__JSValue__borrowBytesForOffThread` below). Returns null for
+// resizable/growable buffers (a shrink would invalidate the borrowed
+// (ptr, len)), SharedArrayBuffers (other agents may write the same storage
+// concurrently, and Bytes::slice() yields &[u8]), or when `v` has no
+// ArrayBuffer impl. Must be called on the JS thread that owns `v`.
+CPP_DECL JSC::ArrayBuffer* Bun__ArrayBuffer__retainPinnedStore(JSC::EncodedJSValue v, const uint8_t** out_ptr, size_t* out_len)
+{
+    auto value = JSC::JSValue::decode(v);
+    if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
+        if (view->isDetached())
+            return nullptr;
+        auto* buf = view->possiblySharedBuffer();
+        if (!buf || buf->isResizableOrGrowableShared() || buf->isShared())
+            return nullptr;
+        buf->pin();
+        buf->ref();
+        *out_ptr = static_cast<const uint8_t*>(view->vector());
+        *out_len = view->byteLength();
+        return buf;
+    }
+    if (auto* jb = dynamicDowncast<JSC::JSArrayBuffer>(value)) {
+        auto* buf = jb->impl();
+        if (!buf || buf->isDetached() || buf->isResizableOrGrowableShared() || buf->isShared())
+            return nullptr;
+        buf->pin();
+        buf->ref();
+        *out_ptr = static_cast<const uint8_t*>(buf->data());
+        *out_len = buf->byteLength();
+        return buf;
+    }
+    return nullptr;
+}
+// Release the pin + ref taken by `retainPinnedStore`. Only dereferences the
+// native ArrayBuffer (not a JSCell), so it is safe to call from a finalizer
+// during the GC sweep that collects the holder.
+CPP_DECL void Bun__ArrayBuffer__releasePinnedStore(JSC::ArrayBuffer* buf)
+{
+    buf->unpin();
+    buf->deref();
+}
+
 // Borrow `v`'s byte storage for off-thread reading. Splits out only the
 // `FastTypedArray` case from `pinArrayBuffer`, because that's the one mode
 // where `possiblySharedBuffer()` actually COPIES data

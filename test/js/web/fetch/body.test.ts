@@ -749,6 +749,201 @@ describe.concurrent("string body consumption does not leak", () => {
   }
 });
 
+describe("constructing a Response from a large ArrayBuffer borrows the storage", () => {
+  // Response bodies from ArrayBuffers/views above the cork-buffer threshold
+  // wrap the JSC ArrayBuffer instead of cloning it (so a Bun.serve fetch
+  // handler returning `new Response(sharedBuffer)` does not pay a per-request
+  // body-sized copy). Request and outbound fetch() keep the spec snapshot
+  // semantics and always copy. The borrow is exposed via a pin on the backing
+  // buffer: transfer() copies instead of detaching for its duration, released
+  // once the body has been consumed.
+  const N = 64 * 1024;
+  const SMALL = 4 * 1024;
+
+  test("Request snapshots BufferSource bodies (mutate-before-consume not visible)", async () => {
+    const buf = new Uint8Array(N).fill(0x61);
+    const req = new Request("http://example.com/", { method: "POST", body: buf });
+    buf.fill(0x62);
+    const out = await req.bytes();
+    expect(out[0]).toBe(0x61);
+    expect(out[out.byteLength - 1]).toBe(0x61);
+    // No pin was taken; transfer() detaches.
+    const moved = buf.buffer.transfer();
+    expect(buf.buffer.byteLength).toBe(0);
+    expect(moved.byteLength).toBe(N);
+  });
+
+  test("Response borrows BufferSource bodies above the threshold (mutate-before-consume is visible)", async () => {
+    const buf = new Uint8Array(N).fill(0x61);
+    const res = new Response(buf);
+    buf.fill(0x62);
+    expect((await res.bytes())[0]).toBe(0x62);
+  });
+
+  test("Response snapshots BufferSource bodies below the threshold", async () => {
+    const buf = new Uint8Array(SMALL).fill(0x61);
+    const res = new Response(buf);
+    buf.fill(0x62);
+    expect((await res.bytes())[0]).toBe(0x61);
+  });
+
+  test("Response snapshots SharedArrayBuffer bodies (mutate-before-consume not visible)", async () => {
+    const sab = new SharedArrayBuffer(N);
+    const view = new Uint8Array(sab).fill(0x61);
+    const res = new Response(view);
+    view.fill(0x62);
+    const out = await res.bytes();
+    expect(out.byteLength).toBe(N);
+    expect(out[0]).toBe(0x61);
+  });
+
+  test("HTMLRewriter.transform(Response) snapshots the borrowed body before parsing", async () => {
+    // lol-html invokes user handlers mid-chunk; a handler must not be able to
+    // mutate the bytes the parser is still iterating.
+    const buf = new Uint8Array(N).fill(0x61);
+    buf.set(new TextEncoder().encode("<p>x</p><p>x</p>"), 0);
+    let hits = 0;
+    const out = await new HTMLRewriter()
+      .on("p", {
+        element() {
+          hits++;
+          buf.fill(0);
+        },
+      })
+      .transform(new Response(buf))
+      .bytes();
+    // Both <p> elements were parsed from the snapshot; the handler's mutation
+    // of the source buffer did not affect the second one.
+    expect(hits).toBe(2);
+    expect(out.byteLength).toBe(N);
+    expect(out[N - 1]).toBe(0x61);
+  });
+
+  test("Response.clone() snapshots the borrow (the clone never shares the pinned Store)", async () => {
+    const buf = new Uint8Array(N).fill(0x61);
+    const r1 = new Response(buf);
+    const r2 = r1.clone();
+    buf.fill(0x62);
+    // r1 still borrows (sees the mutation); r2 snapshotted at clone time.
+    expect((await r1.bytes())[0]).toBe(0x62);
+    expect((await r2.bytes())[0]).toBe(0x61);
+  });
+
+  test("new Request(url, Response) snapshots the borrow", async () => {
+    const buf = new Uint8Array(N).fill(0x61);
+    const res = new Response(buf);
+    const req = new Request("http://example.com/", res);
+    buf.fill(0x62);
+    const out = await req.bytes();
+    expect(out[0]).toBe(0x61);
+    // The Request does not hold a pin; transfer() detaches with the Response
+    // also consumed.
+    await res.bytes();
+    const moved = buf.buffer.transfer();
+    expect(buf.buffer.byteLength).toBe(0);
+    expect(moved.byteLength).toBe(N);
+  });
+
+  describe("Response", () => {
+    const fn = (body: BodyInit) => new Response(body);
+
+    for (const method of ["arrayBuffer", "bytes", "text"] as const) {
+      test(`${method}() releases the borrow and returns a distinct buffer`, async () => {
+        const buf = new Uint8Array(N).fill(0x61);
+        const body = fn(buf);
+        const out: any = await (body as any)[method]();
+        // A subsequent mutation of the source must not be visible in the
+        // materialised body.
+        buf.fill(0x62);
+        if (method === "arrayBuffer") {
+          expect(out.byteLength).toBe(N);
+          expect(new Uint8Array(out)[0]).toBe(0x61);
+        } else if (method === "bytes") {
+          expect(out.byteLength).toBe(N);
+          expect(out[0]).toBe(0x61);
+        } else {
+          expect(out.length).toBe(N);
+          expect(out[0]).toBe("a");
+        }
+        // The body is consumed: the pin on `buf.buffer` is gone, so
+        // transfer() detaches again.
+        const moved = buf.buffer.transfer();
+        expect(buf.buffer.byteLength).toBe(0);
+        expect(moved.byteLength).toBe(N);
+      });
+    }
+
+    test("blob() snapshots the borrow into an owned Store", async () => {
+      const buf = new Uint8Array(N).fill(0x61);
+      const blob = await fn(buf).blob();
+      // `.blob()` copies out of the borrowed ArrayBuffer so the returned
+      // Blob is immutable and its Store cannot carry the pin off-thread.
+      buf.fill(0x62);
+      const out = new Uint8Array(await blob.arrayBuffer());
+      expect(out.byteLength).toBe(N);
+      expect(out[0]).toBe(0x61);
+      // The borrow was released when `.blob()` snapshotted; `transfer()`
+      // detaches again with the Blob still live.
+      const moved = buf.buffer.transfer();
+      expect(buf.buffer.byteLength).toBe(0);
+      expect(moved.byteLength).toBe(N);
+      expect((await blob.bytes())[0]).toBe(0x61);
+    });
+
+    test("transfer() copies while the body holds the borrow, detaches after", async () => {
+      const buf = new Uint8Array(N).fill(0x61);
+      const body = fn(buf);
+      const moved = buf.buffer.transfer();
+      expect(moved.byteLength).toBe(N);
+      // Pinned: transfer() left the source attached (copy-instead-of-detach).
+      expect(buf.buffer.byteLength).toBe(N);
+      // The body still reads the original contents.
+      const out = await body.bytes();
+      expect(out.byteLength).toBe(N);
+      expect(out[0]).toBe(0x61);
+      // Consuming the body released the pin; transfer() now detaches.
+      const moved2 = buf.buffer.transfer();
+      expect(buf.buffer.byteLength).toBe(0);
+      expect(moved2.byteLength).toBe(N);
+    });
+
+    test("view offset/length are respected", async () => {
+      const raw = new Uint8Array(N);
+      for (let i = 0; i < N; i++) raw[i] = i & 0xff;
+      const view = new Uint8Array(raw.buffer, 17, N - 64);
+      const out = await fn(view).bytes();
+      expect(out.byteLength).toBe(N - 64);
+      expect(out[0]).toBe(17);
+      expect(out[out.byteLength - 1]).toBe((17 + N - 64 - 1) & 0xff);
+    });
+
+    test("resizable ArrayBuffer bodies snapshot at construction", async () => {
+      // @ts-ignore: maxByteLength is a recent option
+      const ab = new ArrayBuffer(N, { maxByteLength: N * 2 });
+      new Uint8Array(ab).fill(0x61);
+      const body = fn(new Uint8Array(ab));
+      // Borrow path rejects resizable; a subsequent resize must not affect
+      // the body.
+      // @ts-ignore
+      ab.resize(N / 2);
+      const out = await body.bytes();
+      expect(out.byteLength).toBe(N);
+      expect(out[out.byteLength - 1]).toBe(0x61);
+    });
+
+    test("GC of the source ArrayBuffer does not free the borrowed body", async () => {
+      let buf: Uint8Array | undefined = new Uint8Array(N).fill(0x61);
+      const body = fn(buf);
+      buf = undefined;
+      Bun.gc(true);
+      const out = await body.bytes();
+      expect(out.byteLength).toBe(N);
+      expect(out[0]).toBe(0x61);
+      expect(out[out.byteLength - 1]).toBe(0x61);
+    });
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/6860
 describe("constructing a body from an unusable ReadableStream", () => {
   const bytes = () =>

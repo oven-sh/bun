@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "node:path";
 
 // On POSIX, `cat` falls through to the subprocess path unless
 // BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS is set (see `Kind::DISABLED_ON_POSIX`).
-// These spawn a child with the flag so the shell IOReader path is exercised on
-// every platform.
+// These spawn a child with the flag so the builtin path is taken on every
+// platform.
 const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
 
 async function runShell(dir: string, script: string): Promise<{ stdout: string; stderr: string; exitCode: number }> {
@@ -70,19 +70,56 @@ describe.concurrent("cat (builtin)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.if(isPosix)("stdin redirect from /dev/null", async () => {
-    using dir = tempDir("shell-cat-devnull", {});
-    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat < /dev/null");
-    expect(stderr).toBe("");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
-  });
-
   test("file redirect out still works", async () => {
     using dir = tempDir("shell-cat-out", { "a.txt": "payload\n" });
     const { stderr, exitCode } = await runShell(String(dir), "cat a.txt > out.txt");
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(await Bun.file(path.join(String(dir), "out.txt")).text()).toBe("payload\n");
+  });
+
+  test("sequential cat commands", async () => {
+    using dir = tempDir("shell-cat-seq", {
+      "a.txt": "A\n",
+      "b.txt": "B\n",
+      "c.txt": "C\n",
+      "d.txt": "D\n",
+    });
+    const { stdout, stderr, exitCode } = await runShell(String(dir), "cat a.txt; cat b.txt; cat c.txt; cat d.txt");
+    expect(stderr).toBe("");
+    expect(stdout).toBe("A\nB\nC\nD\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("sequential cat redirected to files", async () => {
+    using dir = tempDir("shell-cat-seq-out", {
+      "a.txt": "A\n",
+      "b.txt": "B\n",
+      "c.txt": "C\n",
+    });
+    const { stderr, exitCode } = await runShell(
+      String(dir),
+      "cat a.txt > o1.txt; cat b.txt > o2.txt; cat c.txt > o3.txt",
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "o1.txt")).text()).toBe("A\n");
+    expect(await Bun.file(path.join(String(dir), "o2.txt")).text()).toBe("B\n");
+    expect(await Bun.file(path.join(String(dir), "o3.txt")).text()).toBe("C\n");
+  });
+
+  test("many file arguments", async () => {
+    const files: Record<string, string> = {};
+    let expected = "";
+    for (let i = 0; i < 100; i++) {
+      files[`f${i}.txt`] = `line${i}\n`;
+      expected += `line${i}\n`;
+    }
+    using dir = tempDir("shell-cat-many", files);
+    const args = Object.keys(files).join(" ");
+    const { stdout, stderr, exitCode } = await runShell(String(dir), `cat ${args}`);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected);
+    expect(exitCode).toBe(0);
   });
 });

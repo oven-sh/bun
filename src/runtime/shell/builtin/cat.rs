@@ -105,6 +105,38 @@ impl Cat {
         Builtin::done(interp, cmd, exit_code)
     }
 
+    /// Write the whole buffer to stdout as a single chunk. Mirrors the
+    /// `!stdin_needs_io` shape: for fd-backed stdout one chunk is queued and
+    /// the enqueue yield is returned, otherwise `write_no_io` and `None`.
+    fn write_buf_to_stdout(interp: &Interpreter, cmd: NodeId, buf: &[u8]) -> Option<Yield> {
+        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            match &mut Self::state_mut(interp, cmd).state {
+                CatState::ExecStdin {
+                    in_done,
+                    chunks_queued,
+                    ..
+                }
+                | CatState::ExecFilepathArgs {
+                    in_done,
+                    chunks_queued,
+                    ..
+                } => {
+                    *in_done = true;
+                    *chunks_queued += 1;
+                }
+                _ => panic!("Invalid state"),
+            }
+            let child = ChildPtr::new(cmd, WriterTag::Builtin);
+            return Some(
+                Builtin::of_mut(interp, cmd)
+                    .stdout
+                    .enqueue(child, buf, safeguard),
+            );
+        }
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, buf);
+        None
+    }
+
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         // Read scalars, drop the borrow, then act.
         enum Branch {
@@ -113,120 +145,145 @@ impl Cat {
             WaitingErr,
             Done,
         }
-        let branch = match &Self::state_mut(interp, cmd).state {
-            CatState::Idle => panic!("Invalid state"),
-            CatState::ExecStdin { .. } => Branch::Stdin,
-            CatState::ExecFilepathArgs {
-                args_start, idx, ..
-            } => Branch::FileArg {
-                args_start: *args_start,
-                idx: *idx,
-            },
-            CatState::WaitingWriteErr => Branch::WaitingErr,
-            CatState::Done => Branch::Done,
-        };
-        match branch {
-            Branch::Stdin => {
-                // Stdin doesn't need IO (captured/ignored): read it all
-                // synchronously and write straight to stdout.
-                let stdin_needs_io = Builtin::of(interp, cmd).stdin.needs_io();
-                if !stdin_needs_io {
-                    if let CatState::ExecStdin { in_done, .. } =
-                        &mut Self::state_mut(interp, cmd).state
-                    {
-                        *in_done = true;
+        loop {
+            let branch = match &Self::state_mut(interp, cmd).state {
+                CatState::Idle => panic!("Invalid state"),
+                CatState::ExecStdin { .. } => Branch::Stdin,
+                CatState::ExecFilepathArgs {
+                    args_start, idx, ..
+                } => Branch::FileArg {
+                    args_start: *args_start,
+                    idx: *idx,
+                },
+                CatState::WaitingWriteErr => Branch::WaitingErr,
+                CatState::Done => Branch::Done,
+            };
+            return match branch {
+                Branch::Stdin => {
+                    // Stdin doesn't need IO (captured/ignored): read it all
+                    // synchronously and write straight to stdout.
+                    let stdin_needs_io = Builtin::of(interp, cmd).stdin.needs_io();
+                    if !stdin_needs_io {
+                        // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
+                        // doesn't overlap a borrow of `stdin`.
+                        let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
+                        return Self::write_buf_to_stdout(interp, cmd, &buf)
+                            .unwrap_or_else(|| Builtin::done(interp, cmd, 0));
                     }
-                    // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
-                    // doesn't overlap a borrow of `stdin`.
-                    let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
-                    if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-                        let child = ChildPtr::new(cmd, WriterTag::Builtin);
-                        return Builtin::of_mut(interp, cmd)
-                            .stdout
-                            .enqueue(child, &buf, safeguard);
+                    // Clone the `Arc<IOReader>`
+                    // out of `stdin` so we hold no borrow of `interp` across
+                    // `start()` (which may re-enter via the raw interp backref).
+                    let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+                    let reader = match &Builtin::of(interp, cmd).stdin {
+                        BuiltinInput::Fd(r) => Arc::clone(r),
+                        _ => unreachable!("needs_io() returned true"),
+                    };
+                    // Linux can't register a regular file with epoll
+                    // (`IOReader::start` would surface EPERM as a read error).
+                    // Handle it like the in-memory stdin path: slurp, then one
+                    // enqueue. The fd stays owned by `Builtin::stdin`.
+                    if let Some(result) = slurp_regular_file(reader.fd()) {
+                        return match result {
+                            Ok(buf) => Self::write_buf_to_stdout(interp, cmd, &buf)
+                                .unwrap_or_else(|| Builtin::done(interp, cmd, 0)),
+                            Err(e) => {
+                                let buf =
+                                    Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
+                                        .to_vec();
+                                Self::write_failing_error(interp, cmd, &buf, 1)
+                            }
+                        };
                     }
-                    let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-                    return Builtin::done(interp, cmd, 0);
+                    reader.set_interp(interp_ptr);
+                    reader.add_reader(ReaderChildPtr {
+                        node: cmd,
+                        tag: ReaderTag::Cat,
+                    });
+                    reader.start()
                 }
-                // Clone the `Arc<IOReader>`
-                // out of `stdin` so we hold no borrow of `interp` across
-                // `start()` (which may re-enter via the raw interp backref).
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                let reader = match &Builtin::of(interp, cmd).stdin {
-                    BuiltinInput::Fd(r) => Arc::clone(r),
-                    _ => unreachable!("needs_io() returned true"),
-                };
-                reader.set_interp(interp_ptr);
-                reader.add_reader(ReaderChildPtr {
-                    node: cmd,
-                    tag: ReaderTag::Cat,
-                });
-                reader.start()
-            }
-            Branch::FileArg { args_start, idx } => {
-                let argc = Builtin::of(interp, cmd).args_slice().len();
-                let n_files = argc - args_start;
-                if idx >= n_files {
-                    // Drop the reader if any.
-                    if let CatState::ExecFilepathArgs { reader, .. } =
-                        &mut Self::state_mut(interp, cmd).state
+                Branch::FileArg { args_start, idx } => {
+                    let argc = Builtin::of(interp, cmd).args_slice().len();
+                    let n_files = argc - args_start;
+                    if idx >= n_files {
+                        // Drop the reader if any.
+                        if let CatState::ExecFilepathArgs { reader, .. } =
+                            &mut Self::state_mut(interp, cmd).state
+                        {
+                            *reader = None;
+                        }
+                        return Builtin::done(interp, cmd, 0);
+                    }
+                    if let CatState::ExecFilepathArgs {
+                        reader,
+                        chunks_done,
+                        chunks_queued,
+                        in_done,
+                        out_done,
+                        ..
+                    } = &mut Self::state_mut(interp, cmd).state
                     {
                         *reader = None;
+                        *chunks_done = 0;
+                        *chunks_queued = 0;
+                        *in_done = false;
+                        *out_done = false;
                     }
-                    return Builtin::done(interp, cmd, 0);
-                }
-                if let CatState::ExecFilepathArgs { reader, .. } =
-                    &mut Self::state_mut(interp, cmd).state
-                {
-                    *reader = None;
-                }
 
-                let path = Builtin::of(interp, cmd).arg_zstr(args_start + idx);
+                    let path = Builtin::of(interp, cmd).arg_zstr(args_start + idx);
 
-                if let CatState::ExecFilepathArgs { idx: i, .. } =
-                    &mut Self::state_mut(interp, cmd).state
-                {
-                    *i += 1;
-                }
-
-                let dir = Builtin::cwd(interp, cmd);
-                let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
-                    Ok(fd) => fd,
-                    Err(e) => {
-                        let buf =
-                            Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
-                        // The reader was already taken to `None` above.
-                        return Self::write_failing_error(interp, cmd, &buf, 1);
+                    if let CatState::ExecFilepathArgs { idx: i, .. } =
+                        &mut Self::state_mut(interp, cmd).state
+                    {
+                        *i += 1;
                     }
-                };
 
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
-                let reader = IOReader::init(fd, evtloop);
-                reader.set_interp(interp_ptr);
-                if let CatState::ExecFilepathArgs {
-                    reader: slot,
-                    chunks_done,
-                    chunks_queued,
-                    in_done,
-                    out_done,
-                    ..
-                } = &mut Self::state_mut(interp, cmd).state
-                {
-                    *chunks_done = 0;
-                    *chunks_queued = 0;
-                    *in_done = false;
-                    *out_done = false;
-                    *slot = Some(Arc::clone(&reader));
+                    let dir = Builtin::cwd(interp, cmd);
+                    let fd = match shell_openat(dir, path, bun_sys::O::RDONLY, 0) {
+                        Ok(fd) => fd,
+                        Err(e) => {
+                            let buf =
+                                Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e).to_vec();
+                            // The reader was already taken to `None` above.
+                            return Self::write_failing_error(interp, cmd, &buf, 1);
+                        }
+                    };
+
+                    // Same rationale as the stdin arm; we own `fd` here so
+                    // close it afterwards.
+                    if let Some(result) = slurp_regular_file(fd) {
+                        let _ = bun_sys::close(fd);
+                        match result {
+                            Ok(buf) => match Self::write_buf_to_stdout(interp, cmd, &buf) {
+                                Some(y) => return y,
+                                None => continue,
+                            },
+                            Err(e) => {
+                                let buf =
+                                    Builtin::task_error_to_string(interp, cmd, Kind::Cat, &e)
+                                        .to_vec();
+                                return Self::write_failing_error(interp, cmd, &buf, 1);
+                            }
+                        }
+                    }
+
+                    let evtloop = Builtin::event_loop(interp, cmd);
+                    let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
+                    let reader = IOReader::init(fd, evtloop);
+                    reader.set_interp(interp_ptr);
+                    if let CatState::ExecFilepathArgs { reader: slot, .. } =
+                        &mut Self::state_mut(interp, cmd).state
+                    {
+                        *slot = Some(Arc::clone(&reader));
+                    }
+                    reader.add_reader(ReaderChildPtr {
+                        node: cmd,
+                        tag: ReaderTag::Cat,
+                    });
+                    reader.start()
                 }
-                reader.add_reader(ReaderChildPtr {
-                    node: cmd,
-                    tag: ReaderTag::Cat,
-                });
-                reader.start()
-            }
-            Branch::WaitingErr => Yield::failed(),
-            Branch::Done => Builtin::done(interp, cmd, 0),
+                Branch::WaitingErr => Yield::failed(),
+                Branch::Done => Builtin::done(interp, cmd, 0),
+            };
         }
     }
 
@@ -410,6 +467,53 @@ impl Cat {
             Step::Done(code) => Builtin::done(interp, cmd, code),
             Step::Next => Self::next(interp, cmd),
         }
+    }
+}
+
+/// On POSIX, if `fd` refers to a regular file, read it to EOF and return the
+/// buffer. Returns `None` for anything else (pipes, sockets, TTYs, character
+/// devices) so the caller falls through to `IOReader::start()`, which is
+/// epoll-driven. Regular files can't be registered with epoll on Linux, and
+/// `read(2)` on one is finite, so slurping here is the analogue of
+/// `IOWriter::do_file_write` for the read side.
+#[allow(unused_variables)]
+fn slurp_regular_file(fd: bun_sys::Fd) -> Option<bun_sys::Result<Vec<u8>>> {
+    #[cfg(unix)]
+    {
+        let st = bun_sys::fstat(fd).ok()?;
+        if !bun_sys::S::ISREG(st.st_mode as _) {
+            return None;
+        }
+        let size_hint = usize::try_from(st.st_size).unwrap_or(0);
+        let mut buf: Vec<u8> = Vec::new();
+        if buf.try_reserve(size_hint.saturating_add(1)).is_err() {
+            return Some(Err(bun_sys::Error::from_code(
+                bun_sys::E::ENOMEM,
+                bun_sys::Tag::read,
+            )));
+        }
+        loop {
+            if buf.len() == buf.capacity() && buf.try_reserve(64 * 1024).is_err() {
+                return Some(Err(bun_sys::Error::from_code(
+                    bun_sys::E::ENOMEM,
+                    bun_sys::Tag::read,
+                )));
+            }
+            // SAFETY: `bun_sys::read` only writes initialised bytes into the
+            // prefix it reports; `commit_spare` exposes exactly that prefix.
+            let spare = unsafe { bun_core::vec::spare_bytes_mut(&mut buf) };
+            match bun_sys::read(fd, spare) {
+                Ok(0) => return Some(Ok(buf)),
+                // SAFETY: `n` bytes were just initialised by the syscall.
+                Ok(n) => unsafe { bun_core::vec::commit_spare(&mut buf, n) },
+                Err(e) if e.is_retry() => continue,
+                Err(e) => return Some(Err(e)),
+            }
+        }
+    }
+    #[cfg(windows)]
+    {
+        None
     }
 }
 

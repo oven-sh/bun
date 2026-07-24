@@ -122,3 +122,161 @@ test("tsconfig 'extends' merge still works after freeing intermediates", async (
   expect(stdout.trim()).toBe("leaf");
   expect(exitCode).toBe(0);
 });
+
+// tsconfig "extends" accepts package specifiers (tsc resolves them against
+// node_modules, walking up parent directories), and the package config may
+// itself extend another file. The chained compilerOptions must apply: here
+// experimentalDecorators (legacy decorator call signature) and
+// emitDecoratorMetadata (design:* metadata emission) live in the base config.
+test("tsconfig 'extends' resolves package specifiers from node_modules", async () => {
+  using dir = tempDir("tsconfig-extends-package", {
+    "node_modules/fake-tsconfig/package.json": JSON.stringify({ name: "fake-tsconfig", version: "1.0.0" }),
+    // Layered like @adonisjs/tsconfig: the entry config extends a sibling
+    // base config inside the package, and the flags live only in the base.
+    "node_modules/fake-tsconfig/tsconfig.app.json": JSON.stringify({ extends: "./flags.json" }),
+    "node_modules/fake-tsconfig/flags.json": JSON.stringify({
+      compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+    }),
+    "tsconfig.json": JSON.stringify({ extends: "fake-tsconfig/tsconfig.app.json" }),
+    "index.ts": `
+      (Reflect as any).metadata = (key: string, value: any) => (target: any, prop: any) => {
+        if (key === "design:type") console.log("design:type:", value.name);
+      };
+      function dec(target: unknown, key?: unknown) {
+        console.log("decorator args:", typeof target, typeof key);
+      }
+      class Foo {
+        @dec name!: string;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Legacy decorators receive (prototype, key); TC39 would be (undefined, context).
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "design:type: String\ndecorator args: object string\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// TypeScript 5 allows "extends" to be an array. Each entry is resolved like a
+// single-string extends (relative or package specifier), and later entries
+// override earlier ones. The leaf config overrides all of them.
+test("tsconfig 'extends' accepts an array of base configs", async () => {
+  using dir = tempDir("tsconfig-extends-array", {
+    "lib/a/mod.ts": `export default "A";`,
+    "lib/b/mod.ts": `export default "B";`,
+    "a.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/a/*"] } } }),
+    "b.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/b/*"] } } }),
+    // paths is defined in both entries; the later one wins.
+    "tsconfig.json": JSON.stringify({ extends: ["./a.json", "./b.json"] }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "B\n", stderr: "", exitCode: 0 });
+});
+
+test("tsconfig 'extends' array entries may be package specifiers", async () => {
+  using dir = tempDir("tsconfig-extends-array-pkg", {
+    "lib/mod.ts": `export default "LIB";`,
+    "node_modules/@tsc/base/package.json": JSON.stringify({ name: "@tsc/base", version: "1.0.0" }),
+    "node_modules/@tsc/base/tsconfig.json": JSON.stringify({
+      compilerOptions: { paths: { "@lib/*": ["../../../lib/*"] } },
+    }),
+    "local.json": JSON.stringify({ compilerOptions: { jsx: "react" } }),
+    "tsconfig.json": JSON.stringify({ extends: ["@tsc/base", "./local.json"] }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "LIB\n", stderr: "", exitCode: 0 });
+});
+
+// The merge loop must carry experimentalDecorators from every config in the
+// chain, not just the one the merge starts from. With array extends, the
+// second entry is merged (not used as the starting config), so a flag set
+// only there exercises the merge path. No emitDecoratorMetadata here: that
+// flag alone already implies legacy semantics and would mask the bug.
+test("tsconfig 'extends' array merges experimentalDecorators from a non-first entry", async () => {
+  using dir = tempDir("tsconfig-extends-array-decorators", {
+    "paths.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+    "decorators.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+    "tsconfig.json": JSON.stringify({ extends: ["./paths.json", "./decorators.json"] }),
+    "index.ts": `
+      function dec(target: unknown, key?: unknown) {
+        console.log("decorator args:", typeof target, typeof key);
+      }
+      class Foo {
+        @dec name!: string;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // Legacy decorators receive (prototype, key); TC39 would be (undefined, context).
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "decorator args: object string\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// One unresolvable array entry must not drop the entries next to it.
+test("tsconfig 'extends' array keeps siblings when one entry is missing", async () => {
+  using dir = tempDir("tsconfig-extends-array-missing", {
+    "lib/mod.ts": `export default "OK";`,
+    "real.json": JSON.stringify({ compilerOptions: { paths: { "@lib/*": ["./lib/*"] } } }),
+    "tsconfig.json": JSON.stringify({ extends: ["./missing.json", "./real.json"] }),
+    "index.ts": `import x from "@lib/mod"; console.log(x);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
+});

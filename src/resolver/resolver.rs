@@ -3859,6 +3859,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         file: &[u8],
         dirname_fd: FD,
+        from_extends: bool,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
@@ -3903,12 +3904,15 @@ impl<'a> Resolver<'a> {
 
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let mut result = match TSConfigJSON::parse(
+            unsafe { &mut *self.log() },
+            &source,
+            &mut self.caches.json,
+            from_extends,
+        )? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         if result.has_base_url() {
             // this might leak
@@ -3938,6 +3942,53 @@ impl<'a> Resolver<'a> {
         // ownership — intermediate configs in an extends-chain are dropped via
         // `heap::take`, the final one is interned into the DirInfo cache.
         Ok(Some(result))
+    }
+
+    /// Resolve a tsconfig `extends` package specifier (e.g. `@tsconfig/node20`
+    /// or `pkg/tsconfig.base.json`) by walking up parent `node_modules`
+    /// directories like tsc: try `<path>/tsconfig.json`, `<path>`, `<path>.json`.
+    fn parse_tsconfig_extends_package(
+        &mut self,
+        start_dir: &[u8],
+        specifier: &[u8],
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let mut specifier_json = Vec::with_capacity(specifier.len() + b".json".len());
+        specifier_json.extend_from_slice(specifier);
+        specifier_json.extend_from_slice(b".json");
+
+        let mut dir = start_dir;
+        loop {
+            if !strings::eql(ResolvePath::basename(dir), b"node_modules") {
+                let node_modules: &[u8] = b"node_modules";
+                let candidates: [&[&[u8]]; 3] = [
+                    &[dir, node_modules, specifier, b"tsconfig.json"],
+                    &[dir, node_modules, specifier],
+                    &[dir, node_modules, &specifier_json],
+                ];
+                for parts in candidates {
+                    let abs_path = ResolvePath::join_abs_string_buf(
+                        dir,
+                        bufs!(tsconfig_path_abs),
+                        parts,
+                        bun_paths::Platform::AUTO,
+                    );
+                    match self.parse_tsconfig(abs_path, FD::INVALID, true) {
+                        // Candidate is missing or not a regular file: keep looking.
+                        Err(crate::Error::Sys(
+                            bun_errno::SystemErrno::ENOENT
+                            | bun_errno::SystemErrno::ENOTDIR
+                            | bun_errno::SystemErrno::EISDIR,
+                        )) => {}
+                        result => return result,
+                    }
+                }
+            }
+            let parent = Dirname::dirname(dir);
+            if parent.len() >= dir.len() {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
+            dir = parent;
+        }
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -6313,6 +6364,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         FD::ZERO
                     },
+                    false,
                 ) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
@@ -6352,26 +6404,58 @@ impl<'a> Resolver<'a> {
                 if let Some(tsconfig_json) = parsed_tsconfig {
                     let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
                         BoundedArray::default();
-                    parent_configs.append(tsconfig_json)?;
-                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
+                    // `parent_config_ptr`/`merged_config` are heap TSConfigJSON
                     // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-                    // this extends-chain walk and freed via heap::take below. Hold as
-                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
-                    // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
-                    );
-                    while !current.extends.is_empty() {
-                        let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
+                    // this extends-chain walk and freed via heap::take below.
+                    //
+                    // `extends` may be an array (TS 5). Flatten the extends tree so
+                    // the merge pop order is: first entry's deepest base, ..., first
+                    // entry, ..., last entry's deepest base, ..., last entry, leaf.
+                    // A worklist DFS (pop, record, push children forward) yields that
+                    // order in `parent_configs` and matches the prior behaviour for a
+                    // single-string extends.
+                    let mut worklist: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
+                    worklist.append(tsconfig_json)?;
+                    'walk: while let Some(current_ptr) = worklist.pop() {
+                        if parent_configs.append(current_ptr).is_err() {
+                            // Degenerate >64-config extends tree (or a cycle):
+                            // drop this config and merge what was collected.
+                            TSConfigJSON::destroy(unsafe { bun_core::heap::take(current_ptr) });
+                            break 'walk;
+                        }
+                        let current = bun_ptr::BackRef::from(
+                            core::ptr::NonNull::new(current_ptr).expect("heap alloc"),
                         );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
+                        let ts_dir_name = Dirname::dirname(&current.abs_path);
+                        for entry in current.extends.iter() {
+                            // tsc resolves non-relative `extends` specifiers
+                            // (e.g. "@tsconfig/node20") against node_modules.
+                            let parse_result = if is_package_path(entry) {
+                                self.parse_tsconfig_extends_package(ts_dir_name, entry)
+                            } else {
+                                let abs_path = ResolvePath::join_abs_string_buf(
+                                    ts_dir_name,
+                                    bufs!(tsconfig_path_abs),
+                                    &[ts_dir_name, entry],
+                                    bun_paths::Platform::AUTO,
+                                );
+                                self.parse_tsconfig(abs_path, FD::INVALID, true)
+                            };
+                            match parse_result {
+                                Ok(Some(parent)) => {
+                                    let raw = bun_core::heap::into_raw(parent);
+                                    if worklist.append(raw).is_err() {
+                                        // Degenerate >64-config extends tree (or a
+                                        // cycle): drop this base and stop walking.
+                                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(raw) });
+                                        break 'walk;
+                                    }
+                                }
+                                // Found but unparseable; the JSON parser already
+                                // logged it. Skip so sibling entries still apply.
+                                Ok(None) => {}
+                                // Missing entry: skip it, keep sibling entries
+                                // (tsc errors here, esbuild warns and continues).
                                 Err(err) => {
                                     let _ = self.log_mut().add_debug_fmt(
                                         None,
@@ -6379,19 +6463,18 @@ impl<'a> Resolver<'a> {
                                         format_args!(
                                             "{} loading tsconfig.json extends {}",
                                             bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
+                                            bun_core::fmt::quote(&entry[..])
                                         ),
                                     );
-                                    break;
                                 }
-                            };
-                        if let Some(parent_config) = parent_config_maybe {
-                            parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
-                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                            );
-                        } else {
-                            break;
+                            }
+                        }
+                    }
+                    // Drain anything an overflow break left on the worklist so it
+                    // is still merged (and freed) rather than leaked.
+                    while let Some(pending) = worklist.pop() {
+                        if parent_configs.append(pending).is_err() {
+                            TSConfigJSON::destroy(unsafe { bun_core::heap::take(pending) });
                         }
                     }
 
@@ -6405,6 +6488,11 @@ impl<'a> Resolver<'a> {
                         let mc = unsafe { &mut *merged_config };
                         mc.emit_decorator_metadata =
                             mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+                        mc.experimental_decorators =
+                            mc.experimental_decorators || parent_config.experimental_decorators;
+                        if let Some(value) = parent_config.use_define_for_class_fields {
+                            mc.use_define_for_class_fields = Some(value);
+                        }
                         if !parent_config.base_url.is_empty() {
                             mc.base_url = core::mem::take(&mut parent_config.base_url);
                         }

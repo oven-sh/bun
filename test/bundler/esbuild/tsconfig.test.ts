@@ -787,6 +787,163 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
     },
   });
+  itBundled("tsconfig/ExtendsPackageExactFile", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "@scope/configs/tsconfig.base.json"
+        }
+      `,
+      "/Users/user/project/node_modules/@scope/configs/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
+  itBundled("tsconfig/ExtendsPackageDirectory", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "my-configs"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
+  itBundled("tsconfig/ExtendsPackageImplicitJson", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "my-configs/base"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
+  // The package config itself extends a sibling file, and the effective
+  // options live only in the base (the @adonisjs/tsconfig layout). The chain
+  // must keep going even though the config sits inside node_modules.
+  itBundled("tsconfig/ExtendsPackageLayered", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "my-configs/tsconfig.app.json"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/tsconfig.app.json": /* json */ `
+        {
+          "extends": "./tsconfig.base.json"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
+  // TypeScript 5 array extends: later entries override earlier ones, and the
+  // leaf config overrides all of them.
+  itBundled("tsconfig/ExtendsArrayOverrideOrder", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": ["./a.json", "./b.json"]
+        }
+      `,
+      "/Users/user/project/src/a.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "fromA"
+          }
+        }
+      `,
+      "/Users/user/project/src/b.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsxFactory": "fromB"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`fromB("div", null)`);
+      api.expectFile("/Users/user/project/out.js").not.toContain(`fromA`);
+    },
+  });
+  itBundled("tsconfig/ExtendsArrayNested", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": ["./a.json", "./b.json"]
+        }
+      `,
+      "/Users/user/project/src/a.json": /* json */ `
+        {
+          "compilerOptions": { "jsxFactory": "fromA" }
+        }
+      `,
+      "/Users/user/project/src/b.json": /* json */ `
+        {
+          "extends": "./b-base.json"
+        }
+      `,
+      "/Users/user/project/src/b-base.json": /* json */ `
+        {
+          "compilerOptions": { "jsx": "react", "jsxFactory": "fromBBase" }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`fromBBase("div", null)`);
+    },
+  });
   return;
   itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED

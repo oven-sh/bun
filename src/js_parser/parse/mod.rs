@@ -1437,6 +1437,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// Returns true when the statement at `loc` begins with a string-literal quote
+    /// (`"` or `'`). A bare string-literal statement starts at the quote; a
+    /// parenthesized expression like `("use strict")` starts at `(`. Only a bare
+    /// string literal is a Directive Prologue entry.
+    fn stmt_starts_with_quote(source: &bun_ast::Source, loc: bun_ast::Loc) -> bool {
+        matches!(source.contents().get(loc.i()), Some(b'"') | Some(b'\''))
+    }
+
+    /// Returns true when the string-literal statement at `loc` has a raw source
+    /// form — the bytes between the quotes, before escape sequences are decoded —
+    /// exactly equal to `directive`. ECMA-262 requires a Directive Prologue entry
+    /// to contain no `EscapeSequence`, so e.g. `"use\x20strict"` is not a Use
+    /// Strict Directive: it must not enable strict mode, set the scope's
+    /// strict-mode flag (which also feeds CommonJS detection), or trip the
+    /// non-simple-parameter early error. `directive` is expected to be plain
+    /// ASCII (`use strict` / `use asm`); any escape makes the raw form differ.
+    fn directive_raw_eq(source: &bun_ast::Source, loc: bun_ast::Loc, directive: &[u8]) -> bool {
+        let range = source.range_of_string(loc);
+        // `range` spans both quotes, so the inner text is [start+1, end-1).
+        if range.len < 2 {
+            return false;
+        }
+        let start = loc.i() + 1;
+        let end = range.end_i().saturating_sub(1);
+        source.contents().get(start..end) == Some(directive)
+    }
+
     pub fn parse_stmts_up_to(
         &mut self,
         eend: T,
@@ -1476,21 +1503,82 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_directive_prologue {
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
+                    // A Directive Prologue entry must "consist entirely of a
+                    // StringLiteral token" (ECMA-262). A template literal or a
+                    // parenthesized string (e.g. `("use strict")`) is not such a token,
+                    // so it ends the prologue and is never itself a directive. The
+                    // statement begins at the opening quote only when it is a bare string
+                    // literal; for a parenthesized expression it begins at `(`.
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        if !str_.prefer_template && Self::stmt_starts_with_quote(p.source, stmt.loc)
+                        {
                             is_directive_prologue = true;
 
-                            if str_.eql_comptime(b"use strict") {
-                                skip = true;
-                                // Track "use strict" directives
-                                p.current_scope_mut().strict_mode =
-                                    StrictModeKind::ExplicitStrictMode;
-                                if p.current_scope == p.module_scope {
-                                    p.module_scope_directive_loc = stmt.loc;
+                            // A directive's raw source form must contain no escape
+                            // sequence (ECMA-262 Directive Prologue), so compare the raw
+                            // bytes between the quotes rather than the cooked value —
+                            // otherwise `"use\x20strict"` would be mistaken for `use strict`.
+                            if Self::directive_raw_eq(p.source, stmt.loc, b"use strict") {
+                                // Track "use strict" directives — but only in scopes that
+                                // actually have a Directive Prologue: the script/module body,
+                                // function bodies, and TypeScript enum/namespace bodies
+                                // (`Kind::Entry`, which lower to function bodies). Elsewhere
+                                // the string must not make the scope strict, or a reserved
+                                // word after a block-scope `"use strict"` would spuriously
+                                // error where Node accepts it.
+                                if matches!(
+                                    p.current_scope().kind,
+                                    js_ast::scope::Kind::Entry | js_ast::scope::Kind::FunctionBody
+                                ) {
+                                    p.current_scope_mut().strict_mode =
+                                        StrictModeKind::ExplicitStrictMode;
                                 }
-                            } else if str_.eql_comptime(b"use asm") {
+                                if p.current_scope == p.module_scope {
+                                    // The module-scope directive is dropped here and
+                                    // re-synthesized during printing only when the module
+                                    // is wrapped as CommonJS (see `preserve_strict_mode` in
+                                    // `to_ast`). It also doubles as a CommonJS-detection
+                                    // heuristic, so it must not be emitted as a directive.
+                                    skip = true;
+                                    p.module_scope_directive_loc = stmt.loc;
+                                } else if p.current_scope().kind
+                                    == js_ast::scope::Kind::FunctionBody
+                                {
+                                    // Keep the directive inside function bodies: JSC treats
+                                    // CommonJS output as a sloppy Program, so a function that
+                                    // is only strict because of its own "use strict" would
+                                    // otherwise run sloppy. Re-emit it as a directive so the
+                                    // printed function body stays strict (matches esbuild).
+                                    let bytes = str_.string(p.arena).expect("OOM");
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(bytes),
+                                        },
+                                        stmt.loc,
+                                    );
+                                } else {
+                                    // Only function bodies and the script/module body have a
+                                    // Directive Prologue (ECMA-262). In a plain block, `try`/
+                                    // `catch`, `switch`, or class static block, `"use strict"`
+                                    // is an ordinary no-op string statement, not a directive, so
+                                    // drop it — emitting it could let a minify pass hoist the
+                                    // bare directive out of an unwrapped single-statement block.
+                                    skip = true;
+                                }
+                            } else if Self::directive_raw_eq(p.source, stmt.loc, b"use asm") {
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                            } else if str_.eql_comptime(b"use strict")
+                                || str_.eql_comptime(b"use asm")
+                            {
+                                // The cooked value matches a reserved directive but the raw
+                                // form did not (it contained an escape), so per spec this is
+                                // NOT a directive. Emitting it as a directive with the cooked
+                                // value would spuriously enable strict mode; printing the raw
+                                // form would change the string's value. It is a side-effect-free
+                                // prologue string, so drop it — leaving the function sloppy,
+                                // which matches Node.
+                                skip = true;
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(

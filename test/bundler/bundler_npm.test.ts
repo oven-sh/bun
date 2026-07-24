@@ -57,9 +57,9 @@ describe("bundler", () => {
           "../entry.tsx",
         ],
         mappings: [
-          ["react.development.js:524:'getContextName'", "1:5623:nt"],
+          ["react.development.js:524:'getContextName'", "1:5636:nt"],
           ["react.development.js:2495:'actScopeDepth'", "23:4082:ar++"],
-          ["react.development.js:696:''Component'", '1:7685:\'Component "%s"'],
+          ["react.development.js:696:''Component'", '1:7698:\'Component "%s"'],
           ["entry.tsx:6:'\"Content-Type\"'", '100:18808:"Content-Type"'],
           ["entry.tsx:11:'<html>'", "100:19062:void"],
           ["entry.tsx:23:'await'", "100:19161:await"],
@@ -67,7 +67,10 @@ describe("bundler", () => {
       },
     },
     expectExactFilesize: {
-      "out/entry.js": 221969,
+      // Bundling preserves the function-body "use strict" directive inside each of
+      // React's 4 CJS development-bundle IIFEs (~13 bytes each), matching esbuild.
+      // See https://github.com/oven-sh/bun/pull/31807.
+      "out/entry.js": 222021,
     },
     run: {
       stdout: "<!DOCTYPE html><html><body><h1>Hello World</h1><p>This is an example.</p></body></html>",

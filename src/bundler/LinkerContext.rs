@@ -2214,12 +2214,6 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // `init` stores an erased `*mut self` and returns a `Copy` value; the
-        // `&mut self` reborrow ends here, so the shared `self.*` reads below
-        // can coexist in `print_options`.
-        let require_or_import_meta_for_source_callback =
-            js_printer::RequireOrImportMetaCallback::init(self);
-
         // SAFETY: parse_graph backref.
         let parse_graph = unsafe { &*self.parse_graph };
 
@@ -2254,7 +2248,8 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback,
+            require_or_import_meta_for_source_callback:
+                js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(
                 &self.graph.files.items_line_offset_table()[source_index.get() as usize],
             ),
@@ -2336,7 +2331,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
@@ -2592,7 +2587,7 @@ impl<'a> LinkerContext<'a> {
 impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     #[inline]
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {

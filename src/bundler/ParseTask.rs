@@ -2221,10 +2221,7 @@ pub mod parse_worker {
         log: &mut Log,
         entry: &mut CacheEntry,
     ) -> core::result::Result<Success, AnyError> {
-        // SAFETY: worker arena is pinned for the bundle pass. `'static` matches
-        // `JSAst = BundledAst<'static>`; the arena outlives all reads through the
-        // returned ASTs.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(this.arena.get()) };
+        let bump: &'static Bump = this.arena();
         let worker_ctx = this.ctx;
 
         let loader = {
@@ -2314,10 +2311,9 @@ pub mod parse_worker {
         // `get_ast` takes them raw because `resolver` may equal
         // `&(*transpiler).resolver` (see its doc).
         let data = this.data.as_mut().expect("Worker.data set in create()");
-        let main_is_browser = data.transpiler.options.target == options::Target::Browser;
-        let known_uses_other = task.known_target == options::Target::Browser && !main_is_browser;
+        let known_uses_other = data.uses_other_transpiler_for(task.known_target);
         let final_uses_other = if rebind_to_browser {
-            !main_is_browser
+            data.uses_other_transpiler_for(options::Target::Browser)
         } else {
             known_uses_other
         };

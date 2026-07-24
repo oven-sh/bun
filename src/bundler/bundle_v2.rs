@@ -2213,27 +2213,25 @@ pub mod bv2_impl {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
-                        if err == _resolver::Error::ModuleNotFound && self.dev_server.is_some() {
-                            if !had_busted_dir_cache {
-                                // Only re-query if we previously had something cached.
-                                if self
-                                    .transpiler_for_target(target)
-                                    .resolver
-                                    .bust_dir_cache_from_specifier(
-                                        &import_record.source_file,
-                                        &import_record.specifier,
-                                    )
-                                {
-                                    had_busted_dir_cache = true;
-                                    continue;
+                        if err == _resolver::Error::ModuleNotFound {
+                            if let Some(dev) = self.dev_server {
+                                if !had_busted_dir_cache {
+                                    // Only re-query if we previously had something cached.
+                                    if self
+                                        .transpiler_for_target(target)
+                                        .resolver
+                                        .bust_dir_cache_from_specifier(
+                                            &import_record.source_file,
+                                            &import_record.specifier,
+                                        )
+                                    {
+                                        had_busted_dir_cache = true;
+                                        continue;
+                                    }
                                 }
-                            }
 
-                            // Tell Bake's Dev Server to wait for the file to be imported.
-                            self.dev_server
-                                .as_ref()
-                                .unwrap()
-                                .track_resolution_failure(
+                                // Tell Bake's Dev Server to wait for the file to be imported.
+                                dev.track_resolution_failure(
                                     &import_record.source_file,
                                     &import_record.specifier,
                                     target.bake_graph(),
@@ -2242,13 +2240,14 @@ pub mod bv2_impl {
                                 )
                                 .expect("oom");
 
-                            // Turn this into an invalid AST, so that incremental mode skips it when printing.
-                            // SAFETY: truncating to len 0 never exposes uninitialized elements.
-                            unsafe {
-                                self.graph.ast.items_parts_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .set_len((0) as usize)
-                            };
+                                // Turn this into an invalid AST, so that incremental mode skips it when printing.
+                                // SAFETY: truncating to len 0 never exposes uninitialized elements.
+                                unsafe {
+                                    self.graph.ast.items_parts_mut()
+                                        [import_record.importer_source_index as usize]
+                                        .set_len((0) as usize)
+                                };
+                            }
                         }
 
                         let handles_import_errors;

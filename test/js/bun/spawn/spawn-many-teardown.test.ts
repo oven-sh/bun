@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // Regression coverage for a Windows-only panic: integer overflow in
 // uv.Loop.active_handles during process teardown when a large number of
@@ -61,3 +61,65 @@ test("tearing down hundreds of spawned subprocesses at exit does not overflow th
   // surface as a non-zero exit code.
   expect(exitCode).toBe(0);
 }, 120_000);
+
+// https://github.com/oven-sh/bun/issues/28175
+// Exercises us_loop_free on the per-VM spawnSync libuv loop at Worker teardown
+// under the debug build, which aborts the child (BUN_PANIC) if the loop drain
+// leaves uv_loop_close() unable to deregister the loop from uv__loops[].
+test.skipIf(!isWindows)(
+  "the per-worker spawnSync libuv loop is fully drained and closed at worker teardown",
+  async () => {
+    using dir = tempDir("spawnsync-uvloop-teardown", {
+      "worker.mjs": /* js */ `
+        import { parentPort } from "node:worker_threads";
+        const exe = process.execPath;
+        // An extra "pipe" stdio entry lands a uv_pipe_t on the spawn-sync loop
+        // that nothing reads; finalizeStreams only uv_close()s it, so its close
+        // callback is still pending when the worker tears down.
+        Bun.spawnSync({ cmd: [exe, "-e", "1"], stdio: ["ignore", "pipe", "pipe", "pipe"] });
+        // A stdin write the child never drains plus a timeout, so the timeout
+        // timer (whose callback calls uv_stop on the loop) and the writer are
+        // both live late into the teardown.
+        Bun.spawnSync({
+          cmd: [exe, "-e", "Bun.sleepSync(60_000)"],
+          timeout: 25,
+          stdin: Buffer.alloc(1 << 20, 66),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        parentPort.postMessage("done");
+      `,
+      "main.mjs": /* js */ `
+        import { Worker } from "node:worker_threads";
+        for (let i = 0; i < 6; i++) {
+          const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+          const { promise, resolve, reject } = Promise.withResolvers();
+          worker.on("message", resolve);
+          worker.on("error", reject);
+          worker.on("exit", code => reject(new Error("worker exited before posting: " + code)));
+          await promise;
+          await worker.terminate();
+        }
+        console.log("OK");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    if (exitCode !== 0) {
+      console.error(stderr);
+    }
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
+  },
+  120_000,
+);

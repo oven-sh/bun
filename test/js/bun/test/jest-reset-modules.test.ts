@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-describe("jest.resetModules", () => {
+describe.concurrent("jest.resetModules", () => {
   test("exists and is chainable on jest and vi", async () => {
     using dir = tempDir("jest-reset-modules-exists", {
       "exists.test.ts": `

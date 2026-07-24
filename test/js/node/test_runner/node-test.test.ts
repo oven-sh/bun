@@ -1096,6 +1096,59 @@ test.concurrent(
 );
 
 test.concurrent(
+  "run(): causes JSON cannot encode do not drop the event line",
+  async () => {
+    // node's v8 serializer carries BigInt and cyclic causes across the process
+    // boundary; our JSON pipe re-tags BigInt (restored as a real bigint) and
+    // degrades cycles to their inspected string. Before the envelope handled
+    // these, JSON.stringify threw and the whole test:fail line vanished,
+    // leaving a file-level failure with undercounted tests.
+    using dir = tempDir("node-test-unencodable-cause", {
+      "f.test.mjs": `
+      import { test } from 'node:test';
+      test('bigint cause', () => { throw Object.assign(new Error('x'), { cause: 42n }); });
+      test('circular cause', () => { const c = {}; c.self = c; throw Object.assign(new Error('y'), { cause: c }); });
+      test('after', () => {});
+    `,
+      "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))] });
+      const out = { events: [], counts: null };
+      stream.on('test:pass', function onPass(t) { out.events.push(['pass', t.name]); });
+      stream.on('test:fail', function onFail(t) {
+        const c = t.details?.error?.cause?.cause;
+        out.events.push(['fail', t.name, typeof c, String(c).includes('Circular') || String(c)]);
+      });
+      stream.on('test:summary', function onSummary(t) {
+        if (t.file === undefined) out.counts = { tests: t.counts.tests, failed: t.counts.failed, passed: t.counts.passed };
+      });
+      for await (const _ of stream);
+      console.log(JSON.stringify(out));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Counts and event order match node v26.3.0; the bigint round-trips intact.
+    expect(JSON.parse(stdout.trim() || "null")).toEqual({
+      events: [
+        ["fail", "bigint cause", "bigint", "42"],
+        ["fail", "circular cause", "string", true],
+        ["pass", "after"],
+      ],
+      counts: { tests: 3, failed: 2, passed: 1 },
+    });
+  },
+  30_000,
+);
+
+test.concurrent(
   "run({isolation:'none'}): a suite's duration spans all of its children",
   async () => {
     using dir = tempDir("node-test-suite-duration", {

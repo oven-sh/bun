@@ -672,7 +672,12 @@ function rebuildError(serialized: any, depth = 0): Error {
   if (diff !== undefined) error.diff = diff;
   if (failureType !== undefined) error.failureType = failureType;
   if (cause !== undefined && depth < 8)
-    error.cause = cause?.nonError === true ? cause.value : rebuildError(cause, depth + 1);
+    error.cause =
+      cause?.nonError === true
+        ? cause.bigint !== undefined
+          ? BigInt(cause.bigint)
+          : cause.value
+        : rebuildError(cause, depth + 1);
   return error;
 }
 
@@ -852,12 +857,25 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
-// A non-Error cause crosses the pipe by value (node's v8 serializer preserves
-// primitives and plain objects); the envelope tags it so the parent does not
-// rebuild it as an Error.
+// A non-Error cause crosses the pipe by value when JSON can carry it (node's
+// v8 serializer preserves primitives and plain objects); the envelope tags it
+// so the parent does not rebuild it as an Error. BigInt is re-tagged so the
+// parent restores the real value, and anything JSON cannot encode (cycles,
+// symbols, functions) degrades to its inspected string — JSON.stringify
+// throwing here would silently drop the whole event line on the pipe.
 function serializeRunCause(cause: unknown, depth: number) {
   if (Error.isError(cause)) return serializeRunError(cause, depth);
-  return { __proto__: null, nonError: true, value: cause };
+  const t = typeof cause;
+  if (t === "bigint") return { __proto__: null, nonError: true, bigint: String(cause) };
+  if (t !== "symbol" && t !== "function") {
+    try {
+      JSON.stringify(cause);
+      return { __proto__: null, nonError: true, value: cause };
+    } catch {
+      // fall through to the inspected-string form
+    }
+  }
+  return { __proto__: null, nonError: true, value: require("node:util").inspect(cause) };
 }
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.

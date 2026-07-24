@@ -1,4 +1,7 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -190,6 +193,108 @@ describe("bundler", () => {
         stdout: "./lib/second/test.file",
       },
     ],
+  });
+  // `[dir]` must resolve relative to the configured root even when root and
+  // the asset source path spell the same directory differently (Windows 8.3
+  // short names in the cwd, or a symlinked `Bun.build({ files })` key).
+  test("naming/AssetNamingDirCanonicalRoot", async () => {
+    using base = tempDir("asset-naming-dir-canon", {
+      "real/src/lib/first/.keep": "",
+      "real/src/lib/second/.keep": "",
+    });
+    const real = join(String(base), "real");
+    const link = join(String(base), "project-link");
+    // A junction needs no elevation on Windows; on POSIX this is a plain
+    // directory symlink. Either way `root` below canonicalizes to `real/src`
+    // while the `files` map keys keep the `project-link` spelling.
+    symlinkSync(real, link, isWindows ? "junction" : "dir");
+
+    const entry = join(link, "src/lib/first/file.js").replaceAll("\\", "/");
+    const asset = join(link, "src/lib/second/data.file").replaceAll("\\", "/");
+    const root = join(link, "src");
+
+    const script = `
+      const result = await Bun.build({
+        entrypoints: [${JSON.stringify(entry)}],
+        files: {
+          ${JSON.stringify(entry)}: 'import f from "../second/data.file"; console.log(f);',
+          ${JSON.stringify(asset)}: "this is a file",
+        },
+        root: ${JSON.stringify(root)},
+        naming: { entry: "hello.[ext]", asset: "[dir]/test.[ext]" },
+        loader: { ".file": "file" },
+      });
+      if (!result.success) {
+        for (const m of result.logs) console.error(String(m));
+        process.exit(1);
+      }
+      for (const out of result.outputs) console.log(out.kind + " " + out.path);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(base),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const out = stdout.replaceAll("\\", "/");
+    const assetLine = out.split("\n").find(l => l.startsWith("asset "));
+    expect({ assetLine, stderr, exitCode }).toEqual({
+      assetLine: "asset ./lib/second/test.file",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(out).not.toContain("_.._");
+  });
+  // The on-disk canonicalization above must not apply to a plugin asset whose
+  // virtual path happens to collide with a real cwd subdirectory: `[dir]` for
+  // a non-file namespace stays a pure string computation.
+  test("naming/AssetNamingDirVirtualNamespace", async () => {
+    using base = tempDir("asset-naming-dir-virt", {
+      "src/.keep": "",
+      "unrelated-target/.keep": "",
+    });
+    symlinkSync(join(String(base), "unrelated-target"), join(String(base), "assets"), isWindows ? "junction" : "dir");
+
+    const entry = join(String(base), "src/entry.js").replaceAll("\\", "/");
+    const script = `
+      const result = await Bun.build({
+        entrypoints: [${JSON.stringify(entry)}],
+        files: { ${JSON.stringify(entry)}: 'import f from "virt:assets/icon.bin"; console.log(f);' },
+        root: ${JSON.stringify(join(String(base), "src"))},
+        naming: { entry: "hello.[ext]", asset: "[dir]/[name].[ext]" },
+        plugins: [{
+          name: "virt",
+          setup(b) {
+            b.onResolve({ filter: /^virt:/ }, a => ({ path: a.path.slice(5), namespace: "virt" }));
+            b.onLoad({ filter: /.*/, namespace: "virt" }, () => ({ contents: "hi", loader: "file" }));
+          },
+        }],
+      });
+      if (!result.success) { for (const m of result.logs) console.error(String(m)); process.exit(1); }
+      for (const out of result.outputs) console.log(out.kind + " " + out.path);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(base),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const out = stdout.replaceAll("\\", "/");
+    const assetLine = out.split("\n").find(l => l.startsWith("asset "));
+    expect({ assetLine, stderr, exitCode }).toEqual({
+      assetLine: "asset ./_.._/assets/icon.bin",
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(out).not.toContain("unrelated-target");
   });
   itBundled("naming/AssetNoOverwrite", {
     todo: true,

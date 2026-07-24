@@ -5,7 +5,6 @@ use core::sync::atomic::AtomicUsize;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
 use bun_core::strings;
-use bun_paths::{PathBuffer, resolve_path};
 use bun_sourcemap::SourceMapPieces;
 use bun_wyhash::{self, Wyhash};
 
@@ -634,46 +633,11 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
         }
 
         if chunk.template.needs(PlaceholderField::Dir) {
-            // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-            let dir_path: &[u8] = if !pathname.dir.is_empty() {
-                pathname.dir
-            } else {
-                b"."
-            };
-            let mut real_path_buf = PathBuffer::uninit();
-            let dir: &[u8] = 'dir: {
-                let Ok(dir_file) = bun_sys::File::openat(
-                    bun_sys::Fd::cwd(),
-                    dir_path,
-                    bun_sys::O::PATH | bun_sys::O::DIRECTORY,
-                    0,
-                ) else {
-                    break 'dir &*resolve_path::normalize_buf::<bun_paths::platform::Auto>(
-                        dir_path,
-                        &mut real_path_buf.0,
-                    );
-                };
-
-                match dir_file.get_path(&mut real_path_buf) {
-                    Ok(p) => break 'dir p,
-                    Err(err) => {
-                        // Split-borrow — see `LinkerContext::log_disjoint`.
-                        this.log_disjoint().add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{}: Failed to get full path for directory '{}'",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(dir_path)
-                            ),
-                        );
-                        return Err(crate::Error::BuildFailed);
-                    }
-                }
-            };
-
-            let root_dir = &this.resolver().opts.root_dir;
-            chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
+            chunk.template.placeholder.dir = crate::options::source_dir_relative_to_root(
+                pathname.dir,
+                &this.resolver().opts.root_dir,
+                true,
+            )?;
         }
     }
 

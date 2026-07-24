@@ -4097,23 +4097,22 @@ pub mod bv2_impl {
                         let source = &mut sources[index];
 
                         let output_path: Box<[u8]> = {
-                            // TODO: outbase
-                            let pathname =
-                                Fs::PathName::init(bun_paths::resolve_path::relative_platform::<
-                                    bun_paths::resolve_path::platform::Loose,
-                                    false,
-                                >(
-                                    &self.transpiler.options.root_dir,
-                                    source.path.text,
-                                ));
+                            let pathname = Fs::PathName::init(source.path.text);
 
                             template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
-                            template.placeholder.dir = pathname.dir.to_vec().into_boxed_slice();
                             let mut ext: &[u8] = pathname.ext;
                             if !ext.is_empty() && ext[0] == b'.' {
                                 ext = &ext[1..];
                             }
                             template.placeholder.ext = ext.to_vec().into_boxed_slice();
+
+                            if template.needs(options::PlaceholderField::Dir) {
+                                template.placeholder.dir = options::source_dir_relative_to_root(
+                                    pathname.dir,
+                                    &self.transpiler.options.root_dir,
+                                    source.path.is_file(),
+                                )?;
+                            }
 
                             if template.needs(options::PlaceholderField::Hash) {
                                 template.placeholder.hash =

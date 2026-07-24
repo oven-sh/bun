@@ -1079,6 +1079,71 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
   });
 });
 
+// The hand-rolled pkcs8 parser consumed everything after the CurvePrivateKey
+// tag as key material, so the optional attributes [0] and publicKey [1] fields
+// of an RFC 5958 v2 OneAsymmetricKey made the seed 69 bytes and the import was
+// rejected. https://github.com/oven-sh/bun/issues/35432
+describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
+  const fromHex = (hex: string) => Uint8Array.from(Buffer.from(hex, "hex"));
+  const der = (...parts: string[]) => {
+    const body = parts.join("");
+    return fromHex("30" + (body.length / 2).toString(16).padStart(2, "0") + body);
+  };
+
+  // RFC 8032 section 7.1 test vector 1
+  const edSeed = "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60";
+  const edPub = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+  const edAlgorithm = "300506032b6570";
+  // RFC 7748 section 6.1
+  const xAlicePriv = "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a";
+  const xAlicePub = "8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a";
+  const xBobPub = "de9edb7d7b7dc1b4d35b61c2ece435373f8343c85b78674dadfc7e146f882b4f";
+  const xShared = "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742";
+  const xAlgorithm = "300506032b656e";
+
+  const version2 = "020101";
+  const emptyAttributes = "a000";
+  const wrapSeed = (seed: string) => "04220420" + seed;
+  const publicKeyField = (pub: string) => "812100" + pub;
+
+  const signsAndVerifies = async (pkcs8: Uint8Array) => {
+    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"]);
+    const publicKey = await crypto.subtle.importKey("raw", fromHex(edPub), "Ed25519", false, ["verify"]);
+    const message = new TextEncoder().encode("RFC 5958 OneAsymmetricKey");
+    const signature = await crypto.subtle.sign("Ed25519", privateKey, message);
+    return crypto.subtle.verify("Ed25519", publicKey, signature, message);
+  };
+
+  it("Ed25519 with attributes [0] and publicKey [1]", async () => {
+    const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes, publicKeyField(edPub));
+    expect(await signsAndVerifies(pkcs8)).toBe(true);
+  });
+
+  it("Ed25519 with only publicKey [1]", async () => {
+    expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub)))).toBe(true);
+  });
+
+  it("Ed25519 with only attributes [0]", async () => {
+    expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes))).toBe(true);
+  });
+
+  it("X25519 with attributes [0] and publicKey [1]", async () => {
+    const pkcs8 = der(version2, xAlgorithm, wrapSeed(xAlicePriv), emptyAttributes, publicKeyField(xAlicePub));
+    const privateKey = await crypto.subtle.importKey("pkcs8", pkcs8, "X25519", false, ["deriveBits"]);
+    const bobKey = await crypto.subtle.importKey("raw", fromHex(xBobPub), "X25519", false, []);
+    const shared = await crypto.subtle.deriveBits({ name: "X25519", public: bobKey }, privateKey, 256);
+    expect(Buffer.from(shared).toString("hex")).toBe(xShared);
+  });
+
+  it("rejects a CurvePrivateKey that does not fill the privateKey OCTET STRING", async () => {
+    // inner OCTET STRING claims 32 bytes but the outer one only carries 16
+    const truncated = der(version2, edAlgorithm, "04120420" + edSeed.slice(0, 32));
+    await expect(crypto.subtle.importKey("pkcs8", truncated, "Ed25519", false, ["sign"])).rejects.toThrow(
+      "Invalid keyData",
+    );
+  });
+});
+
 // importKey's empty-usages guard got Node's message; the same predicate in
 // generateKey, deriveKey's inner import and unwrapKey's inner import still
 // carried the empty-message SyntaxError.

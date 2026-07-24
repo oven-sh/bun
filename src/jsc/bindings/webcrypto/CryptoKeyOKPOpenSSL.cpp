@@ -48,6 +48,24 @@ static bool parsesAsSubjectPublicKeyInfo(const Vector<uint8_t>& keyData)
     return !!EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
 }
 
+// Decodes the DER length at keyData[index] and advances index past the length
+// bytes. Returns std::nullopt if the encoding is truncated or wider than size_t.
+static std::optional<size_t> readDERLength(const Vector<uint8_t>& keyData, size_t& index)
+{
+    if (index >= keyData.size())
+        return std::nullopt;
+    uint8_t firstByte = keyData[index++];
+    if (firstByte < MaxLengthInOneByte)
+        return firstByte;
+    size_t numBytes = firstByte & 0x7f;
+    if (!numBytes || numBytes > sizeof(size_t) || keyData.size() - index < numBytes)
+        return std::nullopt;
+    size_t length = 0;
+    for (size_t i = 0; i < numBytes; ++i)
+        length = (length << 8) | keyData[index++];
+    return length;
+}
+
 static bool parsesAsPrivateKeyInfo(const Vector<uint8_t>& keyData)
 {
     const uint8_t* ptr = keyData.begin();
@@ -213,8 +231,9 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
     return WTF::move(result);
 }
 
-// Per https://www.ietf.org/rfc/rfc5280.txt
-// PrivateKeyInfo ::= SEQUENCE { version INTEGER, privateKeyAlgorithm AlgorithmIdentifier, privateKey OCTET STRING }
+// Per https://www.rfc-editor.org/rfc/rfc5958 (OneAsymmetricKey, superseding RFC 5208 PrivateKeyInfo)
+// OneAsymmetricKey ::= SEQUENCE { version INTEGER, privateKeyAlgorithm AlgorithmIdentifier, privateKey OCTET STRING,
+//                                 attributes [0] IMPLICIT Attributes OPTIONAL, publicKey [1] IMPLICIT BIT STRING OPTIONAL }
 // AlgorithmIdentifier  ::= SEQUENCE { algorithm OBJECT IDENTIFIER, parameters ANY DEFINED BY algorithm OPTIONAL }
 // Per https://www.rfc-editor.org/rfc/rfc8410
 // id-X25519    OBJECT IDENTIFIER ::= { 1 3 101 110 }
@@ -276,26 +295,30 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
         break;
     };
 
-    // Read OCTET STRING
-    if (keyData.size() < index + 2)
-        return nullptr;
-
-    if (keyData[index++] != 4)
-        return nullptr;
-
-    index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 2)
-        return nullptr;
-
-    // Read OCTET STRING
-    if (keyData[index++] != 4)
-        return nullptr;
-
-    index += bytesUsedToEncodedLength(keyData[index]);
+    // Read privateKey OCTET STRING, bounded by its encoded length: RFC 5958 v2
+    // OneAsymmetricKey may carry optional attributes [0] and publicKey [1]
+    // fields after it, which must not be consumed as key material.
     if (keyData.size() < index + 1)
         return nullptr;
 
-    return create(identifier, namedCurve, CryptoKeyType::Private, std::span<const uint8_t> { keyData.begin() + index, keyData.size() - index }, extractable, usages);
+    if (keyData[index++] != 4)
+        return nullptr;
+
+    auto octetStringLength = readDERLength(keyData, index);
+    if (!octetStringLength || keyData.size() - index < *octetStringLength)
+        return nullptr;
+    size_t octetStringEnd = index + *octetStringLength;
+
+    // Read the wrapped CurvePrivateKey OCTET STRING; it must fill the outer
+    // OCTET STRING exactly.
+    if (octetStringEnd - index < 1 || keyData[index++] != 4)
+        return nullptr;
+
+    auto keyLength = readDERLength(keyData, index);
+    if (!keyLength || index > octetStringEnd || octetStringEnd - index != *keyLength)
+        return nullptr;
+
+    return create(identifier, namedCurve, CryptoKeyType::Private, std::span<const uint8_t> { keyData.begin() + index, *keyLength }, extractable, usages);
 }
 
 ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportPkcs8() const

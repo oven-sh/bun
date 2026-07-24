@@ -43,7 +43,7 @@ extern "C" JSPromise* Bun__loadNodeInspectEntryPoint(Zig::GlobalObject* globalOb
     if (JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result)) {
         return promise;
     }
-    return JSPromise::resolvedPromise(globalObject, jsUndefined());
+    RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, jsUndefined()));
 }
 
 }

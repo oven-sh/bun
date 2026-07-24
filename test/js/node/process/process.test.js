@@ -95,6 +95,27 @@ it.skipIf(!isWindows)("a rejected process.env defineProperty leaves no phantom k
   }
 });
 
+it.skipIf(!isWindows)("process.env defineProperty enumerates special-accessor keys and coerces accessor reads", () => {
+  // HTTP_PROXY and friends exist on the underlying env object as DontEnum
+  // CustomAccessors even when unset; the defineProperty trap must use the
+  // envMapList predicate (like the set trap) so a first-time define still
+  // makes the key enumerable.
+  const key = "HTTP_PROXY";
+  const hadKey = Reflect.ownKeys(process.env).includes(key);
+  if (hadKey) return; // only meaningful when the var is not already set
+  try {
+    Object.defineProperty(process.env, key, { value: "http://x", writable: true, enumerable: true, configurable: true });
+    expect(Reflect.ownKeys(process.env)).toContain(key);
+    expect({ ...process.env }[key]).toBe("http://x");
+    // An accessor getter's result reaches the OS sync via the trap; a
+    // non-string result must not violate editWindowsEnvVar's string contract.
+    Object.defineProperty(process.env, key, { get: () => 42, configurable: true });
+    expect(process.env[key]).toBe(42);
+  } finally {
+    delete process.env[key];
+  }
+});
+
 /**
  * Helper function to run inline fixture code and return stdout and exit code
  */

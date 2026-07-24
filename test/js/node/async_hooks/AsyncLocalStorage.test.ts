@@ -13,6 +13,28 @@ describe("AsyncLocalStorage", () => {
     }).toThrow("error");
   });
 
+  // cleanupAsyncHooksData used to clear the microtask-tick hook without
+  // draining the queue when m_nextTickQueue already existed, so a nextTick
+  // scheduled alongside enterWith() on an otherwise-idle tick never ran.
+  test("process.nextTick scheduled alongside enterWith() still runs", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const als = new AsyncLocalStorage();
+         als.enterWith(1);
+         process.nextTick(() => console.log("nextTick ran"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "nextTick ran", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
+  });
+
   // The post-run restoration assert must account for getStore() falling
   // through to defaultValue once the entry is removed (debug builds only).
   test("run() works with a defaultValue and no prior context", () => {
@@ -965,6 +987,9 @@ describe("async context passes through", () => {
   // 'close' listener cannot leave a retained session pinning the store.
   // Subprocess: the listener throws, which the test runner would otherwise
   // claim as its own failure.
+  // 15s on this and the three following subprocess tests: net/_http_server
+  // eagerly load node:diagnostics_channel, which on a loaded debug+ASAN host
+  // pushes the spawned http/http2 handshake past the 5s default.
   test("http2 clears the session frame even if a 'close' listener throws", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1003,7 +1028,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   // destroy(err) with no 'error' listener throws out of the emit, which must
   // not skip the frame clear (the 'close' tick after it never runs).
@@ -1038,7 +1063,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   // _destroy emits 'aborted' (and can reach user code via end()/push(null))
   // before it finishes; the clear must not sit downstream of that. The throw is
@@ -1086,7 +1111,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   // The upgrade/connect branch emits before closeRequest(), which carries the
   // clear; a throwing handler must not leave the request pinning the store.
@@ -1130,7 +1155,7 @@ describe("async context passes through", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
     expect(stderr).not.toContain("AssertionError");
-  });
+  }, 15_000);
 
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();

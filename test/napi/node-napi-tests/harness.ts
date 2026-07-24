@@ -197,10 +197,17 @@ export function run(dir: string, test: string) {
     cmd: [bunExe(), "run", test],
     cwd: dir,
     stderr: "inherit",
-    stdout: "ignore",
+    // Vendored tests report diagnostics via console.log (e.g. common.mustCall's
+    // process-exit "Mismatched function calls"). Capture stdout so a failure
+    // carries its diagnostic instead of a bare nonzero exit code.
+    stdout: "pipe",
     stdin: "inherit",
     env: envFor(test),
   });
+  if (!result.success) {
+    const stdout = result.stdout.toString();
+    if (stdout.length > 0) console.error(`--- ${test} stdout ---\n${stdout}`);
+  }
   expect(result.success).toBeTrue();
   expect(result.exitCode).toBe(0);
 }
@@ -211,11 +218,14 @@ export async function runAsync(dir: string, test: string) {
     cmd: [bunExe(), "run", test],
     cwd: dir,
     stderr: "inherit",
-    stdout: "ignore",
+    stdout: "pipe",
     stdin: "inherit",
     env: envFor(test),
   });
-  const exitCode = await child.exited;
+  const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  if (exitCode !== 0 && stdout.length > 0) {
+    console.error(`--- ${test} stdout ---\n${stdout}`);
+  }
   expect(child.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 }

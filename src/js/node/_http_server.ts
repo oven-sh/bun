@@ -20,6 +20,11 @@ const {
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
+const dc = require("node:diagnostics_channel");
+const onServerRequestStartChannel = dc.channel("http.server.request.start");
+const onServerResponseCreatedChannel = dc.channel("http.server.response.created");
+const onServerResponseFinishChannel = dc.channel("http.server.response.finish");
+
 const { isPrimary } = require("internal/cluster/isPrimary");
 const {
   throwOnInvalidTLSArray,
@@ -920,6 +925,30 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // 'upgrade' listener and false for a declined upgrade that falls
         // through to 'request'.
         http_req.upgrade = is_upgrade;
+
+        if (!is_upgrade) {
+          // Node publishes response.created from the ServerResponse constructor,
+          // which it only reaches after the upgrade check; Bun constructs the
+          // response unconditionally, so publish here instead.
+          if (onServerResponseCreatedChannel.hasSubscribers) {
+            onServerResponseCreatedChannel.publish({
+              request: http_req,
+              response: http_res,
+            });
+          }
+          if (onServerRequestStartChannel.hasSubscribers) {
+            onServerRequestStartChannel.publish({
+              request: http_req,
+              response: http_res,
+              socket,
+              server,
+            });
+          }
+          // Node's resOnFinish is always attached and checks hasSubscribers at
+          // 'finish' time, so a subscriber added mid-request still observes it.
+          http_res.on("finish", publishServerResponseFinish);
+        }
+
         if (isPipelined) {
           // A previous response on this connection has not finished yet: like
           // Node.js, this response is queued (res.socket === null) and its
@@ -2150,6 +2179,19 @@ function _writeHead(statusCode, reason, obj, response) {
 }
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
+
+function publishServerResponseFinish(this: any) {
+  if (!onServerResponseFinishChannel.hasSubscribers) return;
+  // Same socket lookup as emitResponseFinishHandleSocket (req.socket may be
+  // nulled by the stream destroyer; this.socket is the assignSocket fallback).
+  const socket = this.req?.socket ?? this.socket;
+  onServerResponseFinishChannel.publish({
+    request: this.req,
+    response: this,
+    socket,
+    server: socket?.server,
+  });
+}
 
 function ServerResponse(req, options): void {
   if (!(this instanceof ServerResponse)) return new ServerResponse(req, options);

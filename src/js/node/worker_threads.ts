@@ -4,6 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
 const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
@@ -1091,6 +1092,12 @@ class Worker extends EventEmitter {
         });
       }
       urlRevokeRegistry.register(this.#worker, this.#urlToRevoke);
+    }
+
+    if (workerThreadsChannel.hasSubscribers) {
+      workerThreadsChannel.publish({
+        worker: this,
+      });
     }
   }
 

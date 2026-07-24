@@ -274,6 +274,7 @@ public:
     JSC::Weak<JSObject> spyTarget;
     JSC::Identifier spyIdentifier;
     unsigned spyAttributes = 0;
+    bool spyInstalledDuringPreload = false;
 
     static constexpr unsigned SpyAttributeESModuleNamespace = 1 << 30;
 
@@ -643,6 +644,41 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 {
     forEachMockInSet(globalObject->mockModule.activeSpies, [](JSMockFunction* spy) { spy->clearSpy(); });
     globalObject->mockModule.activeSpies.clear();
+}
+
+extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
+
+// Restore every spy registered by the test file that just finished, leaving
+// spies installed during --preload in place. Called at the file boundary by
+// the test runner so one file's spyOn/mockImplementation does not leak into
+// the next file.
+extern "C" void JSMock__restoreTransientSpies(Zig::GlobalObject* globalObject)
+{
+    if (!globalObject->mockModule.activeSpies) {
+        return;
+    }
+
+    ActiveSpySet* spies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
+    ActiveSpySet* mocks = globalObject->mockModule.activeMocks
+        ? uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get())
+        : nullptr;
+
+    MarkedArgumentBuffer active;
+    spies->takeSnapshot(active);
+    size_t size = active.size();
+
+    for (size_t i = 0; i < size; ++i) {
+        JSValue entry = active.at(i);
+        if (!entry.isObject())
+            continue;
+        JSMockFunction* spy = uncheckedDowncast<JSMockFunction>(entry);
+        if (spy->spyInstalledDuringPreload)
+            continue;
+        spy->clearSpy();
+        spies->remove(spy);
+        if (mocks)
+            mocks->remove(spy);
+    }
 }
 
 extern "C" void JSMock__clearAllMocks(Zig::GlobalObject* globalObject)
@@ -1533,6 +1569,7 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
         mock->spyTarget = JSC::Weak<JSObject>(object, &weakValueHandleOwner(), nullptr);
         mock->spyIdentifier = propertyKey.isSymbol() ? Identifier::fromUid(vm, propertyKey.uid()) : Identifier::fromString(vm, propertyKey.publicName());
         mock->spyAttributes = hasValue ? slot.attributes() : 0;
+        mock->spyInstalledDuringPreload = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
         unsigned attributes = 0;
 
         if (hasValue && ((slot.attributes() & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {

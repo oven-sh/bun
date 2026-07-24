@@ -3384,6 +3384,16 @@ impl TestCommand {
                 // need tracking to remain enabled and populated until then.
                 vm.auto_killer.clear();
                 vm.auto_killer.disable();
+
+                // Restore spyOn spies installed by this file so they do not
+                // leak into the next file. Spies installed during --preload
+                // are kept.
+                unsafe extern "C" {
+                    fn JSMock__restoreTransientSpies(global: *mut jsc::JSGlobalObject);
+                }
+                // SAFETY: `vm.global()` is a live Zig::GlobalObject; C++ side
+                // is nothrow (only walks a weak set and writes properties).
+                unsafe { JSMock__restoreTransientSpies(vm.global().as_ptr()) };
             }
 
             repeat_index += 1;

@@ -38,3 +38,24 @@ unsafe extern "C" fn highway_index_of_any_char(
     };
     t.iter().position(|c| cs.contains(c)).unwrap_or(text_len)
 }
+
+#[unsafe(no_mangle)]
+unsafe extern "C" fn highway_memmem(
+    haystack: *const u8,
+    haystack_len: usize,
+    needle: *const u8,
+    needle_len: usize,
+) -> *const u8 {
+    // SAFETY: caller contract of `bun_highway::memmem` guarantees both
+    // (ptr, len) pairs describe valid readable ranges.
+    let (h, n) = unsafe {
+        (
+            core::slice::from_raw_parts(haystack, haystack_len),
+            core::slice::from_raw_parts(needle, needle_len),
+        )
+    };
+    h.windows(n.len())
+        .position(|w| w == n)
+        // SAFETY: `i < haystack_len`, so `haystack.add(i)` stays in bounds.
+        .map_or(core::ptr::null(), |i| unsafe { haystack.add(i) })
+}

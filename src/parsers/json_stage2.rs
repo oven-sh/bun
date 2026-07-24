@@ -963,41 +963,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(self.syntax_err_at(pos));
         }
 
-        if first == b'0' && n > 1 {
-            let (radix, prefix_len, legacy_octal): (u32, usize, bool) = match t[1] {
-                b'b' | b'B' => (2, 2, false),
-                b'o' | b'O' => (8, 2, false),
-                b'x' | b'X' => (16, 2, false),
-                b'0'..=b'7' | b'_' => (8, 1, true),
-                b'8' | b'9' => (10, 1, true),
-                _ => (0, 0, false),
-            };
-            if radix != 0 {
-                return self.parse_radix_number(t, pos, radix, prefix_len, legacy_octal);
-            }
+        if first == b'0' && n > 1 && t[1].is_ascii_digit() {
+            return Err(self.leading_zero_error(pos));
         }
 
         let mut has_dot_or_exp = first == b'.';
-        let mut underscores = false;
-        let mut last_underscore_end: usize = usize::MAX;
         macro_rules! digits {
             () => {
-                while i < n {
-                    match t[i] {
-                        b'0'..=b'9' => i += 1,
-                        b'_' => {
-                            if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
-                                return Err(self.syntax_err_at(pos));
-                            }
-                            if i == 0 {
-                                return Err(self.syntax_err_at(pos));
-                            }
-                            last_underscore_end = i;
-                            underscores = true;
-                            i += 1;
-                        }
-                        _ => break,
-                    }
+                while i < n && t[i].is_ascii_digit() {
+                    i += 1;
                 }
             };
         }
@@ -1005,22 +979,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             digits!();
         }
         if i < n && t[i] == b'.' && (first != b'.') {
-            if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
-                return Err(self.syntax_err_at(pos));
-            }
             has_dot_or_exp = true;
             i += 1;
-            if i < n && t[i] == b'_' {
-                return Err(self.syntax_err_at(pos));
-            }
             digits!();
         } else if first == b'.' {
             digits!();
         }
         if i < n && (t[i] == b'e' || t[i] == b'E') {
-            if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
-                return Err(self.syntax_err_at(pos));
-            }
             has_dot_or_exp = true;
             i += 1;
             if i < n && (t[i] == b'+' || t[i] == b'-') {
@@ -1031,25 +996,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             }
             digits!();
         }
-        if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
-            return Err(self.syntax_err_at(pos));
-        }
         let text = &t[..i];
-        let value: f64 = if !has_dot_or_exp && !underscores && text.len() < 10 {
+        let value: f64 = if !has_dot_or_exp && text.len() < 10 {
             let mut v: u32 = 0;
             for &c in text {
                 v = v * 10 + (c - b'0') as u32;
             }
             v as f64
         } else {
-            let owned: Vec<u8>;
-            let digits: &[u8] = if underscores {
-                owned = text.iter().copied().filter(|&c| c != b'_').collect();
-                &owned
-            } else {
-                text
-            };
-            match core::str::from_utf8(digits)
+            match core::str::from_utf8(text)
                 .ok()
                 .and_then(|s| s.parse::<f64>().ok())
             {
@@ -1064,89 +1019,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     }
 
     #[cold]
-    fn parse_radix_number(
-        &mut self,
-        t: &[u8],
-        pos: usize,
-        radix: u32,
-        prefix_len: usize,
-        legacy_octal: bool,
-    ) -> PResult<(f64, usize)> {
-        let n = t.len();
-        let mut i = prefix_len;
-        let mut value: f64 = 0.0;
-        let mut is_first = true;
-        let mut is_invalid_legacy_octal = false;
-        let mut last_underscore_end: usize = usize::MAX;
-        let base = radix as f64;
-        while i < n {
-            let c = t[i];
-            let digit: u32 = match c {
-                b'_' => {
-                    if (last_underscore_end != usize::MAX && i == last_underscore_end + 1)
-                        || is_first
-                        || legacy_octal
-                    {
-                        return Err(self.syntax_err_at(pos));
-                    }
-                    last_underscore_end = i;
-                    i += 1;
-                    continue;
-                }
-                b'0' | b'1' => (c - b'0') as u32,
-                b'2'..=b'7' => {
-                    if radix == 2 {
-                        return Err(self.syntax_err_at(pos));
-                    }
-                    (c - b'0') as u32
-                }
-                b'8' | b'9' => {
-                    if legacy_octal {
-                        is_invalid_legacy_octal = true;
-                    } else if radix < 10 {
-                        return Err(self.syntax_err_at(pos));
-                    }
-                    (c - b'0') as u32
-                }
-                b'A'..=b'F' => {
-                    if radix != 16 {
-                        return Err(self.syntax_err_at(pos));
-                    }
-                    (c - b'A' + 10) as u32
-                }
-                b'a'..=b'f' => {
-                    if radix != 16 {
-                        return Err(self.syntax_err_at(pos));
-                    }
-                    (c - b'a' + 10) as u32
-                }
-                _ => break,
-            };
-            value = value * base + digit as f64;
-            i += 1;
-            is_first = false;
-        }
-        if is_first {
-            return Err(self.syntax_err_at(pos));
-        }
-        if last_underscore_end != usize::MAX && i == last_underscore_end + 1 {
-            return Err(self.syntax_err_at(pos));
-        }
-        if is_invalid_legacy_octal {
-            let text = &t[..i];
-            let s = core::str::from_utf8(text).expect("ascii");
-            match s.parse::<f64>() {
-                Ok(v) => value = v,
-                Err(_) => {
-                    self.add_error(
-                        pos,
-                        format_args!("Invalid number {}", bstr::BStr::new(text)),
-                    );
-                    return Err(crate::Error::SyntaxError);
-                }
-            }
-        }
-        Ok((value, i))
+    fn leading_zero_error(&mut self, pos: usize) -> crate::Error {
+        let r = Range {
+            loc: usize2loc(pos),
+            len: 2,
+        };
+        let _ = self.add_range_error(r, format_args!("JSON numbers cannot have leading zeros"));
+        crate::Error::SyntaxError
     }
 
     #[cold]

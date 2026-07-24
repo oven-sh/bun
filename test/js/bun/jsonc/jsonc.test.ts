@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("Bun.JSONC exists", () => {
   expect(Bun.JSONC).toBeDefined();
@@ -339,6 +339,59 @@ test("Bun.JSONC.parse rejects raw control characters and unterminated strings", 
 
 test("Bun.JSONC.parse accepts single-quoted strings like the previous parser", () => {
   expect(Bun.JSONC.parse(`{'a': 'b"c'}`)).toEqual({ a: 'b"c' });
+});
+
+describe("Bun.JSONC.parse rejects JavaScript-only numeric literals", () => {
+  const REJECTED = [
+    '{"a":010}',
+    '{"a":0777}',
+    '{"a":-010}',
+    '{"a":089}',
+    '{"a":00}',
+    '{"a":0b101}',
+    '{"a":0B101}',
+    '{"a":0o17}',
+    '{"a":0O17}',
+    '{"a":0x10}',
+    '{"a":0XfF}',
+    '{"a":1_000}',
+    '{"a":1_0_0}',
+    '{"a":1.0_1}',
+    '{"a":1e1_0}',
+    '{"a":0xFF_FF}',
+  ];
+  test.each(REJECTED)("%s throws and matches JSON.parse", source => {
+    expect(() => JSON.parse(source)).toThrow(SyntaxError);
+    expect(() => Bun.JSONC.parse(source)).toThrow();
+  });
+
+  test("leading-zero error message is descriptive", () => {
+    expect(() => Bun.JSONC.parse('{"port": 0777}')).toThrow(/leading zeros/);
+  });
+
+  test("strict-JSON numbers with a leading zero are still accepted", () => {
+    for (const doc of ['{"a":0}', '{"a":0.5}', '{"a":0e5}', '{"a":0.0}', '{"a":-0}', '{"a":0E+10}']) {
+      expect(Bun.JSONC.parse(doc)).toEqual(JSON.parse(doc));
+    }
+  });
+});
+
+test("the bundler's .json loader rejects JavaScript-only numeric literals", async () => {
+  using dir = tempDir("json-loader-numbers", {
+    "data.json": '{"port": 0777, "flags": 010}',
+    "entry.mjs": 'import d from "./data.json"; console.log(JSON.stringify(d));',
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.mjs", "--target=bun"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).not.toContain("511");
+  expect(stderr).toContain("leading zeros");
+  expect(exitCode).not.toBe(0);
 });
 
 test("Bun.JSONC.parse handles huge documents with every value type", () => {

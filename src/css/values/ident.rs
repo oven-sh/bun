@@ -385,15 +385,26 @@ impl IdentOrRef {
     pub fn hash(&self, hasher: &mut Wyhash) {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
-        } else {
-            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
-            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
-            // behavioral compatibility; PR #30784 hashes the full identity.
-            let bytes = unsafe {
-                core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
-            };
-            hasher.update(bytes);
+        } else if let Some(r) = self.as_ref() {
+            // Hash the `Ref`'s identity bits. Matches `eql`, which compares via
+            // `Ref::eql` (user-bit lane masked out) and — in debug builds —
+            // ignores the `ptrbits` heap pointer that differs between
+            // logically-equal refs constructed via separate `from_ref` calls.
+            // Deviates from the Zig reference's `slice_u8[0..2]` — see #30772.
+            hasher.update(&r.as_u64().to_ne_bytes());
         }
+    }
+
+    /// Test-only: wyhash of `IdentOrRef::from_ref(r, debug_ident)` where the
+    /// debug-ident slice is arena-allocated from `debug_slice`. Lives here
+    /// (not in the `bun_css_jsc` binding) because `DebugIdent`/`debug_ident`
+    /// are `pub(crate)`. Used by `cssInternals.identOrRefHashRefs`.
+    pub fn hash_from_ref_for_testing(arena: &bun_alloc::Arena, r: Ref, debug_slice: &[u8]) -> u64 {
+        let slice: &[u8] = arena.alloc_slice_copy(debug_slice);
+        let ior = Self::from_ref(r, debug_ident(slice, arena));
+        let mut h = Wyhash::init(0);
+        ior.hash(&mut h);
+        h.final_()
     }
 
     pub fn eql(&self, other: &Self) -> bool {

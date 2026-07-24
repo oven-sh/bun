@@ -657,8 +657,10 @@ impl Options {
             self.do_.set(Do::VERIFY_INTEGRITY, check_bool != b"0");
         }
 
-        // Update should never read from manifest cache
-        if subcommand == Subcommand::Update {
+        // Update and outdated should never read from the manifest cache. Both
+        // commands report freshness, so a stale manifest within the default TTL
+        // would make them disagree with the registry (and with each other).
+        if matches!(subcommand, Subcommand::Update | Subcommand::Outdated) {
             self.enable.set(Enable::MANIFEST_CACHE, false);
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }

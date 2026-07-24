@@ -9,6 +9,7 @@ import {
   dummyBeforeAll,
   dummyBeforeEach,
   dummyRegistry,
+  getPort,
   package_dir,
   requested,
   root_url,
@@ -526,4 +527,72 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   // double-encoded UTF-8 (each byte of the arrow re-encoded as Latin-1)
   expect(out).not.toContain("â");
   expect(await exited2).toBe(0);
+});
+
+it("outdated should not answer from a stale manifest cache", async () => {
+  // The default bunfig.toml written by dummyBeforeEach disables the manifest
+  // cache (`cache = false`). Use default caching here so the install step
+  // writes a manifest that `bun outdated` would otherwise read back as fresh.
+  await writeFile(join(package_dir, "bunfig.toml"), `[install]\nregistry = "http://localhost:${getPort()}/"\n`);
+  const cacheDir = join(package_dir, ".bun-cache");
+  const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
+
+  const urls: string[] = [];
+  const registry = {
+    "0.0.3": {},
+    latest: "0.0.3",
+  };
+  setHandler(dummyRegistry(urls, registry));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        baz: "^0.0.3",
+      },
+    }),
+  );
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: testEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("baz@0.0.3");
+    expect(exitCode).toBe(0);
+  }
+  expect(urls.sort()).toEqual([`${root_url}/baz`, `${root_url}/baz-0.0.3.tgz`]);
+
+  // The registry now has a newer version available.
+  urls.length = 0;
+  setHandler(
+    dummyRegistry(urls, {
+      "0.0.3": {},
+      "0.0.5": {},
+      latest: "0.0.5",
+    }),
+  );
+
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "outdated"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: testEnv,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    // `bun outdated` must hit the registry (same as `bun update`) rather than
+    // trusting the manifest cache from the install above.
+    expect(urls).toEqual([`${root_url}/baz`]);
+    expect(out).toContain("baz");
+    expect(out).toContain("0.0.5");
+    expect(exitCode).toBe(0);
+  }
 });

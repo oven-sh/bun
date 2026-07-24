@@ -46,6 +46,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodePerformanceHooksHistogramGetter_percentilesBigIn
 
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentile);
 JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncPercentileBigInt);
+JSC_DECLARE_HOST_FUNCTION(jsNodePerformanceHooksHistogramProtoFuncToJSON);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_createHistogram);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_monitorEventLoopDelay);
@@ -155,12 +156,15 @@ public:
     uint64_t recordDelta(JSGlobalObject* globalObject);
     void reset();
     int64_t getMin() const;
+    // Node.js returns min as if it were unsigned when converting to double (INT64_MIN initial-state quirk).
+    double getMinAsDouble() const { return static_cast<double>(static_cast<uint64_t>(getMin())); }
     int64_t getMax() const;
     double getMean() const;
     double getStddev() const;
     int64_t getPercentile(double percentile) const;
     void getPercentiles(JSGlobalObject* globalObject, JSC::JSMap* map);
     void getPercentilesBigInt(JSGlobalObject* globalObject, JSC::JSMap* map);
+    JSC::JSObject* getPercentilesObject(JSGlobalObject* globalObject);
     size_t getExceeds() const;
     uint64_t getCount() const;
     double add(JSNodePerformanceHooksHistogram* other);
@@ -168,6 +172,18 @@ public:
     // std::shared_ptr<HistogramData> getHistogramDataForCloning() const;
 
 private:
+    template<typename Callback>
+    void forEachPercentile(Callback&& callback)
+    {
+        if (!m_histogramData.histogram) return;
+        struct hdr_iter iter;
+        hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
+        while (hdr_iter_next(&iter)) {
+            if (!callback(iter.specifics.percentiles.percentile, iter.highest_equivalent_value))
+                return;
+        }
+    }
+
     uint16_t m_extraMemorySizeForGC = 0;
 };
 

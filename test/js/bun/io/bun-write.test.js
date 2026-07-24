@@ -727,4 +727,32 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
   });
+
+  it("Bun.write with proxy-prototyped constructor does not crash", async () => {
+    // Runs in a subprocess because it mutates global Buffer.prototype.
+    using dir = tempDir("bun-write-proxy", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const origProto = Object.getPrototypeOf(Buffer);
+        Object.setPrototypeOf(Buffer, new Proxy(origProto, {
+          get(t, k, r) { try { Reflect.has(t, k); } catch(_) {} return Reflect.get(t, k, r); }
+        }));
+        const r = await Bun.write("out.txt", Buffer);
+        if (r <= 0) process.exit(1);
+      `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

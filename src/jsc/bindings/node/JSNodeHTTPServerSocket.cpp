@@ -274,6 +274,14 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
         // like Node freeing the parser for upgraded connections.
         return false;
     }
+    if (httpResponseData->requestTimeoutReported) {
+        // Already reported for the current message. Node's
+        // ConnectionsList::Expired() removes the parser from its active set on
+        // return and only on_message_begin re-adds it, so a 'clientError'
+        // listener that keeps the socket open sees the timeout exactly once per
+        // stalled message even if the client keeps trickling bytes.
+        return false;
+    }
     uint64_t start = httpResponseData->lastMessageStartMs;
     if (start == 0) {
         // Idle: no request message is currently being received.
@@ -281,13 +289,15 @@ static bool isRequestTimedOutImpl(us_socket_t* socket, uint64_t headersTimeoutMs
     }
     uint64_t now = uWS::nodeCompatMonotonicMs();
     uint64_t elapsed = now > start ? now - start : 0;
-    if (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs) {
-        return true;
+    bool expired = (headersTimeoutMs > 0 && !httpResponseData->headersCompleted && elapsed > headersTimeoutMs)
+        || (requestTimeoutMs > 0 && elapsed > requestTimeoutMs);
+    if (expired) {
+        httpResponseData->requestTimeoutReported = true;
     }
-    return requestTimeoutMs > 0 && elapsed > requestTimeoutMs;
+    return expired;
 }
 
-bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs) const
+bool JSNodeHTTPServerSocket::isRequestTimedOut(uint64_t headersTimeoutMs, uint64_t requestTimeoutMs)
 {
     if (!socket || upgraded || us_socket_is_closed(socket)) {
         return false;

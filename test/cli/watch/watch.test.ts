@@ -106,7 +106,15 @@ int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), vo
     // backtrace symbolication so the child exits promptly.
     cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "watchee.js"],
     cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
+    env: {
+      ...bunEnv,
+      LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
+      // This panic is deliberate; uploading it to CI's BUN_CRASH_REPORT_URL
+      // would pin a spurious "crash reported" on the next test to exit
+      // non-zero (see scripts/runner.node.mjs).
+      BUN_CRASH_REPORT_URL: "",
+      BUN_ENABLE_CRASH_REPORTING: "0",
+    },
     stdout: "pipe",
     stderr: "pipe",
   });

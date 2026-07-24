@@ -441,8 +441,11 @@ impl BuildCommand {
             unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
         }
 
-        this_transpiler.configure_defines()?;
+        // `configure_linker`'s auto-JSX step copies tsconfig `jsx` wholesale;
+        // run it before `configure_defines` so env/`--define` NODE_ENV=production
+        // overrides the tsconfig default, matching `Bun.build()` and `bun run`.
         this_transpiler.configure_linker();
+        this_transpiler.configure_defines()?;
 
         if !this_transpiler.options.production {
             this_transpiler

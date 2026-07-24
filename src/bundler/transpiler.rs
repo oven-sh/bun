@@ -730,6 +730,20 @@ impl<'a> Transpiler<'a> {
                 let was_production = self.options.production;
                 env.load_process()?;
                 let has_production_env = env.is_production();
+
+                // Load the project root for .env file discovery. If the cwd
+                // (or a parent) is unreadable, readDirInfo may return null;
+                // bail out of .env file loading in that case, but process
+                // env vars were already loaded above.
+                let top_level_dir = self.fs().top_level_dir;
+                let dir_info = self.resolver.read_dir_info(top_level_dir).ok().flatten();
+
+                // Merge tsconfig JSX before applying env-derived production so
+                // NODE_ENV=production overrides the tsconfig `jsx` default.
+                if let Some(tsconfig) = dir_info.and_then(|d| d.tsconfig_json()) {
+                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
+                }
+
                 if !was_production && has_production_env {
                     self.options.set_production(true);
                     // The resolver's FORWARD_DECL `BundleOptions` now exposes
@@ -741,19 +755,9 @@ impl<'a> Transpiler<'a> {
                     self.resolver.opts.set_production(true);
                 }
 
-                // Load the project root for .env file discovery. If the cwd
-                // (or a parent) is unreadable, readDirInfo may return null;
-                // bail out of .env file loading in that case, but process
-                // env vars were already loaded above.
-                let top_level_dir = self.fs().top_level_dir;
-                let dir_info = match self.resolver.read_dir_info(top_level_dir) {
-                    Ok(Some(d)) => d,
-                    _ => return Ok(()),
+                let Some(dir_info) = dir_info else {
+                    return Ok(());
                 };
-
-                if let Some(tsconfig) = dir_info.tsconfig_json() {
-                    merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
-                }
 
                 let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
                     return Ok(());

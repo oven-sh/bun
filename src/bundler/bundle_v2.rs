@@ -4130,6 +4130,10 @@ pub mod bv2_impl {
                             template
                                 .print(&mut v, !self.transpiler.options.compile)
                                 .expect("oom");
+                            // Same invariant as `Chunk.final_rel_path`: every consumer
+                            // (chunk assembly, manifest JSON, standalone graph, HTTP
+                            // routes) wants `/`, and Windows openat normalises `/` itself.
+                            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut v);
                             v.into_boxed_slice()
                         };
 

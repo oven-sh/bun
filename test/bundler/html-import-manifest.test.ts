@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { tempDir, tempDirWithFiles } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled } from "./expectBundled";
@@ -358,6 +358,51 @@ console.log("About manifest:", aboutHtml);
         ]
       `);
     },
+  });
+
+  // The manifest is meant to be passed straight to a static-file server, so its
+  // `input` keys must be project-relative and every path must use `/` regardless
+  // of the host (no leaked build-machine absolute paths, no backslashes).
+  test("html-import/manifest-paths-are-posix-relative", async () => {
+    using cwd = tempDir("html-manifest-paths", {
+      "server.ts": `import m from "./page/index.html"; console.log(JSON.stringify(m));`,
+      "page/index.html": `<!doctype html><link rel="stylesheet" href="./s.css"><script type="module" src="./a.ts"></script>`,
+      "page/a.ts": `import icon from "./icon.txt" with { type: "file" }; console.log(icon);`,
+      "page/s.css": `body { color: red }`,
+      "page/icon.txt": `hi`,
+    });
+    const dir = String(cwd);
+
+    const out = join(dir, "out");
+    const r = await Bun.build({ entrypoints: [join(dir, "server.ts")], outdir: out, target: "bun", root: dir });
+    expect(r.success).toBe(true);
+    const js = readFileSync(join(out, "server.js"), "utf8");
+    const m = js.match(/__jsonParse\("(.+?)"\)/s)!;
+    const manifest = JSON.parse(JSON.parse('"' + m[1] + '"')) as {
+      index: string;
+      files: Array<{ input?: string; path: string; loader: string }>;
+    };
+
+    const absolute = /^(?:[A-Za-z]:|[\\/]|\.\.[\\/])/;
+    expect(manifest.index).not.toContain("\\");
+    expect(manifest.index).not.toMatch(absolute);
+
+    // Entry chunks are keyed by the entry HTML source, relative to `root`;
+    // the file-loader asset is keyed by its own source path.
+    expect(manifest.files.map(f => [f.loader, f.input])).toEqual([
+      ["js", "page/index.html"],
+      ["html", "page/index.html"],
+      ["css", "page/index.html"],
+      ["file", "page/icon.txt"],
+    ]);
+    for (const f of manifest.files) {
+      expect(f.path).not.toContain("\\");
+      expect(f.path).not.toMatch(absolute);
+    }
+    // file-loader asset path comes from `additional_output_files[].dest_path`,
+    // which was the one emitted with native `\` before the fix.
+    const asset = manifest.files.find(f => f.loader === "file")!;
+    expect(asset.path).toStartWith("./");
   });
 
   // The HTML chunk's etag must change when only a referenced JS/CSS chunk

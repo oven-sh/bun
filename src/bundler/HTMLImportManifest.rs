@@ -42,7 +42,8 @@ use bun_collections::VecExt;
 use bun_core::strings;
 use bun_io::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
-use bun_paths::resolve_path::relative_normalized;
+use bun_paths::path_buffer_pool;
+use bun_paths::resolve_path::{platform, platform_to_posix_in_place};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
@@ -197,6 +198,7 @@ pub fn write<W: Write + ?Sized>(
     // Use the server-side public path here.
     let public_path: &[u8] = &options.public_path;
     let mut temp_buffer: Vec<u8> = Vec::new();
+    let mut input_buf = path_buffer_pool::get();
 
     for ch in chunks.iter() {
         if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
@@ -253,11 +255,16 @@ pub fn write<W: Write + ?Sized>(
             let input: &[u8] = if !ch.entry_point.is_entry_point() {
                 b""
             } else {
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                // `root_dir` and `source.path.text` are native absolute paths, so
+                // compute the relative path with host semantics and emit it as posix.
+                let len = bun_paths::resolve_path::relative_platform_buf::<platform::Auto, true>(
+                    &mut **input_buf,
                     root_dir,
                     sources[ch.entry_point.source_index() as usize].path.text,
-                );
-                strings::remove_leading_dot_slash(path_for_key)
+                )
+                .len();
+                platform_to_posix_in_place::<u8>(&mut input_buf[..len]);
+                strings::remove_leading_dot_slash(&input_buf[..len])
             };
 
             let path: &[u8] = if inject_compiler_filesystem_prefix {
@@ -308,11 +315,14 @@ pub fn write<W: Write + ?Sized>(
                 }
                 first = false;
 
-                let path_for_key = relative_normalized::<bun_paths::platform::Posix, false>(
+                let len = bun_paths::resolve_path::relative_platform_buf::<platform::Auto, true>(
+                    &mut **input_buf,
                     root_dir,
                     sources[source_index.get() as usize].path.text,
-                );
-                let path_for_key = strings::remove_leading_dot_slash(path_for_key);
+                )
+                .len();
+                platform_to_posix_in_place::<u8>(&mut input_buf[..len]);
+                let path_for_key = strings::remove_leading_dot_slash(&input_buf[..len]);
 
                 let path: &[u8] = if inject_compiler_filesystem_prefix {
                     temp_buffer.clear();

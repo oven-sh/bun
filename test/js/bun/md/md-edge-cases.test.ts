@@ -671,6 +671,32 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html(`[${label1000}]: /url\n\n[${label1000}]\n`)).not.toContain("<a href=");
   });
 
+  test("reference label length cap is not applied to lookup before whitespace normalization", () => {
+    // Label matching compares normalized labels (whitespace collapsed), so a
+    // reference whose raw bytes exceed 999 only because of leading, trailing,
+    // or interior whitespace must still match the definition it normalizes to.
+    // commonmark.js agrees.
+    const a = Buffer.alloc(998, "a").toString();
+    const def = `[${a}]: /url\n\n`;
+    // shortcut reference, trailing whitespace (raw label 1001 bytes)
+    expect(Markdown.html(def + `[${a}   ]\n`)).toContain('<a href="/url">');
+    // shortcut reference, leading whitespace
+    expect(Markdown.html(def + `[   ${a}]\n`)).toContain('<a href="/url">');
+    // full reference form
+    expect(Markdown.html(def + `[text][${a}   ]\n`)).toContain('<a href="/url">');
+    // collapsed reference form
+    expect(Markdown.html(def + `[${a}   ][]\n`)).toContain('<a href="/url">');
+    // interior whitespace run: definition label is 998 bytes, reference label
+    // is 1006 raw bytes, both normalize to "x <994 a's> x"
+    const mid = Buffer.alloc(994, "a").toString();
+    expect(Markdown.html(`[x ${mid} x]: /u\n\n[x     ${mid}     x]\n`)).toContain('<a href="/u">');
+    // exactly at the cap with trailing whitespace still resolves
+    const label999 = Buffer.alloc(999, "y").toString();
+    expect(Markdown.html(`[${label999}]: /url\n\n[${label999} ]\n`)).toContain('<a href="/url">');
+    // escaped '[' in the label is not a disqualifier
+    expect(Markdown.html(`[\\[z]: /u\n\n[  \\[z  ]\n`)).toContain('<a href="/u">');
+  });
+
   test("wiki link bracket nesting is capped", () => {
     const wiki = (depth: number) => "[[t|" + "[".repeat(depth) + "x" + "]".repeat(depth) + "]]\n";
     // Within the cap the whole construct is one wiki link targeting "t".

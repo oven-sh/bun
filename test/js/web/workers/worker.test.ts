@@ -268,6 +268,38 @@ describe("web worker", () => {
         },
       );
 
+      test.concurrent("[test] preload is not inherited by in-process Workers under bun test", async () => {
+        using dir = tempDir("worker-test-preload-no-inherit", {
+          "bunfig.toml": `[test]\npreload = ["./setup.ts"]`,
+          "setup.ts": `globalThis.__fromTestPreload = true;`,
+          "w.ts": `postMessage(globalThis.__fromTestPreload === true);`,
+          "fixture.test.ts": `
+            import { test, expect } from "bun:test";
+            test("worker does not re-run [test] preload", async () => {
+              expect(globalThis.__fromTestPreload).toBe(true);
+              const w = new Worker(new URL("./w.ts", import.meta.url));
+              const got = await new Promise((res, rej) => {
+                w.onmessage = e => res(e.data);
+                w.onerror = e => rej(new Error(e.message));
+              });
+              await w.terminate();
+              expect(got).toBe(false);
+            });
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", "fixture.test.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("1 pass");
+        expect(stderr).toContain("0 fail");
+        expect(exitCode).toBe(0);
+      });
+
       test.concurrent("execArgv: [] opts out of inherited preloads", async () => {
         using dir = tempDir("worker-preload-execargv-optout", {
           "bunfig.toml": `preload = ["./setup.ts"]`,

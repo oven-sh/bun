@@ -1661,6 +1661,10 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
     if (a.length() != b.length()) return false;
     return a.startsWithIgnoringASCIICase(b);
 }
+
+// OpenSSL's DH_MIN_MODULUS_BITS (crypto/dh/dh_local.h). BoringSSL has no
+// equivalent; the check() port below uses it to mirror DH_check_params().
+constexpr int kDhMinModulusBits = 512;
 } // namespace
 
 DHPointer::DHPointer(DH* dh)
@@ -1769,13 +1773,64 @@ DHPointer DHPointer::New(size_t bits, unsigned int generator)
     return dh;
 }
 
+// BoringSSL's DH_check() still applies OpenSSL 1.0.x's generator heuristics
+// (g == 2 demands p % 24 == 11, g == 5 demands p % 10 in {3, 7}, any other
+// generator is "unable to check"), which rejects every RFC 3526 group. OpenSSL 3
+// dropped them: with no q it only range-checks g and the modulus size. Mirror
+// crypto/dh/dh_check.c's DH_check()/DH_check_params() so verifyError agrees.
 DHPointer::CheckResult DHPointer::check()
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (!dh_) return DHPointer::CheckResult::NONE;
-    int codes = 0;
-    if (DH_check(dh_.get(), &codes) != 1)
+
+    const BIGNUM* p = nullptr;
+    const BIGNUM* q = nullptr;
+    const BIGNUM* g = nullptr;
+    DH_get0_pqg(dh_.get(), &p, &q, &g);
+    if (p == nullptr || g == nullptr) return DHPointer::CheckResult::CHECK_FAILED;
+
+    if (q != nullptr) {
+        // BoringSSL only uses the obsolete heuristics when q is absent; its q
+        // branch already matches OpenSSL's.
+        int codes = 0;
+        if (DH_check(dh_.get(), &codes) != 1)
+            return DHPointer::CheckResult::CHECK_FAILED;
+        return static_cast<CheckResult>(codes);
+    }
+
+    // The primality tests below are unbounded work, and BoringSSL cannot use a
+    // modulus this wide for anything else either.
+    if (BN_num_bits(p) > OPENSSL_DH_MAX_MODULUS_BITS)
         return DHPointer::CheckResult::CHECK_FAILED;
+
+    BignumCtxPointer ctx(BN_CTX_new());
+    auto tmp = BignumPointer::New();
+    if (!ctx || !tmp) return DHPointer::CheckResult::CHECK_FAILED;
+
+    int codes = 0;
+
+    // DH_check_params()
+    if (!BN_is_odd(p)) codes |= DH_CHECK_P_NOT_PRIME;
+    if (BN_is_negative(g) || BN_is_zero(g) || BN_is_one(g))
+        codes |= DH_NOT_SUITABLE_GENERATOR;
+    if (!BN_copy(tmp.get(), p) || !BN_sub_word(tmp.get(), 1))
+        return DHPointer::CheckResult::CHECK_FAILED;
+    if (BN_cmp(g, tmp.get()) >= 0) codes |= DH_NOT_SUITABLE_GENERATOR;
+    if (BN_num_bits(p) < kDhMinModulusBits)
+        codes |= static_cast<int>(CheckResult::MODULUS_TOO_SMALL);
+
+    // DH_check(): p must be prime, and (p - 1) / 2 prime when q is absent.
+    int r = BN_is_prime_ex(p, BN_prime_checks_for_validation, ctx.get(), nullptr);
+    if (r < 0) return DHPointer::CheckResult::CHECK_FAILED;
+    if (!r) {
+        codes |= DH_CHECK_P_NOT_PRIME;
+    } else {
+        if (!BN_rshift1(tmp.get(), p)) return DHPointer::CheckResult::CHECK_FAILED;
+        r = BN_is_prime_ex(tmp.get(), BN_prime_checks_for_validation, ctx.get(), nullptr);
+        if (r < 0) return DHPointer::CheckResult::CHECK_FAILED;
+        if (!r) codes |= DH_CHECK_P_NOT_SAFE_PRIME;
+    }
+
     return static_cast<CheckResult>(codes);
 }
 

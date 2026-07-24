@@ -26,6 +26,17 @@
 # ships ClangCL. Runs everywhere else.
 [ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
+# Verbatim Node port that picks `hasOpenSSL3 ? 1024 : 256` and then asserts
+# dh1.verifyError === 0 on the generated group. DHPointer::check() now mirrors
+# OpenSSL 3's DH_check_params(), which sets DH_MODULUS_TOO_SMALL for any prime
+# below DH_MIN_MODULUS_BITS (512), so that assert gets 128. The file runs but is
+# a verbatim mirror that cannot be edited to skip the one assert, and dropping
+# the flag would make a five-bit safe prime report 0. Its two-party exchange and
+# setPublicKey/setPrivateKey round-trip coverage lives on in
+# test/js/node/crypto/node-crypto.test.js. See PR #32623, which re-syncs this
+# file to Node v26.3.0 and will need to reconcile the same divergence.
+test/js/node/test/parallel/test-crypto-dh.js [ FAIL ] # asserts verifyError === 0 on a 256-bit prime; DH_MODULUS_TOO_SMALL makes it 128
+
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
 # closure is unreferenced. The FinalizationRegistry spec gives no timing

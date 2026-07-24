@@ -1031,6 +1031,10 @@ public:
         // Boringssl does not define the DH_CHECK_INVALID_[Q or J]_VALUE
         INVALID_Q = DH_CHECK_INVALID_Q_VALUE,
         INVALID_J = DH_CHECK_INVALID_J_VALUE,
+        MODULUS_TOO_SMALL = DH_MODULUS_TOO_SMALL,
+#else
+        // Boringssl does not define DH_MODULUS_TOO_SMALL; this is OpenSSL's value.
+        MODULUS_TOO_SMALL = 0x80,
 #endif
         CHECK_FAILED = 512,
     };

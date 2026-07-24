@@ -661,6 +661,142 @@ describe("DiffieHellman", () => {
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
   });
+
+  describe("verifyError", () => {
+    const { DH_CHECK_P_NOT_PRIME, DH_CHECK_P_NOT_SAFE_PRIME, DH_NOT_SUITABLE_GENERATOR } = crypto.constants;
+    // DH_check() also reports OpenSSL's DH_MODULUS_TOO_SMALL for a modulus below
+    // DH_MIN_MODULUS_BITS. Node does not expose a constant for it either.
+    const DH_MODULUS_TOO_SMALL = 0x80;
+
+    // BoringSSL's DH_check() kept OpenSSL 1.0.x's generator heuristics (g == 2
+    // demands p % 24 == 11), which rejects every RFC 3526 safe prime. Larger
+    // groups share this path; they are left out because primality testing an
+    // 8192-bit modulus takes ~30s.
+    it.each(["modp5", "modp14"])("is 0 for well-known group %s", group => {
+      expect(crypto.getDiffieHellman(group).verifyError).toBe(0);
+    });
+
+    it("is 0 for a well-known prime and generator passed to createDiffieHellman", () => {
+      const group = crypto.getDiffieHellman("modp14");
+      const dh = crypto.createDiffieHellman(group.getPrime(), group.getGenerator());
+      expect(dh.verifyError).toBe(0);
+    });
+
+    // 2 and 5 were special-cased by the old heuristics; 3 fell into its
+    // "unable to check" branch. All three are suitable for a safe prime.
+    it.each([2, 3, 5])("is 0 for generator %i on a safe prime", generator => {
+      const p = crypto.getDiffieHellman("modp5").getPrime();
+      const dh = crypto.createDiffieHellman(p, Buffer.from([generator]));
+      expect(dh.verifyError).toBe(0);
+    });
+
+    // p = 23 is a safe prime (23 = 2 * 11 + 1), so only its size is wrong.
+    it("reports a modulus below 512 bits", () => {
+      const dh = crypto.createDiffieHellman(Buffer.from([23]), Buffer.from([2]));
+      expect(dh.verifyError).toBe(DH_MODULUS_TOO_SMALL);
+    });
+
+    it("reports a generator outside [2, p - 1)", () => {
+      const dh = crypto.createDiffieHellman(Buffer.from([23]), Buffer.from([22]));
+      expect(dh.verifyError).toBe(DH_NOT_SUITABLE_GENERATOR | DH_MODULUS_TOO_SMALL);
+    });
+
+    it("reports a composite modulus", () => {
+      const dh = crypto.createDiffieHellman(Buffer.from([0xab, 0xcd]), Buffer.from([2]));
+      expect(dh.verifyError).toBe(DH_CHECK_P_NOT_PRIME | DH_MODULUS_TOO_SMALL);
+    });
+
+    // BoringSSL's DH_check() refuses an even modulus outright (dh_check_params_fast
+    // returns 0 for !BN_is_odd(p)), so the getter used to throw instead of
+    // reporting flags. OpenSSL 3 folds this into DH_CHECK_P_NOT_PRIME.
+    it("reports an even modulus rather than throwing", () => {
+      const dh = crypto.createDiffieHellman(Buffer.from([0x10]), 2);
+      expect(dh.verifyError).toBe(DH_CHECK_P_NOT_PRIME | DH_MODULUS_TOO_SMALL);
+    });
+
+    it("reports a wide even modulus rather than throwing", () => {
+      const p = crypto.getDiffieHellman("modp14").getPrime();
+      p[p.length - 1] &= 0xfe;
+      const dh = crypto.createDiffieHellman(p, 2);
+      expect(dh.verifyError).toBe(DH_CHECK_P_NOT_PRIME);
+    });
+
+    // 101 is prime but (101 - 1) / 2 = 50 is not.
+    it("reports a prime modulus that is not a safe prime", () => {
+      const dh = crypto.createDiffieHellman(Buffer.from([101]), Buffer.from([2]));
+      expect(dh.verifyError).toBe(DH_CHECK_P_NOT_SAFE_PRIME | DH_MODULUS_TOO_SMALL);
+    });
+  });
+
+  // Upstream's test-crypto-dh.js exercises a two-party exchange over a generated
+  // group and asserts verifyError === 0 on it. That file is quarantined in
+  // test/expectations.txt because it generates a 256-bit group (hasOpenSSL3 is
+  // false here) and 256 bits now reports DH_MODULUS_TOO_SMALL. Keep its coverage
+  // alive here over a well-known prime instead of generating one.
+  it("completes a two-party exchange over a well-known prime", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime("buffer");
+    const dh1 = crypto.createDiffieHellman(p, "buffer");
+    const dh2 = crypto.createDiffieHellman(p, "buffer");
+    const key1 = dh1.generateKeys();
+    const key2 = dh2.generateKeys("hex");
+    const secret1 = dh1.computeSecret(key2, "hex", "base64");
+    const secret2 = dh2.computeSecret(key1, "latin1", "buffer");
+
+    expect(secret2.toString("base64")).toBe(secret1);
+    expect(dh1.verifyError).toBe(0);
+    expect(dh2.verifyError).toBe(0);
+
+    const dh3 = crypto.createDiffieHellman(p, "buffer");
+    dh3.setPublicKey(key1);
+    dh3.setPrivateKey(dh1.getPrivateKey());
+
+    expect({
+      prime: dh3.getPrime(),
+      generator: dh3.getGenerator(),
+      publicKey: dh3.getPublicKey(),
+      privateKey: dh3.getPrivateKey(),
+      verifyError: dh3.verifyError,
+    }).toEqual({
+      prime: dh1.getPrime(),
+      generator: dh1.getGenerator(),
+      publicKey: dh1.getPublicKey(),
+      privateKey: dh1.getPrivateKey(),
+      verifyError: 0,
+    });
+
+    expect(dh3.computeSecret(key2, "hex", "base64")).toBe(secret1);
+  });
+
+  // These errors used to be constructed and returned rather than thrown, so
+  // `createDiffieHellman(...)` evaluated to an Error instance and a caller's
+  // `if (dh.verifyError) throw` read undefined on it. expect().toThrow() cannot
+  // catch that: it accepts a returned Error as if it had been thrown. So assert
+  // the control flow directly.
+  //
+  // A numeric prime demands a numeric generator. A string reaches that check
+  // rather than the earlier type guard because the buffer-prime branch would
+  // have read it as an encoding.
+  it.each([
+    ["a string generator", [1024, "abc"]],
+    ["a buffer generator", [512, Buffer.from([2])]],
+  ])("throws rather than returning the error for %s alongside a numeric prime", (_label, args) => {
+    let returned;
+    let thrown;
+    try {
+      returned = crypto.createDiffieHellman(...args);
+    } catch (err) {
+      thrown = err;
+    }
+
+    expect(returned).toBeUndefined();
+    expect(thrown).toEqual(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Second argument must be an int32",
+      }),
+    );
+  });
 });
 
 describe("ECDH", () => {
@@ -874,11 +1010,7 @@ it("verifyError should not be on the prototype of DiffieHellman and DiffieHellma
   const dhg = crypto.createDiffieHellmanGroup("modp5");
   expect("verifyError" in crypto.DiffieHellmanGroup.prototype).toBeFalse();
   expect("verifyError" in dhg).toBeTrue();
-
-  // boringssl seems to set DH_NOT_SUITABLE_GENERATOR for both
-  // DH_GENERATOR_2 and DH_GENERATOR_5 if not using
-  // DH_generate_parameters_ex
-  expect(dhg.verifyError).toBe(8);
+  expect(dhg.verifyError).toBe(0);
 });
 it("cipher.setAAD should not throw if encoding or plaintextLength is undefined #18700", () => {
   const key = crypto.randomBytes(32);

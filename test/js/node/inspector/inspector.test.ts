@@ -724,6 +724,25 @@ test("a listener that throws a non-stringifiable value does not break console.lo
   }
 });
 
+test("a tampered Set.prototype[Symbol.iterator] does not break console.log while Runtime is enabled", () => {
+  const session = new inspector.Session();
+  session.connect();
+  const saved = Set.prototype[Symbol.iterator];
+  let logged = "";
+  session.on("Runtime.consoleAPICalled", msg => (logged = msg.params.args[0].value));
+  try {
+    session.post("Runtime.enable");
+    Set.prototype[Symbol.iterator] = () => {
+      throw new Error("tampered");
+    };
+    expect(() => console.log("still works after set tamper")).not.toThrow();
+    expect(logged).toBe("still works after set tamper");
+  } finally {
+    Set.prototype[Symbol.iterator] = saved;
+    session.disconnect();
+  }
+});
+
 test("a console argument whose toString throws does not break console.log", async () => {
   const session = new inspector.Session();
   session.connect();

@@ -5,6 +5,7 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
+const { SafeSet } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
@@ -120,7 +121,10 @@ function waitForDebugger() {
 // Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
 // calls. This monkey-patches globalThis.console (not JSC's ConsoleClient as
 // cdp.ts does), so pre-captured refs bypass it and no stackTrace is emitted.
-const runtimeEnabledSessions = new Set<Session>();
+// SafeSet iteration is tamper-proof (own frozen Symbol.iterator), so a hostile
+// Set.prototype[Symbol.iterator] cannot make console.log itself throw from
+// inside the hook's for-of loop head.
+const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
 const CONSOLE_API_TYPES: Record<string, string> = {
@@ -247,11 +251,12 @@ function installConsoleHooks() {
 
 function removeConsoleHooks() {
   const consoleObject = globalThis.console;
-  for (const [method, original, hook] of hookedConsoleMethods) {
+  for (let i = 0; i < hookedConsoleMethods.length; i++) {
+    const entry = hookedConsoleMethods[i];
     // Only restore slots that still hold our hook — user code may have
     // reassigned the method since the Runtime domain was enabled.
-    if (consoleObject[method] === hook) {
-      consoleObject[method] = original;
+    if (consoleObject[entry[0]] === entry[2]) {
+      consoleObject[entry[0]] = entry[1];
     }
   }
   hookedConsoleMethods.length = 0;
@@ -432,7 +437,7 @@ class Session extends EventEmitter {
     this.#profilerEnabled = false;
     this.#connected = false;
     this.#coverageBaseline.$clear();
-    runtimeEnabledSessions.$delete(this);
+    runtimeEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
@@ -499,12 +504,12 @@ class Session extends EventEmitter {
   #handleMethod(method: string, params?: object): any {
     switch (method) {
       case "Runtime.enable":
-        runtimeEnabledSessions.$add(this);
+        runtimeEnabledSessions.add(this);
         installConsoleHooks();
         return {};
 
       case "Runtime.disable":
-        runtimeEnabledSessions.$delete(this);
+        runtimeEnabledSessions.delete(this);
         if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
         return {};
 

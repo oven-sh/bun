@@ -874,10 +874,13 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     RETURN_IF_EXCEPTION(scope, false);
                     if (!eql) return false;
 
-                    // User JS may have transitioned the array (same butterfly pointer means
-                    // same shape; fastArrayJoin uses the same check). If it moved, finish
-                    // the remaining elements via the generic loop below.
-                    if (array1->butterfly() != b1 || array2->butterfly() != b2) [[unlikely]] {
+                    // User JS may have transitioned the array. convertInt32ToDouble()
+                    // rewrites slots in the same butterfly, so the butterfly pointer alone
+                    // is not sufficient; re-check the indexing shape as well (same guard as
+                    // Bun__JSArray__contiguousVectorIsStillValid).
+                    if (array1->butterfly() != b1 || array2->butterfly() != b2
+                        || (array1->indexingType() & IndexingShapeMask) != shape1
+                        || (array2->indexingType() & IndexingShapeMask) != shape2) [[unlikely]] {
                         arrayIndex++;
                         goto arrayGenericLoop;
                     }

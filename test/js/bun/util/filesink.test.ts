@@ -1,6 +1,6 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -314,6 +314,98 @@ it.skipIf(!isPosix)(
         fs.closeSync(writeFd);
       } catch {}
       if (readFdOpen) fs.closeSync(readFd);
+    }
+  },
+);
+
+// Sibling of the end() test above for sink.close() (js_close -> FileSink::end()).
+// end()'s Err arm set done=true and tore down the writer without scheduling
+// run_pending, so a backpressured write()'s promise was left pending forever
+// while close() threw. Now close() routes the error to that promise and
+// returns undefined.
+//
+// Runs in a subprocess because sink.close() on a Blob-created FileSink
+// currently leaks the native FileSink (doClose detaches m_sinkPtr so the
+// wrapper's +1 never reaches finalize); running it in-process would abort the
+// whole file under detect_leaks=1. That leak is pre-existing on main and
+// tracked separately.
+it.skipIf(!isPosix)(
+  "close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE",
+  async () => {
+    const src = `
+      const { createSocketPair } = require("bun:internal-for-testing");
+      const fs = require("node:fs");
+      const [readFd, writeFd] = createSocketPair();
+      const sink = Bun.file(writeFd).writer();
+      const p = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      if (!(p instanceof Promise)) { console.log("not-backpressured"); process.exit(0); }
+      fs.closeSync(readFd);
+      let threw = false;
+      try { sink.close(); } catch { threw = true; }
+      if (threw) { console.log("close-threw"); process.exit(0); }
+      try { await p; console.log("resolved"); }
+      catch (e) { console.log(e?.code ?? "unknown"); }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        // Pre-existing leak in sink.close() (see comment above); don't let the
+        // child's LSAN abort hide the actual assertion we're testing.
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("EPIPE");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// end()'s and end_from_js()'s Done/Wrote arms had the same orphan: when the
+// reader drains between write() and end(), flush() pushes the whole remaining
+// buffer through in one shot and returns Done/Wrote, and writer.end() only
+// fires on_close (which never touches pending). Linux-only because the
+// drain-flush-drain shape needs the AF_UNIX send buffer to hold the remainder
+// (Linux default ~200KB; macOS is ~8KB, so flush() returns Pending there and
+// the promise was already settled via on_write).
+it.skipIf(!isLinux)(
+  "end() after a backpressured write() with the reader drained returns the write's promise and resolves it",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    const sink = Bun.file(writeFd).writer();
+    const size = 300 * 1024;
+    try {
+      const writePromise = sink.write(Buffer.alloc(size, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      const buf = Buffer.alloc(64 * 1024);
+      const drain = () => {
+        while (true)
+          try {
+            if (!fs.readSync(readFd, buf)) break;
+          } catch {
+            break;
+          }
+      };
+      drain();
+
+      // flush() now drains the sink's remaining buffer in one write; the
+      // Done/Wrote arm hands back the write()'s promise and schedules
+      // run_pending to resolve it with the bytes write() accepted.
+      const endResult = sink.end();
+      expect(endResult).toBe(writePromise);
+      drain();
+      expect(await writePromise).toBe(size);
+    } finally {
+      try {
+        await Promise.resolve(sink.end()).catch(() => {});
+      } catch {}
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      fs.closeSync(readFd);
     }
   },
 );

@@ -94,7 +94,6 @@
 #include "JSClipboard.h"
 #include "JSClipboardEvent.h"
 #include "JSClipboardItem.h"
-#include "JSClipboardWriteState.h"
 #include "JSCloseEvent.h"
 #include "JSCommonJSExtensions.h"
 #include "streams/JSCountQueuingStrategy.h"
@@ -2315,11 +2314,6 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSClipboardItemClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             Bun::setupClipboardItemClassStructure(init);
-        });
-
-    m_clipboardWriteStateStructure.initLater(
-        [](const Initializer<Structure>& init) {
-            init.set(WebCore::JSClipboardWriteState::createStructure(init.vm, init.owner, jsNull()));
         });
 
     // The clipboard's three promise-reaction handlers. Each is invoked as

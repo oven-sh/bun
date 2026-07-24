@@ -98,4 +98,9 @@ template<> struct JSDOMWrapperConverterTraits<Clipboard> {
 // can put on / take off the OS clipboard.
 bool clipboardSupportsType(const WTF::String&);
 
+// The write loop's two reactions. Their context at argument(1) is a plain
+// JSArray (Blobs in the leading slots, item/promise/index trailing).
+JSC_DECLARE_HOST_FUNCTION(jsClipboardHandler_onWriteBlobMaterialized);
+JSC_DECLARE_HOST_FUNCTION(jsClipboardHandler_onWriteBlobFailed);
+
 } // namespace WebCore

@@ -342,8 +342,8 @@ pub extern "C" fn Bun__Clipboard__writeBlobs(
         JsError::Thrown => {}
     }
     // Nothing was scheduled, so settling `promise` is still this call's job. The caller's
-    // `JSClipboardWriteState` roots the cell, so re-taking a handle is safe even if the
-    // job's own handle was already created and dropped.
+    // state array roots the cell, so re-taking a handle is safe even if the job's own
+    // handle was already created and dropped.
     if let Some(exception) = global.try_take_exception() {
         JSPromiseStrong::from_value(promise, global).reject_without_swap(global, Ok(exception));
     }

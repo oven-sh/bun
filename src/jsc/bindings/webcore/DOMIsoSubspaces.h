@@ -136,7 +136,6 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForApplePayValidateMerchantEvent;
     std::unique_ptr<IsoSubspace> m_subspaceForClipboard;
     std::unique_ptr<IsoSubspace> m_subspaceForClipboardItem;
-    std::unique_ptr<IsoSubspace> m_subspaceForClipboardWriteState;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMCache;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMCacheStorage;
     // std::unique_ptr<IsoSubspace> m_subspaceForContactsManager;

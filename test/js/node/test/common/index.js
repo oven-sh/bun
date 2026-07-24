@@ -59,6 +59,22 @@ const hasCrypto = Boolean(process.versions.openssl) &&
 
 const hasSQLite = Boolean(process.versions.sqlite);
 
+const usesSharedLibrary = process.config.variables.node_shared;
+const hasInspector = Boolean(process.features.inspector);
+// Bun has `bun:ffi` but not Node's `node:ffi`, which is what this gates.
+const hasFFI = Boolean(process.config.variables.node_use_ffi);
+
+// small-icu doesn't support non-English locales
+const hasFullICU = (() => {
+  try {
+    const january = new Date(9e8);
+    const spanish = new Intl.DateTimeFormat('es', { month: 'long' });
+    return spanish.format(january) === 'enero';
+  } catch {
+    return false;
+  }
+})();
+
 // Node gates these on build variables (v8_enable_temporal_support and
 // --localstorage-file). Bun has no equivalent knobs, so feature-detect.
 const hasTemporal = typeof globalThis.Temporal === 'object' && globalThis.Temporal !== null;
@@ -932,6 +948,12 @@ function skipIfSQLiteMissing() {
   }
 }
 
+function skipIfFFIMissing() {
+  if (!hasFFI) {
+    skip('missing FFI');
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1180,10 +1202,28 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function expectRequiredTLAError(err) {
+  const message = /require\(\) cannot be used on an ESM graph with top-level await/;
+  if (typeof err === 'string') {
+    assert.match(err, /ERR_REQUIRE_ASYNC_MODULE/);
+    assert.match(err, message);
+  } else {
+    assert.strictEqual(err.code, 'ERR_REQUIRE_ASYNC_MODULE');
+    assert.match(err.message, message);
+  }
+}
+
 function sleepSync(ms) {
   const sab = new SharedArrayBuffer(4);
   const i32 = new Int32Array(sab);
   Atomics.wait(i32, 0, 0, ms);
+}
+
+function resolveBuiltBinary(binary) {
+  if (isWindows) {
+    binary += '.exe';
+  }
+  return path.join(path.dirname(process.execPath), binary);
 }
 
 const common = {
@@ -1196,6 +1236,7 @@ const common = {
   escapePOSIXShell,
   expectsError,
   expectRequiredModule,
+  expectRequiredTLAError,
   expectWarning,
   gcUntil,
   getArrayBufferViews,
@@ -1205,6 +1246,9 @@ const common = {
   getTTYfd,
   hasIntl,
   hasCrypto,
+  hasFFI,
+  hasFullICU,
+  hasInspector,
   hasOpenSSL,
   hasQuic,
   hasSQLite,
@@ -1222,6 +1266,7 @@ const common = {
   isOpenBSD,
   isMacOS,
   isPi,
+  isRiscv64,
   isSunOS,
   isWindows,
   localIPv6Hosts,
@@ -1239,15 +1284,18 @@ const common = {
   pwdCommand,
   requireNoPackageJSONAbove,
   runWithInvalidFD,
+  resolveBuiltBinary,
   skip,
   skipIf32Bits,
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfFFIMissing,
   skipIfSQLiteMissing,
   skipIfWorker,
   sleepSync,
   spawnPromisified,
+  usesSharedLibrary,
 
   get enoughTestMem() {
     return require('os').totalmem() > 0x70000000; /* 1.75 Gb */

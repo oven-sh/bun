@@ -143,16 +143,16 @@ mod _impl {
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[4];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     "writeResult",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     write_result_value,
                 ));
             };
             if write_result_buf.typed_array_type != bun_jsc::JSType::Uint32Array {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     "writeResult",
-                    "Uint32Array",
+                    &[b"Uint32Array"],
                     write_result_value,
                 ));
             }
@@ -177,9 +177,9 @@ mod _impl {
                 dictionary_buf = match dictionary_value.as_array_buffer(global) {
                     Some(buf) => buf,
                     None => {
-                        return Err(global.throw_invalid_argument_type_value(
+                        return Err(global.throw_invalid_argument_type_list(
                             "dictionary",
-                            "Buffer, TypedArray, or DataView",
+                            &[b"Buffer", b"TypedArray", b"DataView"],
                             dictionary_value,
                         ));
                     }

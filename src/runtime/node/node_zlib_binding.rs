@@ -113,9 +113,9 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         let data: JSValue = arguments[0];
 
         if callframe.arguments_count() < 1 {
-            return Err(global_this.throw_invalid_argument_type_value(
+            return Err(global_this.throw_invalid_argument_type_list(
                 b"data",
-                b"string or an instance of Buffer, TypedArray, or DataView",
+                &[b"string", b"Buffer", b"TypedArray", b"DataView"],
                 JSValue::UNDEFINED,
             ));
         }

@@ -649,9 +649,9 @@ pub mod random {
             let [buf_value, offset_value, size_value] = call_frame.arguments_as_array::<3>();
 
             let Some(mut buf) = buf_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     b"buf",
-                    b"ArrayBuffer or ArrayBufferView",
+                    &[b"ArrayBuffer", b"ArrayBufferView"],
                     buf_value,
                 ));
             };
@@ -697,9 +697,9 @@ pub mod random {
                 call_frame.arguments_as_array::<4>();
 
             let Some(buf) = buf_value.as_array_buffer(global) else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     b"buf",
-                    b"ArrayBuffer or ArrayBufferView",
+                    &[b"ArrayBuffer", b"ArrayBufferView"],
                     buf_value,
                 ));
             };
@@ -827,9 +827,15 @@ mod _impl {
             let Some(password) =
                 StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
             else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     b"password",
-                    b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
+                    &[
+                        b"string",
+                        b"ArrayBuffer",
+                        b"Buffer",
+                        b"TypedArray",
+                        b"DataView",
+                    ],
                     password_value,
                 ));
             };
@@ -846,9 +852,15 @@ mod _impl {
             let Some(salt) =
                 StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
             else {
-                return Err(global.throw_invalid_argument_type_value(
+                return Err(global.throw_invalid_argument_type_list(
                     b"salt",
-                    b"string, ArrayBuffer, Buffer, TypedArray, or DataView",
+                    &[
+                        b"string",
+                        b"ArrayBuffer",
+                        b"Buffer",
+                        b"TypedArray",
+                        b"DataView",
+                    ],
                     salt_value,
                 ));
             };

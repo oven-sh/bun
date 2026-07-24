@@ -541,9 +541,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // is the centralised non-null deref proof.
                     **abort_signal = Some(WebCore::AbortSignal::opaque_ref(signal).ref_());
                 } else {
-                    return Err(global_this.throw_invalid_argument_type_value(
+                    return Err(global_this.throw_invalid_argument_type_list(
                         b"signal",
-                        b"AbortSignal",
+                        &[b"AbortSignal"],
                         signal_val,
                     ));
                 }

@@ -8,20 +8,6 @@ UV_EXTERN int uv_accept(uv_stream_t* server, uv_stream_t* client)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_async_init(uv_loop_t*,
-    uv_async_t* async,
-    uv_async_cb async_cb)
-{
-    __bun_throw_not_implemented("uv_async_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_async_send(uv_async_t* async)
-{
-    __bun_throw_not_implemented("uv_async_send");
-    __builtin_unreachable();
-}
-
 UV_EXTERN unsigned int uv_available_parallelism(void)
 {
     __bun_throw_not_implemented("uv_available_parallelism");
@@ -100,12 +86,6 @@ UV_EXTERN int uv_clock_gettime(uv_clock_id clock_id, uv_timespec64_t* ts)
     __builtin_unreachable();
 }
 
-UV_EXTERN void uv_close(uv_handle_t* handle, uv_close_cb close_cb)
-{
-    __bun_throw_not_implemented("uv_close");
-    __builtin_unreachable();
-}
-
 UV_EXTERN void uv_cond_broadcast(uv_cond_t* cond)
 {
     __bun_throw_not_implemented("uv_cond_broadcast");
@@ -159,12 +139,6 @@ UV_EXTERN int uv_cpumask_size(void)
 UV_EXTERN int uv_cwd(char* buffer, size_t* size)
 {
     __bun_throw_not_implemented("uv_cwd");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uv_loop_t* uv_default_loop(void)
-{
-    __bun_throw_not_implemented("uv_default_loop");
     __builtin_unreachable();
 }
 
@@ -788,30 +762,6 @@ UV_EXTERN uv_handle_type uv_guess_handle(uv_file file)
     __builtin_unreachable();
 }
 
-UV_EXTERN void* uv_handle_get_data(const uv_handle_t* handle)
-{
-    __bun_throw_not_implemented("uv_handle_get_data");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uv_loop_t* uv_handle_get_loop(const uv_handle_t* handle)
-{
-    __bun_throw_not_implemented("uv_handle_get_loop");
-    __builtin_unreachable();
-}
-
-UV_EXTERN uv_handle_type uv_handle_get_type(const uv_handle_t* handle)
-{
-    __bun_throw_not_implemented("uv_handle_get_type");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_handle_set_data(uv_handle_t* handle, void* data)
-{
-    __bun_throw_not_implemented("uv_handle_set_data");
-    __builtin_unreachable();
-}
-
 UV_EXTERN size_t uv_handle_size(uv_handle_type type)
 {
     __bun_throw_not_implemented("uv_handle_size");
@@ -821,12 +771,6 @@ UV_EXTERN size_t uv_handle_size(uv_handle_type type)
 UV_EXTERN const char* uv_handle_type_name(uv_handle_type type)
 {
     __bun_throw_not_implemented("uv_handle_type_name");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_has_ref(const uv_handle_t*)
-{
-    __bun_throw_not_implemented("uv_has_ref");
     __builtin_unreachable();
 }
 
@@ -910,18 +854,6 @@ UV_EXTERN int uv_ip6_name(const struct sockaddr_in6* src, char* dst, size_t size
 UV_EXTERN int uv_ip_name(const struct sockaddr* src, char* dst, size_t size)
 {
     __bun_throw_not_implemented("uv_ip_name");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_is_active(const uv_handle_t* handle)
-{
-    __bun_throw_not_implemented("uv_is_active");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_is_closing(const uv_handle_t* handle)
-{
-    __bun_throw_not_implemented("uv_is_closing");
     __builtin_unreachable();
 }
 
@@ -1363,12 +1295,6 @@ UV_EXTERN int uv_read_stop(uv_stream_t*)
 UV_EXTERN int uv_recv_buffer_size(uv_handle_t* handle, int* value)
 {
     __bun_throw_not_implemented("uv_recv_buffer_size");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_ref(uv_handle_t*)
-{
-    __bun_throw_not_implemented("uv_ref");
     __builtin_unreachable();
 }
 
@@ -2028,12 +1954,6 @@ UV_EXTERN int uv_udp_try_send2(uv_udp_t* handle,
 UV_EXTERN int uv_udp_using_recvmmsg(const uv_udp_t* handle)
 {
     __bun_throw_not_implemented("uv_udp_using_recvmmsg");
-    __builtin_unreachable();
-}
-
-UV_EXTERN void uv_unref(uv_handle_t*)
-{
-    __bun_throw_not_implemented("uv_unref");
     __builtin_unreachable();
 }
 

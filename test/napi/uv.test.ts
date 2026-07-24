@@ -1,10 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "node:path";
-import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
-import source from "./uv-stub-stuff/uv_impl.c";
-
-const symbols_to_test = symbols.filter(s => !test_skipped.includes(s));
+import source from "./uv-stub-stuff/uv_impl.c" with { type: "file" };
 
 // We use libuv on Windows
 describe.if(!isWindows)("uv stubs", () => {
@@ -111,5 +108,95 @@ describe.if(!isWindows)("uv stubs", () => {
     // 3. The difference shouldn't be unreasonably large
     // Let's say not more than 100ms (100,000,000 ns)
     expect(diff <= 100_000_000n).toBe(true);
+  });
+
+  // Run the uv_async_t tests in a subprocess: the async callback is deferred to
+  // the next event-loop tick, and on older builds these functions abort the
+  // process.
+  async function runUvAsync(useDefaultLoop: boolean, sendFromThread: boolean) {
+    const addon = path.join(tempdir, "./build/Release/uv_test.node");
+    const script = `
+      const addon = require(${JSON.stringify(addon)});
+      const sync = addon.testUvAsync(${useDefaultLoop}, ${sendFromThread}, result => {
+        console.log(JSON.stringify({ sync, result }));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim().length).toBeGreaterThan(0);
+    const out = JSON.parse(stdout.trim());
+    expect(out).toEqual({
+      sync: {
+        initRc: 0,
+        defaultLoopMatchesNapiLoop: true,
+        handleType: out.sync.expectedHandleType,
+        expectedHandleType: out.sync.expectedHandleType,
+        handleLoopMatches: true,
+        handleDataMatches: true,
+        hasRefAfterInit: 1,
+        isActiveAfterInit: 1,
+        isClosingAfterInit: 0,
+        hasRefAfterUnref: 0,
+        hasRefAfterReref: 1,
+        firedSynchronously: 0,
+      },
+      result: {
+        asyncFired: 1,
+        closed: 1,
+        isClosingInCloseCb: 1,
+      },
+    });
+    expect(exitCode).toBe(0);
+  }
+
+  test("uv_async: napi_get_uv_event_loop, send from loop thread", async () => {
+    await runUvAsync(false, false);
+  });
+
+  test("uv_async: napi_get_uv_event_loop, send from another thread", async () => {
+    await runUvAsync(false, true);
+  });
+
+  test("uv_async: uv_default_loop, send from loop thread", async () => {
+    await runUvAsync(true, false);
+  });
+
+  test("uv_async: uv_default_loop, send from another thread", async () => {
+    await runUvAsync(true, true);
+  });
+
+  test("uv_async: ref'd handle keeps the process alive until unref", async () => {
+    const addon = path.join(tempdir, "./build/Release/uv_test.node");
+    const script = `
+      const addon = require(${JSON.stringify(addon)});
+      addon.testUvAsyncKeepaliveInit();
+      let ticks = 0;
+      (function tick() {
+        if (++ticks === 3) {
+          console.log("unref");
+          addon.testUvAsyncKeepaliveUnref();
+          // After unref there is nothing keeping the loop alive; the process
+          // must exit on its own without an explicit process.exit().
+        } else {
+          setImmediate(tick);
+        }
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("unref\n");
+    expect(exitCode).toBe(0);
   });
 });

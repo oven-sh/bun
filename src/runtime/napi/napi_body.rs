@@ -3571,6 +3571,93 @@ mod posix_platform_specific_v8_apis {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// uv_async_t bridge (POSIX only)
+// ──────────────────────────────────────────────────────────────────────────
+//
+// On POSIX the `uv_loop_t*` that `napi_get_uv_event_loop`/`uv_default_loop`
+// hand out is really a `*mut EventLoop` (see `napi_get_uv_event_loop` above).
+// The C side (`src/jsc/bindings/uv-posix-polyfills.c`) owns the `uv_async_t`
+// struct layout and the `flags`/`pending` bookkeeping that addons can observe;
+// these shims provide the two things it cannot do from C: schedule a callback
+// onto Bun's event loop, and adjust the loop's keep-alive refcount. On Windows
+// Bun links real libuv and none of this is used.
+
+#[cfg(unix)]
+mod uv_async_posix {
+    use core::ffi::c_void;
+
+    use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
+    use bun_jsc::virtual_machine::VirtualMachine;
+
+    unsafe extern "C" {
+        fn Bun__uv_handle_dispatch(handle: *mut c_void);
+    }
+
+    fn dispatch(handle: *mut c_void) -> bun_event_loop::JsResult<()> {
+        // SAFETY: `handle` is the live `uv_handle_t*` enqueued below; libuv's
+        // contract is that a handle may only be freed in or after its close
+        // callback, and the C side guarantees at most one task per handle is
+        // in the queue, so this never observes a freed handle.
+        unsafe { Bun__uv_handle_dispatch(handle) };
+        Ok(())
+    }
+
+    /// Schedule `handle`'s callback on its loop thread. Called from
+    /// `uv_async_send` (any thread) and the `uv_close` path (loop thread).
+    #[unsafe(no_mangle)]
+    pub(super) extern "C" fn Bun__uv_handle_schedule(
+        event_loop: *const EventLoop,
+        handle: *mut c_void,
+    ) {
+        if event_loop.is_null() {
+            return;
+        }
+        // SAFETY: `event_loop` is the `*mut EventLoop` stored in `handle->loop`
+        // by `uv_async_init`, which came from `napi_get_uv_event_loop` or
+        // `uv_default_loop`; it is live for the VM lifetime and
+        // `enqueue_task_concurrent` is thread-safe.
+        let event_loop = unsafe { &*event_loop };
+        event_loop.enqueue_task_concurrent(ConcurrentTask::from_callback(handle, dispatch));
+    }
+
+    /// Adjust the event loop's concurrent keep-alive refcount. `uv_async_init`
+    /// / `uv_ref` pass `delta > 0`; `uv_unref` / the close-callback path pass
+    /// `delta < 0`. Every call site is either on the loop thread or is
+    /// `uv_async_init` itself, so the atomic counter in `EventLoop` is
+    /// sufficient.
+    #[unsafe(no_mangle)]
+    pub(super) extern "C" fn Bun__uv_handle_ref(
+        event_loop: *const EventLoop,
+        delta: core::ffi::c_int,
+    ) {
+        if event_loop.is_null() {
+            return;
+        }
+        // SAFETY: see `Bun__uv_handle_schedule`.
+        let event_loop = unsafe { &*event_loop };
+        if delta > 0 {
+            event_loop.ref_concurrently();
+        } else {
+            event_loop.unref_concurrently();
+        }
+    }
+
+    /// POSIX `uv_default_loop`: the main-thread VM's event loop, which is the
+    /// same pointer `napi_get_uv_event_loop` returns on the main thread.
+    /// Addons that call `uv_default_loop()` are assuming Node's model where
+    /// that loop is the one JS runs on.
+    #[unsafe(no_mangle)]
+    pub(super) extern "C" fn Bun__uv_default_loop() -> *mut EventLoop {
+        match VirtualMachine::get_main_thread_vm() {
+            // SAFETY: `get_main_thread_vm` returns the live main-thread
+            // singleton; `event_loop()` is a raw self-pointer into it.
+            Some(vm) => unsafe { &*vm }.event_loop(),
+            None => core::ptr::null_mut(),
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // uv_* symbol references (posix DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -4054,6 +4141,13 @@ pub fn fix_dead_code_elimination() {
         node_api_create_sharedarraybuffer,
         node_api_create_external_sharedarraybuffer,
         node_api_is_sharedarraybuffer,
+    );
+
+    #[cfg(unix)]
+    keep_symbols!(
+        uv_async_posix::Bun__uv_handle_schedule,
+        uv_async_posix::Bun__uv_handle_ref,
+        uv_async_posix::Bun__uv_default_loop,
     );
 
     // uv_functions_to_export

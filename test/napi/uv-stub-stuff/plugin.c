@@ -45,22 +45,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_async_init") == 0) {
-    uv_loop_t *arg0 = {0};
-    uv_async_t *arg1 = {0};
-    uv_async_cb arg2 = NULL;
-
-    uv_async_init(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_async_send") == 0) {
-    uv_async_t *arg0 = {0};
-
-    uv_async_send(arg0);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_available_parallelism") == 0) {
 
     uv_available_parallelism();
@@ -156,14 +140,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_close") == 0) {
-    uv_handle_t *arg0 = {0};
-    uv_close_cb arg1 = NULL;
-
-    uv_close(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_cond_broadcast") == 0) {
     uv_cond_t *arg0 = {0};
 
@@ -228,12 +204,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     size_t *arg1 = {0};
 
     uv_cwd(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_default_loop") == 0) {
-
-    uv_default_loop();
     return NULL;
   }
 
@@ -932,35 +902,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     return NULL;
   }
 
-  if (strcmp(buffer, "uv_handle_get_data") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_handle_get_data(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_get_loop") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_handle_get_loop(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_get_type") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_handle_get_type(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_handle_set_data") == 0) {
-    uv_handle_t *arg0 = {0};
-    void *arg1 = {0};
-
-    uv_handle_set_data(arg0, arg1);
-    return NULL;
-  }
-
   if (strcmp(buffer, "uv_handle_size") == 0) {
     uv_handle_type arg0 = {0};
 
@@ -972,13 +913,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     uv_handle_type arg0 = {0};
 
     uv_handle_type_name(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_has_ref") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_has_ref(arg0);
     return NULL;
   }
 
@@ -1092,20 +1026,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     size_t arg2 = {0};
 
     uv_ip_name(arg0, arg1, arg2);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_is_active") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_is_active(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_is_closing") == 0) {
-    const uv_handle_t *arg0 = {0};
-
-    uv_is_closing(arg0);
     return NULL;
   }
 
@@ -1650,13 +1570,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     int *arg1 = {0};
 
     uv_recv_buffer_size(arg0, arg1);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_ref") == 0) {
-    uv_handle_t *arg0 = {0};
-
-    uv_ref(arg0);
     return NULL;
   }
 
@@ -2403,13 +2316,6 @@ napi_value call_uv_func(napi_env env, napi_callback_info info) {
     const uv_udp_t *arg0 = {0};
 
     uv_udp_using_recvmmsg(arg0);
-    return NULL;
-  }
-
-  if (strcmp(buffer, "uv_unref") == 0) {
-    uv_handle_t *arg0 = {0};
-
-    uv_unref(arg0);
     return NULL;
   }
 

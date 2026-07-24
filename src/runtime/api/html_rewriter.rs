@@ -452,6 +452,7 @@ impl HTMLRewriter {
                 body_value,
                 BunString::empty(),
                 false,
+                webcore::ResponseType::Default,
             )));
             let _resp_guard = scopeguard::guard(resp, |r| {
                 // SAFETY: `r` is the `heap::into_raw` allocation from just
@@ -614,6 +615,7 @@ impl BufferOutputSink {
             }),
             BunString::empty(),
             false,
+            webcore::ResponseType::Default,
         )));
 
         // SAFETY: sink was just allocated via heap::alloc above; refcount==1.
@@ -715,6 +717,8 @@ impl BufferOutputSink {
         // SAFETY: result/original are live *Response (see SAFETY note above).
         // `url()` is +0 borrowed-bits; `set_url` takes +1 — `.clone()` to bump.
         unsafe { (*result).set_url((*original).url().clone()) };
+        // SAFETY: result/original are live *Response (see SAFETY note above).
+        unsafe { (*result).set_response_type((*original).response_type()) };
 
         // SAFETY: original is a live *Response kept alive by caller.
         let value = unsafe { (*original).get_body_value() };

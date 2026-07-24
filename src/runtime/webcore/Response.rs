@@ -171,6 +171,7 @@ pub struct Response {
     // `Copy` and has no `Drop`.
     url: JsCell<OwnedString>,
     redirected: Cell<bool>,
+    response_type: Cell<ResponseType>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
     pub ref_count: Cell<u32>,
@@ -192,10 +193,38 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(OwnedString::new(BunString::empty())),
             redirected: Cell::new(false),
+            response_type: Cell::new(ResponseType::Default),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
+        }
+    }
+}
+
+/// <https://fetch.spec.whatwg.org/#concept-response-type>
+///
+/// Bun has no notion of an origin, so response tainting is always "basic" and
+/// the filtered types ("cors", "opaque", "opaqueredirect") are unreachable.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ResponseType {
+    /// `new Response()`, `Response.json()`, `Response.redirect()`, and the
+    /// responses Bun's servers construct.
+    Default = 0,
+    /// Anything `fetch()` resolves with.
+    Basic = 1,
+    /// `Response.error()`.
+    Error = 2,
+}
+
+impl ResponseType {
+    fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
+        let common_strings = global_this.common_strings();
+        match self {
+            Self::Default => common_strings.default(),
+            Self::Basic => common_strings.basic(),
+            Self::Error => common_strings.error(),
         }
     }
 }
@@ -263,12 +292,19 @@ impl BodyMixin for Response {
 }
 
 impl Response {
-    pub fn init(response_init: Init, body: Body, url: BunString, redirected: bool) -> Response {
+    pub fn init(
+        response_init: Init,
+        body: Body,
+        url: BunString,
+        redirected: bool,
+        response_type: ResponseType,
+    ) -> Response {
         Response {
             init: JsCell::new(response_init),
             body: JsCell::new(body),
             url: JsCell::new(OwnedString::new(url)),
             redirected: Cell::new(redirected),
+            response_type: Cell::new(response_type),
             ..Default::default()
         }
     }
@@ -325,6 +361,27 @@ impl Response {
     #[inline]
     pub fn url(&self) -> BunString {
         self.url.get().get()
+    }
+
+    /// `url` serialized with exclude fragment set to true, as `Response.url`
+    /// exposes it. https://fetch.spec.whatwg.org/#dom-response-url
+    /// Borrowed (+0): the returned view must not outlive `self.url`.
+    fn url_without_fragment(&self) -> BunString {
+        let url = self.url();
+        match url.index_of_ascii_char(b'#') {
+            Some(fragment_start) => url.substring_with_len(0, fragment_start),
+            None => url,
+        }
+    }
+
+    #[inline]
+    pub fn response_type(&self) -> ResponseType {
+        self.response_type.get()
+    }
+
+    #[inline]
+    pub fn set_response_type(&self, response_type: ResponseType) {
+        self.response_type.set(response_type);
     }
 
     #[inline]
@@ -566,16 +623,13 @@ impl Response {
 
     // JS getter; codegen calls this exact name.
     pub fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
-        this.url.get().to_js(global_this)
+        // `to_js` copies into a JSString before the borrowed view can dangle.
+        this.url_without_fragment().to_js(global_this)
     }
 
     pub fn get_response_type(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        if this.init.get().status_code < 200 {
-            return Ok(global_this.common_strings().error());
-        }
-
-        Ok(global_this.common_strings().default())
+        // https://fetch.spec.whatwg.org/#dom-response-type
+        Ok(this.response_type.get().to_js(global_this))
     }
 
     pub fn get_status_text(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
@@ -697,7 +751,12 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \"")
             )?;
-            bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r><b>{}<r>", self.url.get())?;
+            bun_core::write_pretty!(
+                writer,
+                ENABLE_ANSI_COLORS,
+                "<r><b>{}<r>",
+                self.url_without_fragment()
+            )?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
@@ -821,6 +880,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
+            response_type: Cell::new(self.response_type.get()),
             ..Default::default()
         })
     }
@@ -1125,6 +1185,7 @@ impl Response {
                 ..Default::default()
             }),
             body: JsCell::new(Body::new(BodyValue::Empty)),
+            response_type: Cell::new(ResponseType::Error),
             ..Default::default()
         }));
 

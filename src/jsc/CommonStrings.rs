@@ -24,6 +24,7 @@ enum CommonStringsForZig {
     BinaryTypeArrayBuffer = 10,
     BinaryTypeNodeBuffer = 11,
     BinaryTypeUint8Array = 12,
+    FetchBasic = 13,
 }
 
 unsafe extern "C" {
@@ -71,6 +72,10 @@ impl<'a> CommonStrings<'a> {
     #[inline]
     pub fn default(self) -> JSValue {
         CommonStringsForZig::FetchDefault.to_js(self.global_object)
+    }
+    #[inline]
+    pub fn basic(self) -> JSValue {
+        CommonStringsForZig::FetchBasic.to_js(self.global_object)
     }
     #[inline]
     pub fn error(self) -> JSValue {

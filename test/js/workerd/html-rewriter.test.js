@@ -337,6 +337,28 @@ describe("HTMLRewriter", () => {
     }
   });
 
+  it("transform() keeps the original response's type and url", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response("<div>hello</div>", { headers: { "Content-Type": "text/html" } }),
+    });
+
+    const original = await fetch(`${server.url.origin}/page#frag`);
+    const transformed = new HTMLRewriter()
+      .on("div", {
+        element(element) {
+          element.setInnerContent("it worked!");
+        },
+      })
+      .transform(original);
+
+    expect(transformed.type).toBe("basic");
+    expect(transformed.url).toBe(`${server.url.origin}/page`);
+    expect(await transformed.text()).toBe("<div>it worked!</div>");
+
+    expect(new HTMLRewriter().transform(new Response("<div>hello</div>")).type).toBe("default");
+  });
+
   for (let input of [new Response("<div>hello</div>"), "<div>hello</div>"]) {
     it("supports element handlers with input " + input.constructor.name, async () => {
       var rewriter = new HTMLRewriter();

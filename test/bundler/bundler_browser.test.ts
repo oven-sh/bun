@@ -134,6 +134,66 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+  itBundled("browser/NodeEventsCaptureRejectionsThenable", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const ee = new EventEmitter({ captureRejections: true });
+        ee.on("error", err => console.log("captured", err.message));
+        ee.on("boom", () => ({
+          then(onFulfilled, onRejected) {
+            console.log("onFulfilled is", typeof onFulfilled);
+            onRejected(new Error("rejected-thenable"));
+          },
+        }));
+        ee.emit("boom");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "onFulfilled is undefined\ncaptured rejected-thenable",
+    },
+  });
+  itBundled("browser/NodeEventsCaptureRejectionsThrowingThenGetter", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const ee = new EventEmitter({ captureRejections: true });
+        ee.on("error", err => console.log("captured", err.message));
+        ee.on("boom", () => {
+          const thenable = {};
+          Object.defineProperty(thenable, "then", {
+            get() {
+              throw new Error("throwing-then-getter");
+            },
+          });
+          return thenable;
+        });
+        console.log("emit returned", ee.emit("boom"));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "captured throwing-then-getter\nemit returned true",
+    },
+  });
+  itBundled("browser/NodeEventsCaptureRejectionsOnceListener", {
+    files: {
+      "/entry.js": /* js */ `
+        import { EventEmitter } from "node:events";
+        const ee = new EventEmitter({ captureRejections: true });
+        ee.on("error", err => console.log("captured", err.message));
+        ee.once("boom", async () => { throw new Error("once-rejection"); });
+        ee.prependOnceListener("bang", async () => { throw new Error("prepend-once-rejection"); });
+        ee.emit("boom");
+        ee.emit("bang");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "captured once-rejection\ncaptured prepend-once-rejection",
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {

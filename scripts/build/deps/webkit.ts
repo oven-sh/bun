@@ -10,7 +10,7 @@
 // Windows ICU data table filtered + per-item zstd compressed, and Windows
 // unwind info (RtlAddGrowableFunctionTable) registered for the fixed JIT
 // pool (LLInt pending offlineasm .seh_* emission).
-export const WEBKIT_VERSION = "autobuild-preview-pr-330-be77ad70";
+export const WEBKIT_VERSION = "autobuild-preview-pr-330-6d8df126";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

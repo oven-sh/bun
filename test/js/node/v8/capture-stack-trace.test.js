@@ -420,11 +420,14 @@ test("sanity check", () => {
     Error.prepareStackTrace = (e, s) => {
       // getThis returns undefined in strict mode
       expect(s[0].getThis()).toBe(undefined);
-      expect(s[0].getTypeName()).toBe("undefined");
+      // getTypeName returns null when the receiver is null/undefined or strict.
+      // Matches V8 (previously Bun returned the literal string "undefined").
+      expect(s[0].getTypeName()).toBe(null);
       // getFunction returns undefined in strict mode
       expect(s[0].getFunction()).toBe(undefined);
       expect(s[0].getFunctionName()).toBe("f3");
-      expect(s[0].getMethodName()).toBe("f3");
+      // f3 is a top-level function, not a method of any object, so V8 returns null.
+      expect(s[0].getMethodName()).toBe(null);
       expect(typeof s[0].getLineNumber()).toBe("number");
       expect(typeof s[0].getColumnNumber()).toBe("number");
       expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
@@ -533,6 +536,60 @@ test("CallFrame.p.isConstructor", () => {
   };
   new C();
   Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+// https://github.com/oven-sh/bun/issues/30938
+test("CallSite.p.getTypeName returns null (not 'undefined') when receiver is not an object", () => {
+  // The assertion runs inside the prepareStackTrace hook, so require it to fire.
+  expect.hasAssertions();
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, s) => {
+    expect(s[0].getTypeName()).toBe(null);
+  };
+  try {
+    const e = new Error();
+    Error.captureStackTrace(e);
+    e.stack;
+  } finally {
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+});
+
+test("CallSite.p.getFunctionName returns null for anonymous frames", () => {
+  expect.hasAssertions();
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  Error.prepareStackTrace = (_, s) => {
+    // Top frame is the anonymous arrow below.
+    expect(s[0].getFunctionName()).toBe(null);
+  };
+  try {
+    (() => {
+      const e = new Error();
+      Error.captureStackTrace(e);
+      e.stack;
+    })();
+  } finally {
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+});
+
+test("CallSite.p.getMethodName returns null for non-method frames", () => {
+  expect.hasAssertions();
+  let prevPrepareStackTrace = Error.prepareStackTrace;
+  function topLevelFn() {
+    const e = new Error();
+    Error.captureStackTrace(e);
+    e.stack;
+  }
+  Error.prepareStackTrace = (_, s) => {
+    // topLevelFn is a plain function call, not a method, so V8 returns null.
+    expect(s[0].getMethodName()).toBe(null);
+  };
+  try {
+    topLevelFn();
+  } finally {
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
 });
 
 test("CallFrame.p.isNative", () => {

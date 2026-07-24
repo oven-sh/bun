@@ -262,10 +262,10 @@ The `CallSite` object has the following methods:
 | Method                     | Returns                                               |
 | -------------------------- | ----------------------------------------------------- |
 | `getThis`                  | `this` value of the function call                     |
-| `getTypeName`              | typeof `this`                                         |
+| `getTypeName`              | constructor name of the receiver, or `null`           |
 | `getFunction`              | function object                                       |
-| `getFunctionName`          | function name as a string                             |
-| `getMethodName`            | method name as a string                               |
+| `getFunctionName`          | function name, or `null` if anonymous                 |
+| `getMethodName`            | `null` (receiver not retained)                        |
 | `getFileName`              | file name or URL                                      |
 | `getLineNumber`            | line number                                           |
 | `getColumnNumber`          | column number                                         |

@@ -1693,7 +1693,25 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
 
+        // An X509 verify result is only meaningful when the protocol handshake
+        // completed. A positive `error_no` on a failed handshake is the
+        // verifier's no-peer-certificate default and does not describe a
+        // presented certificate; drop it so the JS handler reads this as a
+        // protocol failure (`verifyError == null`) rather than a verification
+        // result on an established session. Negative `error_no` values
+        // (EPROTO/ECONNRESET from the openssl.c transport) are preserved.
+        let ssl_error = if success == 0 && ssl_error.error_no > 0 {
+            uws::us_bun_verify_error_t::default()
+        } else {
+            ssl_error
+        };
         let verify_failed = SSL && ssl_error.error_no != 0;
+        // The `success` argument delivered to JS is the same verdict as the
+        // `socket.authorized` getter: protocol handshake completed AND the
+        // X509 chain verified AND the hostname matched.
+        if verify_failed {
+            authorized = false;
+        }
 
         this.verify_error.set(if verify_failed {
             Some(StoredVerifyError {
@@ -1719,7 +1737,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // deliver application data to a peer that is about to be rejected —
         // including the raw twin of an `upgradeTLS` pair, which shares the fd.
         this.update_flags(|f| {
-            f.set(Flags::AUTHORIZED, authorized && !verify_failed);
+            f.set(Flags::AUTHORIZED, authorized);
             f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
             f.set(Flags::REJECTED, reject_unauthorized);
         });

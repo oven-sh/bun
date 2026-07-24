@@ -6360,7 +6360,8 @@ declare module "bun" {
 
     /**
      * Called when the TLS handshake completes.
-     * @param success Whether the server authorized the connection despite `authorizationError`
+     * @param success Whether the peer is authorized: the handshake completed, the certificate chain verified,
+     *                and (for clients) the hostname matched. Equal to `socket.authorized`.
      * @param authorizationError The certificate authorization error, or `null` if there was none
      */
     handshake?(socket: Socket<Data>, success: boolean, authorizationError: Error | null): void;

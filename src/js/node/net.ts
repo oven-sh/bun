@@ -850,11 +850,20 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1105-L1106
       self.removeListener("timeout", onHandshakeTimeout);
     }
-    // On the server side the second argument is the raw handshake result
-    // (client-certificate verification is reported separately through
-    // `verifyError` and handled below), so !success always means the TLS
-    // session was never established.
-    if (!success) {
+    // The second argument is "authorized" (handshake + verification), matching
+    // the public Bun.connect handshake callback and `socket.authorized`. node:tls
+    // decides what to do with a client-certificate verification result in JS via
+    // the requestCert / rejectUnauthorized handling below, so a verification-class
+    // result (an X509 code such as UNABLE_TO_VERIFY_LEAF_SIGNATURE) still means
+    // the TLS session itself was established. Only a fatal TLS protocol failure
+    // or a mid-handshake disconnect means the session was never established.
+    const isProtocolFailure =
+      !success &&
+      (verifyError == null ||
+        verifyError.code === "ECONNRESET" ||
+        verifyError.code === "EPROTO" ||
+        /^ERR_(SSL|OSSL)_/.test(verifyError.code));
+    if (isProtocolFailure) {
       // The handshake never completed: there is no TLS session, so there is
       // no secureConnection. Report the failure through tlsClientError the
       // way Node does and tear the connection down. A connection that was
@@ -898,7 +907,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     }
     self._securePending = false;
     self.secureConnecting = false;
-    self._secureEstablished = !!success;
+    self._secureEstablished = true;
     self.servername = socket.getServername();
     self.alpnProtocol = socket.alpnProtocol;
     self[kVerifyError] = verifyError ?? null;

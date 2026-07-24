@@ -1285,14 +1285,17 @@ class Session extends EventEmitter {
         // Node's dispatcher delivers these as Maybe<int>, so clamp to finite
         // non-negative int32 and fall through to the defaults otherwise: NaN
         // would disable eviction and a negative would evict the entry just
-        // written.
+        // written. Gate on the ToInt32-converted value so a finite input
+        // above 2^31 cannot wrap negative past the sign check.
         const maxTotal = (params as any)?.maxTotalBufferSize;
         const maxResource = (params as any)?.maxResourceBufferSize;
-        if (typeof maxTotal === "number" && Number.isFinite(maxTotal) && maxTotal >= 0) {
-          state.maxTotalBufferSize = maxTotal | 0;
+        if (typeof maxTotal === "number" && Number.isFinite(maxTotal)) {
+          const v = maxTotal | 0;
+          if (v >= 0) state.maxTotalBufferSize = v;
         }
-        if (typeof maxResource === "number" && Number.isFinite(maxResource) && maxResource >= 0) {
-          state.maxResourceBufferSize = maxResource | 0;
+        if (typeof maxResource === "number" && Number.isFinite(maxResource)) {
+          const v = maxResource | 0;
+          if (v >= 0) state.maxResourceBufferSize = v;
         }
         networkEnabledSessions.set(this, state);
         return {};

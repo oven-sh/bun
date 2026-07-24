@@ -800,6 +800,11 @@ function republishChildEvent(
   const { type, data } = event;
   Object.setPrototypeOf(data, null);
   data.file = file;
+  // Child stdout is user-controlled: a forged nesting/duration_ms would crash
+  // the reporter's .repeat()/jsToYaml. Clamp once here so the reporter port
+  // stays byte-faithful to upstream.
+  const rawNesting = data.nesting;
+  data.nesting = typeof rawNesting === "number" && rawNesting >= 0 && rawNesting <= 256 ? rawNesting | 0 : 0;
   const isVerdict = type === "test:pass" || type === "test:fail";
   if (isVerdict || type === "test:complete") {
     const isSuite = data.type === "suite";
@@ -841,7 +846,9 @@ function republishChildEvent(
     if (serialized != null) {
       error = Error.isError(serialized) ? serialized : rebuildError(serialized);
     }
-    data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
+    const rawDuration = data.duration_ms;
+    const duration_ms = typeof rawDuration === "number" && Number.isFinite(rawDuration) ? rawDuration : 0;
+    data.details = { __proto__: null, duration_ms, type: detailType, error };
     if (type === "test:complete") data.details.passed = data.passed;
     delete data.error;
     delete data.duration_ms;
@@ -3204,13 +3211,17 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     (node.abortController ??= new AbortController()).abort();
   }
 
+  const bodyFailure = failure;
   failure = applyExpectFailure(node, failure);
+  // Node's Test.fail() re-checks expectFailure on a later hook error, so an
+  // accepted-xfail test stays passing even when its after/afterEach throws.
+  const acceptedXfail = bodyFailure !== undefined && failure === undefined;
 
   // Node sets passed/error before running afterEach/after so hooks can
   // introspect the outcome (nodejs/node lib/internal/test_runner/test.js
   // pass()/fail() precede afterEach).
   node.passed = failure === undefined;
-  node.error = failure ?? null;
+  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   // Mark finished before hooks so a late t.test() from an after/afterEach
   // hook hits addTest()'s parentAlreadyFinished path (Node cancels these).
   node.finished = true;
@@ -3221,7 +3232,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       try {
         await runHook(hook, ancestor, ctx, "afterEach");
       } catch (err) {
-        failure ??= err;
+        if (!acceptedXfail) failure ??= err;
       }
     }
   }
@@ -3230,7 +3241,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     try {
       await runHook(hook, node, ctx, "after");
     } catch (err) {
-      failure ??= err;
+      if (!acceptedXfail) failure ??= err;
     }
   }
 
@@ -3242,11 +3253,11 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     node.mockTracker?.reset();
   } catch (err) {
-    failure ??= err;
+    if (!acceptedXfail) failure ??= err;
   }
 
   node.passed = failure === undefined;
-  node.error = failure ?? null;
+  node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
   return failure;
 }

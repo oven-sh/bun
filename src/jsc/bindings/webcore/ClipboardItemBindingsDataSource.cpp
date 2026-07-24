@@ -102,11 +102,12 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
     }
 
     // The item is the only thing keeping m_itemPromises alive across the async
-    // gap, so the reaction holds it strongly. It does not, however, hold a
-    // strong Ref<DOMPromise> — that would close a native<->GC cycle through
-    // guardedObjects for a never-settling representation. The reaction drops
-    // its captures when it fires (whenPromiseIsSettled's std::exchange), so a
-    // source that does settle releases the item then.
+    // gap, so the reaction holds it strongly. This transitively holds the
+    // item's Ref<DOMPromise>s and so does close a guardedObjects cycle for a
+    // representation that never settles — a bounded per-call leak accepted so
+    // a temporary item is not collected mid-getType() (which would reject with
+    // InvalidStateError). A source that does settle releases everything when
+    // the reaction fires (whenPromiseIsSettled's std::exchange).
     m_itemPromises[matchIndex].value->whenSettled([this, protectedItem = Ref { m_item.get() }, matchIndex, promise = WTF::move(promise), type]() mutable {
         Ref itemPromise = m_itemPromises[matchIndex].value;
         if (itemPromise->status() != DOMPromise::Status::Fulfilled) {

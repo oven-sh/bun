@@ -1932,3 +1932,55 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
+
+it("a fatal uncaught exception exits before already-queued work runs", async () => {
+  // Node's fatal path: print the error, run 'exit' listeners, exit 1 -
+  // already-queued I/O completions, timers, immediates, later ticks, and
+  // beforeExit never run.
+  using dir = tempDir("fatal-uncaught-order", {
+    "fatal.js": `
+      const fs = require("fs");
+      fs.stat(".", () => console.log("IO-CALLBACK-RAN"));
+      process.on("exit", (code) => console.log("EXIT-HANDLER code=" + code));
+      process.on("beforeExit", () => console.log("BEFORE-EXIT-RAN"));
+      setImmediate(() => console.log("IMMEDIATE-RAN"));
+      setTimeout(() => console.log("TIMER-RAN"), 0);
+      process.nextTick(() => { throw new Error("fatal"); });
+      process.nextTick(() => console.log("LATER-TICK-RAN"));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fatal.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("EXIT-HANDLER code=1");
+  expect(stderr).toContain("fatal");
+  expect(exitCode).toBe(1);
+});
+
+it("a handled uncaughtException keeps the event loop running", async () => {
+  using dir = tempDir("handled-uncaught-order", {
+    "handled.js": `
+      const fs = require("fs");
+      process.on("uncaughtException", (e) => console.log("HANDLED:" + e.message));
+      fs.stat(".", () => console.log("IO-CALLBACK-RAN"));
+      setTimeout(() => console.log("TIMER-RAN"), 0);
+      process.nextTick(() => { throw new Error("caught-me"); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "handled.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const lines = stdout.trim().split(/\r?\n/).sort();
+  expect(lines).toEqual(["HANDLED:caught-me", "IO-CALLBACK-RAN", "TIMER-RAN"]);
+  expect(exitCode).toBe(0);
+});

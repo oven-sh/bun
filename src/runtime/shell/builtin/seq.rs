@@ -204,14 +204,13 @@ impl Seq {
         Builtin::done(interp, cmd, 0)
     }
 
-    #[allow(clippy::needless_pass_by_value)] // signature fixed by `Builtin::on_io_writer_chunk` dispatch
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if e.is_some() {
+        if let Some(_err) = e {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

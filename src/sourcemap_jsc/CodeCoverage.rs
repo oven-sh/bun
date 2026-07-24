@@ -76,6 +76,19 @@ impl Report {
         (self.functions_which_have_executed.count() as f64) / total_count
     }
 
+    /// This file's coverage fractions, with `failing` set when it misses
+    /// `thresholds` (only functions and lines are enforced).
+    pub fn coverage_fraction(&self, thresholds: Fraction) -> Fraction {
+        let functions = self.function_coverage_fraction();
+        let lines = self.lines_coverage_fraction();
+        Fraction {
+            functions,
+            lines,
+            stmts: self.stmts_coverage_fraction(),
+            failing: functions < thresholds.functions || lines < thresholds.lines,
+        }
+    }
+
     pub fn generate(
         global_this: &JSGlobalObject,
         byte_range_mapping: &mut ByteRangeMapping,
@@ -188,21 +201,11 @@ pub mod text {
     pub fn write_format<const ENABLE_COLORS: bool>(
         report: &Report,
         max_filename_length: usize,
-        fraction: &mut Fraction,
+        vals: Fraction,
+        thresholds: Fraction,
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let failing = *fraction;
-        let fns = report.function_coverage_fraction();
-        let lines = report.lines_coverage_fraction();
-        let stmts = report.stmts_coverage_fraction();
-        fraction.functions = fns;
-        fraction.lines = lines;
-        fraction.stmts = stmts;
-
-        let failed = fns < failing.functions || lines < failing.lines; // || stmts < failing.stmts;
-        fraction.failing = failed;
-
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
             filename = bun_paths::resolve_path::relative(base_path, filename);
@@ -211,9 +214,9 @@ pub mod text {
         write_format_with_values::<ENABLE_COLORS>(
             filename,
             max_filename_length,
-            *fraction,
-            failing,
-            failed,
+            vals,
+            thresholds,
+            vals.failing,
             writer,
             true,
         )?;
@@ -230,9 +233,6 @@ pub mod text {
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
-        let mut start_of_line_range: usize = 0;
-        let mut prev_line: usize = 0;
-        let mut is_first = true;
 
         // `concat!(pretty_fmt!(..), "{}")` requires a literal; split into a
         // prefix `write_all` + plain `write!` so the const-generic `ENABLE_COLORS` can
@@ -240,49 +240,49 @@ pub mod text {
         let red = pretty_fmt::<ENABLE_COLORS>("<red>");
         let comma = pretty_fmt::<ENABLE_COLORS>("<r><d>,<r>");
 
-        while let Some(next_line) = iter.next() {
-            if next_line == (prev_line + 1) {
-                prev_line = next_line;
-                continue;
-            } else if is_first && start_of_line_range == 0 && prev_line == 0 {
-                start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
-            }
+        let mut is_first = true;
+        // [start, end] of the run of consecutive uncovered lines being built.
+        let mut pending: Option<(usize, usize)> = None;
 
-            if is_first {
-                is_first = false;
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
+        while let Some(line) = iter.next() {
+            pending = match pending {
+                Some((start, end)) if line == end + 1 => Some((start, line)),
+                Some((start, end)) => {
+                    write_line_range(writer, &mut is_first, &red, &comma, start, end)?;
+                    Some((line, line))
+                }
+                None => Some((line, line)),
+            };
         }
 
-        if prev_line != start_of_line_range {
-            if is_first {
-            } else {
-                writer.write_all(&comma)?;
-            }
-
-            if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
-                write!(writer, "{}", start_of_line_range + 1)?;
-            } else {
-                writer.write_all(&red)?;
-                write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
-            }
+        if let Some((start, end)) = pending {
+            write_line_range(writer, &mut is_first, &red, &comma, start, end)?;
         }
         Ok(())
+    }
+
+    /// One comma-separated `start` / `start-end` entry of the
+    /// "Uncovered Line #s" column (`start`/`end` are inclusive and 0-based).
+    fn write_line_range(
+        writer: &mut impl bun_io::Write,
+        is_first: &mut bool,
+        red: &[u8],
+        comma: &[u8],
+        start: usize,
+        end: usize,
+    ) -> bun_io::Result<()> {
+        if *is_first {
+            *is_first = false;
+        } else {
+            writer.write_all(comma)?;
+        }
+
+        writer.write_all(red)?;
+        if start == end {
+            write!(writer, "{}", start + 1)
+        } else {
+            write!(writer, "{}-{}", start + 1, end + 1)
+        }
     }
 }
 
@@ -420,6 +420,15 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
+impl BasicBlockRange {
+    /// Hit count this block contributes to each line (a line reports the
+    /// max over the blocks touching it). JSC's synthetic function ranges
+    /// have `has_executed` with a zero count, so executed blocks count ≥ 1.
+    fn line_execution_count(&self) -> u32 {
+        u32::try_from(self.execution_count.max(usize::from(self.has_executed))).unwrap_or(u32::MAX)
+    }
+}
+
 pub struct ByteRangeMapping {
     pub line_offset_table: line_offset_table::List,
     pub source_id: i32,
@@ -532,6 +541,7 @@ impl ByteRangeMapping {
                 let mut max_line: u32 = 0;
 
                 let has_executed = block.has_executed || block.execution_count > 0;
+                let execution_count = block.line_execution_count();
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -554,7 +564,8 @@ impl ByteRangeMapping {
                     executable_lines.set(line as usize);
                     if has_executed {
                         lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
+                        let hits = &mut line_hits_slice[line as usize];
+                        *hits = (*hits).max(execution_count);
                     }
                 }
 
@@ -606,7 +617,10 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    // `max_line` is inclusive; without the + 1 the function's
+                    // last line (all of it, for a single-line function) kept
+                    // whatever the enclosing executed block recorded for it.
+                    let end = (max_line + 1).min(line_count);
                     line_hits_slice[min_line as usize..end as usize].fill(0);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
@@ -644,6 +658,7 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
                 let has_executed = block.has_executed || block.execution_count > 0;
+                let execution_count = block.line_execution_count();
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -694,7 +709,8 @@ impl ByteRangeMapping {
                         executable_lines.set(line as usize);
                         if has_executed {
                             lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
+                            let hits = &mut line_hits_slice[line as usize];
+                            *hits = (*hits).max(execution_count);
                         }
 
                         min_line = min_line.min(line);
@@ -787,7 +803,8 @@ impl ByteRangeMapping {
                 // only mark the lines as executable if the function has not executed
                 // functions that have executed have non-executable lines in them and thats fine.
                 if !did_fn_execute {
-                    let end = max_line.min(line_count);
+                    // `max_line` is inclusive; see the identical fix-up above.
+                    let end = (max_line + 1).min(line_count);
                     for line in min_line..end {
                         executable_lines.set(line as usize);
                         lines_which_have_executed.unset(line as usize);
@@ -910,7 +927,7 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
         Err(_) => return global_this.throw_out_of_memory_value(),
     };
 
-    let mut coverage_fraction = Fraction::default();
+    let thresholds = Fraction::default();
 
     // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
     let mut buf: Vec<u8> = Vec::new();
@@ -918,7 +935,8 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     if text::write_format::<false>(
         &report,
         source_url.utf8_byte_length(),
-        &mut coverage_fraction,
+        report.coverage_fraction(thresholds),
+        thresholds,
         b"",
         &mut buf,
     )

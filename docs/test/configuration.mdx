@@ -287,11 +287,11 @@ Specify the coverage threshold as a single number or as an object with per-metri
 
 ```toml title="bunfig.toml" icon="settings"
 [test]
-# Simple threshold - applies to lines, functions, and statements
+# Simple threshold - applies to lines and functions
 coverageThreshold = 0.8
 
 # Detailed thresholds
-coverageThreshold = { lines = 0.9, functions = 0.8, statements = 0.85 }
+coverageThreshold = { lines = 0.9, functions = 0.8 }
 ```
 
 Setting any of these enables `fail_on_low_coverage`, causing the test run to fail if coverage is below the threshold.
@@ -305,9 +305,8 @@ coverageThreshold = 0.9
 
 # Different requirements for different metrics
 coverageThreshold = {
-  lines = 0.85,      # 85% line coverage
-  functions = 0.90,  # 90% function coverage
-  statements = 0.80  # 80% statement coverage
+  lines = 0.85,     # 85% line coverage
+  functions = 0.90  # 90% function coverage
 }
 ```
 
@@ -431,7 +430,7 @@ smol = true
 coverage = true
 coverageReporter = ["text", "lcov"]
 coverageDir = "./coverage"
-coverageThreshold = { lines = 0.85, functions = 0.90, statements = 0.80 }
+coverageThreshold = { lines = 0.85, functions = 0.90 }
 coverageSkipTestFiles = true
 coveragePathIgnorePatterns = [
   "**/*.spec.ts",

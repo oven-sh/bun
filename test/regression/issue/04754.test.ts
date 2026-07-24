@@ -7,7 +7,7 @@
 // source natively and bypassed the patched function, so the unmodified source
 // was evaluated and vue-tsc fell back to plain tsc behavior.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 describe.concurrent("require() reads module source through fs.readFileSync", () => {
@@ -42,11 +42,7 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ result: "PATCHED", calls: 1 });
     expect(exitCode).toBe(0);
@@ -80,11 +76,7 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual(["PATCHED", "ORIGINAL"]);
     expect(exitCode).toBe(0);
@@ -116,11 +108,7 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ patched: true });
     expect(exitCode).toBe(0);
@@ -155,11 +143,7 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("caught: boom");
     expect(exitCode).toBe(0);
@@ -204,11 +188,7 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([".ts", ".tsx", ".js", ".vue"]);
     expect(exitCode).toBe(0);
@@ -247,14 +227,9 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("VIA-EXTENSION");
     expect(exitCode).toBe(0);
   });
-
 });

@@ -545,17 +545,20 @@ fn update_package_json_and_install_with_manager_with_updates(
         // so we can commit the version we changed from the lockfile
         let mut json_arena = bun_alloc::AstArena::new();
         let _scope = json_arena.enter();
-        let mut new_package_json: bun_ast::Expr =
-            match json::parse_package_json_utf8(&source, manager.log_mut(), bun_alloc::AstAlloc.arena()) {
-                Ok(v) => v,
-                Err(err) => {
-                    bun_core::pretty_errorln!(
-                        "package.json failed to parse due to error {}",
-                        err.name(),
-                    );
-                    Global::crash();
-                }
-            };
+        let mut new_package_json: bun_ast::Expr = match json::parse_package_json_utf8(
+            &source,
+            manager.log_mut(),
+            bun_alloc::AstAlloc.arena(),
+        ) {
+            Ok(v) => v,
+            Err(err) => {
+                bun_core::pretty_errorln!(
+                    "package.json failed to parse due to error {}",
+                    err.name(),
+                );
+                Global::crash();
+            }
+        };
 
         if updates.is_empty() {
             PackageJSONEditor::edit_update_no_args(

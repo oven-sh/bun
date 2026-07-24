@@ -1855,7 +1855,12 @@ mod tests {
                 out.push('\n');
             }
 
-            writeln!(out, "bool={:?}", root.as_property(b"private").and_then(|q| q.expr.as_bool())).unwrap();
+            writeln!(
+                out,
+                "bool={:?}",
+                root.as_property(b"private").and_then(|q| q.expr.as_bool())
+            )
+            .unwrap();
             writeln!(out, "num={:?}", root.get_number(b"count").map(|(n, _)| n)).unwrap();
             writeln!(
                 out,

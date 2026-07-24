@@ -53,14 +53,9 @@ fn bench_parse(c: &mut Criterion) {
                 ast_arena.reset();
                 let _scope = ast_arena.enter();
                 let mut log = js_ast::Log::init();
-                let parser = Parser::init(
-                    ParserOptions::default(),
-                    &mut log,
-                    &source,
-                    &define,
-                    &bump,
-                )
-                .expect("init");
+                let parser =
+                    Parser::init(ParserOptions::default(), &mut log, &source, &define, &bump)
+                        .expect("init");
                 let _ = std::hint::black_box(parser.parse());
             })
         });

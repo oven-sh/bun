@@ -390,8 +390,7 @@ impl UpdateInteractiveCommand {
                 // Update the version using hash map put. The string *bytes* go
                 // through the CLI arena (matches PackageJSONEditor `leak_str`).
                 let interned: &'static [u8] = crate::cli::cli_dupe(&version_with_prefix);
-                let new_expr =
-                    Expr::init(E::EString::init(interned), version_query.expr.loc);
+                let new_expr = Expr::init(E::EString::init(interned), version_query.expr.loc);
                 dep_obj
                     .put(&bump, &update.name, new_expr)
                     .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;

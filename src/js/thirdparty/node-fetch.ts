@@ -189,6 +189,24 @@ function fetchWithAgent(url, init, counter) {
       reject(new TypeError("Request with GET/HEAD method cannot have body"));
       return;
     }
+
+    let blobPromise: Promise<ArrayBuffer> | undefined;
+    if (body != null && typeof body === "object") {
+      if (body instanceof URLSearchParams) {
+        if (!headers.has("content-type")) headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
+        body = body.toString();
+      } else if (body instanceof FormData) {
+        // Let the native encoder produce the multipart body + boundary.
+        const encoded = new WebResponse(body);
+        const ct = encoded.headers.get("content-type");
+        if (ct && !headers.has("content-type")) headers.set("content-type", ct);
+        blobPromise = encoded.arrayBuffer();
+        body = null;
+      } else if (body instanceof Blob) {
+        const bodyType = body.type;
+        if (bodyType && !headers.has("content-type")) headers.set("content-type", bodyType);
+      }
+    }
     if (body != null && !headers.has("content-length") && !headers.has("transfer-encoding")) {
       if (typeof body === "string") headers.set("content-length", String(Buffer.byteLength(body)));
       else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
@@ -279,16 +297,17 @@ function fetchWithAgent(url, init, counter) {
             reject(new FetchError(`maximum redirect reached at: ${href}`, "max-redirect"));
             return;
           }
-          const nextInit: any = { ...init, counter: counter + 1 };
+          const nextHeaders = new Headers(init.headers || undefined);
+          const nextInit: any = { ...init, counter: counter + 1, headers: nextHeaders };
           const nextURL = new URL(locationURL);
           if (nextURL.hostname !== parsed.hostname || nextURL.protocol !== parsed.protocol) {
-            const h = new Headers(init.headers || undefined);
-            for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) h.delete(name);
-            nextInit.headers = h;
+            for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) nextHeaders.delete(name);
           }
           if (status === 303 || ((status === 301 || status === 302) && method === "POST")) {
             nextInit.method = "GET";
             nextInit.body = undefined;
+            nextHeaders.delete("content-length");
+            nextHeaders.delete("content-type");
           } else if (body != null && typeof body === "object" && typeof (body as any).pipe === "function") {
             settled = true;
             res.resume();
@@ -332,12 +351,8 @@ function fetchWithAgent(url, init, counter) {
       resolve(response);
     });
 
-    if (body == null) {
-      req.end();
-    } else if (typeof body === "string" || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
-      req.end(body instanceof ArrayBuffer ? new Uint8Array(body) : body);
-    } else if (body instanceof Blob) {
-      body.arrayBuffer().then(
+    const sendBuffered = (p: Promise<ArrayBuffer>) =>
+      p.then(
         buf => req.end(new Uint8Array(buf)),
         err => {
           if (!settled) {
@@ -347,6 +362,15 @@ function fetchWithAgent(url, init, counter) {
           req.destroy(err);
         },
       );
+
+    if (blobPromise) {
+      sendBuffered(blobPromise);
+    } else if (body == null) {
+      req.end();
+    } else if (typeof body === "string" || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      req.end(body instanceof ArrayBuffer ? new Uint8Array(body) : body);
+    } else if (body instanceof Blob) {
+      sendBuffered(body.arrayBuffer());
     } else if (typeof (body as any).pipe === "function") {
       (body as any).pipe(req);
     } else if (typeof (body as any).getReader === "function") {

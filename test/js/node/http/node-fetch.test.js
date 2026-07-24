@@ -191,145 +191,202 @@ describe("node-fetch honours the agent option", () => {
 
   test("calls agent.createConnection", async () => {
     const { agent, calls } = makeAgent();
-    await withServer(
-      (req, res) => res.end("ok"),
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
-        expect(await res.text()).toBe("ok");
-        expect(res.status).toBe(200);
-        expect(res.url).toBe(`http://127.0.0.1:${port}/`);
-        expect(res.body).toBeInstanceOf(stream.Readable);
-      },
-    );
-    expect(calls()).toBe(1);
-    agent.destroy();
+    try {
+      await withServer(
+        (req, res) => res.end("ok"),
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+          expect(await res.text()).toBe("ok");
+          expect(res.status).toBe(200);
+          expect(res.url).toBe(`http://127.0.0.1:${port}/`);
+          expect(res.body).toBeInstanceOf(stream.Readable);
+        },
+      );
+      expect(calls()).toBe(1);
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("agent as a function receives the parsed URL", async () => {
     const { agent, calls } = makeAgent();
-    let receivedHostname;
-    await withServer(
-      (req, res) => res.end("ok"),
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/`, {
-          agent: parsed => {
-            receivedHostname = parsed.hostname;
-            return agent;
-          },
-        });
-        expect(await res.text()).toBe("ok");
-      },
-    );
-    expect(receivedHostname).toBe("127.0.0.1");
-    expect(calls()).toBe(1);
-    agent.destroy();
+    try {
+      let receivedHostname;
+      await withServer(
+        (req, res) => res.end("ok"),
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, {
+            agent: parsed => {
+              receivedHostname = parsed.hostname;
+              return agent;
+            },
+          });
+          expect(await res.text()).toBe("ok");
+        },
+      );
+      expect(receivedHostname).toBe("127.0.0.1");
+      expect(calls()).toBe(1);
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("forwards method, headers and body", async () => {
     const { agent, calls } = makeAgent();
-    await withServer(
-      (req, res) => {
-        let body = "";
-        req.on("data", c => (body += c));
-        req.on("end", () => {
-          res.setHeader("x-echo", req.headers["x-foo"] ?? "");
-          res.end(`${req.method}:${body}`);
-        });
-      },
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/`, {
-          agent,
-          method: "POST",
-          headers: { "x-foo": "bar" },
-          body: "hello",
-        });
-        expect(await res.text()).toBe("POST:hello");
-        expect(res.headers.get("x-echo")).toBe("bar");
-        expect(res.headers.raw()["x-echo"]).toEqual(["bar"]);
-      },
-    );
-    expect(calls()).toBe(1);
-    agent.destroy();
+    try {
+      await withServer(
+        (req, res) => {
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("end", () => {
+            res.setHeader("x-echo", req.headers["x-foo"] ?? "");
+            res.end(`${req.method}:${body}`);
+          });
+        },
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, {
+            agent,
+            method: "POST",
+            headers: { "x-foo": "bar" },
+            body: "hello",
+          });
+          expect(await res.text()).toBe("POST:hello");
+          expect(res.headers.get("x-echo")).toBe("bar");
+          expect(res.headers.raw()["x-echo"]).toEqual(["bar"]);
+        },
+      );
+      expect(calls()).toBe(1);
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("serialises FormData and URLSearchParams bodies", async () => {
+    const { agent } = makeAgent();
+    try {
+      await withServer(
+        (req, res) => {
+          let body = "";
+          req.on("data", c => (body += c));
+          req.on("end", () => {
+            res.setHeader("x-ct", req.headers["content-type"] ?? "");
+            res.end(body);
+          });
+        },
+        async port => {
+          const fd = new FormData();
+          fd.append("name", "value");
+          let res = await fetch2(`http://127.0.0.1:${port}/`, { agent, method: "POST", body: fd });
+          const ct = res.headers.get("x-ct");
+          expect(ct).toStartWith("multipart/form-data; boundary=");
+          const received = await res.text();
+          expect(received).toContain('name="name"');
+          expect(received).toContain("value");
+
+          const sp = new URLSearchParams({ a: "1", b: "2" });
+          res = await fetch2(`http://127.0.0.1:${port}/`, { agent, method: "POST", body: sp });
+          expect(res.headers.get("x-ct")).toStartWith("application/x-www-form-urlencoded");
+          expect(await res.text()).toBe("a=1&b=2");
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("decompresses gzip responses", async () => {
     const { agent } = makeAgent();
-    await withServer(
-      (req, res) => {
-        res.writeHead(200, { "content-encoding": "gzip" });
-        res.end(zlib.gzipSync("compressed body"));
-      },
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
-        expect(await res.text()).toBe("compressed body");
-      },
-    );
-    agent.destroy();
+    try {
+      await withServer(
+        (req, res) => {
+          res.writeHead(200, { "content-encoding": "gzip" });
+          res.end(zlib.gzipSync("compressed body"));
+        },
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+          expect(await res.text()).toBe("compressed body");
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("follows redirects through the agent", async () => {
     const { agent, calls } = makeAgent();
-    await withServer(
-      (req, res) => {
-        if (req.url === "/start") {
-          res.writeHead(302, { location: "/end" });
-          res.end();
-        } else {
-          res.end("landed");
-        }
-      },
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/start`, { agent });
-        expect(await res.text()).toBe("landed");
-        expect(res.status).toBe(200);
-      },
-    );
-    expect(calls()).toBe(2);
-    agent.destroy();
+    try {
+      await withServer(
+        (req, res) => {
+          if (req.url === "/start") {
+            res.writeHead(302, { location: "/end" });
+            res.end();
+          } else {
+            res.end("landed");
+          }
+        },
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/start`, { agent });
+          expect(await res.text()).toBe("landed");
+          expect(res.status).toBe(200);
+        },
+      );
+      expect(calls()).toBe(2);
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("redirect: 'manual' returns the 3xx response", async () => {
     const { agent } = makeAgent();
-    await withServer(
-      (req, res) => {
-        res.writeHead(302, { location: "/elsewhere" });
-        res.end();
-      },
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent, redirect: "manual" });
-        expect(res.status).toBe(302);
-        expect(res.headers.get("location")).toBe("/elsewhere");
-      },
-    );
-    agent.destroy();
+    try {
+      await withServer(
+        (req, res) => {
+          res.writeHead(302, { location: "/elsewhere" });
+          res.end();
+        },
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, { agent, redirect: "manual" });
+          expect(res.status).toBe(302);
+          expect(res.headers.get("location")).toBe("/elsewhere");
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("rejects with FetchError on connection failure", async () => {
     const { agent } = makeAgent();
-    // Bind a socket to reserve a port, then close it so nothing is listening.
-    const probe = net.createServer().listen(0);
-    await once(probe, "listening");
-    const port = probe.address().port;
-    await new Promise(r => probe.close(r));
+    try {
+      // Bind a socket to reserve a port, then close it so nothing is listening.
+      const probe = net.createServer().listen(0);
+      await once(probe, "listening");
+      const port = probe.address().port;
+      await new Promise(r => probe.close(r));
 
-    await expect(fetch2(`http://127.0.0.1:${port}/`, { agent })).rejects.toThrow(FetchError);
-    agent.destroy();
+      await expect(fetch2(`http://127.0.0.1:${port}/`, { agent })).rejects.toThrow(FetchError);
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("aborts via signal", async () => {
     const { agent } = makeAgent();
-    await withServer(
-      () => {
-        /* never respond */
-      },
-      async port => {
-        const controller = new AbortController();
-        const p = fetch2(`http://127.0.0.1:${port}/`, { agent, signal: controller.signal });
-        controller.abort();
-        await expect(p).rejects.toMatchObject({ name: "AbortError" });
-      },
-    );
-    agent.destroy();
+    try {
+      await withServer(
+        () => {
+          /* never respond */
+        },
+        async port => {
+          const controller = new AbortController();
+          const p = fetch2(`http://127.0.0.1:${port}/`, { agent, signal: controller.signal });
+          controller.abort();
+          await expect(p).rejects.toMatchObject({ name: "AbortError" });
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
   });
 
   test("picks https.request for https: URLs", async () => {
@@ -348,11 +405,11 @@ describe("node-fetch honours the agent option", () => {
       const port = server.address().port;
       const res = await fetch2(`https://127.0.0.1:${port}/`, { agent });
       expect(await res.text()).toBe("secure");
+      expect(calls).toBe(1);
     } finally {
       server.close();
+      agent.destroy();
     }
-    expect(calls).toBe(1);
-    agent.destroy();
   });
 
   test("tunnels via a CONNECT-proxy agent", async () => {
@@ -374,10 +431,10 @@ describe("node-fetch honours the agent option", () => {
     });
     proxy.listen(0);
     await once(proxy, "listening");
-    const proxyPort = proxy.address().port;
 
     // Agent whose createConnection establishes the tunnel first (what
     // socks-proxy-agent / https-proxy-agent do).
+    const proxyPort = proxy.address().port;
     class TunnelAgent extends http.Agent {
       createConnection(opts, cb) {
         const sock = net.connect(proxyPort, "127.0.0.1", () => {
@@ -389,16 +446,18 @@ describe("node-fetch honours the agent option", () => {
     }
     const agent = new TunnelAgent({ keepAlive: false });
 
-    await withServer(
-      (req, res) => res.end("via proxy"),
-      async port => {
-        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
-        expect(await res.text()).toBe("via proxy");
-        expect(targets).toEqual([`127.0.0.1:${port}`]);
-      },
-    );
-
-    agent.destroy();
-    proxy.close();
+    try {
+      await withServer(
+        (req, res) => res.end("via proxy"),
+        async port => {
+          const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+          expect(await res.text()).toBe("via proxy");
+          expect(targets).toEqual([`127.0.0.1:${port}`]);
+        },
+      );
+    } finally {
+      agent.destroy();
+      proxy.close();
+    }
   });
 });

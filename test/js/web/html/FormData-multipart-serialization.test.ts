@@ -48,7 +48,7 @@ describe("multipart serialization (new Response(formData))", () => {
         `Content-Type: application/octet-stream\r\n\r\nnamed-bytes\r\n`,
         `--${boundary}\r\n`,
         `Content-Disposition: form-data; name="typed-file"; filename="weird%22file%0D%0Aname.html"\r\n`,
-        `Content-Type: text/html;charset=utf-8\r\n\r\n<p>hi</p>\r\n`,
+        `Content-Type: text/html\r\n\r\n<p>hi</p>\r\n`,
         `--${boundary}--\r\n`,
       ].join(""),
     );

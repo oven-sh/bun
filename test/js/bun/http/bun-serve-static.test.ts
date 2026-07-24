@@ -107,11 +107,7 @@ describe("static route Content-Type", () => {
   // change the Content-Type the next registration of the same Response produces.
   test.each([
     ["string body", () => new Response("hello"), "text/plain;charset=utf-8"],
-    [
-      "typed Blob body",
-      () => new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" })),
-      "text/html;charset=utf-8",
-    ],
+    ["typed Blob body", () => new Response(new Blob(["<h1>hi</h1>"], { type: "text/html" })), "text/html"],
     ["explicit header", () => new Response("hello", { headers: { "Content-Type": "text/foo" } }), "text/foo"],
     ["Response.json", () => Response.json({ a: 1 }), "application/json;charset=utf-8"],
     ["Uint8Array body", () => new Response(new Uint8Array([1, 2, 3])), null],
@@ -151,8 +147,8 @@ describe("static route Content-Type", () => {
       untouched: await contentTypeOf(server, "/untouched"),
       touched: await contentTypeOf(server, "/touched"),
     }).toEqual({
-      untouched: "text/html;charset=utf-8",
-      touched: "text/html;charset=utf-8",
+      untouched: "text/html",
+      touched: "text/html",
     });
   });
 

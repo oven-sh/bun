@@ -1331,12 +1331,8 @@ impl BlobExt for Blob {
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
                         self.content_type_was_set.set(true);
-                        self.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+                        self.content_type
+                            .set(BlobContentType::from_lowercased(slice));
                     }
                 }
             } else if !options_object.is_empty_or_undefined_or_null() {
@@ -1746,12 +1742,8 @@ impl BlobExt for Blob {
                     let slice = content_type_str.slice();
                     if is_valid_blob_type(slice) {
                         self.content_type_was_set.set(true);
-                        self.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+                        self.content_type
+                            .set(BlobContentType::from_lowercased(slice));
                     }
                 }
 
@@ -1971,17 +1963,10 @@ impl BlobExt for Blob {
         blob.offset.set(offset);
         blob.size.set(len);
 
-        let content_type_was_allocated = content_type.is_owned() && !content_type.is_empty();
-        // infer the content type if it was not specified
-        if content_type.is_empty()
-            && matches!(self.content_type.get(), BlobContentType::Static(s) if !s.is_empty())
-        {
-            blob.content_type.set(self.content_type.get().clone());
-        } else {
-            blob.content_type.set(content_type);
-        }
-        blob.content_type_was_set
-            .set(self.content_type_was_set.get() || content_type_was_allocated);
+        // File API: a slice()'s type is the caller-supplied contentType (or "" if
+        // omitted/invalid); it never inherits the parent blob's type.
+        blob.content_type_was_set.set(!content_type.is_empty());
+        blob.content_type.set(content_type);
 
         let ptr = Blob::new(blob);
         // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`. Explicit
@@ -1996,13 +1981,6 @@ impl BlobExt for Blob {
         let mut arguments_ = callframe.arguments_as_array::<3>();
         // index the full fixed-3 array (args[2] is written below regardless of len).
         let args = &mut arguments_[..];
-
-        if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; force
-            // the inherent `Blob::to_js(&mut self)` over `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
-        }
 
         // If the optional start parameter is not used as a parameter, let relativeStart be 0.
         let mut relative_start: i64 = 0;
@@ -2056,10 +2034,7 @@ impl BlobExt for Blob {
                     if !is_valid_blob_type(slice) {
                         break 'inner;
                     }
-                    content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                        Some(mime) => BlobContentType::from(mime),
-                        None => BlobContentType::from_lowercased(slice),
-                    };
+                    content_type = BlobContentType::from_lowercased(slice);
                 }
             }
         }
@@ -2396,12 +2371,8 @@ impl BlobExt for Blob {
                                         break 'inner;
                                     }
                                     blob.content_type_was_set.set(true);
-                                    blob.content_type.set(
-                                        match global_this.bun_vm().as_mut().mime_type(slice) {
-                                            Some(mime) => BlobContentType::from(mime),
-                                            None => BlobContentType::from_lowercased(slice),
-                                        },
-                                    );
+                                    blob.content_type
+                                        .set(BlobContentType::from_lowercased(slice));
                                 }
                             }
                         }
@@ -5633,12 +5604,8 @@ pub fn jsdom_file_construct_(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_this.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+                        blob.content_type
+                            .set(BlobContentType::from_lowercased(slice));
                     }
                 }
             }
@@ -5722,12 +5689,8 @@ pub fn construct_bun_file(
                             break 'inner;
                         }
                         blob.content_type_was_set.set(true);
-                        blob.content_type.set(
-                            match global_object.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => BlobContentType::from(mime),
-                                None => BlobContentType::from_lowercased(slice),
-                            },
-                        );
+                        blob.content_type
+                            .set(BlobContentType::from_lowercased(slice));
                     }
                 }
             }
@@ -6704,6 +6667,15 @@ impl Any {
             // MimeType::TEXT is `const` — see Internal::content_type.
             Any::WTFStringImpl(_) => b"text/plain;charset=utf-8",
             Any::InternalBlob(ib) => ib.content_type(),
+        }
+    }
+
+    /// `content_type()`, or for a File-/S3-backed Blob with no explicit type,
+    /// the extension-sniffed `mime_type` held on the store.
+    pub fn content_type_or_mime_type(&self) -> Option<&[u8]> {
+        match self {
+            Any::Blob(b) => b.content_type_or_mime_type(),
+            _ => Some(self.content_type()),
         }
     }
 

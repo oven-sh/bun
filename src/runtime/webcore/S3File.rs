@@ -75,12 +75,10 @@ where
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
-        if offset > 0 {
-            writer.write_str("\n")?;
-        }
     }
 
     if offset > 0 {
+        writer.write_str("\n")?;
         let mut formatter = formatter.indented();
         formatter.write_indent(writer)?;
 
@@ -399,10 +397,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
                         }
                         blob.content_type_was_set.set(true);
                         blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => blob::BlobContentType::from(mime),
-                                None => blob::BlobContentType::from_lowercased(slice),
-                            });
+                            .set(blob::BlobContentType::from_lowercased(slice));
                     }
                 }
             }
@@ -446,10 +441,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
                         }
                         blob.content_type_was_set.set(true);
                         blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
-                                Some(mime) => blob::BlobContentType::from(mime),
-                                None => blob::BlobContentType::from_lowercased(slice),
-                            });
+                            .set(blob::BlobContentType::from_lowercased(slice));
                     }
                 }
             }

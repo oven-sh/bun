@@ -38,6 +38,7 @@ test("dead extern C symbols removed in #35437 do not reappear", () => {
     ["src/jsc/bindings/c-bindings.cpp", /\bBun__disableSOLinger\b/],
     ["src/jsc/bindings/SQLClient.cpp", /\bJSC__createEmptyObjectWithStructure\b/],
     ["src/jsc/bindings/RegularExpression.cpp", /\bYarr__RegularExpression__searchRev\b/],
+    ["src/jsc/bindings/webcore/JSFetchHeaders.cpp", /\bjsFetchHeaders_getRawKeys\b/],
   ];
   const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);

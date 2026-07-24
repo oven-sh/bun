@@ -462,9 +462,7 @@ impl<'a> CssModuleReference<'a> {
 
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
-/// the *same* hasher without depending on `bun_css`. Re-export here so
-/// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path.
+/// the *same* hasher without depending on `bun_css`.
 #[inline]
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)

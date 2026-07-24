@@ -230,8 +230,8 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // deinit() dropped — scratchbuf/indentation_buf are arena-backed
-    // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
+    // `scratchbuf` and `indentation_buf` are arena-backed and freed in bulk by
+    // `arena.reset()`, so no explicit `Drop` implementation is needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
     pub fn new(

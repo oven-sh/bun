@@ -1,9 +1,6 @@
 use crate::css_parser as css;
 use css::{CssResult, PrintErr, Printer};
 
-use bun_ast::ImportRecord;
-use bun_core::strings;
-
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
 pub struct Url {
     /// The url string.
@@ -23,45 +20,6 @@ impl Url {
             import_record_idx,
             loc: crate::dependencies::Location::from_source_location(loc),
         })
-    }
-
-    /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
-        let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
-
-        // Quick checks. If the url starts with '.', it is relative.
-        if strings::starts_with_char(url, b'.') {
-            return false;
-        }
-
-        // If the url starts with '/' it is absolute.
-        if strings::starts_with_char(url, b'/') {
-            return true;
-        }
-
-        // If the url starts with '#' we have a fragment URL.
-        // These are resolved relative to the document rather than the CSS file.
-        // https://drafts.csswg.org/css-values-4/#local-urls
-        if strings::starts_with_char(url, b'#') {
-            return true;
-        }
-
-        // Otherwise, we might have a scheme. These must start with an ascii alpha character.
-        // https://url.spec.whatwg.org/#scheme-start-state
-        if url.is_empty() || !url[0].is_ascii_alphabetic() {
-            return false;
-        }
-
-        // https://url.spec.whatwg.org/#scheme-state
-        for &c in url {
-            match c {
-                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'+' | b'-' | b'.' => {}
-                b':' => return true,
-                _ => break,
-            }
-        }
-
-        false
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {

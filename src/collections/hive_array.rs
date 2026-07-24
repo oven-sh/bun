@@ -712,10 +712,9 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
     ///
     /// # Safety
     /// `value` must have been obtained from this `Fallback` (via `get_init` /
-    /// `emplace` / `claim().write()` / the deprecated `get` family) and not
-    /// yet returned. The contained `T` is **not** dropped — caller must have
-    /// already moved out / destructured anything with drop glue, or `T` must
-    /// be POD.
+    /// `emplace` / `claim().write()`) and not yet returned. The contained `T`
+    /// is **not** dropped — caller must have already moved out / destructured
+    /// anything with drop glue, or `T` must be POD.
     pub unsafe fn put_raw(&self, value: *mut T) {
         if CAPACITY > 0 {
             // SAFETY: caller contract (this fn is `unsafe`).
@@ -723,10 +722,9 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
                 return;
             }
         }
-        // SAFETY: caller contract — `value` is a heap slot from `claim()` /
-        // `get()`; it was allocated as `Box<MaybeUninit<T>>` (same layout as
-        // `Box<T>`). Reclaiming as `MaybeUninit<T>` deallocates without
-        // running `T::drop`.
+        // SAFETY: caller contract — `value` is a heap slot from `claim()`; it
+        // was allocated as `Box<MaybeUninit<T>>` (same layout as `Box<T>`).
+        // Reclaiming as `MaybeUninit<T>` deallocates without running `T::drop`.
         drop(unsafe { Box::from_raw(value.cast::<MaybeUninit<T>>()) });
     }
 
@@ -754,9 +752,9 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
             }
         }
 
-        // SAFETY: `value` was produced by the heap-fallback path of `claim()` /
-        // `get()` (it is not in the hive), and the caller has since fully
-        // initialized it. `destroy` reconstructs the `Box<T>` and runs `T::drop`.
+        // SAFETY: `value` was produced by the heap-fallback path of `claim()`
+        // (it is not in the hive), and the caller has since fully initialized
+        // it. `destroy` reconstructs the `Box<T>` and runs `T::drop`.
         unsafe { bun_core::heap::destroy(value) };
     }
 }

@@ -1,4 +1,4 @@
-//! CSS dependency tracking — `@import` and `url()` references collected during printing.
+//! Source location for CSS `url()` values and printer errors.
 
 use crate::SourceLocation;
 

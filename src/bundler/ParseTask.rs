@@ -11,7 +11,6 @@ use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
 use bun_ast::{IntoText, Loc, Location, Log, Msg, Source};
-use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_sys::Fd;
@@ -598,14 +597,16 @@ pub mod parse_worker {
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
+        alloc: bun_alloc::AstAlloc,
         source: &'static Source,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(E::Object::default(), Loc { start: 0 });
+        let root = Expr::init(alloc, E::Object::empty(alloc), Loc { start: 0 });
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
         let mut ast = JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
+            js_parser::new_lazy_export_ast(bump, alloc, define, opts, log, root, source, b"")?
+                .unwrap(),
         );
         ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(
             bump.alloc(bun_css::BundlerStyleSheet::empty()),
@@ -613,18 +614,20 @@ pub mod parse_worker {
         Ok(ast)
     }
 
-    fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
+    fn get_empty_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
+        alloc: bun_alloc::AstAlloc,
         source: &'static Source,
+        root: Expr,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(RootType::default(), Loc::EMPTY);
         // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?.unwrap(),
+            js_parser::new_lazy_export_ast(bump, alloc, define, opts, log, root, source, b"")?
+                .unwrap(),
         ))
     }
 
@@ -696,6 +699,7 @@ pub mod parse_worker {
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
+        alloc: bun_alloc::AstAlloc,
         resolver: *mut Resolver,
         source: &'static Source,
         loader: Loader,
@@ -722,7 +726,7 @@ pub mod parse_worker {
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
                 return if let Some(res) =
-                    (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
+                    (crate::cache::JavaScript {}).parse(bump, alloc, opts, &topts.define, log, source)?
                 {
                     // `Cached`/`AlreadyBundled` are runtime-loader
                     // states that never reach the bundler's `getAST`, so unwrap.
@@ -734,9 +738,25 @@ pub mod parse_worker {
                         }
                     }
                 } else if module_type == options::ModuleType::Esm {
-                    get_empty_ast::<E::Undefined>(log, transpiler, fallback_opts, bump, source)
+                    get_empty_ast(
+                        log,
+                        transpiler,
+                        fallback_opts,
+                        bump,
+                        alloc,
+                        source,
+                        Expr::init(alloc, E::Undefined {}, Loc::EMPTY),
+                    )
                 } else {
-                    get_empty_ast::<E::Object>(log, transpiler, fallback_opts, bump, source)
+                    get_empty_ast(
+                        log,
+                        transpiler,
+                        fallback_opts,
+                        bump,
+                        alloc,
+                        source,
+                        Expr::init(alloc, E::Object::empty(alloc), Loc::EMPTY),
+                    )
                 };
             }
             Loader::Json | Loader::Jsonc => {
@@ -750,10 +770,11 @@ pub mod parse_worker {
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
                 let root: Expr = unsafe { &mut (*resolver).caches.json }
                     .parse_json(log, source, mode)?
-                    .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
+                    .unwrap_or_else(|| Expr::init(alloc, E::Object::empty(alloc), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
+                        alloc,
                         &mut topts.define,
                         opts,
                         log,
@@ -773,10 +794,11 @@ pub mod parse_worker {
                 // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
+                        bun_parsers::toml::TOML::parse(source, &mut temp_log, alloc, false)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
-                            bump,
+                        bump,
+                        alloc,
                             &mut topts.define,
                             opts,
                             &mut temp_log,
@@ -794,10 +816,11 @@ pub mod parse_worker {
                 let _trace = perf::trace("Bundler.ParseYAML");
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
-                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, bump)?;
+                    let root: Expr = bun_parsers::yaml::YAML::parse(source, &mut temp_log, alloc)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
-                            bump,
+                        bump,
+                        alloc,
                             &mut topts.define,
                             opts,
                             &mut temp_log,
@@ -816,10 +839,11 @@ pub mod parse_worker {
                 let mut temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
+                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, alloc)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
-                            bump,
+                        bump,
+                        alloc,
                             &mut topts.define,
                             opts,
                             &mut temp_log,
@@ -835,6 +859,7 @@ pub mod parse_worker {
             }
             Loader::Text => {
                 let root = Expr::init(
+                    alloc,
                     E::String {
                         data: source.contents().into(),
                         ..Default::default()
@@ -844,6 +869,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
+                        alloc,
                         &mut topts.define,
                         opts,
                         log,
@@ -876,6 +902,7 @@ pub mod parse_worker {
                 };
                 let html: &[u8] = bump.alloc_slice_copy(&html);
                 let root = Expr::init(
+                    alloc,
                     E::String {
                         data: html.into(),
                         ..Default::default()
@@ -885,6 +912,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
+                        alloc,
                         &mut topts.define,
                         opts,
                         log,
@@ -945,6 +973,7 @@ pub mod parse_worker {
                 // import.meta.require(unique_key).db
                 //
                 let import_path = Expr::init(
+                    alloc,
                     E::String {
                         data: path_to_use.into(),
                         ..Default::default()
@@ -952,8 +981,9 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
-                let import_meta = Expr::init(E::ImportMeta {}, Loc { start: 0 });
+                let import_meta = Expr::init(alloc, E::ImportMeta {}, Loc { start: 0 });
                 let require_property = Expr::init(
+                    alloc,
                     E::Dot {
                         target: import_meta,
                         name_loc: Loc::EMPTY,
@@ -962,11 +992,11 @@ pub mod parse_worker {
                     },
                     Loc { start: 0 },
                 );
-                let require_args = bump.alloc_slice_fill_default::<Expr>(2);
-                require_args[0] = import_path;
-                let object_properties = bump.alloc_slice_fill_default::<G::Property>(1);
-                object_properties[0] = G::Property {
+                let mut require_args = alloc.vec_with_capacity::<Expr>(2);
+                require_args.push(import_path);
+                let object_properties = alloc.vec_from_iter([G::Property {
                     key: Some(Expr::init(
+                        alloc,
                         E::String {
                             data: b"type".into(),
                             ..Default::default()
@@ -974,34 +1004,36 @@ pub mod parse_worker {
                         Loc { start: 0 },
                     )),
                     value: Some(Expr::init(
+                        alloc,
                         E::String {
                             data: b"sqlite".into(),
                             ..Default::default()
                         },
                         Loc { start: 0 },
                     )),
-                    ..Default::default()
-                };
-                require_args[1] = Expr::init(
+                    ..G::Property::empty(alloc)
+                }]);
+                require_args.push(Expr::init(
+                    alloc,
                     E::Object {
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        properties: unsafe { G::PropertyList::from_bump_slice(object_properties) },
+                        properties: object_properties,
                         is_single_line: true,
-                        ..Default::default()
+                        ..E::Object::empty(alloc)
                     },
                     Loc { start: 0 },
-                );
+                ));
                 let require_call = Expr::init(
+                    alloc,
                     E::Call {
                         target: require_property,
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                        ..Default::default()
+                        args: require_args,
+                        ..E::Call::empty(alloc)
                     },
                     Loc { start: 0 },
                 );
 
                 let root = Expr::init(
+                    alloc,
                     E::Dot {
                         target: require_call,
                         name_loc: Loc::EMPTY,
@@ -1014,6 +1046,7 @@ pub mod parse_worker {
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
+                        alloc,
                         &mut topts.define,
                         opts,
                         log,
@@ -1053,6 +1086,7 @@ pub mod parse_worker {
                 // require(unique_key)
                 //
                 let import_path = Expr::init(
+                    alloc,
                     E::String {
                         data: unique_key.into(),
                         ..Default::default()
@@ -1060,18 +1094,17 @@ pub mod parse_worker {
                     Loc { start: 0 },
                 );
 
-                let require_args = bump.alloc_slice_fill_default::<Expr>(1);
-                require_args[0] = import_path;
+                let require_args = alloc.vec_from_slice(&[import_path]);
 
                 let root = Expr::init(
+                    alloc,
                     E::Call {
                         target: Expr {
                             data: ast::ExprData::ERequireCallTarget,
                             loc: Loc { start: 0 },
                         },
-                        // SAFETY: bump-owned slice; never grown via this Vec.
-                        args: unsafe { bun_ast::ExprNodeList::from_bump_slice(require_args) },
-                        ..Default::default()
+                        args: require_args,
+                        ..E::Call::empty(alloc)
                     },
                     Loc { start: 0 },
                 );
@@ -1083,6 +1116,7 @@ pub mod parse_worker {
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
+                        alloc,
                         &mut topts.define,
                         opts,
                         log,
@@ -1108,11 +1142,12 @@ pub mod parse_worker {
                 let import_records_len = import_records.len();
                 let output_format = opts.output_format;
                 let mut ast = js_parser::new_lazy_export_ast(
-                    bump,
+                        bump,
+                        alloc,
                     &mut topts.define,
                     opts,
                     log,
-                    Expr::init(E::Missing {}, Loc::EMPTY),
+                    Expr::init(alloc, E::Missing {}, Loc::EMPTY),
                     source,
                     b"",
                 )?
@@ -1137,14 +1172,13 @@ pub mod parse_worker {
                     import_record_indices: {
                         // Generate a single part that depends on all the import records.
                         // This is to ensure that we generate a JavaScript bundle containing all the user's code.
-                        let mut import_record_indices = ast::PartImportRecordIndices::init_capacity(
-                            import_records_len as usize,
-                        );
+                        let mut import_record_indices =
+                            alloc.vec_with_capacity::<u32>(import_records_len as usize);
                         import_record_indices
                             .extend(0..u32::try_from(import_records_len).expect("int cast"));
                         import_record_indices
                     },
-                    ..Default::default()
+                    ..Part::empty(alloc)
                 };
 
                 // Try to avoid generating unnecessary ESM <> CJS wrapper code.
@@ -1222,7 +1256,7 @@ pub mod parse_worker {
                     let _ = has_any_css_locals.fetch_add(1, Ordering::Relaxed);
                 }
                 // If this is a css module, the final exports object wil be set in `generateCodeForLazyExport`.
-                let root = Expr::init(E::Object::default(), Loc { start: 0 });
+                let root = Expr::init(alloc, E::Object::empty(alloc), Loc { start: 0 });
                 // `StylesheetExtra.symbols` is
                 // `Vec<bun_ast::Symbol>`; `new_lazy_export_ast_impl` takes
                 // `Vec<bun_ast::Symbol>`. Convert field-by-field so CSS-module local refs
@@ -1233,6 +1267,7 @@ pub mod parse_worker {
                 // not dropped on the error path.
                 let lazy = js_parser::new_lazy_export_ast_impl(
                     bump,
+                    alloc,
                     &mut topts.define,
                     opts,
                     &mut temp_log,
@@ -1250,7 +1285,15 @@ pub mod parse_worker {
             }
             // TODO:
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
-                return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
+                return get_empty_ast(
+                    log,
+                    transpiler,
+                    opts,
+                    bump,
+                    alloc,
+                    source,
+                    Expr::init(alloc, E::String::default(), Loc::EMPTY),
+                );
             }
             Loader::File | Loader::Wasm => {
                 debug_assert!(loader.should_copy_for_bundling());
@@ -1291,6 +1334,7 @@ pub mod parse_worker {
                     buf.into_bump_str().as_bytes()
                 };
                 let root = Expr::init(
+                    alloc,
                     E::String {
                         data: unique_key.into(),
                         ..Default::default()
@@ -1304,6 +1348,7 @@ pub mod parse_worker {
                 let mut ast = JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
+                        alloc,
                         &mut topts.define,
                         opts,
                         log,
@@ -2232,6 +2277,8 @@ pub mod parse_worker {
         // reads through the returned ASTs. `arena` is a `*const Bump` field; the
         // deref points outside `*worker_raw`.
         let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
+        // SAFETY: `worker_raw` derived from the live `this: &mut Worker`.
+        let alloc: bun_alloc::AstAlloc = unsafe { (*worker_raw).alloc() };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
@@ -2584,6 +2631,7 @@ pub mod parse_worker {
                     transpiler,
                     opts,
                     bump,
+                    alloc,
                     resolver,
                     source,
                     loader,
@@ -2592,11 +2640,27 @@ pub mod parse_worker {
                     &task_ctx.linker.has_any_css_locals,
                 )
             } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, source)
+                get_empty_css_ast(log, transpiler, opts, bump, alloc, source)
             } else if module_type == options::ModuleType::Esm {
-                get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
+                get_empty_ast(
+                    log,
+                    transpiler,
+                    opts,
+                    bump,
+                    alloc,
+                    source,
+                    Expr::init(alloc, E::Undefined {}, Loc::EMPTY),
+                )
             } else {
-                get_empty_ast::<E::Object>(log, transpiler, opts, bump, source)
+                get_empty_ast(
+                    log,
+                    transpiler,
+                    opts,
+                    bump,
+                    alloc,
+                    source,
+                    Expr::init(alloc, E::Object::empty(alloc), Loc::EMPTY),
+                )
             };
         let mut ast = match ast_result {
             Ok(a) => a,

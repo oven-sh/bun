@@ -162,6 +162,7 @@ fn generate_compile_result_for_js_chunk_impl(
     // `worker.temporary_arena` / `worker.stmt_list` borrowed `&mut` above, so
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
     let worker_alloc = worker.arena.get();
+    let ast_alloc = worker.ast_arena.alloc();
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
     // touches `chunk.renamer` through its `chunk` parameter; take a raw-ptr view so borrowck doesn't
     // see two overlapping `&mut chunk` borrows.
@@ -180,6 +181,7 @@ fn generate_compile_result_for_js_chunk_impl(
         runtime_require_ref,
         stmt_list,
         worker_alloc,
+        ast_alloc,
         &**arena,
         if collect_decls { Some(&mut dc) } else { None },
     );

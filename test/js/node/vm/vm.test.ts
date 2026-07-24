@@ -1342,7 +1342,10 @@ describe.concurrent("breakOnSigint saves and restores process SIGINT listeners",
   // interruptible. onDidChangeListeners skips the sigaction while
   // SigintWatcher::isActive(), so every add/remove permutation is covered.
   const midRunVariants: [string, { before: string; inside: string }][] = [
-    ["pre-run listener + mid-run add", { before: `process.on("SIGINT", () => {});`, inside: `process.on("SIGINT", () => {});` }],
+    [
+      "pre-run listener + mid-run add",
+      { before: `process.on("SIGINT", () => {});`, inside: `process.on("SIGINT", () => {});` },
+    ],
     [
       "pre-run listener + mid-run add, remove, add",
       {

@@ -1366,7 +1366,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const pendingWrite = self[kwriteCallback];
     if (pendingWrite) {
       self[kwriteCallback] = null;
-      pendingWrite($ERR_SOCKET_CLOSED());
+      // Tearing down the SSL engine cancels its queued writes, and node reports
+      // that as errnoException(UV_ECANCELED, 'write', ...) rather than a socket
+      // error. https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L339
+      pendingWrite(
+        self.encrypted
+          ? new ErrnoException(UV_ECANCELED, "write", "Canceled because of SSL destruction")
+          : $ERR_SOCKET_CLOSED(),
+      );
     }
   },
   handshake(socket, success, verifyError) {

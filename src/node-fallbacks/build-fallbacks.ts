@@ -41,6 +41,11 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
         .replaceAll("__require(", "require(")
         .replaceAll("import.meta.url", "''")
         .replaceAll("createRequire", "")
+        // --define=global:globalThis has already run, so the bundled text
+        // contains `globalThis.process` (e.g. from the `process` npm package's
+        // index.js). Rewrite both forms to the `node:process` polyfill so the
+        // output does not depend on a real `globalThis.process` in the browser.
+        .replaceAll("globalThis.process", "require('process')")
         .replaceAll("global.process", "require('process')")
         .trim();
 

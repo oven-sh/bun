@@ -32,7 +32,7 @@ function drainQueue() {
     while (++queueIndex < len) {
       if (currentQueue) {
         var item = currentQueue[queueIndex];
-        item.fun.apply(null, item.array);
+        item.fun.apply(null, item.args);
       }
     }
     queueIndex = -1;

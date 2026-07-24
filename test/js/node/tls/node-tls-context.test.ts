@@ -654,6 +654,55 @@ describe("server certificate chain built from `ca`", () => {
   });
 });
 
+it("accepts every BoringSSL named group (and alias) as ecdhCurve", () => {
+  // Mirrors vendor/boringssl/ssl/ssl_key_share.cc kNamedGroups at the pinned
+  // commit. This pins the set the public API accepts; it cannot detect a NEW
+  // upstream group by itself - the boringssl upgrade doc re-derives the list.
+  const groups = [
+    "P-256",
+    "prime256v1",
+    "P-384",
+    "secp384r1",
+    "P-521",
+    "secp521r1",
+    "X25519",
+    "x25519",
+    "X25519Kyber768Draft00",
+    "X25519MLKEM768",
+    "MLKEM1024",
+  ];
+  const rejected = groups.filter(g => {
+    try {
+      tls.createSecureContext({ ecdhCurve: g });
+      return false;
+    } catch {
+      return true;
+    }
+  });
+  expect(rejected).toEqual([]);
+  // "auto" and a colon-separated list are accepted like Node.
+  expect(() => tls.createSecureContext({ ecdhCurve: "auto" })).not.toThrow();
+  expect(() => tls.createSecureContext({ ecdhCurve: "P-256:X25519" })).not.toThrow();
+});
+
+it("rejects an unsupported ecdhCurve with Node's error shape", () => {
+  // Node: THROW_ERR_CRYPTO_OPERATION_FAILED sets `code` without renaming the
+  // error, so String(err) still matches the upstream tests' /Error: .../ regex:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1973-L1975
+  let err: any;
+  try {
+    tls.createSecureContext({ ecdhCurve: "not-a-real-curve" });
+  } catch (e) {
+    err = e;
+  }
+  expect({ name: err?.name, code: err?.code, message: err?.message, text: String(err) }).toEqual({
+    name: "Error",
+    code: "ERR_CRYPTO_OPERATION_FAILED",
+    message: "Failed to set ECDH curve",
+    text: "Error: Failed to set ECDH curve",
+  });
+});
+
 it("rejects a non-string ecdhCurve like Node's validateString", () => {
   // Node: configSecureContext destructures ecdhCurve with a default and passes
   // it through validateString - only the type is checked in JS, an unsupported

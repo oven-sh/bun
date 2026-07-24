@@ -137,17 +137,16 @@ extern "C" fn select_alpn_callback(
                 let name = unsafe { core::ffi::CStr::from_ptr(servername_ptr) };
                 ZigString::init(name.to_bytes()).to_js(&global)
             };
-            // The user callback (and the error handler below) run from inside
-            // SSL_do_handshake on this socket: JS that writes to or destroys a
-            // different TLS socket on the same loop re-points the per-loop BIO
-            // routing state, and this handshake's next flight would land on
-            // that other socket's fd. Snapshot and restore it around every
-            // JS-running region.
+            // Snapshot the per-loop BIO routing state around JS that may touch
+            // another TLS socket. Connected usockets only: UpgradedDuplex/Pipe
+            // own mem BIOs whose BIO_get_data is a BUF_MEM*, not loop_ssl_data.
             let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
-            tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                boringssl_sys::SSL::opaque_ref(ssl),
-                saved_loop_state.as_mut_ptr(),
-            );
+            if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
+                tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
+                    boringssl_sys::SSL::opaque_ref(ssl),
+                    saved_loop_state.as_mut_ptr(),
+                );
+            }
             let result =
                 match callback.call(&global, this_value, &[this_value, servername_js, buffer]) {
                     Ok(v) => v,
@@ -1419,7 +1418,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // ffi-safe-fn: opaque-ZST `&SSL`/`&SSL_CTX` redecls;
                     // `ssl_ptr` non-null in this branch and `SSL_get_SSL_CTX`
                     // never returns null for a live SSL.
-                    if this.is_server()
+                    if this.acts_as_tls_server()
                         && (this.protos.get().is_some()
                             || !this.get_handlers().on_alpn_callback().is_empty())
                     {
@@ -1437,8 +1436,18 @@ impl<const SSL: bool> NewSocket<SSL> {
                             ptr::null_mut(),
                         );
                     }
+                    // A rejecting client must refuse a bad chain DURING the
+                    // handshake, like node observably does (its post-verify
+                    // destroy cancels the queued Finished; test-tls-close-error).
+                    if !this.acts_as_tls_server()
+                        && this.flags.get().contains(Flags::REJECT_UNAUTHORIZED)
+                    {
+                        tls_socket_functions::ffi::us_internal_ssl_set_inline_reject(
+                            boringssl_sys::SSL::opaque_ref(ssl_ptr),
+                        );
+                    }
                     if let Some(protos) = this.protos.get() {
-                        if this.is_server() {
+                        if this.acts_as_tls_server() {
                             // Registered above (selector + ex_data); nothing
                             // further to do for the static server list here.
                         } else {
@@ -1710,10 +1719,22 @@ impl<const SSL: bool> NewSocket<SSL> {
         // node:tls sockets defer the hostname verdict: their JS layer applies
         // `checkServerIdentity` (default or user override) itself.
         let flags = this.flags.get();
-        let reject_unauthorized = success == 1
-            && flags.contains(Flags::REJECT_UNAUTHORIZED)
+        // Deliberately independent of `success`: the inline-reject path
+        // dispatches with success=0 after suppressing the client Finished, and
+        // REJECTED must still be set there or the write-refusal guards are
+        // bypassed for the exact peer the policy is rejecting (a failed
+        // handshake never has a usable transport, so fail closed on every
+        // failure flavor).
+        let reject_unauthorized = flags.contains(Flags::REJECT_UNAUTHORIZED)
             && (verify_failed
                 || (hostname_mismatch && !flags.contains(Flags::DEFERS_SERVER_IDENTITY)));
+        // A handshake that failed outright (success == 0 with no policy
+        // verdict: protocol error, peer alert, EOF mid-handshake) never has a
+        // usable transport either — node destroys the underlying socket before
+        // user code can write again. Cover that flavor too, so the shared-fd
+        // twin of an `upgradeTLS` pair cannot push plaintext through its
+        // BYPASS_TLS write path in the window before JS tears the pair down.
+        let transport_unusable = reject_unauthorized || (SSL && success == 0);
 
         // `REJECTED` is set before the callback runs so no write path can
         // deliver application data to a peer that is about to be rejected —
@@ -1721,9 +1742,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.update_flags(|f| {
             f.set(Flags::AUTHORIZED, authorized && !verify_failed);
             f.set(Flags::HOSTNAME_MISMATCH, hostname_mismatch);
-            f.set(Flags::REJECTED, reject_unauthorized);
+            f.set(Flags::REJECTED, transport_unusable);
         });
-        if reject_unauthorized {
+        if transport_unusable {
             if let Some(twin) = this.twin.get().as_ref() {
                 twin.update_flags(|f| f.insert(Flags::REJECTED));
             }
@@ -3619,6 +3640,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             });
         }
 
+        // A server-side adopted socket has no listen socket to hang an
+        // SNICallback off, so the resolver goes on the SSL itself. Must run
+        // before the handshake is driven.
+        if is_server && !tls.get_handlers().on_server_name().is_empty() {
+            bun_opaque::opaque_deref_mut(new_raw.as_ptr())
+                .on_server_name(super::listener::us_dispatch_socket_server_name);
+        }
         // Fire onOpen with the right `this`, then send ClientHello. Doing
         // it before ext was repointed would have ALPN/onOpen land in the
         // dead TCPSocket.
@@ -4093,6 +4121,9 @@ pub(super) struct DuplexUpgradeContext {
     /// on success, freed in `deinit` if Close races ahead of StartTLS.
     pub owned_ctx: Option<*mut SSL_CTX>,
     pub is_open: bool,
+    /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
+    /// when `StartTLS` builds it. Unused for client upgrades.
+    pub server_verify: crate::socket::upgraded_duplex::ServerVerify,
     mode: SocketMode,
 }
 
@@ -4262,12 +4293,13 @@ impl DuplexUpgradeContext {
                         <&'static str>::from(this_ref.mode)
                     );
                     let is_client = this_ref.mode == SocketMode::Client;
+                    let verify = this_ref.server_verify;
                     if let Some(ctx) = this_ref.owned_ctx.take() {
                         // Transfer the ref into SSLWrapper; null first so the
                         // failure path / deinit don't double-free it.
-                        this_ref.upgrade.start_tls_with_ctx(ctx, is_client)
+                        this_ref.upgrade.start_tls_with_ctx(ctx, is_client, verify)
                     } else if let Some(config) = &this_ref.ssl_config {
-                        this_ref.upgrade.start_tls(config, is_client)
+                        this_ref.upgrade.start_tls(config, is_client, verify)
                     } else {
                         Ok(())
                     }
@@ -4304,6 +4336,18 @@ impl DuplexUpgradeContext {
                 }
                 // SAFETY: `this` is live; short-lived `&mut` for the field write.
                 unsafe { (*this).ssl_config = None }; // Drop frees.
+                // Bytes the peer sent while this task was still queued were
+                // staged by `UpgradedDuplex::on_internal_receive_data` (the
+                // engine did not exist yet to receive them). Feed them now
+                // that StartTLS is fully done, so the replay is ordered
+                // exactly like an ordinary post-start delivery. Without this
+                // the bytes are dropped and the handshake never advances -
+                // e.g. both ends of a `duplexPair()` wrapped in-process, where
+                // the peer's ClientHello lands before this side starts.
+                // SAFETY: `this` is live; `&mut` scoped to this call, and
+                // `drain_pending` does not free the allocation (close only
+                // schedules `deinit` for the next tick).
+                unsafe { (*this).upgrade.drain_pending() };
             }
             // Previously this only called `upgrade.close()` and never `deinit`,
             // leaking the SSLWrapper, the strong refs, and this struct itself
@@ -4491,6 +4535,17 @@ pub fn js_upgrade_duplex_to_tls(
         is_server,
         owned_ctx.as_ref().map(|c| c.as_ptr()),
     );
+    // Server-side peer-cert policy, applied per-SSL once the engine exists.
+    // A bare `secureContext` carries no parsed config, so read `requestCert`
+    // back off the ctx's verify mode the same way `upgrade_reject_policy` does
+    // for `rejectUnauthorized`.
+    let server_verify = crate::socket::upgraded_duplex::ServerVerify {
+        request_cert: match socket_config {
+            Some(cfg) => cfg.request_cert != 0,
+            None => server_ctx_requests_cert(owned_ctx.as_ref().map(|c| c.as_ptr())),
+        },
+        reject_unauthorized,
+    };
     // Client duplex upgrades come from net.ts, whose JS layer owns
     // server-identity policy; http2's server upgrade also lands here, where
     // the deferral is meaningless.
@@ -4572,6 +4627,7 @@ pub fn js_upgrade_duplex_to_tls(
         });
         ptr::addr_of_mut!((*duplex_context).owned_ctx).write(owned_ctx_taken);
         ptr::addr_of_mut!((*duplex_context).is_open).write(false);
+        ptr::addr_of_mut!((*duplex_context).server_verify).write(server_verify);
         ptr::addr_of_mut!((*duplex_context).mode).write(if is_server {
             SocketMode::DuplexServer
         } else {

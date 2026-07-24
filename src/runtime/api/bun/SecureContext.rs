@@ -343,6 +343,15 @@ impl SecureContext {
         self.ctx
     }
 
+    /// `secureContext.context._external` — Node exposes the SSL_CTX here as an
+    /// opaque V8 External. Bun has nothing meaningful to hand out, so the
+    /// getter exists only so the property behaves like an accessor (a foreign
+    /// receiver gets a TypeError) instead of a missing property.
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_external(_this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::UNDEFINED)
+    }
+
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.

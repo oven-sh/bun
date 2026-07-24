@@ -17,13 +17,18 @@ export default [
       // the regular key/cert/ca option plumbing can consume it.
       parsePkcs12: { fn: "parse_pkcs12", length: 2 },
     },
-    // No prototype surface — node:tls hands out the SecureContext object
-    // itself as `.context`. We deliberately do NOT expose the underlying
-    // SSL_CTX* to JS: a Number would lose precision above 2^53, and Node's
-    // `context._external` is a V8 External (opaque) used only by N-API
-    // addons that link OpenSSL directly, which Bun's BoringSSL build can't
-    // satisfy anyway.
+    // node:tls hands out the SecureContext object itself as `.context`. We
+    // deliberately do NOT expose the underlying SSL_CTX* to JS: a Number
+    // would lose precision above 2^53, and Node's `context._external` is a
+    // V8 External (opaque) used only by N-API addons that link OpenSSL
+    // directly, which Bun's BoringSSL build can't satisfy anyway.
     proto: {
+      // Present so the accessor exists (and rejects a foreign receiver the
+      // way every other class getter does) rather than reading as a plain
+      // missing property; the value stays hidden, see above.
+      _external: {
+        getter: "get_external",
+      },
       // `secureContext.context.addCACert(pem)` — Node's SecureContext exposes
       // this so extra CAs can be appended to an existing context's store.
       addCACert: {

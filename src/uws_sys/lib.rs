@@ -109,6 +109,7 @@ pub enum create_bun_socket_error_t {
     invalid_ca,
     invalid_ciphers,
     invalid_crl,
+    invalid_ecdh_curve,
 }
 
 impl create_bun_socket_error_t {
@@ -120,6 +121,7 @@ impl create_bun_socket_error_t {
             Self::invalid_ca => Some(b"Invalid CA"),
             Self::invalid_ciphers => Some(b"Invalid ciphers"),
             Self::invalid_crl => Some(b"Invalid CRL"),
+            Self::invalid_ecdh_curve => Some(b"Failed to set ECDH curve"),
         }
     }
 }

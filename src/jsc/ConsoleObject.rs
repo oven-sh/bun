@@ -394,6 +394,53 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+unsafe extern "C" {
+    fn Bun__ConsoleObject__onStdioWriteError(global: &JSGlobalObject, fd: i32, err: JSValue);
+}
+
+/// If the writer backing recorded an I/O errno during this `console.*` call,
+/// surface it on `process.stdout`/`stderr` as an `'error'` event so user
+/// listeners fire. Node routes `console.log` through `process.stdout.write()`,
+/// so a broken-pipe `EPIPE` reaches the stream's error machinery; Bun's native
+/// writer bypasses the stream entirely, hence this after-the-fact forward.
+/// When no `'error'` listener is attached the C++ side drops the error rather
+/// than letting it become an uncaught exception (matching
+/// `test-process-external-stdio-close`).
+fn forward_write_error(global: &JSGlobalObject, is_stderr: bool) {
+    // SAFETY: single-JS-thread top-level host call; `&mut` is scoped to this
+    // block so nothing derived from it is live across the re-entrant FFI below.
+    let errno = {
+        let console = unsafe { vm_console_mut(global) };
+        let backing = if is_stderr {
+            &mut console.error_writer_backing
+        } else {
+            &mut console.writer_backing
+        };
+        match backing.take_err() {
+            None => return,
+            Some(e) => e,
+        }
+    };
+    // A pending JS exception (thrown by the caller's formatting path) takes
+    // precedence; don't call into JS under it. The sticky errno was cleared
+    // above and the next `console.*` call hits the dead pipe again.
+    if global.has_exception() {
+        return;
+    }
+    // Transient: Node/libuv retry these internally and never emit `'error'`.
+    if errno == bun_sys::E::EAGAIN as i32 || errno == bun_sys::E::EINTR as i32 {
+        return;
+    }
+    let sys_err = bun_sys::Error::new(errno, bun_sys::Tag::write);
+    let js_err = crate::SysErrorJsc::to_js(&sys_err, global);
+    if global.has_exception() {
+        return;
+    }
+    // SAFETY: C++ side resolves `process.stdout`/`stderr` and calls
+    // `.destroy(err)`; `js_err` is stack-rooted for the call's duration.
+    unsafe { Bun__ConsoleObject__onStdioWriteError(global, if is_stderr { 2 } else { 1 }, js_err) };
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -404,6 +451,8 @@ pub extern "C" fn message_with_type_and_level(
     vals: *const JSValue,
     len: usize,
 ) {
+    let is_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
+        || message_type == MessageType::Assert;
     if let Err(err) = message_with_type_and_level_(ctype, message_type, level, global, vals, len) {
         // The exception is already set on the VM (`JsError::Thrown`); for OOM
         // make sure something is pending. Mirrors `host_fn::void_from_js_error`.
@@ -412,6 +461,8 @@ pub extern "C" fn message_with_type_and_level(
         }
         debug_assert!(global.has_exception());
     }
+    // Safe with a pending exception: clears the sticky errno and returns early.
+    forward_write_error(global, is_stderr);
 }
 
 fn message_with_type_and_level_(
@@ -5850,6 +5901,7 @@ pub extern "C" fn Bun__ConsoleObject__count(
         let _ = writeln!(writer, "{}: {}", bstr::BStr::new(slice), current);
     }
     let _ = writer.flush();
+    forward_write_error(global_this, false);
 }
 
 #[unsafe(no_mangle)]
@@ -5993,6 +6045,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     }
     let _ = bun_io::Write::write_all(&mut writer, b"\n");
     let _ = bun_io::Write::flush(&mut writer);
+    forward_write_error(global, true);
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

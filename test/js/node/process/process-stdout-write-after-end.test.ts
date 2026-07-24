@@ -24,9 +24,13 @@ test.concurrent.each(["stdout", "stderr"] as const)(
     const lines = reportPipe.trim().split("\n");
     const report = JSON.parse(lines[lines.length - 1]);
 
+    // Node's pipe stdio is a net.Socket with autoDestroy:true, so end() runs
+    // finish -> destroy -> _undestroy, which resets writableEnded/writable.
+    // The write-after-end contract (ret=false, ERR_STREAM_WRITE_AFTER_END,
+    // bytes not delivered) is enforced at write() time, before that reset.
     expect(report).toEqual({
-      writableEnded: true,
-      writable: false,
+      writableEnded: false,
+      writable: true,
       ret: false,
       cbErr: "ERR_STREAM_WRITE_AFTER_END",
       ev: ["err:ERR_STREAM_WRITE_AFTER_END"],

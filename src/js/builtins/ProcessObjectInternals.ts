@@ -55,6 +55,13 @@ export function getStdioWriteStream(
     stream = new fs.WriteStream(null, { autoClose: false, fd, $fastPath: true });
     stream.readable = false;
     stream._type = "fs";
+    // Node's stdio streams (net.Socket for pipe/socket, SyncWriteStream for
+    // file) all have autoDestroy:true with _destroy overridden below to
+    // _undestroy(), so a write error goes errorOrDestroy -> destroy ->
+    // _undestroy -> emit 'error' on nextTick, and the stream remains writable.
+    // autoClose:false left it off, so errorOrDestroy latched on errorEmitted
+    // after the first failure and later writes never surfaced an error.
+    stream._writableState.autoDestroy = true;
 
     // When stdout/stderr are piped or connected to a socket, they should have Symbol.asyncIterator
     // to match Node.js behavior where they become Duplex streams (Socket)
@@ -65,11 +72,6 @@ export function getStdioWriteStream(
           // stdout/stderr don't produce readable data, so yield nothing
         })();
       };
-    } else {
-      // File-backed stdio: Node's SyncWriteStream runs end() -> finish ->
-      // destroy -> the _destroy override below -> _undestroy(), which resets
-      // writable state so later writes succeed. autoClose:false disabled that.
-      stream._writableState.autoDestroy = true;
     }
   }
 
@@ -77,9 +79,21 @@ export function getStdioWriteStream(
     stream.destroySoon = stream.destroy;
     stream._destroy = function (err, cb) {
       cb(err);
+      // Node terminates on the first uncaught 'error', so _undestroy()'s
+      // reset of errorEmitted never matters there. Bun keeps running after
+      // an uncaughtException, so a write loop on a dead pipe with no 'error'
+      // listener would re-emit (and re-report) forever. Preserve errorEmitted
+      // across _undestroy() when nobody is listening so emitErrorNT's
+      // one-shot guard stays latched; with a listener, reset it so the
+      // listener fires per write like Node.
+      const w = this._writableState;
+      const hadErrorEmitted = w.errorEmitted;
       this._undestroy();
+      if (this.listenerCount("error") === 0) {
+        w.errorEmitted = hadErrorEmitted;
+      }
 
-      if (!this._writableState.emitClose) {
+      if (!w.emitClose) {
         process.nextTick(() => {
           this.emit("close");
         });

@@ -566,6 +566,7 @@ bun_dispatch::link_interface! {
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
         fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
         fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
+        fn quiet_writer_adapter_take_err(a: &mut output::QuietWriterAdapter) -> i32;
         fn quiet_writer_flush(qw: &mut output::QuietWriter);
         fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
         fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;

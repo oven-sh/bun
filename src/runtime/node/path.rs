@@ -1549,9 +1549,8 @@ pub(crate) fn join_js_t<T: PathCharCwd>(
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
-    // Adding 10 bytes when Windows for the possible UNC root plus the leading
-    // `.\` win32 normalize can prepend.
-    let mut buf_len: usize = if is_windows { 10 } else { 0 };
+    // Adding 8 bytes when Windows for the possible UNC root.
+    let mut buf_len: usize = if is_windows { 8 } else { 0 };
     for path in paths {
         buf_len += if !path.is_empty() {
             path.len() + 1
@@ -1560,8 +1559,11 @@ pub(crate) fn join_js_t<T: PathCharCwd>(
         };
     }
     buf_len = buf_len.max(path_size::<T>());
-    let mut scratch = PathScratch::<T>::new(pool, buf_len * 2);
-    let (buf, buf2) = scratch.slice().split_at_mut(buf_len);
+    // `buf` is the destination of `normalize_windows_t`, so it also carries the
+    // slots that reserves; `buf2` only accumulates the joined path.
+    let out_len = buf_len + 1 + WIN32_NORMALIZE_RESERVE;
+    let mut scratch = PathScratch::<T>::new(pool, out_len + buf_len);
+    let (buf, buf2) = scratch.slice().split_at_mut(out_len);
     if is_windows {
         join_windows_js_t(global_object, paths, buf, buf2)
     } else {
@@ -1848,6 +1850,12 @@ fn is_windows_reserved_name_t<T: PathCharCwd>(device_part: &[T]) -> bool {
     }
 }
 
+/// Leading slots `normalize_windows_t` reserves in its output buffer for the
+/// `.\` prefix Node prepends for CVE-2024-36139 and for reserved device names.
+/// Reserving them up front keeps that a write instead of a shift of the whole
+/// result. Callers must size the buffer to include them.
+pub(crate) const WIN32_NORMALIZE_RESERVE: usize = 2;
+
 /// Based on Node v26.3.0 path.win32.normalize
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L346
 pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [T]) -> &'a [T] {
@@ -1876,10 +1884,8 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
         };
     }
 
-    // Node prepends `.\` to some results (CVE-2024-36139 and reserved device
-    // names). Reserving the two leading slots up front keeps that a write
-    // instead of a shift of the whole result.
-    const PFX: usize = 2;
+    // Short local alias for readability; see `WIN32_NORMALIZE_RESERVE`.
+    const PFX: usize = WIN32_NORMALIZE_RESERVE;
 
     let colon_index = index_of_char_t(path, T::from_u8(CHAR_COLON), 0);
 
@@ -2147,8 +2153,8 @@ pub(crate) fn normalize_js_t<T: PathCharCwd>(
     path: &[T],
 ) -> JsResult<JSValue> {
     let buf_len = path.len().max(path_size::<T>());
-    // +1 for null terminator
-    let mut scratch = PathScratch::<T>::new(pool, buf_len + 1);
+    // +1 for null terminator, plus the slots `normalize_windows_t` reserves.
+    let mut scratch = PathScratch::<T>::new(pool, buf_len + 1 + WIN32_NORMALIZE_RESERVE);
     let buf = scratch.slice();
     if is_windows {
         normalize_windows_js_t(global_object, path, buf)
@@ -3562,9 +3568,8 @@ pub(crate) fn resolve_js_t<T: PathCharCwd>(
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
-    // Adding 10 bytes when Windows for the possible UNC root plus the leading
-    // `.\` win32 normalize can prepend.
-    let mut buf_len: usize = if is_windows { 10 } else { 0 };
+    // Adding 8 bytes when Windows for the possible UNC root.
+    let mut buf_len: usize = if is_windows { 8 } else { 0 };
     for path in paths {
         buf_len += if buf_len > 0 && !path.is_empty() {
             path.len() + 1

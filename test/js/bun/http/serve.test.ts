@@ -20,7 +20,9 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
-import net from "node:net";
+import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
+import net, { type AddressInfo } from "node:net";
 import { networkInterfaces } from "node:os";
 import nodeTls from "node:tls";
 import { tmpdir } from "os";
@@ -1267,6 +1269,91 @@ it("reload() of a node:http-backed server is not treated as a mode switch", asyn
   expect(stdout).toBe("OK\n");
   expect(exitCode).toBe(0);
 });
+
+// reload() clears the uWS route table; the connection-open filter that backs
+// node:http's 'connection' event is not a route and must survive that. `bun --hot`
+// on a node:http app takes this reload path on every file change.
+it("reload() of a node:http-backed server keeps the 'connection' event firing", async () => {
+  let connections = 0;
+  const httpServer = createHttpServer((req, res) => res.end("ok"));
+  httpServer.on("connection", () => connections++);
+  httpServer.listen(0, "127.0.0.1");
+  await once(httpServer, "listening");
+  try {
+    const { port } = httpServer.address() as AddressInfo;
+    const hit = async () => {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      // Drain the response so 'end' (and then 'close') is delivered.
+      socket.resume();
+      await once(socket, "close");
+    };
+
+    await hit();
+    expect(connections).toBe(1);
+
+    const native = (httpServer as any)[Symbol.for("::bunternal::")] as Server;
+    native.reload({ fetch: () => new Response("x") });
+
+    await hit();
+    expect(connections).toBe(2);
+  } finally {
+    httpServer.closeAllConnections();
+    httpServer.close();
+  }
+});
+
+// Under --hot the module re-evaluates and listen() runs again against the same
+// native server from the hot map, re-invoking Server__setOnConnection. The JS
+// onServerConnection callback dedupes on socketHandle.duplex, so this asserts
+// the user-visible contract (exactly one 'connection' per accept) holds across
+// hot reloads, not the native filter-vector size.
+it("--hot reload of a node:http server fires 'connection' once per socket", async () => {
+  using dir = tempDir("hot-node-http-connection", {
+    "server.mjs": `
+      import { createServer } from "node:http";
+      import { once } from "node:events";
+      import { connect } from "node:net";
+      import { writeFileSync, readFileSync } from "node:fs";
+
+      globalThis.__reloads ??= 0;
+      const n = globalThis.__reloads++;
+
+      let fired = 0;
+      const server = createServer((req, res) => res.end("ok"));
+      server.on("connection", () => fired++);
+      await once(server.listen(0, "127.0.0.1"), "listening");
+
+      const s = connect(server.address().port, "127.0.0.1");
+      s.on("error", () => {});
+      await once(s, "connect");
+      s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+      s.resume();
+      await once(s, "close");
+
+      console.log("[reload " + n + "] " + fired);
+      if (n < 3) {
+        const self = new URL(import.meta.url);
+        writeFileSync(self, readFileSync(self, "utf8"));
+      } else {
+        process.exit(fired === 1 ? 0 : 1);
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--hot", "server.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.replaceAll(/^DEBUG:.*\n/gm, "")).toBe("");
+  expect(stdout).toBe("[reload 0] 1\n[reload 1] 1\n[reload 2] 1\n[reload 3] 1\n");
+  expect(exitCode).toBe(0);
+}, 30_000);
 
 it("reload() cannot turn a Bun.serve server into a node:http server", async () => {
   // The server's kind is fixed when listen() sizes its connections' native

@@ -85,7 +85,10 @@ private:
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
         this->currentRouter = &router;
-        filterHandlers.clear();
+        /* filterHandlers are connection-level (open/close) callbacks, not routes;
+         * Bun's only consumer (the node:http 'connection' thunk) is registered
+         * once for the server's lifetime and left in place here like
+         * onSocketClosed / onClientError above. */
     }
 
 public:

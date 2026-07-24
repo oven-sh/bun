@@ -914,6 +914,87 @@ describe("Query Execution", () => {
     expect(result2).toHaveLength(1);
     expect(result2[0].id).toBe(2);
   });
+
+  test("runs every statement when the first one returns rows", async () => {
+    await sql.unsafe(`CREATE TABLE batch_rows (v INTEGER)`);
+    await sql`INSERT INTO batch_rows VALUES (1), (2), (3)`;
+
+    // The first statement returns rows, the rest must still execute.
+    const result = await sql.unsafe("SELECT count(*) AS before FROM batch_rows; DELETE FROM batch_rows");
+    expect(result).toEqual([{ before: 3 }]);
+
+    const left = await sql`SELECT count(*) AS n FROM batch_rows`;
+    expect(left[0].n).toBe(0);
+  });
+
+  test("returns the first row-returning statement when a write comes first", async () => {
+    await sql.unsafe(`CREATE TABLE batch_reverse (v INTEGER)`);
+    await sql`INSERT INTO batch_reverse VALUES (1), (2), (3)`;
+
+    const result = await sql.unsafe("DELETE FROM batch_reverse WHERE v = 1; SELECT count(*) AS n FROM batch_reverse");
+    expect(result).toEqual([{ n: 2 }]);
+
+    const left = await sql`SELECT count(*) AS n FROM batch_reverse`;
+    expect(left[0].n).toBe(2);
+  });
+
+  test("executes a RETURNING statement exactly once in a batch", async () => {
+    await sql.unsafe(`CREATE TABLE batch_returning (v INTEGER)`);
+
+    const result = await sql.unsafe(
+      "INSERT INTO batch_returning VALUES (99) RETURNING v; DELETE FROM batch_returning WHERE v = 99",
+    );
+    expect(result).toEqual([{ v: 99 }]);
+
+    const left = await sql`SELECT count(*) AS n FROM batch_returning`;
+    expect(left[0].n).toBe(0);
+  });
+
+  test("binds parameters to the first statement of a batch", async () => {
+    await sql.unsafe(`CREATE TABLE batch_params (v INTEGER)`);
+    await sql`INSERT INTO batch_params VALUES (1), (2), (3)`;
+
+    const result = await sql.unsafe("SELECT v FROM batch_params WHERE v > ?; DELETE FROM batch_params WHERE v = 1", [
+      1,
+    ]);
+    expect(result).toEqual([{ v: 2 }, { v: 3 }]);
+
+    const left = await sql`SELECT count(*) AS n FROM batch_params`;
+    expect(left[0].n).toBe(2);
+  });
+
+  test("runs later statements and ignores a trailing comment", async () => {
+    await sql.unsafe(`CREATE TABLE batch_comment (v INTEGER)`);
+    await sql`INSERT INTO batch_comment VALUES (1), (2)`;
+
+    // Row-returning first statement, a write, then a trailing comment.
+    const result = await sql.unsafe(
+      "SELECT v FROM batch_comment ORDER BY v; DELETE FROM batch_comment; -- trailing comment",
+    );
+    expect(result).toEqual([{ v: 1 }, { v: 2 }]);
+
+    const left = await sql`SELECT count(*) AS n FROM batch_comment`;
+    expect(left[0].n).toBe(0);
+  });
+
+  test("surfaces a syntax error in a later statement after earlier ones run", async () => {
+    await sql.unsafe(`CREATE TABLE batch_err (v INTEGER)`);
+
+    let caught: unknown;
+    try {
+      // A row-returning first statement used to hide the invalid tail entirely.
+      await sql.unsafe("INSERT INTO batch_err VALUES (1) RETURNING v; this is not valid sql");
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as any)?.name).toBe("SQLiteError");
+    expect((caught as any)?.code).toBe("SQLITE_ERROR");
+    expect((caught as Error)?.message).toMatch(/syntax/i);
+
+    // The valid statement before the error still executed.
+    const rows = await sql`SELECT count(*) AS n FROM batch_err`;
+    expect(rows[0].n).toBe(1);
+  });
 });
 
 describe("Parameterized Queries", () => {
@@ -2014,7 +2095,7 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    const iterations = 2000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

@@ -341,6 +341,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnNames);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnCount);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetParamCount);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetHasMultipleStatements);
+JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetRemainingSQL);
 
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes);
 JSC_DECLARE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes);
@@ -521,6 +522,10 @@ public:
     mutable JSC::WriteBarrier<JSC::JSObject> userPrototype;
     size_t extraMemorySize = 0;
     SQLiteBindingsMap m_bindingNames = { 0, false };
+    // The SQL text that follows this statement within a multi-statement string,
+    // starting at the next statement that can be prepared (empty when only
+    // whitespace or comments remain). Lets callers execute the whole string.
+    WTF::String remainingSQL;
     bool hasExecuted : 1 = false;
     bool useBigInt64 : 1 = false;
 
@@ -664,6 +669,7 @@ static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "columns"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnNames, 0 } },
     { "columnsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnCount, 0 } },
     { "paramsCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetParamCount, 0 } },
+    { "remainingSQL"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetRemainingSQL, 0 } },
     { "columnTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnTypes, 0 } },
     { "declaredTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetColumnDeclaredTypes, 0 } },
     { "safeIntegers"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsSqlStatementGetSafeIntegers, jsSqlStatementSetSafeIntegers } },
@@ -1692,8 +1698,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     // but that should be okay.
     int64_t currentMemoryUsage = sqlite_malloc_amount;
 
+    const char* sqlStart = reinterpret_cast<const char*>(utf8.span().data());
+    const char* sqlEnd = sqlStart + utf8.span().size();
+
     int rc = SQLITE_OK;
-    rc = sqlite3_prepare_v3(db, reinterpret_cast<const char*>(utf8.span().data()), utf8.span().size(), flags, &statement, nullptr);
+    const char* tail = nullptr;
+    rc = sqlite3_prepare_v3(db, sqlStart, utf8.span().size(), flags, &statement, &tail);
 
     if (rc != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
@@ -1704,6 +1714,32 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
         static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, versionDB, memoryChange);
+
+    // Find where the next preparable statement begins so callers can execute a
+    // multi-statement string one statement at a time. Scan past chunks that
+    // contain no statement (trailing whitespace or comments) so the remainder
+    // always starts at real SQL, and stays empty when nothing is left.
+    const char* cursor = tail;
+    while (cursor && cursor < sqlEnd) {
+        sqlite3_stmt* nextStatement = nullptr;
+        const char* nextTail = nullptr;
+        int nextRc = sqlite3_prepare_v3(db, cursor, sqlEnd - cursor, 0, &nextStatement, &nextTail);
+        if (nextRc != SQLITE_OK) {
+            // Leave the malformed remainder in place; the caller re-prepares it
+            // and surfaces the error at the right point in the batch.
+            sqlStatement->remainingSQL = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(cursor), static_cast<size_t>(sqlEnd - cursor) });
+            break;
+        }
+        if (nextStatement) {
+            sqlite3_finalize(nextStatement);
+            sqlStatement->remainingSQL = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(cursor), static_cast<size_t>(sqlEnd - cursor) });
+            break;
+        }
+        if (!nextTail || nextTail <= cursor) {
+            break;
+        }
+        cursor = nextTail;
+    }
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -2681,6 +2717,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetParamCount, (JSGlobalObject * lexicalG
     CHECK_PREPARED
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsNumber(sqlite3_bind_parameter_count(castedThis->stmt))));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetRemainingSQL, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    JSSQLStatement* castedThis = dynamicDowncast<JSSQLStatement>(JSValue::decode(thisValue));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    CHECK_THIS
+
+    if (castedThis->remainingSQL.isEmpty()) {
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
+    }
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, castedThis->remainingSQL)));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnTypes, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))

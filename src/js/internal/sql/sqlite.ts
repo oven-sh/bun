@@ -241,16 +241,41 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
       // For SELECT queries, we need to use a prepared statement
       // For other queries, we can check if there are multiple statements and use db.run() if so
       if (parsedInfo.canReturnRows) {
-        // SELECT queries must use prepared statements for results
-        const stmt = db.prepare(sql);
+        // A prepared statement only compiles the first statement of the string,
+        // so loop over every statement to avoid silently dropping the rest.
+        // Bindings apply to the first statement, matching db.run(). The first
+        // statement that returns rows provides the result set.
         let result: unknown[] | undefined;
+        let remaining = sql;
+        let isFirst = true;
 
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
-        } else {
-          result = stmt.all.$apply(stmt, values);
+        while (remaining) {
+          const stmt = db.prepare(remaining);
+          const next = stmt.native.remainingSQL;
+          const bindValues = isFirst ? values : [];
+
+          try {
+            if (result === undefined && stmt.native.columnsCount > 0) {
+              if (mode === SQLQueryResultMode.values) {
+                result = stmt.values.$apply(stmt, bindValues);
+              } else if (mode === SQLQueryResultMode.raw) {
+                result = stmt.raw.$apply(stmt, bindValues);
+              } else {
+                result = stmt.all.$apply(stmt, bindValues);
+              }
+            } else {
+              stmt.run.$apply(stmt, bindValues);
+            }
+          } finally {
+            stmt.finalize();
+          }
+
+          isFirst = false;
+          remaining = next;
+        }
+
+        if (result === undefined) {
+          result = [];
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -258,7 +283,6 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
-        stmt.finalize();
         query.resolve(sqlResult);
       } else {
         // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively

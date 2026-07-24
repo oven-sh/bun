@@ -1248,6 +1248,29 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                 let needs_ctx =
                     this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+
+                if needs_ctx {
+                    if let Some(&pkg_id) = this.git_checkout_packages.get(&checkout_id) {
+                        // The checkout for this repo+commit already completed
+                        // and drained its callback queue; a context queued now
+                        // would never be processed. Resolve against the package
+                        // it appended, applying the same fix-up the completion
+                        // drain applies to queued dependencies.
+                        let pkg_name = this.lockfile.packages.items_name()[pkg_id as usize];
+                        let pkg_res = this.lockfile.packages.items_resolution()[pkg_id as usize];
+                        let repo = this.lockfile.buffers.dependencies[id as usize]
+                            .version
+                            .git_mut();
+                        // SAFETY: `pkg_res.tag == Git` — the recorded checkout
+                        // appended a git-resolved package; `value.git` is the
+                        // active union arm.
+                        repo.resolved = pkg_res.git().resolved;
+                        repo.package_name = pkg_name;
+                        success_fn(this, id, pkg_id);
+                        return Ok(());
+                    }
+                }
+
                 let entry = this
                     .task_queue
                     .get_or_put_context(checkout_id, ())

@@ -460,6 +460,34 @@ impl<'a> Task<'a> {
                                         break 'body;
                                     }
                                 }
+                            } else if this.status != Status::Fail {
+                                // Neither matcher recognized the URL
+                                // (`file://`, `git://`, ...) and no clone was
+                                // attempted yet; git supports these schemes
+                                // directly, so clone with the URL as written.
+                                // Without this the task would finish with
+                                // `Status::Waiting` and zeroed data, which the
+                                // main thread treats as a successful clone.
+                                match Repository::download(
+                                    req.env,
+                                    &mut this.log,
+                                    // SAFETY: see `manager` decl — short-lived `&mut` at call boundary.
+                                    unsafe { &mut *manager }.get_cache_directory(),
+                                    this.id,
+                                    name,
+                                    url,
+                                    attempt,
+                                ) {
+                                    Ok(d) => d,
+                                    Err(err) => {
+                                        this.err = Some(err);
+                                        this.status = Status::Fail;
+                                        this.data = Data {
+                                            git_clone: ManuallyDrop::new(Fd::invalid()),
+                                        };
+                                        break 'body;
+                                    }
+                                }
                             } else {
                                 break 'body;
                             }

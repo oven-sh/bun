@@ -2960,8 +2960,7 @@ impl RunCommand {
         // branch (lib/internal/main/repl.js): an external REPL replacement is
         // loaded regardless of --input-type.
         if ctx.runtime_options.input_type_specified
-            && bun_core::env_var::NODE_REPL_EXTERNAL_MODULE::get()
-                .is_none_or(|v| v.is_empty())
+            && bun_core::env_var::NODE_REPL_EXTERNAL_MODULE::get().is_none_or(|v| v.is_empty())
         {
             // Match node exactly: bare message on stderr, exit code 9.
             pretty_errorln!("Cannot specify --input-type for REPL");

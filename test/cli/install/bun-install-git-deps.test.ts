@@ -1,7 +1,8 @@
 // Tests for installing git dependencies that live in ONE repository as
-// multiple branches (issue #35420), plus `git+file://` dependencies.
-// Everything is local: a bare repo on disk, served over git's dumb HTTP
-// protocol by Bun.serve when an http URL is needed.
+// multiple branches (issue #35420), `git+file://` dependencies, and
+// tarball-URL dependencies that appear both directly and transitively.
+// Everything is local: a bare repo on disk (served over git's dumb HTTP
+// protocol by Bun.serve when an http URL is needed) or static tarballs.
 import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -55,7 +56,7 @@ function makeSharedRepo(root: string, packages: BranchPackage[]): string {
   return bare;
 }
 
-function serveDumbHttp(root: string) {
+function serveStatic(root: string) {
   return Bun.serve({
     port: 0,
     async fetch(req) {
@@ -94,7 +95,7 @@ test.concurrent(
     using dir = tempDir("git-dep-dup", {});
     const root = String(dir);
 
-    await using server = serveDumbHttp(root);
+    await using server = serveStatic(root);
     const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
 
     // pkg-a re-declares 11 of its siblings as its own dependencies, so those
@@ -135,6 +136,69 @@ test.concurrent(
   },
 );
 
+// same mechanism as above but for tarball-URL dependencies (issues #10915,
+// #8501): a dependency enqueued after its tarball's extract task already
+// completed and drained its callback queue was parked forever and failed
+// with "failed to resolve".
+test.concurrent("installs every tarball-URL dependency that appears directly and transitively", async () => {
+  const letters = "abcdefghijklmnop".split("");
+  using dir = tempDir("tarball-dep-dup", {});
+  const root = String(dir);
+  const tarballs = join(root, "tarballs");
+  mkdirSync(tarballs);
+
+  await using server = serveStatic(tarballs);
+  const urlOf = (l: string) => `http://localhost:${server.port}/pkg-${l}.tgz`;
+
+  // pkg-a re-declares 11 of its siblings as its own dependencies, so those
+  // tarball specs appear both directly (from the project) and transitively.
+  const transitive = Object.fromEntries(letters.slice(1, 12).map(l => [`@scope/pkg-${l}`, urlOf(l)]));
+  for (const l of letters) {
+    const pkgDir = join(root, `work-${l}`, "package");
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(
+      join(pkgDir, "package.json"),
+      JSON.stringify({
+        name: `@scope/pkg-${l}`,
+        version: "1.0.0",
+        dependencies: l === "a" ? transitive : undefined,
+      }),
+    );
+    writeFileSync(join(pkgDir, "index.js"), `module.exports = ${JSON.stringify(`pkg-${l}`)};\n`);
+    const res = Bun.spawnSync({
+      cmd: ["tar", "-czf", join(tarballs, `pkg-${l}.tgz`), "-C", join(root, `work-${l}`), "package"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (!res.success) throw new Error(`tar failed: ${res.stderr.toString()}`);
+  }
+
+  const project = join(root, "project");
+  mkdirSync(project);
+  writeFileSync(
+    join(project, "package.json"),
+    JSON.stringify({
+      name: "project",
+      version: "1.0.0",
+      dependencies: Object.fromEntries(letters.map(l => [`@scope/pkg-${l}`, urlOf(l)])),
+    }),
+  );
+
+  // the race depends on threadpool scheduling; two fresh-cache attempts to
+  // make the failure reliable on the unfixed code
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await Bun.$`rm -rf ${join(project, "node_modules")} ${join(project, "bun.lock")} ${join(root, "cache-" + attempt)}`;
+    const { stderr, exitCode } = await runInstall(project, join(root, `cache-${attempt}`));
+    expect(stderr).not.toContain("failed to resolve");
+    expect(stderr).not.toContain("error:");
+    for (const l of letters) {
+      expect(await installedVersionOf(project, `@scope/pkg-${l}`)).toBe(`pkg-${l}`);
+    }
+    expect(exitCode).toBe(0);
+  }
+});
+
 // issue #35420 bug 2: installing from a complete lockfile with a cold cache
 // only checked out the single dependency stored on the shared clone task; the
 // other branches of the same repo were silently skipped with exit code 0.
@@ -142,7 +206,7 @@ test.concurrent("installs every git dependency from a lockfile on a cold cache w
   using dir = tempDir("git-dep-lockfile", {});
   const root = String(dir);
 
-  await using server = serveDumbHttp(root);
+  await using server = serveStatic(root);
   const repoUrl = `git+http://localhost:${server.port}/shared-repo.git`;
   makeSharedRepo(root, [
     { name: "@scope/pkg-m", branch: "pkg-m" },

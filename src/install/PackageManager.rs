@@ -269,11 +269,12 @@ type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
-/// Git-checkout task id -> the package that checkout appended during the
-/// resolve phase. A checkout's callback queue is drained exactly once, so a
-/// dependency enqueued after that drain must resolve through this map instead
-/// of queueing a callback that nothing will ever process.
-type GitCheckoutPackageMap =
+/// Resolve-task id (git checkout / tarball extract) -> the package that task
+/// appended during the resolve phase. A task's callback queue is drained
+/// exactly once, so a dependency enqueued after that drain must resolve
+/// through this map instead of queueing a callback that nothing will ever
+/// process.
+type AppendedTaskPackageMap =
     HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
     HashMap<u64, FolderResolutionEntry /* , IdentityContext<u64>, 80 */>;
@@ -356,7 +357,7 @@ pub struct PackageManager {
     pub manifests: PackageManifestMap,
     pub folders: FolderResolutionMap,
     pub git_repositories: RepositoryMap,
-    pub git_checkout_packages: GitCheckoutPackageMap,
+    pub appended_task_packages: AppendedTaskPackageMap,
 
     pub network_dedupe_map: crate::network_task::DedupeMap,
     pub async_network_task_queue: AsyncNetworkTaskQueue,
@@ -1930,7 +1931,7 @@ pub fn init(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
-        wr!(git_checkout_packages, GitCheckoutPackageMap::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());
@@ -2362,7 +2363,7 @@ pub(crate) fn init_with_runtime_once(
         wr!(manifests, PackageManifestMap::default());
         wr!(folders, Default::default());
         wr!(git_repositories, RepositoryMap::default());
-        wr!(git_checkout_packages, GitCheckoutPackageMap::default());
+        wr!(appended_task_packages, AppendedTaskPackageMap::default());
         wr!(network_dedupe_map, Default::default());
         wr!(async_network_task_queue, AsyncNetworkTaskQueue::default());
         wr!(network_tarball_batch, thread_pool::Batch::default());

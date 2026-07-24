@@ -1159,6 +1159,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     task.data_extract(),
                     log_level,
                 ) {
+                    // The callback queue below is drained exactly once; record
+                    // the appended package so a dependency enqueued after this
+                    // drain (e.g. the same tarball reached transitively) can
+                    // resolve instead of queueing a callback that nothing will
+                    // ever process.
+                    manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         // In the middle of an install, you could end up needing to downlaod the github tarball for a dependency
                         // We need to make sure we resolve the dependencies first before calling the onExtract callback
@@ -1511,7 +1517,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // drain (e.g. the same repo+commit reached transitively)
                     // can resolve instead of queueing a callback that nothing
                     // will ever process.
-                    manager.git_checkout_packages.insert(task.id, pkg.meta.id);
+                    manager.appended_task_packages.insert(task.id, pkg.meta.id);
                     'handle_pkg: {
                         let any_root = Cell::new(false);
                         let dependency_list: TaskCallbackList = {

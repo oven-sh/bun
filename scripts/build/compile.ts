@@ -168,11 +168,14 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
   // already the final, patched, re-signed artifact. See shims.ts.
   const wrap = `${cfg.jsRuntime} ${q(streamPath)} link --console`;
   // Windows ASAN: -fsanitize=address is a clang-cl DRIVER argument (it lives
-  // before /link, unlike $ldflags which go raw to lld-link). The driver
-  // then links the ASAN runtime itself: the clang_rt.asan_dynamic import
-  // lib plus the static-CRT runtime thunk. The dynamic runtime DLL is copied
-  // next to the binary by the build (see bun.ts) so it resolves at load.
-  const winAsanDriver = cfg.windows && cfg.asan ? " -fsanitize=address" : "";
+  // before /link, unlike $ldflags which go raw to lld-link) so the driver
+  // links the ASAN runtime itself. /MD must appear at LINK time too: the
+  // driver picks the CRT-specific glue from it — the dynamic import lib +
+  // clang_rt.asan_dynamic_runtime_thunk for /MD — otherwise it defaults to
+  // the static-CRT thunk, whose own malloc/free definitions collide with
+  // ucrt.lib (duplicate symbol). The dynamic runtime DLL is copied next to
+  // the binary by the build (see bun.ts) so it resolves at load.
+  const winAsanDriver = cfg.windows && cfg.asan ? " -fsanitize=address /MD" : "";
   n.rule("link", {
     command: cfg.windows
       ? `${wrap} ${cxx} /nologo${winAsanDriver} -fuse-ld=lld ${q(`/clang:-B${dirname(cfg.ld)}`)} @$out.rsp /Fe$out /link $ldflags`

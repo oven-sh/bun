@@ -1054,6 +1054,10 @@ impl<'a> Parser<'a> {
                     && p.options.output_format == options::Format::Cjs
                     && (p.options.target.is_bun() || p.options.target.is_node());
 
+                if import_meta_names.is_some() {
+                    p.has_import_meta = true;
+                }
+
                 if !defer_to_cjs_wrapper {
                     let count = (uses_dirname as usize) + (uses_filename as usize);
                     let mut declared_symbols =

@@ -429,8 +429,8 @@ export function createRequireCache() {
 }
 
 type WrapperMutate = (start: string, end: string) => void;
-export function getWrapperArrayProxy(onMutate: WrapperMutate) {
-  const wrapper = ["(function(exports,require,module,__filename,__dirname){", "})"];
+export function getWrapperArrayProxy(onMutate: WrapperMutate, start: string, end: string) {
+  const wrapper = [start, end];
   return new Proxy(wrapper, {
     set(_target, prop, value, receiver) {
       Reflect.set(wrapper, prop, value, receiver);

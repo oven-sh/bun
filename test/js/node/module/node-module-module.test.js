@@ -194,6 +194,34 @@ describe.concurrent("node-module-module", () => {
     expect(wrap()).toBe("(function (exports, require, module, __filename, __dirname) { undefined\n});");
   });
 
+  test("Module.wrap is consistent with Module.wrapper", async () => {
+    const script = `
+      const assert = require("node:assert");
+      const { Module } = require("node:module");
+
+      assert.strictEqual(Module.wrapper[0], "(function (exports, require, module, __filename, __dirname) { ");
+      assert.strictEqual(Module.wrapper[1], "\\n});");
+      assert.strictEqual(Module.wrap("X"), Module.wrapper[0] + "X" + Module.wrapper[1]);
+
+      Module.wrapper[0] = "(function (exports, require, module, __filename, __dirname) { module.__viaWrapper = true; ";
+      assert.strictEqual(Module.wrap("Y").includes("__viaWrapper"), true);
+      assert.strictEqual(Module.wrap("Y"), Module.wrapper[0] + "Y" + Module.wrapper[1]);
+
+      Module.wrapper = ["PREFIX{", "}SUFFIX"];
+      assert.strictEqual(Module.wrapper[0], "PREFIX{");
+      assert.strictEqual(Module.wrapper[1], "}SUFFIX");
+      assert.strictEqual(Module.wrap("Z"), "PREFIX{Z}SUFFIX");
+      console.log("PASS");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "PASS\n", stderr: "", exitCode: 0 });
+  });
+
   test("Overwriting _resolveFilename", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", path.join(import.meta.dir, "resolveFilenameOverwrite.cjs")],

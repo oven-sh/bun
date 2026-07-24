@@ -447,22 +447,63 @@ mod _impl {
         let top_level_dir: &[u8] = fs.top_level_dir;
         match Syscall::chdir(slice) {
             bun_sys::Result::Ok(()) => {
-                // When we update the cwd from JS, we have to update the bundler's version as well
-                // However, this might be called many times in a row, so we use a pre-allocated buffer
-                // that way we don't have to worry about garbage collector
-                let into_cwd_len = match Syscall::getcwd(&mut buf[..]) {
-                    bun_sys::Result::Ok(r) => r,
-                    bun_sys::Result::Err(err) => {
-                        // roll back to the previous top_level_dir
-                        let mut rollback = PathBuffer::uninit();
-                        let _ = Syscall::chdir(bun_paths::resolve_path::z(
-                            fs.top_level_dir,
-                            &mut rollback,
-                        ));
-                        return Err(global_object.throw_value(err.to_js(global_object)));
+                // The chdir succeeded, so the process cwd changed; refresh the
+                // cached cwd used by the resolver/bundler. A separate scratch
+                // buffer keeps `slice` (borrowed from `buf`) valid for the
+                // fallback below.
+                //
+                // `getcwd` can fail after a successful chdir: ENOENT when the
+                // new cwd was unlinked (e.g. `chdir("..")` into a directory
+                // that was `rm -rf`'d) or ERANGE when the cwd has grown past
+                // PATH_MAX. The chdir itself still succeeded, and Node does not
+                // treat a failed cwd lookup as a chdir failure, so fall back to
+                // the logical path (old cwd joined with the target) rather than
+                // rolling the chdir back and throwing.
+                let mut cwd_scratch = bun_paths::path_buffer_pool::get();
+                let into_cwd_len = match Syscall::getcwd(&mut cwd_scratch[..]) {
+                    bun_sys::Result::Ok(r) => {
+                        fs.top_level_dir_buf[..r].copy_from_slice(&cwd_scratch[..r]);
+                        r
+                    }
+                    bun_sys::Result::Err(_) => {
+                        // The checked join returns None instead of overflowing
+                        // the fixed buffer when the logical path would exceed
+                        // PATH_MAX; keep the previously cached cwd in that case.
+                        let mut resolve_scratch = bun_paths::path_buffer_pool::get();
+                        match bun_paths::resolve_path::join_abs_string_buf_checked::<
+                            bun_paths::platform::Auto,
+                        >(
+                            top_level_dir, &mut resolve_scratch[..], &[slice.as_bytes()]
+                        ) {
+                            // Leave room for the trailing NUL and separator
+                            // written below.
+                            Some(resolved) if resolved.len() + 2 <= bun_paths::MAX_PATH_BYTES => {
+                                let len = resolved.len();
+                                fs.top_level_dir_buf[..len].copy_from_slice(resolved);
+                                len
+                            }
+                            _ => {
+                                // Keep the previously cached cwd. Before the
+                                // first chdir `top_level_dir` points into the
+                                // resolver's DirnameStore, not `top_level_dir_buf`,
+                                // so copy it in before the buffer is re-sliced
+                                // below.
+                                let len = top_level_dir.len();
+                                // SAFETY: `top_level_dir` is at most
+                                // MAX_PATH_BYTES long and may alias
+                                // `top_level_dir_buf`, so use a memmove.
+                                unsafe {
+                                    core::ptr::copy(
+                                        top_level_dir.as_ptr(),
+                                        fs.top_level_dir_buf.as_mut_ptr(),
+                                        len,
+                                    );
+                                }
+                                len
+                            }
+                        }
                     }
                 };
-                fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
                 fs.top_level_dir_buf[into_cwd_len] = 0;
                 // SAFETY: `top_level_dir_buf` is a process-lifetime field of
                 // the FileSystem singleton, so the detached borrow never
@@ -471,8 +512,11 @@ mod _impl {
                     unsafe { bun_ptr::detach_lifetime(&fs.top_level_dir_buf[..into_cwd_len]) };
 
                 let len = fs.top_level_dir.len();
-                // Ensure the path ends with a slash
-                if fs.top_level_dir_buf[len - 1] != SEP {
+                // Ensure the path ends with a slash, when there is room for the
+                // separator and NUL. `getcwd` can return up to MAX_PATH_BYTES - 1
+                // bytes, so a cwd already at the limit is left without the
+                // trailing slash rather than writing past `top_level_dir_buf`.
+                if len + 2 <= fs.top_level_dir_buf.len() && fs.top_level_dir_buf[len - 1] != SEP {
                     fs.top_level_dir_buf[len] = SEP;
                     fs.top_level_dir_buf[len + 1] = 0;
                     // SAFETY: see above.

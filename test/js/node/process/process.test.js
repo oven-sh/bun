@@ -1,7 +1,8 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { mkdirSync } from "node:fs";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -117,6 +118,157 @@ it("process.chdir() on root dir", () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: only on Linux does chdir("..") succeed while getcwd() then fails
+// for an unlinked cwd. On macOS/BSD the chdir("..") syscall itself fails, so
+// (like Node) Bun throws and there is no divergence to exercise.
+it.skipIf(!isLinux)("process.chdir() does not throw when the cwd was deleted", async () => {
+  using dir = tempDir("process-chdir-deleted", {
+    "index.js": `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const base = process.cwd();
+      fs.mkdirSync(path.join(base, "parent", "child"), { recursive: true });
+      process.chdir(path.join(base, "parent", "child"));
+      // Delete the directory tree we are currently inside of.
+      fs.rmSync(path.join(base, "parent"), { recursive: true, force: true });
+      // chdir("..") must not throw even though getcwd() now fails for the
+      // unlinked directory: the chdir syscall itself still succeeds and Node
+      // returns normally here.
+      process.chdir("..");
+      // Recovering to a live absolute directory still works.
+      process.chdir(base);
+      console.log(process.cwd() === base ? "RECOVERED" : "WRONG:" + process.cwd());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("RECOVERED");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: the process cwd can grow past PATH_MAX via repeated relative
+// chdir, after which getcwd fails with ERANGE. The logical-path fallback must
+// not overflow its fixed buffer, which would crash the process.
+it.skipIf(!isLinux)("process.chdir() does not crash when the cwd grows past PATH_MAX", async () => {
+  using dir = tempDir("process-chdir-long", {
+    "index.js": `
+      const fs = require("node:fs");
+      const seg = Buffer.alloc(200, "d").toString();
+      // 40 * ~201 bytes is well past PATH_MAX (4096): getcwd() starts failing
+      // with ERANGE partway down, but each short relative chdir still succeeds.
+      for (let i = 0; i < 40; i++) {
+        fs.mkdirSync(seg);
+        process.chdir(seg);
+      }
+      console.log("OK");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: getcwd() returns up to MAX_PATH_BYTES - 1 (4095) bytes, and the
+// cached cwd must not write the trailing slash one byte past its fixed buffer
+// when the cwd lands exactly on that boundary.
+it.skipIf(!isLinux)("process.chdir() does not crash when the cwd is exactly PATH_MAX - 1", async () => {
+  using dir = tempDir("process-chdir-edge", {
+    "index.js": `
+      const fs = require("node:fs");
+      const TARGET = 4095; // MAX_PATH_BYTES - 1 on Linux: the longest cwd getcwd() returns
+      const big = Buffer.alloc(250, "d").toString();
+      // Grow the cwd with short relative chdirs (each getcwd succeeds) until one
+      // more <=255-byte segment can land it exactly on TARGET.
+      while (process.cwd().length + 1 + 255 < TARGET) {
+        fs.mkdirSync(big);
+        process.chdir(big);
+      }
+      const finalSeg = Buffer.alloc(TARGET - process.cwd().length - 1, "d").toString();
+      fs.mkdirSync(finalSeg);
+      // cwd is now exactly TARGET bytes; the unguarded trailing-slash write used
+      // to index one past top_level_dir_buf here and crash the process.
+      process.chdir(finalSeg);
+      console.log(process.cwd().length === TARGET ? "OK" : "LEN:" + process.cwd().length);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/32409
+// Linux-only: when the very first process.chdir() overflows getcwd (the process
+// started in a near-PATH_MAX cwd), the fallback keeps the cached cwd. That cwd
+// still points into the resolver's DirnameStore, not top_level_dir_buf, so the
+// fallback must copy it in rather than re-slice the uninitialized buffer.
+it.skipIf(!isLinux)("process.chdir() keeps the cached cwd on the first overflow", async () => {
+  using dir = tempDir("process-chdir-first", {
+    "fixture.mjs": `
+      const fs = require("node:fs");
+      const startup = process.cwd();
+      const seg = Buffer.alloc(200, "d").toString();
+      fs.mkdirSync(seg);
+      // First chdir pushes the cwd past PATH_MAX; getcwd now fails with ERANGE
+      // and the logical path does not fit, so the cached cwd is kept.
+      process.chdir(seg);
+      console.log(process.cwd() === startup ? "OK" : "MISMATCH:" + process.cwd().length);
+    `,
+  });
+
+  // Build a startup cwd of ~4000 bytes (just under PATH_MAX) so the fixture's
+  // first chdir overflows and hits the getcwd-failure fallback immediately.
+  const big = Buffer.alloc(200, "d").toString();
+  let deep = String(dir);
+  while (deep.length + 1 + 200 < 3950) deep = join(deep, big);
+  deep = join(deep, Buffer.alloc(4000 - deep.length - 1, "d").toString());
+  mkdirSync(deep, { recursive: true });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(String(dir), "fixture.mjs")],
+    env: bunEnv,
+    cwd: deep,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
 });
 
 it("process.hrtime()", async () => {

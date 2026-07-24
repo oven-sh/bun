@@ -1666,6 +1666,89 @@ describe("deno_task", () => {
     TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
       .quiet()
       .runAsTest("bunception redirect /dev/null");
+
+    describe("stdin from Request/Response", () => {
+      const P = "hello-shell-stdin-0123456789";
+      const wrap = {
+        Response: (b: BodyInit) => new Response(b),
+        Request: (b: BodyInit) => new Request("http://example.com", { method: "POST", body: b }),
+      } as const;
+
+      // A Request/Response whose body is a JS-driven ReadableStream cannot be
+      // drained synchronously at redirect setup time. It used to be substituted
+      // with an empty blob, so the command ran on zero bytes and reported
+      // success. On POSIX `cat` resolves to a spawned subprocess
+      // (Cmd::init_subproc_redirections); on Windows it is the shell builtin
+      // (Builtin::init_redirections); both paths route through
+      // check_body_for_redirect.
+      describe.each(["Response", "Request"] as const)("%s", kind => {
+        describe.each([
+          [
+            "ReadableStream start()",
+            () =>
+              new ReadableStream({
+                start(c) {
+                  c.enqueue(new TextEncoder().encode(P));
+                  c.close();
+                },
+              }),
+          ],
+          [
+            "TransformStream readable",
+            () => {
+              const ts = new TransformStream();
+              const w = ts.writable.getWriter();
+              w.write(new TextEncoder().encode(P));
+              w.close();
+              return ts.readable;
+            },
+          ],
+          [
+            "async generator",
+            () =>
+              (async function* () {
+                yield P;
+              })(),
+          ],
+        ])("with a %s body", (_name, body) => {
+          test("rejects instead of delivering zero bytes", async () => {
+            await expect($`cat < ${wrap[kind](body())}`.text()).rejects.toThrow(/body is a ReadableStream/);
+          });
+        });
+
+        test("with an already-consumed body rejects", async () => {
+          const r = wrap[kind](P);
+          await r.text();
+          await expect($`cat < ${r}`.text()).rejects.toThrow(/already used/i);
+        });
+
+        test("with a string body still works", async () => {
+          const { stdout } = await $`cat < ${wrap[kind](P)}`;
+          expect(stdout.toString()).toBe(P);
+        });
+
+        test("with a Blob body still works", async () => {
+          const { stdout } = await $`cat < ${wrap[kind](new Blob([P]))}`;
+          expect(stdout.toString()).toBe(P);
+        });
+      });
+
+      test("stdout redirect to a stream-body Response rejects without the stdin hint", async () => {
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode(P));
+            c.close();
+          },
+        });
+        const err = await $`echo hi > ${new Response(body)}`.text().then(
+          () => null,
+          e => e,
+        );
+        expect(err).not.toBeNull();
+        expect(err.message).toMatch(/body is a ReadableStream/);
+        expect(err.message).not.toContain("Read it first");
+      });
+    });
   });
 
   describe("pwd", async () => {

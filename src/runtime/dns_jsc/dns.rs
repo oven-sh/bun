@@ -4179,7 +4179,15 @@ impl Resolver {
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::AllowMockedTime));
-        let next = now_ts.add_ms(1000);
+        // Ask c-ares when its next retransmission/timeout is actually due
+        // (capped at 1 s) so sub-second `timeout` options and c-ares's own
+        // adaptive retry schedule are honored instead of quantized to 1 s.
+        let interval_ms = match self.channel.get() {
+            // SAFETY: `channel` is the live c-ares channel owned by `self`.
+            Some(channel) => unsafe { (*channel).timeout_ms(1000) },
+            None => 1000,
+        };
+        let next = now_ts.add_ms(interval_ms);
         // `EventLoopTimer.next` uses the event-loop crate's local
         // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
         self.event_loop_timer.with_mut(|t| {

@@ -317,16 +317,34 @@ export function mysqlHandshakeV10(
   return mysqlRawPacket(0, payload);
 }
 
+// Status flags — page_protocol_basic_ok_packet.html (subset used by the mocks).
+export const MYSQL_SERVER_STATUS_AUTOCOMMIT = 0x0002;
+export const MYSQL_SERVER_MORE_RESULTS_EXISTS = 0x0008;
+
 // MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
-export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+export function mysqlOkPacket(
+  seq: number,
+  header: 0x00 | 0xfe = 0x00,
+  statusFlags: number = MYSQL_SERVER_STATUS_AUTOCOMMIT,
+): Buffer {
+  return mysqlRawPacket(
+    seq,
+    Buffer.from([header, 0x00, 0x00, statusFlags & 0xff, (statusFlags >> 8) & 0xff, 0x00, 0x00]),
+  );
 }
 
 // MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:
 //   Int<1>(0x01) String<EOF>(plugin-specific payload)
 export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
   return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x01]), data]));
+}
+
+// MySQL Protocol::LOCAL INFILE Request — page_protocol_com_query_response_local_infile_request.html:
+//   Int<1>(0xfb) String<EOF>(filename). Sent in place of a result set when the server wants the
+//   client to upload a file; the client answers with the file's contents, then an empty packet.
+export function mysqlLocalInfileRequest(seq: number, filename: string): Buffer {
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0xfb]), Buffer.from(filename, "utf-8")]));
 }
 
 // caching_sha2_password fast_auth_success marker carried in an AuthMoreData payload —

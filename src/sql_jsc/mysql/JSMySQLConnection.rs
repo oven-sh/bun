@@ -905,6 +905,27 @@ impl JSMySQLConnection {
         }
     }
 
+    /// Rejects a single request with `message` and `err`, leaving the connection open.
+    pub fn on_error_with_message(
+        &self,
+        request: &JSMySQLQuery,
+        message: &[u8],
+        err: AnyMySQLErrorT,
+    ) {
+        if self.vm().is_shutting_down() {
+            request.mark_as_failed();
+            return;
+        }
+        if let Some(err_) = self.global_object.try_take_exception() {
+            request.reject_with_js_value(self.get_queries_array(), err_);
+            return;
+        }
+        let queries_array = self.get_queries_array();
+        let instance = mysql_error_to_js(&self.global_object, message, err);
+        instance.ensure_still_alive();
+        request.reject_with_js_value(queries_array, instance);
+    }
+
     pub fn on_error_packet(&self, request: Option<&JSMySQLQuery>, err: &ErrorPacket) {
         if let Some(request) = request {
             if self.vm().is_shutting_down() {

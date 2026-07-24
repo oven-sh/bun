@@ -874,16 +874,6 @@ impl MySQLConnection {
                             return Err(AnyMySQLError::UnexpectedPacket);
                         }
                     }
-                } else if first_byte == PacketType::LOCAL_INFILE.0 {
-                    // Handle LOCAL INFILE request
-                    let mut infile = LocalInfileRequest {
-                        packet_size: header_length,
-                        ..Default::default()
-                    };
-                    infile.decode_internal(reader)?;
-
-                    // We don't support LOCAL INFILE for security reasons
-                    return Err(AnyMySQLError::LocalInfileNotSupported);
                 } else {
                     bun_core::scoped_log!(
                         MySQLConnection,
@@ -1360,6 +1350,7 @@ impl MySQLConnection {
         let _request_guard = request.ref_guard();
         // `ThisPtr::get` borrows the local `request` (Copy), not `*self`.
         let request: &JSMySQLQuery = request.get();
+
         let mut ok = OKPacket {
             header: 0,
             affected_rows: 0,
@@ -1370,6 +1361,43 @@ impl MySQLConnection {
             session_state_changes: Data::Empty,
             packet_size: header_length,
         };
+
+        if self
+            .flags
+            .contains(ConnectionFlags::AWAITING_LOCAL_INFILE_RESULT)
+        {
+            // The server's answer to the empty file sent in place of the one it asked for: an OK
+            // means it accepted that empty file, so the query is failed here rather than reported
+            // as a successful load of zero rows. An ERR aborts the rest of a statement batch.
+            self.flags
+                .remove(ConnectionFlags::AWAITING_LOCAL_INFILE_RESULT);
+            match PacketType(first_byte) {
+                PacketType::ERROR => {}
+                PacketType::OK => {
+                    ok.decode_internal(reader)?;
+                    if ok.status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS) {
+                        // The result sets of the batch's remaining statements still follow, and
+                        // they cannot be attributed to a query that just failed.
+                        return Err(AnyMySQLError::LocalInfileNotSupported);
+                    }
+                }
+                _ => return Err(AnyMySQLError::UnexpectedPacket),
+            }
+            if let Some(statement) = request.get_statement() {
+                statement.reset();
+            }
+            self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
+            self.queue.mark_as_ready_for_query();
+            self.queue.mark_current_request_as_finished(request);
+            self.js_connection_ref().on_error_with_message(
+                request,
+                b"LOAD DATA LOCAL INFILE is not supported",
+                AnyMySQLError::LocalInfileNotSupported,
+            );
+            let _ = self.flush_queue();
+            return Ok(());
+        }
+
         match PacketType(first_byte) {
             PacketType::ERROR => {
                 let mut err = ErrorPacket::default();
@@ -1417,6 +1445,29 @@ impl MySQLConnection {
                             ok.last_insert_id,
                             ok.affected_rows,
                         );
+                        return Ok(());
+                    }
+
+                    if packet_type == PacketType::LOCAL_INFILE {
+                        // 0xFB is never a column count (251 columns encode as `0xfc 0xfb 0x00`),
+                        // it is a request to upload a local file. End the transfer with the
+                        // empty packet the protocol requires; the server's reply fails the query.
+                        let mut infile = LocalInfileRequest {
+                            packet_size: header_length,
+                            ..Default::default()
+                        };
+                        infile.decode_internal(reader)?;
+                        bun_core::scoped_log!(
+                            MySQLConnection,
+                            "Refusing LOCAL INFILE request for {}",
+                            bstr::BStr::new(infile.filename.slice())
+                        );
+
+                        let mut packet = self.writer().start(self.sequence_id)?;
+                        packet.end()?;
+                        self.flush_data();
+                        self.flags
+                            .insert(ConnectionFlags::AWAITING_LOCAL_INFILE_RESULT);
                         return Ok(());
                     }
 

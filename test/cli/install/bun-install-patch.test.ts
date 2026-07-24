@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
+import { mkdirSync, rmSync } from "fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const normalizeBunSnapshot = (str: string) => {
@@ -230,6 +230,68 @@ index c8950c17b265104bcf27f8c345df1a1b13a78950..7ce57ab96400ab0ff4fac7e06f6e02c2
     const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(filedir);
     expect(stderr.toString()).toBe("");
     expect(stdout.toString()).toContain("Hi from isOdd!\n");
+  });
+
+  // https://github.com/oven-sh/bun/issues/33571
+  // Root bypasses the missing-execute-bit check (DAC_OVERRIDE) and the staging
+  // tree is copied into node_modules with fresh 0o755 dirs, so the bug is only
+  // observable as a non-root user, where creating the staging subdirectory at
+  // the file's 0o644 mode fails with EACCES. When running as root (CI), drop to
+  // an unprivileged uid so the failure is reproducible.
+  test.skipIf(isWindows)("should apply a patch that adds a file in a directory absent from the package", async () => {
+    const version = "0.1.2";
+    const patchFilename = filepathEscape(`is-odd@${version}.patch`);
+    const create_dir_patch = /* patch */ `diff --git a/android/build/x/results.bin b/android/build/x/results.bin
+new file mode 100644
+--- /dev/null
++++ b/android/build/x/results.bin
+@@ -0,0 +1 @@
++hi
+`;
+    const filedir = tempDirWithFiles("patch-create-dir", {
+      "project/package.json": JSON.stringify({
+        "name": "bun-patch-test",
+        "module": "index.ts",
+        "type": "module",
+        "patchedDependencies": {
+          [`is-odd@${version}`]: `patches/${patchFilename}`,
+        },
+        "dependencies": {
+          "is-odd": version,
+        },
+      }),
+      [`project/patches/${patchFilename}`]: create_dir_patch,
+    });
+    const projectDir = join(filedir, "project");
+    const cacheDir = join(filedir, "cache");
+    const homeDir = join(filedir, "home");
+    mkdirSync(cacheDir);
+    mkdirSync(homeDir);
+
+    const NOBODY = 65534;
+    const asRoot = process.getuid?.() === 0;
+    if (asRoot) {
+      // Hand the whole tree to the unprivileged uid so it can write the cache,
+      // staging tree and node_modules.
+      Bun.spawnSync(["chown", "-R", `${NOBODY}:${NOBODY}`, filedir]);
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: projectDir,
+      env: { ...bunEnv, HOME: homeDir, BUN_INSTALL_CACHE_DIR: cacheDir },
+      ...(asRoot ? { uid: NOBODY, gid: NOBODY } : {}),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("EACCES");
+    expect(stderr).not.toContain("failed to apply patchfile");
+    expect(exitCode).toBe(0);
+
+    const createdFile = join(projectDir, "node_modules", "is-odd", "android", "build", "x", "results.bin");
+    expect(await Bun.file(createdFile).text()).toBe("hi\n");
   });
 
   describe("should patch a dependency after it was already installed", async () => {

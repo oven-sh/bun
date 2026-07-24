@@ -98,4 +98,34 @@ describe("url.domainToUnicode", () => {
       expect(url.domainToASCII(input)).toEqual(expected);
     });
   }
+
+  // The result must depend only on the string's value, not on whether JSC
+  // happened to back it with an 8-bit or 16-bit buffer.
+  test("does not depend on the string's internal representation", () => {
+    const eight = "xn--bcher-kva.de";
+    const sixteen = "xn--bcher-kva.de\u4e2d".slice(0, -1);
+    expect(sixteen).toBe(eight);
+    expect({
+      eight: url.domainToUnicode(eight),
+      sixteen: url.domainToUnicode(sixteen),
+    }).toEqual({
+      eight: "bücher.de",
+      sixteen: "bücher.de",
+    });
+  });
+
+  test("round-trips through domainToASCII", () => {
+    for (const [domain] of pairs) {
+      expect(url.domainToUnicode(url.domainToASCII(domain))).toBe(domain);
+    }
+  });
+
+  test("decodes A-labels that appear alongside non-Latin-1 labels", () => {
+    expect(url.domainToUnicode("中.xn--fiqs8s")).toBe("中.中国");
+    expect(url.domainToUnicode("пример.xn--p1ai")).toBe("пример.рф");
+  });
+
+  test("applies UTS #46 mapping to non-Latin-1 input", () => {
+    expect(url.domainToUnicode("\ufb00.COM")).toBe("ff.com");
+  });
 });

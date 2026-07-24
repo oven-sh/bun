@@ -1025,6 +1025,7 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ESUCCESS;
           },
           clock_res_get: (clockId, resolution) => {
+            this.refreshMemory();
             let res;
             switch (clockId) {
               case constants_1.WASI_CLOCK_MONOTONIC:
@@ -1039,9 +1040,9 @@ var require_wasi = __commonJS({
               }
             }
             if (!res) {
-              throw Error("invalid clockId");
+              return constants_1.WASI_EINVAL;
             }
-            this.view.setBigUint64(resolution, res);
+            this.view.setBigUint64(resolution, res, true);
             return constants_1.WASI_ESUCCESS;
           },
           clock_time_get: (clockId, _precision, time) => {

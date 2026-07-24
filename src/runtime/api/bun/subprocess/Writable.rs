@@ -232,6 +232,8 @@ impl<'a> Writable<'a> {
                                 subprocess.update_flags(|f| {
                                     f.set(Flags::DEREF_ON_STDIN_DESTROYED, false)
                                 });
+                                // `assign_to_stream` detached the JS controller on its
+                                // error path, so this create-time ref is the only one.
                                 Self::pipe_release(pipe_nn);
                                 subprocess.deref();
                                 let _ = global.throw_value(err_val);
@@ -338,6 +340,8 @@ impl<'a> Writable<'a> {
                     if let Some(err_val) = assign_result.to_error() {
                         subprocess.weak_file_sink_stdin_ptr.set(None);
                         subprocess.update_flags(|f| f.set(Flags::DEREF_ON_STDIN_DESTROYED, false));
+                        // `assign_to_stream` detached the JS controller on its error
+                        // path, so this create-time ref is the only one.
                         Self::pipe_release(pipe_nn);
                         subprocess.deref();
                         let _ = global.throw_value(err_val);

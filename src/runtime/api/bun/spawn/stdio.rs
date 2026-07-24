@@ -337,49 +337,24 @@ impl Stdio {
         match body {
             webcore::body::Value::Null | webcore::body::Value::Empty => {
                 *out_stdio = Stdio::Ignore;
-                return Ok(());
+                Ok(())
             }
-            webcore::body::Value::Used => {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::BODY_ALREADY_USED,
-                        format_args!("Body already used"),
-                    )
-                    .throw());
-            }
-            webcore::body::Value::Error(err) => {
-                return Err(global.throw_value(err.to_js(global)));
-            }
+            webcore::body::Value::Used => Err(global
+                .err(
+                    jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!("Body already used"),
+                )
+                .throw()),
+            webcore::body::Value::Error(err) => Err(global.throw_value(err.to_js(global))),
 
             // handled above.
             webcore::body::Value::Blob(_)
             | webcore::body::Value::WTFStringImpl(_)
             | webcore::body::Value::InternalBlob(_) => unreachable!(),
             webcore::body::Value::Locked(_) => {
-                if is_sync {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used in sync mode"
-                    )));
-                }
-
-                match i {
-                    0 => {}
-                    1 => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "ReadableStream cannot be used for stdout yet. For now, do .stdout"
-                        )));
-                    }
-                    2 => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "ReadableStream cannot be used for stderr yet. For now, do .stderr"
-                        )));
-                    }
-                    _ => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "ReadableStream cannot be used for stdio[{i}] yet"
-                        )));
-                    }
-                }
+                // `to_readable_stream` can start draining the body, so reject an
+                // unsupported destination before it runs.
+                Self::validate_readable_stream_target(global, i, is_sync)?;
 
                 let stream_value = body.to_readable_stream(global)?;
 
@@ -388,20 +363,9 @@ impl Stdio {
                         .throw_invalid_arguments(format_args!("Failed to create ReadableStream")));
                 };
 
-                if stream.is_disturbed(global) {
-                    return Err(global
-                        .err(
-                            jsc::ErrorCode::BODY_ALREADY_USED,
-                            format_args!("ReadableStream has already been used"),
-                        )
-                        .throw());
-                }
-
-                *out_stdio = Stdio::ReadableStream(stream);
+                out_stdio.extract_readable_stream(global, stream, i, is_sync)
             }
         }
-
-        Ok(())
     }
 
     pub fn extract(
@@ -513,42 +477,7 @@ impl Stdio {
         }
 
         if let Some(stream_) = webcore::ReadableStream::from_js(value, global)? {
-            let mut stream = stream_;
-            if let Some(blob) = stream.to_any_blob(global) {
-                return out_stdio.extract_blob(global, blob, i);
-            }
-
-            let name: &'static [u8] = match i {
-                0 => b"stdin",
-                1 => b"stdout",
-                2 => b"stderr",
-                _ => {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "ReadableStream cannot be used for stdio[{i}] yet"
-                    )));
-                }
-            };
-
-            if is_sync {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "'{}' ReadableStream cannot be used in sync mode",
-                    bstr::BStr::new(name),
-                )));
-            }
-
-            if stream.is_disturbed(global) {
-                return Err(global
-                    .err(
-                        jsc::ErrorCode::INVALID_STATE,
-                        format_args!(
-                            "'{}' ReadableStream has already been used",
-                            bstr::BStr::new(name),
-                        ),
-                    )
-                    .throw());
-            }
-            *out_stdio = Stdio::ReadableStream(stream);
-            return Ok(());
+            return out_stdio.extract_readable_stream(global, stream_, i, is_sync);
         }
 
         if let Some(array_buffer) = value.as_array_buffer(global) {
@@ -573,6 +502,88 @@ impl Stdio {
         Err(global.throw_invalid_arguments(format_args!(
             "stdio must be an array of 'inherit', 'ignore', or null"
         )))
+    }
+
+    /// A stream can only be pumped into the child's stdin, and only
+    /// asynchronously.
+    fn validate_readable_stream_target(
+        global: &JSGlobalObject,
+        i: i32,
+        is_sync: bool,
+    ) -> JsResult<()> {
+        match i {
+            0 => {}
+            1 => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ReadableStream cannot be used for stdout yet. For now, do .stdout"
+                )));
+            }
+            2 => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ReadableStream cannot be used for stderr yet. For now, do .stderr"
+                )));
+            }
+            _ => {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "ReadableStream cannot be used for stdio[{i}] yet"
+                )));
+            }
+        }
+
+        if is_sync {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "'stdin' ReadableStream cannot be used in sync mode"
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Validate a `ReadableStream` destined for a spawned process's stdio and
+    /// store it. The single implementation behind every entry point that can
+    /// hand one to a child: `Bun.spawn`'s `stdin`/`stdio` options, a `Request`
+    /// or `Response` body (`Stdio::extract_body_value`), and the shell's
+    /// `cmd < ${stream}` redirect.
+    ///
+    /// Streams that are really an already-complete Blob/File take the blob
+    /// fast-path. Disturbed (already read from) and locked (a reader is held)
+    /// streams are rejected up front: `assignToStream` could not pump either,
+    /// and that failure would otherwise surface only asynchronously, after the
+    /// child is already running with an empty stdin.
+    pub fn extract_readable_stream(
+        &mut self,
+        global: &JSGlobalObject,
+        stream: webcore::ReadableStream,
+        i: i32,
+        is_sync: bool,
+    ) -> JsResult<()> {
+        let mut stream = stream;
+        if let Some(blob) = stream.to_any_blob(global) {
+            return self.extract_blob(global, blob, i);
+        }
+
+        Self::validate_readable_stream_target(global, i, is_sync)?;
+
+        if stream.is_disturbed(global) {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_STATE,
+                    format_args!("'stdin' ReadableStream has already been used"),
+                )
+                .throw());
+        }
+
+        if stream.is_locked(global) {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_STATE,
+                    format_args!("'stdin' ReadableStream is locked"),
+                )
+                .throw());
+        }
+
+        *self = Stdio::ReadableStream(stream);
+        Ok(())
     }
 
     pub fn extract_blob(

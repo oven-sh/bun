@@ -42,6 +42,11 @@ pub struct FileSink {
     pub pending: JsCell<streams::WritablePending>,
     pub signal: JsCell<streams::Signal>,
     pub done: Cell<bool>,
+    /// Set when the ReadableStream assigned via [`Self::assign_to_stream`]
+    /// failed asynchronously (the pump promise rejected). Lets owners that
+    /// have no other channel to the stream (the shell's `< ${stream}` stdin)
+    /// distinguish "source errored, child saw early EOF" from success.
+    pub stream_rejected: Cell<bool>,
     pub started: Cell<bool>,
     pub must_be_kept_alive_until_eof: Cell<bool>,
 
@@ -332,6 +337,11 @@ impl FileSink {
                             stream.done(global);
                         }
                     }
+                    // The child is gone while the stream may still be pumping:
+                    // nothing on the JS side will reach `controller.end()`, so
+                    // detach the controller here. This also clears the signal
+                    // so `writer.close()` below cannot re-enter user JS.
+                    (*this).detach_js_controller(global);
                 }
                 // Clean up the readable stream reference
                 drop(readable_stream);
@@ -1358,6 +1368,7 @@ impl FileSink {
             }),
             signal: JsCell::new(streams::Signal::default()),
             done: Cell::new(false),
+            stream_rejected: Cell::new(false),
             started: Cell::new(false),
             must_be_kept_alive_until_eof: Cell::new(false),
             pollable: Cell::new(false),
@@ -1411,6 +1422,10 @@ impl FileSink {
             stream.done(global_this);
         }
 
+        // The JS side normally detached already (`controller.end()`); this
+        // covers completions that never went through the controller.
+        self.detach_js_controller(global_this);
+
         if !self.done.get() {
             self.writer.with_mut(|w| w.close());
         }
@@ -1418,10 +1433,16 @@ impl FileSink {
 
     /// Does not ref or unref.
     fn handle_reject_stream(&self, global_this: &JSGlobalObject, _err: JSValue) {
+        self.stream_rejected.set(true);
         if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
             stream.abort(global_this);
             self.readable_stream.set(readable_stream::Strong::default());
         }
+
+        // An async pump failure never reaches `controller.end()`, so the
+        // controller is still attached; detach it so its GC destructor does
+        // not deref the owner's ref.
+        self.detach_js_controller(global_this);
 
         if !self.done.get() {
             self.writer.with_mut(|w| w.close());
@@ -1453,6 +1474,25 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 }
 
 impl FileSink {
+    /// Detach the `JSReadableFileSinkController` that `assignToStream` stored
+    /// in `self.signal`, if one is still attached: nulls its `m_sinkPtr` (so
+    /// its GC destructor no longer derefs a ref it never owned) and clears the
+    /// signal so no further `onClose`/`onReady` can fire into JS. Idempotent.
+    ///
+    /// Every native terminal path of an *assigned* stream must go through this
+    /// so the create-time ref stays solely owned by the native handle
+    /// (`Writable::Pipe` / `FileSinkPtr`). Callers must only use it when the
+    /// signal was populated by `assignToStream` (or is empty): a signal
+    /// installed by `Signal::init_with_type` holds a native pointer, not a JS
+    /// cell.
+    fn detach_js_controller(&self, global_this: &JSGlobalObject) {
+        // Take the signal out of the JsCell first: `detach` re-enters JS (the
+        // controller's `onClose` runs the source's `cancel`), which must not
+        // happen under a live borrow of `self.signal`.
+        let mut signal = self.signal.replace(streams::Signal::default());
+        JSSink::detach(&mut signal, global_this);
+    }
+
     pub fn assign_to_stream(
         &mut self,
         stream: &mut ReadableStream,
@@ -1479,53 +1519,77 @@ impl FileSink {
         let signal_ptr: *mut *mut c_void =
             unsafe { (&raw mut (*self.signal.as_ptr()).ptr).cast::<*mut c_void>() };
         // No per-wrapper +1 for the controller (only the transient `_guard`
-        // above): the JS builtins always call `controller.end()`/`.close()`
-        // (`${controller}__end/close` → `controller->detach()` → m_sinkPtr=null)
-        // before GC, so the controller's dtor never reaches `finalize`.
+        // above): every completion path, JS (`controller.end()/.close()` →
+        // `controller->detach()`) or native (`detach_js_controller` at every
+        // native terminal), nulls its `m_sinkPtr` before the create-time ref
+        // is released, so the controller's dtor never reaches `finalize`.
         let promise_result = JSSink::assign_to_stream(global_this, stream.value, self, signal_ptr);
 
-        if let Some(err) = promise_result.to_error() {
+        if promise_result.to_error().is_some() {
             self.readable_stream.set(readable_stream::Strong::default());
-            return err;
+            // `__assignToStream` wrote the controller into `self.signal` before
+            // running the JS that threw, so the controller is attached but owns
+            // no ref. Detach it: its GC destructor becomes a no-op and the
+            // caller's create-time ref stays the only one. This also clears the
+            // signal, so the `writer.end()` below cannot re-enter user JS
+            // through the controller's `onClose`.
+            self.detach_js_controller(global_this);
+            // Close the writer now so the destination fd / FilePoll are released
+            // immediately (what handle_reject_stream does for async failures);
+            // without this a spawned child reading from the pipe would block on
+            // the open write-end until the stream is GC'd.
+            self.writer.with_mut(|w| w.end());
+            // Return the original result (a JSC::Exception when the stream's pull()
+            // threw synchronously) rather than the unwrapped thrown value, so callers
+            // can detect failure with a single `.to_error()` even when the thrown
+            // value is not an Error (e.g. `throw "boom"` / `throw null` — the
+            // unwrapped forms of those are indistinguishable from the undefined that
+            // the direct-stream success path returns).
+            return promise_result;
         }
 
-        if !promise_result.is_empty_or_undefined_or_null() {
-            if let Some(promise) = promise_result.as_any_promise() {
-                // `bun_jsc::AnyPromise` (the active raw-ptr variant in
-                // lib.rs) does not yet expose `status()`/`result()`; recover the
-                // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
-                // in C++, so the cast is layout-safe).
-                let js_promise: *mut bun_jsc::JSPromise = match promise {
-                    bun_jsc::AnyPromise::Normal(p) => p,
-                    bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
-                };
-                // SAFETY: `as_any_promise` returned non-null.
-                match unsafe { (*js_promise).status() } {
-                    bun_jsc::js_promise::Status::Pending => {
-                        self.writer
-                            .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
-                        self.ref_();
-                        // TODO: properly propagate exception upwards
-                        // `JSValue::then` takes already-wrapped C-ABI
-                        // host fns; the `toJSHostFunction` step is the manual
-                        // shims at the bottom of this file.
-                        promise_result.then(
-                            global_this,
-                            std::ptr::from_mut::<FileSink>(self),
-                            on_resolve_stream_shim,
-                            on_reject_stream_shim,
-                        );
-                    }
-                    bun_jsc::js_promise::Status::Fulfilled => {
-                        // These don't ref().
-                        self.handle_resolve_stream(global_this);
-                    }
-                    bun_jsc::js_promise::Status::Rejected => {
-                        // These don't ref().
-                        // SAFETY: `js_promise` is non-null (`as_any_promise`).
-                        let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        self.handle_reject_stream(global_this, result);
-                    }
+        if promise_result.is_empty_or_undefined_or_null() {
+            // `assignToStream` finished synchronously with no promise: a direct
+            // stream whose `pull()` ended the sink inline (everything below is
+            // then a no-op), or one with no `pull` at all, which can never
+            // write. Run the same terminal as a fulfilled pump so the
+            // destination sees EOF (instead of a write end held open forever)
+            // and the controller detaches.
+            self.handle_resolve_stream(global_this);
+        } else if let Some(promise) = promise_result.as_any_promise() {
+            // `bun_jsc::AnyPromise` (the active raw-ptr variant in
+            // lib.rs) does not yet expose `status()`/`result()`; recover the
+            // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
+            // in C++, so the cast is layout-safe).
+            let js_promise: *mut bun_jsc::JSPromise = match promise {
+                bun_jsc::AnyPromise::Normal(p) => p,
+                bun_jsc::AnyPromise::Internal(p) => p.cast::<bun_jsc::JSPromise>(),
+            };
+            // SAFETY: `as_any_promise` returned non-null.
+            match unsafe { (*js_promise).status() } {
+                bun_jsc::js_promise::Status::Pending => {
+                    self.writer
+                        .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
+                    self.ref_();
+                    // `JSValue::then` takes already-wrapped C-ABI
+                    // host fns; the `toJSHostFunction` step is the manual
+                    // shims at the bottom of this file.
+                    promise_result.then(
+                        global_this,
+                        std::ptr::from_mut::<FileSink>(self),
+                        on_resolve_stream_shim,
+                        on_reject_stream_shim,
+                    );
+                }
+                bun_jsc::js_promise::Status::Fulfilled => {
+                    // These don't ref().
+                    self.handle_resolve_stream(global_this);
+                }
+                bun_jsc::js_promise::Status::Rejected => {
+                    // These don't ref().
+                    // SAFETY: `js_promise` is non-null (`as_any_promise`).
+                    let result = unsafe { (*js_promise).result(global_this.vm()) };
+                    self.handle_reject_stream(global_this, result);
                 }
             }
         }

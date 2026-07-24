@@ -762,8 +762,22 @@ impl Cmd {
                             STDERR_NO as i32,
                         )?;
                     }
-                } else if crate::webcore::ReadableStream::from_js(jsval, global)?.is_some() {
-                    panic!("TODO SHELL READABLE STREAM");
+                } else if let Some(rstream) =
+                    crate::webcore::ReadableStream::from_js(jsval, global)?
+                {
+                    if !flags.stdin() {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "ReadableStream can only be redirected to stdin"
+                        )));
+                    }
+                    // Shared with `Bun.spawn`: blob fast-path + the
+                    // disturbed/locked validation live in one place.
+                    stdio[STDIN_NO].extract_readable_stream(
+                        global,
+                        rstream,
+                        STDIN_NO as i32,
+                        false,
+                    )?;
                 } else if let Some(req) = jsval.as_::<crate::webcore::Response>() {
                     // SAFETY: `as_` returns a live JSC-owned `*mut Response`.
                     let req = unsafe { &mut *req };
@@ -922,6 +936,43 @@ impl Cmd {
     pub fn buffered_input_close(&mut self) {
         if let Exec::Subproc(sub) = &mut self.exec {
             sub.buffered_closed.close_stdin();
+        }
+    }
+
+    /// The ReadableStream redirected to this command's stdin failed after the
+    /// pump started (its `pull()` rejected / the stream errored), so the child
+    /// only saw a truncated stdin. Note it on the captured stderr (the
+    /// JS-visible `$` result; echoing it through the stderr IOWriter would
+    /// need a waiting state this process-exit callback cannot enter) and fail
+    /// the command unless the child itself exited non-zero: the child's own
+    /// exit code is the better diagnostic, so it is kept.
+    pub fn on_stdin_stream_rejected(&mut self, child_exit_code: Option<u8>) {
+        log!("cmd stdin stream rejected");
+        const MSG: &[u8] = b"bun: ReadableStream redirected to stdin errored\n";
+        match &self.io.stderr {
+            IoOutKind::Fd(fd) => {
+                // SAFETY: single-threaded; the captured `Vec<u8>` lives in the
+                // owning `ShellExecEnv` and no other borrow of it is live here.
+                if let Some(captured) = unsafe { fd.captured_mut() } {
+                    captured.append_slice(MSG);
+                }
+            }
+            IoOutKind::Pipe => {
+                // Same destination `close_out` uses for piped/captured stderr.
+                let shell_buf = self.base.shell_mut().buffered_stderr();
+                if !shell_buf.is_null() {
+                    // SAFETY: `shell_buf` points into `ShellExecEnv::_buffered_*`,
+                    // which `base.shell` keeps live for the command's duration.
+                    unsafe { (*shell_buf).append_slice(MSG) };
+                }
+            }
+            IoOutKind::Ignore => {}
+        }
+        // An exit code set earlier (a stdout/stderr IO error) or a failing
+        // child exit code is kept; `on_process_exit` only reports the child's
+        // own code when `exit_code` is still unset here.
+        if self.exit_code.is_none() && !matches!(child_exit_code, Some(code) if code != 0) {
+            self.exit_code = Some(1);
         }
     }
 

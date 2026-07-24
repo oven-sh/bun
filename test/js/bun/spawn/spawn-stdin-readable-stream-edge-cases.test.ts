@@ -14,6 +14,101 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 describe("spawn stdin ReadableStream edge cases", () => {
+  test("direct ReadableStream that throws synchronously in pull rejects without crashing", async () => {
+    // A direct stream's pull() runs synchronously inside assignToStream, so the
+    // throw surfaces as a spawn-time error instead of a stream error. Cover both
+    // Error and non-Error (null) throws, and force GC afterwards — the error path
+    // used to free the FileSink while the JS controller still pointed at it.
+    const spawnWithThrowingPull = (thrown: unknown) =>
+      spawn({
+        cmd: [bunExe(), "-e", "process.exit(0)"],
+        stdin: new ReadableStream({
+          type: "direct",
+          pull() {
+            throw thrown;
+          },
+        }),
+        stdout: "ignore",
+        env: bunEnv,
+      });
+    // The original thrown value is what surfaces from spawn.
+    expect(() => spawnWithThrowingPull(new Error("sync pull error"))).toThrow("sync pull error");
+    let caught: unknown = "nothing thrown";
+    try {
+      spawnWithThrowingPull(null);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeNull();
+    Bun.gc(true);
+    await Bun.sleep(0);
+    Bun.gc(true);
+  });
+
+  test("direct ReadableStream with no pull closes stdin", async () => {
+    // A direct stream with no `pull` can never write, so the native sink must
+    // still be ended: the child sees EOF instead of hanging, and the
+    // controller detaches (otherwise its GC destructor released a ref it
+    // never owned).
+    const proc = spawn({
+      cmd: [bunExe(), "-e", "process.stdin.pipe(process.stdout)"],
+      stdin: new ReadableStream({ type: "direct" }),
+      stdout: "pipe",
+      env: bunEnv,
+    });
+    const [text, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    Bun.gc(true);
+    expect(text).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("locked ReadableStream is rejected synchronously", () => {
+    // `getReader()` locks without disturbing; assignToStream can never pump a
+    // locked stream, so spawn must reject it up front instead of letting the
+    // failure surface asynchronously after the child started.
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue("data");
+        controller.close();
+      },
+    });
+    stream.getReader();
+    expect(() =>
+      spawn({
+        cmd: [bunExe(), "-e", "process.exit(0)"],
+        stdin: stream,
+        stdout: "ignore",
+        env: bunEnv,
+      }),
+    ).toThrow("'stdin' ReadableStream is locked");
+  });
+
+  // Only stdin can be pumped from a stream. Every entry point that can hand one
+  // to a child runs the same validation, so a bare stream and a Request or
+  // Response body are rejected with the same message. A bare stream used to be
+  // accepted for stdout and silently turned into a pipe nothing ever read.
+  const pullStream = () =>
+    new ReadableStream({
+      async pull(controller) {
+        await Bun.sleep(0);
+        controller.close();
+      },
+    });
+  test.each([
+    ["bare stream", () => pullStream()],
+    ["Response body", () => new Response(pullStream())],
+    ["Request body", () => new Request("http://x", { method: "POST", body: pullStream() })],
+  ])("ReadableStream is rejected for stdout (%s)", (_label, make) => {
+    expect(() =>
+      spawn({
+        cmd: [bunExe(), "-e", "process.exit(0)"],
+        stdin: "ignore",
+        stdout: make() as any,
+        env: bunEnv,
+      }),
+    ).toThrow("ReadableStream cannot be used for stdout yet");
+  });
+
   test("ReadableStream with exception in pull", async () => {
     let pullCount = 0;
     const stream = new ReadableStream({

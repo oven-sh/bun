@@ -73,6 +73,15 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
         return JSArgument::from_js_maybe_file(global, str.to_js(), true);
     }
 
+    // A later argument's `toString()` can run user JS that detaches an earlier
+    // ArrayBuffer (`transfer()` frees its store synchronously). Copy the bytes
+    // now so the captured slice stays valid until `send_cmd` serializes it.
+    if let Some(ab) = value.as_array_buffer(global) {
+        return Ok(Some(JSArgument::StringOrBuffer(
+            crate::node::StringOrBuffer::EncodedSlice(Slice::init_owned(ab.byte_slice().to_vec())),
+        )));
+    }
+
     JSArgument::from_js_maybe_file(global, value, false)
 }
 

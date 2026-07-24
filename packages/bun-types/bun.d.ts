@@ -7062,6 +7062,29 @@ declare module "bun" {
       killSignal?: string | number;
 
       /**
+       * On Linux, arrange for the child to receive this signal when the
+       * thread that spawned it dies (via `prctl(PR_SET_PDEATHSIG)`), so the
+       * child cannot outlive its parent even if the parent is `SIGKILL`ed.
+       *
+       * Note that `PR_SET_PDEATHSIG` is keyed to the spawning *thread*, not
+       * the process — a child spawned from a `Worker` will receive this
+       * signal when that `Worker` terminates.
+       *
+       * Ignored on platforms other than Linux.
+       *
+       * @default undefined (no signal; `"SIGKILL"` when `--no-orphans` is enabled)
+       *
+       * @example
+       * ```ts
+       * const subprocess = Bun.spawn({
+       *   cmd: ["sleep", "1000"],
+       *   deathSignal: "SIGKILL",
+       * });
+       * ```
+       */
+      deathSignal?: NodeJS.Signals | number;
+
+      /**
        * The maximum number of bytes the process may output. If the process goes over this limit,
        * it is killed with signal `killSignal` (defaults to SIGTERM).
        *
@@ -7331,6 +7354,27 @@ declare module "bun" {
      * @param exitCode Exit code or signal to send to the process
      */
     kill(exitCode?: number | NodeJS.Signals): void;
+
+    /**
+     * Kill the process and all of its descendants.
+     *
+     * On Linux and macOS, this walks the process tree rooted at this
+     * subprocess and sends the signal to every descendant, using the same
+     * mechanism as `--no-orphans`. The tree is frozen with `SIGSTOP` while
+     * it is enumerated so processes cannot fork or exit out from under the
+     * walk; each pid's parent is re-verified after freezing to guard against
+     * pid reuse. For catchable signals, `SIGCONT` is sent afterwards so the
+     * pending signal is delivered.
+     *
+     * On Windows and on POSIX platforms other than Linux/macOS, this
+     * currently behaves the same as {@link kill} and only signals the root
+     * process.
+     *
+     * @param signal The signal to send (name or number). Defaults to
+     * `SIGTERM`. Passing `0` performs a liveness probe on the root process
+     * (equivalent to `kill(0)`) and does not walk or signal descendants.
+     */
+    killTree(signal?: number | NodeJS.Signals): void;
 
     /**
      * Tell Bun to wait for this process to exit after you already

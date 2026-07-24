@@ -7,22 +7,25 @@ import { pathToFileURL } from "node:url";
 // Node prints this and blocks while a CDP frontend is still attached at exit.
 const DISCONNECT_NOTICE = "Waiting for the debugger to disconnect...";
 
-// Children that call inspector.open() and take a remote connection run the
-// debugger thread, whose global is never destroyed (its BunInspectorConnection
-// is deliberately leaked; base's leaksan.supp records that). Per-connection
-// state allocated on that thread is therefore reported by LSAN at exit, and
-// Runtime.evaluate over the protocol trips WebKit's internal
-// evaluateWithScopeExtension validator abort this file is already exempted
-// from. Children inherit neither so these tests observe the process behavior,
-// not the debugger thread's exit-time bookkeeping.
-const inspectorChildEnv = {
-  ...bunEnv,
-  BUN_JSC_validateExceptionChecks: undefined,
-  BUN_JSC_dumpSimulatedThrows: undefined,
-  BUN_DESTRUCT_VM_ON_EXIT: undefined,
-  LSAN_OPTIONS: undefined,
-  ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0",
-};
+// Children that drive Runtime.evaluate or Debugger.* over the protocol go
+// through JSC's InjectedScript, which misses RELEASE_AND_RETURN at
+// JSInjectedScriptHostPrototype.cpp jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension
+// and JSJavaScriptCallFrame::scopeChain (constructArray return). Both live in
+// the prebuilt WebKit, so validateExceptionChecks aborts the child before the
+// test can observe anything. The debugger thread's global is also never
+// destroyed, so state it allocates that the stop()-time Bun.gc sweep misses is
+// reported by LSAN at exit. Strip both from the child so these tests observe
+// process behavior, not WebKit scope-discipline noise.
+const inspectorChildEnv = (() => {
+  const {
+    BUN_JSC_validateExceptionChecks,
+    BUN_JSC_dumpSimulatedThrows,
+    BUN_DESTRUCT_VM_ON_EXIT,
+    LSAN_OPTIONS,
+    ...env
+  } = bunEnv;
+  return { ...env, ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0" };
+})();
 
 test("inspector.url()", () => {
   expect(inspector.url()).toBeUndefined();
@@ -420,6 +423,8 @@ process.stderr.write("WAITING_FOR_DEBUGGER\\n");
 inspector.waitForDebugger();
 const resumedByClient = globalThis.__resumed_by_client === true;
 console.log(JSON.stringify({ resumedByClient }));
+// No inspector.close(): the test asserts Node's exit handshake, which only
+// runs when a frontend is still attached at process.exit().
 process.exit(resumedByClient ? 0 : 7);
 `;
 
@@ -506,6 +511,7 @@ process.stderr.write("FIRST_RESUMED\\n");
 inspector.waitForDebugger();
 process.stderr.write("SECOND_RESUMED\\n");
 console.log(JSON.stringify({ first: globalThis.__mark, second: globalThis.__mark2 }));
+inspector.close();
 process.exit(0);
 `;
 
@@ -763,6 +769,25 @@ test("a listener that throws a non-stringifiable value does not break console.lo
   }
 });
 
+test("a tampered Set.prototype[Symbol.iterator] does not break console.log while Runtime is enabled", () => {
+  const session = new inspector.Session();
+  session.connect();
+  const saved = Set.prototype[Symbol.iterator];
+  let logged = "";
+  session.on("Runtime.consoleAPICalled", msg => (logged = msg.params.args[0].value));
+  try {
+    session.post("Runtime.enable");
+    Set.prototype[Symbol.iterator] = () => {
+      throw new Error("tampered");
+    };
+    expect(() => console.log("still works after set tamper")).not.toThrow();
+    expect(logged).toBe("still works after set tamper");
+  } finally {
+    Set.prototype[Symbol.iterator] = saved;
+    session.disconnect();
+  }
+});
+
 test("a console argument whose toString throws does not break console.log", async () => {
   const session = new inspector.Session();
   session.connect();
@@ -903,6 +928,8 @@ let beforeOpen = 1;
 inspector.open(0, "127.0.0.1", true);
 const mod = await import("./mod.mjs");
 console.log(JSON.stringify({ after: mod.after, beforeOpen }));
+// No inspector.close(): the test asserts Node's exit handshake, which only
+// runs when a frontend is still attached at process.exit().
 process.exit(0);
 `,
     "mod.mjs": `

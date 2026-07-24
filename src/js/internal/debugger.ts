@@ -503,6 +503,12 @@ class Debugger {
     this.#server = undefined;
     this.#loopbackServer?.stop(true);
     this.#loopbackServer = undefined;
+    // server.stop(true) has fired each connection's close callback, which
+    // downgrades the ServerWebSocket wrapper's Strong handle to Weak; the Rust
+    // box behind it is only freed when GC sweeps the now-collectable wrapper.
+    // This thread's VM never runs destruct-on-exit, so sweep now: close() is
+    // synchronous and rare enough that a full collection is acceptable.
+    Bun.gc(true);
   }
 
   // A backend connection that is not tied to a WebSocket client, used for

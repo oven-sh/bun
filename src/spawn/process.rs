@@ -3527,7 +3527,33 @@ mod spawn_process_body {
             let mut events: [libc::kevent; 16] = bun_core::ffi::zeroed();
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
+            // Close the register-after-exit race: a fast-exiting script can be a
+            // zombie before the EV_ADD above. `filt_procattach` attaches to
+            // zombies without error, but NOTE_EXIT fires at exit time — attaching
+            // afterwards arms a knote that never fires, and kevent() below would
+            // block forever. Probe once, non-blocking, after registration.
+            {
+                let r = posix_spawn::wait4(child, libc::WNOHANG as u32, None);
+                if let Ok(ref w) = r {
+                    if w.pid == child {
+                        child_status = Status::from(child, &r);
+                        child_exited = true;
+                        Bun__noOrphans_onExit(child);
+                    }
+                }
+            }
             loop {
+                if child_exited {
+                    // Intentionally don't wait for pipe EOF (unlike the `poll()`
+                    // path): a grandchild holding the write end is exactly what
+                    // no-orphans exists to kill, and the killTracked()/pgroup-kill
+                    // defers can't run until we return. drainFd() loops to EAGAIN,
+                    // so everything the script itself wrote is captured.
+                    for i in 0..2 {
+                        let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
+                    }
+                    return Some(Ok(child_status.unwrap_or_else(|| reap_child(child))));
+                }
                 let got = match bun_sys::kevent(kq_fd, &[], &mut events[..], None) {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
@@ -3605,17 +3631,6 @@ mod spawn_process_body {
                 // the best-effort backstop.
                 if saw_fork {
                     Bun__noOrphans_onFork();
-                }
-                if child_exited {
-                    // Intentionally don't wait for pipe EOF (unlike the `poll()`
-                    // path): a grandchild holding the write end is exactly what
-                    // no-orphans exists to kill, and the killTracked()/pgroup-kill
-                    // defers can't run until we return. drainFd() loops to EAGAIN,
-                    // so everything the script itself wrote is captured.
-                    for i in 0..2 {
-                        let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
-                    }
-                    return Some(Ok(child_status.unwrap_or_else(|| reap_child(child))));
                 }
             }
         }

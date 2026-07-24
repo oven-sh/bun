@@ -89,6 +89,7 @@ impl ReplCommand {
         // SAFETY: vm valid as above; preload/argv are disjoint from `b`'s transpiler borrow.
         unsafe {
             (*vm).preload = core::mem::take(&mut ctx.preloads);
+            (*vm).initial_preload = (*vm).preload.clone();
             (*vm).argv = core::mem::take(&mut ctx.passthrough);
             // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
             // post-init like run_command.rs since InitOptions doesn't carry it.

@@ -183,6 +183,13 @@ pub struct VirtualMachine {
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    /// The preload list as originally configured (bunfig `preload` + CLI
+    /// `--preload`/`--require`/`--import`). Unlike `preload`, this is never
+    /// cleared after execution, so `WebWorker::create` can copy it into each
+    /// child worker. Set once on the owning thread before any worker is
+    /// spawned and never mutated afterwards, so cross-thread reads from
+    /// `WebWorker::create` (which runs on the parent's thread) need no lock.
+    pub initial_preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
@@ -2104,6 +2111,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).initial_preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());
@@ -4447,6 +4455,7 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.initial_preload));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

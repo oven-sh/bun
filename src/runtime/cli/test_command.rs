@@ -2290,6 +2290,9 @@ impl TestCommand {
         vm.argv = core::mem::take(&mut ctx.passthrough);
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
+        // Intentionally NOT setting `vm.initial_preload`: `[test] preload`
+        // entries are test-runner setup (expect.extend, env normalisation,
+        // mocks) that in-process workers spawned from tests should not re-run.
         vm.transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,

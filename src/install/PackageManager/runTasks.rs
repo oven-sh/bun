@@ -410,6 +410,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 manager.options.max_retry_count,
                             );
                             Output::flush();
+                            if log_level.show_progress() {
+                                // Re-create `downloads_node` before `continue`
+                                // so later iterations' `downloads_node_mut()`
+                                // don't hit `None`.
+                                manager.start_progress_bar_if_none();
+                            }
                         } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
@@ -701,6 +707,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 manager.options.max_retry_count,
                             );
                             Output::flush();
+                            if log_level.show_progress() {
+                                manager.start_progress_bar_if_none();
+                            }
                         } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),

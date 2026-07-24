@@ -139,35 +139,32 @@ describe("seq without stdout", async () => {
 
 // Regression guard: the fd-output path used to build the full output into a
 // local Vec, store it into state, then clone the stored Vec to hand to
-// BuiltinIO::enqueue (which itself copies into IOWriter's buffer). For
-// `seq 1 4000000` that is a ~30 MB clone on top of the two copies that must
-// exist, so peak RSS was ~3x the output instead of ~2x. The clone was only
-// observable under ASAN (which does not return freed pages to the OS as
-// eagerly as mimalloc), so this test is ASAN-gated.
-test.skipIf(!isASAN)(
-  "seq piped to an fd does not clone its output buffer before enqueue",
-  async () => {
-    const N = 4_000_000;
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
+// BuiltinIO::enqueue (which itself copies into IOWriter's buffer). That is a
+// full-output-sized clone on top of the two copies that must exist, so peak
+// RSS was ~3x the output instead of ~2x. ASAN-gated because release mimalloc
+// does not retain freed pages the way ASAN's allocator does.
+test.skipIf(!isASAN)("seq piped to an fd does not clone its output buffer before enqueue", async () => {
+  // 100-byte separator keeps the output large (~32 MB) with only 300k
+  // iterations, so the child finishes in ~1s under ASAN.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const sep = Buffer.alloc(100, "x").toString();` +
         `await Bun.$\`seq 1 10 > /dev/null\`;` +
-          `const b = process.memoryUsage().rss;` +
-          `await Bun.$\`seq 1 ${N} > /dev/null\`;` +
-          `console.log(process.memoryUsage().rss - b);`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const deltaBytes = parseInt(stdout.trim(), 10);
-    // `seq 1 4000000` renders 30_888_896 bytes. With the fix the child's RSS
-    // grows by ~106 MB (rendered Vec capacity + IOWriter's copy + ASAN shadow);
-    // without it the extra clone pushes it to ~143 MB.
-    expect(deltaBytes).toBeLessThan(128 * 1024 * 1024);
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+        `const b = process.memoryUsage().rss;` +
+        `await Bun.$\`seq -s \${sep} 1 300000 > /dev/null\`;` +
+        `console.log(process.memoryUsage().rss - b);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const deltaBytes = parseInt(stdout.trim(), 10);
+  // Output is 31_888_894 bytes. With the fix the child's RSS grows by ~134 MB
+  // (rendered Vec capacity + IOWriter's copy + ASAN shadow); without it the
+  // extra clone pushes it to ~170 MB.
+  expect(deltaBytes).toBeLessThan(152 * 1024 * 1024);
+  expect(exitCode).toBe(0);
+});

@@ -326,39 +326,48 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (result.isUndefinedOrNull()) {
-        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
-        return nullptr;
-    }
-
-    if (auto* promise = dynamicDowncast<JSPromise>(result)) {
-        return promise;
-    }
-
-    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
+    // Building a vm.Module means awaiting link()/evaluate(), so the hook is usually
+    // async: await its return value before handing anything to the guest's import().
+    auto* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
+    // import() resolves with the module's namespace, and anything that is not a
+    // module (or a namespace) is rejected with ERR_VM_MODULE_NOT_MODULE.
     auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
         JSValue argument = callFrame->argument(0);
 
-        if (JSObject* object = argument.getObject()) {
-            JSValue result = object->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s));
+        if (argument.inherits<JSModuleNamespaceObject>()) {
+            return JSValue::encode(argument);
+        }
+
+        if (!getModuleFromWrapper(globalObject, argument)) {
+            throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+            return {};
+        }
+
+        JSObject* module = asObject(argument);
+
+        JSValue status = module->get(globalObject, JSC::Identifier::fromString(vm, "status"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (status.isString()) {
+            auto statusString = asString(status)->value(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (!result.isUndefinedOrNull()) {
-                return JSValue::encode(result);
+
+            if (statusString.data == "errored"_s) {
+                JSValue error = module->get(globalObject, JSC::Identifier::fromString(vm, "error"_s));
+                RETURN_IF_EXCEPTION(scope, {});
+                throwException(globalObject, scope, error);
+                return {};
             }
         }
 
-        return JSValue::encode(argument);
+        RELEASE_AND_RETURN(scope, JSValue::encode(module->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s))));
     });
 
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    promise->fulfill(vm, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSObject* thenResult = promise->then(globalObject, transformer, jsUndefined());
@@ -786,6 +795,23 @@ bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue
     }
 
     return false;
+}
+
+NodeVMModule* getModuleFromWrapper(JSGlobalObject* globalObject, JSValue value)
+{
+    JSObject* wrapper = value.getObject();
+    if (!wrapper) {
+        return nullptr;
+    }
+
+    Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+    Symbol* key = zigGlobalObject->m_nodeVMModuleNative.get(zigGlobalObject);
+    JSValue native = wrapper->getDirect(globalObject->vm(), Identifier::fromUid(key->privateName()));
+    if (!native) {
+        return nullptr;
+    }
+
+    return dynamicDowncast<NodeVMModule>(native);
 }
 
 } // namespace NodeVM
@@ -1743,11 +1769,6 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     RELEASE_AND_RETURN(scope, Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode));
 }
 
-JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
-}
-
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -1774,9 +1795,6 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
-    obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);
     obj->putDirect(
@@ -1794,6 +1812,9 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kErrored"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Errored)), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kNativeModule"_s)),
+        globalObject->m_nodeVMModuleNative.get(globalObject), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kSourceText"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMModule::Type::SourceText)), 0);
@@ -1816,6 +1837,9 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
     });
     globalObject->m_nodeVMUseMainContextDefaultLoader.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
         init.set(JSC::Symbol::createWithDescription(init.vm, "vm_use_main_context_default_loader"_s));
+    });
+    globalObject->m_nodeVMModuleNative.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
+        init.set(JSC::Symbol::createWithDescription(init.vm, "kNative"_s));
     });
 
     globalObject->m_NodeVMScriptClassStructure.initLater(

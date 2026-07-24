@@ -8,6 +8,8 @@ import {
   runInNewContext,
   runInThisContext,
   Script,
+  SourceTextModule,
+  SyntheticModule,
 } from "node:vm";
 
 function capture(_: any, _1?: any) {}
@@ -1006,6 +1008,193 @@ test("node:vm native Module prototype methods reject non-module receivers", asyn
     requests: [\"./dep.js\"]"
   `);
   expect(exitCode).toBe(0);
+});
+
+describe("importModuleDynamically", () => {
+  type Hook = (value: any) => any;
+  const hookShapes: [string, Hook][] = [
+    ["sync", value => () => value],
+    ["async", value => async () => value],
+  ];
+  const nonModules: [string, any][] = [
+    ["a number", 123],
+    ["undefined", undefined],
+    ["null", null],
+    ["a plain object", {}],
+    ["an object with a namespace property", { namespace: { v: 1 } }],
+  ];
+
+  async function evaluatedModule(value: unknown) {
+    const mod = new SyntheticModule(["v"], function (this: SyntheticModule) {
+      this.setExport("v", value);
+    });
+    await mod.link(() => {});
+    await mod.evaluate();
+    return mod;
+  }
+
+  async function erroredModule(message: string) {
+    const mod = new SourceTextModule(`throw new Error(${JSON.stringify(message)});`);
+    await mod.link(() => {});
+    await mod.evaluate().catch(() => {});
+    expect(mod.status).toBe("errored");
+    return mod;
+  }
+
+  // An async hook is the normal shape, since building a vm.Module means awaiting
+  // link()/evaluate(). Its return value must be awaited before it is used.
+  test("vm.Script resolves import() with the namespace of a module returned by an async hook", async () => {
+    const script = new Script("import('x')", { importModuleDynamically: async () => evaluatedModule(42) });
+    const namespace = await script.runInThisContext();
+    expect(namespace.v).toBe(42);
+    expect(Object.prototype.toString.call(namespace)).toBe("[object Module]");
+  });
+
+  test("vm.Script resolves import() with the namespace of a module returned by a sync hook", async () => {
+    const mod = await evaluatedModule(7);
+    const script = new Script("import('x')", { importModuleDynamically: () => mod });
+    expect((await script.runInThisContext()).v).toBe(7);
+  });
+
+  test("vm.compileFunction resolves import() with the namespace of a module returned by an async hook", async () => {
+    const fn = compileFunction("return import('x')", [], {
+      importModuleDynamically: async () => evaluatedModule(3),
+    });
+    expect((await fn()).v).toBe(3);
+  });
+
+  test("vm.SourceTextModule resolves import() with the namespace of a module returned by an async hook", async () => {
+    const mod = new SourceTextModule("export const result = import('x');", {
+      importModuleDynamically: async () => evaluatedModule(9),
+    });
+    await mod.link(() => {});
+    await mod.evaluate();
+    expect((await (mod.namespace as any).result).v).toBe(9);
+  });
+
+  test("vm.Script passes a module namespace object returned by the hook straight through", async () => {
+    const mod = await evaluatedModule(1);
+    const script = new Script("import('x')", { importModuleDynamically: async () => mod.namespace });
+    expect(await script.runInThisContext()).toBe(mod.namespace);
+  });
+
+  describe.each(hookShapes)("with a %s hook", (_label, makeHook) => {
+    test.each(nonModules)(
+      "vm.Script rejects ERR_VM_MODULE_NOT_MODULE when the hook returns %s",
+      async (_name, value) => {
+        const script = new Script("import('x')", { importModuleDynamically: makeHook(value) });
+        await expect(script.runInThisContext()).rejects.toMatchObject({
+          code: "ERR_VM_MODULE_NOT_MODULE",
+          message: "Provided module is not an instance of Module",
+        });
+      },
+    );
+
+    test("vm.Script rejects with the module's own error when the hook returns an errored module", async () => {
+      const mod = await erroredModule("boom");
+      const script = new Script("import('x')", { importModuleDynamically: makeHook(mod) });
+      await expect(script.runInThisContext()).rejects.toThrow("boom");
+    });
+  });
+
+  // The validation reads status/error/namespace off the wrapper, so each of those
+  // getters can run user code and throw. Every one must surface as a rejection.
+  describe("adversarial getters on the returned module", () => {
+    function poison(mod: object, property: string, get: () => unknown) {
+      Object.defineProperty(mod, property, { get, configurable: true });
+      return mod;
+    }
+
+    test("a throwing status getter rejects with that error", async () => {
+      const mod = poison(await evaluatedModule(1), "status", () => {
+        throw new Error("status boom");
+      });
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      await expect(script.runInThisContext()).rejects.toThrow("status boom");
+    });
+
+    test("a throwing error getter on an errored module rejects with that error", async () => {
+      const mod = poison(await evaluatedModule(1), "status", () => "errored");
+      poison(mod, "error", () => {
+        throw new Error("error boom");
+      });
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      await expect(script.runInThisContext()).rejects.toThrow("error boom");
+    });
+
+    test("a throwing namespace getter rejects with that error", async () => {
+      const mod = poison(await evaluatedModule(1), "namespace", () => {
+        throw new Error("namespace boom");
+      });
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      await expect(script.runInThisContext()).rejects.toThrow("namespace boom");
+    });
+
+    test("a non-string status is compared, never coerced", async () => {
+      const mod = await evaluatedModule(5);
+      poison(mod, "status", () => ({
+        toString() {
+          throw new Error("status was coerced");
+        },
+      }));
+      const script = new Script("import('x')", { importModuleDynamically: () => mod });
+      expect((await script.runInThisContext()).v).toBe(5);
+    });
+  });
+
+  test("vm.Script awaits a thenable returned by the hook", async () => {
+    const mod = await evaluatedModule(11);
+    const script = new Script("import('x')", {
+      importModuleDynamically: () => ({ then: (resolve: (m: unknown) => void) => resolve(mod) }) as any,
+    });
+    expect((await script.runInThisContext()).v).toBe(11);
+  });
+
+  test("vm.Script handles a promise subclass with a tampered Symbol.species", async () => {
+    const mod = await evaluatedModule(22);
+    class Subclass extends Promise<unknown> {
+      static get [Symbol.species]() {
+        return Promise;
+      }
+    }
+    const script = new Script("import('x')", { importModuleDynamically: () => Subclass.resolve(mod) as any });
+    expect((await script.runInThisContext()).v).toBe(22);
+  });
+
+  // The module is recognized through a symbol hanging off the main global, so a
+  // script whose import() runs inside a vm context still has to find it.
+  describe("across realms", () => {
+    test("a script in a vm context resolves import() with a main-realm module's namespace", async () => {
+      const context = createContext({}) as any;
+      const mod = await evaluatedModule(1);
+      const script = new Script("globalThis.imported = import('x')", {
+        importModuleDynamically: async () => mod,
+      });
+      script.runInContext(context);
+      const namespace = await context.imported;
+      expect(namespace).toBe(mod.namespace);
+      expect(namespace.v).toBe(1);
+    });
+
+    test("a script in a vm context rejects with a main-realm module's own error", async () => {
+      const context = createContext({}) as any;
+      const mod = await erroredModule("cross-realm boom");
+      const script = new Script("globalThis.imported = import('x')", {
+        importModuleDynamically: () => mod,
+      });
+      script.runInContext(context);
+      await expect(context.imported).rejects.toThrow("cross-realm boom");
+    });
+
+    test("a script in a vm context rejects ERR_VM_MODULE_NOT_MODULE for a non-module", async () => {
+      const context = createContext({}) as any;
+      const script = new Script("globalThis.imported = import('x')", {
+        importModuleDynamically: async () => 123,
+      });
+      script.runInContext(context);
+      await expect(context.imported).rejects.toMatchObject({ code: "ERR_VM_MODULE_NOT_MODULE" });
+    });
+  });
 });
 
 test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNatives array", async () => {

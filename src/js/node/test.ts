@@ -657,7 +657,10 @@ async function runOneFile(
 // Reverses the serializer's non-finite re-tagging (JSON emits null for
 // NaN/Infinity, so they cross the pipe as { nonFinite: "NaN" }).
 function reviveSerializedValue(value: unknown) {
-  return value !== null && typeof value === "object" && (value as { nonFinite?: string }).nonFinite !== undefined
+  return value !== null &&
+    typeof value === "object" &&
+    typeof (value as { nonFinite?: unknown }).nonFinite === "string" &&
+    Object.keys(value as object).length === 1
     ? Number((value as { nonFinite: string }).nonFinite)
     : value;
 }
@@ -893,6 +896,22 @@ function serializeRunCause(cause: unknown, depth: number) {
   return { __proto__: null, nonError: true, value: require("node:util").inspect(cause) };
 }
 
+// deepStrictEqual carries objects in actual/expected: pass them by value when
+// JSON can carry them (node's v8 serializer preserves them), and degrade to
+// the inspected string otherwise instead of dropping the field.
+function serializeExtraValue(value: unknown) {
+  const t = typeof value;
+  if (t !== "symbol" && t !== "function") {
+    try {
+      JSON.stringify(value);
+      return value;
+    } catch {
+      // fall through to the inspected-string form
+    }
+  }
+  return require("node:util").inspect(value);
+}
+
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
 const kSerializedErrorExtras = ["generatedMessage", "actual", "expected", "operator", "diff"];
 function serializeRunError(error: unknown, depth = 0) {
@@ -914,6 +933,7 @@ function serializeRunError(error: unknown, depth = 0) {
       // JSON emits null for non-finite numbers; re-tag so the parent revives.
       if (t === "number" && !Number.isFinite(value)) out[key] = { __proto__: null, nonFinite: String(value) };
       else if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
+      else if (value !== undefined) out[key] = serializeExtraValue(value);
     }
     return out;
   }
@@ -3959,10 +3979,6 @@ function addTest(
       else test(name, directiveRunner);
       return Promise.resolve(undefined);
     }
-    // A skipped body never runs — in node either — so nothing would report it.
-    // Emit at registration: bun:test collects every test before running any, so
-    // there is no later point that still knows the declaration position.
-    reportDirectiveOnlyNode(node, effectiveMode);
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
@@ -4198,13 +4214,6 @@ function addSuite(
     else test(name, directiveRunner);
     return Promise.resolve(undefined);
   }
-  if (effectiveMode === "skip" || (effectiveMode === "todo" && !runChildReporterEnabled)) {
-    // A skipped suite reports as a leaf: its directive event is its completion
-    // (its children are never declared at all).
-    suiteNode.suiteReported = true;
-    reportDirectiveOnlyNode(suiteNode, effectiveMode);
-  }
-
   if (passOptions !== undefined) {
     register(name, wrapped, passOptions);
   } else {

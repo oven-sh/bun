@@ -1099,6 +1099,42 @@ test.concurrent("run(): causes JSON cannot encode do not drop the event line", a
   });
 });
 
+test.concurrent("run(): object actual/expected cross the pipe by value", async () => {
+  // node's v8 serializer hands the parent real objects for deepStrictEqual's
+  // actual/expected; JSON-safe objects pass by value over our pipe too.
+  using dir = tempDir("node-test-object-extras", {
+    "f.test.mjs": `
+      import { test } from 'node:test';
+      import assert from 'node:assert';
+      test('objects', () => { assert.deepStrictEqual({ a: 1, b: [1, 2] }, { a: 2, b: [1, 2] }); });
+    `,
+    "driver.mjs": `
+      import { run } from 'node:test';
+      import { fileURLToPath } from 'node:url';
+      const stream = run({ files: [fileURLToPath(new URL('./f.test.mjs', import.meta.url))] });
+      stream.on('test:fail', function onFail(t) {
+        const c = t.details?.error?.cause;
+        console.log(JSON.stringify({ actual: c?.actual, expected: c?.expected, operator: c?.operator }));
+      });
+      for await (const _ of stream);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", join(String(dir), "driver.mjs")],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Verbatim node v26.3.0 output for this fixture.
+  expect(JSON.parse(stdout.trim() || "null")).toEqual({
+    actual: { a: 1, b: [1, 2] },
+    expected: { a: 2, b: [1, 2] },
+    operator: "deepStrictEqual",
+  });
+});
+
 test.concurrent("run({isolation:'none'}): a suite's duration spans all of its children", async () => {
   using dir = tempDir("node-test-suite-duration", {
     "f.test.mjs": `

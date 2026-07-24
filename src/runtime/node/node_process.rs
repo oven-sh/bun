@@ -79,9 +79,15 @@ pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
 
 // ───────────────────────────── misc exports ─────────────────────────────
 
+/// Set by `--no-warnings`. Node's `--warnings` is the default, so it needs no
+/// state of its own.
+pub static NO_WARNINGS_FLAG: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
-    env_var::NODE_NO_WARNINGS.get() == Some(b"1")
+    NO_WARNINGS_FLAG.load(core::sync::atomic::Ordering::Relaxed)
+        || env_var::NODE_NO_WARNINGS.get() == Some(b"1")
 }
 
 #[unsafe(no_mangle)]

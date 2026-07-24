@@ -34,6 +34,16 @@ pub(crate) enum ArgError {
     MissingValue,
     #[error("InvalidArgument")]
     InvalidArgument,
+    #[error("InvalidNegation")]
+    InvalidNegation,
+}
+
+/// Whether `takes_value` opts the param into Node's value-binding rules.
+fn is_node_style(takes_value: clap::Values) -> bool {
+    matches!(
+        takes_value,
+        clap::Values::OneNoDashValue | clap::Values::OneOptionalNoDashValue
+    )
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -62,6 +72,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub positional: Option<&'p clap::Param<Id>>,
     pub diagnostic: Option<&'p mut clap::Diagnostic>,
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    pub reject_bad_negations: bool,
 }
 
 // ArgIterator is the
@@ -129,6 +140,13 @@ where
                         }));
                     }
 
+                    if is_node_style(param.takes_value) {
+                        return match self.node_style_value(param.takes_value, maybe_value) {
+                            Ok(value) => Ok(Some(Arg { param, value })),
+                            Err(e) => Err(self.err(arg, None, Some(name), e)),
+                        };
+                    }
+
                     let value = 'blk: {
                         if let Some(v) = maybe_value {
                             break 'blk v;
@@ -151,6 +169,23 @@ where
                         param,
                         value: Some(value),
                     }));
+                }
+
+                // `--no-<x>` where `<x>` is a known option that carries a
+                // value cannot mean anything, and Node rejects it
+                // (src/node_options-inl.h). An *unknown* `--no-<x>` is left
+                // alone: Bun ignores unrecognized flags on purpose so the many
+                // Node options it does not implement (--no-global-search-paths,
+                // --no-extra-info-on-fatal-exception, …) stay harmless.
+                if self.reject_bad_negations {
+                    if let Some(negated) = name.strip_prefix(b"no-") {
+                        let negates_a_value = params.iter().any(|p| {
+                            p.names.matches_long(negated) && p.takes_value != clap::Values::None
+                        });
+                        if negates_a_value {
+                            return Err(self.err(arg, None, Some(name), ArgError::InvalidNegation));
+                        }
+                    }
                 }
 
                 // unrecognized command
@@ -250,6 +285,37 @@ where
                 return Ok(Some(Arg { param, value: None }));
             }
 
+            if is_node_style(param.takes_value) {
+                if next_is_eql {
+                    return match self
+                        .node_style_value(param.takes_value, Some(&arg[next_index + 1..]))
+                    {
+                        Ok(value) => Ok(Some(Arg { param, value })),
+                        Err(e) => Err(self.err(arg, Some(short), None, e)),
+                    };
+                }
+                if arg.len() > next_index {
+                    // Text attached without '=' stays part of the cluster for
+                    // the optional form, so "-pe 42" is -p followed by -e 42
+                    // rather than -p with the value "e".
+                    if param.takes_value == clap::Values::OneOptionalNoDashValue {
+                        self.state = State::Chaining(Chaining {
+                            arg,
+                            index: next_index,
+                        });
+                        return Ok(Some(Arg { param, value: None }));
+                    }
+                    return Ok(Some(Arg {
+                        param,
+                        value: Some(&arg[next_index..]),
+                    }));
+                }
+                return match self.node_style_value(param.takes_value, None) {
+                    Ok(value) => Ok(Some(Arg { param, value })),
+                    Err(e) => Err(self.err(arg, Some(short), None, e)),
+                };
+            }
+
             if arg.len() <= next_index {
                 let value = match self.iter.next() {
                     Some(v) => v,
@@ -342,6 +408,58 @@ where
         }))
     }
 
+    /// Bind the value of a param declared with Node's value semantics
+    /// ([`clap::Values::OneNoDashValue`] / [`clap::Values::OneOptionalNoDashValue`]).
+    ///
+    /// Mirrors nodejs/node v26.3.0 `src/node_options-inl.h`:
+    ///
+    /// * An `=`-attached value binds verbatim. For the required form an empty
+    ///   one is an error rather than an empty value (`node --eval=` exits 9);
+    ///   the optional form is a boolean upstream, so `--print=` is no value.
+    /// * A separate following argument that starts with '-' is never the
+    ///   value; it is a missing value instead (`node -e -p` exits 9). This is
+    ///   why an expression like `-42` must be passed as `--eval=-42`.
+    /// * A separate following argument may escape that rule with a leading
+    ///   backslash, which is then stripped: `node -p "\-42"` prints -42. The
+    ///   `=` form does not unescape, so `--eval=\-42` keeps the backslash.
+    /// * For the optional form (upstream's `--print <arg>` alias) an *empty*
+    ///   following argument is additionally not consumed. It stays a
+    ///   positional, which is why `node -p "" -e 42` prints `undefined`: the
+    ///   positional ends option parsing before `-e` is seen.
+    fn node_style_value(
+        &mut self,
+        takes_value: clap::Values,
+        attached: Option<&'a [u8]>,
+    ) -> Result<Option<&'a [u8]>, ArgError> {
+        if let Some(value) = attached {
+            if !value.is_empty() {
+                return Ok(Some(value));
+            }
+            if takes_value == clap::Values::OneOptionalNoDashValue {
+                return Ok(None);
+            }
+            return Err(ArgError::MissingValue);
+        }
+
+        let usable = self.iter.remain().first().is_some_and(|next| {
+            !next.starts_with(b"-")
+                && !(takes_value == clap::Values::OneOptionalNoDashValue && next.is_empty())
+        });
+        if !usable {
+            if takes_value == clap::Values::OneNoDashValue {
+                return Err(ArgError::MissingValue);
+            }
+            return Ok(None);
+        }
+
+        // `usable` only holds when the iterator has a next argument.
+        let value = self.iter.next().unwrap_or_default();
+        Ok(Some(match value.strip_prefix(b"\\") {
+            Some(rest) if rest.starts_with(b"-") => rest,
+            _ => value,
+        }))
+    }
+
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
         if let Some(d) = self.diagnostic.as_deref_mut() {
             // `Diagnostic` owns
@@ -369,6 +487,7 @@ mod tests {
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
             short_aliases: &[],
+            reject_bad_negations: false,
             params,
             iter: &mut iter,
             state: State::Normal,
@@ -402,6 +521,7 @@ mod tests {
         };
         let mut c = StreamingClap::<u8, args::SliceIterator> {
             short_aliases: &[],
+            reject_bad_negations: false,
             params,
             iter: &mut iter,
             state: State::Normal,

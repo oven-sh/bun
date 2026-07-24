@@ -28,6 +28,8 @@ enum Values {
     One,
     Many,
     OneOptional,
+    OneNoDashValue,
+    OneOptionalNoDashValue,
 }
 
 #[derive(Default)]
@@ -226,11 +228,27 @@ fn parse_param_rest(line: &[u8]) -> Param {
         };
         let after = &line[len + 1..];
         let takes_many = after.starts_with(b"...");
+        // "?" = optional value; "!" = node-style value (a separate argument
+        // starting with '-' is never consumed as the value); "?!" = both.
         let takes_one_optional = after.starts_with(b"?");
-        let help_start = len + 1 + 3 * (takes_many as usize) + (takes_one_optional as usize);
+        let no_dash_value = after.starts_with(b"!") || after.starts_with(b"?!");
+        let suffix_len = if takes_many {
+            3
+        } else if after.starts_with(b"?!") {
+            2
+        } else if takes_one_optional || no_dash_value {
+            1
+        } else {
+            0
+        };
+        let help_start = len + 1 + suffix_len;
         return Param {
             takes_value: if takes_many {
                 Values::Many
+            } else if takes_one_optional && no_dash_value {
+                Values::OneOptionalNoDashValue
+            } else if no_dash_value {
+                Values::OneNoDashValue
             } else if takes_one_optional {
                 Values::OneOptional
             } else {
@@ -383,6 +401,8 @@ fn emit_param(krate: &Path, p: &Param) -> TokenStream2 {
         Values::One => quote! { #krate::Values::One },
         Values::Many => quote! { #krate::Values::Many },
         Values::OneOptional => quote! { #krate::Values::OneOptional },
+        Values::OneNoDashValue => quote! { #krate::Values::OneNoDashValue },
+        Values::OneOptionalNoDashValue => quote! { #krate::Values::OneOptionalNoDashValue },
     };
 
     quote! {

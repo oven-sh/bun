@@ -65,7 +65,13 @@ pub const fn count_single<Id>(params: &[Param<Id>]) -> usize {
     let mut i = 0;
     while i < params.len() {
         if is_named(&params[i])
-            && matches!(params[i].takes_value, Values::One | Values::OneOptional)
+            && matches!(
+                params[i].takes_value,
+                Values::One
+                    | Values::OneOptional
+                    | Values::OneNoDashValue
+                    | Values::OneOptionalNoDashValue
+            )
         {
             n += 1;
         }
@@ -114,7 +120,10 @@ pub const fn convert_params_array<Id, const N: usize>(params: &[Param<Id>]) -> [
                     index = flags;
                     flags += 1;
                 }
-                Values::One | Values::OneOptional => {
+                Values::One
+                | Values::OneOptional
+                | Values::OneNoDashValue
+                | Values::OneOptionalNoDashValue => {
                     index = single;
                     single += 1;
                 }
@@ -361,7 +370,10 @@ impl ConvertedTable {
             if p.names.long.is_some() || p.names.short.is_some() {
                 let ctr = match p.takes_value {
                     Values::None => &mut flags,
-                    Values::One | Values::OneOptional => &mut single,
+                    Values::One
+                    | Values::OneOptional
+                    | Values::OneNoDashValue
+                    | Values::OneOptionalNoDashValue => &mut single,
                     Values::Many => &mut multi,
                 };
                 index = *ctr;
@@ -544,6 +556,7 @@ impl<Id> ComptimeClap<Id> {
             state: streaming::State::Normal,
             positional: None,
             short_aliases: opt.short_aliases,
+            reject_bad_negations: opt.reject_bad_negations,
         };
 
         while let Some(arg) = stream.next()? {
@@ -567,7 +580,13 @@ impl<Id> ComptimeClap<Id> {
                     }
                     break;
                 }
-            } else if param.takes_value == Values::One || param.takes_value == Values::OneOptional {
+            } else if matches!(
+                param.takes_value,
+                Values::One
+                    | Values::OneOptional
+                    | Values::OneNoDashValue
+                    | Values::OneOptionalNoDashValue
+            ) {
                 debug_assert!(single_options.len() != 0);
                 if single_options.len() != 0 {
                     single_options[param.id] = Some(arg.value.unwrap_or(b""));
@@ -602,7 +621,10 @@ impl<Id> ComptimeClap<Id> {
     pub fn flag(&self, name: &[u8]) -> bool {
         let param = self.table.find(name);
         debug_assert!(
-            param.takes_value == Values::None || param.takes_value == Values::OneOptional,
+            matches!(
+                param.takes_value,
+                Values::None | Values::OneOptional | Values::OneOptionalNoDashValue
+            ),
             "{} is an option and not a flag.",
             bstr::BStr::new(name),
         );
@@ -634,7 +656,13 @@ impl<Id> ComptimeClap<Id> {
             bstr::BStr::new(name),
         );
         debug_assert!(
-            !(param.takes_value == Values::One || param.takes_value == Values::OneOptional),
+            !matches!(
+                param.takes_value,
+                Values::One
+                    | Values::OneOptional
+                    | Values::OneNoDashValue
+                    | Values::OneOptionalNoDashValue
+            ),
             "{} takes one option, not multiple.",
             bstr::BStr::new(name),
         );

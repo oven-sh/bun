@@ -262,6 +262,15 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    /// Like [`Values::One`], but a separate following argument that starts
+    /// with '-' is never consumed as the value (Node's behavior for `-e`):
+    /// the parse fails with a missing value instead.
+    OneNoDashValue,
+    /// Like [`Values::OneOptional`], but a separate following argument is
+    /// consumed as the value when it does not start with '-' (Node's behavior
+    /// for `-p`), and in a short cluster the attached remainder stays part of
+    /// the cluster (`-pe` is `-p` followed by `-e`).
+    OneOptionalNoDashValue,
 }
 
 /// Represents a parameter for the command line.
@@ -417,6 +426,9 @@ pub struct ParseOptions<'a> {
     /// flag, never to an option's value or a `--` target. Node keeps its own
     /// aliases on exactly that branch (node_options-inl.h).
     pub short_aliases: &'static [(&'static [u8], &'static [u8])],
+    /// Reject `--no-<x>` shapes Node rejects instead of ignoring them as an
+    /// unrecognized flag. Only the commands that stand in for `node` set this.
+    pub reject_bad_negations: bool,
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -511,6 +523,7 @@ pub fn parse<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            reject_bad_negations: opt.reject_bad_negations,
         },
     )?;
     Ok(Args { clap, exe_arg })
@@ -532,6 +545,7 @@ pub fn parse_with_table<Id: 'static>(
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
             short_aliases: opt.short_aliases,
+            reject_bad_negations: opt.reject_bad_negations,
         },
     )?;
     Ok(Args { clap, exe_arg })
@@ -657,14 +671,14 @@ where
 {
     match param.takes_value {
         Values::None => {}
-        Values::One => {
+        Values::One | Values::OneNoDashValue => {
             write!(
                 w,
                 " <{}>",
                 bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
             )?;
         }
-        Values::OneOptional => {
+        Values::OneOptional | Values::OneOptionalNoDashValue => {
             write!(
                 w,
                 " <{}>?",

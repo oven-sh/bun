@@ -2359,6 +2359,50 @@ pub mod JSZlib {
         };
     }
 
+    /// Node's `checkRangesOrGetDefault`: undefined/NaN → `None`, non-number →
+    /// `ERR_INVALID_ARG_TYPE`, non-finite / out-of-range → `ERR_OUT_OF_RANGE`.
+    fn get_i32_option(
+        global: &JSGlobalObject,
+        options: JSValue,
+        key: &'static [u8],
+        display: &'static [u8],
+        min: i32,
+        max: i32,
+    ) -> JsResult<Option<i32>> {
+        let Some(value) = options.get(global, key)? else {
+            return Ok(None);
+        };
+        if !value.is_number() {
+            return Err(global.throw_invalid_argument_type_value(display, b"number", value));
+        }
+        let num = value.as_number();
+        if num.is_nan() {
+            return Ok(None);
+        }
+        if !num.is_finite() {
+            return Err(global.throw_range_error(
+                num,
+                bun_core::fmt::OutOfRangeOptions {
+                    field_name: display,
+                    msg: b"a finite number",
+                    ..Default::default()
+                },
+            ));
+        }
+        if num < min as f64 || num > max as f64 {
+            return Err(global.throw_range_error(
+                num,
+                bun_core::fmt::OutOfRangeOptions {
+                    min: min as i64,
+                    max: max as i64,
+                    field_name: display,
+                    ..Default::default()
+                },
+            ));
+        }
+        Ok(Some(num as i32))
+    }
+
     /// Move `list`'s allocation into a `Uint8Array` backing store without
     /// copying. After `shrink_to_fit`, an empty `Vec` owns no allocation (its
     /// pointer is dangling), so no deallocator is registered for it.
@@ -2441,22 +2485,52 @@ pub mod JSZlib {
 
         let mut library = Library::Zlib;
         if let Some(options_val) = options_val_ {
-            if let Some(window) = options_val.get(global_this, "windowBits")? {
-                opts.window_bits = window.coerce::<i32>(global_this)?;
+            if let Some(window) = get_i32_option(
+                global_this,
+                options_val,
+                b"windowBits",
+                b"options.windowBits",
+                -15,
+                47,
+            )? {
+                opts.window_bits = window;
                 library = Library::Zlib;
             }
 
-            if let Some(level) = options_val.get(global_this, "level")? {
-                opts.level = level.coerce::<i32>(global_this)?;
+            // level/memLevel/strategy are ignored by inflate; type-check only so
+            // a shared compress options object (e.g. libdeflate level 12) still works.
+            if let Some(level) = get_i32_option(
+                global_this,
+                options_val,
+                b"level",
+                b"options.level",
+                i32::MIN,
+                i32::MAX,
+            )? {
+                opts.level = level;
             }
 
-            if let Some(mem_level) = options_val.get(global_this, "memLevel")? {
-                opts.mem_level = mem_level.coerce::<i32>(global_this)?;
+            if let Some(mem_level) = get_i32_option(
+                global_this,
+                options_val,
+                b"memLevel",
+                b"options.memLevel",
+                i32::MIN,
+                i32::MAX,
+            )? {
+                opts.mem_level = mem_level;
                 library = Library::Zlib;
             }
 
-            if let Some(strategy) = options_val.get(global_this, "strategy")? {
-                opts.strategy = strategy.coerce::<i32>(global_this)?;
+            if let Some(strategy) = get_i32_option(
+                global_this,
+                options_val,
+                b"strategy",
+                b"options.strategy",
+                i32::MIN,
+                i32::MAX,
+            )? {
+                opts.strategy = strategy;
                 library = Library::Zlib;
             }
 
@@ -2609,10 +2683,34 @@ pub mod JSZlib {
         let mut window_bits: i32 = 0;
 
         if let Some(options_val) = options_val_ {
-            if let Some(window) = options_val.get(global_this, "windowBits")? {
-                window_bits = window.coerce::<i32>(global_this)?;
+            if let Some(window) = get_i32_option(
+                global_this,
+                options_val,
+                b"windowBits",
+                b"options.windowBits",
+                -15,
+                31,
+            )? {
+                window_bits = window;
                 library = Library::Zlib;
             }
+
+            let _ = get_i32_option(
+                global_this,
+                options_val,
+                b"memLevel",
+                b"options.memLevel",
+                1,
+                9,
+            )?;
+            let _ = get_i32_option(
+                global_this,
+                options_val,
+                b"strategy",
+                b"options.strategy",
+                0,
+                4,
+            )?;
 
             if let Some(library_value) = options_val.get_truthy(global_this, "library")? {
                 if !library_value.is_string() {
@@ -2630,12 +2728,18 @@ pub mod JSZlib {
                 };
             }
 
-            if let Some(level_value) = options_val.get(global_this, "level")? {
-                level = Some(level_value.coerce::<i32>(global_this)?);
-                if global_this.has_exception() {
-                    return Ok(JSValue::ZERO);
-                }
-            }
+            let (level_min, level_max) = match library {
+                Library::Zlib => (-1, 9),
+                Library::Libdeflate => (0, 12),
+            };
+            level = get_i32_option(
+                global_this,
+                options_val,
+                b"level",
+                b"options.level",
+                level_min,
+                level_max,
+            )?;
         }
 
         if global_this.has_exception() {

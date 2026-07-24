@@ -335,10 +335,8 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
 
         // Find all uses in this chunk of symbols from other chunks
-        // reshaped for borrowck — collect keys first to avoid holding a borrow on
-        // chunk_metas[chunk_index] while mutating chunk_metas[other_chunk_index].
-        let import_refs: Vec<Ref> = chunk_metas[chunk_index].imports.keys().to_vec();
-        for import_ref in import_refs {
+        let imports = core::mem::take(&mut chunk_metas[chunk_index].imports);
+        for &import_ref in imports.keys() {
             let symbol = c.graph.symbols.get_const(import_ref).unwrap();
 
             // Ignore uses that aren't top-level symbols
@@ -385,6 +383,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                 }
             }
         }
+        chunk_metas[chunk_index].imports = imports;
 
         // If this is an entry point, make sure we import all chunks belonging to
         // this entry point, even if there are no imports. We need to make sure

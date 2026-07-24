@@ -4310,10 +4310,6 @@ impl VirtualMachine {
             vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
             old_log,
         };
-        // Note: reshaped for borrowck — re-derive from raw so the unique
-        // borrow doesn't span the guard's drop.
-        // SAFETY: per-thread VM is live for this synchronous call.
-        let jsc_vm = unsafe { &mut *jsc_vm_ptr };
 
         let resolve_result = jsc_vm._resolve(
             &mut result,
@@ -5524,16 +5520,12 @@ impl VirtualMachine {
         // box it to keep the per-level recursion frame small enough for the
         // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
         let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
-        // Note: reshaped for borrowck — `zig_exception()` returns a
-        // `&mut` into the holder; we need to also borrow
-        // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
-        // raw pointer (the holder is heap-pinned for the call).
-        let exception: *mut ZigException = exception_holder.zig_exception();
+        exception_holder.zig_exception();
         let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
         self.remap_zig_exception(
-            // SAFETY: `exception` points into stack-local `exception_holder`.
-            unsafe { &mut *exception },
+            // SAFETY: `zig_exception()` above initialized this slot.
+            unsafe { exception_holder.zig_exception.assume_init_mut() },
             error_instance,
             exception_list,
             &mut exception_holder.need_to_clear_parser_arena_on_deinit,
@@ -5544,7 +5536,7 @@ impl VirtualMachine {
 
         let result = self.print_error_instance_body(
             // SAFETY: see above.
-            unsafe { &mut *exception },
+            unsafe { exception_holder.zig_exception.assume_init_mut() },
             error_instance,
             None, // Note: `exception_list` was already
             // consumed by `remap_zig_exception` above (only writer).

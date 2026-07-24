@@ -1322,12 +1322,10 @@ pub(crate) fn get_workspace_filters(
 #[cold]
 #[inline(never)]
 fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: crate::Error) {
-    // reshaped for borrowck — capture the realname slice before
-    // taking `&mut` on `manager.log`.
     let realname = dependency.realname();
-    let path = manager.lockfile.str(&realname).to_vec();
+    let path = manager.lockfile.str(&realname);
     let path_fmt = bun_core::fmt::fmt_path(
-        &path,
+        path,
         bun_core::fmt::PathFormatOptions {
             path_sep: match dependency.version.tag {
                 DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,

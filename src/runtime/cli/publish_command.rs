@@ -715,23 +715,19 @@ impl PublishCommand {
                 .put(b"npm_command", b"publish")
                 .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
 
-            // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
-            // is held by `context`; `run_package_script_foreground` needs
-            // `&mut ContextData` too. Re-derive from the raw pointer.
-            let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
+            let use_system_shell = context.command_ctx.debug.use_system_shell;
+            let silent = context.manager.options.log_level == LogLevel::Silent;
 
             if let Some(publish_script) = &context.publish_script {
                 if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
+                    &mut *context.command_ctx,
                     publish_script,
                     b"publish",
                     &abs_workspace_path,
                     script_env,
                     &[],
-                    context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    silent,
+                    use_system_shell,
                 ) {
                     if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(
@@ -746,16 +742,14 @@ impl PublishCommand {
 
             if let Some(postpublish_script) = &context.postpublish_script {
                 if let Err(e) = Run::run_package_script_foreground(
-                    // SAFETY: see above.
-                    unsafe { &mut *cmd_ctx_ptr },
+                    &mut *context.command_ctx,
                     postpublish_script,
                     b"postpublish",
                     &abs_workspace_path,
                     script_env,
                     &[],
-                    context.manager.options.log_level == LogLevel::Silent,
-                    // SAFETY: see above.
-                    unsafe { &*cmd_ctx_ptr }.debug.use_system_shell,
+                    silent,
+                    use_system_shell,
                 ) {
                     if matches!(e, crate::Error::MissingShell) {
                         Output::err_generic(

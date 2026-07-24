@@ -876,11 +876,11 @@ impl FlexHandler {
         }
 
         if let (Some(g_val), Some(s_val), Some(b_val)) = (&mut grow, &mut shrink, &mut basis) {
-            // reshaped for borrowck
             let g = g_val.0;
             let g_prefix: &mut VendorPrefix = &mut g_val.1;
             let s = s_val.0;
             let s_prefix: &mut VendorPrefix = &mut s_val.1;
+            // basis is emitted again below as the FlexBasis longhand, so the shorthand needs its own copy.
             let b = b_val.0.clone();
             let b_prefix: &mut VendorPrefix = &mut b_val.1;
 

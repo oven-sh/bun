@@ -1,0 +1,271 @@
+diff --git a/compiler-rt/lib/asan/asan_win.cpp b/compiler-rt/lib/asan/asan_win.cpp
+index 845408a..f729233 100644
+--- a/compiler-rt/lib/asan/asan_win.cpp
++++ b/compiler-rt/lib/asan/asan_win.cpp
+@@ -148,6 +148,9 @@ static thread_return_t THREAD_CALLING_CONV asan_thread_start(void *arg) {
+   return res;
+ }
+ 
++// Declared here so the interceptor (at file scope) can classify the child.
++namespace __asan { static void RecordThreadClass(u32 tid, bool owned); }
++
+ INTERCEPTOR_WINAPI(HANDLE, CreateThread, LPSECURITY_ATTRIBUTES security,
+                    SIZE_T stack_size, LPTHREAD_START_ROUTINE start_routine,
+                    void *arg, DWORD thr_flags, DWORD *tid) {
+@@ -161,8 +164,22 @@ INTERCEPTOR_WINAPI(HANDLE, CreateThread, LPSECURITY_ATTRIBUTES security,
+   u32 current_tid = GetCurrentTidOrInvalid();
+   ThreadStartParams params = {start_routine, arg};
+   AsanThread *t = AsanThread::Create(params, current_tid, &stack, detached);
+-  return REAL(CreateThread)(security, stack_size, asan_thread_start, t,
+-                            thr_flags, tid);
++  // Record the child as interceptor-owned BEFORE it can execute anything, so
++  // early startup code on it cannot trigger lazy foreign-thread adoption
++  // ahead of asan_thread_start's own registration. Creating suspended and
++  // resuming after recording makes the ordering deterministic regardless of
++  // scheduling; DLL_THREAD_ATTACH is too late (adoption can precede it).
++  DWORD child_tid = 0;
++  HANDLE h = REAL(CreateThread)(security, stack_size, asan_thread_start, t,
++                                thr_flags | CREATE_SUSPENDED, &child_tid);
++  if (h) {
++    __asan::RecordThreadClass((u32)child_tid, /*owned=*/true);
++    if (tid)
++      *tid = child_tid;
++    if (!(thr_flags & CREATE_SUSPENDED))
++      ::ResumeThread(h);
++  }
++  return h;
+ }
+ 
+ INTERCEPTOR_WINAPI(void, ExitThread, DWORD dwExitCode) {
+@@ -176,6 +193,9 @@ INTERCEPTOR_WINAPI(void, ExitThread, DWORD dwExitCode) {
+ 
+ namespace __asan {
+ 
++// Foreign-thread adoption: tid -> interceptor-owned classification (defined below).
++static void RecordThreadClass(u32 tid, bool owned);
++
+ void InitializePlatformInterceptors() {
+   __interception::SetErrorReportCallback(Report);
+ 
+@@ -248,7 +268,7 @@ typedef struct _TEB {
+ } TEB, *PTEB;
+ 
+ constexpr size_t TEB_RESERVED_FIELDS_THREAD_LOCAL_STORAGE_OFFSET = 11;
+-BOOL IsTlsInitialized() {
++int IsTlsInitialized() {
+   PTEB teb = (PTEB)NtCurrentTeb();
+   return teb->Reserved1[TEB_RESERVED_FIELDS_THREAD_LOCAL_STORAGE_OFFSET] !=
+          nullptr;
+@@ -402,6 +422,59 @@ __declspec(allocate(".CRT$XLAB")) void(NTAPI *__asan_tls_init)(
+     void *, unsigned long, void *) = asan_thread_init;
+ #endif
+ 
++
++// --- Foreign-thread adoption: distinguishing interceptor-owned threads ---
++// A thread created through the CreateThread interceptor is registered by
++// asan_thread_start (the trampoline the interceptor hands to CreateThread).
++// Code that runs on such a thread BEFORE the trampoline body -- the CRT's
++// per-thread startup -- can call GetCurrentThread() and would trigger lazy
++// adoption, racing the interceptor's own registration. At DLL_THREAD_ATTACH
++// (which runs on the new thread before that CRT startup) we identify these
++// threads by their Win32 start address and mark them so adoption defers.
++// Threads with any other start address (e.g. ntdll's thread-pool workers,
++// which start at TppWorkerThread) remain adoptable.
++// Classification is recorded in a process-wide table keyed by OS thread id,
++// deliberately NOT in a __declspec(thread) variable: the DLL_THREAD_ATTACH
++// callback runs before this DLL's TLS block is finalised for the new thread,
++// so a thread-local written there is not the instance later reads observe.
++// A small open-addressed table of (tid -> owned) is enough; thread ids are
++// recycled, and the entry is overwritten on the next attach with that id.
++namespace {
++struct TidClassEntry {
++  atomic_uint32_t tid;    // 0 = empty
++  atomic_uint8_t owned;   // 1 = created via the CreateThread interceptor
++};
++constexpr uptr kTidClassSlots = 1024;
++TidClassEntry tid_class_table[kTidClassSlots];
++}  // namespace
++
++static void RecordThreadClass(u32 tid, bool owned) {
++  uptr idx = tid % kTidClassSlots;
++  for (uptr n = 0; n < kTidClassSlots; ++n, idx = (idx + 1) % kTidClassSlots) {
++    u32 cur = atomic_load(&tid_class_table[idx].tid, memory_order_acquire);
++    if (cur == tid || cur == 0) {
++      atomic_store(&tid_class_table[idx].owned, owned ? 1 : 0,
++                   memory_order_release);
++      atomic_store(&tid_class_table[idx].tid, tid, memory_order_release);
++      return;
++    }
++  }
++}
++bool AsanThreadInterceptorOwned() {
++  u32 tid = (u32)GetTid();
++  uptr idx = tid % kTidClassSlots;
++  for (uptr n = 0; n < kTidClassSlots; ++n, idx = (idx + 1) % kTidClassSlots) {
++    u32 cur = atomic_load(&tid_class_table[idx].tid, memory_order_acquire);
++    if (cur == tid)
++      return atomic_load(&tid_class_table[idx].owned, memory_order_acquire) == 1;
++    if (cur == 0)
++      return false;
++  }
++  return false;
++}
++
++
++
+ static void NTAPI asan_thread_exit(void *module, DWORD reason, void *reserved) {
+   if (reason == DLL_THREAD_DETACH) {
+     // Unpoison the thread's stack because the memory may be re-used.
+diff --git a/compiler-rt/lib/asan/asan_thread.cpp b/compiler-rt/lib/asan/asan_thread.cpp
+index 37fb6f2..bd7ba42 100644
+--- a/compiler-rt/lib/asan/asan_thread.cpp
++++ b/compiler-rt/lib/asan/asan_thread.cpp
+@@ -26,6 +26,12 @@
+ 
+ namespace __asan {
+ 
++// Defined later in this file; used by lazy thread adoption on Windows.
++AsanThread *GetAsanThreadByOsIDLocked(tid_t os_id);
++#if SANITIZER_WINDOWS
++bool AsanThreadInterceptorOwned();  // set at DLL_THREAD_ATTACH, from asan_win.cpp
++#endif
++
+ // AsanThreadContext implementation.
+ 
+ void AsanThreadContext::OnCreated(void *arg) {
+@@ -366,7 +372,14 @@ bool AsanThread::GetStackFrameAccessByAddr(uptr addr,
+   }
+ 
+   uptr *ptr = (uptr *)(mem_ptr + ASAN_SHADOW_GRANULARITY);
+-  CHECK(ptr[0] == kCurrentStackFrameMagic);
++  // The frame containing this address may be uninstrumented (e.g. a
++  // frame from a language/module built without ASAN instrumentation on
++  // a thread whose stack is otherwise instrumented). Such a frame carries no
++  // frame magic; degrade gracefully -- the report still names the thread
++  // and address, without per-variable frame detail -- instead of aborting
++  // the whole report.
++  if (ptr[0] != kCurrentStackFrameMagic)
++    return false;
+   access->offset = addr - (uptr)ptr;
+   access->frame_pc = ptr[2];
+   access->frame_descr = (const char *)ptr[1];
+@@ -418,6 +431,10 @@ static bool ThreadStackContainsAddress(ThreadContextBase *tctx_base,
+   return fake_stack->AddrIsInFakeStack((uptr)addr);
+ }
+ 
++#if SANITIZER_WINDOWS
++static AsanThread *AdoptCurrentThread();
++#endif
++
+ AsanThread *GetCurrentThread() {
+   AsanThreadContext *context =
+       reinterpret_cast<AsanThreadContext *>(AsanTSDGet());
+@@ -434,11 +451,70 @@ AsanThread *GetCurrentThread() {
+         return tctx->thread;
+       }
+     }
++#if SANITIZER_WINDOWS
++    // Windows starts thread-pool worker threads through ntdll's worker
++    // factory, which never passes through the intercepted CreateThread, so
++    // no AsanThread is registered for them; instrumented code running on
++    // such a thread would otherwise be attributed to "thread T-1" with an
++    // undescribable stack. Adopt an unknown thread lazily on first use.
++    // Threads created through the interceptor call SetCurrentThread from
++    // asan_thread_start before any instrumented code runs on them, so they
++    // always have a context here and never reach this path.
++    if (AsanThread *adopted = AdoptCurrentThread())
++      return adopted;
++#endif
+     return nullptr;
+   }
+   return context->thread;
+ }
+ 
++#if SANITIZER_WINDOWS
++static AsanThread *AdoptCurrentThread() {
++  // AsanInited() flips before CreateMainThread() runs, so it is the wrong
++  // readiness signal: adopting inside that window steals the main thread
++  // from CreateMainThread. Wait until T0's bookkeeping is complete.
++  if (!AsanMainThreadCreated())
++    return nullptr;
++  // Threads created through the CreateThread interceptor are registered
++  // by asan_thread_start; adopting them from earlier CRT-trampoline code
++  // would race that registration. They are recognised at thread attach.
++  if (AsanThreadInterceptorOwned())
++    return nullptr;
++  // Re-entrancy guard: Create() allocates, and allocation consults
++  // GetCurrentThread(), which would re-enter here on this still-unregistered
++  // thread. Also serializes the OS-id lookup below.
++  static THREADLOCAL bool adopting;
++  if (adopting)
++    return nullptr;
++  adopting = true;
++  AsanThread *t = nullptr;
++  // Identity by OS thread id, not the TSD: on Windows the TSD is a
++  // __declspec(thread) slot masked to null until the TEB's TLS pointer is
++  // set, so a null AsanTSDGet() cannot distinguish "no thread" from "not
++  // visible yet". The registry knows every thread the runtime created
++  // (including an early main thread), so only a genuinely unknown OS
++  // thread -- e.g. a thread-pool worker started by ntdll's worker factory,
++  // which never passes through the intercepted CreateThread -- is adopted.
++  // The *Locked lookup requires the registry lock; scope it to the lookup
++  // alone, since AsanThread::Create() below registers the new thread and
++  // takes the same lock itself.
++  bool known;
++  {
++    ThreadRegistryLock l(&asanThreadRegistry());
++    known = GetAsanThreadByOsIDLocked(GetTid()) != nullptr;
++  }
++  if (!known) {
++    t = AsanThread::Create(kInvalidTid, /*stack=*/nullptr, /*detached=*/true);
++    if (t) {
++      SetCurrentThread(t);
++      t->ThreadStart(GetTid());
++    }
++  }
++  adopting = false;
++  return t;
++}
++#endif
++
+ void SetCurrentThread(AsanThread *t) {
+   CHECK(t->context());
+   VReport(2, "SetCurrentThread: %p for thread %p\n", (void *)t->context(),
+diff --git a/compiler-rt/lib/asan/asan_rtl.cpp b/compiler-rt/lib/asan/asan_rtl.cpp
+index b9ba250..3ad812f 100644
+--- a/compiler-rt/lib/asan/asan_rtl.cpp
++++ b/compiler-rt/lib/asan/asan_rtl.cpp
+@@ -74,6 +74,11 @@ static void CheckUnwind() {
+ static StaticSpinMutex asan_inited_mutex;
+ static atomic_uint8_t asan_inited = {0};
+ 
++static atomic_uint8_t asan_main_thread_created = {0};
++bool AsanMainThreadCreated() {
++  return atomic_load(&asan_main_thread_created, memory_order_acquire) == 1;
++}
++
+ static void SetAsanInited() {
+   atomic_store(&asan_inited, 1, memory_order_release);
+ }
+@@ -527,6 +532,9 @@ static bool AsanInitInternal() {
+   // Create main thread.
+   AsanThread *main_thread = CreateMainThread();
+   CHECK_EQ(0, main_thread->tid());
++  // Thread bookkeeping is now complete: lazy adoption of foreign
++  // threads (Windows thread-pool workers) may begin.
++  atomic_store(&asan_main_thread_created, 1, memory_order_release);
+   force_interface_symbols();  // no-op.
+ 
+   if (CAN_SANITIZE_LEAKS) {
+diff --git a/compiler-rt/lib/asan/asan_internal.h b/compiler-rt/lib/asan/asan_internal.h
+index 35c887e..9c9c0b9 100644
+--- a/compiler-rt/lib/asan/asan_internal.h
++++ b/compiler-rt/lib/asan/asan_internal.h
+@@ -134,6 +134,7 @@ void InstallAtForkHandler();
+   __asan_on_error()
+ 
+ bool AsanInited();
++bool AsanMainThreadCreated();  // true once CreateMainThread has registered T0
+ extern bool replace_intrin_cached;
+ extern void (*death_callback)(void);
+ // These magic values are written to shadow for better error

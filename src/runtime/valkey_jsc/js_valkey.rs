@@ -1248,7 +1248,9 @@ impl JSValkeyClient {
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);
             // Call onConnect callback if defined by the user
-            if let Some(on_connect) = Js::onconnect_get_cached(this_value) {
+            if let Some(on_connect) =
+                Js::onconnect_get_cached(this_value).filter(|cb| cb.is_callable())
+            {
                 let js_value = this_value;
                 js_value.ensure_still_alive();
                 global_object.queue_microtask(on_connect, &[js_value, hello_value]);
@@ -1394,7 +1396,7 @@ impl JSValkeyClient {
         }
 
         // Call onClose callback if it exists
-        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue) {
+        if let Some(on_close) = Js::onclose_get_cached(this_jsvalue).filter(|cb| cb.is_callable()) {
             if let Err(e) = on_close.call(&global_object, this_jsvalue, &[error_value]) {
                 global_object.report_active_exception_as_unhandled(e);
             }
@@ -1413,7 +1415,7 @@ impl JSValkeyClient {
             return;
         };
         let global_object = self.global_object;
-        if let Some(on_close) = Js::onclose_get_cached(this_value) {
+        if let Some(on_close) = Js::onclose_get_cached(this_value).filter(|cb| cb.is_callable()) {
             let _exit = self.vm().enter_event_loop_scope();
             if let Err(e) = on_close.call(&global_object, this_value, &[value]) {
                 global_object.report_active_exception_as_unhandled(e);

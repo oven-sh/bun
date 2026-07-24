@@ -458,7 +458,11 @@ async function fetch(
   // agent ride on a Request input.
   const agent = init?.agent ?? (url != null && typeof url === "object" ? url.agent : undefined);
   if (agent != null && agent !== false) {
-    return fetchWithAgent(url, init == null ? { agent } : init.agent == null ? { ...init, agent } : init, init?.counter || 0);
+    return fetchWithAgent(
+      url,
+      init == null ? { agent } : init.agent == null ? { ...init, agent } : init,
+      init?.counter || 0,
+    );
   }
   // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
   // This is needed for libraries like `form-data` that use CombinedStream which extends

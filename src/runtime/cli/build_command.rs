@@ -823,6 +823,13 @@ impl BuildCommand {
             }
 
             if ctx.bundler_options.compile {
+                if log_ref.errors > 0 {
+                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                        Output::error_writer(),
+                    ))?;
+                    exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+                }
+
                 print_summary(
                     bundled_end,
                     minify_duration,

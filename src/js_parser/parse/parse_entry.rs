@@ -93,6 +93,10 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
+    /// When true, import.meta.env is lowered to process.env during bundling.
+    /// Set for bun/node targets where process.env is available.
+    pub lower_import_meta_env_to_process_env: bool,
+
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
@@ -132,6 +136,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta_env_to_process_env: false,
             framework: None,
             repl_mode: false,
         }
@@ -215,6 +220,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            lower_import_meta_env_to_process_env: self.lower_import_meta_env_to_process_env,
             framework: self.framework,
             repl_mode: self.repl_mode,
         }
@@ -282,6 +288,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            lower_import_meta_env_to_process_env: false,
             framework: None,
             repl_mode: false,
         };

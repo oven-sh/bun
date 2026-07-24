@@ -308,6 +308,10 @@ function ownSourceMappingURL(source: string): string {
 // https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-UnserializableValue
 const UNSERIALIZABLE_NUMBERS = new Set(["NaN", "Infinity", "-Infinity", "-0"]);
 
+// Commands whose reply carries `wasThrown`; a thrown reply is enriched with
+// the exception's stack before it is forwarded (see #replyEvaluateLike).
+const EVALUATE_LIKE_METHODS = new Set(["Runtime.evaluate", "Runtime.callFunctionOn", "Debugger.evaluateOnCallFrame"]);
+
 // JSC names a collection by its class alone and puts the element count in a
 // separate `size` field; V8 folds the count into the description and has no
 // such field.
@@ -316,7 +320,7 @@ function collectionDescription(description: string | undefined, size: number | u
   return `${description}(${size})`;
 }
 
-function toCdpObjectPreview(preview: AnyObject | undefined): AnyObject | undefined {
+function toCdpObjectPreview(preview: AnyObject | undefined, nested = false): AnyObject | undefined {
   if (!preview) return preview;
   const { lossless, size, properties, entries, valuePreview, description, ...rest } = preview;
   const out: AnyObject = rest;
@@ -325,22 +329,33 @@ function toCdpObjectPreview(preview: AnyObject | undefined): AnyObject | undefin
   // too, but only for some types, so derive it whenever `lossless` is present.
   if (lossless !== undefined) out.overflow = !lossless;
   if (properties) out.properties = properties.map(toCdpPropertyPreview);
-  if (entries) out.entries = entries.map(toCdpEntryPreview);
-  if (valuePreview) out.valuePreview = toCdpObjectPreview(valuePreview);
+  // V8 omits `entries` from the preview of an empty Map/Set; JSC sends an
+  // empty array. Node's debugger REPL branches on the field's presence
+  // (`Map(0) {}` vs `Map(0) {  }`), so keep it presence-equivalent. V8 also
+  // reports entries only on the top-level preview: a Map/Set nested inside
+  // one is elided to overflow (`Set(1) { ... }`).
+  if (entries && entries.length > 0) {
+    if (nested) {
+      out.overflow = true;
+    } else {
+      out.entries = entries.map(toCdpEntryPreview);
+    }
+  }
+  if (valuePreview) out.valuePreview = toCdpObjectPreview(valuePreview, nested);
   return out;
 }
 
 function toCdpPropertyPreview(property: AnyObject): AnyObject {
   const { valuePreview } = property;
   if (!valuePreview) return property;
-  return { ...property, valuePreview: toCdpObjectPreview(valuePreview) };
+  return { ...property, valuePreview: toCdpObjectPreview(valuePreview, true) };
 }
 
 function toCdpEntryPreview(entry: AnyObject): AnyObject {
   const { key, value } = entry;
   const out: AnyObject = { ...entry };
-  if (key) out.key = toCdpObjectPreview(key);
-  if (value) out.value = toCdpObjectPreview(value);
+  if (key) out.key = toCdpObjectPreview(key, true);
+  if (value) out.value = toCdpObjectPreview(value, true);
   return out;
 }
 
@@ -458,6 +473,12 @@ class InspectorCDPAdapter {
   // V8 reports the pause that ends a step command with reason "step"; JSC does
   // not distinguish it from any other pause, so track the step here.
   #steppingToNextPause = false;
+  // V8 reports the scheduled --inspect-brk pause with reason "Break on start"
+  // (clients branch on it: NODE_INSPECT_RESUME_ON_START, the REPL header).
+  // Bun implements --inspect-brk as a prepended `debugger;`, which JSC reports
+  // like any other debugger statement, so latch the release of a waiting
+  // target and relabel the pause it triggers.
+  #breakOnStartPending = false;
   #pending = new Map<
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
@@ -646,7 +667,124 @@ class InspectorCDPAdapter {
     // objectId (the first step forced returnByValue:false), which
     // DevTools/vscode-js-debug inspect via exceptionDetails, so we do not
     // re-serialize it to honour the client's returnByValue.
-    this.#replyToClient(id, this.#translateResult(method, result));
+    this.#replyEvaluateLike(id, method, result);
+  }
+
+  // V8's exceptionDetails for a thrown evaluation carry the throw site, the
+  // script it happened in, a structured stackTrace, and a description that
+  // embeds the formatted stack; JSC reports only the bare exception object.
+  // Recover the missing pieces from the exception's own properties (stack,
+  // line, column, sourceURL) with one extra backend roundtrip before replying.
+  #replyEvaluateLike(clientId: number | string, method: string, jscResult: AnyObject): void {
+    const objectId = jscResult.wasThrown ? jscResult.result?.objectId : undefined;
+    if (!objectId) {
+      this.#replyToClient(clientId, this.#translateResult(method, jscResult));
+      return;
+    }
+    this.#sendToBackend("Runtime.getProperties", { objectId, ownProperties: true }, null, method, (props, error) => {
+      const properties = error ? [] : (props.properties ?? []);
+      this.#replyToClient(clientId, this.#translateThrownResult(method, jscResult, properties));
+    });
+  }
+
+  #translateThrownResult(method: string, jscResult: AnyObject, properties: AnyObject[]): AnyObject {
+    const out = this.#translateResult(method, jscResult);
+    const details = out.exceptionDetails;
+    if (!details) return out;
+    let stack: string | undefined;
+    let line: number | undefined;
+    let column: number | undefined;
+    let generatedLine: number | undefined;
+    let generatedColumn: number | undefined;
+    let sourceURL: string | undefined;
+    for (const property of properties) {
+      const value = property?.value?.value;
+      switch (property?.name) {
+        case "stack":
+          if (typeof value === "string") stack = value;
+          break;
+        // Bun stores the raw JSC throw position in originalLine/originalColumn
+        // and the source-mapped one in line/column (all 1-based).
+        case "line":
+          if (typeof value === "number") line = value;
+          break;
+        case "column":
+          if (typeof value === "number") column = value;
+          break;
+        case "originalLine":
+          if (typeof value === "number") generatedLine = value;
+          break;
+        case "originalColumn":
+          if (typeof value === "number") generatedColumn = value;
+          break;
+        case "sourceURL":
+          if (typeof value === "string") sourceURL = value;
+          break;
+      }
+    }
+    // details.exception and out.result are the same object; V8 formats both
+    // with the message followed by the frames, which is exactly Bun's
+    // Error#stack. A tampered stack that dropped the message keeps it.
+    const remote = details.exception;
+    if (stack !== undefined && stack !== "") {
+      const description = typeof remote.description === "string" ? remote.description : "";
+      remote.description = stack.startsWith(description) ? stack : `${description}\n${stack}`;
+
+      const callFrames: AnyObject[] = [];
+      for (const frameLine of stack.split("\n")) {
+        const match = /^\s+at\s+(?:(.+?)\s+\()?(.+?):(\d+):(\d+)\)?$/.exec(frameLine);
+        if (match === null) continue;
+        const frameUrl = match[2];
+        callFrames.push({
+          functionName: match[1] ?? "",
+          scriptId: this.#scriptIdsByUrl.get(frameUrl) ?? "",
+          url: frameUrl,
+          lineNumber: Number(match[3]) - 1,
+          columnNumber: Number(match[4]) - 1,
+        });
+      }
+      if (callFrames.length > 0) details.stackTrace = { callFrames };
+    }
+    // JSC positions are 1-based; CDP's are 0-based. JSC records the callee
+    // position of the throwing `new`; V8 reports the start of the throwing
+    // statement. Approximate it from the raw (generated) position: take the
+    // mapping at-or-before it and walk back to that original line's first
+    // mapping (the statement's start unless several statements share the
+    // line, which the transpiler's one-statement-per-generated-line printing
+    // makes rare at a throw site).
+    const scriptId = sourceURL !== undefined ? this.#scriptIdsByUrl.get(sourceURL) : undefined;
+    const statementStart =
+      scriptId !== undefined && typeof generatedLine === "number" && generatedLine > 0
+        ? this.#originalStatementStart(
+            scriptId,
+            generatedLine - 1,
+            typeof generatedColumn === "number" && generatedColumn > 0 ? generatedColumn - 1 : 0,
+          )
+        : undefined;
+    if (statementStart !== undefined) {
+      details.lineNumber = statementStart.lineNumber;
+      details.columnNumber = statementStart.columnNumber;
+      details.scriptId = scriptId;
+    } else if (typeof line === "number" && line > 0) {
+      details.lineNumber = line - 1;
+      details.columnNumber = typeof column === "number" && column > 0 ? column - 1 : 0;
+      if (scriptId !== undefined) details.scriptId = scriptId;
+    }
+    return out;
+  }
+
+  #originalStatementStart(scriptId: string, genLine: number, genColumn: number): OriginalPosition | undefined {
+    const map = this.#sourceMapFor(scriptId);
+    const lineMappings = map?.byGeneratedLine?.[genLine];
+    if (!lineMappings || lineMappings.columns.length === 0) return undefined;
+    const { columns, lineNumbers, columnNumbers } = lineMappings;
+    let at = 0;
+    for (let i = 0; i < columns.length; i++) {
+      if (columns[i] <= genColumn) at = i;
+    }
+    const lineNumber = lineNumbers[at];
+    while (at > 0 && lineNumbers[at - 1] === lineNumber) at--;
+    return { lineNumber, columnNumber: columnNumbers[at] };
   }
 
   #onProfilerStartReply(id: number, _result: AnyObject, error: AnyObject) {
@@ -764,6 +902,7 @@ class InspectorCDPAdapter {
     // A synchronous scriptParsed listener may have already decoded the map
     // (#sourceMapFor consumes mappings into map), so check both states.
     if (!script || (script.mappings === undefined && script.map === undefined)) return;
+    const resets: { clientBreakpointId: string; bp: AnyObject; generated: AnyObject }[] = [];
     for (const [clientBreakpointId, bp] of this.#preParseBreakpoints) {
       if (bp.resolved) continue;
       const { url: bpUrl, urlRegex: bpUrlRegex } = bp;
@@ -788,7 +927,16 @@ class InspectorCDPAdapter {
       if (generated.lineNumber === bp.lineNumber && (generated.columnNumber ?? 0) === (bp.columnNumber ?? 0)) {
         continue; // The map is an identity for this position.
       }
+      resets.push({ clientBreakpointId, bp, generated });
+    }
+    // Two phases: every stale breakpoint is removed before any is re-added.
+    // JSC resolves distinct pre-parse requests on an unmapped line forward to
+    // one shared pause location; removing one of them after a re-added
+    // breakpoint resolved to that same location cleared the re-added one too.
+    for (const { bp } of resets) {
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
+    }
+    for (const { clientBreakpointId, bp, generated } of resets) {
       const options: AnyObject = {};
       const { condition } = bp;
       if (condition) options.condition = condition;
@@ -798,7 +946,7 @@ class InspectorCDPAdapter {
           lineNumber: generated.lineNumber,
           columnNumber: generated.columnNumber,
           options,
-          urlRegex: bpUrlRegex ?? breakpointUrlRegex(bpUrl!),
+          urlRegex: bp.urlRegex ?? breakpointUrlRegex(bp.url!),
         },
         null,
         "Debugger.setBreakpointByUrl",
@@ -871,6 +1019,10 @@ class InspectorCDPAdapter {
         this.#replyErrorToClient(clientId, error.code ?? -32000, toCdpErrorMessage(error.message));
         return;
       }
+      if (EVALUATE_LIKE_METHODS.$has(pending.method)) {
+        this.#replyEvaluateLike(clientId, pending.method, parsed.result || {});
+        return;
+      }
       this.#replyToClient(clientId, this.#translateResult(pending.method, parsed.result || {}));
       return;
     }
@@ -936,6 +1088,9 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.runIfWaitingForDebugger":
+        // Only a target parked in wait-for-debugger state can produce the
+        // "Break on start" pause; --inspect (no -brk/-wait) never waits.
+        if (this.#isWaitingForDebugger()) this.#breakOnStartPending = true;
         // Inspector.initialized resolves Bun's wait-for-debugger state, which
         // unblocks inspector.open(port, host, true) on the inspected thread.
         this.#sendToBackend("Inspector.initialized");
@@ -1332,7 +1487,9 @@ class InspectorCDPAdapter {
         if (result.wasThrown) {
           out.exceptionDetails = {
             exceptionId: this.#nextExceptionId++,
-            text: result.result?.description ?? "Uncaught",
+            // V8's text for a thrown evaluation is the fixed string
+            // "Uncaught"; the message lives in the exception's description.
+            text: "Uncaught",
             lineNumber: 0,
             columnNumber: 0,
             exception: remote,
@@ -1434,6 +1591,12 @@ class InspectorCDPAdapter {
         const stepped = this.#steppingToNextPause;
         this.#steppingToNextPause = false;
         const cdpParams: AnyObject = { callFrames, reason: stepped ? "step" : "other", data };
+        // The first pause after releasing a parked target is the scheduled
+        // break on start, unless something with its own reason (an exception,
+        // a breakpoint) fired first -- then the chance has passed either way.
+        const breakOnStart = this.#breakOnStartPending;
+        this.#breakOnStartPending = false;
+        if (breakOnStart) cdpParams.reason = "Break on start";
         switch (params.reason) {
           case "exception":
             cdpParams.reason = "exception";

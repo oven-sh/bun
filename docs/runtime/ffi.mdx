@@ -154,6 +154,15 @@ The following `FFIType` values are supported.
 
 `buffer` arguments must be a `TypedArray` or `DataView`.
 
+### Integer argument coercion
+
+When a JavaScript value is passed as an integer-typed argument (`i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `char`, `i64`, `u64`, `i64_fast`, `u64_fast`), it is coerced with **modular wrap** semantics, identical to storing into the corresponding `TypedArray` element:
+
+- **32-bit and narrower**: the value is converted with ECMAScript `ToInt32` (truncating any fractional part and wrapping modulo 2<sup>32</sup>), then narrowed modulo 2<sup>N</sup> to the declared width. `echo_u8(300)` reaches C as `44`, `echo_u32(-1)` reaches C as `0xFFFFFFFF`, and `echo_i32(5.7)` reaches C as `5`. `NaN` and `±Infinity` become `0`. Passing a `BigInt` throws, matching `Int32Array` assignment.
+- **64-bit**: `number` inputs are truncated toward zero (with `NaN`/`±Infinity` becoming `0`) and `BigInt` inputs pass through; either is then wrapped modulo 2<sup>64</sup>. `echo_u64(-1)` reaches C as `0xFFFFFFFFFFFFFFFF`, and `echo_i64(5.7)` reaches C as `5`.
+
+Out-of-range values are never clamped and never throw.
+
 ---
 
 ## Strings

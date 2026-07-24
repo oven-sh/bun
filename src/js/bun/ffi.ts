@@ -160,101 +160,50 @@ Object.defineProperty(globalThis, "__GlobalBunCString", {
 
 const ffiWrappers = new Array(21);
 
-var char = "val|0";
-ffiWrappers.fill(char);
-ffiWrappers[FFIType.uint8_t] = "val<0?0:val>=255?255:val|0";
-ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32768?32768:val|0";
-ffiWrappers[FFIType.uint16_t] = "val<=0?0:val>=65536?65536:val|0";
-ffiWrappers[FFIType.int32_t] = "val|0";
-// https://github.com/oven-sh/bun/issues/7007
-// This cast with `|0` looks incorrect as it converts 0xffffffff into -1, but this misinterpretation
-// of the integer is taken advantage of by a second misinterpretation of the bytes in the C binding
-// The bitwise operator | forces a conversion to int32_t, but it will wrap to negative numbers
-// when going above >0x7fffffff.
+// Integer argument coercion policy: **modular wrap** at the declared width.
 //
-// What this |0 operatation also *seems to do* (citation needed) is convert the internal representation
-// of JSC::JSValue to ALWAYS use Int32Tag, which is important as `JSValue::asInt32()` can only handle
-// this encoding to properly deserialize this as an int32.
+// For <=32-bit integer types (char, i8, u8, i16, u16, i32, u32) the value is
+// normalized with `| 0` (ToInt32), which truncates fractions and wraps modulo
+// 2^32. The generated C stub then implicitly narrows the int32-tagged low bits
+// to the parameter's declared width, giving wrap modulo 2^N. The result is
+// identical to storing into the corresponding TypedArray element:
+//   echo_u8(300) === new Uint8Array([300])[0] === 44
 //
-// tldr jsc internals: JSValue represents int32 as a tag value, then the int32 bytes.
-//                     and all other integers are as tagged 64-bit floats.
+// `| 0` also forces the JSValue into Int32Tag encoding (JSC boxes small ints
+// as tag|int32 and everything else as an offset double), which is the only
+// encoding the trampoline's raw `*argsPtr` read is valid for; see #7007.
+// For unsigned types the signed int32 bit pattern is reinterpreted by the C
+// cast, so `-1 | 0` reaches a `uint32_t` parameter as `0xFFFFFFFF`.
 //
-// The trick to fixing the bug: after using |0 to misinterpret and force the integer into Int32Tag,
-// when passing the value to the C ffi code, misinterpret it again, resulting in the correct uint32_t.
-//
-// To do this in native code, there is a spot in zig where uint32_t just prints int32_t.
-ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
-ffiWrappers[FFIType.i64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
+// For 64-bit integer types the value is normalized to a BigInt. Numbers are
+// truncated toward zero first; NaN/Infinity become 0. Out-of-range BigInts
+// wrap modulo 2^64 on the C side (toBigInt64 / toBigUInt64), matching
+// BigInt64Array / BigUint64Array assignment.
+var int32 = "val|0";
+ffiWrappers.fill(int32);
 
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-ffiWrappers[FFIType.i64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
+// JSVALUE_TO_INT64 reads int32-tagged and double-encoded Numbers directly, so
+// integers in the safe range stay as Number and avoid a BigInt allocation.
+// Fractional, NaN, and too-large Numbers are normalized to a BigInt; the
+// C-side toBigInt64 wraps out-of-range BigInt modulo 2^64.
+ffiWrappers[FFIType.int64_t] = ffiWrappers[FFIType.i64_fast] = `{
+  if (typeof val === "bigint") return val;
+  var n = typeof val === "number" ? val : Number(val);
+  if (Number.isSafeInteger(n)) return n;
+  n = Math.trunc(n);
+  return n > -Infinity && n < Infinity ? BigInt(n) : 0n;
 }`;
 
-ffiWrappers[FFIType.u64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= 0) {
-      return Number(val).valueOf() || 0;
-    }
-
-    return val;
-  }
-
-  return !val ? 0 : +val || 0;
-}`;
-
-ffiWrappers[FFIType.int64_t] = `{
-  if (typeof val === "bigint") {
-    return val;
-  }
-
-  if (typeof val === "number") {
-    return BigInt(val || 0);
-  }
-
-  return BigInt(+val || 0);
-}`;
-
-ffiWrappers[FFIType.uint64_t] = `{
-  if (typeof val === "bigint") {
-    return val;
-  }
-
-  if (typeof val === "number") {
-    return val <= 0 ? BigInt(0) : BigInt(val || 0);
-  }
-
-  return BigInt(+val || 0);
-}`;
-
-ffiWrappers[FFIType.u64_fast] = `{
-  if (typeof val === "bigint") {
-    if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(0)) return Number(val);
-    return val;
-  }
-
-  return typeof val === "number" ? (val <= 0 ? 0 : +val || 0) : +val || 0;
-}`;
-
-ffiWrappers[FFIType.uint16_t] = `{
-  const ret = (typeof val === "bigint" ? Number(val) : val) | 0;
-  return ret <= 0 ? 0 : ret > 0xffff ? 0xffff : ret;
+// JSVALUE_TO_UINT64's Number paths cannot wrap a negative value (the C cast of
+// a negative double to uint64_t is undefined, and toUInt64NoTruncate clamps to
+// 0), so only non-negative safe integers stay as Number. Everything else goes
+// through BigInt; toBigUInt64 wraps negatives and over-width values.
+ffiWrappers[FFIType.uint64_t] = ffiWrappers[FFIType.u64_fast] = `{
+  if (typeof val === "bigint") return val;
+  var n = typeof val === "number" ? val : Number(val);
+  if (Number.isSafeInteger(n) && n >= 0) return n;
+  n = Math.trunc(n);
+  return n > -Infinity && n < Infinity ? BigInt(n) : 0n;
 }`;
 
 // Plain numbers pass through untouched: NaN, -0.0, and every other double are

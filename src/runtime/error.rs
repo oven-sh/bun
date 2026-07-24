@@ -425,6 +425,12 @@ pub enum Error {
     Core(#[from] bun_core::Error),
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
+    /// A `bun_sys::Error` with its path/syscall/dest preserved. `Sys(errno)`
+    /// still exists for callers that only have a bare errno; prefer this
+    /// variant via `?` on a `bun_sys::Error` so top-level error handlers can
+    /// report which file/syscall failed.
+    #[error(transparent)]
+    SysErr(Box<bun_sys::Error>),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -479,7 +485,7 @@ pub enum Error {
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
-        Self::Sys(e.into())
+        Self::SysErr(Box::new(e))
     }
 }
 
@@ -515,6 +521,7 @@ impl From<Error> for bun_bundler::Error {
         match e {
             Error::Bundler(inner) => inner,
             Error::Sys(s) => bun_bundler::Error::Sys(s),
+            Error::SysErr(s) => bun_bundler::Error::Sys((*s).into()),
             Error::Alloc(a) => bun_bundler::Error::Alloc(a),
             Error::Core(c) => bun_bundler::Error::Core(c),
             Error::Resolver(r) => bun_bundler::Error::Resolver(r),
@@ -560,6 +567,7 @@ impl From<Error> for bun_jsc::CrateError {
     fn from(e: Error) -> Self {
         match e {
             Error::Sys(s) => Self::Sys(s),
+            Error::SysErr(s) => Self::Sys((*s).into()),
             Error::Alloc(a) => Self::Alloc(a),
             Error::Core(c) => Self::Core(c),
             Error::Resolver(r) => Self::Resolver(r),
@@ -578,12 +586,24 @@ impl From<Error> for bun_uws_sys::Error {
         match e {
             Error::Alloc(a) => bun_uws_sys::Error::Alloc(a),
             Error::Sys(s) => bun_uws_sys::Error::Sys(s),
+            Error::SysErr(s) => bun_uws_sys::Error::Sys((*s).into()),
             _ => bun_uws_sys::Error::RequestBodyTooLarge,
         }
     }
 }
 
 impl Error {
+    /// The OS errno this error represents, whether it arrived as a bare
+    /// `Sys(errno)`, a rich `SysErr`, or wrapped in `Install`.
+    pub fn errno(&self) -> Option<bun_errno::SystemErrno> {
+        match self {
+            Self::Sys(e) => Some(*e),
+            Self::SysErr(e) => e.resolve_system_errno(),
+            Self::Install(e) => e.errno(),
+            _ => None,
+        }
+    }
+
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
@@ -803,6 +823,10 @@ impl Error {
             Self::NoDevice => "NoDevice",
             Self::Core(e) => e.name(),
             Self::Sys(e) => <&'static str>::from(e),
+            Self::SysErr(e) => e
+                .get_error_code_tag_name()
+                .map(|(n, _)| n)
+                .unwrap_or("UNKNOWN"),
             Self::Alloc(_) => "OutOfMemory",
             Self::ShellLexer(e) => <&'static str>::from(e),
             Self::ShellParse(e) => <&'static str>::from(e),
@@ -842,6 +866,21 @@ impl From<std::io::Error> for Error {
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         Error::name(self).as_bytes()
+    }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
+        match self {
+            Self::SysErr(e) => bun_core::output::ErrName::as_sys_err_info(&**e),
+            Self::Install(e) => bun_core::output::ErrName::as_sys_err_info(e),
+            _ => None,
+        }
+    }
+}
+impl bun_core::output::ErrName for &Error {
+    fn name(&self) -> &[u8] {
+        Error::name(self).as_bytes()
+    }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
+        (**self).as_sys_err_info()
     }
 }
 

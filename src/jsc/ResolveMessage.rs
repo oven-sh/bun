@@ -130,6 +130,7 @@ impl ResolveMessage {
         Ok(JSValue::from(0_i32))
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn fmt(
         specifier: &[u8],
         referrer: &[u8],

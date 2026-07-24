@@ -2463,6 +2463,7 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
     let fmt = fmt.strip_suffix('\n').unwrap_or(fmt);
     let body = pretty_fmt_args(fmt, enable_ansi_colors_stderr(), args);
     if let Some(e) = error_name.as_sys_err_info() {
+        let where_ = fmt_syscall_where(e.syscall, e.path, e.dest);
         // MOVE_DOWN: bun_sys::coreutils_error_map → bun_core (move-in pass).
         if let Some(label) = crate::coreutils_error_map::get(e.errno) {
             pretty_errorln!(
@@ -2470,14 +2471,14 @@ pub fn err(error_name: impl ErrName, fmt: &str, args: impl FmtTuple) {
                 bstr::BStr::new(e.tag_name),
                 bstr::BStr::new(label),
                 body,
-                e.syscall,
+                where_,
             );
         } else {
             pretty_errorln!(
                 "<r><red>{}<r><d>:<r> {} <d>({})<r>",
                 bstr::BStr::new(e.tag_name),
                 body,
-                e.syscall,
+                where_,
             );
         }
         return;
@@ -2499,6 +2500,54 @@ pub fn err_tag(tag: &str, body: core::fmt::Arguments<'_>) {
     pretty_errorln!("<red>{}<r><d>:<r> {}", tag, body);
 }
 
+/// Render "syscall 'path'" / "syscall 'path' -> 'dest'" / "syscall" for the
+/// dim trailer in syscall-error prints.
+struct SyscallWhere<'a> {
+    syscall: &'static str,
+    path: &'a [u8],
+    dest: &'a [u8],
+}
+impl core::fmt::Display for SyscallWhere<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.syscall)?;
+        if !self.path.is_empty() {
+            write!(f, " '{}'", bstr::BStr::new(self.path))?;
+        }
+        if !self.dest.is_empty() {
+            write!(f, " -> '{}'", bstr::BStr::new(self.dest))?;
+        }
+        Ok(())
+    }
+}
+#[inline]
+fn fmt_syscall_where<'a>(syscall: &'static str, path: &'a [u8], dest: &'a [u8]) -> SyscallWhere<'a> {
+    SyscallWhere { syscall, path, dest }
+}
+
+/// Print a syscall error as the whole message (no caller-supplied body):
+/// `ENOENT: No such file or directory (open '/path')`. Used by the top-level
+/// CLI error handlers when a `bun_sys::Error` bubbles up unannotated.
+pub fn err_sys(info: &SysErrInfo<'_>) {
+    let where_ = fmt_syscall_where(info.syscall, info.path, info.dest);
+    let label = info
+        .msg
+        .or_else(|| crate::coreutils_error_map::get(info.errno).map(str::as_bytes));
+    if let Some(label) = label {
+        pretty_errorln!(
+            "<r><red>{}<r><d>:<r> {} <d>({})<r>",
+            bstr::BStr::new(info.tag_name),
+            bstr::BStr::new(label),
+            where_,
+        );
+    } else {
+        pretty_errorln!(
+            "<r><red>error<r><d>:<r> {} <d>({})<r>",
+            bstr::BStr::new(info.tag_name),
+            where_,
+        );
+    }
+}
+
 /// `Output.errGeneric` — function form. `<red>error<r>:` prefix to stderr with
 /// a `<tag>`-rewritten template + positional args.
 #[inline]
@@ -2513,10 +2562,31 @@ pub fn err_generic(fmt: &str, args: impl FmtTuple) {
 /// What `err()` needs from a `bun_sys::Error` without naming the type.
 /// Populated by bun_sys's `ErrName` impl (move-in pass).
 #[derive(Clone, Copy)]
-pub struct SysErrInfo {
+pub struct SysErrInfo<'a> {
     pub tag_name: &'static [u8],
     pub errno: i32,
     pub syscall: &'static str,
+    /// strerror label (e.g., "No such file or directory").
+    pub msg: Option<&'static [u8]>,
+    pub path: &'a [u8],
+    pub dest: &'a [u8],
+}
+
+impl<'a> SysErrInfo<'a> {
+    pub const fn without_path(
+        tag_name: &'static [u8],
+        errno: i32,
+        syscall: &'static str,
+    ) -> SysErrInfo<'static> {
+        SysErrInfo {
+            tag_name,
+            errno,
+            syscall,
+            msg: None,
+            path: b"",
+            dest: b"",
+        }
+    }
 }
 
 /// Trait abstracting the error-name shapes accepted by `err()`.
@@ -2526,7 +2596,7 @@ pub struct SysErrInfo {
 /// its own error type (move-in pass) and returns the projected info here.
 pub trait ErrName {
     fn name(&self) -> &[u8];
-    fn as_sys_err_info(&self) -> Option<SysErrInfo> {
+    fn as_sys_err_info(&self) -> Option<SysErrInfo<'_>> {
         None
     }
 }

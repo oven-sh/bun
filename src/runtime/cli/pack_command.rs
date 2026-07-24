@@ -229,7 +229,7 @@ impl PackCommand {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if cause.value.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic(
@@ -869,8 +869,8 @@ fn iterate_bundled_deps(
         Err(err) => {
             // ignore node_modules if it isn't a directory, or doesn't exist
             if matches!(
-                err,
-                crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT)
+                err.errno(),
+                Some(bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT)
             ) {
                 return Ok(bundled_pack_queue);
             }

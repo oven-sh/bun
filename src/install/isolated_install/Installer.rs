@@ -230,6 +230,7 @@ impl<'a> Installer<'a> {
     /// Without this, the upfront pending-task slot for each waiting entry is
     /// never released and the install loop blocks forever on
     /// `pendingTaskCount() == 0`.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn on_package_download_error(
         &mut self,
         task_id: crate::package_manager_task::Id,
@@ -252,7 +253,7 @@ impl<'a> Installer<'a> {
                 self.on_task_fail(
                     entry_id,
                     &TaskError::Download(DownloadError {
-                        err,
+                        err: err.clone(),
                         url: url.into(),
                     }),
                 );
@@ -266,7 +267,7 @@ impl<'a> Installer<'a> {
                 (
                     bstr::BStr::new(name),
                     resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    bstr::BStr::new(download_error_reason(err)),
+                    bstr::BStr::new(download_error_reason(&err)),
                     bstr::BStr::new(url),
                 ),
             );
@@ -375,7 +376,7 @@ impl<'a> Installer<'a> {
             }
             TaskError::Binaries(bin_err) => {
                 Output::err(
-                    *bin_err,
+                    bin_err,
                     "failed to link binaries for package: {}@{}",
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
@@ -389,7 +390,7 @@ impl<'a> Installer<'a> {
                     (
                         bstr::BStr::new(pkg_name.slice(string_buf)),
                         pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                        bstr::BStr::new(download_error_reason(dl.err)),
+                        bstr::BStr::new(download_error_reason(&dl.err)),
                         bstr::BStr::new(&dl.url),
                     ),
                 );
@@ -604,7 +605,7 @@ pub enum CompleteState {
     Fail,
 }
 
-fn download_error_reason(e: crate::Error) -> &'static [u8] {
+fn download_error_reason(e: &crate::Error) -> &'static [u8] {
     match e {
         crate::Error::TarballHTTP400 => b"400 Bad Request",
         crate::Error::TarballHTTP401 => b"401 Unauthorized",
@@ -678,8 +679,8 @@ impl TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
-            TaskError::Binaries(err) => TaskError::Binaries(*err),
-            TaskError::RunScripts(err) => TaskError::RunScripts(*err),
+            TaskError::Binaries(err) => TaskError::Binaries(err.clone()),
+            TaskError::RunScripts(err) => TaskError::RunScripts(err.clone()),
             TaskError::Patching(_log) => {
                 // `bun_ast::Log` is non-Clone; the only caller of
                 // `TaskError::clone()` is the `Result::Err(err) => err.clone()`
@@ -694,7 +695,7 @@ impl TaskError {
                 TaskError::Patching(Log::init())
             }
             TaskError::Download(dl) => TaskError::Download(DownloadError {
-                err: dl.err,
+                err: dl.err.clone(),
                 url: dl.url.clone(),
             }),
         }

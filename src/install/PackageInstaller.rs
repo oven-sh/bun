@@ -1784,11 +1784,9 @@ impl<'a> PackageInstaller<'a> {
                         // npm packages can declare `file:` paths missing from the published
                         // tarball (e.g. excluded by `files`); nothing to link is not a failure.
                         if let package_install::InstallResult::Failure(f) = &result {
-                            if matches!(
-                                f.err,
-                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                                    | crate::Error::FileNotFound
-                            ) {
+                            if f.err.errno() == Some(bun_errno::SystemErrno::ENOENT)
+                                || f.err == crate::Error::FileNotFound
+                            {
                                 break 'result package_install::InstallResult::Success;
                             }
                         }
@@ -2000,11 +1998,9 @@ impl<'a> PackageInstaller<'a> {
                             bstr::BStr::new(alias.slice(string_buf!())),
                         );
                         self.summary.fail += 1;
-                    } else if matches!(
-                        cause.err,
-                        crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                            | crate::Error::AccessDenied
-                    ) {
+                    } else if cause.err.errno() == Some(bun_errno::SystemErrno::EACCES)
+                        || cause.err == crate::Error::AccessDenied
+                    {
                         // there are two states this can happen
                         // - Access Denied because node_modules/ is unwritable
                         // - Access Denied because this specific package is unwritable

@@ -1433,15 +1433,13 @@ pub mod command {
         if ctx.parallel || ctx.sequential {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::multi_run::run(ctx);
-            pretty_errorln!("<r><red>error<r>: {}", err.name());
-            Global::exit(1);
+            return Err(err);
         }
 
         if !ctx.filters.is_empty() || ctx.workspaces {
             // Result<Infallible, _>: if this returns at all, it's Err.
             let Err(err) = super::filter_run::run_scripts_with_filter(ctx);
-            pretty_errorln!("<r><red>error<r>: {}", err.name());
-            Global::exit(1);
+            return Err(err);
         }
 
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {

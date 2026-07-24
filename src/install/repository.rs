@@ -864,7 +864,7 @@ impl RepositoryExt for Repository {
         {
             Ok(d) => d,
             Err(not_found) => 'brk: {
-                if not_found != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                if not_found.errno() != Some(bun_errno::SystemErrno::ENOENT) {
                     return Err(not_found);
                 }
 

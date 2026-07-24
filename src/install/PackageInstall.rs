@@ -171,7 +171,7 @@ impl Method {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct Failure {
     pub err: crate::Error,
     pub step: Step,
@@ -180,14 +180,9 @@ pub struct Failure {
 }
 
 impl Failure {
-    // `Failure` is `Copy` and tiny without the `#[cfg(bun_debug)]` trace
-    // field; clippy's trivially_copy_pass_by_ref fires in that config but
-    // `&self` is correct when the trace field is present. Allow it rather
-    // than vary the signature per-config.
-    #[allow(clippy::trivially_copy_pass_by_ref)]
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
-        (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+        (self.err.errno() == Some(bun_errno::SystemErrno::ENOENT)
             || self.err == crate::Error::FileNotFound)
             && self.step == Step::OpeningCacheDir
     }
@@ -1753,7 +1748,7 @@ impl<'a> PackageInstall<'a> {
                 #[cfg(not(windows))]
                 {
                     if err == crate::Error::NotSameFileSystem
-                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                        || err.errno() == Some(bun_errno::SystemErrno::ENXIO)
                     {
                         return Err(err);
                     }
@@ -1963,7 +1958,7 @@ impl<'a> PackageInstall<'a> {
                 #[cfg(not(windows))]
                 {
                     if err == crate::Error::NotSameFileSystem
-                        || err == crate::Error::Sys(bun_errno::SystemErrno::ENXIO)
+                        || err.errno() == Some(bun_errno::SystemErrno::ENXIO)
                     {
                         return Err(err);
                     }
@@ -2424,7 +2419,7 @@ impl<'a> PackageInstall<'a> {
                             if err == crate::Error::NotSupported {
                                 Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
-                            } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            } else if err.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
                                     crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                                     Step::OpeningCacheDir,
@@ -2446,7 +2441,7 @@ impl<'a> PackageInstall<'a> {
                             if err == crate::Error::NotSupported {
                                 Self::set_supported_method(Method::Copyfile);
                                 supported_method_to_use = Method::Copyfile;
-                            } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            } else if err.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
                                     crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                                     Step::OpeningCacheDir,
@@ -2473,7 +2468,7 @@ impl<'a> PackageInstall<'a> {
                             }
                         }
 
-                        return if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        return if err.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                             InstallResult::fail(
                                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT),
                                 Step::OpeningCacheDir,
@@ -2489,7 +2484,7 @@ impl<'a> PackageInstall<'a> {
                 return match self.install_with_symlink(destination_dir) {
                     Ok(result) => result,
                     Err(err) => {
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if err.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                             InstallResult::fail(err, Step::OpeningCacheDir, None)
                         } else {
                             InstallResult::fail(err, Step::CopyingFiles, None)

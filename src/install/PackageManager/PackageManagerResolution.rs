@@ -109,12 +109,16 @@ impl PackageManager {
             .map_err(crate::Error::from)
         {
             Ok(d) => d,
-            Err(
-                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                | crate::Error::DeviceBusy,
-            ) => {
+            Err(e)
+                if matches!(
+                    e.errno(),
+                    Some(
+                        bun_errno::SystemErrno::ENOENT
+                            | bun_errno::SystemErrno::ENOTDIR
+                            | bun_errno::SystemErrno::EACCES
+                    )
+                ) || e == crate::Error::DeviceBusy =>
+            {
                 return Ok(list);
             }
             Err(e) => return Err(e),

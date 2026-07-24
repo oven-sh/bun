@@ -529,7 +529,7 @@ impl TranspilerJob {
             break 'brk out;
         };
 
-        let parse_error = self.parse_error;
+        let parse_error = self.parse_error.take();
 
         self.promise.deinit();
         self.reset_for_pool();

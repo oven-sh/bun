@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("JSTerminated")]
     JSTerminated,
@@ -148,7 +148,13 @@ impl From<crate::error_code::ErrorCode> for Error {
 
 impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
-        (*self).name().as_bytes()
+        Error::name(self).as_bytes()
+    }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
+        match self {
+            Self::Install(e) => bun_core::output::ErrName::as_sys_err_info(e),
+            _ => None,
+        }
     }
 }
 

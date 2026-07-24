@@ -1995,10 +1995,10 @@ fn create_if_different(s: &bun_core::String, other: &[u8]) -> bun_core::String {
 
 fn to_jsc_fetch_error(err: &crate::Error) -> bun_jsc::CrateError {
     match err {
-        crate::Error::Jsc(e) => *e,
+        crate::Error::Jsc(e) => e.clone(),
         crate::Error::Bundler(e) => (*e).into(),
         crate::Error::Resolver(e) => (*e).into(),
-        crate::Error::Install(e) => (*e).into(),
+        crate::Error::Install(e) => e.clone().into(),
         crate::Error::Core(e) => (*e).into(),
         crate::Error::Sys(e) => (*e).into(),
         crate::Error::Alloc(e) => (*e).into(),

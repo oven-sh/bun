@@ -153,7 +153,7 @@ impl UntrustedCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) if e.errno() == Some(bun_errno::SystemErrno::ENOENT) => continue,
                     Err(e) => return Err(e.into()),
                 };
 
@@ -350,7 +350,7 @@ impl TrustCommand {
                 .map_err(crate::Error::from)
             {
                 Ok(d) => d,
-                Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => {
+                Err(e) if e.errno() == Some(bun_errno::SystemErrno::ENOENT) => {
                     node_modules_path.set_length(nm_saved);
                     continue;
                 }
@@ -387,7 +387,7 @@ impl TrustCommand {
 
                 let maybe_scripts_list = match result {
                     Ok(v) => v,
-                    Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => continue,
+                    Err(e) if e.errno() == Some(bun_errno::SystemErrno::ENOENT) => continue,
                     Err(e) => return Err(e.into()),
                 };
 

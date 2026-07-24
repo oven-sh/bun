@@ -1321,6 +1321,7 @@ pub(crate) fn get_workspace_filters(
 /// manager.log.hasErrors() is checked.
 #[cold]
 #[inline(never)]
+#[allow(clippy::needless_pass_by_value)]
 fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: crate::Error) {
     // reshaped for borrowck — capture the realname slice before
     // taking `&mut` on `manager.log`.
@@ -1373,22 +1374,22 @@ fn report_lockfile_load_error(
     if log_level != Options::LogLevel::Silent {
         match cause.step {
             lockfile::LoadStep::OpenFile => Output::err(
-                cause.value,
+                &cause.value,
                 "failed to open lockfile: '{}'",
                 format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
             ),
             lockfile::LoadStep::ParseFile => Output::err(
-                cause.value,
+                &cause.value,
                 "failed to parse lockfile: '{}'",
                 format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
             ),
             lockfile::LoadStep::ReadFile => Output::err(
-                cause.value,
+                &cause.value,
                 "failed to read lockfile: '{}'",
                 format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
             ),
             lockfile::LoadStep::Migrating => Output::err(
-                cause.value,
+                &cause.value,
                 "failed to migrate lockfile: '{}'",
                 format_args!("{}", bstr::BStr::new(&cause.lockfile_path)),
             ),

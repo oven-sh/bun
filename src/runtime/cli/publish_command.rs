@@ -479,7 +479,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             LoadResult::Err(cause) => 'err: {
                 match cause.step {
                     LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                        if cause.value.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                             break 'err None;
                         }
                         Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));

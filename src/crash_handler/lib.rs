@@ -1365,6 +1365,26 @@ mod draft {
         }
 
         let mut show_trace = Environment::SHOW_CRASH_TRACE;
+
+        // A `bun_sys::Error` that bubbled up unhandled carries the
+        // path/syscall/dest of the failing call. Print that directly instead
+        // of a bare errno name so users can see which file was involved.
+        if let Some(info) = err.as_sys_err_info() {
+            match info.tag_name {
+                // These get the same fd-limit advice as the bare-name path
+                // below; fall through so the helpful text is kept.
+                b"EMFILE" | b"ENFILE" => {}
+                _ => {
+                    bun_core::output::err_sys(&info);
+                    if Environment::SHOW_CRASH_TRACE {
+                        VERBOSE_ERROR_TRACE.store(true, Ordering::Relaxed);
+                        handle_error_return_trace_extra::<true>(info.tag_name, error_return_trace);
+                    }
+                    Global::exit(1);
+                }
+            }
+        }
+
         let name: &[u8] = err.name();
 
         if name == b"OutOfMemory" {
@@ -1516,12 +1536,6 @@ mod draft {
                 );
                 show_trace = true;
             }
-        } else if matches!(name, b"ENOENT" | b"FileNotFound") {
-            Output::err(
-                "ENOENT",
-                "Bun could not find a file, and the code that produces this error is missing a better error.",
-                (),
-            );
         } else if name == b"MissingPackageJSON" {
             err_generic!("Bun could not find a package.json file to install from");
             bun_core::note!("Run \"bun init\" to initialize a project");

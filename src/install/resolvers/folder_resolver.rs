@@ -19,7 +19,7 @@ use crate::package_manager_real::PackageManager;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::versioned_url::VersionedURLType;
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub enum FolderResolution {
     PackageId(PackageID),
     Err(crate::Error),
@@ -431,7 +431,9 @@ pub fn get_or_put(
     // different path whose hash collides must not reuse this resolution. On a
     // collision, resolve fresh without caching so the first path's entry stays.
     let hash_collision = match manager.folders.get(&abs_hash) {
-        Some(existing) if *existing.abs_path == *abs.as_bytes() => return existing.resolution,
+        Some(existing) if *existing.abs_path == *abs.as_bytes() => {
+            return existing.resolution.clone();
+        }
         Some(_) => true,
         None => false,
     };
@@ -494,7 +496,7 @@ pub fn get_or_put(
     let package = match result {
         Ok(p) => p,
         Err(err) => {
-            let stored = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+            let stored = if err.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                 FolderResolution::Err(crate::Error::MissingPackageJSON)
             } else {
                 FolderResolution::Err(err)
@@ -504,7 +506,7 @@ pub fn get_or_put(
                     abs_hash,
                     Entry {
                         abs_path: abs.as_bytes().into(),
-                        resolution: stored,
+                        resolution: stored.clone(),
                     },
                 );
             }

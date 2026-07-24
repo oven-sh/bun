@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("FileNotFound")]
     FileNotFound,
@@ -235,6 +235,10 @@ pub enum Error {
 
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
+    /// A `bun_sys::Error` with its path/syscall/dest preserved, so the CLI
+    /// fallback can report which file/syscall failed instead of a bare errno.
+    #[error(transparent)]
+    SysErr(Box<bun_sys::Error>),
     #[error(transparent)]
     Alloc(#[from] bun_alloc::AllocError),
     #[error(transparent)]
@@ -266,6 +270,16 @@ pub enum Error {
 }
 
 impl Error {
+    /// The OS errno this error represents, whether it arrived as a bare
+    /// `Sys(errno)` or a rich `SysErr` with path/syscall context.
+    pub fn errno(&self) -> Option<bun_errno::SystemErrno> {
+        match self {
+            Self::Sys(e) => Some(*e),
+            Self::SysErr(e) => e.resolve_system_errno(),
+            _ => None,
+        }
+    }
+
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
@@ -408,6 +422,10 @@ impl Error {
             Self::InvalidBinCount => "InvalidBinCount",
             Self::InvalidBinContent => "InvalidBinContent",
             Self::Sys(e) => <&'static str>::from(e),
+            Self::SysErr(e) => e
+                .get_error_code_tag_name()
+                .map(|(n, _)| n)
+                .unwrap_or("UNKNOWN"),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
             Self::Resolver(e) => e.name(),
@@ -430,11 +448,25 @@ impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         Error::name(self).as_bytes()
     }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
+        match self {
+            Self::SysErr(e) => bun_core::output::ErrName::as_sys_err_info(&**e),
+            _ => None,
+        }
+    }
+}
+impl bun_core::output::ErrName for &Error {
+    fn name(&self) -> &[u8] {
+        Error::name(self).as_bytes()
+    }
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
+        (**self).as_sys_err_info()
+    }
 }
 
 impl From<bun_sys::Error> for Error {
     fn from(e: bun_sys::Error) -> Self {
-        Self::Sys(e.into())
+        Self::SysErr(Box::new(e))
     }
 }
 

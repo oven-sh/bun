@@ -942,7 +942,7 @@ impl<'a> Linker<'a> {
                 Ok(f) => f,
                 Err(err) => {
                     let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
+                    if err.errno() != Some(bun_errno::SystemErrno::EISDIR) {
                         // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
@@ -1154,7 +1154,7 @@ impl<'a> Linker<'a> {
                 Ok(f) => break 'bunx_file f,
                 Err(err) => {
                     let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
+                    if err.errno() != Some(bun_errno::SystemErrno::ENOENT) || global {
                         self.err = Some(err);
                         return;
                     }
@@ -1253,7 +1253,7 @@ impl<'a> Linker<'a> {
             crate::windows_shim::embedded_executable_data(),
         ) {
             let err: crate::Error = err.into();
-            if err == crate::Error::Sys(bun_errno::SystemErrno::EBUSY) {
+            if err.errno() == Some(bun_errno::SystemErrno::EBUSY) {
                 // exe is most likely running. bunx file has already been updated, ignore error
                 return;
             }
@@ -1279,7 +1279,7 @@ impl<'a> Linker<'a> {
             sys::Result::Err(err) => {
                 if err.get_errno() != sys::Errno::EEXIST && err.get_errno() != sys::Errno::ENOENT {
                     self.err = Some(err.into());
-                    Self::chmod_on_ok(self.err, abs_target);
+                    Self::chmod_on_ok(&self.err, abs_target);
                     return;
                 }
 
@@ -1287,7 +1287,7 @@ impl<'a> Linker<'a> {
                 if err.get_errno() == sys::Errno::ENOENT {
                     if global {
                         self.err = Some(err.into());
-                        Self::chmod_on_ok(self.err, abs_target);
+                        Self::chmod_on_ok(&self.err, abs_target);
                         return;
                     }
 
@@ -1302,11 +1302,11 @@ impl<'a> Linker<'a> {
                         sys::Result::Err(real_error) => {
                             // It was just created, no need to delete destination and symlink again
                             self.err = Some(real_error.into());
-                            Self::chmod_on_ok(self.err, abs_target);
+                            Self::chmod_on_ok(&self.err, abs_target);
                             return;
                         }
                         sys::Result::Ok(()) => {
-                            Self::chmod_on_ok(self.err, abs_target);
+                            Self::chmod_on_ok(&self.err, abs_target);
                             return;
                         }
                     }
@@ -1316,7 +1316,7 @@ impl<'a> Linker<'a> {
                 debug_assert!(err.get_errno() == sys::Errno::EEXIST);
             }
             sys::Result::Ok(()) => {
-                Self::chmod_on_ok(self.err, abs_target);
+                Self::chmod_on_ok(&self.err, abs_target);
                 return;
             }
         }
@@ -1326,11 +1326,11 @@ impl<'a> Linker<'a> {
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.into());
         }
-        Self::chmod_on_ok(self.err, abs_target);
+        Self::chmod_on_ok(&self.err, abs_target);
     }
 
     #[cfg(not(windows))]
-    fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
+    fn chmod_on_ok(err: &Option<Error>, abs_target: &ZStr) {
         // hoisted from `defer` block in create_symlink
         if err.is_none() {
             let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);

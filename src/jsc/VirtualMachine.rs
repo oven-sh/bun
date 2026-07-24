@@ -2456,6 +2456,7 @@ impl VirtualMachine {
 ///
 /// Free function; takes `&JSGlobalObject` directly rather
 /// than `&mut VirtualMachine` because the body never touches VM state.
+#[allow(clippy::needless_pass_by_value)]
 pub fn process_fetch_log(
     global_this: &JSGlobalObject,
     specifier: bun_core::String,

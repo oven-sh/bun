@@ -1681,7 +1681,7 @@ impl Template {
                 )
             };
             if let Err(err) = result {
-                if matches!(err, crate::Error::Sys(bun_errno::SystemErrno::EEXIST)) {
+                if err.errno() == Some(bun_errno::SystemErrno::EEXIST) {
                     bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",
                         bstr::BStr::new(path),

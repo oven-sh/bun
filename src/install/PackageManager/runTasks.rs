@@ -963,9 +963,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 };
                 if task.status == Task::Status::Fail {
+                    let err = task.err.take().unwrap_or(crate::Error::Failed);
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
-                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
@@ -1065,7 +1065,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
+                    let err = task.err.take().unwrap_or(crate::Error::TarballFailedToExtract);
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
                     // is symmetric with the HTTP 4xx/5xx branch above: mark the
@@ -1246,6 +1246,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             }
             Task::Tag::GitClone => {
+                let task_err = task.err.take();
                 let clone = task.request_git_clone();
                 let repo_fd: bun_sys::Fd = task.data_git_clone();
                 let name = clone.name.slice();
@@ -1254,7 +1255,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.git_repositories.insert(task.id, repo_fd);
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(crate::Error::Failed);
+                    let err = task_err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, url);
@@ -1293,7 +1294,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     checkout_id,
                                     name,
                                     res,
-                                    err,
+                                    err.clone(),
                                     url,
                                 );
                             }
@@ -1422,7 +1423,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or(crate::Error::Failed);
+                    let err = task.err.take().unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are

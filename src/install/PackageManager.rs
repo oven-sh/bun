@@ -861,6 +861,7 @@ impl PackageManager {
         self.env().get_tls_reject_unauthorized()
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn fail_root_resolution(
         &mut self,
         dependency: &Dependency,
@@ -2205,9 +2206,9 @@ pub(crate) fn init_with_runtime(
             *INIT_ERROR.lock() = Some(err);
         }
     });
-    match *INIT_ERROR.lock() {
+    match INIT_ERROR.lock().as_ref() {
         None => Ok(get()),
-        Some(code) => Err(code),
+        Some(code) => Err(code.clone()),
     }
 }
 

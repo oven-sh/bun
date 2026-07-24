@@ -23,7 +23,7 @@ const TODO_ERRNO: Int = Int::MAX - 1;
 
 pub(crate) type Int = u16;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error {
     pub errno: Int,
     pub fd: Fd,
@@ -287,7 +287,7 @@ impl Error {
     /// Decode `self.errno` (+ `from_libuv` on Windows) into a validated `SystemErrno`.
     /// Shared by `name()` / `get_error_code_tag_name()`; a fallible discriminant lookup.
     #[inline]
-    fn resolve_system_errno(&self) -> Option<SystemErrno> {
+    pub fn resolve_system_errno(&self) -> Option<SystemErrno> {
         #[cfg(windows)]
         {
             if self.from_libuv {
@@ -480,6 +480,8 @@ impl Error {
     }
 }
 
+impl std::error::Error for Error {}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // We want to reuse the code from SystemError for formatting.
@@ -509,11 +511,14 @@ impl bun_core::output::ErrName for Error {
     fn name(&self) -> &[u8] {
         Error::name(self)
     }
-    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
         Some(bun_core::output::SysErrInfo {
             tag_name: Error::name(self),
             errno: i32::from(self.errno),
             syscall: <&'static str>::from(self.syscall),
+            msg: self.msg(),
+            path: &self.path,
+            dest: &self.dest,
         })
     }
 }
@@ -523,7 +528,7 @@ impl bun_core::output::ErrName for &Error {
     fn name(&self) -> &[u8] {
         Error::name(self)
     }
-    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo> {
+    fn as_sys_err_info(&self) -> Option<bun_core::output::SysErrInfo<'_>> {
         (**self).as_sys_err_info()
     }
 }

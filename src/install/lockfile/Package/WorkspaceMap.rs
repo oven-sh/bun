@@ -235,9 +235,9 @@ impl WorkspaceMap {
                 match process_workspace_name(json_cache, abs_package_json_path, log) {
                     Ok(e) => e,
                     Err(err) => {
-                        if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
-                            || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
-                            || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                        if err.errno() == Some(bun_errno::SystemErrno::EISDIR)
+                            || err.errno() == Some(bun_errno::SystemErrno::EPERM)
+                            || err.errno() == Some(bun_errno::SystemErrno::ENOENT)
                         {
                             let _ = log.add_error_fmt(
                                 Some(source),
@@ -454,7 +454,7 @@ impl WorkspaceMap {
                         Ok(e) => e,
                         Err(err) => {
                             let entry_base: &[u8] = path::basename(matched_path);
-                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
+                            if err.errno() == Some(bun_errno::SystemErrno::ENOENT) {
                                 continue;
                             } else if err == crate::Error::MissingPackageName {
                                 let _ = log.add_error_fmt(

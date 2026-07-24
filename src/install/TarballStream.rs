@@ -297,6 +297,7 @@ impl TarballStream {
             if is_last {
                 (*this).closed = true;
             }
+            let had_err = err.is_some();
             if let Some(e) = err {
                 (*this).http_err = Some(e);
             }
@@ -306,7 +307,7 @@ impl TarballStream {
             // Batch sub-threshold chunks so each one doesn't re-wake a worker
             // once the drain has yielded; `is_last`/`err` always schedule so
             // `finish()` never waits on the threshold.
-            if is_last || err.is_some() || pending_len >= Self::drain_threshold() {
+            if is_last || had_err || pending_len >= Self::drain_threshold() {
                 Self::schedule_drain(this);
             }
         }
@@ -414,7 +415,7 @@ impl TarballStream {
                 // next `notify` dereference a dead pointer.
                 (*this).pending.clear();
                 let closed = (*this).closed;
-                let http_err = (*this).http_err;
+                let http_err = (*this).http_err.take();
                 (*this).mutex.unlock();
                 // A transport error that arrives *after* libarchive reached
                 // EOF (e.g. the server RSTs the connection once the last
@@ -1084,7 +1085,7 @@ impl TarballStream {
                 extract: ManuallyDrop::new(Default::default()),
             };
 
-            if let Some(err) = self.fail {
+            if let Some(err) = self.fail.take() {
                 if self.invalid_name {
                     (*task).log.add_error_fmt(
                         None,

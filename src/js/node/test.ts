@@ -4206,22 +4206,47 @@ function addSuite(
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
           }
           function settleSuiteAfterHooks() {
-            // Settle from a bun:test afterAll registered after the body ran
-            // (FIFO puts it behind the suite's own after() hooks) so the
-            // suite's verdict accounts for hook failures, like the
-            // standalone twin's before -> children -> after -> settle order.
+            // Settle from a bun:test afterAll so it fires at the suite's
+            // execution turn. The suite's own after() hooks run here (not via
+            // separate bun:test afterAlls) so a post-await after() in an async
+            // describe body still runs before the verdict is emitted,
+            // matching the standalone twin's before -> children -> after ->
+            // settle order.
             if (!runEventsEnabled()) {
               noteSuiteCollectionSettled(suiteNode);
               return;
             }
             const { afterAll } = bunTest();
             afterAll(function settleSuite(done: (error?: unknown) => void) {
-              noteSuiteCollectionSettled(suiteNode);
               // Settle asynchronously like the other hook wrappers so
               // bun:test's native hook driver is not re-entered from its own
               // callback (on Windows a sync return from a nested describe's
               // last afterAll does not advance to the outer's afterAll).
-              Promise.resolve(undefined).then(done, done);
+              function settleAndDone() {
+                noteSuiteCollectionSettled(suiteNode);
+                Promise.resolve(undefined).then(done, done);
+              }
+              const hooks = suiteNode.hooks.after;
+              // An ancestor's before() already failed: node skips nested after
+              // hooks (the failing suite's OWN after runs from its own settle).
+              if (hooks.length === 0 || hasHookFailedAncestorSuite(suiteNode)) {
+                settleAndDone();
+                return;
+              }
+              const isTodo = suiteNode.todoFlag || hasTodoAncestor(suiteNode);
+              async function runSuiteAfterHooks() {
+                for (const hook of hooks) {
+                  try {
+                    await runHook(hook, suiteNode, suiteNode.getSuiteCtx(), "after");
+                  } catch (err) {
+                    if (!isTodo) {
+                      suiteNode.childrenFailed++;
+                      suiteNode.error ??= err;
+                    }
+                  }
+                }
+              }
+              runSuiteAfterHooks().then(settleAndDone, settleAndDone);
             });
           }
           // Records the body failure so maybeCompleteSuite emits the suite's
@@ -4424,34 +4449,20 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   if (runChildReporterEnabled && (owner.skipped || hasSkippedAncestorSuite(owner))) return;
+  // In run-child mode a collection suite's after() hooks are run by its
+  // settleSuite afterAll (registered before an async body's continuation),
+  // not as separate bun:test afterAlls — so a post-await after() still runs
+  // before the suite's verdict is emitted.
+  if (runChildReporterEnabled && owner.isSuite && owner.parent !== undefined) {
+    owner.hooks.after.push(hook);
+    return;
+  }
   const { afterAll } = bunTest();
   function runAfterAllHook(done: (error?: unknown) => void) {
-    // An ancestor's before() already failed: node skips nested after hooks
-    // too (the suite's OWN after still runs; hasHookFailedAncestorSuite walks
-    // from owner.parent).
-    if (runChildReporterEnabled && hasHookFailedAncestorSuite(owner)) {
-      // Settle asynchronously like every other done path (see runBeforeAllHook).
-      Promise.resolve(undefined).then(done, done);
-      return;
-    }
     function onHookDone() {
       done();
     }
     function onHookFailed(err: unknown) {
-      // A todo suite's results are advisory in node: its failing after hook
-      // must not fail the run (mirrors before()'s guard above).
-      if (runChildReporterEnabled && (owner.todoFlag || hasTodoAncestor(owner))) {
-        done();
-        return;
-      }
-      if (runChildReporterEnabled && owner.parent !== undefined) {
-        // Attribute to the suite; its deferred settle emits the hookFailed
-        // verdict after this hook returns.
-        owner.childrenFailed++;
-        owner.error ??= err as Error;
-        done();
-        return;
-      }
       done(err ?? new Error("after hook failed"));
     }
     Promise.resolve(runHook(hook, owner, hookArgFor(owner), "after")).then(onHookDone, onHookFailed);

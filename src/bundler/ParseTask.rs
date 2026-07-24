@@ -2728,6 +2728,10 @@ pub mod parse_worker {
                 }
             }
 
+            // `entry` must be written back into `this.stage` on every path before `break 'value`:
+            // `Success.source.contents` borrows its `Contents::Owned` buffer via the
+            // arena-erased `StoreStr` path (see `run_with_source_code`), so dropping the local
+            // would free the buffer underneath the borrowed source.
             let mut entry =
                 match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
                     ParseTaskStage::NeedsParse(e) => e,

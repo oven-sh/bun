@@ -991,7 +991,6 @@ pub(super) fn build_with_vm(
 
         let route = router.route_ptr(route_index);
         let main_file_route_index = route.file_page.unwrap();
-        // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         pattern.prepend_part(route.part);

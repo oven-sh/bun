@@ -4368,7 +4368,6 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value; restored below.
         let body_snapshot = body_out::take_list(body);

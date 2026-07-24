@@ -1235,4 +1235,38 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
   });
+
+  test("a failed link() leaves already-linked dependencies linked and evaluable", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const leaf = new vm.SourceTextModule("export const other = 1;", { identifier: "leaf" });
+      const root = new vm.SourceTextModule("import { nope } from 'l';", { identifier: "root" });
+      try {
+        await root.link(() => leaf);
+        console.log("link did not throw");
+      } catch (e) {
+        console.log("link threw " + e.constructor.name);
+      }
+      console.log("statuses " + root.status + " " + leaf.status);
+      try {
+        await leaf.evaluate();
+        console.log("leaf evaluated");
+      } catch (e) {
+        console.log("leaf.evaluate rejected " + e.code);
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["link threw SyntaxError", "statuses unlinked linked", "leaf evaluated"]);
+    expect(exitCode).toBe(0);
+  });
 });

@@ -707,10 +707,36 @@ bool NodeVMModule::hasAsyncGraph() const
     return false;
 }
 
-// After record->link() succeeds, every reachable record in the graph is
-// linked, but only the root wrapper's status was updated. Mirror the record
-// state onto the dependency wrappers (Node's module status reflects the V8
-// record status, so dependencies read "linked" after the root instantiates).
+// Whether this module's existing record has reached LINKED (or beyond). A
+// source-text record tracks this via CyclicModuleRecord::Status; a synthetic
+// record is fully linked the moment it is created.
+static bool recordReachedLinked(NodeVMModule* module)
+{
+    if (auto* sourceText = dynamicDowncast<NodeVMSourceTextModule>(module)) {
+        JSC::JSModuleRecord* record = sourceText->moduleRecordIfExists();
+        if (!record)
+            return false;
+        using RecordStatus = JSC::CyclicModuleRecord::Status;
+        switch (record->status()) {
+        case RecordStatus::Linked:
+        case RecordStatus::Evaluating:
+        case RecordStatus::EvaluatingAsync:
+        case RecordStatus::Evaluated:
+            return true;
+        default:
+            return false;
+        }
+    }
+    if (auto* synthetic = dynamicDowncast<NodeVMSyntheticModule>(module))
+        return synthetic->hasModuleRecord();
+    return false;
+}
+
+// Mirror the record status onto the dependency wrappers (Node's module status
+// reflects the V8 record status). Runs whether or not record->link() threw: per
+// the ES Link() algorithm, a dependency whose own instantiation already
+// completed stays LINKED even when a later importer aborts linking, and only
+// modules still on the linking stack revert to UNLINKED.
 void NodeVMModule::propagateLinked()
 {
     WTF::HashSet<NodeVMModule*> visited;
@@ -722,7 +748,7 @@ void NodeVMModule::propagateLinked()
         if (!visited.add(module).isNewEntry)
             continue;
 
-        if (module->status() == Status::Unlinked)
+        if (module->status() == Status::Unlinked && recordReachedLinked(module))
             module->status(Status::Linked);
 
         for (const auto& dependency : module->m_resolveCache.values()) {

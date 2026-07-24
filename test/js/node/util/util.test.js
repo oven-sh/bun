@@ -512,6 +512,53 @@ describe("util", () => {
       });
     }
   });
+
+  describe("inspect numericSeparator", () => {
+    const sep = v => util.inspect(v, { numericSeparator: true });
+
+    it("formats negative fractional numbers (#23098)", () => {
+      // Previously produced "0..12" and dropped the sign.
+      expect(sep([0.1234, -0.12, -0.123, -0.1234, -1.234])).toBe("[ 0.123_4, -0.12, -0.123, -0.123_4, -1.234 ]");
+    });
+
+    it("matches Node for each negative fraction", () => {
+      expect(sep(-0.12)).toBe("-0.12");
+      expect(sep(-0.123)).toBe("-0.123");
+      expect(sep(-0.1234)).toBe("-0.123_4");
+      expect(sep(-1.234)).toBe("-1.234");
+      expect(sep(-12345.6789)).toBe("-12_345.678_9");
+    });
+
+    it("keeps the sign on -0", () => {
+      expect(sep(-0)).toBe("-0");
+      expect(sep(0)).toBe("0");
+    });
+
+    it("groups large integers and fractions", () => {
+      expect(sep(1234567)).toBe("1_234_567");
+      expect(sep(-1234567)).toBe("-1_234_567");
+      expect(sep(123456.789)).toBe("123_456.789");
+      expect(sep(0.1234)).toBe("0.123_4");
+    });
+
+    it("leaves exponent-form numbers intact", () => {
+      // The old integer-length split corrupted these: 1e-7 became "0.-7",
+      // -1e-7 lost its sign as "0.e-7", and 1.23456e-7 became "0.234_56e_-7".
+      expect(sep(1e-7)).toBe("1e-7");
+      expect(sep(-1e-7)).toBe("-1e-7");
+      expect(sep(2e-7)).toBe("2e-7");
+      expect(sep(1.23456e-7)).toBe("1.23456e-7");
+      expect(sep(-0.5)).toBe("-0.5");
+      // Integers large enough to stringify in exponent form take the same path.
+      expect(sep(1234567891234567891234)).toBe("1.234567891234568e+21");
+    });
+
+    it("handles non-finite values", () => {
+      expect(sep(NaN)).toBe("NaN");
+      expect(sep(Infinity)).toBe("Infinity");
+      expect(sep(-Infinity)).toBe("-Infinity");
+    });
+  });
 });
 
 describe("util.parseEnv", () => {

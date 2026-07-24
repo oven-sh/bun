@@ -1,6 +1,6 @@
 import { randomUUIDv7, SQL } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1118,6 +1118,53 @@ describe("Transactions", () => {
     expect(accounts[1].balance).toBe(600);
   });
 
+  test("savepoint returning an array of queries resolves them before release", async () => {
+    const result = await sql.begin(async tx => {
+      return await tx.savepoint(async sp => [
+        sp`INSERT INTO accounts VALUES (3, 100) RETURNING id`,
+        sp`INSERT INTO accounts VALUES (4, 200) RETURNING id`,
+      ]);
+    });
+    expect(result).toEqual([[{ id: 3 }], [{ id: 4 }]]);
+
+    const accounts = await sql`SELECT id, balance FROM accounts ORDER BY id`;
+    expect(accounts).toEqual([
+      { id: 1, balance: 1000 },
+      { id: 2, balance: 500 },
+      { id: 3, balance: 100 },
+      { id: 4, balance: 200 },
+    ]);
+  });
+
+  test("savepoint returning an array of queries rolls back atomically on failure", async () => {
+    let caught: any;
+    await sql.begin(async tx => {
+      try {
+        await tx.savepoint(async sp => [
+          sp`INSERT INTO accounts VALUES (3, 100)`,
+          sp`INSERT INTO accounts VALUES (1, 999)`,
+        ]);
+      } catch (e) {
+        caught = e;
+      }
+      await tx`INSERT INTO accounts VALUES (5, 50)`;
+    });
+
+    // The sibling insert from the failed savepoint must not survive; the outer
+    // transaction's own write after the savepoint must still commit. The real
+    // statement error must be surfaced, not "no such savepoint".
+    const accounts = await sql`SELECT id, balance FROM accounts ORDER BY id`;
+    expect({ code: caught?.code, message: String(caught), accounts }).toEqual({
+      code: "SQLITE_CONSTRAINT_PRIMARYKEY",
+      message: "SQLiteError: UNIQUE constraint failed: accounts.id",
+      accounts: [
+        { id: 1, balance: 1000 },
+        { id: 2, balance: 500 },
+        { id: 5, balance: 50 },
+      ],
+    });
+  });
+
   // SQLite doesn't support read-only transactions via BEGIN syntax
   // It only supports DEFERRED (default), IMMEDIATE, and EXCLUSIVE
   test("read-only transactions throw appropriate error", async () => {
@@ -2014,7 +2061,7 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

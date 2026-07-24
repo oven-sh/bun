@@ -833,13 +833,17 @@ impl TimerObjectInternals {
             unsafe { (*state).timer.remove(self.event_loop_timer()) };
         }
 
-        // (c) `vm.timer.maps.get(kind).orderedRemove(id)` if
+        // (c) `vm.timer.maps.get(kind).swapRemove(id)` if
         //     `has_accessed_primitive` — drops the i32→*mut EventLoopTimer
-        //     entry minted by `toPrimitive`.
+        //     entry minted by `toPrimitive`. Swap-remove: the id map is only
+        //     ever keyed into, never iterated in order, and `deinit` runs for
+        //     every id-accessed timer a GC sweep collects, so the ordered
+        //     remove's O(n) shift + index rebuild here was O(n²) across a
+        //     sweep.
         if self.flags.get().has_accessed_primitive() {
             // SAFETY: as above — fresh `&mut` to `.timer.maps` for this call.
             let map = unsafe { (*state).timer.maps.get(kind) };
-            if map.remove(&self.id).is_some() {
+            if map.swap_remove(&self.id) {
                 // If this map got
                 // large, shrink it back down. Keys are i32, values are one
                 // pointer (~12 bytes per entry), so 21,000 timers accessed by
@@ -858,7 +862,7 @@ impl TimerObjectInternals {
                 // too, or `remove_timer_by_id` would hand out a dangling
                 // `*mut EventLoopTimer` after the parent is freed.
                 // SAFETY: as above.
-                let _ = unsafe { (*state).timer.maps.set_timeout.remove(&self.id) };
+                unsafe { (*state).timer.maps.set_timeout.swap_remove(&self.id) };
             }
         }
 

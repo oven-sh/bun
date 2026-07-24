@@ -58,7 +58,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     let binding = st.decls.slice()[i].binding;
                     let value = st.decls.slice()[i].value;
                     let Some(value) = value else {
-                        *st.decls.mut_(new_len) = G::Decl {
+                        st.decls[new_len] = G::Decl {
                             binding,
                             value: None,
                         };
@@ -87,7 +87,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                     ..Default::default()
                                 });
                             } else {
-                                *st.decls.mut_(new_len) = G::Decl {
+                                st.decls[new_len] = G::Decl {
                                     binding,
                                     value: Some(value),
                                 };
@@ -97,7 +97,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                         }
 
                         _ => {
-                            *st.decls.mut_(new_len) = G::Decl {
+                            st.decls[new_len] = G::Decl {
                                 binding,
                                 value: Some(value),
                             };

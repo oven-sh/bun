@@ -840,7 +840,6 @@ pub(super) struct Repl<'a> {
     is_tty: bool,
     use_colors: bool,
     terminal_width: u16,
-    terminal_height: u16,
     ctrl_c_pressed: bool,
 
     // Buffered stdin
@@ -880,7 +879,6 @@ impl<'a> Repl<'a> {
             is_tty: false,
             use_colors: false,
             terminal_width: 80,
-            terminal_height: 24,
             ctrl_c_pressed: false,
             stdin_buf: [0u8; 256],
             stdin_buf_start: 0,
@@ -927,7 +925,6 @@ impl<'a> Repl<'a> {
         let ts = Output::TERMINAL_SIZE.load();
         if ts.col > 0 {
             self.terminal_width = ts.col;
-            self.terminal_height = ts.row;
         }
 
         // Enable raw mode

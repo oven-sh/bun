@@ -53,9 +53,3 @@ impl AuthSwitchRequest {
         Err(crate::Error::InvalidAuthSwitchRequest)
     }
 }
-
-impl AuthSwitchRequest {
-    pub fn decode<Context: ReaderContext>(&mut self, context: Context) -> crate::Result<()> {
-        self.decode_internal(NewReader { wrapped: context })
-    }
-}

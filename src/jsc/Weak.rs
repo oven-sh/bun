@@ -78,7 +78,6 @@ unsafe extern "C" {
 
 pub struct Weak<T> {
     r#ref: Option<NonNull<WeakImpl>>,
-    global_this: Option<crate::GlobalRef>,
     _ctx: PhantomData<*mut T>,
 }
 
@@ -86,7 +85,6 @@ impl<T> Default for Weak<T> {
     fn default() -> Self {
         Self {
             r#ref: None,
-            global_this: None,
             _ctx: PhantomData,
         }
     }
@@ -95,15 +93,6 @@ impl<T> Default for Weak<T> {
 impl<T> Weak<T> {
     pub fn init() -> Self {
         Self::default()
-    }
-
-    pub fn call(&mut self, args: &[JSValue]) -> JSValue {
-        let Some(function) = self.try_swap() else {
-            return JSValue::ZERO;
-        };
-        function
-            .call(&self.global_this.unwrap(), JSValue::UNDEFINED, args)
-            .unwrap_or(JSValue::ZERO)
     }
 
     pub fn create(
@@ -120,14 +109,12 @@ impl<T> Weak<T> {
                     ref_type,
                     Some(NonNull::from(ctx).cast::<c_void>()),
                 )),
-                global_this: Some(global_this.into()),
                 _ctx: PhantomData,
             };
         }
 
         Self {
             r#ref: None,
-            global_this: Some(global_this.into()),
             _ctx: PhantomData,
         }
     }
@@ -142,33 +129,11 @@ impl<T> Weak<T> {
         Some(result)
     }
 
-    pub fn swap(&mut self) -> JSValue {
-        let Some(r#ref) = self.r#ref else {
-            return JSValue::ZERO;
-        };
-        let result = WeakImpl::get(r#ref);
-        if result.is_empty() {
-            return JSValue::ZERO;
-        }
-
-        WeakImpl::clear(r#ref);
-        result
-    }
-
     pub fn has(&self) -> bool {
         let Some(r#ref) = self.r#ref else {
             return false;
         };
         !WeakImpl::get(r#ref).is_empty()
-    }
-
-    pub fn try_swap(&mut self) -> Option<JSValue> {
-        let result = self.swap();
-        if result.is_empty() {
-            return None;
-        }
-
-        Some(result)
     }
 
     pub fn clear(&mut self) {

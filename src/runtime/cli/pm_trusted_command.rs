@@ -214,9 +214,6 @@ struct ScriptInfo {
     skip: bool,
 }
 
-// structs in impl blocks — hoisted to module level.
-pub struct TrustCommandSorter;
-
 impl TrustCommand {
     fn error_expected_args() -> ! {
         Output::err_generic("expected package names(s) or --all", ());

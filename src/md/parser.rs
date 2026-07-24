@@ -17,14 +17,13 @@ use bun_core::StackCheck;
 use super::helpers;
 use super::html_renderer::HtmlRenderer;
 use super::types::{
-    Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
-    TABLE_MAXCOLCOUNT, VerbatimLine,
+    Align, BlockType, Container, Flags, OFF, Renderer, TABLE_MAXCOLCOUNT, VerbatimLine,
 };
 use crate::RenderOptions;
 
 // Rust has no struct-scoped type
 // aliases, so these live at module scope as `parser::EmphDelim` etc.
-pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
+pub use super::inlines::{EmphDelim, HtmlScanMemo};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
@@ -43,13 +42,11 @@ pub struct Parser<'a> {
 
     // Code indent offset: 4 normally, maxInt if no_indented_code_blocks
     pub code_indent_offset: u32,
-    pub doc_ends_with_newline: bool,
 
     // Mark character map — bitset of characters that need special handling
     pub mark_char_map: MarkCharMap,
 
     // Dynamic arrays
-    pub marks: Vec<Mark>,
     pub containers: Vec<Container>,
     // 4-byte alignment is
     // load-bearing for the `BlockHeader` reinterpretation in
@@ -78,22 +75,12 @@ pub struct Parser<'a> {
     pub current_block: Option<usize>,
     pub current_block_lines: Vec<VerbatimLine>,
 
-    // Opener stacks
-    pub opener_stacks: [OpenerStack; NUM_OPENER_STACKS],
-
-    // Linked lists through marks
-    pub unresolved_link_head: i32,
-    pub unresolved_link_tail: i32,
-    pub table_cell_boundaries_head: i32,
-    pub table_cell_boundaries_tail: i32,
-
     // HTML block tracking
     pub html_block_type: u8,
     // Fenced code block indent
     pub fence_indent: u32,
 
     // Table column alignments
-    pub table_col_count: u32,
     pub table_alignments: [Align; TABLE_MAXCOLCOUNT as usize],
 
     // Ref defs
@@ -296,9 +283,7 @@ impl<'a> Parser<'a> {
             } else {
                 4
             },
-            doc_ends_with_newline: size > 0 && helpers::is_newline(text[(size - 1) as usize]),
             mark_char_map: MarkCharMap::init_empty(),
-            marks: Vec::new(),
             containers: Vec::new(),
             block_bytes: Vec::new(),
             buffer: Vec::new(),
@@ -309,14 +294,8 @@ impl<'a> Parser<'a> {
             n_containers: 0,
             current_block: None,
             current_block_lines: Vec::new(),
-            opener_stacks: [(); NUM_OPENER_STACKS].map(|_| OpenerStack::default()),
-            unresolved_link_head: -1,
-            unresolved_link_tail: -1,
-            table_cell_boundaries_head: -1,
-            table_cell_boundaries_tail: -1,
             html_block_type: 0,
             fence_indent: 0,
-            table_col_count: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
             ref_defs: Vec::new(),
             ref_def_labels: bun_collections::StringSet::new(),

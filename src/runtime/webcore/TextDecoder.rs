@@ -1,7 +1,5 @@
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
-};
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
 use core::cell::Cell;
@@ -222,7 +220,15 @@ impl TextDecoder {
         // `decodeSlice` reading through a stale pointer into memory that may have
         // been freed or reused. Node.js reads options first as well.
         let stream = 'stream: {
-            if arguments.len() > 1 && arguments[1].is_object() {
+            if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+                // https://webidl.spec.whatwg.org/#es-dictionary step 1
+                if !arguments[1].is_object() {
+                    return Err(global_this.throw_invalid_argument_type_value(
+                        b"options",
+                        b"object",
+                        arguments[1],
+                    ));
+                }
                 if let Some(stream_value) =
                     arguments[1].fast_get(global_this, jsc::BuiltinName::stream)?
                 {
@@ -269,30 +275,6 @@ impl TextDecoder {
         } else {
             self.decode_slice::<false>(global_this, input_slice)
         }
-    }
-
-    /// DOMJIT fast path for `decode(typedArray)` called with no options object.
-    /// A no-options decode is flushing per WHATWG Encoding, matching the slow
-    /// path in `decode()` when `stream` is absent.
-    pub fn decode_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        uint8array: &mut JSUint8Array,
-    ) -> JsResult<JSValue> {
-        // Same stream bookkeeping as `decode()`, with `stream` always false.
-        if !self.do_not_flush.replace(false) {
-            self.bom_seen.set(false);
-        }
-        let owned_input;
-        let input_slice: &[u8] =
-            match JSValue::from_cell::<JSUint8Array>(uint8array).as_array_buffer(global_this) {
-                Some(array_buffer) if array_buffer.shared || array_buffer.resizable => {
-                    owned_input = Box::<[u8]>::from(array_buffer.slice());
-                    &owned_input
-                }
-                _ => uint8array.slice(),
-            };
-        self.decode_slice::<true>(global_this, input_slice)
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -633,10 +615,14 @@ impl TextDecoder {
             }
         }
 
-        if !options_value.is_undefined() {
+        if !options_value.is_undefined_or_null() {
+            // https://webidl.spec.whatwg.org/#es-dictionary step 1
             if !options_value.is_object() {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("TextDecoder(options) is invalid",)));
+                return Err(global_this.throw_invalid_argument_type_value(
+                    b"options",
+                    b"object",
+                    options_value,
+                ));
             }
 
             if let Some(fatal) = options_value.get(global_this, b"fatal")? {

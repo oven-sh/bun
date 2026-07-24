@@ -420,7 +420,7 @@ pub mod default_alloc {
 
 pub use max_heap_allocator::MaxHeapAllocator;
 pub use nullable_allocator::NullableAllocator;
-pub use stack_fallback::{ArenaPtr, StackFallback};
+pub use stack_fallback::ArenaPtr;
 
 #[path = "MimallocArena.rs"]
 pub mod mimalloc_arena;

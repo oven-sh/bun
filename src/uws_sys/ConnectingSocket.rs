@@ -1,6 +1,6 @@
 use core::ffi::{c_uint, c_void};
 
-use crate::{Loop, SocketGroup, SocketKind};
+use crate::{SocketGroup, SocketKind};
 
 // `us_connecting_socket_t` — a connect in flight (DNS / non-blocking
 // `connect()` / happy-eyeballs). No I/O is possible yet; on success the loop
@@ -26,13 +26,6 @@ impl ConnectingSocket {
 
     pub fn kind(&mut self) -> SocketKind {
         SocketKind::from_u8(us_connecting_socket_kind(self))
-    }
-
-    /// Returns the owning `Loop`. Raw pointer because the loop is a shared
-    /// singleton referenced by every group/socket/timer;
-    /// materializing `&mut Loop` here would be aliased UB.
-    pub fn r#loop(&mut self) -> *mut Loop {
-        us_connecting_socket_get_loop(self)
     }
 
     pub fn ext<T>(&mut self) -> &mut T {
@@ -104,5 +97,4 @@ unsafe extern "C" {
     pub(crate) safe fn us_connecting_socket_shutdown(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_shutdown_read(s: &mut ConnectingSocket);
     pub(crate) safe fn us_connecting_socket_timeout(s: &mut ConnectingSocket, seconds: c_uint);
-    pub(crate) safe fn us_connecting_socket_get_loop(s: &mut ConnectingSocket) -> *mut Loop;
 }

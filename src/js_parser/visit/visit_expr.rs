@@ -821,7 +821,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             loc: expr.loc,
             in_,
             left_in: ExprIn::default(),
-            is_stmt_expr: false,
         };
 
         // Everything uses a single stack to reduce allocation overhead. This stack
@@ -870,7 +869,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 loc: left.loc,
                 in_: left_in,
                 left_in: ExprIn::default(),
-                is_stmt_expr: false,
             };
         }
 
@@ -920,14 +918,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
-        p.visit_expr_in_out(
-            &mut e_.target,
-            ExprIn {
-                has_chain_parent,
-                ..Default::default()
-            },
-        );
+        p.visit_expr_in_out(&mut e_.target, ExprIn::default());
 
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
@@ -1228,13 +1219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             Op::UnDelete => {
-                p.visit_expr_in_out(
-                    &mut e_.value,
-                    ExprIn {
-                        has_chain_parent: true,
-                        ..Default::default()
-                    },
-                );
+                p.visit_expr_in_out(&mut e_.value, ExprIn::default());
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1867,11 +1852,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         let target_was_identifier_before_visit = matches!(e_.target.data, Data::EIdentifier(..));
-        let has_chain_parent = e_.optional_chain == Some(js_ast::OptionalChain::Continuation);
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                has_chain_parent,
                 property_access_for_method_call_maybe_should_replace_with_undefined: true,
                 ..Default::default()
             },
@@ -2441,7 +2424,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
-            is_arrow: true,
             is_async: e_.is_async,
             ..Default::default()
         };

@@ -284,19 +284,3 @@ pub mod coreutils_error_map {
     };
     }
 }
-
-/// A plain ok/err union.
-pub enum Result<T, E> {
-    Ok(T),
-    Err(E),
-}
-
-impl<T, E> Result<T, E> {
-    #[inline]
-    pub fn as_err(&self) -> Option<&E> {
-        if let Result::Err(e) = self {
-            return Some(e);
-        }
-        None
-    }
-}

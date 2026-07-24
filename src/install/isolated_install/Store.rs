@@ -91,14 +91,6 @@ impl<T> NewId<T> {
             Some(self.0)
         }
     }
-
-    pub fn get_or(self, default: u32) -> u32 {
-        if self == Self::INVALID {
-            default
-        } else {
-            self.0
-        }
-    }
 }
 
 impl Drop for Store {
@@ -563,7 +555,6 @@ pub use entry::EntryColumns;
 // from `pkg_id` and `peers`
 pub mod node {
     use super::*;
-    use crate::lockfile::package::PackageColumns as _;
 
     pub type Id = NewId<Node>;
     pub type List = MultiArrayList<Node>;
@@ -615,10 +606,6 @@ pub mod node {
         pub auto_installed: bool,
     }
 
-    pub mod transitive_peer {
-        pub use super::TransitivePeerOrderedArraySetCtx as OrderedArraySetCtx;
-    }
-
     pub struct TransitivePeerOrderedArraySetCtx<'a> {
         pub string_buf: &'a [u8],
         pub pkg_names: &'a [SemverString],
@@ -643,39 +630,6 @@ pub mod node {
             let r_pkg_name = pkg_names[r_pkg_id as usize];
 
             l_pkg_name.order(r_pkg_name, string_buf, string_buf)
-        }
-    }
-
-    impl Node {
-        pub fn debug_print(&self, id: Id, lockfile: &Lockfile) {
-            let pkgs = lockfile.packages.slice();
-            let pkg_names = pkgs.items_name();
-            let pkg_resolutions = pkgs.items_resolution();
-
-            let string_buf = lockfile.buffers.string_bytes.as_slice();
-            let deps = lockfile.buffers.dependencies.as_slice();
-
-            let dep_name: &[u8] = if self.dep_id == INVALID_DEPENDENCY_ID {
-                b"root"
-            } else {
-                deps[self.dep_id as usize].name.slice(string_buf)
-            };
-            let dep_version: &[u8] = if self.dep_id == INVALID_DEPENDENCY_ID {
-                b"root"
-            } else {
-                deps[self.dep_id as usize].version.literal.slice(string_buf)
-            };
-
-            bun_output::scoped_log!(
-                Store,
-                "node({})\n  deps: {}@{}\n  res: {}@{}\n",
-                id.get(),
-                BStr::new(dep_name),
-                BStr::new(dep_version),
-                BStr::new(pkg_names[self.pkg_id as usize].slice(string_buf)),
-                pkg_resolutions[self.pkg_id as usize]
-                    .fmt(string_buf, bun_core::fmt::PathSep::Posix),
-            );
         }
     }
 }

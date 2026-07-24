@@ -2890,9 +2890,3 @@ pub mod parse_worker {
 } // end mod parse_worker
 
 pub use parse_worker::{FileLoaderHash, OnBeforeParsePlugin, get_runtime_source, on_complete};
-
-// ───────────────────────────────────────────────────────────────────────────
-// Re-exports
-// ───────────────────────────────────────────────────────────────────────────
-
-pub use crate::DeferredBatchTask::DeferredBatchTask;

@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 
 use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
-use bun_core::{WStr, ZStr, strings};
+use bun_core::{ZStr, strings};
 
 // Thread-local scratch buffers. Stored in `UnsafeCell` (not `RefCell`)
 // because callers must receive a raw `&mut` slice that outlives the `.with` closure
@@ -50,7 +50,6 @@ pub fn z<'a>(input: &[u8], output: &'a mut PathBuffer) -> &'a ZStr {
 type IsSeparatorFunc = fn(char: u8) -> bool;
 // Rust cannot express "fn<T>(T) -> bool" as a value, so the generic-`T`
 // callers dispatch via Platform methods instead of fn pointers.
-type LastSeparatorFunction = fn(slice: &[u8]) -> Option<usize>;
 
 #[inline(always)]
 fn is_dotdot_with_type<T: PathChar>(slice: &[T]) -> bool {
@@ -880,24 +879,6 @@ pub(crate) fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
     &path[0..0]
 }
 
-pub fn normalize_string_generic<
-    'a,
-    const ALLOW_ABOVE_ROOT: bool,
-    const SEPARATOR: u8,
-    const PRESERVE_TRAILING_SLASH: bool,
->(
-    path_: &[u8],
-    buf: &'a mut [u8],
-    is_separator: impl Fn(u8) -> bool + Copy,
-) -> &'a mut [u8] {
-    normalize_string_generic_t::<u8, ALLOW_ABOVE_ROOT, PRESERVE_TRAILING_SLASH>(
-        path_,
-        buf,
-        SEPARATOR,
-        is_separator,
-    )
-}
-
 pub fn normalize_string_generic_t<
     'a,
     T: PathChar,
@@ -915,37 +896,6 @@ pub fn normalize_string_generic_t<
         separator,
         is_separator_t,
     )
-}
-
-/// Plain options struct whose flags become
-/// individual const-generic bools below (separator and is_separator stay
-/// runtime since Rust const generics cannot carry fn pointers / non-integral T).
-pub struct NormalizeOptions<T: PathChar> {
-    pub allow_above_root: bool,
-    pub separator: T,
-    pub is_separator: fn(T) -> bool,
-    pub preserve_trailing_slash: bool,
-    pub zero_terminate: bool,
-    pub add_nt_prefix: bool,
-}
-
-impl<T: PathChar> Default for NormalizeOptions<T> {
-    fn default() -> Self {
-        Self {
-            allow_above_root: false,
-            separator: T::from_u8(SEP),
-            is_separator: |c| {
-                if SEP == SEP_WINDOWS {
-                    c == T::from_u8(b'\\') || c == T::from_u8(b'/')
-                } else {
-                    c == T::from_u8(b'/')
-                }
-            },
-            preserve_trailing_slash: false,
-            zero_terminate: false,
-            add_nt_prefix: false,
-        }
-    }
 }
 
 // Rust cannot vary the return type on a const-generic bool without
@@ -1237,14 +1187,6 @@ impl Platform {
             Platform::Loose => is_sep_any,
             Platform::Nt | Platform::Windows => is_sep_any,
             Platform::Posix => is_sep_posix,
-        }
-    }
-
-    pub const fn get_last_separator_func(self) -> LastSeparatorFunction {
-        match self {
-            Platform::Loose => last_index_of_separator_loose,
-            Platform::Nt | Platform::Windows => last_index_of_separator_windows,
-            Platform::Posix => last_index_of_separator_posix,
         }
     }
 
@@ -1563,23 +1505,6 @@ pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     }
 
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
-}
-
-pub fn join_string_buf_wz<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u8]]) -> &'a WStr {
-    // reshaped for borrowck — capture buf base ptr before sub-borrow
-    let buf_base = buf.as_mut_ptr();
-    let buf_len = buf.len();
-    let (start_offset, len) = {
-        let joined = join_string_buf_t::<u16, P>(&mut buf[..buf_len - 1], parts);
-        (
-            (joined.as_ptr() as usize - buf_base as usize) / 2,
-            joined.len(),
-        )
-    };
-    debug_assert!(start_offset + len < buf_len);
-    buf[start_offset + len] = 0;
-    // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { WStr::from_raw(buf_base.add(start_offset), len) }
 }
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1969,15 +1894,11 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
 // Separator predicates live in T0 `bun_core::path_sep`; re-export the full set
 // so existing `bun_paths::is_sep_*` callers are unchanged.
 pub use bun_core::path_sep::{
-    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t, is_sep_win32_t,
+    is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t,
 };
 #[inline(always)]
 pub fn is_sep_posix(c: u8) -> bool {
     is_sep_posix_t::<u8>(c)
-}
-#[inline(always)]
-pub fn is_sep_win32(c: u8) -> bool {
-    is_sep_win32_t::<u8>(c)
 }
 
 pub(crate) fn last_index_of_separator_windows(slice: &[u8]) -> Option<usize> {
@@ -2210,18 +2131,6 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
-
-    #[cfg(windows)]
-    #[inline]
-    pub fn resolve_cwd_z<'a>(
-        &'a mut self,
-        maybe_posix_path: &'a [u8],
-    ) -> crate::Result<&'a mut ZStr> {
-        Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
-    }
-    // On posix `_raw_bytes` is `()` so `resolve_cwd_z` is windows-only.
-    // Callers on posix use
-    // `resolve_cwd_with_external_buf_z` with an explicit PathBuffer.
 
     // underlying implementation:
 

@@ -1348,12 +1348,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
-    sqlite3* db = versionDB->db;
-    if (!db) [[unlikely]] {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
-        return {};
-    }
-
     WTF::String attachedName = callFrame->argument(1).toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -1361,6 +1355,14 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected attached database name"_s));
         return {};
     }
+
+    // Read after toWTFString: a user toString() may have closed the database.
+    sqlite3* db = versionDB->db;
+    if (!db) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
+        return {};
+    }
+
     sqlite3_int64 length = -1;
     unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
     if (data == nullptr && length) [[unlikely]] {

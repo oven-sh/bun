@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -475,7 +475,9 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
         })
         .catch(done);
     },
-    { timeout: timeout ?? 1000 },
+    // Each test spawns its own echo-server subprocess; debug builds take
+    // well over 1s to spawn + connect on slow CI runners.
+    { timeout: timeout ?? (isDebug ? 10000 : 1000) },
   );
 }
 
@@ -800,10 +802,12 @@ it("Server should be able to send empty pings", async () => {
   }
 
   {
-    // should not be equal because is bigger than 125 bytes
+    // > 125 bytes throws RangeError synchronously, matching npm ws
     const pingPayload = Buffer.alloc(126, "b").toString();
-    const pingMessage = await checkPing("Hello, World", pingPayload);
-    expect(pingMessage).not.toBe(pingPayload);
+    let err: unknown;
+    await checkPing("Hello, World", pingPayload).catch(e => (err = e));
+    expect(err).toBeInstanceOf(RangeError);
+    expect((err as Error).message).toContain("must not be greater than 125 bytes");
   }
 });
 

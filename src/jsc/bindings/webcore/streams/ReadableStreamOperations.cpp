@@ -412,7 +412,12 @@ JSPromise* readableStreamCancel(JSGlobalObject* globalObject, JSReadableStream* 
     JSPromise* sourceCancelPromise = nullptr;
     switch (stream->m_controllerKind) {
     case ControllerKind::None:
-        sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        if (stream->m_bunMode == BunStreamMode::NativePending)
+            sourceCancelPromise = cancelPendingNativeSource(globalObject, stream, reason);
+        else {
+            stream->m_bunMode = BunStreamMode::Default;
+            sourceCancelPromise = promiseFulfilledWith(globalObject, JSC::jsUndefined());
+        }
         break;
     case ControllerKind::Default:
         sourceCancelPromise = defaultControllerOf(stream)->cancelSteps(globalObject, reason);

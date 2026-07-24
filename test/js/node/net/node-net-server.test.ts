@@ -1,4 +1,5 @@
 import { realpathSync } from "fs";
+import { bunEnv, bunExe } from "harness";
 import { AddressInfo, createServer, Server, Socket } from "net";
 import { createTest } from "node-harness";
 import { once } from "node:events";
@@ -567,5 +568,131 @@ describe("net.createServer events", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+// Node gives each accepted handle its own uv_stream_t ref; Bun's Listener used
+// to hold ONE KeepAlive for the listening socket and all its connections, so an
+// accepted socket's unref() was a no-op and server.unref() dropped live
+// connections. Both directions are covered below via Bun.listen to bypass
+// node:net's onconnection (whose resume() on main would paper over case 1).
+describe("accepted socket event-loop hold matches Node (per-connection KeepAlive)", () => {
+  async function run(body: string) {
+    // Spawned so "process exits naturally" is the observable.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // stderr is drained but only surfaced on failure: debug builds may emit
+    // benign warnings, so it is not asserted empty.
+    return { stdout, exitCode, failureDetail: exitCode === 0 ? "" : stderr };
+  }
+
+  it("server.stop() + accepted socket.unref() lets the process exit", async () => {
+    // do_stop used to gate the listener's KeepAlive release on
+    // active_connections == 0, and the accepted socket's own KeepAlive was
+    // never activated, so neither unref reached the loop counter and the
+    // process hung even though nothing wanted it alive.
+    expect(
+      await run(`
+        const accepted = Promise.withResolvers();
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open(s) { accepted.resolve(s); }, data() {}, close() {} },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open() {}, data() {}, close() {} },
+        });
+        const srvSock = await accepted.promise;
+        server.stop();
+        client.unref();
+        srvSock.unref();
+        setTimeout(() => { process.stdout.write("HUNG"); process.exit(1); }, 4000).unref();
+      `),
+    ).toEqual({ stdout: "", exitCode: 0, failureDetail: "" });
+  });
+
+  it("server.unref() alone does not drop a ref'd accepted connection's hold", async () => {
+    // Before the fix the Listener's single KeepAlive covered the listening
+    // socket AND every accepted socket; server.unref() released the lot and
+    // the process exited immediately, dropping the live ref'd connection
+    // before the 300ms timer could observe it. Node keeps the loop alive for
+    // the accepted handle on its own (as does this fix) so "alive" prints.
+    expect(
+      await run(`
+        const accepted = Promise.withResolvers();
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { open(s) { accepted.resolve(s); }, data() {}, close() {} },
+        });
+        const client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: server.port,
+          socket: { open() {}, data() {}, close() {} },
+        });
+        const srvSock = await accepted.promise;
+        server.unref();
+        client.unref();
+        // srvSock is NOT unref'd: it must keep the process alive on its own.
+        setTimeout(() => {
+          process.stdout.write(srvSock ? "alive" : "dead");
+          srvSock.end();
+          client.end();
+          server.stop();
+        }, 300).unref();
+        setTimeout(() => { process.stdout.write("|HUNG"); process.exit(1); }, 4000).unref();
+      `),
+    ).toEqual({ stdout: "alive", exitCode: 0, failureDetail: "" });
+  });
+
+  it("half-open accepted sockets after peer FIN do not busy-poll the event loop (Windows AFD DISCONNECT)", async () => {
+    // A write-only connection handler whose peer sends data+FIN leaves the
+    // accepted socket half-open with bytes buffered (Node's flowing=null
+    // accept state). On Windows, poll_cb mapped UV_DISCONNECT to READABLE
+    // unconditionally, recv() re-found the same EOF, the half-open EOF path
+    // re-armed WRITABLE+DISCONNECT, and AFD kept reporting DISCONNECT - so
+    // on_end fired once per loop turn per half-open socket. 40 such sockets
+    // made a 2000-setImmediate spin take seconds instead of tens of ms.
+    expect(
+      await run(`
+        const net = require("net");
+        (async () => {
+          for (let i = 0; i < 40; i++) {
+            const srv = net.createServer(conn => { conn.write("x"); });
+            await new Promise(r => srv.listen(0, "127.0.0.1", r));
+            await new Promise(r => {
+              const c = net.connect(srv.address().port, "127.0.0.1", () => {
+                c.write("y".repeat(50));
+                c.end();
+                r();
+              });
+              c.on("data", () => {});
+            });
+            srv.close();
+          }
+          // Half-open sockets are now sitting with end delivered and 50 bytes
+          // buffered; the loop must not be paying per-iteration cost for them.
+          await new Promise(r => setTimeout(r, 50));
+          const t0 = Date.now();
+          let n = 0;
+          await new Promise(r => {
+            function tick() { if (++n >= 2000) return r(); setImmediate(tick); }
+            tick();
+          });
+          const ms = Date.now() - t0;
+          // Well under 200ms when quiescent (release ~5ms, debug ~50ms); the
+          // busy-poll made 40 sockets x 2000 turns cost multiple seconds.
+          process.stdout.write(ms < 800 ? "fast" : "busy-poll " + ms + "ms");
+          process.exit(0);
+        })();
+      `),
+    ).toEqual({ stdout: "fast", exitCode: 0, failureDetail: "" });
   });
 });

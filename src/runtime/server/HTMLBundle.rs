@@ -165,15 +165,6 @@ pub struct Route {
     // Raw `*mut` because the pointer is handed to uws onAborted callback and
     // compared by identity; allocation/free is via heap::alloc/from_raw.
     pub pending_responses: JsCell<Vec<*mut PendingResponse>>,
-
-    pub method: RouteMethod,
-}
-
-#[derive(Default)]
-pub enum RouteMethod {
-    #[default]
-    Any,
-    Method(bun_http_types::Method::Set),
 }
 
 pub enum State {
@@ -252,7 +243,6 @@ impl Route {
             server: Cell::new(None),
             state: JsCell::new(State::Pending),
             dev_server_id: Cell::new(None),
-            method: RouteMethod::Any,
         })
     }
 
@@ -665,7 +655,6 @@ impl Route {
                         status_code: 200,
                         headers,
                         cached_blob_size,
-                        has_content_disposition: false,
                         has_date: false,
                     }));
 
@@ -766,11 +755,16 @@ impl Route {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
                     }
+                    // This runs from a JS event-loop task, not a uWS handler,
+                    // so `end_without_body(true)` alone cannot close the
+                    // socket; write Content-Length so the client has framing.
                     resp.write_status(b"500 Build Failed");
-                    resp.end_without_body(false);
+                    resp.write_header_int(b"Content-Length", 0);
+                    resp.end_without_body(true);
                 }
                 _ => {
-                    resp.end_without_body(false);
+                    resp.write_header_int(b"Content-Length", 0);
+                    resp.end_without_body(true);
                 }
             }
         }

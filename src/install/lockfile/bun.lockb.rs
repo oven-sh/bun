@@ -27,7 +27,6 @@ use bun_semver::{self as semver, String as SemverString};
 // save path zeroes padding explicitly (see the note in `save` and the
 // `assert_no_uninitialized_padding` invariant in `Package::Serializer`).
 
-pub const VERSION: &[u8] = b"bun-lockfile-format-v0\n";
 const HEADER_BYTES: &[u8] = b"#!/usr/bin/env bun\nbun-lockfile-format-v0\n";
 
 // Native-endian reinterpretation of 8 bytes as u64.

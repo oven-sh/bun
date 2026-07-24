@@ -414,8 +414,6 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
 
 #[derive(Default, Clone, Copy)]
 pub struct Opts {
-    /// `-m`, `--mode` — set file mode (as in chmod), not a=rwx - umask
-    pub mode: Option<u32>,
     /// `-p`, `--parents` — no error if existing, make parent directories as
     /// needed, with their file modes unaffected by any -m option.
     pub parents: bool,

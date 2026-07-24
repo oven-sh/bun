@@ -880,8 +880,6 @@ mod inherent_bridge {
 // Hash
 // ───────────────────────────────────────────────────────────────────────────────
 
-pub const HASH_SEED: u64 = 0;
-
 /// Wyhash-based structural hash for CSS values.
 pub trait CssHash {
     fn hash(&self, hasher: &mut Wyhash);
@@ -1215,11 +1213,6 @@ pub fn parse_with_options<T: ParseWithOptions>(
 #[inline]
 pub fn parse<T: Parse>(input: &mut Parser) -> CssResult<T> {
     T::parse(input)
-}
-
-#[inline]
-pub fn parse_for<T: Parse>() -> fn(&mut Parser) -> CssResult<T> {
-    |input| T::parse(input)
 }
 
 // ── container / primitive Parse impls ────────────────────────────────────────

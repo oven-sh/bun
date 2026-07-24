@@ -1907,10 +1907,6 @@ impl PackageManager {
         drain_dependency_list(self)
     }
     #[inline]
-    pub fn flush_dependency_queue(&mut self) {
-        flush_dependency_queue(self)
-    }
-    #[inline]
     pub fn flush_network_queue(&mut self) {
         flush_network_queue(self)
     }

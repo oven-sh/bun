@@ -150,10 +150,6 @@ impl Version {
 
         digest
     }
-
-    pub fn export() {
-        // force-reference — drop in Rust (linker keeps #[no_mangle])
-    }
 }
 
 // Exported C symbol — null-terminated

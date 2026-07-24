@@ -2,6 +2,7 @@
 // This is a stub! None of this is actually implemented yet.
 // It only exists to make some packages which import this module work.
 const { throwNotImplemented } = require("internal/shared");
+const { inspect } = require("node:util");
 
 const builtinModules = [
   "bun",
@@ -63,62 +64,40 @@ const builtinModules = [
   "node:test",
 ];
 
+const REPL_MODE_SLOPPY = Symbol("repl-sloppy");
+const REPL_MODE_STRICT = Symbol("repl-strict");
+
+function start() {
+  throwNotImplemented("node:repl", 28478);
+}
+
+function REPLServer() {
+  throwNotImplemented("node:repl REPLServer", 28478);
+}
+
+class Recoverable extends SyntaxError {
+  err;
+  constructor(err) {
+    super();
+    this.err = err;
+  }
+}
+
+function writer(obj) {
+  return inspect(obj, writer.options);
+}
+writer.options = { ...inspect.replDefaults };
+
+// The module-level exports match Node's `require("node:repl")` shape. Instance
+// fields like `context`/`terminal`/`useGlobal` belong to a REPLServer instance,
+// not this module, so they are intentionally absent.
 export default {
-  lines: [],
-  context: globalThis,
-  historyIndex: -1,
-  cursor: 0,
-  historySize: 1000,
-  removeHistoryDuplicates: false,
-  crlfDelay: 100,
-  completer: () => {
-    throwNotImplemented("node:repl");
-  },
-  history: [],
-  _initialPrompt: "> ",
-  terminal: true,
-  input: new Proxy(
-    {},
-    {
-      get() {
-        throwNotImplemented("node:repl");
-      },
-      has: () => false,
-      ownKeys: () => [],
-      getOwnPropertyDescriptor: () => undefined,
-      set() {
-        throwNotImplemented("node:repl");
-      },
-    },
-  ),
-  line: "",
-  eval: () => {
-    throwNotImplemented("node:repl");
-  },
-  isCompletionEnabled: true,
-  escapeCodeTimeout: 500,
-  tabSize: 8,
-  breakEvalOnSigint: true,
-  useGlobal: true,
-  underscoreAssigned: false,
-  last: undefined,
-  _domain: undefined,
-  allowBlockingCompletions: false,
-  useColors: true,
-  output: new Proxy(
-    {},
-    {
-      get() {
-        throwNotImplemented("node:repl");
-      },
-      has: () => false,
-      ownKeys: () => [],
-      getOwnPropertyDescriptor: () => undefined,
-      set() {
-        throwNotImplemented("node:repl");
-      },
-    },
-  ),
+  start,
+  REPLServer,
+  Recoverable,
+  REPL_MODE_SLOPPY,
+  REPL_MODE_STRICT,
+  writer,
   _builtinLibs: builtinModules,
   builtinModules: builtinModules,
 };

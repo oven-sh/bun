@@ -90,7 +90,7 @@ impl Handler {
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])
-                .map_err(|err| self.global_object.report_active_exception_keep_alive(err));
+                .map_err(|err| self.global_object.report_active_exception_as_unhandled(err));
             return;
         }
 
@@ -103,7 +103,7 @@ impl Handler {
         let mut vm_ref = self.vm;
         // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
         let vm_mut = unsafe { vm_ref.get_mut() };
-        let _ = vm_mut.report_error_keep_alive(
+        let _ = vm_mut.uncaught_exception(
             global_object,
             error_value,
             bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,

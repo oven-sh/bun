@@ -1365,7 +1365,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // --abort-on-uncaught-exception this aborts before
                 // domain/capture like Node's triggerUncaughtException
                 // binding — deliberate: Bun.serve has no Node equivalent.
-                let _ = unsafe { &mut *vm }.report_error_keep_alive(
+                let _ = unsafe { &mut *vm }.uncaught_exception(
                     global,
                     *err,
                     if matches!(http_result, HttpResult::Rejection(_)) {

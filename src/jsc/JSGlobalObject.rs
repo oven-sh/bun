@@ -1069,22 +1069,6 @@ impl JSGlobalObject {
         }
     }
 
-    /// Same reporting as `report_active_exception_as_unhandled`, but routes
-    /// through `report_error_keep_alive` so the process is not hard-exited.
-    /// For Bun-native long-running handlers (`Bun.serve` websocket,
-    /// `Bun.connect`/`Bun.listen`, `Bun.udpSocket`) whose `error:` handler
-    /// itself threw: the pre-existing contract is print-and-continue.
-    pub fn report_active_exception_keep_alive(&self, err: JsError) {
-        let exception = self.take_exception(err);
-        if !exception.is_termination_exception() {
-            let _ = self.bun_vm().as_mut().report_error_keep_alive(
-                self,
-                exception,
-                crate::virtual_machine::UncaughtExceptionOrigin::Exception,
-            );
-        }
-    }
-
     pub fn vm(&self) -> &VM {
         // JSC guarantees the VM outlives the global object; `VM` is an opaque
         // ZST handle so the deref is the centralised `opaque_ref` proof.

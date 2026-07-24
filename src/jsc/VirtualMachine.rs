@@ -1369,29 +1369,38 @@ impl VirtualMachine {
         bun_core::env_var::feature_flag::BUN_DESTRUCT_VM_ON_EXIT::get().unwrap_or(false)
     }
 
+    /// Fire `uncaughtException` listeners (via `Bun__handleUncaughtException`);
+    /// if none claim the error, print it and set `exit_code = 1`, then return.
+    /// The process keeps running — this is the pre-existing contract every
+    /// Bun-native call site was written against (`Bun.serve`, `Bun.listen`,
+    /// `Bun.spawn` ipc/onExit, `Bun.sql`/`Bun.redis` onclose, the shell,
+    /// `EventLoop::run_callback`, `reportError()`, ...).
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, origin, true)
+        self.uncaught_exception_impl(global_object, err, origin, false)
     }
 
-    /// Print like an uncaught exception — listeners and exit code included —
-    /// but keep the process running. For Web `reportError()` and Bun-native
-    /// long-running handlers (`Bun.serve` websocket, `Bun.connect`/`Bun.listen`,
-    /// `Bun.udpSocket`, `Bun.Cron`) whose pre-existing contract is print-and-
-    /// continue; matches the `Bun.serve` HTTP fetch path, which calls
-    /// `on_unhandled_rejection` directly. Node-compat paths (nextTick drain,
-    /// N-API, `node:http`) stay on `uncaught_exception` and hard-exit.
-    pub fn report_error_keep_alive(
+    /// Node's fatal path: if no listener/domain/capture callback claims the
+    /// error, print it, emit `'exit'`, and `process.exit(1)` without another
+    /// loop turn (queued I/O, timers, immediates, later ticks never run).
+    /// Only for true Node-compat uncaught throws that reach
+    /// `Bun__reportUnhandledError` — the nextTick drain, setTimeout/
+    /// setInterval callbacks, `jsFunctionReportUncaughtException` (what this
+    /// PR's `guardCallback` routes fs/dns/crypto callback throws to), N-API
+    /// `napi_fatal_exception`, `node:events` error with no listener, and JSC's
+    /// `reportUncaughtExceptionAtEventLoop`. Everything else stays on
+    /// `uncaught_exception` above.
+    pub fn uncaught_exception_fatal(
         &mut self,
         global_object: &JSGlobalObject,
         err: JSValue,
         origin: UncaughtExceptionOrigin,
     ) -> bool {
-        self.uncaught_exception_impl(global_object, err, origin, false)
+        self.uncaught_exception_impl(global_object, err, origin, true)
     }
 
     fn uncaught_exception_impl(
@@ -1477,18 +1486,19 @@ impl VirtualMachine {
                 self.unhandled_error_counter += 1;
                 self.exit_handler.exit_code = 1;
                 (self.on_unhandled_rejection)(self, global_object, err);
-                // Match run_command's exit_with_unhandled_note: the drain path
-                // would have printed the missing-sourcemaps note and the
-                // version footer after the error; process_exit below bypasses
-                // that owner, so emit them here.
+                // See the recursion-guard note above: drop it before on_exit
+                // emits 'exit' (a throwing 'exit' listener re-enters here).
+                self.is_handling_uncaught_exception = false;
+                // Mirror run_command's exit_with_unhandled_note order: emit
+                // 'exit' first (Process::m_isExiting makes the process_exit
+                // below skip its own emit), then print the sourcemap note and
+                // version footer so they stay the last stderr lines.
+                self.on_exit();
                 bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
                 bun_core::pretty_errorln!(
                     "<r>\n<d>{}<r>",
                     bun_core::Global::unhandled_error_bun_version_string,
                 );
-                // See the recursion-guard note above: drop it before
-                // process_exit emits 'exit'.
-                self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");

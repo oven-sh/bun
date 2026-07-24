@@ -798,7 +798,7 @@ impl UDPSocket {
             return;
         }
         if callback.is_empty_or_undefined_or_null() {
-            let _ = vm.report_error_keep_alive(
+            let _ = vm.uncaught_exception(
                 global_this,
                 err,
                 bun_jsc::virtual_machine::UncaughtExceptionOrigin::Exception,
@@ -810,7 +810,7 @@ impl UDPSocket {
         event_loop.enter();
         let result = callback.call(global_this, this_value, &[err.to_error().unwrap_or(err)]);
         if let Err(e) = result {
-            global_this.report_active_exception_keep_alive(e);
+            global_this.report_active_exception_as_unhandled(e);
         }
         event_loop.exit();
     }

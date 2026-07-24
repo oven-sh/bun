@@ -160,6 +160,25 @@ describe("createWebSocketStream", () => {
     expect(msg.toString()).toBe("echo:ping");
   });
 
+  it("errors the write callback when the server-side peer has closed", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    const url = await serve(ws => {
+      const duplex = createWebSocketStream(ws);
+      duplex.on("error", () => {});
+      duplex.resume();
+      ws.on("close", () => {
+        duplex.write("too late", err => (err ? resolve(err) : reject(new Error("expected an error"))));
+      });
+    });
+
+    const ws = connect(url);
+    await once(ws, "open");
+    ws.terminate();
+
+    const err = await promise;
+    expect((err as Error).message).toMatch(/not open/i);
+  });
+
   it("forces objectMode and writableObjectMode to false", async () => {
     const url = await serve(() => {});
     const ws = connect(url);

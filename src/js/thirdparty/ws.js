@@ -280,7 +280,7 @@ class BunWebSocket extends EventEmitter {
     return ws;
   }
 
-  #on(event, listener) {
+  #ensureForwarder(event) {
     if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
@@ -322,21 +322,31 @@ class BunWebSocket extends EventEmitter {
         });
       }
     }
-    return super.on(event, listener);
   }
 
   on(event, listener) {
-    return this.#on(event, listener);
+    this.#ensureForwarder(event);
+    return super.on(event, listener);
   }
 
   addListener(event, listener) {
-    return this.#on(event, listener);
+    this.#ensureForwarder(event);
+    return super.on(event, listener);
   }
 
+  prependListener(event, listener) {
+    this.#ensureForwarder(event);
+    return super.prependListener(event, listener);
+  }
+
+  // EventEmitter.prototype.once() / prependOnceListener() call this.on() /
+  // this.prependListener(), which reach #ensureForwarder above.
   once(event, listener) {
-    // EventEmitter.prototype.once() calls this.on(), which reaches #on and
-    // registers the native forwarder once per event type.
     return super.once(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    return super.prependOnceListener(event, listener);
   }
 
   send(data, opts, cb) {
@@ -950,6 +960,8 @@ class BunWebSocketMocked extends EventEmitter {
       // not connected yet
       this.#enquedMessages.push([data, opts?.compress, cb]);
       this.#bufferedAmount += data.length;
+    } else {
+      return sendAfterClose(this.#state, cb);
     }
   }
 
@@ -1570,8 +1582,10 @@ function duplexOnError(err) {
  * @return {Duplex} The duplex stream
  * @public
  */
+let Duplex;
+
 function createWebSocketStream(ws, options) {
-  const { Duplex } = require("node:stream");
+  Duplex ??= require("node:stream").Duplex;
   let terminateOnDestroy = true;
 
   const duplex = new Duplex({

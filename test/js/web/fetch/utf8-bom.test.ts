@@ -51,6 +51,45 @@ describe("UTF-8 BOM should be ignored", () => {
     });
   });
 
+  describe.each([
+    ["Response", (body: string, type: string) => new Response(body, { headers: { "content-type": type } })],
+    [
+      "Request",
+      (body: string, type: string) =>
+        new Request("https://example.com", { method: "POST", body, headers: { "content-type": type } }),
+    ],
+  ] as const)("%s (string body)", (_, make) => {
+    it("in text()", async () => {
+      expect(await make("\uFEFFHello, World!", "text/plain").text()).toBe("Hello, World!");
+    });
+
+    it("in text() with emoji", async () => {
+      expect(await make("\uFEFFHello, World! 🌎", "text/plain").text()).toBe("Hello, World! 🌎");
+    });
+
+    it("in text() with only a BOM", async () => {
+      expect(await make("\uFEFF", "text/plain").text()).toBe("");
+    });
+
+    it("in text() only strips one leading BOM", async () => {
+      expect(await make("\uFEFF\uFEFFHello", "text/plain").text()).toBe("\uFEFFHello");
+    });
+
+    it("in text() leaves an interior BOM", async () => {
+      expect(await make("Hello\uFEFFWorld", "text/plain").text()).toBe("Hello\uFEFFWorld");
+    });
+
+    it("in json()", async () => {
+      expect(await make('\uFEFF{"hello":"World"}', "application/json").json()).toEqual({ "hello": "World" } as any);
+    });
+
+    it("in json() with emoji", async () => {
+      expect(await make('\uFEFF{"hello":"World 🌎"}', "application/json").json()).toEqual({
+        "hello": "World 🌎",
+      } as any);
+    });
+  });
+
   describe("Response", () => {
     it("in text()", async () => {
       const response = new Response(Buffer.from("\uFEFFHello, World!"), { headers: { "content-type": "text/plain" } });

@@ -1600,6 +1600,19 @@ impl PostgresSQLConnection {
             || self.current().is_some()
     }
 
+    /// Absolute byte position to pass to `rollback_write_buffer` when a
+    /// `PostgresRequest::*` serializer errors mid-write, so partial frontend
+    /// messages are not flushed to the socket.
+    #[inline]
+    pub fn write_buffer_mark(&self) -> usize {
+        self.write_buffer.get().byte_list.len()
+    }
+
+    #[inline]
+    pub fn rollback_write_buffer(&self, mark: usize) {
+        self.write_buffer.with_mut(|b| b.byte_list.truncate(mark));
+    }
+
     #[inline]
     pub fn note_request_pending(&self) {
         self.pending_requests.set(self.pending_requests.get() + 1);
@@ -2003,6 +2016,7 @@ impl PostgresSQLConnection {
                                         debug!("parse, bind and execute unnamed stmt");
                                         let query_str = req.query.to_utf8();
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) =
                                             PostgresRequest::parse_and_bind_and_execute(
                                                 &global,
@@ -2014,6 +2028,7 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                             )
                                         {
+                                            self.rollback_write_buffer(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2039,6 +2054,7 @@ impl PostgresSQLConnection {
                                     } else {
                                         debug!("binding and executing stmt");
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) = PostgresRequest::bind_and_execute(
                                             &global,
                                             statement,
@@ -2046,6 +2062,7 @@ impl PostgresSQLConnection {
                                             columns_value,
                                             self.writer(),
                                         ) {
+                                            self.rollback_write_buffer(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2128,6 +2145,7 @@ impl PostgresSQLConnection {
                                                 .unwrap_or(JSValue::ZERO);
                                         debug!("prepareAndQueryWithSignature");
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) =
                                             PostgresRequest::prepare_and_query_with_signature(
                                                 &global,
@@ -2137,6 +2155,7 @@ impl PostgresSQLConnection {
                                                 &mut statement.signature,
                                             )
                                         {
+                                            self.rollback_write_buffer(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {
@@ -2200,6 +2219,7 @@ impl PostgresSQLConnection {
                                                 .unwrap_or(JSValue::ZERO);
                                         debug!("parseAndBindAndExecute (unnamed, first execution)");
                                         let global = self.global_object;
+                                        let mark = self.write_buffer_mark();
                                         if let Err(err) =
                                             PostgresRequest::parse_and_bind_and_execute(
                                                 &global,
@@ -2211,6 +2231,7 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                             )
                                         {
+                                            self.rollback_write_buffer(mark);
                                             if let Some(err_) = self.global().try_take_exception() {
                                                 req.on_js_error(err_, self.global());
                                             } else {

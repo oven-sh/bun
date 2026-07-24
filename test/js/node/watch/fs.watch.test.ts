@@ -1340,6 +1340,71 @@ test.skipIf(!isWindows)(
   30000,
 );
 
+// A Worker owns an fs.watch(); the main thread queues a burst of inotify events
+// for the watched directory and then terminate()s the Worker while those events
+// are still being dispatched. The unfixed build's FSWatchTask::run() kept
+// calling the listener after the sticky TerminationException was set on the
+// worker VM, re-entering executeCallImpl() under scope.assertNoException() and
+// aborting. Must run in a subprocess: on an unfixed debug build the abort takes
+// down the whole runtime.
+test("terminating a worker while its fs.watch has queued events does not crash", async () => {
+  using dir = tempDir("fswatch-worker-terminate", { ".keep": "" });
+  const watched = String(dir);
+
+  const fixture = /* js */ `
+    const fs = require("node:fs");
+    const { Worker } = require("node:worker_threads");
+
+    const d = ${JSON.stringify(watched)};
+    const workerCode = \`
+      const fs = require("node:fs");
+      const { parentPort, workerData } = require("node:worker_threads");
+      const w = fs.watch(workerData.d, () => {});
+      w.on("error", () => {});
+      parentPort.postMessage("READY");
+    \`;
+
+    (async () => {
+      for (let i = 0; i < 8; i++) {
+        const wk = new Worker(workerCode, { eval: true, workerData: { d } });
+        await new Promise((resolve, reject) => {
+          wk.once("message", resolve);
+          wk.once("error", reject);
+        });
+        for (let j = 0; j < 50; j++) fs.writeFileSync(d + "/b" + j, "x");
+        await wk.terminate();
+      }
+      console.log("ok");
+    })().catch(err => {
+      console.error(String(err));
+      process.exit(1);
+    });
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      // detect_leaks=0: ConcurrentTask nodes left in a terminated worker's
+      // undrained concurrent queue are a known pre-existing leak (see #32071);
+      // this test asserts no crash, not no leaks. symbolize=0 so a pre-fix
+      // ASAN abort exits promptly instead of spending seconds in
+      // llvm-symbolizer.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "symbolize=0", "detect_leaks=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "ok",
+    stderr: expect.not.stringContaining("ASSERTION"),
+    exitCode: 0,
+    signalCode: null,
+  });
+}, 30_000);
+
 // FSWatcher::init joins the user-supplied watch path with the process cwd into a
 // fixed pooled path buffer. The raw-path length validator only bounds the path
 // itself, so a relative path just under the platform path limit used to overflow

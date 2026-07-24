@@ -1373,7 +1373,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         dep_id,
                         dep_name_handle,
                         &clone.res,
-                        &resolved,
+                        strings::StringOrTinyString::init_append_if_needed(
+                            &resolved,
+                            &mut crate::network_task::filename_store_appender(),
+                        )
+                        .expect("unreachable"),
                         None,
                     );
                     manager.task_batch.push(ThreadPoolBatch::from(queued));

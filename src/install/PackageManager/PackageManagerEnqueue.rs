@@ -292,9 +292,6 @@ pub fn enqueue_git_for_checkout(
     }
 
     if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-        // `enqueue_git_checkout` copies `resolved` into the filename store
-        // before taking `&mut *this`; do that copy here so the
-        // `this.lockfile` borrow ends before the call.
         let resolved_tiny = StringOrTinyString::init_append_if_needed(
             this.lockfile.str(&repository.resolved),
             &mut crate::network_task::filename_store_appender(),
@@ -307,7 +304,7 @@ pub fn enqueue_git_for_checkout(
             dependency_id,
             alias,
             resolution,
-            resolved_tiny.slice(),
+            resolved_tiny,
             patch_name_and_version_hash,
         );
         this.task_batch.push(ThreadPool::Batch::from(task));
@@ -1240,7 +1237,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     id,
                     alias,
                     &res,
-                    &resolved,
+                    StringOrTinyString::init_append_if_needed(
+                        &resolved,
+                        &mut crate::network_task::filename_store_appender(),
+                    )
+                    .expect("unreachable"),
                     None,
                 );
                 this.task_batch.push(ThreadPool::Batch::from(task));
@@ -1527,19 +1528,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    // Copy into the filename store (no heap alloc; where
-                    // `generate_network_task_for_tarball` would copy it
-                    // anyway) so the slice no longer borrows
-                    // `this.lockfile` across the `&mut this` call.
-                    let url_tiny = StringOrTinyString::init_append_if_needed(
-                        this.lockfile.str(&url_str),
-                        &mut crate::network_task::filename_store_appender(),
-                    )
-                    .expect("unreachable");
+                    // Stage the URL in a stack buffer so the `this.lockfile`
+                    // borrow ends before the `&mut this` call;
+                    // `generate_network_task_for_tarball` interns it into the
+                    // filename store once.
+                    let mut url_buf = bun_paths::path_buffer_pool::get();
+                    let url_len = {
+                        let url = this.lockfile.str(&url_str);
+                        url_buf[..url.len()].copy_from_slice(url);
+                        url.len()
+                    };
                     if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
                         this,
                         task_id,
-                        url_tiny.slice(),
+                        &url_buf[..url_len],
                         dependency.behavior.is_required(),
                         id,
                         &Package {
@@ -1724,7 +1726,7 @@ pub fn enqueue_git_checkout(
     dependency_id: DependencyID,
     name: SemverString,
     resolution: &Resolution,
-    resolved: &[u8],
+    resolved: StringOrTinyString,
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
@@ -1754,7 +1756,7 @@ pub fn enqueue_git_checkout(
             // `resolution.tag == Git` for the git-checkout path.
             StringOrTinyString::init_append_if_needed(lf.str(&resolution.git().repo), &mut store)
                 .expect("unreachable"),
-            StringOrTinyString::init_append_if_needed(resolved, &mut store).expect("unreachable"),
+            resolved,
             patch.map(|_| {
                 let dep_name_hash = lf.buffers.dependencies[dependency_id as usize].name_hash;
                 match lf
@@ -2060,20 +2062,6 @@ fn get_or_put_resolved_package_with_find_result(
     // way out.
     let pkg_meta_id = package.meta.id;
     let result = (|| {
-        // Lazily copy the tarball URL out of `this.manifests` into the
-        // filename store (only the Extract/CalcPatchHash arms need it), then
-        // release the `&this.manifests` borrow before the whole-`&mut this`
-        // calls.
-        let tarball_url_tiny = |this: &PackageManager| {
-            StringOrTinyString::init_append_if_needed(
-                this.manifests
-                    .loaded_by_name_hash(name_hash)
-                    .expect("manifest was just loaded by caller")
-                    .str(&find_result_package.tarball_url),
-                &mut crate::network_task::filename_store_appender(),
-            )
-            .expect("unreachable")
-        };
         // non-null if the package is in "patchedDependencies"
         let mut name_and_version_hash: Option<u64> = None;
         let mut patchfile_hash: Option<u64> = None;
@@ -2111,7 +2099,20 @@ fn get_or_put_resolved_package_with_find_result(
                     );
                     debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
-                    let url_tiny = tarball_url_tiny(this);
+                    // Stage the URL in a pooled stack buffer so the
+                    // `&this.manifests` borrow ends before the `&mut this`
+                    // call; `generate_network_task_for_tarball` interns it
+                    // into the filename store.
+                    let mut url_buf = bun_paths::path_buffer_pool::get();
+                    let url_len = {
+                        let url = this
+                            .manifests
+                            .loaded_by_name_hash(name_hash)
+                            .expect("manifest was just loaded by caller")
+                            .str(&find_result_package.tarball_url);
+                        url_buf[..url.len()].copy_from_slice(url);
+                        url.len()
+                    };
                     break 'extract Some(ResolvedPackageResult {
                         package,
                         is_first_time: true,
@@ -2119,7 +2120,7 @@ fn get_or_put_resolved_package_with_find_result(
                             run_tasks::generate_network_task_for_tarball(
                                 this,
                                 task_id,
-                                url_tiny.slice(),
+                                &url_buf[..url_len],
                                 behavior.is_required(),
                                 dependency_id,
                                 &package,
@@ -2142,7 +2143,12 @@ fn get_or_put_resolved_package_with_find_result(
                             Some(EnqueueAfterState {
                                 pkg_id: package.meta.id,
                                 dependency_id,
-                                url: Box::<[u8]>::from(tarball_url_tiny(this).slice()),
+                                url: Box::<[u8]>::from(
+                                    this.manifests
+                                        .loaded_by_name_hash(name_hash)
+                                        .expect("manifest was just loaded by caller")
+                                        .str(&find_result_package.tarball_url),
+                                ),
                             }),
                         ),
                     )),

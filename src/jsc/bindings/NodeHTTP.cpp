@@ -778,7 +778,9 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     auto& internalHeaders = headers.internalHeaders();
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
-
+        if (value.isEmpty()) {
+            continue;
+        }
         if (value.is8Bit()) {
             const auto valueSpan = value.span8();
             res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(valueSpan.data()), valueSpan.size()));
@@ -1534,6 +1536,9 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
     };
 
     for (auto& value : internalHeaders.getSetCookieHeaders()) {
+        if (value.isEmpty()) {
+            continue;
+        }
         if (value.is8Bit()) {
             const auto s = value.span8();
             res->writeHeader(std::string_view("set-cookie", 10), std::string_view(reinterpret_cast<const char*>(s.data()), s.size()));

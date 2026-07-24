@@ -95,7 +95,7 @@ impl StaticRoute {
         }
 
         // Generate ETag if not already present
-        if headers.get(b"etag").is_none() {
+        if headers.get(b"etag").is_none_or(|v| v.is_empty()) {
             if !blob.slice().is_empty() {
                 append_etag(blob.slice(), &mut headers);
             }
@@ -222,13 +222,20 @@ impl StaticRoute {
             // Consuming the body left a plain `Blob` behind, which no longer implies
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
+            // `fast_get` (unlike `put_default`'s `fast_has`) treats an empty value as
+            // absent, so an explicit `content-type: ""` is overwritten here — a
+            // Bun-specific choice for the `static:` route API, not at Fetch-spec
+            // construction time.
             if was_string {
-                let text_mime = bun_http_types::MimeType::TEXT;
-                response.get_or_create_headers(global_this)?.put_default(
-                    HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(text_mime.value.as_ref()),
-                    global_this,
-                )?;
+                let h = response.get_or_create_headers(global_this)?;
+                if h.fast_get(HTTPHeaderName::ContentType).is_none() {
+                    let text_mime = bun_http_types::MimeType::TEXT;
+                    h.put(
+                        HTTPHeaderName::ContentType,
+                        &bun_core::String::ascii(text_mime.value.as_ref()),
+                        global_this,
+                    )?;
+                }
             }
 
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
@@ -237,7 +244,7 @@ impl StaticRoute {
             );
 
             // Generate ETag if not already present
-            if headers.get(b"etag").is_none() {
+            if headers.get(b"etag").is_none_or(|v| v.is_empty()) {
                 if !blob.slice().is_empty() {
                     append_etag(blob.slice(), &mut headers);
                 }

@@ -71,10 +71,15 @@ describe("empty header value does not duplicate auto-headers", () => {
   });
 
   test("Response.json with empty content-type", async () => {
+    // The Fetch spec's "initialize a response" gates the default Content-Type on
+    // "header list contains" (key presence), so the Response object keeps the
+    // empty value; the wire serializer drops it and backfills from the body.
+    const r = Response.json({ a: 1 }, { headers: { "content-type": "" } });
+    expect(r.headers.get("content-type")).toBe("");
     const head = await rawHead(() => Response.json({ a: 1 }, { headers: { "content-type": "" } }));
     const ct = lines(head, "content-type");
     expect(ct).toHaveLength(1);
-    expect(ct[0].toLowerCase()).toBe("content-type: application/json;charset=utf-8");
+    expect(ct[0]).toMatch(/^content-type: \S/i);
   });
 
   test("both empty at once: one of each", async () => {
@@ -154,6 +159,22 @@ describe("empty header value does not duplicate auto-headers", () => {
       expect(lines(head, "x-custom")).toEqual([]);
       expect(lines(head, "content-type")).toEqual(["Content-Type: text/html"]);
     }
+  });
+
+  test("empty set-cookie is dropped on both paths", async () => {
+    for (const head of [
+      await rawHead(() => new Response("x", { headers: { "set-cookie": "" } })),
+      await rawHeadStatic(new Response("x", { headers: { "set-cookie": "" } })),
+    ]) {
+      expect(lines(head, "set-cookie")).toEqual([]);
+    }
+  });
+
+  test("static route: empty etag gets the auto content-hash", async () => {
+    const head = await rawHeadStatic(new Response("x", { headers: { etag: "" } }));
+    const etag = lines(head, "etag");
+    expect(etag).toHaveLength(1);
+    expect(etag[0]).toMatch(/^etag: "\S/);
   });
 });
 

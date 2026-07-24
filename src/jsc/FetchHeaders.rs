@@ -143,11 +143,7 @@ impl FetchHeaders {
         value: &BunString,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        // `fast_get` returns None for a zero-length value, so an empty entry is
-        // treated as absent and overwritten with the default (`Response.json`'s
-        // `application/json`, StaticRoute's was-string `text/plain`). `fast_has`
-        // would leave the empty value in place.
-        if self.fast_get(name_).is_some() {
+        if self.fast_has(name_) {
             return Ok(());
         }
 

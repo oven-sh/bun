@@ -1059,7 +1059,7 @@ describe("parse shell", () => {
 
 describe("parse shell invalid input", () => {
   const jsObjRefErr =
-    "Response, Blob, ReadableStream, ArrayBuffer, and TypedArray values can only be used as a redirect in a shell command (e.g. `< ${value}` or `> ${value}`), not as a command or argument";
+    "Response, Blob, ReadableStream, ArrayBuffer, and TypedArray values can only be used with a redirect operator (`<`, `>`), not as a command name, argument, or assignment value";
 
   test("invalid js obj", async () => {
     const file = new Uint8Array(420);
@@ -1079,20 +1079,34 @@ describe("parse shell invalid input", () => {
     test("as argument", async () => {
       await TestBuilder.command`echo ${make()}`.error(jsObjRefErr).run();
     });
-    test("after assignment", async () => {
+    test("as assignment value", async () => {
+      await TestBuilder.command`FOO=${make()}`.error(jsObjRefErr).run();
+    });
+    test("glued to assignment value", async () => {
+      await TestBuilder.command`FOO=bar${make()}`.error(jsObjRefErr).run();
+    });
+    test("as command after assignment", async () => {
       await TestBuilder.command`FOO=bar ${make()}`.error(jsObjRefErr).run();
     });
     test("after pipe", async () => {
       await TestBuilder.command`echo hi | ${make()}`.error(jsObjRefErr).run();
     });
-  });
-
-  test("error for interpolated Response/Blob/etc does not leak internal token name", () => {
-    for (const value of [new Response("x"), new Blob(["x"]), new ArrayBuffer(4)]) {
-      expect(() => $`echo ${value}`).toThrow(/can only be used as a redirect/);
-      expect(() => $`echo ${value}`).not.toThrow(/JSObjRef/);
-      expect(() => $`if [[ ${value} == foo ]]; then echo hi; fi`).not.toThrow(/JSObjRef/);
-    }
+    test("as [[ ]] operand", async () => {
+      await TestBuilder.command`if [[ ${make()} == foo ]]; then echo hi; fi`.error(jsObjRefErr).run();
+    });
+    test("as [[ ]] operator", async () => {
+      await TestBuilder.command`if [[ foo ${make()} bar ]]; then echo hi; fi`
+        .error(
+          "Expected a conditional expression operator, but got: an interpolated Response, Blob, ReadableStream, ArrayBuffer, or TypedArray",
+        )
+        .run();
+    });
+    test("does not leak internal token name", () => {
+      expect(() => $`echo ${make()}`).not.toThrow(/JSObjRef/);
+      expect(() => $`FOO=${make()}`).not.toThrow(/JSObjRef/);
+      expect(() => $`if [[ ${make()} == foo ]]; then echo hi; fi`).not.toThrow(/JSObjRef/);
+      expect(() => $`if [[ foo ${make()} bar ]]; then echo hi; fi`).not.toThrow(/JSObjRef/);
+    });
   });
 
   test("subshell", async () => {

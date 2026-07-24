@@ -1339,12 +1339,6 @@ impl<'bump> Parser<'bump> {
         let name = match self.parse_atom()? {
             Some(n) => n,
             None => {
-                if self.peek().tag() == TokenTag::JSObjRef {
-                    self.add_error(format_args!(
-                        "Response, Blob, ReadableStream, ArrayBuffer, and TypedArray values can only be used as a redirect in a shell command (e.g. `< ${{value}}` or `> ${{value}}`), not as a command or argument"
-                    ))?;
-                    return Err(ParseError::Expected.into());
-                }
                 if assigns.is_empty() {
                     self.add_error(format_args!(
                         "expected a command or assignment but got: \"{}\"",
@@ -1650,6 +1644,12 @@ impl<'bump> Parser<'bump> {
                         ))?;
                         return Err(ParseError::Unexpected.into());
                     }
+                    Token::JSObjRef(_) => {
+                        self.add_error(format_args!(
+                            "Response, Blob, ReadableStream, ArrayBuffer, and TypedArray values can only be used with a redirect operator (`<`, `>`), not as a command name, argument, or assignment value"
+                        ))?;
+                        return Err(ParseError::Expected.into());
+                    }
                     Token::Pipe
                     | Token::DoublePipe
                     | Token::Ampersand
@@ -1661,7 +1661,6 @@ impl<'bump> Parser<'bump> {
                     | Token::Newline
                     | Token::CmdSubstQuoted
                     | Token::CmdSubstEnd
-                    | Token::JSObjRef(_)
                     | Token::Delimit
                     | Token::Eof
                     | Token::DoubleBracketOpen

@@ -1781,11 +1781,18 @@ where
             (bun_io::FileType::File, false)
         };
 
-        let original_size = match &self.blob {
-            AnyBlob::Blob(b) => b.size.get(),
+        let (original_size, blob_offset) = match &self.blob {
+            AnyBlob::Blob(b) => (b.size.get(), b.offset.get()),
             _ => unreachable!(),
         };
         let stat_size: BlobSizeType = BlobSizeType::try_from(stat.st_size.max(0)).unwrap();
+        // procfs/sysfs regular files report st_size == 0 but yield content on
+        // read(); for an unsliced Bun.file() body, read to EOF (chunked, no
+        // Content-Length) instead of trusting stat and serving an empty body.
+        let stream_to_eof = is_regular
+            && stat_size == 0
+            && blob_offset == 0
+            && original_size == crate::webcore::blob::MAX_SIZE;
         if let AnyBlob::Blob(b) = &mut self.blob {
             b.size.set(if is_regular {
                 stat_size
@@ -1794,22 +1801,18 @@ where
             });
         }
 
-        self.flags.set_needs_content_length(true);
-        let blob_offset = match &self.blob {
-            AnyBlob::Blob(b) => b.offset.get(),
-            _ => unreachable!(),
-        };
+        self.flags.set_needs_content_length(!stream_to_eof);
         self.sendfile = SendfileContext {
             remain: blob_offset + original_size,
             offset: blob_offset,
             total: 0,
         };
-        if is_regular && auto_close {
+        if is_regular && !stream_to_eof && auto_close {
             self.flags.set_needs_content_range(
                 self.sendfile.remain.saturating_sub(self.sendfile.offset) != stat_size,
             );
         }
-        if is_regular {
+        if is_regular && !stream_to_eof {
             self.sendfile.offset = self.sendfile.offset.min(stat_size);
             self.sendfile.remain = self
                 .sendfile
@@ -1842,6 +1845,7 @@ where
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's headers).
         let method_allows_range = self.method == Method::GET || self.method == Method::HEAD;
         if is_regular
+            && !stream_to_eof
             && method_allows_range
             && !user_handles_range
             && is_whole_file
@@ -1888,7 +1892,7 @@ where
 
         resp.run_corked_with_type(Self::render_metadata_corked, self);
 
-        if (is_regular && self.sendfile.remain == 0) || !self.method.has_body() {
+        if (is_regular && !stream_to_eof && self.sendfile.remain == 0) || !self.method.has_body() {
             if auto_close {
                 fd.close();
             }
@@ -1929,7 +1933,7 @@ where
             file_type,
             pollable,
             offset: self.sendfile.offset as u64,
-            length: if is_regular {
+            length: if is_regular && !stream_to_eof {
                 Some(self.sendfile.remain as u64)
             } else {
                 None

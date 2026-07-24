@@ -139,7 +139,9 @@ describe("empty header value does not duplicate auto-headers", () => {
 
   test("file route: date empty", async () => {
     using dir = tempDir("serve-file-empty-date", { "a.txt": "x" });
-    const head = await rawHeadStatic(new Response(Bun.file(path.join(String(dir), "a.txt")), { headers: { date: "" } }));
+    const head = await rawHeadStatic(
+      new Response(Bun.file(path.join(String(dir), "a.txt")), { headers: { date: "" } }),
+    );
     const date = lines(head, "date");
     expect(date).toHaveLength(1);
     expect(date[0]).toMatch(/^Date: \S/);

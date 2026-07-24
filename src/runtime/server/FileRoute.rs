@@ -121,7 +121,9 @@ impl FileRoute {
             ref_count: Cell::new(1),
             server: Cell::new(opts.server),
             has_last_modified_header: headers.get(b"last-modified").is_some_and(|v| !v.is_empty()),
-            has_content_length_header: headers.get(b"content-length").is_some_and(|v| !v.is_empty()),
+            has_content_length_header: headers
+                .get(b"content-length")
+                .is_some_and(|v| !v.is_empty()),
             has_content_range_header: headers.get(b"content-range").is_some_and(|v| !v.is_empty()),
             has_date_header: headers.get(b"date").is_some_and(|v| !v.is_empty()),
             blob,
@@ -180,9 +182,15 @@ impl FileRoute {
                 return Ok(Some(bun_core::heap::into_raw(Box::new(FileRoute {
                     ref_count: Cell::new(1),
                     server: Cell::new(None),
-                    has_last_modified_header: headers.get(b"last-modified").is_some_and(|v| !v.is_empty()),
-                    has_content_length_header: headers.get(b"content-length").is_some_and(|v| !v.is_empty()),
-                    has_content_range_header: headers.get(b"content-range").is_some_and(|v| !v.is_empty()),
+                    has_last_modified_header: headers
+                        .get(b"last-modified")
+                        .is_some_and(|v| !v.is_empty()),
+                    has_content_length_header: headers
+                        .get(b"content-length")
+                        .is_some_and(|v| !v.is_empty()),
+                    has_content_range_header: headers
+                        .get(b"content-range")
+                        .is_some_and(|v| !v.is_empty()),
                     has_date_header: headers.get(b"date").is_some_and(|v| !v.is_empty()),
                     blob,
                     headers,

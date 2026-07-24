@@ -303,6 +303,272 @@ describe("module", () => {
   });
 });
 
+describe("the loader runs once per specifier", () => {
+  it("require() after import() reuses the ESM registry entry", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-import-first", () => {
+          calls++;
+          return { exports: { value: calls }, loader: "object" };
+        });
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("load-once-import-first");
+    expect([calls, imported.value]).toEqual([1, 1]);
+
+    const required = require("load-once-import-first");
+    expect([calls, required.value]).toEqual([1, 1]);
+  });
+
+  it("import() after require() reuses the require() load", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-require-first", () => {
+          calls++;
+          return { exports: { value: calls }, loader: "object" };
+        });
+      },
+    });
+
+    const required = require("load-once-require-first");
+    expect([calls, required.value]).toEqual([1, 1]);
+
+    // @ts-expect-error
+    const imported = await import("load-once-require-first");
+    expect([calls, imported.value]).toEqual([1, 1]);
+  });
+
+  it("require() after import() reuses the entry for a namespaced onLoad", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.onResolve({ filter: /.*/, namespace: "load-once-ns" }, ({ path }) => ({
+          path,
+          namespace: "load-once-ns",
+        }));
+        builder.onLoad({ filter: /.*/, namespace: "load-once-ns" }, () => {
+          calls++;
+          return { contents: `export const value = ${calls};`, loader: "js" };
+        });
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("load-once-ns:hello");
+    expect([calls, imported.value]).toEqual([1, 1]);
+
+    const required = require("load-once-ns:hello");
+    expect([calls, required.value]).toEqual([1, 1]);
+  });
+
+  // require() unwraps `default` when the object loader sets __esModule. That unwrap has to
+  // survive the registry reuse above, so it must not depend on import() ordering.
+  it("require() after import() unwraps the __esModule default", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-esmodule-import-first", () => {
+          calls++;
+          return { exports: { __esModule: true, default: "world" }, loader: "object" };
+        });
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("load-once-esmodule-import-first");
+    expect([calls, imported.default]).toEqual([1, "world"]);
+
+    expect([require("load-once-esmodule-import-first"), calls]).toEqual(["world", 1]);
+  });
+
+  it("require() before import() unwraps the __esModule default", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-esmodule-require-first", () => {
+          calls++;
+          return { exports: { __esModule: true, default: "world" }, loader: "object" };
+        });
+      },
+    });
+
+    expect([require("load-once-esmodule-require-first"), calls]).toEqual(["world", 1]);
+
+    // @ts-expect-error
+    const imported = await import("load-once-esmodule-require-first");
+    expect([calls, imported.default]).toEqual([1, "world"]);
+  });
+
+  // `default: null` is the one value the "module.exports" binding and a nullish check
+  // disagree about, so require() has to read the binding's presence, not its value.
+  it.each([
+    ["null", null],
+    ["false", false],
+    ["0", 0],
+  ])("require() agrees in either order when the __esModule default is %s", async (label, value) => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.module(`load-once-falsy-import-first-${label}`, () => {
+          calls++;
+          return { exports: { __esModule: true, default: value }, loader: "object" };
+        });
+        builder.module(`load-once-falsy-require-first-${label}`, () => ({
+          exports: { __esModule: true, default: value },
+          loader: "object",
+        }));
+      },
+    });
+
+    expect(require(`load-once-falsy-require-first-${label}`)).toBe(value);
+
+    await import(`load-once-falsy-import-first-${label}`);
+    expect([require(`load-once-falsy-import-first-${label}`), calls]).toEqual([value, 1]);
+  });
+
+  // Transpilers emit the marker with Object.defineProperty, leaving it non-enumerable,
+  // so it has to be found by lookup rather than by enumerating the exports object.
+  it("require() unwraps a non-enumerable __esModule default in either order", async () => {
+    let calls = 0;
+    const markedExports = () => {
+      const exports = { default: "world" };
+      Object.defineProperty(exports, "__esModule", { value: true });
+      return exports;
+    };
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-defineprop-import-first", () => {
+          calls++;
+          return { exports: markedExports(), loader: "object" };
+        });
+        builder.module("load-once-defineprop-require-first", () => ({
+          exports: markedExports(),
+          loader: "object",
+        }));
+      },
+    });
+
+    expect(require("load-once-defineprop-require-first")).toBe("world");
+
+    // @ts-expect-error
+    await import("load-once-defineprop-import-first");
+    expect([require("load-once-defineprop-import-first"), calls]).toEqual(["world", 1]);
+  });
+
+  it("a namespaced onLoad object loader unwraps the __esModule default after import()", async () => {
+    let calls = 0;
+    Bun.plugin({
+      setup(builder) {
+        builder.onResolve({ filter: /.*/, namespace: "load-once-esm-ns" }, ({ path }) => ({
+          path,
+          namespace: "load-once-esm-ns",
+        }));
+        builder.onLoad({ filter: /.*/, namespace: "load-once-esm-ns" }, () => {
+          calls++;
+          return { exports: { __esModule: true, default: "world" }, loader: "object" };
+        });
+      },
+    });
+
+    // @ts-expect-error
+    const imported = await import("load-once-esm-ns:hello");
+    expect([calls, imported.default]).toEqual([1, "world"]);
+
+    expect([require("load-once-esm-ns:hello"), calls]).toEqual(["world", 1]);
+  });
+
+  it("require() of an async virtual module succeeds once import() has loaded it", async () => {
+    Bun.plugin({
+      setup(builder) {
+        builder.module("load-once-async", async () => {
+          await Bun.sleep(1);
+          return { exports: { value: "async" }, loader: "object" };
+        });
+      },
+    });
+
+    // Nothing has loaded it yet, so require() has no finished module to hand back.
+    expect(() => require("load-once-async")).toThrow(
+      `require() async module "load-once-async" is unsupported. use "await import()" instead.`,
+    );
+
+    // @ts-expect-error
+    const imported = await import("load-once-async");
+    expect(imported.value).toBe("async");
+
+    // The ESM registry holds it now, so require() returns it rather than throwing.
+    expect(require("load-once-async").value).toBe("async");
+  });
+
+  // `export *` re-exports every name but "default", so a wrapper around an __esModule
+  // object module inherits its "module.exports" binding and require() of the wrapper
+  // unwraps to the same value. A user-authored `export { X as "module.exports" }` already
+  // propagates that way, so this keeps the two spellings consistent.
+  it("export * from an __esModule object module carries the CJS unwrap", async () => {
+    using dir = tempDir("plugin-star-export", {
+      "preload.ts": `
+        import { plugin } from "bun";
+        plugin({
+          setup(b) {
+            b.module("star-virt", () => ({
+              exports: { __esModule: true, default: "X", helper: 1 },
+              loader: "object",
+            }));
+          },
+        });
+      `,
+      "wrapper.mjs": `export * from "star-virt";\nexport const extra = 2;`,
+      "app.cjs": `console.log(JSON.stringify(require("./wrapper.mjs")));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "./app.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(`"X"`);
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun test` lets plugins shadow builtins, which reorders the virtual module
+  // lookup in fetchCommonJSModule(). Cover the plain-runtime ordering too.
+  it("require() after import() reuses the ESM registry entry outside of `bun test`", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        let calls = 0;
+        Bun.plugin({
+          setup(builder) {
+            builder.module("load-once-outside-bun-test", () => {
+              calls++;
+              return { exports: { value: calls }, loader: "object" };
+            });
+          },
+        });
+        const imported = await import("load-once-outside-bun-test");
+        const required = require("load-once-outside-bun-test");
+        console.log(JSON.stringify({ calls, imported: imported.value, required: required.value }));
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe(JSON.stringify({ calls: 1, imported: 1, required: 1 }));
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("dynamic import", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
     const { default: App }: any = await import("./hello.svelte");

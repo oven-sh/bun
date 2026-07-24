@@ -297,6 +297,13 @@ describe.concurrent("node-module-module", () => {
     expect(require("./esm_to_cjs_interop.mjs")).toEqual(Symbol.for("meow"));
   });
 
+  // A declared "module.exports" export wins on its presence, not on its value, which is
+  // what Node returns here. A nullish binding used to fall through to the namespace.
+  test("require uses a nullish 'module.exports' export verbatim", () => {
+    expect(require("./esm_to_cjs_interop_null.mjs")).toBeNull();
+    expect(require("./esm_to_cjs_interop_undefined.mjs")).toBeUndefined();
+  });
+
   test("Module.runMain", async () => {
     await using proc = Bun.spawn({
       cmd: [

@@ -37,6 +37,7 @@
 #include "../modules/ObjectModule.h"
 #include "JSCommonJSModule.h"
 #include "IsolatedModuleCache.h"
+#include "isBuiltinModule.h"
 #include "../modules/_NativeModule.h"
 
 #include "JSCommonJSExtensions.h"
@@ -401,7 +402,12 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypeObject: {
         JSC::JSObject* object = onLoadResult.value.object.getObject();
-        if (commonJSModule) {
+        // Only mocks need to unwrap `default` here. For everything else the source code
+        // below carries a "module.exports" binding that require() reads back out, and
+        // going through it is what registers the module so a later import() reuses this
+        // load instead of running the loader a second time. Mocks skip provideFetch, so
+        // they have nothing to read back and still need the shortcut.
+        if (commonJSModule && wasModuleMock) {
             const auto& __esModuleIdentifier = vm.propertyNames->__esModule;
             auto esModuleValue = object->getIfPropertyExists(globalObject, __esModuleIdentifier);
             if (scope.exception()) [[unlikely]] {
@@ -660,9 +666,26 @@ JSValue fetchCommonJSModule(
 
     bool wasModuleMock = false;
 
+    // require() of a module already in the ESM registry returns that instance (the
+    // jsNumber(-1) below), so re-running a plugin's onLoad() re-executes user code for
+    // a result we discard. The ESM path never re-fetches a registered module either.
+    const bool alreadyLoadedAsESM = [&]() -> bool {
+        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
+        return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
+    }();
+
+    // Two exemptions, both because this lookup runs ahead of the builtin one under
+    // `bun test`. Mocks: mock.module() is how a builtin gets shadowed, and it patches
+    // whatever registry entry existed at install time, which carries no "module.exports"
+    // binding for require() to unwrap. Builtins: keep require() of one on the branch it
+    // already takes, rather than having a registered plugin decide that.
+    const bool shouldRunVirtualModule = !alreadyLoadedAsESM
+        || globalObject->onLoadPlugins.hasModuleMock(specifierWtfString)
+        || Bun::isBuiltinModule(specifierWtfString);
+
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
-    if (isBunTest) {
+    if (isBunTest && shouldRunVirtualModule) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
@@ -717,7 +740,7 @@ JSValue fetchCommonJSModule(
     }
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
-    if (!isBunTest) {
+    if (!isBunTest && shouldRunVirtualModule) {
         JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, &specifier, wasModuleMock);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
@@ -760,12 +783,7 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    bool hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
-        auto* entry = globalObject->moduleLoader()->registryEntry(JSC::Identifier::fromString(vm, specifierWtfString));
-        return entry && entry->status() >= JSC::ModuleRegistryEntry::Status::Fetched;
-    }();
-
-    if (hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice) {
+    if (alreadyLoadedAsESM) {
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 

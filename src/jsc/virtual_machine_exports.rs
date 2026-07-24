@@ -346,3 +346,11 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
         .store(limit, core::sync::atomic::Ordering::Relaxed);
     Ok(JSValue::js_number(prev as f64))
 }
+
+#[crate::host_fn(export = "Bun__isSmolModeForTesting")]
+pub fn Bun__isSmolModeForTesting(
+    _global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_boolean(crate::virtual_machine::is_smol_mode()))
+}

@@ -148,6 +148,12 @@ export const setSyntheticAllocationLimitForTesting: (limit: number) => number = 
   1,
 );
 
+export const isSmolModeForTesting: () => boolean = $newRustFunction(
+  "virtual_machine_exports.rs",
+  "Bun__isSmolModeForTesting",
+  0,
+);
+
 // Shrink the markdown parser's block-metadata cap (in bytes) so its
 // `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
 // be lowered, never raised past the real limit. Returns the previous value so

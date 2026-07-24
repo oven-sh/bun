@@ -172,7 +172,11 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     }
   });
 
-  test("NOT autoload local bunfig.toml (sub cwd)", async () => {
+  test("autoload ancestor bunfig.toml (sub cwd)", async () => {
+    // Since #29310, a project-root bunfig.toml is picked up when `bun run`
+    // (or `bun`) is invoked from a workspace subdirectory, matching how
+    // package.json is resolved. `run.bun = true` in the ancestor config
+    // should therefore redirect `which node` to bun's node shim.
     const runCmd = cmd === "bun" ? ["run"] : [];
 
     const bunfig = toTOMLString({
@@ -205,7 +209,11 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     });
     const nodeBin = result.stdout.toString().trim();
 
-    expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+    if (isWindows) {
+      expect(realpathSync(nodeBin)).toContain("\\bun-node-");
+    } else {
+      expect(realpathSync(nodeBin)).toBe(realpathSync(execPath));
+    }
     expect(result.success).toBeTrue();
   });
 
@@ -220,6 +228,9 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
     const cwd = tempDirWithFiles("run.where.node", {
       "my-home/.bunfig.toml": bunfig,
+      // Terminate the ancestor bunfig walk inside the tempdir so a stray
+      // bunfig.toml between tmpdir and / can't leak into this test.
+      "bunfig.toml": "",
       "package.json": JSON.stringify(
         {
           scripts: {
@@ -247,4 +258,54 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     expect(realpathSync(nodeBin)).toBe(realpathSync(node));
     expect(result.success).toBeTrue();
   });
+
+  // Config is now loaded before CLI flags are applied, so the flag's absence
+  // must not overwrite `smol = true` from the auto-loaded bunfig.toml.
+  test.each([
+    { label: "bunfig smol = true", files: { "bunfig.toml": "smol = true\n" }, flags: [], expected: "true" },
+    // Empty bunfig.toml keeps the ancestor walk inside the tempdir.
+    { label: "empty bunfig, no flag", files: { "bunfig.toml": "" }, flags: [], expected: "false" },
+    { label: "empty bunfig, --smol", files: { "bunfig.toml": "" }, flags: ["--smol"], expected: "true" },
+  ])("smol: $label", ({ files, flags, expected }) => {
+    const runCmd = cmd === "bun" ? ["run"] : [];
+
+    const cwd = tempDirWithFiles("run.smol", {
+      ...files,
+      "index.ts": `import { isSmolModeForTesting } from "bun:internal-for-testing";\nconsole.log(isSmolModeForTesting());\n`,
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), ...runCmd, ...flags, "index.ts"],
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      cwd,
+    });
+
+    expect(result.stdout.toString().trim()).toBe(expected);
+    expect(result.success).toBeTrue();
+  });
+
+  if (cmd === "bun") {
+    // Same clobber applied to `bun test`: [test].smol must survive too.
+    test("bun test respects [test].smol from bunfig.toml", () => {
+      const cwd = tempDirWithFiles("test.smol", {
+        "bunfig.toml": "[test]\nsmol = true\n",
+        "smol.test.ts": `import { test, expect } from "bun:test";\nimport { isSmolModeForTesting } from "bun:internal-for-testing";\ntest("smol", () => expect(isSmolModeForTesting()).toBe(true));\n`,
+      });
+
+      const result = Bun.spawnSync({
+        cmd: [bunExe(), "test", "smol.test.ts"],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+        stdin: "ignore",
+        cwd,
+      });
+
+      expect(result.stderr.toString()).toContain("1 pass");
+      expect(result.success).toBeTrue();
+    });
+  }
 });

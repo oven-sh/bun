@@ -133,6 +133,18 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
+/// Entries marking a directory as the root of its own project, ending the
+/// ancestor bunfig.toml walk in `load_config`. A fresh directory with only a
+/// package.json is not a boundary until its first install writes a lockfile.
+const PROJECT_BOUNDARY_MARKERS: [&[u8]; 6] = [
+    b".git",
+    b"bun.lock",
+    b"bun.lockb",
+    b"package-lock.json",
+    b"yarn.lock",
+    b"pnpm-lock.yaml",
+];
+
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
@@ -202,26 +214,125 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // Reshaped for borrowck: `join_abs_string_buf` ties the
-        // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
-        // and `config_buf`. We only need the length to NUL-terminate and
-        // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
-        // the `&mut ctx` call below.
-        config_path_len = {
-            let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
-            let parts: [&[u8]; 2] = [awd, config_path_];
-            let joined =
-                resolve_path::join_abs_string_buf::<platform::Auto>(awd, &mut *config_buf, &parts);
-            joined.len()
-        };
-        config_buf[config_path_len] = 0;
+        if auto_loaded {
+            // Walk up the directory tree looking for a bunfig.toml. Lets
+            // commands run from a subdirectory of the project (e.g. a
+            // workspace package) pick up the project-root bunfig.toml,
+            // matching how package.json is resolved.
+            let awd: Box<[u8]> = ctx
+                .args
+                .absolute_working_dir
+                .as_deref()
+                .unwrap()
+                .to_vec()
+                .into_boxed_slice();
+            // `--cwd some/dir/` preserves the trailing separator; strip it
+            // (keeping root forms like "/" and "C:\") so the root check
+            // below only fires on `bun_paths::dirname` outputs.
+            let mut dir: &[u8] = &awd;
+            while dir.len() > 1
+                && bun_paths::is_sep_native(dir[dir.len() - 1])
+                && (!cfg!(windows) || dir[dir.len() - 2] != b':')
+            {
+                dir = &dir[..dir.len() - 1];
+            }
+            // `bun_paths::dirname` yields root directories ("/", "C:\\",
+            // "\\\\server\\share\\") with a trailing separator and None above
+            // them, so a parent ending in a separator is the last to check;
+            // the walk never escapes a drive or UNC share root.
+            let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
+            let mut found_len: Option<usize> = None;
+            loop {
+                let parts: [&[u8]; 2] = [dir, config_path_];
+                let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    dir,
+                    &mut *config_buf,
+                    &parts,
+                );
+                let joined_len = joined.len();
+                config_buf[joined_len] = 0;
+                let candidate = ZStr::from_buf(&config_buf[..], joined_len);
+                let is_regular = matches!(
+                    bun_sys::stat(candidate),
+                    Ok(ref st) if bun_sys::is_regular_file(st.st_mode as bun_sys::Mode)
+                );
+                if is_regular {
+                    found_len = Some(joined_len);
+                    break;
+                }
+                // A directory with its own lockfile or repository root is a
+                // separate project: don't inherit a bunfig.toml from beyond
+                // it (e.g. a package vendored inside a larger repo).
+                let at_project_boundary = PROJECT_BOUNDARY_MARKERS.iter().any(|marker| {
+                    let parts: [&[u8]; 2] = [dir, marker];
+                    let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                        dir,
+                        &mut *config_buf,
+                        &parts,
+                    );
+                    let joined_len = joined.len();
+                    config_buf[joined_len] = 0;
+                    bun_sys::stat(ZStr::from_buf(&config_buf[..], joined_len)).is_ok()
+                });
+                if at_project_boundary {
+                    break;
+                }
+                if is_root {
+                    break;
+                }
+                let Some(parent) = bun_paths::dirname(dir) else {
+                    break;
+                };
+                is_root = matches!(parent.last(), Some(&c) if bun_paths::is_sep_native(c));
+                dir = parent;
+            }
+            match found_len {
+                Some(len) => {
+                    // config_buf is already populated and NUL-terminated.
+                    config_path_len = len;
+                }
+                None => {
+                    // Walk found nothing. Mark bunfig "loaded" (attempted)
+                    // so a secondary load_config call (e.g. the RunCommand
+                    // fallback in run_command) doesn't redo the same walk.
+                    ctx.debug.loaded_bunfig = true;
+                    return Ok(());
+                }
+            }
+        } else {
+            // Reshaped for borrowck: `join_abs_string_buf` ties the
+            // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
+            // and `config_buf`. We only need the length to NUL-terminate and
+            // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
+            // the `&mut ctx` call below.
+            config_path_len = {
+                let awd: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap();
+                let parts: [&[u8]; 2] = [awd, config_path_];
+                let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                    awd,
+                    &mut *config_buf,
+                    &parts,
+                );
+                joined.len()
+            };
+            config_buf[config_path_len] = 0;
+        }
     }
     // SAFETY: `config_buf[config_path_len] == 0` (written above on both arms);
     // `config_buf` outlives the call.
     let config_path = ZStr::from_buf(&config_buf[..], config_path_len);
 
     if let Err(err) = load_config_path(cmd, auto_loaded, config_path, ctx) {
-        report_bunfig_load_failure(ctx.log, err);
+        // An error in an auto-discovered bunfig is non-fatal when running a
+        // script (`bun file.ts` / `bun run file.ts`): keep going so a
+        // stray/broken bunfig.toml up the tree doesn't abort the script. The
+        // accumulated log is flushed later on the normal path, so the
+        // diagnostic still reaches stderr. Explicit `--config` (!auto_loaded)
+        // and config-required commands (test/build/install) still abort.
+        let run_like = cmd == CommandTag::RunCommand || cmd == CommandTag::AutoCommand;
+        if !(auto_loaded && run_like) {
+            report_bunfig_load_failure(ctx.log, err);
+        }
     }
     Ok(())
 }

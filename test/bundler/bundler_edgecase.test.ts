@@ -2146,6 +2146,49 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  // __dirname/__filename lowering is target-sensitive; lock the per-target
+  // output shape so a property-name mixup can't silently pass when both
+  // targets are run under Bun (which aliases import.meta.dir/.dirname). #4216
+  itBundled("edgecase/DirnameFilenameTargetBun#4216", {
+    target: "bun",
+    files: {
+      "/entry.ts": `console.log(capture(__dirname), capture(__filename));`,
+    },
+    capture: ["__dirname", "__filename"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("import.meta.dir");
+      api.expectFile("/out.js").toContain("import.meta.path");
+      api.expectFile("/out.js").not.toContain('"/entry.ts"');
+    },
+  });
+  itBundled("edgecase/DirnameFilenameTargetNode#4216", {
+    target: "node",
+    files: {
+      "/entry.ts": `console.log(capture(__dirname), capture(__filename));`,
+    },
+    capture: ["__dirname", "__filename"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("import.meta.dirname");
+      api.expectFile("/out.js").toContain("import.meta.filename");
+      // Make sure we emit the Node spellings, not Bun's.
+      api.expectFile("/out.js").not.toMatch(/import\.meta\.dir\b/);
+      api.expectFile("/out.js").not.toMatch(/import\.meta\.path\b/);
+    },
+  });
+  itBundled("edgecase/DirnameFilenameTargetNodeCjs#4216", {
+    target: "node",
+    format: "cjs",
+    files: {
+      "/entry.ts": `console.log(capture(__dirname), capture(__filename), capture(import.meta.dir), capture(import.meta.path));`,
+    },
+    capture: ["__dirname", "__filename", "__dirname", "__filename"],
+    onAfterBundle(api) {
+      // No declaration; references fall through to the host module wrapper.
+      api.expectFile("/out.js").not.toMatch(/var __dirname\b/);
+      api.expectFile("/out.js").not.toMatch(/var __filename\b/);
+      api.expectFile("/out.js").not.toContain("import.meta");
+    },
+  });
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `

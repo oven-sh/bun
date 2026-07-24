@@ -623,9 +623,16 @@ describe.concurrent("__dirname/__filename resolve at runtime in bundled output",
     });
 
     test.skipIf(missingNode)(`--target=${target} --format=cjs`, async () => {
+      // Also reference `import.meta.dir`/`.path` so the test catches any
+      // divergence between them and `__dirname`/`__filename` in CJS output.
       using src = tempDir("dirname-4216-cjs", {
         "entry.js": `
-          console.log(JSON.stringify({ dirname: __dirname, filename: __filename }));
+          console.log(JSON.stringify({
+            dirname: __dirname,
+            filename: __filename,
+            metaDir: import.meta.dir,
+            metaPath: import.meta.path,
+          }));
         `,
       });
       const srcDir = String(src);
@@ -672,6 +679,8 @@ describe.concurrent("__dirname/__filename resolve at runtime in bundled output",
       expect(JSON.parse(stdout.trim())).toEqual({
         dirname: String(runDir),
         filename: runPath,
+        metaDir: String(runDir),
+        metaPath: runPath,
       });
       expect(exitCode).toBe(0);
     });

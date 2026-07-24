@@ -1036,22 +1036,27 @@ impl<'a> Parser<'a> {
             if uses_dirname || uses_filename {
                 // `(dir_property, path_property)` — `Some` when the target
                 // runtime exposes these on `import.meta`, `None` to fall back
-                // to the build-time string literal.
-                let import_meta_names: Option<(&'static [u8], &'static [u8])> =
-                    if p.options.bundle && p.options.output_format == options::Format::Esm {
-                        if p.options.target.is_bun() {
-                            Some((b"dir", b"path"))
-                        } else if p.options.target.is_node() {
-                            Some((b"dirname", b"filename"))
-                        } else {
-                            None
-                        }
+                // to the build-time string literal. Bake (`framework.is_some()`)
+                // inlines user-written `import.meta.dir` as a source-path string
+                // during visitation, so keep `__dirname` consistent with that.
+                let import_meta_names: Option<(&'static [u8], &'static [u8])> = if p.options.bundle
+                    && p.options.output_format == options::Format::Esm
+                    && p.options.framework.is_none()
+                {
+                    if p.options.target.is_bun() {
+                        Some((b"dir", b"path"))
+                    } else if p.options.target.is_node() {
+                        Some((b"dirname", b"filename"))
                     } else {
                         None
-                    };
+                    }
+                } else {
+                    None
+                };
 
                 let defer_to_cjs_wrapper = p.options.bundle
                     && p.options.output_format == options::Format::Cjs
+                    && p.options.framework.is_none()
                     && (p.options.target.is_bun() || p.options.target.is_node());
 
                 if import_meta_names.is_some() {

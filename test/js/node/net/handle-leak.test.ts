@@ -3,7 +3,7 @@
 // short-lived IPC (unix-socket / named-pipe) connections and asserts RSS is flat
 // between a warmup sample and a post sample.
 import { expect } from "bun:test";
-import { isASAN, isWindows } from "harness";
+import { isASAN, isMusl, isWindows } from "harness";
 import { rmSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
@@ -85,6 +85,11 @@ console.log(
 // was verified to fail against bun v1.2.22.
 let margin = 1024 * 1024 * 16;
 if (isWindows) margin = 1024 * 1024 * 20;
+// musl mallocng retains freed pages longer than glibc/mimalloc on this workload
+// (alpine CI observed ~17 MB at 60k with no leak). The previous 100k-connection
+// version ran at 24 MB on alpine, so reuse that here; v1.2.22's ~30 MB of leaked
+// native handles sits well above it regardless of libc.
+if (isMusl) margin = 1024 * 1024 * 24;
 // Under ASAN we use the system allocator so the interceptor sees every
 // allocation. The ASAN free-quarantine (default 256 MB) plus glibc malloc
 // retaining freed pages causes RSS to grow well past the native margin above

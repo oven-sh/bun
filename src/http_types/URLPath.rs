@@ -47,6 +47,15 @@ impl URLPath {
 // percent-encoded path, which is the rare case.
 
 pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
+    // The fragment starts at the first '#' and is part of neither the pathname nor
+    // the query (WHATWG URL). Cut it off the raw input, before percent-decoding, so
+    // that an encoded '#' ("%23") still decodes to a literal byte in the pathname.
+    let possibly_encoded_pathname_ =
+        match strings::index_of_char_usize(possibly_encoded_pathname_, b'#') {
+            Some(hash_i) => &possibly_encoded_pathname_[..hash_i],
+            None => possibly_encoded_pathname_,
+        };
+
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
     let mut needs_redirect = false;

@@ -1267,7 +1267,7 @@ describe("optionalDependencies", () => {
       );
       expect(await exited).toBe(optional ? 0 : 1);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "uses-what-bin", "what-bin"]);
+      expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["uses-what-bin", "what-bin"]);
       expect(await exists(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt"))).toBeTrue();
     });
   }

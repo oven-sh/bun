@@ -1,7 +1,18 @@
+import { dlopen } from "bun:ffi";
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isPosix, isWindows, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  fileDescriptorLeakChecker,
+  isLinux,
+  isPosix,
+  isWindows,
+  libcPathForDlopen,
+  tmpdirSync,
+} from "harness";
 import { mkfifo } from "mkfifo";
+import { closeSync, constants as fsConstants, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 describe("FileSink", () => {
@@ -529,4 +540,95 @@ it("fs.promises.writeFile with iterables under GC pressure does not crash", asyn
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+});
+
+// A regular file can't be polled for readability or writability, so the
+// streaming reader/writer have no poll to re-drive an EAGAIN. If the fd is
+// left O_NONBLOCK, a short write (or an EAGAIN read) on a filesystem that
+// honors it (FUSE, NFS, overlay, cgroup writes) strands the remainder with no
+// error. The open flags carry O_NONBLOCK only so open() itself never blocks on
+// a FIFO target; once fstat says "regular file" the flag must be cleared.
+describe.skipIf(!isPosix)("Bun.file() regular-file fd is kept blocking", () => {
+  const F_GETFL = 3; // same value on Linux, macOS and the BSDs
+  const fcntl = isPosix
+    ? dlopen(libcPathForDlopen(), { fcntl: { args: ["i32", "i32"], returns: "i32" } }).symbols.fcntl
+    : undefined;
+  const nonblock = (fd: number) => Number(fcntl!(fd, F_GETFL)) & fsConstants.O_NONBLOCK;
+
+  // F_SETFL acts on the open file description, so the sink's dup() and the
+  // caller's fd observe the same flags.
+  it("Bun.file(fd).writer() does not set O_NONBLOCK on a regular file", async () => {
+    const path = join(tmpdirSync(), "out.txt");
+    const fd = openSync(path, "w");
+    try {
+      expect(nonblock(fd)).toBe(0);
+
+      const sink = Bun.file(fd).writer();
+      sink.write("a");
+      const after = nonblock(fd);
+      await sink.end();
+
+      expect(after).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("Bun.file(fd).stream() clears O_NONBLOCK on a regular file", async () => {
+    const path = join(tmpdirSync(), "in.txt");
+    writeFileSync(path, "hello world");
+    const fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    try {
+      expect(nonblock(fd)).toBe(fsConstants.O_NONBLOCK);
+
+      const reader = Bun.file(fd).stream().getReader();
+      const { value } = await reader.read();
+      const after = nonblock(fd);
+      reader.releaseLock();
+
+      expect(Buffer.from(value!).toString()).toBe("hello world");
+      expect(after).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  // The Path arm of open_for_writing opens with O_NONBLOCK in the flags (so a
+  // FIFO target doesn't block open()) and must clear it afterwards. The sink
+  // owns that fd privately; use /proc/self/fd to find it from the child.
+  it.skipIf(!isLinux)("Bun.file(path).writer() does not leave O_NONBLOCK on a regular file", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("fs");
+          const path = process.argv[1];
+          const sink = Bun.file(path).writer();
+          sink.write("a");
+          sink.flush();
+          let found = -1;
+          for (const name of fs.readdirSync("/proc/self/fd")) {
+            const n = Number(name);
+            if (!Number.isFinite(n)) continue;
+            try {
+              if (fs.realpathSync("/proc/self/fd/" + name) === path) { found = n; break; }
+            } catch {}
+          }
+          if (found < 0) throw new Error("fd not found");
+          const flags = parseInt(
+            /flags:\\s*([0-7]+)/.exec(fs.readFileSync("/proc/self/fdinfo/" + found, "utf8"))[1],
+            8,
+          );
+          process.stdout.write(String(flags & fs.constants.O_NONBLOCK));
+          await sink.end();
+        `,
+        join(tmpdirSync(), "out.txt"),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
+  });
 });

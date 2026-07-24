@@ -147,21 +147,33 @@ where
                     // this.force_sync = true;
                     // this.writer.force_sync = true;
                     on_force_sync_or_isa_tty(ctx);
-                } else if !is_nonblocking {
-                    let flags = match bun_sys::get_fcntl_flags(fd) {
-                        Ok(flags) => flags,
-                        Err(err) => {
-                            fd.close();
-                            return Err(err);
-                        }
-                    };
-                    is_nonblocking = (flags as i32 & bun_sys::O::NONBLOCK) != 0;
-
+                } else if *pollable {
                     if !is_nonblocking {
-                        if bun_sys::set_nonblocking(fd).is_ok() {
-                            is_nonblocking = true;
+                        let flags = match bun_sys::get_fcntl_flags(fd) {
+                            Ok(flags) => flags,
+                            Err(err) => {
+                                fd.close();
+                                return Err(err);
+                            }
+                        };
+                        is_nonblocking = (flags as i32 & bun_sys::O::NONBLOCK) != 0;
+
+                        if !is_nonblocking {
+                            if bun_sys::set_nonblocking(fd).is_ok() {
+                                is_nonblocking = true;
+                            }
                         }
                     }
+                } else {
+                    // Regular file / block device / anything else epoll can't wait
+                    // on: the streaming writer has no poll to re-drive an EAGAIN, so
+                    // an O_NONBLOCK short write would strand the unwritten tail in
+                    // its buffer and close() would drop it. O_NONBLOCK is only on
+                    // the open flags so open() itself never blocks on a FIFO; once
+                    // fstat says this isn't one, clear it and let write() block so
+                    // the try_write loop drains every short write synchronously.
+                    let _ = bun_sys::update_nonblocking(fd, false);
+                    is_nonblocking = false;
                 }
 
                 *out_nonblocking = is_nonblocking && *pollable;

@@ -303,8 +303,6 @@ impl Chunk {
         // Look up the CSS chunk via the JS chunk's css_chunks indices.
         // This correctly handles deduplicated CSS chunks that are shared
         // across multiple HTML entry points (see issue #23668).
-        // Note: reshaped for borrowck — we scan immutably for the JS chunk, copy the
-        // css-chunk index into a local, drop the borrow, then re-borrow mutably.
         let entry_point_id = self.entry_point.entry_point_id();
         let css_idx: Option<usize> = 'find: {
             for other in chunks.iter() {

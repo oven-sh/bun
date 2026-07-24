@@ -638,7 +638,6 @@ pub fn relative(from: &[u8], to: &[u8]) -> &'static [u8] {
 pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr {
     let rel = relative_platform_buf::<platform::Auto, true>(buf, from, to);
     let len = rel.len();
-    // reshaped for borrowck — drop `rel` borrow before mutating buf
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
     ZStr::from_buf(&buf[..], len)
@@ -666,7 +665,6 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
                 platform_to_posix_in_place::<u8>(normalized);
                 break 'brk &*normalized;
             }
-            // reshaped for borrowck — capture len, drop inner &mut, re-slice
             let path_len =
                 normalize_string_buf::<true, P, true>(from, &mut relative_from_buf[1..]).len();
             if P::P == Platform::Windows {
@@ -698,7 +696,6 @@ pub fn relative_platform_buf<'a, P: PlatformT, const ALWAYS_COPY: bool>(
                 platform_to_posix_in_place::<u8>(normalized);
                 break 'brk &*normalized;
             }
-            // reshaped for borrowck — capture len, drop inner &mut, re-slice
             let path_len =
                 normalize_string_buf::<true, P, true>(to, &mut relative_to_buf[1..]).len();
             if P::P == Platform::Windows {
@@ -1746,9 +1743,6 @@ fn _join_abs_string_buf<'a, const IS_SENTINEL: bool, P: PlatformT>(
         out += part.len();
     }
 
-    // reshaped for borrowck — stash leading separator into a local
-    // [u8; 8] (max len: NT prefix `\\?\` = 4) so we don't hold a borrow into
-    // temp_buf across the normalize call below.
     let mut leading_buf = [0u8; 8];
     let leading_len: usize = if let Some(i) = P::P.leading_separator_index::<u8>(&temp_buf[0..out])
     {
@@ -1973,7 +1967,6 @@ pub(crate) fn normalize_string_node_t<'a, T: PathChar, P: PlatformT>(
 
     // `normalize_string_generic` handles absolute path cases for windows
     // we should not prefix with /
-    // reshaped for borrowck — track an offset instead of reslicing.
     let buf_off: usize = if P::P == Platform::Windows { 0 } else { 1 };
 
     let separator_t = T::from_u8(P::P.separator());
@@ -2229,9 +2222,6 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — `getcwd` writes into
-                    // `buf` and returns a borrow of it; capture the lengths we
-                    // need, drop the borrow, then re-slice `buf`.
                     let sr_len = {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
@@ -2277,7 +2267,6 @@ impl PosixToWinNormalizer {
             if root.len() == 1 {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
-                    // reshaped for borrowck — see resolve_cwd above.
                     let sr_len = {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()

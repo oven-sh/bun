@@ -97,7 +97,6 @@ impl Order {
         }
 
         // gather children
-        // reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
         let scope_only = current.base.only;
         for i in 0..current.entries.len() {
             if scope_only == Only::Contains && current.entries[i].base().only == Only::No {

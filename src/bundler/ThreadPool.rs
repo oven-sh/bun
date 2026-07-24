@@ -691,10 +691,8 @@ impl Worker {
 
     /// Build a per-worker `Transpiler` from `from`.
     ///
-    /// reshaped for borrowck — associated fn (no `&mut self`) so
-    /// callers can borrow `self.data.log` disjointly. The returned value is a
-    /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
-    /// be called once it is at its final address.
+    /// The returned value is a fully-owned `Transpiler` whose `Drop` is sound;
+    /// `wire_after_move` must be called once it is at its final address.
     fn initialize_transpiler(
         log: *mut bun_ast::Log,
         from: &Transpiler<'_>,

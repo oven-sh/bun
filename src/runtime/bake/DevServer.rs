@@ -1919,7 +1919,6 @@ impl RequestEnsureRouteBundledCtx {
     }
 
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()> {
-        // Note: reshaped for borrowck — captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
         let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted);

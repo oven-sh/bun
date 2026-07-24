@@ -302,7 +302,6 @@ impl Execution {
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = self.active_group() {
-            // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
             let sequences = &self.sequences[start..end];
             if sequences.len() == 1 {

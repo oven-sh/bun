@@ -164,7 +164,6 @@ pub fn decode_binary_value<Context: ReaderContext>(
                         let remaining = w.len();
                         break 'brk &buffer[..32 - remaining];
                     };
-                    // reshaped for borrowck — compute remaining before re-borrowing buffer
                     Ok(SQLDataCell::string(slice))
                 }
                 _ => Err(crate::Error::InvalidBinaryValue),

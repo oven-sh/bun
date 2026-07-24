@@ -65,7 +65,6 @@ impl PendingConnect {
     /// Box until scope exit.
     pub fn unregister_from(this: *const Self, ctx: &mut NewHTTPContext<true>) -> Option<Box<Self>> {
         let list = &mut ctx.pending_h2_connects;
-        // reshaped for borrowck (was `for + swapRemove + return`)
         list.iter()
             .position(|p| core::ptr::eq(&raw const **p, this))
             .map(|i| list.swap_remove(i))

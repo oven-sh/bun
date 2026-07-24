@@ -1033,9 +1033,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // ctx → transpiler/resolver option mapping.
-        // reshaped for borrowck — `b` borrows `vm.transpiler`
-        // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
-        // capture the defines result, drop `b`, then branch.
         let defines_ok = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);
@@ -1187,9 +1184,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         vm.set_main(unsafe { &*entry_ptr });
 
-        // reshaped for borrowck — `b` borrows `vm.transpiler`
-        // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
-        // capture the defines result, drop `b`, then branch.
         let defines_ok = {
             let b = &mut vm.transpiler;
             Self::wire_transpiler_from_ctx(b, ctx);

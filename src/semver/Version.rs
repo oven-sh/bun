@@ -1025,8 +1025,6 @@ impl Tag {
         } else {
             let pre_slice = self.pre.slice(slice);
             buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // reshaped for borrowck —
-            // capture the init args before advancing `buf`.
             pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
             *buf = &mut core::mem::take(buf)[pre_slice.len()..];
         }

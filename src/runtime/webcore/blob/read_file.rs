@@ -286,8 +286,9 @@ impl FileCloser for ReadFile {
             let this = unsafe { bun_ptr::callback_ctx::<ReadFile>(ctx.cast()) };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
-        // reshaped for borrowck — compute the parent raw pointer
-        // before mutably borrowing `io_poll` so the two borrows do not overlap.
+        // SAFETY: `ctx` is the async io-close callback's *mut Self (on_done re-enters/mutates
+        // self); the hoist before `&mut this.io_poll` is already the minimal safe
+        // ordering.
         let ctx = std::ptr::from_mut::<ReadFile>(this).cast::<()>();
         let fd = this.opened_fd;
         io::Action::Close(io::CloseAction {
@@ -595,7 +596,6 @@ impl ReadFile {
 
         let mut this = this;
         let _store = this.store.take().unwrap();
-        // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
 
         // `_store` is dropped at end of scope (= store.deref()).

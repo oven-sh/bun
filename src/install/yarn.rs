@@ -1022,10 +1022,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         let name_hash = string_hash(name_to_use);
 
-        // reshaped for borrowck — compute the resolution before the
-        // `this.packages.append(...)` call so the per-field `sbuf!()` borrows of
-        // `this.buffers.string_bytes` don't overlap the two-phase reservation
-        // on `this.packages`.
         let pkg_name = sbuf!().append_with_hash(name_to_use, name_hash)?;
         let resolution = 'blk: {
             if entry.workspace {
@@ -1247,9 +1243,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let dependencies_start = dependencies_buf.as_mut_ptr();
         let resolutions_start = resolutions_buf.as_mut_ptr();
 
-        // reshaped for borrowck — iterate by index and re-borrow
-        // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
-        // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
         if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
             let processed = process_deps(
                 deps,

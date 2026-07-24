@@ -981,8 +981,6 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if tag.cell.is_hidden() {
             return;
         }
-        // reshaped for borrowck — `handle_first_property` needs `&mut *ctx`,
-        // so the split borrows of `ctx.formatter`/`ctx.writer` are taken *after* it.
         if ctx.i == 0 {
             let parent = ctx.parent;
             if Self::handle_first_property(ctx, global_this, parent).is_err() {
@@ -1099,10 +1097,6 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // reshaped for borrowck — `WrappedWriter` borrows both writer_
-        // and &mut self.estimated_line_length; we use a local wrapper and sync
-        // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
-        // methods in this file, so we leave it None here.
         let mut writer = WrappedWriter::new(writer_);
 
         if FORMAT.can_have_circular_references() {

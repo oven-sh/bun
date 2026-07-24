@@ -3155,7 +3155,6 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    // NOTE: reshaped for borrowck — see identical note above.
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -3872,8 +3871,6 @@ impl<'a> Resolver<'a> {
             None,
             None,
         )?;
-        // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
-        // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::take(&mut entry.contents);
         let _close_guard = scopeguard::guard(entry, |mut e| {
             let _ = e.close_fd();

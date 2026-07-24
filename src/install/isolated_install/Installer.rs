@@ -1211,9 +1211,6 @@ impl Task {
                         let _ = Fd::cwd().delete_tree(staging.slice());
                     }
 
-                    // reshaped for borrowck — `defer if (cached_package_dir) |d| d.close()`
-                    // becomes a guard that *owns* the `Option<Fd>` so the loop body can reassign
-                    // through `*cached_package_dir` without an outstanding closure borrow.
                     let mut cached_package_dir = scopeguard::guard(None::<Fd>, |dir| {
                         if let Some(d) = dir {
                             d.close();

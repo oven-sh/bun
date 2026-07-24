@@ -2369,7 +2369,6 @@ impl VirtualMachine {
                 }
             }
 
-            // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
@@ -3527,8 +3526,6 @@ impl VirtualMachine {
         }
         // reload_entry_point() stores into pending_internal_promise on every return path.
         let main = self.main;
-        // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
-        // overlapping `&self`/`&mut self` borrows.
         if self.reload_entry_point(main.slice()).is_err() {
             panic!("Failed to reload");
         }
@@ -3778,8 +3775,9 @@ impl VirtualMachine {
         // RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
-        // Note: reshaped for borrowck — capture the back-pointer before
-        // `ref_strings.entry()` takes its unique borrow on `self`.
+        // SAFETY: the `*mut VirtualMachine` is stored as `RefString.ctx` for the WTF
+        // external-string finalizer (`clear_ref_string`) invoked later from C; a
+        // `&self`-derived pointer would carry SharedReadOnly provenance.
         let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
 
         match self.ref_strings.entry(hash) {
@@ -4518,7 +4516,6 @@ impl VirtualMachine {
             }
         }
 
-        // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
         let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))

@@ -571,11 +571,6 @@ impl<'a> CopyFile<'a> {
         let mut dest_buf = PathBuffer::uninit();
 
         loop {
-            // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
-            // ties the returned `&ZStr` to `self`, which would conflict with
-            // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
-            // bytes live in `dest_buf`, so capture the length and re-borrow
-            // from the buffer (not `self`) after dropping the first borrow.
             let dest_len = self
                 .destination_file_store
                 .pathlike
@@ -1033,7 +1028,6 @@ impl<'a> CopyFileWindows<'a> {
 
     fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.clear();
-        // reshaped for borrowck — use the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
@@ -1118,7 +1112,6 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
 
     let source_fd = this.read_write_loop.source_fd;
     let destination_fd = this.read_write_loop.destination_fd;
-    // reshaped for borrowck — `read_buf.items` is `Vec` len-slice.
     let read_buf = &mut this.read_write_loop.read_buf;
 
     let event_loop = this.event_loop;

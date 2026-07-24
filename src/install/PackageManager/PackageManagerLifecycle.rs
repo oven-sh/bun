@@ -231,9 +231,9 @@ impl PackageManager {
     }
 
     pub fn tick_lifecycle_scripts(&mut self) {
-        // reshaped for borrowck — `self.event_loop.tick_once(self)`
-        // would borrow `self` twice. Erase `self` to a raw context pointer
-        // first; `tick_once` only forwards it opaquely to task callbacks.
+        // SAFETY: event_loop.tick_once holds &mut self.event_loop while task.run(ctx) reborrows
+        // the enclosing PackageManager; raw *mut c_void ctx is the correct provenance
+        // carrier.
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
         self.event_loop.tick_once(ctx);
     }

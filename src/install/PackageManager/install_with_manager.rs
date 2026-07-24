@@ -660,10 +660,6 @@ pub fn install_with_manager(
         root_scripts.append_to_lockfile(&mut manager.lockfile);
     }
     {
-        // reshaped for borrowck — shared slices into the
-        // resolution/meta/scripts columns are held while pushing into
-        // `manager.lockfile.scripts`. Field-level split borrow keeps the two
-        // disjoint columns alive simultaneously without raw-pointer routing.
         let lockfile = &mut *manager.lockfile;
         let packages = &lockfile.packages;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
@@ -1418,9 +1414,6 @@ fn report_lockfile_load_error(
 #[inline(never)]
 fn record_updating_package_versions(manager: &mut PackageManager) {
     // existing lockfile, get the original version is updating
-    // reshaped for borrowck — the lockfile is read while
-    // also mutating `manager.updating_packages`. Field-level split
-    // borrow keeps the disjoint columns alive without raw pointers.
     let lockfile: &Lockfile = &manager.lockfile;
     let updating_packages = &mut manager.updating_packages;
     let packages = lockfile.packages.slice();
@@ -1779,9 +1772,6 @@ fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // reshaped for borrowck — `Progress::start` returns
-    // `&mut self.root`, so re-access it via `manager.progress.root` after the
-    // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
     let mut node_started = false;
     if log_level.show_progress() {
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();

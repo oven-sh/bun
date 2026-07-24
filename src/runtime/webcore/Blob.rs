@@ -579,9 +579,6 @@ impl BlobExt for Blob {
                         // SystemError so the callback has one shape to handle.
                         crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
                         | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
-                            // reshaped for borrowck — `t.done` moves
-                            // `t`, so build the SystemError (cloning the path
-                            // out of `t.blob.store`) before the call.
                             let err = bun_jsc::SystemError {
                                 code: BunString::clone_utf8(e.code).into(),
                                 message: BunString::clone_utf8(e.message).into(),

@@ -1814,9 +1814,6 @@ impl ShellExecEnv {
     /// `cd -`.
     #[inline]
     pub fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
-        // Note: reshaped for borrowck — `prev_cwd()` borrows `self`, so
-        // copy into a stack buffer before the `&mut self` call. Bounded by the
-        // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
         // Use a `[4096]u8` buffer on every platform; do NOT use
         // `bun_paths::PathBuffer` here — on Windows that is ~96 KiB of
         // zero-filled stack, and `change_cwd_impl` stacks another on top.
@@ -1866,8 +1863,6 @@ impl ShellExecEnv {
         } else {
             // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
             // strings reflect the resolved path (not `<cwd>/..`).
-            // Note: reshaped for borrowck — capture only the joined length
-            // so the borrow on `buf` is released before stripping below.
             let mut n = {
                 let existing_cwd = self.cwd();
                 bun_paths::resolve_path::join_z_buf::<bun_paths::platform::Auto>(

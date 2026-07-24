@@ -991,8 +991,6 @@ pub(super) fn build_with_vm(
 
         let route = router.route_ptr(route_index);
         let main_file_route_index = route.file_page.unwrap();
-        // Note: reshaped for borrowck — `pt.output_file()` borrows `pt`
-        // immutably, but `pt.preload_bundled_module()` below needs `&mut pt`.
         // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`

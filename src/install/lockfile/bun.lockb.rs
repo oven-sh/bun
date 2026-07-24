@@ -561,10 +561,6 @@ pub(crate) fn load(
                     .ensure_total_capacity(overrides_name_hashes.len())?;
                 let override_versions_external: Vec<dependency::External> =
                     buffers::read_array(stream)?;
-                // reshaped for borrowck — `Context.buffer` borrows
-                // `lockfile.buffers.string_bytes` while we also need
-                // `&mut lockfile.overrides`. Split the disjoint fields up front so
-                // borrowck sees sibling borrows (no raw-ptr provenance laundering).
                 let Lockfile {
                     buffers, overrides, ..
                 } = &mut *lockfile;
@@ -636,12 +632,6 @@ pub(crate) fn load(
 
                 let default_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
-                // reshaped for borrowck — `dependency::Context` /
-                // `ArrayHashContext` borrow `lockfile.buffers.string_bytes` while
-                // we also need `&mut lockfile.catalogs`. Split the disjoint
-                // fields up front so borrowck sees sibling borrows (no raw-ptr
-                // provenance laundering). `string_bytes` is not reallocated for
-                // the remainder of this block.
                 let Lockfile {
                     buffers, catalogs, ..
                 } = &mut *lockfile;

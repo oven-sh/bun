@@ -1063,7 +1063,6 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
     while usize::try_from(pointer).unwrap() < diffs.len() {
         let p = usize::try_from(pointer).unwrap();
         if diffs[p - 1].operation == Operation::Delete && diffs[p].operation == Operation::Insert {
-            // reshaped for borrowck — take owned copies of deletion/insertion
             let deletion: Box<[Unit]> = core::mem::take(&mut diffs[p - 1].text);
             let insertion: Box<[Unit]> = core::mem::take(&mut diffs[p].text);
             let overlap_length1: usize = diff_common_overlap(&deletion, &insertion);

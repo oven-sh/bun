@@ -917,9 +917,6 @@ fn iterate_bundled_deps(
             while let Some(sub_entry) = scoped_iter.next().ok().flatten() {
                 let entry_name = entry_subpath(_entry_name, sub_entry.name.slice_u8())?;
 
-                // Note: reshaped for borrowck — find
-                // the matching index first, mark it, then call
-                // `add_bundled_dep` with `&mut ctx`.
                 let Some(dep_idx) = ctx.bundled_deps.iter().position(|dep| {
                     debug_assert!(dep.from_root_package_json);
                     strings::eql_long(entry_name.as_bytes(), &dep.name, true)
@@ -949,7 +946,6 @@ fn iterate_bundled_deps(
             }
         } else {
             let entry_name = _entry_name;
-            // Note: reshaped for borrowck — see comment in scoped branch.
             let Some(dep_idx) = ctx.bundled_deps.iter().position(|dep| {
                 debug_assert!(dep.from_root_package_json);
                 strings::eql_long(entry_name, &dep.name, true)
@@ -2553,7 +2549,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         package_version,
         &mut dest_buf[..],
     );
-    // Note: reshaped for borrowck — abs_tarball_dest borrows dest_buf
     let abs_tarball_dest_len = abs_tarball_dest.as_bytes().len();
 
     {

@@ -595,7 +595,6 @@ impl FileSink {
             return sys::Result::Ok(());
         }
 
-        // reshaped for borrowck — split into a local capture and apply after.
         // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
         let mut force_sync_out = self.force_sync.get();
         let mut pollable_out = self.pollable.get();
@@ -1468,10 +1467,6 @@ impl FileSink {
 
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
-        // reshaped for borrowck — re-derive `signal_ptr` after
-        // assigning `readable_stream`. `JsCell::as_ptr` yields the stable
-        // address of the inner `Signal` (`#[repr(transparent)]` over
-        // `UnsafeCell`).
         // SAFETY: project to `signal.ptr` without forming a reference;
         // `Option<NonNull<c_void>>` is ABI-identical to `*mut c_void` (see
         // const-asserts on `Signal` in streams.rs), so FFI may write the

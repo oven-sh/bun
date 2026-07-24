@@ -667,11 +667,8 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
-    // Note: reshaped for borrowck — `wait_for_promise` / `event_loop().tick()`
-    // need `&mut VirtualMachine` while we're also iterating `vm.preload` and
-    // touching `vm.transpiler.resolver` / `vm.log`. Dereference per-field via
-    // the raw `vm` ptr; iterate preloads by index (the `Box<[u8]>` payloads are
-    // heap-stable so a raw `*const [u8]` survives the resolver borrow).
+    // SAFETY: wait_for_promise/event_loop().tick() re-enter JS which may mutate VM fields;
+    // holding &mut VM across that would alias.
 
     // ── is_in_preload guard ─────────────────────────────────────────────
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
@@ -900,9 +897,8 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick(vm: *mut VirtualMachine) {
-    // Note: reshaped for borrowck — `EventLoop` is a value field of
-    // `VirtualMachine`, so holding `&mut EventLoop` while also touching VM
-    // siblings would alias. Dereference per-field via the raw `vm` ptr.
+    // SAFETY: tick_immediate_tasks/uws loop dispatch JS callbacks that re-enter the VM and its
+    // EventLoop; no stable &mut can span the tick.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
@@ -1063,7 +1059,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
 /// # Safety
 /// `vm` is the live per-thread VM.
 unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
-    // Note: reshaped for borrowck — see `auto_tick` above.
+    // SAFETY: same as `auto_tick` above: event-loop tick re-enters JS which mutates
+    // VM/EventLoop; raw per-field deref is required.
     // SAFETY: per fn contract — `vm` is the live per-thread VM.
     let el: *mut bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
     // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
@@ -4200,9 +4197,6 @@ unsafe fn transpile_file(
         }
     };
     // Deinit the blob (if any) on scope exit.
-    // Note: reshaped for borrowck — capture the `is_some()` flag *before*
-    // moving the option into the scopeguard so the `transpile_async` predicate
-    // can still read it without aliasing the guard's `&mut`.
     let had_blob = blob_to_deinit.is_some();
     let _blob_guard = scopeguard::guard(blob_to_deinit, |mut slot| {
         if let Some(mut blob) = slot.take() {

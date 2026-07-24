@@ -977,8 +977,6 @@ impl TimerObjectInternals {
             self.update_flags(|f| f.set_has_accessed_primitive(true));
             let state = crate::jsc_hooks::runtime_state();
             debug_assert!(!state.is_null(), "RuntimeState not installed");
-            // Note: reshaped for borrowck — capture `event_loop_timer` ptr
-            // before borrowing `(*state).timer.maps`.
             let elt = self.event_loop_timer();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`;
             // single-threaded JS heap so no concurrent `&mut` to `.timer.maps`.

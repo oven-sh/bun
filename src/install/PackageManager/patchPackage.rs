@@ -100,7 +100,6 @@ pub fn do_patch_commit(
         .root_package_id
         .get(&lockfile, manager.workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
-    // reshaped for borrowck — owned buffer kept separately so `argument` can borrow it
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root
@@ -734,7 +733,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
         .root_package_id
         .get(&manager.lockfile, workspace_name_hash);
     let not_in_workspace_root = workspace_package_id != 0;
-    // reshaped for borrowck — owned buffer kept so `argument` can borrow it.
     let argument_owned: Option<Box<[u8]>>;
     let argument: &[u8] = if arg_kind == PatchArgKind::Path
         && not_in_workspace_root

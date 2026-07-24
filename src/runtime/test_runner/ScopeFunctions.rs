@@ -405,7 +405,6 @@ impl ScopeFunctions {
                     if let Some(filter_regex) = reporter.jest.filter_regex {
                         group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
-                        // reshaped for borrowck — clear at end via explicit call below.
 
                         // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
                         let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };

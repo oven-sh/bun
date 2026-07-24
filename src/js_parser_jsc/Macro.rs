@@ -219,9 +219,9 @@ impl MacroContext {
         unsafe { (*(*vm).event_loop()).ensure_waker() };
 
         let javascript_object = self.javascript_object;
-        // reshaped for borrowck — `self.bump` is shared-borrowed for
-        // the closure while `self.macros` was already released above; capture
-        // as a raw pointer so the closure does not extend `&mut self`.
+        // SAFETY: closure is run through JSC__VM__holdAPILock and executes the JS macro, which
+        // may re-enter MacroContext::call and mutate self.macros/self.bump; holding
+        // &-refs across that would alias.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
         let bump: *const bun_alloc::Arena =
@@ -744,9 +744,6 @@ impl<'a> Run<'a> {
                     i += 1;
                 }
 
-                // reshaped for borrowck — `Expr.data.e_array` is a
-                // `StoreRef` (raw arena ptr) so re-borrow it after the `run`
-                // recursion releases `self`.
                 if let ExprData::EArray(mut e_array) = expr.data {
                     e_array.items = array;
                     e_array.items.truncate(i);

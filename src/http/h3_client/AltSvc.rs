@@ -158,7 +158,6 @@ fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     // hostname verbatim, then format only the port.
     cursor.write_all(hostname).expect("unreachable");
     write!(cursor, ":{}", port).expect("unreachable");
-    // reshaped for borrowck — capture remaining len before reborrowing buf.
     let remaining = cursor.len();
     let written = buf.len() - remaining;
     &buf[..written]

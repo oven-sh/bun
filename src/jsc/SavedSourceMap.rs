@@ -244,8 +244,6 @@ impl SavedSourceMap {
                 if contains {
                     return Ok(());
                 }
-                // Note: reshaped for borrowck — the lock is
-                // released before returning since no further table access follows.
             }
         }
 
@@ -276,7 +274,6 @@ impl SavedSourceMap {
         use bun_collections::zig_hash_map::MapEntry as Entry;
 
         self.lock();
-        // Note: reshaped for borrowck — explicit unlock paired manually.
 
         // `bun_collections::HashMap` derefs to `std::collections::HashMap`, so
         // the std `entry()` API is used directly.

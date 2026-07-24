@@ -998,7 +998,6 @@ impl<'a> ParseRenderer<'a> {
         if self.stack.is_empty() {
             return Ok(());
         }
-        // Note: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self.stack.
         let parent_children = self.stack.last().unwrap().children;
 
         match text_type {
@@ -1308,7 +1307,6 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_block_callback(block_type);
-        // Note: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
         let saved = if self.stack.len() > 1 {
             CallbackStackEntry {
                 block_type: self.stack.last().unwrap().block_type,
@@ -1406,9 +1404,6 @@ impl<'a> JsCallbackRenderer<'a> {
         let mut buf = [0u8; 8];
         let decoded =
             md::helpers::decode_entity_to_utf8(entity_text, &mut buf).unwrap_or(entity_text);
-        // Note: reshaped for borrowck — copy the (≤8-byte) decoded slice out of `buf`
-        // before calling &mut self method, to avoid overlapping borrows when the
-        // borrow checker tracks `buf` as borrowed by `decoded`.
         self.append_text_or_raw(decoded)
     }
 

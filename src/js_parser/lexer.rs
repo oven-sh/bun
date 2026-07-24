@@ -1233,8 +1233,6 @@ lexer_impl_header! {
         let original_text = self.raw();
 
         debug_assert!(self.temp_buffer_u16.is_empty());
-        // Note: reshaped for borrowck — we move temp_buffer_u16 out, use it, then
-        // clear and put it back (mirrors `defer clearRetainingCapacity()`).
         let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
         tmp.reserve(original_text.len());
         let decode_res =

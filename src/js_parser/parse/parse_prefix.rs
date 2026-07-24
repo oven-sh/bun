@@ -252,8 +252,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Handle the start of an arrow expression
         if p.lexer.token == T::TEqualsGreaterThan && level.lte(Level::Assign) {
             let ref_ = p.store_name_in_ref(name);
-            // reshaped for borrowck — build binding before borrowing arena.
-            // `Arg` is non-Copy (owns Vec) → use fill_iter instead of alloc_slice_copy.
             let binding = p.b(B::Identifier { r#ref: ref_ }, loc);
             let args = p.arena.alloc_slice_fill_iter([Arg {
                 binding,

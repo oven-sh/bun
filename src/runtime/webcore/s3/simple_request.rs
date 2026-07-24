@@ -345,7 +345,6 @@ impl S3HttpSimpleTask {
             return Ok(());
         }
         debug_assert!(this.result.metadata.is_some());
-        // reshaped for borrowck — borrow response once, dispatch on a copy of `callback`.
         let response = &this.result.metadata.as_ref().unwrap().response;
         match this.callback {
             Callback::Stat(callback) => match response.status_code {

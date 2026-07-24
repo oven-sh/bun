@@ -1999,8 +1999,6 @@ where
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
-        // NOTE: reshaped for borrowck — split the two fields up front so
-        // `this` and `stream` are independent borrows of `*pair`.
         let this: &mut Self = &mut *pair.this;
         let stream = &mut pair.stream;
         debug_assert!(this.server.is_some());
@@ -2034,8 +2032,10 @@ where
                 ..Default::default()
             },
         });
-        // NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
-        // local `response_stream` view can coexist with `&mut *this` calls below.
+        // SAFETY: sink field is Option<NonNull> by design (JS GC-owned); assign_to_stream may
+        // synchronously fire on_first_write→handle_first_stream_write(&mut *this) while
+        // the outer frame still holds &mut *response_stream, so Box-in-self + safe
+        // borrow would be aliasing UB.
         let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
         this.sink = Some(response_stream_ptr);
         // SAFETY: just allocated; sole live mutable view (this.sink only stores the ptr).

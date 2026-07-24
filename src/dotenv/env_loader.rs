@@ -1106,9 +1106,6 @@ impl<'a> Parser<'a> {
         if end >= self.src.len() {
             return Ok(&self.src[self.src.len()..]);
         }
-        // reshaped for borrowck — `parse_quoted` returns a borrow of
-        // `self.value_buffer`; capture only its length, then re-borrow the buffer
-        // after the match so the unquoted fallthrough can re-borrow `self`.
         let quoted_len: Option<usize> = match self.src[end] {
             b'`' => self.parse_quoted::<b'`'>()?.map(|v| v.len()),
             b'"' => self.parse_quoted::<b'"'>()?.map(|v| v.len()),

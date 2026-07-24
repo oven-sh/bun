@@ -218,8 +218,6 @@ impl INotifyWatcher {
         use bun_sys::linux as system;
         use bun_sys::{E, get_errno};
         let mut i: u32 = 0;
-        // reshaped for borrowck — track length instead of borrowing a sub-slice
-        // of self.eventlist_bytes across the whole function.
         let read_len: usize = if let Some(ptr) = self.read_ptr {
             Futex::wait_forever(&self.watch_count, 0);
             i = ptr.i;
@@ -377,8 +375,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         return Ok(());
     }
 
-    // reshaped for borrowck — copy raw event pointers to a local buffer so
-    // `this.platform` borrow ends before we mutably borrow other `this` fields below.
     let events_len = events.len();
     let mut events_buf: [*const Event; max_count] = [core::ptr::null(); max_count];
     events_buf[..events_len].copy_from_slice(events);
@@ -507,7 +503,6 @@ fn process_inotify_event_batch(
         }
 
         if watch_events[i].index == last_event_id {
-            // reshaped for borrowck — split_at_mut to get two disjoint &mut.
             let (head, tail) = watch_events.split_at_mut(i);
             head[last_event_index].merge(tail[0]);
             continue;

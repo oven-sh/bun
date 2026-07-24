@@ -1830,7 +1830,6 @@ pub mod __gated_printer {
 
             // Record var declarations for module_info. printGlobalBunImportStatement
             // bypasses printDeclStmt/printBinding, so we must record vars explicitly.
-            // reshaped for borrowck — compute names before borrowing module_info.
             if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
                 if !import.star_name_loc.is_empty() {
                     let name = self.name_for_symbol(import.namespace_ref);
@@ -3066,8 +3065,6 @@ pub mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(expr.loc);
 
-                    // reshaped for borrowck — find the matching index first,
-                    // then drop the immutable iter borrow before printing.
                     let mut found: Option<usize> = None;
                     if let Some(exports) = self.options.commonjs_named_exports {
                         for (idx, value) in exports.values().iter().enumerate() {
@@ -4749,7 +4746,6 @@ pub mod __gated_printer {
                     self.add_source_mapping(binding.loc);
                     self.print_symbol(b.r#ref);
                     if Self::MAY_HAVE_MODULE_INFO {
-                        // reshaped for borrowck — fetch name before borrowing module_info.
                         let local_name = self.name_for_symbol(b.r#ref);
                         if let Some(mi) = self.module_info() {
                             let name_id = mi.str(local_name);
@@ -4905,7 +4901,6 @@ pub mod __gated_printer {
                                                     self.name_for_symbol(id.r#ref),
                                                 ) {
                                                     if Self::MAY_HAVE_MODULE_INFO {
-                                                        // reshaped for borrowck — bump access first.
                                                         let str8 = str.slice(self.bump);
                                                         if let Some(mi) = self.module_info() {
                                                             let name_id = mi.str(str8);
@@ -5485,8 +5480,6 @@ pub mod __gated_printer {
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
-                        // reshaped for borrowck — re-borrow module_info per item so
-                        // `name_for_symbol` (which needs `&mut self`) can run between uses.
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let id = mi.str(irp);
@@ -6004,9 +5997,6 @@ pub mod __gated_printer {
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
-                        // reshaped for borrowck — `module_info()` borrows `&mut self`,
-                        // so we re-borrow it between `name_for_symbol` calls instead of holding
-                        // a single long-lived `mi` across the whole block. `irp_id` is Copy.
                         let import_record_path = &record.path.text;
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");

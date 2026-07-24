@@ -79,8 +79,6 @@ impl HeaderBuilder {
 
         let _ = self.content.append(name);
 
-        // Note: reshaped for borrowck — `fmt` returns a borrow into the
-        // builder buffer; capture its length, then re-read `content.len`.
         let value_len = self.content.fmt(args).len();
 
         let value_ptr = api::StringPointer {

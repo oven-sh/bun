@@ -120,7 +120,6 @@ pub trait PosixPipeWriter {
     }
 
     fn on_poll(&mut self, size_hint: isize, received_hup: bool) {
-        // reshaped for borrowck — capture buffer.len() before further &mut self calls.
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
@@ -506,7 +505,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent = Some(bun_ptr::ParentRef::from(
             core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
         ));
-        // reshaped for borrowck — capture *mut Self before borrowing field.
+        // SAFETY: *mut Self is stored as the poll Owner backref for later on_poll/on_close
+        // dispatch (may free self); required provenance.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
@@ -756,7 +756,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        // reshaped for borrowck — capture *mut Self before borrowing field.
+        // SAFETY: *mut Self is stored as the poll Owner backref for later on_poll/on_close
+        // dispatch (may free self); required provenance.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));

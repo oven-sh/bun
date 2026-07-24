@@ -104,9 +104,6 @@ impl S3HttpDownloadStreamingTask {
             _ => true,
         };
 
-        // reshaped for borrowck — `code`/`message` borrow from
-        // `self.reported_response_buffer`, so we compute the chunk after the
-        // borrow scope ends rather than inside the labeled block.
         let chunk: MutableString = 'brk: {
             if failed {
                 if !has_more {

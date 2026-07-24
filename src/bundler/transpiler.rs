@@ -463,11 +463,6 @@ impl<'a> Transpiler<'a> {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
                 // Bust directory cache and try again
-                // reshaped for borrowck — a single labelled block would
-                // return a slice that aliases either `entry_point` (via
-                // `dirname`) or `cache_bust_buf`. Rust can't unify the two
-                // disjoint mutable borrows of `cache_bust_buf` across `break`,
-                // so compute `busted` directly instead.
                 let busted: bool = 'name: {
                     if bun_paths::is_absolute(entry_point) {
                         let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
@@ -1928,9 +1923,6 @@ fn parse_data_loader<'a>(
                     bun_collections::StringHashMap::default();
                 // duplicate_key_checker drops at end of scope (defer .deinit())
                 let mut count: usize = 0;
-                // reshaped for borrowck — cannot zip 4
-                // slices with one mutable borrow into `decls` and
-                // also random-access `decls[prev]`.
                 for i in 0..n {
                     let prop = &mut properties[i];
                     // SAFETY: data-format parsers always emit

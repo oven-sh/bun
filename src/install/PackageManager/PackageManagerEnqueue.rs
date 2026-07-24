@@ -1339,9 +1339,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             } else {
                 TaskCallbackContext::Dependency(id)
             };
-            // reshaped for borrowck — `entry` mutably borrows
-            // `this.task_queue`; scope it tightly so the calls below can
-            // reborrow `*this`.
             {
                 let entry = this
                     .task_queue
@@ -1537,7 +1534,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             } else {
                 TaskCallbackContext::Dependency(id)
             };
-            // reshaped for borrowck — scope `entry` tightly.
             {
                 let entry = this
                     .task_queue

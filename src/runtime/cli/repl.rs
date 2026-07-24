@@ -1304,7 +1304,6 @@ impl<'a> Repl<'a> {
             // Temporarily re-enable signal delivery so Ctrl+C can interrupt
             // the blocking waitForPromise call
             self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
             vm.as_mut()
@@ -1607,7 +1606,6 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
             vm.as_mut()
                 .wait_for_promise(jsc::AnyPromise::Normal(promise));
             if vm.jsc_vm().execution_forbidden() {
@@ -2015,7 +2013,6 @@ impl<'a> Repl<'a> {
                     if self.editor_mode {
                         // Finish editor mode
                         self.print(format_args!("\n"));
-                        // Note: reshaped for borrowck — clone editor_buffer slice before evaluate
                         if !self.editor_buffer.is_empty() {
                             let code = core::mem::take(&mut self.editor_buffer);
                             self.evaluate_and_print(&code);

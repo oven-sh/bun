@@ -946,7 +946,6 @@ impl Expect {
         trimmed_buf: &'a mut [u8],
     ) -> TrimResult<'a> {
         debug_assert!(trimmed_buf.len() == str_in.len());
-        // reshaped for borrowck — track dst as an index into trimmed_buf instead of a moving slice
         let mut src = str_in;
         let trimmed_buf_len = trimmed_buf.len();
         let mut dst_idx: usize = 0;
@@ -3095,7 +3094,6 @@ pub mod mock {
     pub(crate) struct AllCallsWithArgsFormatter<'a, 'g> {
         pub global_this: &'g JSGlobalObject,
         pub calls: JSValue,
-        // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub formatter: core::cell::RefCell<&'a mut ConsoleObject::Formatter<'g>>,
     }
 
@@ -3157,7 +3155,6 @@ pub mod mock {
     pub(crate) struct AllCallsFormatter<'g, 'f> {
         pub global_this: &'g JSGlobalObject,
         pub returns: JSValue,
-        // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
     }
 
@@ -3209,7 +3206,6 @@ pub mod mock {
     pub struct SuccessfulReturnsFormatter<'g, 'f> {
         pub global_this: &'g JSGlobalObject,
         pub successful_returns: &'f Vec<JSValue>,
-        // reshaped for borrowck — Display::fmt takes &self but we need &mut Formatter
         pub formatter: core::cell::RefCell<&'f mut ConsoleObject::Formatter<'g>>,
     }
 

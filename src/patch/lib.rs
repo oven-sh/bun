@@ -66,8 +66,6 @@ impl ApplyState {
         }
         match sys::get_fd_path(fd, &mut self.pathbuf) {
             sys::Result::Ok(p) => {
-                // reshaped for borrowck — capture len, drop `p`,
-                // then re-borrow `self.pathbuf` to write the sentinel.
                 let len = p.len();
                 // On Linux `readlink(2)` does not NUL-terminate, so write the
                 // sentinel explicitly (the buffer is zero-initialized but be
@@ -906,7 +904,6 @@ pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
         }
     }
 
-    // reshaped for borrowck — take ownership of result vec instead of slicing.
     let mut files = mem::take(&mut lines_parser.result);
     patch_file_second_pass(&mut files)
 }
@@ -1154,7 +1151,6 @@ impl<'a> PatchLinesParser<'a> {
     // Drop handles freeing; `reset()` handles the retain-capacity case.
 
     fn reset(&mut self) {
-        // reshaped for borrowck — take result vec, clear it, reinit self.
         let mut result = mem::take(&mut self.result);
         result.clear();
         *self = Self {

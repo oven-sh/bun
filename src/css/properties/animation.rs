@@ -339,8 +339,6 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(s.v) };
                 if css_module_animation_enabled {
-                    // reshaped for borrowck — capture arena/source_index
-                    // before borrowing dest.css_module mutably.
                     let arena = dest.arena;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
@@ -353,7 +351,6 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
                 if css_module_animation_enabled {
-                    // reshaped for borrowck
                     let arena = dest.arena;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {

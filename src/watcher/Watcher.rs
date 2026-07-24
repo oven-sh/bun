@@ -376,7 +376,6 @@ impl Watcher {
         // So if we just sort the list by the biggest index first, that should be fine
         self.evict_list[0..evict_list_i].sort_by(|a, b| b.cmp(a));
 
-        // reshaped for borrowck — capture fds.len() before loop
         let slice = self.watchlist.slice();
         let fds = slice.items_fd();
         let fds_len = fds.len();

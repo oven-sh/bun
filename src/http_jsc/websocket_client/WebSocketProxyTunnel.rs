@@ -515,7 +515,6 @@ impl WebSocketProxyTunnel {
         unsafe {
             let to_send = (*this).write_buffer.slice();
             if !to_send.is_empty() {
-                // reshaped for borrowck — capture len before re-borrowing write_buffer
                 let to_send_len = to_send.len();
                 let written = (*this).socket.write(to_send);
                 if written < 0 {

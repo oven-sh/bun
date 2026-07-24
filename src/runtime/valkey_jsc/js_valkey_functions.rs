@@ -466,7 +466,6 @@ impl JSValkeyClient {
             args: CommandArgs::Args(&args),
             meta: CommandMeta::default(),
         };
-        // Note: reshaped for borrowck (cmd.meta = cmd.meta.check(&cmd))
         let checked_meta = cmd.meta.check(&cmd);
         cmd.meta = checked_meta;
         // Send command with slices directly

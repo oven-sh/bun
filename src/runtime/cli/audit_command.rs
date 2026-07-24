@@ -322,10 +322,6 @@ fn collect_packages_for_audit(
         prod_packages = Some(set);
     }
 
-    // Note: reshaped for borrowck — column slices borrow `pm.lockfile`
-    // immutably for the loop, so resolve `root_id` / `prod_packages` (which
-    // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
-    // (disjoint from `pm.lockfile`).
     let options = &pm.options;
     let default_url_hash = options.scope.url_hash;
     let packages = pm.lockfile.packages.slice();

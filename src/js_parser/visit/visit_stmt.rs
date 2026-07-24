@@ -573,8 +573,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             js_ast::StmtOrExpr::Stmt(s2) => {
-                // reshaped for borrowck — `s2` borrows from `data.value`; copy
-                // `s2.loc`/`s2.data` (both Copy) so we can mutate `data.value` below.
                 let s2_loc = s2.loc;
                 let s2_data = s2.data;
                 let s2_copy = *s2;
@@ -1408,8 +1406,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if to_convert != u32::MAX {
                         p.commonjs_named_exports_needs_conversion = u32::MAX;
                         'convert: {
-                            // reshaped for borrowck — copy StoreRef so DerefMut
-                            // points into the arena, freeing `&mut data.value`.
                             let js_ast::ExprData::EBinary(mut bin_ref) = data.value.data else {
                                 break 'convert;
                             };

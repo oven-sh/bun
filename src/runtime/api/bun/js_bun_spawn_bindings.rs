@@ -419,7 +419,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple.
     let (abort_signal, terminal_info) = &mut *defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
@@ -963,8 +962,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
-    // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe

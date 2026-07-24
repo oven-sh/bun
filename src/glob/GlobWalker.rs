@@ -793,7 +793,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
         'outer: loop {
-            // Note: reshaped for borrowck — take/replace iter_state where needed.
             match &mut self.iter_state {
                 IterState::Matched(_) => {
                     let IterState::Matched(path) =
@@ -842,8 +841,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             // `path_buf` and `pattern_components` (disjoint fields) for the
                             // write+normalize, then drop the &mut and read via `self.walker`.
                             let mut symlink_full_path_len = work_item_path.len();
-                            // Note: reshaped for borrowck — entry_name is a sub-slice
-                            // of symlink_full_path; capture range and re-slice later.
                             let entry_start = work_item.entry_start as usize;
 
                             let mut has_dot_dot = false;
@@ -1004,7 +1001,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
                             let dir_path = dir.dir_path();
-                            // Note: reshaped for borrowck
                             let err = self.walker.handle_sys_err_with_path(&err, dir_path);
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);

@@ -1577,7 +1577,6 @@ impl<'a> BundleOptions<'a> {
 
             Some(Cow::Borrowed(b"\"development\"".as_slice()))
         };
-        // reshaped for borrowck — node_env computed before passing self.log
         self.define = defines_from_transform_options(
             // No other `&mut Log` is live across this call (see `log_mut`
             // caller contract).

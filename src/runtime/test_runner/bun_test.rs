@@ -1453,10 +1453,6 @@ impl RefDataValue {
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
-        // reshaped for borrowck — `ConcurrentGroup::sequences_mut`
-        // borrows `&mut Execution` while `group()` already holds a borrow into
-        // `execution.groups`. Read `(sequence_start, sequence_end)` first, then
-        // index `execution.sequences` directly.
         let group = buntest.execution.groups.get(*group_index)?;
         let (start, end) = (group.sequence_start, group.sequence_end);
         Some(&mut buntest.execution.sequences[start..end][entry_data.sequence_index])

@@ -254,7 +254,6 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             return None;
         }
 
-        // reshaped for borrowck — cannot mutably borrow completed_trees in loop while moved.
         let mut completed_trees = completed_trees;
 
         while trees[self.tree_id as usize].dependencies.len == 0 {
@@ -698,7 +697,6 @@ impl Tree {
             dependencies: DependencyIDList::default(),
         })?;
 
-        // reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
 
         // Copy the `ParentRef` out (it's `Copy`) so the resulting `&Lockfile`
@@ -708,8 +706,6 @@ impl Tree {
         let lockfile: &Lockfile = lockfile_ref.get();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
-        // reshaped for borrowck — copy the `&'a [Dependency]` out of
-        // `builder` so `&dependencies[i]` does not keep `builder` borrowed.
         let dependencies: &[Dependency] = builder.dependencies;
 
         builder.sort_buf.clear();
@@ -734,8 +730,6 @@ impl Tree {
             });
         }
 
-        // reshaped for borrowck — iterate over a snapshot of sort_buf indices since
-        // builder is mutably borrowed inside the loop.
         let sort_buf_len = builder.sort_buf.len();
         'dep: for sort_idx in 0..sort_buf_len {
             let dep_id = builder.sort_buf[sort_idx];
@@ -944,7 +938,6 @@ impl Tree {
             }
         }
 
-        // reshaped for borrowck — re-read `next` via index.
         let next: Tree = builder.list.items_tree()[next_id as usize];
         if next.dependencies.len == 0 {
             debug_assert!(builder.list.len() == (next.id as usize) + 1);
@@ -1063,11 +1056,6 @@ impl Tree {
             }
 
             if AS_DEFINED && !dep.behavior.is_peer() {
-                // reshaped for borrowck — `maybe_report_error` takes
-                // `&mut self` but the format args borrow `&self` (via
-                // `package_name`/`package_version`/`buf`). Inline against split
-                // field borrows: copy the `ParentRef` out so the `&Lockfile` is
-                // not tied to `&builder`, then write to `builder.log`.
                 let lockfile_ref = builder.lockfile;
                 let lockfile: &Lockfile = lockfile_ref.get();
                 let buf = lockfile.buffers.string_bytes.as_slice();

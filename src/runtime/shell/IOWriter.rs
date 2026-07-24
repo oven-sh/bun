@@ -614,8 +614,6 @@ impl IOWriter {
     }
 
     fn get_buffer_impl(&self) -> &[u8] {
-        // NOTE: reshaped for borrowck — re-derive `state()` after
-        // `skip_dead()` instead of holding one `&mut State` across it.
         {
             let s = self.state();
             if s.writer_idx >= s.writers.len() {
@@ -647,9 +645,6 @@ impl IOWriter {
     /// Advance past `current_writer`, shrinking `buf` if appropriate, and
     /// return the `Yield` for the child's `on_io_writer_chunk` callback.
     fn bump(&self, current_idx: usize) -> Yield {
-        // NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
-        // so we must drop `s` before calling it and re-derive after, otherwise
-        // two `&mut State` are live simultaneously (UB under Stacked Borrows).
         let (is_dead, written, child_ptr) = {
             let s = self.state();
             let w = &s.writers[current_idx];

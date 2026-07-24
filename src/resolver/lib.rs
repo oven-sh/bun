@@ -2367,8 +2367,6 @@ pub mod cache {
                 fd
             );
 
-            // reshaped for borrowck — capture `stream` scalar before borrowing
-            // the shared buffer.
             let stream = self.stream;
 
             let contents = match (use_shared_buffer, arena) {

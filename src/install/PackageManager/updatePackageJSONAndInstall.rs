@@ -73,9 +73,6 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
 ) -> Result<(), Error> {
     let subcommand = manager.subcommand;
     if subcommand != Subcommand::PatchCommit && subcommand != Subcommand::Patch {
-        // reshaped for borrowck — `parse` returns a `&mut [UpdateRequest]`
-        // sub-slice of `update_requests`; we take its length and truncate the Vec so
-        // the next call can take the Vec by value.
         let len = UpdateRequest::parse(
             // `dependency::parse_with_tag` is the only consumer of `pm`; it inserts
             // into `pm.known_npm_aliases` for `npm:`-aliased positionals.
@@ -104,10 +101,6 @@ fn update_package_json_and_install_with_manager_with_updates_and_update_requests
 fn update_package_json_and_install_with_manager_with_updates(
     manager: &mut PackageManager,
     ctx: Command::Context,
-    // reshaped for borrowck — taking by
-    // value lets us hand ownership to `manager.update_requests` (typed
-    // `Box<[UpdateRequest]>`) and re-borrow afterwards without
-    // aliasing `&mut manager`.
     mut updates: Vec<UpdateRequest>,
     subcommand: Subcommand,
     original_cwd: &[u8],
@@ -242,10 +235,6 @@ fn update_package_json_and_install_with_manager_with_updates(
                 for list in LISTS {
                     if let Some(query) = current_package_json_root.as_property(list) {
                         if query.expr.data.is_e_object() {
-                            // reshaped for borrowck —
-                            // `StoreRef<E::Object>` is `Copy` and derefs to a raw arena
-                            // pointer, so taking it once works across writes to both the
-                            // inner list and the parent object.
                             let mut e_object = query.expr.data.as_e_object();
                             let dependencies = e_object.properties.slice_mut();
                             let mut i: usize = 0;
@@ -359,9 +348,6 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     manager.to_update = subcommand == Subcommand::Update;
 
-    // reshaped for borrowck — the field is owning
-    // (`Box<[UpdateRequest]>`), so we transfer ownership here and re-borrow from
-    // `manager.update_requests` after `install_with_manager` (which is the only writer).
     manager.update_requests = updates.into_boxed_slice();
 
     let mut buffer_writer = js_printer::BufferWriter::init();
@@ -523,9 +509,6 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     install_with_manager::install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
 
-    // reshaped for borrowck — see assignment above. `install_with_manager`
-    // is the only writer to `manager.update_requests` between the assignment and
-    // here, so taking it back yields exactly the slice assigned above.
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
 
     if subcommand == Subcommand::Update

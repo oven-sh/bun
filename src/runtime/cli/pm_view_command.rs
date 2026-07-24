@@ -186,7 +186,6 @@ pub(crate) fn view(
 
     let versions_len: usize;
 
-    // Note: reshaped for borrowck.
     'brk: {
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {

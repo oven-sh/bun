@@ -3270,7 +3270,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     last_i -= 1;
                 }
 
-                // reshaped for borrowck — copy out loc before borrowing self mutably.
                 if let Some(prev_loc) = self.scopes_in_order[last_i].as_ref().map(|s| s.loc) {
                     if prev_loc.start >= loc.start {
                         self.log().level = bun_ast::Level::Verbose;

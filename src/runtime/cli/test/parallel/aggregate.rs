@@ -162,7 +162,6 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             bun_sys::Result::Err(_) => continue,
         };
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
-        // reshaped for borrowck — store index instead of *mut FileCoverage
         for raw in data.split(|b| *b == b'\n') {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {

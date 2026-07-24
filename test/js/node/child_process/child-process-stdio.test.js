@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
+import { Duplex, PassThrough, Readable, Writable } from "node:stream";
 
 const CHILD_PROCESS_FILE = import.meta.dir + "/spawned-child.js";
 const OUT_FILE = import.meta.dir + "/stdio-test-out.txt";
@@ -163,6 +164,63 @@ describe("child.stdin", () => {
     expect({ ret, cbCode: cbErr?.code }).toEqual({
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
+    });
+  });
+});
+
+describe("spawn stdio validation", () => {
+  it.each([
+    [
+      "Writable",
+      () =>
+        new Writable({
+          write(c, e, cb) {
+            cb();
+          },
+        }),
+    ],
+    ["Readable", () => new Readable({ read() {} })],
+    [
+      "Duplex",
+      () =>
+        new Duplex({
+          read() {},
+          write(c, e, cb) {
+            cb();
+          },
+        }),
+    ],
+    ["PassThrough", () => new PassThrough()],
+  ])("stream without an fd (%s) throws ERR_INVALID_ARG_VALUE", (name, make) => {
+    let err;
+    try {
+      spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio: ["pipe", make(), "pipe"] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect({ code: err.code, message: err.message }).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringMatching(/^The argument 'stdio' is invalid\. Received /),
+    });
+    expect(err.message).toContain(name);
+  });
+
+  it.each([
+    ["unrecognized array entry", ["pipe", { foo: 1 }, "pipe"], /^The argument 'stdio' is invalid\. Received \{/],
+    ["unknown top-level string", "bogus", /^The argument 'stdio' is invalid\. Received 'bogus'$/],
+    ["non-array non-string", 42, /^The argument 'stdio' is invalid\. Received 42$/],
+  ])("%s throws ERR_INVALID_ARG_VALUE", (_label, stdio, messagePattern) => {
+    let err;
+    try {
+      spawn(bunExe(), ["-e", "0"], { env: bunEnv, stdio });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(TypeError);
+    expect({ code: err.code, message: err.message }).toEqual({
+      code: "ERR_INVALID_ARG_VALUE",
+      message: expect.stringMatching(messagePattern),
     });
   });
 });

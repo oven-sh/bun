@@ -1688,25 +1688,17 @@ function nodeToBun(item: string, index: number): string | number | null | NodeJS
   if (typeof item === "number") {
     return item;
   }
-  if (isNodeStreamReadable(item)) {
+  if (isNodeStreamReadable(item) || isNodeStreamWritable(item)) {
     const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
     if (typeof itemFd === "number") return itemFd;
     const handle = item._handle;
     const handleFd = handle ? handle.fd : undefined;
     if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Readable stdio @ ${index}`);
-  }
-  if (isNodeStreamWritable(item)) {
-    const itemFd = Object.hasOwn(item, "fd") ? item.fd : undefined;
-    if (typeof itemFd === "number") return itemFd;
-    const handle = item._handle;
-    const handleFd = handle ? handle.fd : undefined;
-    if (typeof handleFd === "number") return handleFd;
-    throw new Error(`TODO: stream.Writable stdio @ ${index}`);
+    throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
   const result = nodeToBunLookup[item];
   if (result === undefined) {
-    throw new Error(`Invalid stdio option[${index}] "${item}"`);
+    throw $ERR_INVALID_ARG_VALUE("stdio", item);
   }
   return result;
 }
@@ -1791,7 +1783,7 @@ function normalizeStdio(stdio): string[] {
       case "inherit":
         return ["inherit", "inherit", "inherit"];
       default:
-        throw ERR_INVALID_OPT_VALUE("stdio", stdio);
+        throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
     }
   } else if ($isJSArray(stdio)) {
     // Validate if each is a valid stdio type
@@ -1805,7 +1797,7 @@ function normalizeStdio(stdio): string[] {
 
     return processedStdio;
   } else {
-    throw ERR_INVALID_OPT_VALUE("stdio", stdio);
+    throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 }
 
@@ -2060,12 +2052,6 @@ function genericNodeError(message, errorProperties) {
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   err.code = "ERR_UNKNOWN_SIGNAL";
-  return err;
-}
-
-function ERR_INVALID_OPT_VALUE(name, value) {
-  const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
-  err.code = "ERR_INVALID_OPT_VALUE";
   return err;
 }
 

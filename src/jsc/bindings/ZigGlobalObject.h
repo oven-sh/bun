@@ -432,6 +432,14 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Set after a script's synchronous top-level code runs (moduleLoaderEvaluate for ES modules,
+    // evaluateCommonJSModuleOnce for CommonJS), consumed by checkIfNextTickWasCalledDuringMicrotask:
+    // the enclosing microtask's end is Node's main-script process.nextTick checkpoint.
+    bool nextTickQueueCheckpointAtEndOfMicrotask = false;
+    // Set once checkIfNextTickWasCalledDuringMicrotask has handed off to processTicksAndRejections.
+    // That handoff is one-shot, and this bit, not "m_nextTickQueue is non-null" (which can be true
+    // while the handoff is still deferred), is what keeps the onEachMicrotaskTick slot null after it.
+    bool nextTickQueueHandoffDone = false;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

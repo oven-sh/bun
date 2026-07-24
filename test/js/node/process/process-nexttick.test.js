@@ -1,7 +1,8 @@
 // Running this file in jest/vitest does not work as expected. Jest & Vitest
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,135 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// The onEachMicrotaskTick hook that hands control from the microtask queue to the nextTick
+// queue is one-shot: it uninstalls itself after the process's first process.nextTick call.
+// Every case below therefore needs a subprocess that has never called process.nextTick.
+//
+// The matrix covers (-e vs file) x (ES module vs CommonJS): a leading require() makes Bun
+// classify the source as CommonJS, whose body evaluates through evaluateCommonJSModuleOnce
+// instead of moduleLoaderEvaluate. Both have to mark the nextTick checkpoint boundary.
+const entryKinds = ["-e", "-e-cjs", "file", "file-cjs"];
+
+describe.concurrent("process.nextTick interleaving with the microtask queue", () => {
+  async function runFresh(kind, script) {
+    const source = kind.endsWith("-cjs") ? `require("./dep.js");\n${script}` : script;
+    using dir = tempDir("nexttick-order", {
+      "index.js": source,
+      "dep.js": "module.exports = {};\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: kind.startsWith("-e") ? [bunExe(), "-e", source] : [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { order: JSON.parse(stdout.trim() || "null"), stderr, exitCode };
+  }
+
+  // Node drains the entire microtask queue, including microtasks those microtasks queue,
+  // before running nextTick callbacks queued from inside one of them. Node prints the same
+  // order for .js, .cjs, and .mjs entry points.
+  it.each(entryKinds)("queued from inside a microtask waits for the microtask queue (%s)", async kind => {
+    const result = await runFresh(
+      kind,
+      `const L = [];
+       Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
+       Promise.resolve().then(() => { L.push("p2"); Promise.resolve().then(() => L.push("p2-nested")); });
+       queueMicrotask(() => L.push("q3"));
+       setImmediate(() => {
+         process.nextTick(() => L.push("tick2"));
+         Promise.resolve().then(() => L.push("p4"));
+         setImmediate(() => console.log(JSON.stringify(L)));
+       });`,
+    );
+    expect(result).toEqual({
+      order: ["p1", "p2", "q3", "p2-nested", "tick1", "tick2", "p4"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The script's own top-level code is a nextTick checkpoint boundary: nextTicks it queues run
+  // before the promise jobs it queues. Matches a Node CommonJS entry point.
+  it.each(entryKinds)("queued from the script's top-level code runs before its promise jobs (%s)", async kind => {
+    const result = await runFresh(
+      kind,
+      `const L = [];
+       process.nextTick(() => L.push("tick0"));
+       Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
+       Promise.resolve().then(() => L.push("p2"));
+       setImmediate(() => console.log(JSON.stringify(L)));`,
+    );
+    expect(result).toEqual({ order: ["tick0", "p1", "p2", "tick1"], stderr: "", exitCode: 0 });
+  });
+
+  // AsyncLocalStorage.enterWith swaps the onEachMicrotaskTick hook for an async-context cleanup
+  // step; that must not drop a nextTick handoff still pending from an earlier sibling microtask.
+  it("is preserved across AsyncLocalStorage.enterWith in a sibling microtask", async () => {
+    const result = await runFresh(
+      "file",
+      `const { AsyncLocalStorage } = require("async_hooks");
+       const L = [];
+       Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick1")); });
+       Promise.resolve().then(() => { L.push("p2"); new AsyncLocalStorage().enterWith({}); });
+       Promise.resolve().then(() => L.push("p3"));
+       setImmediate(() => console.log(JSON.stringify(L)));`,
+    );
+    expect(result).toEqual({ order: ["p1", "p2", "p3", "tick1"], stderr: "", exitCode: 0 });
+  });
+
+  // Long after the one-shot top-level checkpoint, a lazily required module leaves the checkpoint
+  // flag set with nothing to consume it. An enterWith in a later microtask must not read that
+  // stale flag and drain nextTick ahead of the microtask queue.
+  it("steady-state AsyncLocalStorage.enterWith after a lazy require does not preempt", async () => {
+    const result = await runFresh(
+      "file",
+      `const { AsyncLocalStorage } = require("async_hooks");
+       const als = new AsyncLocalStorage();
+       process.nextTick(() => {});
+       setImmediate(() => {
+         require("./dep.js");
+         const L = [];
+         Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick")); als.enterWith({}); });
+         Promise.resolve().then(() => L.push("p2"));
+         setImmediate(() => console.log(JSON.stringify(L)));
+       });`,
+    );
+    expect(result).toEqual({ order: ["p1", "p2", "tick"], stderr: "", exitCode: 0 });
+  });
+
+  // bun test --isolate swaps in a fresh default global on the same VM for each file. Each one
+  // starts its nextTick bootstrap over, so the per-VM onEachMicrotaskTick slot (nulled once the
+  // previous file's bootstrap handed off) must be re-armed, or b's checkpoint flag goes stale.
+  it("bun test --isolate gives each file its own nextTick bootstrap", async () => {
+    using dir = tempDir("nexttick-isolate", {
+      "a.test.js": `import { test } from "bun:test";
+         test("a completes a nextTick handoff", async () => {
+           process.nextTick(() => {});
+           await new Promise(r => setImmediate(r));
+         });`,
+      "b.test.js": `import { test, expect } from "bun:test";
+         import { AsyncLocalStorage } from "async_hooks";
+         const als = new AsyncLocalStorage();
+         test("enterWith in a microtask does not preempt its siblings", async () => {
+           const L = [];
+           await new Promise(r => setImmediate(r));
+           Promise.resolve().then(() => { L.push("p1"); process.nextTick(() => L.push("tick")); als.enterWith({}); });
+           Promise.resolve().then(() => L.push("p2"));
+           await new Promise(r => setImmediate(r));
+           expect(L).toEqual(["p1", "p2", "tick"]);
+         });`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "a.test.js", "b.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: expect.stringContaining(" 2 pass"), exitCode: 0 });
+  });
 });

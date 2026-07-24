@@ -1381,7 +1381,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let found_entry_idx: Option<usize> = yarn_lock
                     .entries
                     .iter()
-                    .position(|e| e.specs.iter().any(|s| *s == dep_spec.as_slice()));
+                    .position(|e| e.specs.contains(&dep_spec.as_slice()));
 
                 if let Some(found_entry_idx) = found_entry_idx {
                     let dep_entry_specs = &yarn_lock.entries[found_entry_idx].specs;

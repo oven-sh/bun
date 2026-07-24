@@ -143,7 +143,9 @@ function measureMemory(options = kEmptyObject) {
 
   const measurement = () => ({ jsMemoryEstimate: current, jsMemoryRange: [current, upperBound] });
 
-  const result: any = { total: measurement() };
+  // Node always includes a WebAssembly: { code, metadata } entry (both modes).
+  // JSC exposes no equivalent wasm byte accounting, so report zeros for shape parity.
+  const result: any = { total: measurement(), WebAssembly: { code: 0, metadata: 0 } };
   if (mode === "detailed") {
     result.current = measurement();
     const other: object[] = [];

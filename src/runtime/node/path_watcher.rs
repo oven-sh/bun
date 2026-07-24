@@ -811,6 +811,60 @@ impl Linux {
         });
     }
 
+    /// `subpath` is `rel` itself or sits underneath it. Both are `/`-separated and
+    /// relative to the same watch root.
+    fn in_subtree(subpath: &[u8], rel: &[u8]) -> bool {
+        strings::starts_with(subpath, rel)
+            && (subpath.len() == rel.len() || subpath[rel.len()] == b'/')
+    }
+
+    /// The directory `name` inside `parent_subpath` left this watcher's tree:
+    /// `remove_watch` restricted to it and everything under it, issuing
+    /// `inotify_rm_watch` for each wd left with no owners. Caller holds
+    /// `manager.mutex`.
+    fn remove_subtree(
+        manager: &'static PathWatcherManager,
+        watcher: &mut PathWatcher,
+        parent_subpath: &[u8],
+        name: &[u8],
+    ) {
+        if name.is_empty() {
+            return;
+        }
+        // Built here rather than passed in: joined it is a copy, unjoined it is
+        // `name` from the read buffer. Either way it cannot borrow one of the
+        // `WdOwner.subpath`s dropped below.
+        let mut rel_buf = path::path_buffer_pool::get();
+        let rel: &[u8] = if parent_subpath.is_empty() {
+            name
+        } else {
+            join_string_buf::<platform::Posix>(rel_buf.as_mut_slice(), &[parent_subpath, name])
+        };
+
+        let plat: *mut Linux = manager.platform.get();
+        let fd = manager.inotify_fd();
+        let this = core::ptr::from_mut::<PathWatcher>(watcher).cast_const();
+        // SAFETY: caller holds manager.mutex; exclusive access to `wd_map`.
+        let wd_map = unsafe { &mut (*plat).wd_map };
+        watcher.platform.wds.retain(|&wd| {
+            let Some(owners) = wd_map.get_mut(&wd) else {
+                return true;
+            };
+            let Some(oi) = owners.iter().position(|o| core::ptr::eq(o.watcher, this)) else {
+                return true;
+            };
+            if !Linux::in_subtree(owners[oi].subpath.as_bytes(), rel) {
+                return true;
+            }
+            owners.swap_remove(oi);
+            if owners.is_empty() {
+                wd_map.remove(&wd);
+                sys::linux::inotify_rm_watch(fd.native(), wd);
+            }
+            false
+        });
+    }
+
     /// Caller holds `manager.mutex`. Drops this watcher's ownership of each of its
     /// wds; only issues `inotify_rm_watch` once a wd has no remaining owners.
     fn remove_watch(manager: &'static PathWatcherManager, watcher: &mut PathWatcher) {
@@ -1074,6 +1128,15 @@ impl Linux {
                                 && !watcher_is_file),
                     );
                     let _ = handle_oom(touched.get_or_put(owner_watcher));
+
+                    // Recursive: a directory left this owner's tree. inotify watches
+                    // inodes, not paths, so without this the subtree keeps its wds and
+                    // keeps reporting under its stale subpath until the watcher closes.
+                    // A move that stayed inside the tree is re-added by the matching
+                    // IN_MOVED_TO below.
+                    if watcher_recursive && is_dir_child && (ev.mask & IN::MOVED_FROM != 0) {
+                        Linux::remove_subtree(manager, watcher, owner_subpath, name);
+                    }
 
                     // Recursive: a new directory appeared under this owner's tree —
                     // start watching it so future events inside it are delivered.

@@ -764,9 +764,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .expect("unreachable");
         }
 
+        let old_is_inside_single_stmt_body = self.is_inside_single_stmt_body;
+        self.is_inside_single_stmt_body = true;
+
         let mut stmts = BumpVec::with_capacity_in(1, self.arena);
         stmts.push(stmt);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
+
+        self.is_inside_single_stmt_body = old_is_inside_single_stmt_body;
 
         if has_if_scope {
             self.pop_scope();

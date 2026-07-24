@@ -94,6 +94,10 @@ describe("url", () => {
     expect(new URL("http:foo\u1E9E", "http://host/").pathname).toBe("/foo%E1%BA%9E");
     // Cross-scheme reaches the authority state and IDNA runs.
     expect(new URL("http:\u1E9E.com", "ftp://host/").href).toBe("http://xn--zca.com/");
+    // file: only has a host with exactly two slashes; ///x and /x are path.
+    expect(new URL("file:///\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file:/\u1E9E.txt").pathname).toBe("/%E1%BA%9E.txt");
+    expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";

@@ -3371,7 +3371,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionBinding, (JSGlobalObject * jsGlobalObje
             return WTF::IterationStatus::Continue;
         });
         bool isInternalCaller = callerURL.startsWith("node:"_s) || callerURL.startsWith("bun:"_s) || callerURL.startsWith("internal"_s);
-        if (!process->m_warnedProcessBinding && !isInternalCaller) {
+        if (!isInternalCaller) {
             process->m_warnedProcessBinding = true;
             Process::emitWarning(globalObject,
                 jsString(vm, String("process.binding() is deprecated. Please use public APIs instead."_s)),

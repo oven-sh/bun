@@ -93,27 +93,44 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
     // instead unless "//" follows, so the remainder is a path, not a host.
     // A scheme-relative "//" inherits the base's scheme.
     auto isSlash = [](char16_t ch) { return ch == '/' || ch == '\\'; };
+    // file: routes through file state/file slash state/file host state: only
+    // exactly two slashes then a non-slash introduce a host; file:///x and
+    // file:/x have an empty host and `x` is a path segment.
+    auto locateAuthority = [&](size_t afterColon, bool isFile) -> size_t {
+        const bool hasDoubleSlash = afterColon + 1 < view.length()
+            && isSlash(view[afterColon]) && isSlash(view[afterColon + 1]);
+        if (isFile) {
+            if (!hasDoubleSlash)
+                return notFound;
+            size_t start = afterColon + 2;
+            if (start < view.length() && isSlash(view[start]))
+                return notFound;
+            return start;
+        }
+        size_t start = afterColon;
+        while (start < view.length() && isSlash(view[start]))
+            start++;
+        return start;
+    };
     size_t authorityStart = notFound;
     if (!specialBaseScheme.isEmpty() && scan + 1 < view.length() && isSlash(view[scan]) && isSlash(view[scan + 1])) {
-        authorityStart = scan + 2;
-        while (authorityStart < view.length() && isSlash(view[authorityStart]))
-            authorityStart++;
+        authorityStart = locateAuthority(scan, equalLettersIgnoringASCIICase(specialBaseScheme, "file"_s));
     } else {
         size_t colon = view.find(':', scan);
         if (colon != notFound) {
             auto scheme = view.substring(scan, colon - scan);
+            const bool isFile = equalLettersIgnoringASCIICase(scheme, "file"_s);
             if (equalLettersIgnoringASCIICase(scheme, "http"_s) || equalLettersIgnoringASCIICase(scheme, "https"_s)
                 || equalLettersIgnoringASCIICase(scheme, "ws"_s) || equalLettersIgnoringASCIICase(scheme, "wss"_s)
-                || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || equalLettersIgnoringASCIICase(scheme, "file"_s)) {
+                || equalLettersIgnoringASCIICase(scheme, "ftp"_s) || isFile) {
                 size_t afterColon = colon + 1;
-                const bool hasDoubleSlash = afterColon + 1 < view.length() && isSlash(view[afterColon]) && isSlash(view[afterColon + 1]);
+                const bool hasDoubleSlash = afterColon + 1 < view.length()
+                    && isSlash(view[afterColon]) && isSlash(view[afterColon + 1]);
                 // Same scheme as the base and no "//" → relative-state path,
                 // not an authority; the delta must not touch it.
                 if (!hasDoubleSlash && equalIgnoringASCIICase(scheme, specialBaseScheme))
                     return {};
-                authorityStart = afterColon;
-                while (authorityStart < view.length() && isSlash(view[authorityStart]))
-                    authorityStart++;
+                authorityStart = locateAuthority(afterColon, isFile);
             }
         }
     }

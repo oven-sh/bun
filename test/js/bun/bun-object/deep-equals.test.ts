@@ -126,7 +126,18 @@ describe("Bun.deepEquals fast-path coverage", () => {
     });
 
     it("survives an element that mutates the outer array during comparison", () => {
-      const a: any[] = [new Proxy({}, { ownKeys: () => { for (let j = 0; j < 1e5; j++) a.push(j); return []; } }), {}];
+      const a: any[] = [
+        new Proxy(
+          {},
+          {
+            ownKeys: () => {
+              for (let j = 0; j < 1e5; j++) a.push(j);
+              return [];
+            },
+          },
+        ),
+        {},
+      ];
       const b = [{}, {}];
       // The result itself is unspecified once the input is mutated mid-compare;
       // we only require that it does not crash.

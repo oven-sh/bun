@@ -886,49 +886,48 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             }
         }
 
-    arrayGenericLoop:
-        {
-            uint64_t i = arrayIndex;
-            for (; i < array1Length; i++) {
-                JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
-                RETURN_IF_EXCEPTION(scope, false);
-                JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
-                RETURN_IF_EXCEPTION(scope, false);
+    arrayGenericLoop: {
+        uint64_t i = arrayIndex;
+        for (; i < array1Length; i++) {
+            JSValue left = getIndexWithoutAccessors(globalObject, o1, i);
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            RETURN_IF_EXCEPTION(scope, false);
 
-                if (left == right)
-                    continue;
+            if (left == right)
+                continue;
 
-                if constexpr (isStrict) {
-                    if (left.isEmpty() && right.isEmpty()) {
-                        continue;
-                    }
-                    if (left.isEmpty() || right.isEmpty()) {
-                        return false;
-                    }
-                }
-
-                if constexpr (!isStrict) {
-                    if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
-                        continue;
-                    }
-                }
-
-                auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (!eql) return false;
-            }
-
-            for (; i < array2Length; i++) {
-                JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
-                RETURN_IF_EXCEPTION(scope, false);
-
-                if (((right.isEmpty() || right.isUndefined()))) {
+            if constexpr (isStrict) {
+                if (left.isEmpty() && right.isEmpty()) {
                     continue;
                 }
-
-                return false;
+                if (left.isEmpty() || right.isEmpty()) {
+                    return false;
+                }
             }
+
+            if constexpr (!isStrict) {
+                if (((left.isEmpty() || right.isEmpty()) && (left.isUndefined() || right.isUndefined()))) {
+                    continue;
+                }
+            }
+
+            auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, left, right, gcBuffer, stack, scope, true);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!eql) return false;
         }
+
+        for (; i < array2Length; i++) {
+            JSValue right = getIndexWithoutAccessors(globalObject, o2, i);
+            RETURN_IF_EXCEPTION(scope, false);
+
+            if (((right.isEmpty() || right.isUndefined()))) {
+                continue;
+            }
+
+            return false;
+        }
+    }
 
     compareArraySymbols:
         // A structure with isQuickPropertyAccessAllowedForEnumeration() set has no

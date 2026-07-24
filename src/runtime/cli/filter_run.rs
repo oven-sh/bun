@@ -673,8 +673,7 @@ impl AbortHandler {
 
 #[cfg(windows)]
 fn windows_is_terminal() -> bool {
-    let res = bun_sys::windows::GetFileType(bun_sys::Fd::stdout().native());
-    res == bun_sys::windows::FILE_TYPE_CHAR
+    bun_sys::isatty(bun_sys::Fd::stdout())
 }
 
 pub(crate) fn run_scripts_with_filter(

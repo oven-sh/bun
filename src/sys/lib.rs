@@ -4410,12 +4410,23 @@ mod windows_impl {
     pub fn isatty(fd: Fd) -> bool {
         // `uv_guess_handle` takes a `uv_file` (CRT int fd); `fd.uv()` PANICS
         // for HANDLE-backed (`FdKind::System`) Fds that are not stdio. Branch
-        // on the fd kind: uv-backed → libuv probe, HANDLE-backed →
-        // `GetFileType == FILE_TYPE_CHAR` (the canonical Win32 tty test, what
-        // `_isatty()` ultimately calls).
+        // on the fd kind: uv-backed → libuv probe, HANDLE-backed → the same
+        // test libuv's `uv_guess_handle` performs. `GetFileType ==
+        // FILE_TYPE_CHAR` alone is true for any character device (`NUL`,
+        // `COM1`, `CON`, …); only a console has a console mode, so gate on
+        // `GetConsoleMode` succeeding — matching `uv_guess_handle`,
+        // `fstat_handle` above, and the `bun_stdio_tty[]` startup probe.
         match fd.kind() {
             FdKind::Uv => uv::uv_guess_handle(fd.uv()) == uv::UV_TTY,
-            FdKind::System => w::GetFileType(fd.native()) == w::FILE_TYPE_CHAR,
+            FdKind::System => {
+                let handle = fd.native();
+                if w::GetFileType(handle) != w::FILE_TYPE_CHAR {
+                    return false;
+                }
+                let mut mode: w::DWORD = 0;
+                // SAFETY: FFI; `handle` is a by-value opaque, `mode` valid for write.
+                unsafe { w::kernel32::GetConsoleMode(handle, &mut mode) != 0 }
+            }
         }
     }
     pub fn lseek(fd: Fd, offset: i64, whence: i32) -> Maybe<i64> {

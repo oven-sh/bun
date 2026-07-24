@@ -455,6 +455,12 @@ export const sigactionLayout: () =>
       sizeof: number;
     } = $newRustFunction("sys.rs", "TestingAPIs.sigactionLayout", 0);
 
+export const isattyStdioHandles: () => { stdin: boolean; stdout: boolean; stderr: boolean } = $newRustFunction(
+  "sys.rs",
+  "TestingAPIs.isattyStdioHandles",
+  0,
+);
+
 export const stringsInternals = {
   /**
    * Calls `bun.strings.toUTF16AllocForReal(allocator, bytes, false, true)` and

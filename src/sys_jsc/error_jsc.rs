@@ -213,4 +213,32 @@ pub mod TestingAPIs {
             Ok(out)
         }
     }
+
+    /// Exposes `bun_sys::isatty(Fd::stdin/stdout/stderr())` so tests can verify
+    /// the HANDLE-backed (`FdKind::System`) branch agrees with libuv's
+    /// `uv_guess_handle`. The JS-level `tty.isatty()` and `process.std*.isTTY`
+    /// go through `uv_guess_handle` / `GetConsoleMode` directly and never touch
+    /// this branch, so there is no user-visible surface for a regression test
+    /// to observe it through.
+    #[bun_jsc::host_fn]
+    pub fn isatty_stdio_handles(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        use bun_sys::Fd;
+        let out = JSValue::create_empty_object(global, 3);
+        out.put(
+            global,
+            b"stdin",
+            JSValue::js_boolean(bun_sys::isatty(Fd::stdin())),
+        );
+        out.put(
+            global,
+            b"stdout",
+            JSValue::js_boolean(bun_sys::isatty(Fd::stdout())),
+        );
+        out.put(
+            global,
+            b"stderr",
+            JSValue::js_boolean(bun_sys::isatty(Fd::stderr())),
+        );
+        Ok(out)
+    }
 }

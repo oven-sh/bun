@@ -236,11 +236,21 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
 
     // Backwards compat for monkey patching open().
     const orgEmit: any = this.emit;
+    let deferred: any[][] | null = null;
     this.emit = function (...args) {
-      if (args[0] === "open") {
-        this.emit = orgEmit;
+      if (deferred !== null) {
+        deferred.push(args);
+      } else if (args[0] === "open") {
+        // Defer "open" (and anything emitted synchronously after it, typically
+        // "ready") to onConstruct's nextTick batch; see emitOpenReady below.
+        deferred = [args];
+        const self = this;
+        process.nextTick(() => {
+          self.emit = orgEmit;
+          for (let i = 0; i < deferred!.length; i++) orgEmit.$apply(self, deferred![i]);
+          deferred = null;
+        });
         callback();
-        orgEmit.$apply(this, args);
       } else if (args[0] === "error") {
         this.emit = orgEmit;
         callback(args[1]);
@@ -264,9 +274,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
       //   // @ts-expect-error
       //   this.fd = (this[kWriteStreamFastPath] = Bun.file(this.path).writer())._getFd();
       // }
+      process.nextTick(emitOpenReady, this);
       callback();
-      this.emit("open", this.fd);
-      this.emit("ready");
       return;
     }
 
@@ -275,9 +284,8 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
         callback(err);
       } else {
         this.fd = fd;
+        process.nextTick(emitOpenReady, this);
         callback();
-        this.emit("open", this.fd);
-        this.emit("ready");
       }
     });
   }
@@ -286,6 +294,14 @@ function streamConstruct(this: FSStream, callback: (e?: any) => void) {
 readStreamPrototype.open = streamNoop;
 
 readStreamPrototype._construct = streamConstruct;
+
+// Bun drains microtasks before nextTick after I/O (Node is the reverse), so
+// queue "open"/"ready" ahead of callback()'s nextTick(onConstruct): "open"
+// still precedes "finish"/"data", and `await once(s, "open")` resumes constructed.
+function emitOpenReady(stream) {
+  stream.emit("open", stream.fd);
+  stream.emit("ready");
+}
 
 readStreamPrototype._read = function (n) {
   n = this.pos !== undefined ? $min(this.end - this.pos + 1, n) : $min(this.end - this.bytesRead + 1, n);

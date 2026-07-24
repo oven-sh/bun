@@ -3671,6 +3671,36 @@ describe("createWriteStream", () => {
       }
     });
   });
+
+  it.each([false, true])(
+    "destroy() in the same tick as an accepted write() persists the in-flight bytes (destroy with error: %p)",
+    async withErr => {
+      // Node dispatches the first post-'open' write() to _write synchronously, so
+      // a same-tick destroy() waits for that I/O: bytes reach disk and the write
+      // callback gets ERR_STREAM_DESTROYED, not the destroy error.
+      const p = join(tmpdirSync(), "write-then-destroy.bin");
+      const ws = createWriteStream(p);
+      const { promise: opened, resolve: onOpen } = Promise.withResolvers<void>();
+      ws.once("open", () => onOpen());
+      await opened;
+      ws.on("error", () => {});
+      let cbErr: unknown = "<not called>";
+      ws.write(Buffer.alloc(65536, 0x5a), e => {
+        cbErr = e;
+      });
+      ws.destroy(withErr ? new Error("boom") : undefined);
+      const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+      ws.once("close", () => onClose());
+      await closed;
+      expect({
+        sizeOnDisk: statSync(p).size,
+        cbCode: (cbErr as NodeJS.ErrnoException | null)?.code,
+      }).toEqual({
+        sizeOnDisk: 65536,
+        cbCode: "ERR_STREAM_DESTROYED",
+      });
+    },
+  );
 });
 
 describe("fs/promises", () => {

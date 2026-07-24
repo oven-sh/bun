@@ -105,6 +105,8 @@ static JSC::JSPromise* performDefaultControllerPullAlgorithm(JSC::VM& vm, JSC::J
         RELEASE_AND_RETURN(scope, fromIterablePullAlgorithm(globalObject, controller));
     case SourceKind::Native:
         RELEASE_AND_RETURN(scope, nativeSourcePull(globalObject, controller));
+    case SourceKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodePullAlgorithm(globalObject, controller));
     case SourceKind::ByteTeeBranch:
     case SourceKind::CrossRealm:
         break;
@@ -141,6 +143,8 @@ static JSC::JSPromise* performDefaultControllerCancelAlgorithm(JSC::VM& vm, JSC:
         RELEASE_AND_RETURN(scope, fromIterableCancelAlgorithm(globalObject, controller, reason));
     case SourceKind::Native:
         RELEASE_AND_RETURN(scope, nativeSourceCancel(globalObject, controller, reason));
+    case SourceKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodeCancelAlgorithm(globalObject, controller, reason));
     case SourceKind::ByteTeeBranch:
     case SourceKind::CrossRealm:
         break;

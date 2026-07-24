@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite } from "harness";
+import net from "net";
 
 const exampleServer = exampleSite("http");
 
@@ -285,7 +286,403 @@ for (const { body, fn } of bodyTypes) {
           expect(await fn(buffer).text()).toBe(string);
         });
       });
+      describe("textStream()", () => {
+        test("undefined", async () => {
+          const stream = fn().textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          expect(await Array.fromAsync(stream)).toEqual([]);
+        });
+        test("null", async () => {
+          const stream = fn(null).textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          expect(await Array.fromAsync(stream)).toEqual([]);
+        });
+        test(`"${string}" (string body)`, async () => {
+          const stream = fn(string).textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          expect((await Array.fromAsync(stream)).join("")).toBe(string);
+        });
+        test(`"${string}" (buffer body)`, async () => {
+          const stream = fn(buffer).textStream();
+          expect(stream instanceof ReadableStream).toBe(true);
+          const chunks = await Array.fromAsync(stream);
+          for (const chunk of chunks) {
+            expect(typeof chunk).toBe("string");
+          }
+          expect(chunks.join("")).toBe(string);
+        });
+      });
     }
+    describe("textStream()", () => {
+      test("yields string chunks from a ReadableStream body", async () => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello "));
+            controller.enqueue(new TextEncoder().encode("world"));
+            controller.close();
+          },
+        });
+        const stream = fn(input).textStream();
+        const chunks = await Array.fromAsync(stream);
+        for (const chunk of chunks) {
+          expect(typeof chunk).toBe("string");
+        }
+        expect(chunks.join("")).toBe("hello world");
+      });
+      test("joins multi-byte characters split across chunks", async () => {
+        // "🫠" is F0 9F AB A0
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([0xf0, 0x9f]));
+            controller.enqueue(new Uint8Array([0xab]));
+            controller.enqueue(new Uint8Array([0xa0]));
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("🫠");
+      });
+      test("strips a leading UTF-8 BOM", async () => {
+        const input = new Uint8Array([0xef, 0xbb, 0xbf, 0x68, 0x69]);
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("hi");
+      });
+      test("replaces invalid sequences with U+FFFD", async () => {
+        const input = new Uint8Array([0x61, 0xff, 0x62]);
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("a\ufffdb");
+      });
+      test.each([
+        ["surrogate lead + second byte", [0xed, 0xa0]],
+        ["overlong 4-byte lead + second byte", [0xf0, 0x80]],
+        ["out-of-range 4-byte lead + second byte", [0xf4, 0x90]],
+        ["0xF5 (never a valid lead)", [0xf5]],
+        ["0xC0 (overlong 2-byte lead)", [0xc0]],
+      ])("does not hold back a definitely-invalid trailing prefix: %s", async (_, trailing) => {
+        // An invalid prefix at the end of a chunk should be replaced
+        // immediately (the WHATWG decoder emits U+FFFD), not held back to the
+        // next chunk. Assert via observable chunk timing: the first read of
+        // the output stream must not be empty.
+        let sc!: ReadableStreamDefaultController;
+        const input = new ReadableStream({
+          start(c) {
+            sc = c;
+            c.enqueue(new Uint8Array([0x61, ...trailing]));
+          },
+        });
+        const reader = fn(input).textStream().getReader();
+        const first = await reader.read();
+        expect(first.done).toBe(false);
+        expect(first.value!.startsWith("a\ufffd")).toBe(true);
+        sc.close();
+      });
+      test.each([
+        ["ascii", Buffer.alloc(1000, "abcd").toString()],
+        ["mixed", Buffer.alloc(1000, "hello 🫠 ").toString()],
+      ])("decodes a large %s chunk from a ReadableStream body", async (_, big) => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode(big));
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe(big);
+      });
+      test("marks body as used", async () => {
+        const r = fn("hello");
+        expect(r.bodyUsed).toBe(false);
+        const stream = r.textStream();
+        expect(r.bodyUsed).toBe(true);
+        expect((await Array.fromAsync(stream)).join("")).toBe("hello");
+      });
+      test("throws TypeError synchronously when body is unusable", async () => {
+        const r = fn("hello");
+        await r.text();
+        expect(r.bodyUsed).toBe(true);
+        expect(() => r.textStream()).toThrow(TypeError);
+      });
+      test("throws TypeError when body stream is locked", () => {
+        const r = fn("hello");
+        r.body!.getReader();
+        expect(() => r.textStream()).toThrow(TypeError);
+      });
+      test("locks a previously-accessed .body stream", async () => {
+        const r = fn("hello");
+        const stream = r.body!;
+        expect(stream.locked).toBe(false);
+        const ts = r.textStream();
+        expect(stream.locked).toBe(true);
+        expect(() => stream.getReader()).toThrow(TypeError);
+        await expect(stream.cancel()).rejects.toBeInstanceOf(TypeError);
+        expect((await Array.fromAsync(ts)).join("")).toBe("hello");
+        expect(stream.locked).toBe(false);
+      });
+      test("releases the source stream on close and cancel", async () => {
+        {
+          const source = new ReadableStream({
+            start(c) {
+              c.enqueue(new Uint8Array([65]));
+              c.close();
+            },
+          });
+          const ts = fn(source).textStream();
+          expect(source.locked).toBe(true);
+          expect((await Array.fromAsync(ts)).join("")).toBe("A");
+          expect(source.locked).toBe(false);
+        }
+        {
+          const source = new ReadableStream({
+            pull(c) {
+              c.enqueue(new Uint8Array([65]));
+            },
+          });
+          const ts = fn(source).textStream();
+          expect(source.locked).toBe(true);
+          await ts.cancel();
+          expect(source.locked).toBe(false);
+        }
+      });
+      test("second textStream() call throws", () => {
+        const r = fn("hello");
+        r.textStream();
+        expect(() => r.textStream()).toThrow(TypeError);
+      });
+      test("ignores Content-Type charset", async () => {
+        const result = fn(new Uint8Array([0xf0, 0x9f, 0xab, 0xa0]), {
+          "Content-Type": "text/plain; charset=iso-8859-1",
+        });
+        expect((await Array.fromAsync(result.textStream())).join("")).toBe("🫠");
+      });
+      test("propagates errors from a ReadableStream body", async () => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hello"));
+            controller.error(new Error("boom"));
+          },
+        });
+        const stream = fn(input).textStream();
+        await expect(async () => {
+          for await (const _ of stream) {
+          }
+        }).toThrow("boom");
+      });
+      test("cancel propagates to the source stream", async () => {
+        let cancelled: unknown;
+        const input = new ReadableStream({
+          pull(controller) {
+            controller.enqueue(new TextEncoder().encode("x"));
+          },
+          cancel(reason) {
+            cancelled = reason;
+          },
+        });
+        const stream = fn(input).textStream();
+        await stream.cancel("stop");
+        expect(cancelled).toBe("stop");
+      });
+      test("cancels the source stream when it produces a non-BufferSource chunk", async () => {
+        let cancelled: unknown;
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue("oops");
+          },
+          cancel(reason) {
+            cancelled = reason;
+          },
+        });
+        const stream = fn(input).textStream();
+        await expect(async () => {
+          for await (const _ of stream) {
+          }
+        }).toThrow(TypeError);
+        expect(cancelled).toBeInstanceOf(TypeError);
+      });
+      test("treats a detached BufferSource chunk as empty", async () => {
+        const view = new Uint8Array([0x68, 0x69]);
+        structuredClone(view, { transfer: [view.buffer] });
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(view);
+            controller.enqueue(new Uint8Array([0x21]));
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("!");
+      });
+      test("accepts raw ArrayBuffer chunks from a ReadableStream body", async () => {
+        const input = new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("hi").buffer);
+            controller.close();
+          },
+        });
+        expect((await Array.fromAsync(fn(input).textStream())).join("")).toBe("hi");
+      });
+      test("concurrent reads with a source that closes without enqueueing", async () => {
+        let sc!: ReadableStreamDefaultController;
+        const source = new ReadableStream({
+          start(c) {
+            sc = c;
+          },
+        });
+        const reader = fn(source).textStream().getReader();
+        await Promise.resolve();
+        const p1 = reader.read();
+        const p2 = reader.read();
+        await Promise.resolve();
+        sc.close();
+        expect(await p1).toEqual({ value: undefined, done: true });
+        expect(await p2).toEqual({ value: undefined, done: true });
+      });
+      test("cancel after source close with a queued flush chunk", async () => {
+        // closeSteps' flush enqueues a replacement char into the output queue
+        // and releases the source reader; a subsequent output cancel() must
+        // tolerate the already-released reader.
+        let sc!: ReadableStreamDefaultController;
+        const source = new ReadableStream({
+          start(c) {
+            sc = c;
+          },
+        });
+        const reader = fn(source).textStream().getReader();
+        await Promise.resolve();
+        reader.read();
+        await Promise.resolve();
+        reader.read();
+        await Promise.resolve();
+        sc.enqueue(new Uint8Array([0x41, 0xc2]));
+        sc.enqueue(new Uint8Array([0xa9, 0xc2]));
+        sc.close();
+        await Promise.resolve();
+        await reader.cancel();
+        expect(source.locked).toBe(false);
+      });
+      test("re-entrant closeSteps via flush enqueue does not double-release", async () => {
+        let sc!: ReadableStreamDefaultController;
+        const source = new ReadableStream({
+          start(c) {
+            sc = c;
+          },
+        });
+        const reader = fn(source).textStream().getReader();
+        await Promise.resolve();
+        const p1 = reader.read();
+        const p2 = reader.read();
+        await Promise.resolve();
+        await Promise.resolve();
+        // 0xC2 is held back; the chunk-step's callPullIfNeeded queues a third
+        // TextDecode read on the source reader.
+        sc.enqueue(new Uint8Array([0xc2]));
+        await Promise.resolve();
+        sc.close();
+        expect((await p1).value).toBe("\ufffd");
+        expect((await p2).done).toBe(true);
+        expect(source.locked).toBe(false);
+      });
+      if (body === Response) {
+        test("streams a fetch response body", async () => {
+          await using server = Bun.serve({
+            port: 0,
+            fetch() {
+              const chunks = ["hello ", "world 🫠"];
+              return new Response(
+                new ReadableStream({
+                  start(controller) {
+                    for (const c of chunks) controller.enqueue(new TextEncoder().encode(c));
+                    controller.close();
+                  },
+                }),
+              );
+            },
+          });
+          const res = await fetch(server.url);
+          const stream = res.textStream();
+          expect(res.bodyUsed).toBe(true);
+          expect(() => res.textStream()).toThrow(TypeError);
+          const out = (await Array.fromAsync(stream)).join("");
+          expect(out).toBe("hello world 🫠");
+        });
+        test("Bun's ReadableStream.text() on a fetch textStream() yields decoded text", async () => {
+          await using server = Bun.serve({
+            port: 0,
+            fetch: () => new Response(new Uint8Array([0xef, 0xbb, 0xbf, 0x61, 0xff, 0x62])),
+          });
+          const res = await fetch(server.url);
+          // The native-handle buffered fast path must not bypass the decode.
+          expect(await res.textStream().text()).toBe("a\ufffdb");
+        });
+      }
+      if (body === Request) {
+        test("streams an incoming request body server-side", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers<{
+            chunks: string[];
+            bodyUsedAfter: boolean;
+            secondCallThrew: boolean;
+          }>();
+          await using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              try {
+                const stream = req.textStream();
+                const chunks = await Array.fromAsync(stream);
+                let secondCallThrew = false;
+                try {
+                  req.textStream();
+                } catch (e) {
+                  secondCallThrew = e instanceof TypeError;
+                }
+                resolve({ chunks, bodyUsedAfter: req.bodyUsed, secondCallThrew });
+              } catch (e) {
+                reject(e);
+              }
+              return new Response("ok");
+            },
+          });
+          await fetch(server.url, {
+            method: "POST",
+            body: new ReadableStream({
+              start(c) {
+                for (const s of ["hello ", "world 🫠"]) c.enqueue(new TextEncoder().encode(s));
+                c.close();
+              },
+            }),
+          });
+          const result = await promise;
+          for (const chunk of result.chunks) {
+            expect(typeof chunk).toBe("string");
+          }
+          expect(result.chunks.join("")).toBe("hello world 🫠");
+          expect(result.bodyUsedAfter).toBe(true);
+          expect(result.secondCallThrew).toBe(true);
+        });
+        test("rejects when the client aborts mid-upload server-side", async () => {
+          const firstChunk = Promise.withResolvers<void>();
+          const done = Promise.withResolvers<{ name: string; received: string }>();
+          await using server = Bun.serve({
+            port: 0,
+            async fetch(req) {
+              const received: string[] = [];
+              try {
+                for await (const c of req.textStream()) {
+                  received.push(c);
+                  firstChunk.resolve();
+                }
+                done.resolve({ name: "<no error>", received: received.join("") });
+              } catch (e: any) {
+                done.resolve({ name: e?.name, received: received.join("") });
+              }
+              return new Response("ok");
+            },
+          });
+          const connected = Promise.withResolvers<void>();
+          const sock = net.connect(server.port, "127.0.0.1", () => connected.resolve());
+          sock.on("error", () => {});
+          await connected.promise;
+          sock.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 1000\r\n\r\nhello");
+          await firstChunk.promise;
+          sock.destroy();
+          const result = await done.promise;
+          expect(result).toEqual({ name: "AbortError", received: "hello" });
+        });
+      }
+    });
     describe("json()", () => {
       const validTests: [string, unknown][] = [
         ["true", true],

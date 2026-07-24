@@ -402,6 +402,19 @@ static void nativeStorePendingView(JSC::VM& vm, JSNativeStreamSourceAdapter* ada
         adapter->m_pendingView.clear();
 }
 
+// Text mode: decode `bytes` against `state` and enqueue the resulting string
+// (empty strings are skipped).
+static void nativeEnqueueTextChunk(JSGlobalObject* globalObject, JSReadableStreamDefaultController* controller, StreamingUTF8DecodeState& state, std::span<const uint8_t> bytes, bool flush)
+{
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    auto* decoded = streamingUTF8Decode(globalObject, bytes, state, flush);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!decoded || !decoded->length() || !controller)
+        return;
+    readableStreamDefaultControllerEnqueue(globalObject, controller, decoded);
+    RETURN_IF_EXCEPTION(scope, void());
+}
+
 static bool nativeCloserFlag(JSC::VM& vm, JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -438,7 +451,10 @@ static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSN
     auto* controller = adapter->m_controller.get();
     if (controller && readableStreamDefaultControllerCanCloseOrEnqueue(controller)) {
         auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        readableStreamDefaultControllerClose(globalObject, controller);
+        if (adapter->m_textMode)
+            nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, {}, /* flush */ true);
+        if (!catchScope.exception())
+            readableStreamDefaultControllerClose(globalObject, controller);
         if (catchScope.exception()) [[unlikely]] {
             JSValue thrown = takeAbruptCompletion(globalObject, catchScope);
             if (thrown.isEmpty())
@@ -493,6 +509,19 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
         double written = result.asNumber();
         if (!isClosed)
             nativeAdjustChunkSize(adapter, written > 0 ? static_cast<size_t>(written) : 0);
+        if (adapter->m_textMode) {
+            if (written > 0 && view) {
+                size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
+                nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, view->span().first(count), /* flush */ false);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+            if (isClosed) {
+                scheduleNativeSourceCallClose(globalObject, adapter);
+                return jsUndefined();
+            }
+            // The whole view is free to reuse next pull (bytes were copied out).
+            return view ? JSValue(view) : jsUndefined();
+        }
         JSValue newView = view ? JSValue(view) : jsUndefined();
         if (written > 0 && view) {
             size_t count = std::min(static_cast<size_t>(written), static_cast<size_t>(view->length()));
@@ -523,9 +552,14 @@ static JSValue nativeDecodePullResult(JSC::VM& vm, JSGlobalObject* globalObject,
     if (auto* chunk = dynamicDowncast<JSC::JSArrayBufferView>(result)) {
         if (!isClosed)
             nativeAdjustChunkSize(adapter, chunk->byteLength());
-        if (chunk->byteLength() > 0 && controller) {
-            readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
-            RETURN_IF_EXCEPTION(scope, {});
+        if (chunk->byteLength() > 0) {
+            if (adapter->m_textMode) {
+                nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, chunk->span(), /* flush */ false);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else if (controller) {
+                readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
         }
         if (isClosed) {
             scheduleNativeSourceCallClose(globalObject, adapter);
@@ -578,7 +612,12 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
         RETURN_IF_EXCEPTION(scope, );
         auto* drainView = dynamicDowncast<JSC::JSArrayBufferView>(drainValue);
         if (drainView && drainView->byteLength() > 0) {
-            readableStreamDefaultControllerEnqueue(globalObject, controller, drainView);
+            if (stream->m_nativeTextMode) {
+                StreamingUTF8DecodeState state;
+                nativeEnqueueTextChunk(globalObject, controller, state, drainView->span(), /* flush */ true);
+            } else {
+                readableStreamDefaultControllerEnqueue(globalObject, controller, drainView);
+            }
             RETURN_IF_EXCEPTION(scope, );
         }
         readableStreamDefaultControllerClose(globalObject, controller);
@@ -588,6 +627,7 @@ void materializeNativeSource(JSGlobalObject* globalObject, JSReadableStream* str
 
     auto* adapter = WebCore::JSNativeStreamSourceAdapter::create(vm, runtime->nativeStreamSourceAdapterStructure(domGlobalObject));
     adapter->m_handle.set(vm, adapter, handle);
+    adapter->m_textMode = stream->m_nativeTextMode;
     adapter->m_chunkSize = std::max(static_cast<size_t>(chunkSize), autoAllocateChunkSize);
     auto* closer = JSC::constructEmptyArray(globalObject, nullptr, 1);
     RETURN_IF_EXCEPTION(scope, );
@@ -627,7 +667,12 @@ JSValue nativeSourceStart(JSGlobalObject* globalObject, JSReadableStreamDefaultC
         adapter->m_drainValue.clear();
         if (!adapter->m_controller)
             adapter->m_controller = JSC::Weak<JSReadableStreamDefaultController>(controller);
-        readableStreamDefaultControllerEnqueue(globalObject, controller, drainValue);
+        if (adapter->m_textMode) {
+            if (auto* drainView = dynamicDowncast<JSC::JSArrayBufferView>(drainValue))
+                nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, drainView->span(), /* flush */ false);
+        } else {
+            readableStreamDefaultControllerEnqueue(globalObject, controller, drainValue);
+        }
         RETURN_IF_EXCEPTION(scope, {});
     }
     return jsUndefined();
@@ -772,6 +817,11 @@ static void nativeSourceOnDrain(JSGlobalObject* globalObject, JSNativeStreamSour
     auto* controller = adapter->m_controller.get();
     if (!controller)
         return;
+    if (adapter->m_textMode) {
+        if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(chunk))
+            nativeEnqueueTextChunk(globalObject, controller, adapter->m_textState, view->span(), /* flush */ false);
+        return;
+    }
     readableStreamDefaultControllerEnqueue(globalObject, controller, chunk);
 }
 

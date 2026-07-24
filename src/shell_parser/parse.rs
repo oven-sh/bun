@@ -1352,10 +1352,26 @@ impl<'bump> Parser<'bump> {
 
         let mut name_and_args = bun_alloc::ArenaVec::new_in(self.alloc);
         name_and_args.push(name);
-        while let Some(arg) = self.parse_atom()? {
-            name_and_args.push(arg);
+        let mut parsed_redirect = ParsedRedirect::default();
+        let mut has_redirect = false;
+        loop {
+            if let Some(arg) = self.parse_atom()? {
+                name_and_args.push(arg);
+                continue;
+            }
+            if self.check(TokenTag::Redirect) {
+                if has_redirect {
+                    self.add_error(format_args!(
+                        "Multiple redirects are not supported yet. Please open a GitHub issue."
+                    ))?;
+                    return Err(ParseError::Unsupported.into());
+                }
+                parsed_redirect = self.parse_redirect()?;
+                has_redirect = true;
+                continue;
+            }
+            break;
         }
-        let parsed_redirect = self.parse_redirect()?;
 
         Ok(ast::CmdOrAssigns::Cmd(ast::Cmd {
             assigns: assigns.into_bump_slice(),
@@ -1377,6 +1393,11 @@ impl<'bump> Parser<'bump> {
         };
         let redirect_file: Option<ast::Redirect<'bump>> = 'redirect_file: {
             if has_redirect {
+                // `n>&m` is complete on its own and takes no file operand; the
+                // following word (if any) belongs to the enclosing command.
+                if redirect.duplicate_out() {
+                    break 'redirect_file None;
+                }
                 if self.r#match(TokenTag::JSObjRef) {
                     let Token::JSObjRef(obj_ref) = self.prev() else {
                         unreachable!()
@@ -1387,9 +1408,6 @@ impl<'bump> Parser<'bump> {
                 let file = match self.parse_atom()? {
                     Some(f) => f,
                     None => {
-                        if redirect.duplicate_out() {
-                            break 'redirect_file None;
-                        }
                         self.add_error(format_args!("Redirection with no file"))?;
                         return Err(ParseError::Expected.into());
                     }

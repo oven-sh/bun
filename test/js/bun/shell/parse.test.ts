@@ -59,6 +59,45 @@ describe("parse shell", () => {
     expect(result).toEqual(expected);
   });
 
+  test("redirect between arguments", () => {
+    // POSIX lets a redirection appear anywhere among a simple command's words.
+    // `echo x > log rm cache` must parse as one command with four words.
+    const cmd = {
+      assigns: [],
+      name_and_args: [
+        { simple: { Text: "echo" } },
+        { simple: { Text: "x" } },
+        { simple: { Text: "rm" } },
+        { simple: { Text: "cache" } },
+      ],
+      redirect: redirect({ stdout: true }),
+      redirect_file: { atom: { simple: { Text: "log" } } },
+    };
+    expect(JSON.parse(parse`echo x > log rm cache`)).toEqual({ stmts: [{ exprs: [{ cmd }] }] });
+
+    const catCmd = {
+      assigns: [],
+      name_and_args: [{ simple: { Text: "cat" } }, { simple: { Text: "f1" } }],
+      redirect: redirect({ stdin: true }),
+      redirect_file: { atom: { simple: { Text: "f0" } } },
+    };
+    expect(JSON.parse(parse`cat < f0 f1`)).toEqual({ stmts: [{ exprs: [{ cmd: catCmd }] }] });
+
+    // `n>&m` takes no file operand, so the following word stays in argv.
+    const dupCmd = {
+      assigns: [],
+      name_and_args: [
+        { simple: { Text: "echo" } },
+        { simple: { Text: "A" } },
+        { simple: { Text: "B" } },
+        { simple: { Text: "C" } },
+      ],
+      redirect: redirect({ stdout: true, duplicate_out: true }),
+      redirect_file: null,
+    };
+    expect(JSON.parse(parse`echo A 2>&1 B C`)).toEqual({ stmts: [{ exprs: [{ cmd: dupCmd }] }] });
+  });
+
   test("single atom", () => {
     expect(JSON.parse(parse`ls`)).toEqual({
       stmts: [

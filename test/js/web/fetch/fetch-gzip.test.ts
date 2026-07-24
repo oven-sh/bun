@@ -4,7 +4,7 @@ import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
-import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
+import { brotliCompressSync, deflateRawSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
@@ -905,4 +905,77 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+describe("Content-Encoding: deflate zlib-header sniff", () => {
+  const plain = Buffer.alloc(2000, "The quick brown fox jumps over the lazy dog. ");
+  // RFC 1950 zlib streams: windowBits < 15 emit CMF bytes other than 0x78
+  // (0x18/0x28/0x38/0x48/0x58/0x68). All are valid `Content-Encoding: deflate`
+  // per RFC 9110 §8.4.1.2; Node and curl decode them.
+  const bodies: Record<string, Buffer> = { raw: deflateRawSync(plain) };
+  for (let wb = 8; wb <= 15; wb++) bodies[`wb${wb}`] = deflateSync(plain, { windowBits: wb });
+
+  it("decodes every zlib windowBits and raw deflate", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const name = new URL(req.url).pathname.slice(1);
+        return new Response(bodies[name], {
+          headers: { "Content-Encoding": "deflate", "Content-Type": "text/plain" },
+        });
+      },
+    });
+    const results: Record<string, unknown> = {};
+    for (const name of Object.keys(bodies)) {
+      try {
+        const got = Buffer.from(await (await fetch(`${server.url}${name}`)).arrayBuffer());
+        results[name] = { cmf: bodies[name][0], len: got.length, ok: got.equals(plain) };
+      } catch (e) {
+        results[name] = { cmf: bodies[name][0], error: String((e as any)?.code ?? e) };
+      }
+    }
+    expect(results).toEqual(
+      Object.fromEntries(Object.keys(bodies).map(n => [n, { cmf: bodies[n][0], len: plain.length, ok: true }])),
+    );
+  });
+
+  // A zlib stream whose first delivered body segment is a single byte must
+  // still be recognised as zlib-wrapped (the RFC 1950 header is two bytes),
+  // and raw deflate must still be recognised as raw under the same split.
+  it("decodes when the first body segment is 1 byte", async () => {
+    const results: Record<string, unknown> = {};
+    for (const name of ["wb15", "wb9", "raw"]) {
+      const body = bodies[name];
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          data(socket, data) {
+            socket.data = (socket.data ?? "") + data;
+            if (!socket.data.includes("\r\n\r\n")) return;
+            const head = `HTTP/1.1 200 OK\r\nContent-Encoding: deflate\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`;
+            socket.write(Buffer.concat([Buffer.from(head), body.subarray(0, 1)]));
+            socket.flush();
+            (async () => {
+              await Bun.sleep(20);
+              socket.write(body.subarray(1));
+              socket.flush();
+              socket.end();
+            })();
+          },
+        },
+      });
+      try {
+        const got = Buffer.from(await (await fetch(`http://127.0.0.1:${server.port}/`)).arrayBuffer());
+        results[name] = { len: got.length, ok: got.equals(plain) };
+      } catch (e) {
+        results[name] = { error: String((e as any)?.code ?? e) };
+      }
+    }
+    expect(results).toEqual({
+      wb15: { len: plain.length, ok: true },
+      wb9: { len: plain.length, ok: true },
+      raw: { len: plain.length, ok: true },
+    });
+  });
 });

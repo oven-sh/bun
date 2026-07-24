@@ -814,6 +814,18 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         }
     }
 
+    if constexpr (checkPrototypes) {
+        // Distinct WeakMaps, WeakSets and Promises are never equal - their
+        // contents cannot be inspected. node tests this on the LEFT operand
+        // only, which makes the comparison asymmetric: a Proxy wrapping a
+        // promise equals that promise, but only with the proxy on the left.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/comparisons.js#L449-L451
+        uint8_t leftType = c1->type();
+        if (leftType == JSC::JSWeakMapType || leftType == JSC::JSWeakSetType || leftType == JSC::JSPromiseType) {
+            return false;
+        }
+    }
+
     std::optional<bool> isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, gcBuffer, stack, scope, c1, c2);
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
@@ -1778,12 +1790,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     // Symbol/BigInt wrapper objects have no dedicated JSType; node compares
     // their internal values. Only for the node entry point.
     if constexpr (checkPrototypes) {
-        // node never considers distinct WeakMaps, WeakSets, or Promises equal
-        // (their contents cannot be inspected).
-        if (c1Type == JSC::JSWeakMapType || c1Type == JSC::JSWeakSetType || c1Type == JSC::JSPromiseType
-            || c2Type == JSC::JSWeakMapType || c2Type == JSC::JSWeakSetType || c2Type == JSC::JSPromiseType) {
-            return false;
-        }
         auto* symbolObject1 = dynamicDowncast<JSC::SymbolObject>(c1);
         auto* symbolObject2 = dynamicDowncast<JSC::SymbolObject>(c2);
         if (symbolObject1 || symbolObject2) {

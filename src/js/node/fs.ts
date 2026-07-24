@@ -25,10 +25,45 @@ function lazyGlob() {
 
 const { guardCallback } = require("internal/shared");
 
+const asyncHooks = require("internal/async_hooks");
+const asyncHooksState = asyncHooks.state;
+
+// node models every callback-style fs request as an FSREQCALLBACK AsyncWrap.
+function trackFsRequest(guarded) {
+  const asyncId = asyncHooks.newAsyncId();
+  const triggerAsyncId = asyncHooks.getDefaultTriggerAsyncId();
+  const resource = {};
+  asyncHooks.emitInit(asyncId, "FSREQCALLBACK", triggerAsyncId, resource);
+  return function fsReqCallback(a, b, c) {
+    asyncHooks.emitBefore(asyncId, triggerAsyncId, resource);
+    try {
+      switch (arguments.length) {
+        case 0:
+          return guarded();
+        case 1:
+          return guarded(a);
+        case 2:
+          return guarded(a, b);
+        case 3:
+          return guarded(a, b, c);
+        default:
+          return guarded.$apply(undefined, arguments);
+      }
+    } finally {
+      // emitDestroy only queues; the delivered order stays init/before/after/
+      // destroy, matching node's own tick dispatcher.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/task_queues.js#L96-L100
+      asyncHooks.emitDestroy(asyncId);
+      asyncHooks.emitAfter(asyncId);
+    }
+  };
+}
+
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path instead of rejecting the internal promise chain.
 function wrapFsCallback(callback) {
-  return guardCallback(callback);
+  const guarded = guardCallback(callback);
+  return asyncHooksState.active ? trackFsRequest(guarded) : guarded;
 }
 
 // Validates and returns the wrapped callback.

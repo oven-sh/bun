@@ -87,6 +87,43 @@ pub(crate) fn myers_diff(
     }
 }
 
+/// `util.diff()` accepts arrays of strings as well as strings. Each element is
+/// one line, compared byte-wise after UTF-8 conversion.
+pub(crate) fn myers_diff_arrays(
+    global: &JSGlobalObject,
+    actual: JSValue,
+    expected: JSValue,
+    check_comma_disparity: bool,
+) -> JsResult<JSValue> {
+    let actual_lines = collect_utf8_elements(global, actual)?;
+    let expected_lines = collect_utf8_elements(global, expected)?;
+    if actual_lines.is_empty() && expected_lines.is_empty() {
+        return JSValue::create_empty_array(global, 0);
+    }
+
+    let a: Vec<&[u8]> = actual_lines.iter().map(Vec::as_slice).collect();
+    let e: Vec<&[u8]> = expected_lines.iter().map(Vec::as_slice).collect();
+
+    let diff: MyersDiff::DiffList<&[u8]> = if check_comma_disparity {
+        MyersDiff::Differ::<&[u8], true>::diff(&a, &e).map_err(|err| map_diff_error(global, err))?
+    } else {
+        MyersDiff::Differ::<&[u8], false>::diff(&a, &e)
+            .map_err(|err| map_diff_error(global, err))?
+    };
+    diff_list_to_js(global, &diff)
+}
+
+fn collect_utf8_elements(global: &JSGlobalObject, array: JSValue) -> JsResult<Vec<Vec<u8>>> {
+    let length = array.get_length(global)?;
+    let mut lines = Vec::with_capacity(length as usize);
+    for index in 0..length {
+        let element = array.get_index(global, index as u32)?;
+        let element = bun_core::OwnedString::new(element.to_bun_string(global)?);
+        lines.push(element.to_utf8_bytes());
+    }
+    Ok(lines)
+}
+
 fn diff_chars<T>(global: &JSGlobalObject, actual: &[T], expected: &[T]) -> JsResult<JSValue>
 where
     T: Line + FromAny,

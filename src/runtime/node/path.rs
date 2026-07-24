@@ -979,6 +979,72 @@ pub(crate) fn is_windows_device_root_t<T: PathCharCwd>(byte: T) -> bool {
     (b'A' as u32 <= c && c <= b'Z' as u32) || (b'a' as u32 <= c && c <= b'z' as u32)
 }
 
+/// Reserved DOS device names. `COM`/`LPT` also have superscript digit forms
+/// (U+00B9, U+00B2, U+00B3), which Windows treats the same as 1/2/3.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L73-L79
+const WINDOWS_RESERVED_NAMES: [&[u8]; 4] = [b"CON", b"PRN", b"AUX", b"NUL"];
+const WINDOWS_RESERVED_DEVICE_PREFIXES: [&[u8]; 2] = [b"COM", b"LPT"];
+const CHAR_SUPERSCRIPT_ONE: u32 = 0xb9;
+const CHAR_SUPERSCRIPT_TWO: u32 = 0xb2;
+const CHAR_SUPERSCRIPT_THREE: u32 = 0xb3;
+
+/// `isWindowsReservedName(path, colonIndex)`: is everything before `colon_index`
+/// a reserved DOS device name? A missing colon reproduces JS `slice(0, -1)`,
+/// which drops the final character ("PRNX" is treated as "PRN").
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L81-L84
+pub(crate) fn is_windows_reserved_name_t<T: PathCharCwd>(
+    path: &[T],
+    colon_index: Option<usize>,
+) -> bool {
+    let end = match colon_index {
+        Some(index) => index,
+        None => match path.len().checked_sub(1) {
+            Some(end) => end,
+            None => return false,
+        },
+    };
+    let name = &path[..end.min(path.len())];
+    if name.len() < 3 {
+        return false;
+    }
+    let head = [
+        name[0].to_ascii_upper().as_u32(),
+        name[1].to_ascii_upper().as_u32(),
+        name[2].to_ascii_upper().as_u32(),
+    ];
+    let matches = |candidate: &[u8]| {
+        head[0] == candidate[0] as u32
+            && head[1] == candidate[1] as u32
+            && head[2] == candidate[2] as u32
+    };
+    if name.len() == 3 {
+        return WINDOWS_RESERVED_NAMES.iter().any(|n| matches(n));
+    }
+    if !WINDOWS_RESERVED_DEVICE_PREFIXES.iter().any(|n| matches(n)) {
+        return false;
+    }
+    let is_superscript_digit = |c: u32| {
+        c == CHAR_SUPERSCRIPT_ONE || c == CHAR_SUPERSCRIPT_TWO || c == CHAR_SUPERSCRIPT_THREE
+    };
+    match &name[3..] {
+        // COM1 .. COM9, and the UTF-16 spelling of COM¹ / COM² / COM³.
+        [digit] => {
+            let c = digit.as_u32();
+            (b'1' as u32..=b'9' as u32).contains(&c) || is_superscript_digit(c)
+        }
+        // UTF-8 paths carry the superscripts as their two-byte encoding.
+        [lead, trail] => {
+            !T::IS_U16 && lead.as_u32() == 0xc2 && is_superscript_digit(trail.as_u32())
+        }
+        _ => false,
+    }
+}
+
+/// Index of the first `:` in `path`, mirroring `StringPrototypeIndexOf(path, ':')`.
+fn index_of_colon_t<T: PathCharCwd>(path: &[T]) -> Option<usize> {
+    path.iter().position(|c| c.eq_ascii(CHAR_COLON))
+}
+
 /// Based on Node v21.6.1 path.posix.isAbsolute:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1159
 #[inline]
@@ -1860,7 +1926,42 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
                     while j < len && !is_sep_t(path[j]) {
                         j += 1;
                     }
-                    if j == len {
+                    if first_part.len() == 1
+                        && (first_part[0].eq_ascii(CHAR_DOT)
+                            || first_part[0].eq_ascii(CHAR_QUESTION_MARK))
+                    {
+                        // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
+                        // Translated from the following JS code:
+                        //   device = `\\\\${firstPart}`;
+                        //   rootEnd = 4;
+                        buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
+                        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+                        buf[2] = first_part[0];
+                        // `device` stops before the separator; the absolute-path
+                        // branch below writes it back in front of the tail.
+                        device_len = Some(3);
+                        root_end = 4;
+                        // Special case: handle \\?\COM1: or similar reserved device paths.
+                        if let Some(colon_index) = index_of_colon_t(path) {
+                            if colon_index + 1 >= 4 && colon_index < len {
+                                let possible_device = &path[4..colon_index + 1];
+                                if is_windows_reserved_name_t(
+                                    possible_device,
+                                    possible_device.len().checked_sub(1),
+                                ) {
+                                    // device = `\\?\${possibleDevice}`
+                                    buf[2] = T::from_u8(CHAR_QUESTION_MARK);
+                                    buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
+                                    memmove(
+                                        &mut buf[4..4 + possible_device.len()],
+                                        possible_device,
+                                    );
+                                    device_len = Some(4 + possible_device.len());
+                                    root_end = 4 + possible_device.len();
+                                }
+                            }
+                        }
+                    } else if j == len {
                         // We matched a UNC root only
                         // Return the normalized version of the UNC root since there
                         // is nothing left to process
@@ -1883,8 +1984,7 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
                         buf_size += 1;
                         buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
                         return &buf[0..buf_size];
-                    }
-                    if j != last {
+                    } else if j != last {
                         // We matched a UNC root with leftovers
 
                         // Translated from the following JS code:
@@ -1924,6 +2024,15 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
             _is_absolute = true;
             root_end = 3;
         }
+    } else if let Some(colon_index) = index_of_colon_t(path) {
+        // A reserved device name is its own root, so `CON:..\..\foo` cannot
+        // climb out of it.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L438-L441
+        if colon_index > 0 && is_windows_reserved_name_t(path, Some(colon_index)) {
+            memmove(&mut buf[0..colon_index + 1], &path[0..colon_index + 1]);
+            device_len = Some(colon_index + 1);
+            root_end = colon_index + 1;
+        }
     }
 
     buf_offset = device_len.unwrap_or(0) + (_is_absolute as usize);
@@ -1951,6 +2060,38 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
     }
 
     buf_size = buf_offset + tail_len;
+
+    let colon_index = index_of_colon_t(path);
+    // If the original path was not absolute and we could not resolve it relative
+    // to a particular device, make sure the tail cannot be read back as an
+    // absolute path. See CVE-2024-36139.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L455-L471
+    let mut needs_dot_prefix = false;
+    if !_is_absolute && device_len.is_none() && colon_index.is_some() {
+        let tail = &buf[buf_offset..buf_size];
+        if tail.len() >= 2 && is_windows_device_root_t(tail[0]) && tail[1].eq_ascii(CHAR_COLON) {
+            needs_dot_prefix = true;
+        } else {
+            let mut index = colon_index;
+            while let Some(i) = index {
+                if i == len - 1 || is_sep_t(path[i + 1]) {
+                    needs_dot_prefix = true;
+                    break;
+                }
+                index = path[i + 1..]
+                    .iter()
+                    .position(|c| c.eq_ascii(CHAR_COLON))
+                    .map(|k| i + 1 + k);
+            }
+        }
+    }
+    // A reserved device name keeps its device in the result, but the whole path
+    // is made explicitly relative.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L472-L475
+    if is_windows_reserved_name_t(path, colon_index) {
+        needs_dot_prefix = true;
+    }
+
     // Translated from the following JS code:
     //   if (device === undefined) {
     //     return isAbsolute ? `\\${tail}` : tail;
@@ -1960,6 +2101,15 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
         buf_offset -= 1;
         // Prepend the separator.
         buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
+    }
+
+    if needs_dot_prefix {
+        // `.\` in front of the device and tail. The caller reserves two extra
+        // slots in `buf` for exactly this.
+        buf.copy_within(0..buf_size, 2);
+        buf[0] = T::from_u8(CHAR_DOT);
+        buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+        buf_size += 2;
     }
     &buf[0..buf_size]
 }
@@ -1987,8 +2137,9 @@ pub(crate) fn normalize_js_t<T: PathCharCwd>(
     path: &[T],
 ) -> JsResult<JSValue> {
     let buf_len = path.len().max(path_size::<T>());
-    // +1 for null terminator
-    let mut scratch = PathScratch::<T>::new(pool, buf_len + 1);
+    // +1 for null terminator, +2 for the `.\\` a reserved device name or a
+    // CVE-2024-36139 relative path prepends to the result.
+    let mut scratch = PathScratch::<T>::new(pool, buf_len + 3);
     let buf = scratch.slice();
     if is_windows {
         normalize_windows_js_t(global_object, path, buf)

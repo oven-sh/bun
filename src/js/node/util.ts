@@ -48,6 +48,7 @@ const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
 var debugs = {};
+const ObjectDefineProperty = Object.defineProperty;
 var debugEnvRegex = /^$/;
 const NODE_DEBUG = process.env.NODE_DEBUG;
 if (NODE_DEBUG) {
@@ -75,21 +76,68 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
+function debuglogImpl(enabled, set) {
   if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+      debugs[set] = function debug() {
+        const msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      debugs[set] = function debug() {};
     }
   }
   return debugs[set];
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/debuglog.js#L86-L138
+function debuglog(set, cb) {
+  let enabled;
+  function init() {
+    set = set.toUpperCase();
+    enabled = debugEnvRegex.test(set);
+  }
+
+  // The section is resolved on the first call, not here, so that a `debuglog`
+  // taken at module load still sees a later `process.pid`.
+  let debug = function (...args) {
+    init();
+    debug = debuglogImpl(enabled, set);
+    if (typeof cb === "function") {
+      ObjectDefineProperty(debug, "enabled", {
+        __proto__: null,
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+      cb(debug);
+    }
+    return debug(...args);
+  };
+
+  let test = function () {
+    init();
+    test = () => enabled;
+    return enabled;
+  };
+
+  const logger = function (...args) {
+    if (enabled === false) return;
+    return debug(...args);
+  };
+  ObjectDefineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return test();
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {
@@ -403,6 +451,66 @@ function styleText(format, text, options) {
   if (skipColorize) return text;
 
   return `${openCodes}${processedText}${closeCodes}`;
+}
+
+// Port of node's `internal/util/diff` (v26.3.0), the implementation behind
+// `util.diff()`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js
+//
+// The native comparator reports `{ kind, value }` with kind Insert=0, Delete=1,
+// Equal=2; node's public shape is `[operation, value]` with INSERT=1,
+// DELETE=-1, NOP=0.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/myers_diff.js#L18-L22
+const kOperationForDiffKind = [1, -1, 0];
+let myersDiff;
+
+function validateDiffInput(value, name) {
+  if (!$isJSArray(value)) {
+    validateString(value, name);
+    return;
+  }
+  for (let i = 0; i < value.length; ++i) {
+    if (typeof value[i] !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(`${name}[${i}]`, "string", value[i]);
+    }
+  }
+}
+
+// node's myersDiff indexes both operands uniformly, so a string paired with an
+// array is compared code-unit-to-element. The native comparator takes two
+// strings or two arrays, so widen the odd one out.
+function toDiffLines(value) {
+  if ($isJSArray(value)) return value;
+  const length = value.length;
+  const lines = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    lines[i] = value[i];
+  }
+  return lines;
+}
+
+function diff(actual, expected) {
+  if (actual === expected) {
+    return [];
+  }
+
+  validateDiffInput(actual, "actual");
+  validateDiffInput(expected, "expected");
+
+  myersDiff ??= require("internal/assert/myers_diff").myersDiff;
+  const raw =
+    $isJSArray(actual) === $isJSArray(expected)
+      ? myersDiff(actual, expected)
+      : myersDiff(toDiffLines(actual), toDiffLines(expected));
+
+  // myersDiff walks the edit path backwards; node reverses it before returning.
+  const length = raw.length;
+  const result = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    const { kind, value } = raw[length - 1 - i];
+    result[i] = [kOperationForDiffKind[kind], typeof value === "number" ? String.fromCharCode(value) : value];
+  }
+  return result;
 }
 
 function getSystemErrorName(err: any) {
@@ -724,6 +832,7 @@ cjs_exports = {
   TextEncoder,
   MIMEType,
   MIMEParams,
+  diff,
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

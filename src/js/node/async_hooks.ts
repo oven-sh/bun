@@ -25,6 +25,7 @@
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+const asyncHooks = require("internal/async_hooks");
 // SameValue in pure operators. Node compares stores with the primordial
 // ObjectIs; capturing Object.is here would still inherit a patch applied
 // before this module was lazily loaded.
@@ -355,25 +356,46 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #asyncId;
   #triggerAsyncId;
+  #destroyed;
 
   constructor(type, opts?) {
     validateString(type, "type");
 
-    // Node defaults to getDefaultTriggerAsyncId() (the current execution async
-    // id); Bun does not track async ids, so its executionAsyncId() is 0.
-    let triggerAsyncId = typeof opts === "number" ? opts : opts?.triggerAsyncId === undefined ? 0 : opts.triggerAsyncId;
+    let triggerAsyncId;
+    let requireManualDestroy = false;
+    if (typeof opts === "number") {
+      triggerAsyncId = opts;
+    } else if (opts === undefined) {
+      triggerAsyncId = asyncHooks.getDefaultTriggerAsyncId();
+    } else {
+      triggerAsyncId = opts.triggerAsyncId === undefined ? asyncHooks.getDefaultTriggerAsyncId() : opts.triggerAsyncId;
+      requireManualDestroy = !!opts.requireManualDestroy;
+    }
     if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
       throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
-    }
-    if (hasEnabledCreateHook && type.length === 0) {
-      throw $ERR_ASYNC_TYPE(type);
     }
 
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    const asyncId = asyncHooks.newAsyncId();
+    this.#asyncId = asyncId;
     this.#triggerAsyncId = triggerAsyncId;
+
+    if (asyncHooks.initHooksExist()) {
+      if (type.length === 0) {
+        throw $ERR_ASYNC_TYPE(type);
+      }
+      asyncHooks.emitInit(asyncId, type, triggerAsyncId, this);
+    }
+
+    if (!requireManualDestroy && asyncHooks.destroyHooksExist()) {
+      const destroyed = { destroyed: false };
+      this.#destroyed = destroyed;
+      asyncHooks.registerDestroyHook(this, asyncId, destroyed);
+    }
   }
 
   emitBefore() {
@@ -385,7 +407,7 @@ class AsyncResource {
   }
 
   asyncId() {
-    return 0;
+    return this.#asyncId;
   }
 
   triggerAsyncId() {
@@ -393,16 +415,23 @@ class AsyncResource {
   }
 
   emitDestroy() {
-    //
+    if (this.#destroyed !== undefined) {
+      this.#destroyed.destroyed = true;
+    }
+    asyncHooks.emitDestroy(this.#asyncId);
+    return this;
   }
 
   runInAsyncScope(fn, thisArg, ...args) {
+    const asyncId = this.#asyncId;
+    asyncHooks.emitBefore(asyncId, this.#triggerAsyncId, this);
     var prev = get();
     set(this.#snapshot);
     try {
       return fn.$apply(thisArg, args);
     } finally {
       set(prev);
+      asyncHooks.emitAfter(asyncId);
     }
   }
 
@@ -476,79 +505,70 @@ function isEmptyFunction(f: Function) {
 }
 
 const createHookNotImpl = createWarning(
-  "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+  "async_hooks.createHook in Bun only tracks process.nextTick and AsyncResource. " +
+    "Promise and native resource events are never delivered.",
   true,
 );
 
-let hasEnabledCreateHook = false;
-const kHookEnabled = Symbol("kHookEnabled");
-function createHook(hook) {
-  validateObject(hook, "hook");
-  const { init, before, after, destroy, promiseResolve } = hook;
-  if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init");
-  if (before !== undefined && typeof before !== "function") throw $ERR_ASYNC_CALLBACK("hook.before");
-  if (after !== undefined && typeof after !== "function") throw $ERR_ASYNC_CALLBACK("hook.after");
-  if (destroy !== undefined && typeof destroy !== "function") throw $ERR_ASYNC_CALLBACK("hook.destroy");
-  if (promiseResolve !== undefined && typeof promiseResolve !== "function")
-    throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
+class AsyncHook {
+  init;
+  before;
+  after;
+  destroy;
+  promiseResolve;
+  #hook;
 
-  let enabledInit;
-  return {
-    enable() {
-      if (init !== undefined && enabledInit === undefined) {
-        // init is delivered for TickObject resources (process.nextTick);
-        // other resource types are still unimplemented.
-        // Per-instance wrapper: two hooks registered with the same init
-        // function must stay independently removable (removal is by
-        // identity, and removing the other instance's entry would reorder
-        // its callback relative to unrelated hooks).
-        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
-        require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
-      }
-      if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
-        createHookNotImpl(hook);
-      }
-      hasEnabledCreateHook = true;
-      if (!this[kHookEnabled]) {
-        this[kHookEnabled] = true;
-        require("internal/async_hooks").markHookEnabled();
-      }
-      return this;
-    },
-    disable() {
-      if (enabledInit !== undefined) {
-        const hooks = require("internal/async_hooks_tick").tickInitHooks;
-        const idx = hooks.indexOf(enabledInit);
-        if (idx !== -1) hooks.splice(idx, 1);
-        enabledInit = undefined;
-      }
-      if (this[kHookEnabled]) {
-        this[kHookEnabled] = false;
-        require("internal/async_hooks").markHookDisabled();
-      }
-      return this;
-    },
-  };
+  constructor(hook) {
+    validateObject(hook, "hook");
+    const { init, before, after, destroy, promiseResolve } = hook;
+    if (init !== undefined && typeof init !== "function") throw $ERR_ASYNC_CALLBACK("hook.init");
+    if (before !== undefined && typeof before !== "function") throw $ERR_ASYNC_CALLBACK("hook.before");
+    if (after !== undefined && typeof after !== "function") throw $ERR_ASYNC_CALLBACK("hook.after");
+    if (destroy !== undefined && typeof destroy !== "function") throw $ERR_ASYNC_CALLBACK("hook.destroy");
+    if (promiseResolve !== undefined && typeof promiseResolve !== "function")
+      throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
+
+    this.init = init;
+    this.before = before;
+    this.after = after;
+    this.destroy = destroy;
+    this.promiseResolve = promiseResolve;
+    this.#hook = hook;
+  }
+
+  enable() {
+    if (
+      this.before !== undefined ||
+      this.after !== undefined ||
+      this.destroy !== undefined ||
+      this.promiseResolve !== undefined
+    ) {
+      createHookNotImpl(this.#hook);
+    }
+    asyncHooks.addHook(this);
+    return this;
+  }
+
+  disable() {
+    asyncHooks.removeHook(this);
+    return this;
+  }
 }
 
-const executionAsyncIdNotImpl = createWarning(
-  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
-);
+function createHook(hook) {
+  return new AsyncHook(hook);
+}
+
 function executionAsyncId() {
-  executionAsyncIdNotImpl();
-  return 0;
+  return asyncHooks.executionAsyncId();
 }
 
 function triggerAsyncId() {
-  return 0;
+  return asyncHooks.triggerAsyncId();
 }
 
-const executionAsyncResourceWarning = createWarning(
-  "async_hooks.executionAsyncResource is not implemented in Bun. It returns a reference to process.stdin every time.",
-);
 function executionAsyncResource() {
-  executionAsyncResourceWarning();
-  return process.stdin;
+  return asyncHooks.executionAsyncResource();
 }
 
 const asyncWrapProviders = {

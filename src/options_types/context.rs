@@ -547,18 +547,43 @@ pub struct RuntimeOptions {
     /// `--expose-gc` makes `globalThis.gc()` available. Added for Node
     /// compatibility.
     pub expose_gc: bool,
+    /// `--disallow-code-generation-from-strings` makes `eval()` and the
+    /// `Function` constructor throw `EvalError`, matching the V8 flag node
+    /// exposes under the same name.
+    pub disallow_code_generation_from_strings: bool,
     pub preserve_symlinks_main: bool,
     pub console_depth: Option<u16>,
     pub cron_title: Box<[u8]>,
     pub cron_period: Box<[u8]>,
     pub cpu_prof: CpuProf,
     pub heap_prof: HeapProf,
+    /// `--check` / `-c`: parse the entry point (or stdin) without executing it,
+    /// like Node.js.
+    pub check_syntax: bool,
 }
 
 #[derive(Default)]
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    /// True when `-e`/`--eval`/`-p`/`--print` was passed at all. Node tracks
+    /// the same fact as `[has_eval_string]`, and it is what distinguishes an
+    /// empty script from an absent one: `bun -e ""` runs an empty program and
+    /// bare `bun -p` prints undefined, rather than falling through to help.
+    pub provided: bool,
+    /// `--input-type`: module type for string input (stdin / `--eval`),
+    /// "module" or "commonjs". Empty when not passed.
+    pub input_type: Box<[u8]>,
+}
+
+impl Eval {
+    /// Whether an eval entry point should run. Either the user asked for one
+    /// with `-e`/`-p` (`provided`, which holds even for an empty script), or an
+    /// internal path staged a script to run instead of a file: piped stdin, or
+    /// the no-op entry `--check` uses to reach the syntax checker.
+    pub fn has_entry(&self) -> bool {
+        self.provided || !self.script.is_empty()
+    }
 }
 
 pub struct CpuProf {
@@ -609,12 +634,14 @@ impl Default for RuntimeOptions {
             experimental_http3_fetch: false,
             dns_result_order: Box::from(&b"verbatim"[..]),
             expose_gc: false,
+            disallow_code_generation_from_strings: false,
             preserve_symlinks_main: false,
             console_depth: None,
             cron_title: Box::default(),
             cron_period: Box::default(),
             cpu_prof: CpuProf::default(),
             heap_prof: HeapProf::default(),
+            check_syntax: false,
         }
     }
 }

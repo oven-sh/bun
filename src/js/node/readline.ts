@@ -43,8 +43,6 @@ const {
 
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
-const PromiseReject = Promise.$reject;
-
 var isWritable;
 
 var { inspect } = Bun;
@@ -1403,6 +1401,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void | Interface}
    */
   pause() {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (this.paused) return;
     this.input.pause();
     this.paused = true;
@@ -1415,6 +1416,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void | Interface}
    */
   resume() {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (!this.paused) return;
     this.input.resume();
     this.paused = false;
@@ -1435,6 +1439,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void}
    */
   write(d, key) {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (this.paused) this.resume();
     if (this.terminal) {
       this[kTtyWrite](d, key);
@@ -2256,7 +2263,7 @@ Interface.prototype.question[promisify.custom] = {
     var signal = options?.signal;
 
     if (signal && signal.aborted) {
-      return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+      return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
     }
 
     return new Promise((resolve, reject) => {
@@ -2703,7 +2710,7 @@ var PromisesInterface = class Interface extends _Interface {
     if (signal) {
       validateAbortSignal(signal, "options.signal");
       if (signal.aborted) {
-        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+        return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
       }
     }
     const { promise, resolve, reject } = $newPromiseCapability(Promise);

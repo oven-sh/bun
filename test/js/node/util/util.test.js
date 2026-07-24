@@ -394,6 +394,8 @@ describe("util", () => {
   });
 
   it("multiplecolors", () => {
+    // validateStream: false - otherwise styleText only colorizes when the
+    // target stream supports color, which a piped stdout does not.
     const noValidate = { validateStream: false };
     expect(util.styleText(["bold", "red"], "test", noValidate)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
     expect(util.styleText("bold", "test", noValidate)).toBe("\u001b[1mtest\u001b[22m");

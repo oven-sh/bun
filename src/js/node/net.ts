@@ -1700,7 +1700,7 @@ function Socket(options?) {
         if (dest === true) {
           let ret;
           try {
-            ret = onreadCallback(total - offset, true);
+            ret = onreadCallback.$call(self, total - offset, true);
             if (onreadBufferIsFn) {
               const next = onreadBuffer();
               if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -1731,7 +1731,7 @@ function Socket(options?) {
         offset += n;
         let ret;
         try {
-          ret = onreadCallback(n, dest);
+          ret = onreadCallback.$call(self, n, dest);
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;
@@ -3667,8 +3667,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         port = 0;
       }
 
-      const isLinux = process.platform === "linux" || process.platform === "android";
-
       // Match Node's listen() option normalization + validation.
       // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/net.js#L2145
       if ((port === undefined && "port" in options) || port === null) {
@@ -3684,12 +3682,14 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
         path = undefined;
       } else if (isPipeName(path)) {
         const isAbstractPath = path.startsWith("\0");
-        if (isLinux && isAbstractPath && (options.writableAll || options.readableAll)) {
-          const message = `The argument 'options' can not set readableAll or writableAll to true when path is abstract unix socket. Received ${JSON.stringify(options)}`;
-
-          const error = new TypeError(message);
-          error.code = "ERR_INVALID_ARG_VALUE";
-          throw error;
+        if (isAbstractPath && (options.writableAll || options.readableAll)) {
+          // The "writableAllt" typo is node's, and the test matches it verbatim.
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2182
+          throw $ERR_INVALID_ARG_VALUE(
+            "options",
+            options,
+            "can not set readableAll or writableAllt to true when path is abstract unix socket",
+          );
         }
 
         hostname = path;

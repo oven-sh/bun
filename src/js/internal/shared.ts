@@ -396,6 +396,40 @@ const kInternalAssertionSuffix =
 
 //
 
+// State behind `node:module`'s getSourceMapsSupport()/setSourceMapsSupport().
+// Bun resolves source maps for stack traces without an opt-in flag, so the
+// initial state reports enabled.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/source_map/source_map_cache.js#L59
+var sourceMapsSupport = ObjectFreeze({
+  __proto__: null,
+  enabled: true,
+  nodeModules: false,
+  generatedCode: false,
+});
+
+function getSourceMapsSupport() {
+  return sourceMapsSupport;
+}
+
+function setSourceMapsSupport(enabled, options = kEmptyObject) {
+  const { validateBoolean, validateObject } = require("internal/validators");
+  validateBoolean(enabled, "enabled");
+  validateObject(options, "options");
+
+  const { nodeModules = false, generatedCode = false } = options;
+  validateBoolean(nodeModules, "options.nodeModules");
+  validateBoolean(generatedCode, "options.generatedCode");
+
+  process.setSourceMapsEnabled(enabled);
+
+  sourceMapsSupport = ObjectFreeze({
+    __proto__: null,
+    enabled,
+    nodeModules,
+    generatedCode,
+  });
+}
+
 export default {
   kInternalAssertionSuffix,
   NotImplementedError,
@@ -426,4 +460,6 @@ export default {
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),
   kEmptyObject,
+  getSourceMapsSupport,
+  setSourceMapsSupport,
 };

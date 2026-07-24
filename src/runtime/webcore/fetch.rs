@@ -230,8 +230,7 @@ pub(crate) fn bun_fetch_preconnect(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = callframe.arguments_old::<1>();
-    let arguments = arguments.slice();
+    let arguments = callframe.arguments();
 
     if arguments.len() < 1 {
         return Err(global_object.throw_not_enough_arguments(
@@ -391,7 +390,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
     let global_this = ctx;
-    let arguments = callframe.arguments_old::<2>();
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
     // outlives this call frame.
@@ -402,7 +400,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut force_http3 = false;
     let mut force_http1 = false;
 
-    if arguments.len == 0 {
+    if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
             format_args!("{FETCH_ERROR_NO_ARGS}"),
@@ -421,7 +419,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
 
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
+    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
 
     let first_arg = args.next_eat().unwrap();
 

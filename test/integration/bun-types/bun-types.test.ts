@@ -24,7 +24,10 @@ const DEFAULT_COMPILER_OPTIONS = ts.parseJsonConfigFileContent(
   dirname(TSCONFIG_SOURCE_PATH),
 ).options;
 
-const $ = Shell.cwd(BUN_REPO_ROOT);
+// Pin BUN_VERSION so $PATH's `bun` (release) and this process (debug/ASAN)
+// agree on the version stamped into package.json and the packed tarball name;
+// otherwise `bun add bun-types@${BUN_TYPES_TARBALL_NAME}` looks for a missing file.
+const $ = Shell.cwd(BUN_REPO_ROOT).env({ ...process.env, BUN_VERSION });
 
 let TEMP_DIR: string;
 let BASE_FIXTURE_DIR: string;
@@ -322,6 +325,44 @@ describe("@types/bun integration test", () => {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,
       diagnostics: [],
     });
+  });
+
+  // https://github.com/oven-sh/bun/issues/30503
+  test("bun.ns.d.ts does not resolve through the @types/bun stub (#30503)", async () => {
+    const fixtureDir = await createIsolatedFixture();
+    const bunNsPath = join(fixtureDir, "node_modules", "bun-types", "bun.ns.d.ts");
+    const atTypesBunStub = join(fixtureDir, "node_modules", "@types", "bun", "index.d.ts");
+
+    expect(await Bun.file(bunNsPath).exists()).toBe(true);
+    expect(await Bun.file(atTypesBunStub).exists()).toBe(true);
+
+    // Extract the namespace-import specifier; ambient merging can hide the
+    // misresolution at type-check time, so assert on resolution directly.
+    const nsSource = ts.createSourceFile(bunNsPath, readFileSync(bunNsPath, "utf8"), ts.ScriptTarget.ESNext, true);
+    let specifier: string | undefined;
+    nsSource.forEachChild(node => {
+      if (
+        ts.isImportDeclaration(node) &&
+        node.importClause?.namedBindings &&
+        ts.isNamespaceImport(node.importClause.namedBindings)
+      ) {
+        specifier = (node.moduleSpecifier as ts.StringLiteral).text;
+      }
+    });
+    expect(specifier).toBeDefined();
+
+    const resolved = ts.resolveModuleName(specifier!, bunNsPath, DEFAULT_COMPILER_OPTIONS, {
+      fileExists: ts.sys.fileExists,
+      readFile: ts.sys.readFile,
+    }).resolvedModule?.resolvedFileName;
+
+    // Must not reach the empty stub; unresolvable (ambient-only) or a real
+    // bun-types declaration is fine. TypeScript normalizes to forward slashes,
+    // so normalize the stub path too or the check is vacuous on Windows.
+    expect(resolved).not.toBe(atTypesBunStub.replaceAll("\\", "/"));
+    if (resolved !== undefined) {
+      expect(resolved).toMatch(/bun-types[\\/].+\.d\.ts$/);
+    }
   });
 
   // TypeScript 7's native (Go-based) compiler does not expose a JS compiler API yet,

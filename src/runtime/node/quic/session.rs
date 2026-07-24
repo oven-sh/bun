@@ -1976,8 +1976,13 @@ impl QuicSession {
         if !self.close_reported.get() && !self.conn.get().is_null() {
             let options = frame.arguments_as_array::<1>()[0];
             if options.is_object() {
-                // Node's Destroy with close options.
-                self.close_with_options(global, options)?;
+                // Node's Destroy with close options. JS has already latched
+                // `inner.destroying` and finished its half before reaching
+                // here, so teardown() MUST run; report a parse failure
+                // instead of propagating past it.
+                if let Err(e) = self.close_with_options(global, options) {
+                    global.report_uncaught_exception_from_error(e);
+                }
                 if let Some(endpoint) = self.endpoint_ref() {
                     endpoint.drive_engines_once();
                 }

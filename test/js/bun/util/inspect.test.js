@@ -316,6 +316,68 @@ it("jsx with fragment", () => {
   expect(input).toBe(output);
 });
 
+// Without the fix these overflow the native stack and segfault, so they run in a
+// subprocess and assert on exit code + output rather than bringing down the runner.
+describe("deep / self-referencing values do not overflow the formatter stack", () => {
+  it("self-referencing JSX element prints [Circular]", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const a = { $$typeof: Symbol.for("react.element"), type: "div", props: null, key: null };
+          a.props = { children: a };
+          console.log(Bun.inspect(a));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("[Circular]");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    [
+      "a deep JSX tree",
+      `let x = "leaf"; for (let i = 0; i < 100000; i++) x = { $$typeof: Symbol.for("react.element"), type: "div", props: { children: x }, key: null };`,
+    ],
+    ["a deep Proxy chain", `let x = {}; for (let i = 0; i < 100000; i++) x = new Proxy(x, {});`],
+  ])("console.log of %s throws RangeError instead of crashing", async (_, setup) => {
+    // print_jsx writes indent per level before recursing, so the partial console.log
+    // output before the stack check fires can be large; discard it and read the
+    // caught error name from stderr.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `${setup} try { console.log(x); } catch (e) { process.stderr.write("CAUGHT:" + e.name); }`],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toEndWith("CAUGHT:RangeError");
+    expect(exitCode).toBe(0);
+  });
+
+  // print_array writes `[\n` + 2*indent spaces before recursing, so the partial
+  // output before the stack check fires is O(N^2); ignore stderr and assert on
+  // exitCode/signalCode (a segfault would be signalCode SIGSEGV, not exit 1).
+  it.each([
+    ["throwing a deeply nested array as an uncaught exception", "throw a;"],
+    ["rejecting a deeply nested array as an unhandled rejection", "Promise.reject(a);"],
+  ])("%s does not crash the printer", async (_, stmt) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `let a = []; for (let i = 0; i < 60000; i++) a = [a]; ${stmt}`],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    await proc.exited;
+    expect({ signalCode: proc.signalCode, exitCode: proc.exitCode }).toEqual({ signalCode: null, exitCode: 1 });
+  });
+});
+
 it("inspect", () => {
   expect(Bun.inspect(new TypeError("what")).includes("TypeError: what")).toBe(true);
   expect(Bun.inspect("hi")).toBe('"hi"');

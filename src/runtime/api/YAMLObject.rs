@@ -132,8 +132,10 @@ impl AnchorAlias {
             name: match origin {
                 ValueOrigin::Root => AnchorAliasName::Root,
                 ValueOrigin::ArrayItem => AnchorAliasName::ArrayItem(0),
+                // `prop_name` is a borrow of the iterator's `PropertyNameArray`
+                // entry; take a ref so it outlives that iterator.
                 ValueOrigin::PropValue(prop_name) => AnchorAliasName::PropValue {
-                    prop_name,
+                    prop_name: OwnedString::new(prop_name.dupe_ref()),
                     counter: 0,
                 },
             },
@@ -146,7 +148,7 @@ pub(crate) enum AnchorAliasName {
     Root,
     ArrayItem(usize),
     PropValue {
-        prop_name: BunString,
+        prop_name: OwnedString,
         // added after the name
         counter: usize,
     },
@@ -408,7 +410,7 @@ impl Stringifier {
                         self.builder.append_latin1(b"value");
                         self.builder.append_usize(*counter);
                     } else {
-                        self.builder.append_string(*prop_name);
+                        self.builder.append_string(prop_name.get());
                         if *counter != 0 {
                             self.builder.append_usize(*counter);
                         }

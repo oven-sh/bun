@@ -747,11 +747,23 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(timeout_value) = args.get(global_this, "timeout")? {
                 'brk: {
                     if timeout_value != JSValue::NULL {
-                        if timeout_value.is_number()
-                            && timeout_value.as_number().is_infinite()
-                            && timeout_value.as_number() > 0.0
-                        {
-                            break 'brk;
+                        if timeout_value.is_number() {
+                            let n = timeout_value.as_number();
+                            // +Infinity is accepted as "no timeout"; NaN is always a
+                            // caller-side bug (validate_integer_range would map it to 0).
+                            if n.is_nan() {
+                                return Err(global_this.throw_range_error(
+                                    n,
+                                    bun_fmt::OutOfRangeOptions {
+                                        field_name: b"timeout",
+                                        msg: b"a non-negative integer",
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            if n.is_infinite() && n > 0.0 {
+                                break 'brk;
+                            }
                         }
 
                         let timeout_int = global_this.validate_integer_range::<u64>(
@@ -775,6 +787,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(val) = args.get(global_this, "killSignal")? {
                 kill_signal = signal_code_from_js(val, global_this)?;
+                if kill_signal.0 == 0 {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
+                            format_args!("Unknown signal: 0"),
+                        )
+                        .throw());
+                }
             }
 
             if let Some(val) = args.get(global_this, "maxBuffer")? {

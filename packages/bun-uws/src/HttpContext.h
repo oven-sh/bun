@@ -1038,6 +1038,9 @@ public:
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
             us_socket_unref(&socket->s);
+        } else if (error) {
+            /* Bun.serve's on_listen_failed reads errno, not the out-param. */
+            errno = error;
         }
 
         return socket;

@@ -1837,6 +1837,25 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener = None;
         let global = self.global_this();
 
+        #[cfg(not(windows))]
+        if let Some(fd) = self.config.listen_fd {
+            let errno = bun_sys::get_errno(-1i32);
+            let err = jsc::SystemError::from(
+                bun_sys::Error::from_code(
+                    if errno != bun_sys::E::SUCCESS {
+                        errno
+                    } else {
+                        bun_sys::E::EBADF
+                    },
+                    bun_sys::Tag::listen,
+                )
+                .with_fd(bun_sys::Fd::from_native(fd))
+                .to_system_error(),
+            );
+            let _ = global.throw_value(err.to_error_instance(global));
+            return;
+        }
+
         let error_instance = match &self.config.address {
             server_config::Address::Tcp {
                 port,

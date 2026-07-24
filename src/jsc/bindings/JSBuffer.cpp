@@ -3298,15 +3298,15 @@ fastPath:
 
 } // namespace
 
-#define DEFINE_BUFFER_READ(name, T, isLittleEndian)                                                                  \
-    JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_##name, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame)) \
-    {                                                                                                          \
-        return bufferRead<T, isLittleEndian>(lexicalGlobalObject, callFrame);                                 \
+#define DEFINE_BUFFER_READ(name, T, isLittleEndian)                                                                           \
+    JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_##name, (JSGlobalObject * lexicalGlobalObject, CallFrame * callFrame)) \
+    {                                                                                                                         \
+        return bufferRead<T, isLittleEndian>(lexicalGlobalObject, callFrame);                                                 \
     }
-#define DEFINE_BUFFER_WRITE(name, T, isLittleEndian)                                                                 \
-    JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_##name, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame)) \
-    {                                                                                                          \
-        return bufferWrite<T, isLittleEndian>(lexicalGlobalObject, callFrame);                                \
+#define DEFINE_BUFFER_WRITE(name, T, isLittleEndian)                                                                          \
+    JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_##name, (JSGlobalObject * lexicalGlobalObject, CallFrame * callFrame)) \
+    {                                                                                                                         \
+        return bufferWrite<T, isLittleEndian>(lexicalGlobalObject, callFrame);                                                \
     }
 
 DEFINE_BUFFER_READ(readInt8, int8_t, true)

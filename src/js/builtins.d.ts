@@ -692,7 +692,6 @@ declare function $toClass(fn: Function, name: string, base?: Function | undefine
 
 declare function $min(a: number, b: number): number;
 
-
 /**
  * Schedules a callback to be invoked as a microtask.
  */

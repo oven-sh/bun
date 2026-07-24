@@ -156,6 +156,9 @@ uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
 #endif
+/* Nanoseconds this loop has spent parked, including a park in progress. Safe
+ * from another thread. Both platforms: Rust calls it ungated. */
+uint64_t us_loop_idle_ns(struct us_loop_t *loop);
 void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link_group(struct us_loop_t *loop, struct us_socket_group_t *group);
 void us_internal_loop_unlink_group(struct us_loop_t *loop, struct us_socket_group_t *group);

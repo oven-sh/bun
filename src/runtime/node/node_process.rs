@@ -303,7 +303,14 @@ mod _impl {
                 });
 
             if let Some(p) = prev {
-                if MAP.contains(p) {
+                // Node's whole-token aliases only apply on the `bun`/`node`
+                // entry points (Arguments::parse scopes them the same way).
+                let takes_value = MAP.contains(p)
+                    || (!seen_run
+                        && crate::cli::arguments::NODE_SHORT_ALIASES
+                            .iter()
+                            .any(|(from, to)| *from == p && MAP.contains(to)));
+                if takes_value {
                     args.push(BunString::clone_utf8(arg));
                     prev = Some(arg);
                     continue;

@@ -71,6 +71,15 @@ struct us_internal_loop_data_t {
      * epoll_pwait2 timeout via getTimeout() instead. */
     struct us_timer_t *quic_timer;
 #endif
+#ifndef LIBUS_USE_LIBUV
+    /* Nanoseconds parked, for eventLoopUtilization(). Read cross-thread —
+     * __atomic_* only. MIRRORED in src/uws_sys/InternalLoopData.rs: this struct
+     * is us_loop_t's first member, so a field here shifts num_polls. */
+    unsigned long long idle_ns;
+    /* Monotonic ns the current park began, 0 when not parked: a mid-park reader
+     * must add (now - entry) or it sees a stale total. So does libuv. */
+    unsigned long long idle_entry_ns;
+#endif
     struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;

@@ -86,6 +86,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_eventLoopUtilizationInternal);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal);
 
@@ -447,6 +448,7 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "startCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_startCpuProfileInternal, 0 } },
     { "stopCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_stopCpuProfileInternal, 0 } },
     { "cpuUsageInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_cpuUsageInternal, 0 } },
+    { "eventLoopUtilizationInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_eventLoopUtilizationInternal, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -855,6 +857,33 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
         promise->resolve(globalObject, vm, jsString(vm, String(kEmptyCpuProfileJSON)));
     }
     return JSValue::encode(promise);
+}
+
+// Synchronous by contract: node's worker.performance.eventLoopUtilization()
+// returns a value, it does not await the worker. Safe to read cross-thread —
+// the counter is atomic and the loop start is immutable after publish.
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_eventLoopUtilizationInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    UNUSED_PARAM(callFrame);
+    double elapsedMs = 0;
+    double idleMs = 0;
+    if (!castedThis->wrapped().eventLoopUtilization(elapsedMs, idleMs))
+        RELEASE_AND_RETURN(throwScope, JSValue::encode(JSC::jsNull()));
+    JSC::JSArray* result = JSC::constructEmptyArray(globalObject, nullptr, 2);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result->putDirectIndex(globalObject, 0, JSC::jsNumber(elapsedMs));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result->putDirectIndex(globalObject, 1, JSC::jsNumber(idleMs));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_eventLoopUtilizationInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_eventLoopUtilizationInternalBody>(*lexicalGlobalObject, *callFrame, "eventLoopUtilizationInternal");
 }
 
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)

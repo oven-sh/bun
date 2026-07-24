@@ -332,6 +332,10 @@ struct us_loop_t *us_create_loop(void *hint,
 
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;
+  /* Without this libuv never accumulates provider_idle_time, so
+   * uv_metrics_idle_time() — and performance.eventLoopUtilization() — read 0.
+   * node enables it unconditionally too (node.cc, node_worker.cc). */
+  uv_loop_configure(loop->uv_loop, UV_METRICS_IDLE_TIME);
 
   loop->uv_pre = us_malloc(sizeof(uv_prepare_t));
   uv_prepare_init(loop->uv_loop, loop->uv_pre);

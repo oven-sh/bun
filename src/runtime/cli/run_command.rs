@@ -941,6 +941,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
+            use_system_ca: crate::cli::Arguments::main_use_system_ca(),
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
@@ -1161,6 +1162,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
+            use_system_ca: crate::cli::Arguments::main_use_system_ca(),
             // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` is exact.
@@ -1358,13 +1360,15 @@ impl Run {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            let config = bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
                 name,
                 dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
                 interval: opts.interval,
-            });
+                thread_id: 0,
+            };
+            vm.cpu_profiler_config = Some(config);
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.
             bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });

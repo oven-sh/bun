@@ -473,6 +473,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    /* Only ticks that really park are timed, so a busy loop pays nothing and a
+     * parked one pays two vDSO reads against a syscall it was making anyway.
+     * Publish the entry so a cross-thread reader can add the in-progress park. */
+    const uint64_t idle_start_ns = will_idle_inside_event_loop ? us_internal_monotonic_ns() : 0;
+    if (will_idle_inside_event_loop)
+        __atomic_store_n(&loop->data.idle_entry_ns, idle_start_ns, __ATOMIC_SEQ_CST);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -490,6 +497,16 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         will_idle_inside_event_loop ? 0 : KEVENT_FLAG_IMMEDIATE,
         timeout);
 #endif
+
+    if (will_idle_inside_event_loop) {
+        /* Clock read first so the zero+add are adjacent seq_cst ops: a reader
+         * between them under-counts (bounded by one park) rather than
+         * double-counting. seq_cst on both — release alone would not order the
+         * later add before the store on ARM. Only runs on parking ticks. */
+        uint64_t now = us_internal_monotonic_ns();
+        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_SEQ_CST);
+        __atomic_add_fetch(&loop->data.idle_ns, now - idle_start_ns, __ATOMIC_SEQ_CST);
+    }
 
     /* Before anything can allocate again. */
     if (handed_off)

@@ -23,12 +23,18 @@ extern "C" void BUN__warn__extra_ca_load_failed(const char* filename, const char
 // Forward declarations for platform-specific functions
 // (Actual implementations are in platform-specific files)
 
-// External variable from Zig CLI arguments
+// External variables from the CLI arguments
 extern "C" bool Bun__Node__UseSystemCA;
+extern "C" bool Bun__Node__NoUseSystemCA;
 
 // Helper function to check if system CA should be used
 // Checks both CLI flag (--use-system-ca) and environment variable (NODE_USE_SYSTEM_CA=1)
 static bool us_should_use_system_ca() {
+  // --no-use-system-ca is the one thing that overrides NODE_USE_SYSTEM_CA, so a
+  // flag whose purpose is to restrict trust actually restricts it.
+  if (Bun__Node__NoUseSystemCA) {
+    return false;
+  }
   // Check CLI flag first
   if (Bun__Node__UseSystemCA) {
     return true;

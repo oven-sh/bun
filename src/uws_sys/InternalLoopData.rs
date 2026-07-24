@@ -35,6 +35,15 @@ pub struct InternalLoopData {
     pub quic_next_tick_us: i64,
     #[cfg(windows)]
     pub quic_timer: *mut Timer,
+    /// Nanoseconds this loop has spent parked, for eventLoopUtilization().
+    /// Mirrors the `#ifndef LIBUS_USE_LIBUV` field in loop_data.h — libuv tracks
+    /// the same itself via uv_metrics_idle_time.
+    #[cfg(not(windows))]
+    pub idle_ns: u64,
+    /// Monotonic ns the current park began, 0 when not parked. Mirrors
+    /// loop_data.h — see the layout warning on `idle_ns`.
+    #[cfg(not(windows))]
+    pub idle_entry_ns: u64,
     pub iterator: *mut SocketGroup,
     pub recv_buf: *mut u8,
     pub send_buf: *mut u8,

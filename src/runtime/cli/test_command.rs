@@ -2287,6 +2287,7 @@ impl TestCommand {
         // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
         let vm: &mut VirtualMachine = unsafe {
             &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
+                use_system_ca: crate::cli::Arguments::main_use_system_ca(),
                 // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
                 // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
                 // main_fields,extension_order,env_files,feature_flags,preserve_symlinks,

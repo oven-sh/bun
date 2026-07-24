@@ -16,6 +16,7 @@ pub(crate) enum ProfilerError {
     FilenameTooLong,
 }
 
+#[derive(Clone, Copy)]
 pub struct CPUProfilerConfig {
     // CLI-arg-backed and
     // process-lifetime, so `&'static` is sound (no struct lifetime params).
@@ -24,6 +25,9 @@ pub struct CPUProfilerConfig {
     pub md_format: bool,
     pub json_format: bool,
     pub interval: u32,
+    /// 0 for the main thread; a worker's execution context id otherwise. Only
+    /// used to keep concurrently-written default filenames distinct.
+    pub thread_id: u32,
 }
 
 impl Default for CPUProfilerConfig {
@@ -34,6 +38,7 @@ impl Default for CPUProfilerConfig {
             md_format: false,
             json_format: false,
             interval: 1000,
+            thread_id: 0,
         }
     }
 }
@@ -56,7 +61,10 @@ unsafe extern "C" {
 }
 
 pub fn set_sampling_interval(interval: u32) {
-    Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast"));
+    // Reachable from a Worker's execArgv: 0 stalls the sampler and the process
+    // never exits, and a value past c_int would panic the cast.
+    let clamped = interval.clamp(1, c_int::MAX as u32);
+    Bun__setSamplingInterval(clamped as c_int);
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {
@@ -174,7 +182,7 @@ fn build_output_path(
             }
         }
     } else {
-        generate_default_filename(&mut filename_buf, is_md_format)?
+        generate_default_filename(&mut filename_buf, is_md_format, config.thread_id)?
     };
 
     // Append directory if specified
@@ -193,6 +201,7 @@ fn build_output_path(
 fn generate_default_filename(
     buf: &mut PathBuffer,
     md_format: bool,
+    thread_id: u32,
 ) -> Result<&[u8], ProfilerError> {
     // Generate filename like: CPU.{timestamp}.{pid}.cpuprofile (or .md for markdown format)
     // Use microsecond timestamp for uniqueness
@@ -214,8 +223,18 @@ fn generate_default_filename(
     let extension: &str = if md_format { ".md" } else { ".cpuprofile" };
 
     let mut cursor = std::io::Cursor::new(&mut buf[..]);
-    write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
-        .map_err(|_| ProfilerError::FilenameTooLong)?;
+    // Worker threads carry their id so concurrent writes can't land on the same
+    // name; the main thread keeps the name it has always had.
+    if thread_id == 0 {
+        write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
+    } else {
+        write!(
+            cursor,
+            "CPU.{}.{}.{}{}",
+            epoch_microseconds, pid, thread_id, extension
+        )
+    }
+    .map_err(|_| ProfilerError::FilenameTooLong)?;
     let len = usize::try_from(cursor.position()).expect("int cast");
     Ok(&buf[..len])
 }

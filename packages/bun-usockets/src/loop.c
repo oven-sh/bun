@@ -119,6 +119,26 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
 #endif
 
 
+/* Nanoseconds this loop has spent parked, for performance.eventLoopUtilization().
+ * Safe to call from another thread. */
+uint64_t us_loop_idle_ns(struct us_loop_t *loop) {
+#ifdef LIBUS_USE_LIBUV
+    return uv_metrics_idle_time(loop->uv_loop);
+#else
+    uint64_t idle = __atomic_load_n(&loop->data.idle_ns, __ATOMIC_SEQ_CST);
+    /* Parked right now? The total is only folded in when the park ends, so add
+     * the in-progress interval — otherwise a mid-park reader sees a stale idle
+     * and over-reports active. Same as libuv's uv_metrics_idle_time. */
+    uint64_t entry = __atomic_load_n(&loop->data.idle_entry_ns, __ATOMIC_SEQ_CST);
+    if (entry > 0) {
+        uint64_t now = us_internal_monotonic_ns();
+        if (now > entry)
+            idle += now - entry;
+    }
+    return idle;
+#endif
+}
+
 void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct us_loop_t *loop),
     void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop)) {
     // We allocate with calloc, so we only need to initialize the specific fields in use.

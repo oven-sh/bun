@@ -1480,7 +1480,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     console_print_runtime_object,
     load_standalone_sourcemap,
     apply_standalone_runtime_flags,
-    parse_worker_exec_argv_allow_addons,
+    parse_worker_exec_argv,
     cron_clear_all_teardown,
     cron_clear_all_reload,
     terminate_all_workers_and_wait,
@@ -1524,20 +1524,22 @@ unsafe fn apply_standalone_runtime_flags(
 ///
 /// Note: the Rust `bun_clap::parse_ex` port currently constrains
 /// `ArgIter<'static>` (parsed values are stored by reference), which would
-/// force leaking the per-call UTF-8 copies of `exec_argv`. Spec only ever
-/// reads the single `--no-addons` flag from the result (per the in-tree
-/// `// TODO: currently this only checks for --no-addons`), so this body scans
-/// the converted argv directly with the same `stop_after_positional_at = 1`
-/// short-circuit. Full clap routing can return when `ComptimeClap` grows a
-/// borrowed-lifetime variant.
+/// force leaking the per-call UTF-8 copies of `exec_argv`. Only flags whose
+/// values need not outlive the parse are read, so this body scans the converted
+/// argv directly with the same `stop_after_positional_at = 1` short-circuit.
+/// Full clap routing can return when `ComptimeClap` grows a borrowed-lifetime
+/// variant.
 ///
 /// # Safety
 /// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
 /// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_allow_addons(
+unsafe fn parse_worker_exec_argv(
     exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<bool> {
+) -> bun_jsc::virtual_machine::WorkerExecArgv {
+    let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
     let mut no_addons = false;
+    let mut want_interval = false;
+    let mut skip_next = false;
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1545,6 +1547,15 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if want_interval {
+            want_interval = false;
+            out.cpu_prof_interval = std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok());
+            continue;
+        }
         // `stop_after_positional_at = 1` — first non-flag token ends parsing.
         if bytes.first() != Some(&b'-') {
             break;
@@ -1554,10 +1565,27 @@ unsafe fn parse_worker_exec_argv_allow_addons(
         }
         if bytes == b"--no-addons" {
             no_addons = true;
+        } else if bytes == b"--use-system-ca" {
+            out.use_system_ca = Some(true);
+        } else if bytes == b"--no-use-system-ca" {
+            // Only the explicit negation beats NODE_USE_SYSTEM_CA; node lets the
+            // env var still win under --use-bundled-ca.
+            out.use_system_ca = Some(false);
+        } else if bytes == b"--cpu-prof" {
+            out.cpu_prof = true;
+        } else if bytes == b"--cpu-prof-interval" {
+            want_interval = true;
+        } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-interval=") {
+            out.cpu_prof_interval = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
+        } else if bytes == b"--cpu-prof-dir" || bytes == b"--cpu-prof-name" {
+            // Value is discarded here but must be consumed so it is not misread
+            // as the first positional (which would stop the scan early).
+            skip_next = true;
         }
     }
-    // Override `allow_addons` unconditionally on successful parse.
-    Some(!no_addons)
+    // Override `allow_addons` unconditionally.
+    out.allow_addons = Some(!no_addons);
+    out
 }
 
 /// `jsc.API.cron.CronJob.clearAllForVM(vm, .teardown)` —

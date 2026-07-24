@@ -265,6 +265,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--use-system-ca                   Use the system's trusted certificate authorities"
     ),
+    parse_param!(
+        "--no-use-system-ca                Do not use the system's trusted certificate authorities, overriding $NODE_USE_SYSTEM_CA"
+    ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
     parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
@@ -697,12 +700,36 @@ pub(crate) static Bun__Node__CAStore: core::sync::atomic::AtomicU8 =
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+/// `--no-use-system-ca`: the only thing that beats NODE_USE_SYSTEM_CA. Read by
+/// C++ (root_certs.cpp) so connections restrict trust too, not just the
+/// getCACertificates() reporting path.
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__NoUseSystemCA: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// The main thread's explicit CA intent; `None` leaves NODE_USE_SYSTEM_CA to
+/// decide. `--use-bundled-ca`/`--use-openssl-ca` are deliberately not
+/// `Some(false)` — node lets the env var win under those.
+pub(crate) fn main_use_system_ca() -> Option<bool> {
+    if Bun__Node__NoUseSystemCA.load(core::sync::atomic::Ordering::Relaxed) {
+        return Some(false);
+    }
+    if Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed) {
+        return Some(true);
+    }
+    None
+}
 
 // ─── bunfig loading ──────────────────────────────────────────────────────────
 // their private helpers moved to `bun_bunfig::arguments` so `bun_install` can
 // call them without a tier-6 dependency. Re-export here so existing
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
+
+/// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
+/// it can't be a short in either runtime, being ambiguous with `-p` carrying
+/// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
+pub const NODE_SHORT_ALIASES: &[(&[u8], &[u8])] = &[(b"-pe", b"-p")];
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
@@ -721,6 +748,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 CommandTag::RunCommand => 2,
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
+            },
+            // Only the paths standing in for `node` get node's aliases.
+            short_aliases: match cmd {
+                CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
+                _ => &[],
             },
         },
     ) {
@@ -1280,6 +1312,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         if args.flag(b"--zero-fill-buffers") {
             Bun__Node__ZeroFillBuffers.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+        if args.flag(b"--no-use-system-ca") {
+            Bun__Node__NoUseSystemCA.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
         let use_system_ca = args.flag(b"--use-system-ca");
         let use_openssl_ca = args.flag(b"--use-openssl-ca");
         let use_bundled_ca = args.flag(b"--use-bundled-ca");
@@ -1292,11 +1327,15 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             Global::exit(1);
         }
 
-        // CLI overrides env var (NODE_USE_SYSTEM_CA)
+        // --no-use-system-ca is the only thing that overrides NODE_USE_SYSTEM_CA;
+        // node lets the env var win under --use-bundled-ca/--use-openssl-ca.
+        let no_use_system_ca = args.flag(b"--no-use-system-ca");
         let store: Option<BunCAStore> = if use_bundled_ca {
             Some(BunCAStore::Bundled)
         } else if use_openssl_ca {
             Some(BunCAStore::Openssl)
+        } else if no_use_system_ca {
+            Some(BunCAStore::Bundled)
         } else if use_system_ca || env_var::NODE_USE_SYSTEM_CA.get().unwrap_or(false) {
             Some(BunCAStore::System)
         } else {

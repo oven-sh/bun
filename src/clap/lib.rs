@@ -395,6 +395,10 @@ impl Default for Help {
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
+    /// Whole-token rewrites applied only where a token is being classified as a
+    /// flag, never to an option's value or a `--` target. Node keeps its own
+    /// aliases on exactly that branch (node_options-inl.h).
+    pub short_aliases: &'static [(&'static [u8], &'static [u8])],
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -478,6 +482,7 @@ pub fn parse<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            short_aliases: opt.short_aliases,
         },
     )?;
     Ok(Args { clap, exe_arg })
@@ -498,6 +503,7 @@ pub fn parse_with_table<Id: 'static>(
         ParseOptions {
             diagnostic: opt.diagnostic,
             stop_after_positional_at: opt.stop_after_positional_at,
+            short_aliases: opt.short_aliases,
         },
     )?;
     Ok(Args { clap, exe_arg })

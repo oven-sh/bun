@@ -33,6 +33,8 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -95,6 +97,10 @@ void WebWorker__releaseParentPollRef(void* worker);
 
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
+
+// Read this worker's loop counters from the parent thread. False if the worker
+// VM is gone. See src/jsc/web_worker.rs.
+bool WebWorker__getELU(void* worker, double* outElapsedMs, double* outIdleMs);
 
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
@@ -373,6 +379,13 @@ void Worker::terminate()
     WebWorker__notifyNeedTermination(impl_);
 }
 
+bool Worker::eventLoopUtilization(double& elapsedMs, double& idleMs)
+{
+    if (!impl_)
+        return false;
+    return WebWorker__getELU(impl_, &elapsedMs, &idleMs);
+}
+
 void Worker::setKeepAlive(bool keepAlive)
 {
     // Once terminate() has been called or the close task has started, the
@@ -446,30 +459,28 @@ void Worker::rejectAllCrossVMRequests(JSC::JSGlobalObject* globalObject)
 
 // ---- Worker-thread entry points ---------------------------------------------
 
-void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+// Posted before the entry point runs, matching node's 'online', so a worker whose
+// top-level never returns still reports online. Deliberately leaves m_state alone:
+// Pending queues in postTaskToWorkerGlobalScope, it does not reject.
+void Worker::dispatchOnlineEvent()
 {
-    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
-    // a message post racing this transition either queues (drained below by
-    // fireEarlyMessages) or posts directly — never both, never neither.
-    //
-    // This MUST happen BEFORE the open event is posted to the parent: the
-    // parent's `online` handler may immediately call getHeapSnapshot() (or
-    // anything else gated on isOnline() / postTaskToWorkerGlobalScope()). If
-    // the state flip happens after the post, a fast parent thread can run the
-    // open task while m_state is still Pending and observe
-    // ERR_WORKER_NOT_RUNNING — flaky `await once(worker, "online");
-    // worker.getHeapSnapshot()` in worker_threads.test.ts.
-    {
-        Locker lock(m_pendingTasksMutex);
-        m_state.store(State::Running);
-    }
-
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
         if (protectedThis->hasEventListeners(eventNames().openEvent)) {
             auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
             protectedThis->dispatchEvent(event);
         }
     });
+}
+
+void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+{
+    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
+    // a message post racing this transition either queues (drained below by
+    // fireEarlyMessages) or posts directly — never both, never neither.
+    {
+        Locker lock(m_pendingTasksMutex);
+        m_state.store(State::Running);
+    }
 
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (!thisContext) {
@@ -517,15 +528,45 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
     }
 }
 
-void Worker::dispatchErrorWithMessage(WTF::String message)
+void Worker::dispatchErrorWithMessage(WTF::String message, WTF::String code)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(),
+                         code = code.isolatedCopy()](ScriptExecutionContext& context) {
         ErrorEvent::Init init;
         init.message = message;
+        // The worker's value would not clone (Bun's ResolveMessage is not even an
+        // Error), so the parent rebuilds one from the text; hand `code` over on a
+        // carrier object or it is lost, unlike every other coded worker error.
+        if (!code.isNull()) {
+            auto* globalObject = context.globalObject();
+            auto& vm = JSC::getVM(globalObject);
+            if (auto* carrier = JSC::createError(globalObject, message)) {
+                carrier->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code));
+                init.error = carrier;
+            }
+        }
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
         protectedThis->dispatchEvent(event);
     });
+}
+
+// A string `code` off an error-ish value, or null. Reading it can run JS (a
+// getter/proxy), so it is done under a top scope and any throw drops the code.
+String Worker::errorCodeOf(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A TerminationException can be pending here (CLEAR_IF_EXCEPTION at the
+    // call sites cannot clear it); do not enter JS with one on the VM.
+    if (!value.isObject() || scope.exception())
+        return {};
+    JSValue codeValue = value.getObject()->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
+    String code;
+    if (!scope.exception() && codeValue && codeValue.isString())
+        code = codeValue.toWTFString(globalObject);
+    CLEAR_IF_EXCEPTION(scope);
+    return code;
 }
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
@@ -539,6 +580,24 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
+    // Cloning an Error reads `stack`, so a throwing Error.prepareStackTrace takes
+    // the whole error down and the caller reports the pretty-printed text as the
+    // message instead. Node drops only the unreadable `stack`
+    // (lib/internal/error_serdes.js TryGetAllProperties); retry once with an own
+    // undefined `stack` so name/message/code still cross. Safe to mutate: the
+    // worker's own error event and the fallback message are both already
+    // materialized by the time we get here, and the thread is terminating.
+    if (!serialized && !scope.exception()) {
+        if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
+            errorInstance->putDirect(vm, vm.propertyNames->stack, JSC::jsUndefined(), JSC::PropertyAttribute::DontEnum | 0);
+            // putDirect bypasses the ErrorInstance property overrides, so tell it
+            // not to re-materialize `stack` (and re-run prepareStackTrace) below.
+            errorInstance->setStackPropertyAlreadyMaterialized();
+            CLEAR_IF_EXCEPTION(scope);
+            serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
+            CLEAR_IF_EXCEPTION(scope);
+        }
+    }
     if (!serialized)
         return false;
 
@@ -548,13 +607,7 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // vendored node tests assert on it (e.g. ERR_TRACE_EVENTS_UNAVAILABLE).
     // Carry a string `code` across the thread boundary manually. If reading
     // `code` throws (a throwing getter/proxy), drop the code and proceed.
-    String errorCode;
-    if (value.isObject() && !scope.exception()) {
-        JSValue codeValue = value.getObject()->getIfPropertyExists(workerGlobalObject, WebCore::builtinNames(vm).codePublicName());
-        if (!scope.exception() && codeValue && codeValue.isString())
-            errorCode = codeValue.toWTFString(workerGlobalObject);
-        CLEAR_IF_EXCEPTION(scope);
-    }
+    String errorCode = errorCodeOf(workerGlobalObject, value);
 
     return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
@@ -713,6 +766,11 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     CLEAR_IF_EXCEPTION(scope);
 }
 
+extern "C" void WebWorker__dispatchOnlineEvent(Worker* worker)
+{
+    worker->dispatchOnlineEvent();
+}
+
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
     WebWorker__entrySettled(globalObject);
@@ -737,11 +795,12 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
-            // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(WTF::move(messageStr));
+            // If serialization threw an error, use the string instead — but keep
+            // `code`, which is all the parent can otherwise recover.
+            worker->dispatchErrorWithMessage(WTF::move(messageStr), Worker::errorCodeOf(globalObject, error));
         }
         return;
     }

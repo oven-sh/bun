@@ -38,6 +38,30 @@ test("support eval in worker", async () => {
   await worker.terminate();
 });
 
+test("online fires before the entry point finishes", async () => {
+  // node reports 'online' once the thread has bootstrapped, BEFORE user code
+  // (lib/internal/worker.js), so a worker whose top-level never returns still
+  // goes online. Blocking in Atomics.wait keeps the entry point unsettled.
+  const sab = new SharedArrayBuffer(4);
+  const signal = new Int32Array(sab);
+  const worker = new Worker(
+    `const { workerData } = require("worker_threads");
+     Atomics.wait(new Int32Array(workerData), 0, 0);`,
+    { eval: true, workerData: sab },
+  );
+  // Registered before the awaits: if 'online' never fires the worker is parked
+  // in Atomics.wait, and the thread would outlive the test.
+  try {
+    await once(worker, "online");
+    Atomics.store(signal, 0, 1);
+    Atomics.notify(signal, 0);
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("all worker_threads module properties are present", () => {
   expect(wt).toHaveProperty("getEnvironmentData");
   expect(wt).toHaveProperty("isMainThread");
@@ -1110,6 +1134,24 @@ test("off() removes only the listener it names, per event and per port", () => {
     b.port1.close();
     b.port2.close();
   }
+});
+
+test("MessagePort listeners receive the port as `this` for on() and once()", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const seen: unknown[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  port1.on("message", function () {
+    seen.push(this);
+  });
+  port1.once("message", function () {
+    seen.push(this);
+    resolve();
+  });
+  port2.postMessage("x");
+  await promise;
+  expect(seen).toEqual([port1, port1]);
+  port1.close();
+  port2.close();
 });
 
 // bun collects entangled ports; node never does. A worker that drops its transferred

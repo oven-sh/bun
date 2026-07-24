@@ -125,6 +125,35 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--cpu-prof-name is inherited by workers, as node does", async () => {
+    using dir = tempDir("cpu-prof-name-worker", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`const end = Date.now() + 100; while (Date.now() < end) {}\`, { eval: true });
+        const end = Date.now() + 100;
+        while (Date.now() < end) {}
+        await new Promise(r => w.on("exit", r));
+      `,
+    });
+
+    const customName = "main.cpuprofile";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", customName, "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    const profiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
+    // Every thread writes the one named path, last wins, so there is a single
+    // file. node v26.3.0 does the same: with a worker, --cpu-prof-name yields 1
+    // file where the default name yields 2 — it only thread-stamps the default.
+    expect(profiles).toEqual([customName]);
+    expect(exitCode).toBe(0);
+  });
+
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `

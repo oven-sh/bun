@@ -64,17 +64,41 @@ pub use bun_sys_jsc::error_jsc::TestingAPIs::translate_uv_error_to_e as sys_sys_
 pub use bun_http_jsc::headers_jsc::h2_live_counts as http_h2_client_testing_ap_is_live_counts;
 pub use bun_http_jsc::headers_jsc::h3_quic_live_counts as http_h3_client_testing_ap_is_quic_live_counts;
 
-/// Lives here (not in `src/bun.rs`)
-/// because the flag it reads — `cli::Arguments::Bun__Node__UseSystemCA` — is
-/// owned by `bun_runtime`; placing the body in a lower crate would invert the
-/// dependency edge.
+/// Per-VM, not a process-wide atomic: node treats `--use-system-ca` as an
+/// Environment option, so a Worker's execArgv can differ from the process.
+/// `undefined` means neither flag was given and NODE_USE_SYSTEM_CA decides —
+/// only the explicit `--no-use-system-ca` beats that env var.
 pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let v =
-        crate::cli::Arguments::Bun__Node__UseSystemCA.load(core::sync::atomic::Ordering::Relaxed);
-    Ok(JSValue::js_boolean(v))
+    Ok(
+        match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
+            Some(v) => JSValue::js_boolean(v),
+            None => JSValue::UNDEFINED,
+        },
+    )
+}
+
+/// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
+/// performance.eventLoopUtilization() is defined in terms of (node derives
+/// active as now - loopStart - idle).
+pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+    // SAFETY: the VM owns this loop and this runs on its thread.
+    let loop_ = unsafe { (*vm.event_loop).usockets_loop().as_ref() };
+    let Some(loop_) = loop_ else {
+        return Ok(JSValue::NULL);
+    };
+    // Idle BEFORE elapsed, matching node's order (it passes loopIdleTime() in
+    // and reads process.hrtime() after). Reversed, idle is dated after now and
+    // active = now - idle comes out short.
+    let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
+    let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
+    let arr = JSValue::create_empty_array(global, 2)?;
+    arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;
+    arr.put_index(global, 1, JSValue::js_number(idle_ms))?;
+    Ok(arr)
 }
 
 mod css {

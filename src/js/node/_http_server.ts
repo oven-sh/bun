@@ -3170,6 +3170,14 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     // and will not throw or emit an error
     return true;
   }
+  // Like Node.js's resOnFinish: if nothing is (or is about to be) reading the
+  // request body, dump it. Runs before the native end so the cleared ondata
+  // lets the native side release the body-read ref; a set ondata means the
+  // body keeps flowing into the IncomingMessage after the response is sent.
+  const req = this.req;
+  if (req && !req._consuming && !req._readableState?.resumeScheduled) {
+    req._dump();
+  }
   const sentState = NodeHTTPHeaderState.sent;
   if (headerState !== sentState) {
     {
@@ -3218,10 +3226,6 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
     }
   }
   this._header = " ";
-  const req = this.req;
-  if (!req._consuming && !req?._readableState?.resumeScheduled) {
-    req._dump();
-  }
   // The socket is NOT detached here: like Node.js, res.socket stays assigned
   // until the response 'finish' machinery runs (the dispatcher detaches it
   // right after a synchronously-finished handler returns, or via its 'finish'

@@ -4054,3 +4054,111 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/4733
+// Ending the response inside the request handler must not drop the request
+// body: Node keeps delivering it to req's 'data' listeners and piped
+// destinations until the body has been fully received.
+describe("request body still flows after res.end() was called in the handler", () => {
+  async function run(
+    attach: (req: IncomingMessage, out: Writable) => void,
+    end: (res: ServerResponse) => Promise<void> | void,
+  ) {
+    const events: string[] = [];
+    const chunks: Buffer[] = [];
+    const { promise: finished, resolve: finish } = Promise.withResolvers<void>();
+
+    await using server = createServer((req, res) => {
+      const out = new Writable({
+        write(chunk, _enc, cb) {
+          chunks.push(Buffer.from(chunk));
+          cb();
+        },
+      });
+      attach(req, out);
+      req.once("end", () => events.push("req-end"));
+      req.once("close", () => events.push("req-close"));
+      out.once("finish", () => {
+        events.push("out-finish");
+        finish();
+      });
+
+      const maybe = end(res);
+      if (maybe) maybe.catch(() => {});
+    });
+
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const resp = await fetch(`http://127.0.0.1:${port}/`, { method: "POST", body: "testing-body" });
+    expect(await resp.text()).toBe("ok");
+    await finished;
+
+    expect(Buffer.concat(chunks).toString()).toBe("testing-body");
+    expect(events).toEqual(["req-end", "out-finish", "req-close"]);
+  }
+
+  it("req.pipe(out) with synchronous res.end()", async () => {
+    await run(
+      (req, out) => req.pipe(out),
+      res => void res.end("ok"),
+    );
+  });
+
+  it("req.on('data') with synchronous res.end()", async () => {
+    await run(
+      (req, out) => {
+        req.on("data", c => out.write(c));
+        req.on("end", () => out.end());
+      },
+      res => void res.end("ok"),
+    );
+  });
+
+  it("req.pipe(out) with res.write() + res.end()", async () => {
+    await run(
+      (req, out) => req.pipe(out),
+      res => {
+        res.write("o");
+        res.end("k");
+      },
+    );
+  });
+
+  it("req.pipe(out) with res.end() on nextTick", async () => {
+    await run(
+      (req, out) => req.pipe(out),
+      res =>
+        new Promise(done => {
+          process.nextTick(() => {
+            res.end("ok");
+            done();
+          });
+        }),
+    );
+  });
+
+  it("chunked request body split across writes", async () => {
+    let body = "";
+    const { promise: ended, resolve } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      req.on("data", c => (body += c));
+      req.once("end", resolve);
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sock = connect(port, "127.0.0.1");
+    await once(sock, "connect");
+    sock.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
+    // A second TCP segment carrying the remainder (via setNoDelay + event-loop
+    // bounce) so res.end() has already run when it arrives.
+    sock.setNoDelay(true);
+    await new Promise<void>(r => setImmediate(r));
+    sock.write("6\r\n world\r\n0\r\n\r\n");
+
+    await ended;
+    sock.end();
+    expect(body).toBe("hello world");
+  });
+});

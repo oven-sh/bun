@@ -610,8 +610,7 @@ impl NodeHTTPResponse {
             || flags.contains(Flags::ENDED))
             && (self.body_read_ref.get().has
                 || self.body_read_state.get() == BodyReadState::Pending)
-            && (!flags.contains(Flags::HAS_CUSTOM_ON_DATA)
-                || js::on_data_get_cached(this_value).is_none())
+            && js::on_data_get_cached(this_value).is_none()
         {
             let had_ref = self.body_read_ref.get().has;
             if !flags.contains(Flags::UPGRADED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -2014,11 +2013,12 @@ impl NodeHTTPResponse {
 
         if IS_END {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
-            // This is the equivalent of req._dump().
+            // This is the equivalent of req._dump(); ServerResponse.prototype.end runs req._dump()
+            // (which clears ondata) before reaching here whenever the IncomingMessage has no
+            // consumer, so an ondata that is still set means the request body is being read.
             if self.body_read_ref.get().has
                 && self.body_read_state.get() == BodyReadState::Pending
-                && (!self.flags.get().contains(Flags::HAS_CUSTOM_ON_DATA)
-                    || js::on_data_get_cached(this_value).is_none())
+                && js::on_data_get_cached(this_value).is_none()
             {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.body_read_state.set(BodyReadState::None);
@@ -2038,6 +2038,16 @@ impl NodeHTTPResponse {
                 raw_response.end(bytes, state.is_http_connection_close());
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
+            }
+            // uws's markDone() (reached from end/end_stream) nulls the connection's
+            // inStream. Re-arm it when the request body is still being consumed so
+            // body chunks keep flowing into the IncomingMessage after the response
+            // has been sent, like Node.js. IS_REQUEST_PENDING (held while the body
+            // is Pending) keeps `self` alive for the callback.
+            if self.body_read_state.get() == BodyReadState::Pending {
+                if let Some(raw_response) = self.raw_response.get() {
+                    raw_response.on_data(on_data_shim, self.as_ctx_ptr());
+                }
             }
             self.on_request_complete();
 

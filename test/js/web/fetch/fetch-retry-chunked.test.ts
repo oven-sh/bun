@@ -94,11 +94,7 @@ describe("small chunked body decode", () => {
   function reply(body: Buffer, extraHeader: string): Buffer {
     return Buffer.concat([
       Buffer.from(
-        "HTTP/1.1 200 OK\r\n" +
-          "Transfer-Encoding: chunked\r\n" +
-          "Connection: keep-alive\r\n" +
-          extraHeader +
-          "\r\n",
+        "HTTP/1.1 200 OK\r\n" + "Transfer-Encoding: chunked\r\n" + "Connection: keep-alive\r\n" + extraHeader + "\r\n",
       ),
       chunked(body),
     ]);

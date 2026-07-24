@@ -2888,7 +2888,8 @@ impl RunCommand {
             }
             ctx.runtime_options.eval.script = contents.into_boxed_slice();
 
-            let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
+            let mut passthrough_list: Vec<Box<[u8]>> =
+                Vec::with_capacity(ctx.passthrough.len() + 1);
             passthrough_list.push(target.to_vec().into_boxed_slice());
             passthrough_list.append(&mut ctx.passthrough);
             ctx.passthrough = passthrough_list;

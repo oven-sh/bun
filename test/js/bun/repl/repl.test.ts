@@ -1175,6 +1175,32 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor(/\n\s*2\b/);
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/27542, https://github.com/oven-sh/bun/issues/5267
+  // The REPL keeps stdin in raw mode while evaluating, so without a cooked-mode
+  // guard inside alert/confirm/prompt pressing Enter delivers a bare CR and the
+  // blocking LF read never returns.
+  test("alert/confirm/prompt return when called from the REPL", async () => {
+    await withTerminalRepl(async ({ send, waitFor }) => {
+      send("prompt('name?')\n");
+      await waitFor("name? ");
+      send("alice\r");
+      await waitFor(/['"]alice['"]/);
+
+      send("confirm('ok?')\n");
+      await waitFor("[y/N]");
+      send("y\r");
+      await waitFor("true");
+
+      send("alert('bye')\n");
+      await waitFor("[Enter]");
+      send("\r");
+      // Back at the prompt and still able to evaluate.
+      await waitFor(/\u276f|> /);
+      send("41 + 1\n");
+      await waitFor("42");
+    });
+  });
 });
 
 // History file written on REPL exit must be owner-only (0600), since it can

@@ -412,6 +412,97 @@ describe("node-fetch honours the agent option", () => {
     }
   });
 
+  test("aborts after headers have arrived", async () => {
+    const { agent } = makeAgent();
+    try {
+      let gotHeaders;
+      const headersSent = new Promise(r => (gotHeaders = r));
+      await withServer(
+        (req, res) => {
+          res.writeHead(200);
+          res.write("x");
+          res.flushHeaders();
+          gotHeaders();
+          // never end
+        },
+        async port => {
+          const controller = new AbortController();
+          const res = await fetch2(`http://127.0.0.1:${port}/`, { agent, signal: controller.signal });
+          expect(res.status).toBe(200);
+          await headersSent;
+          const textP = res.text();
+          controller.abort();
+          await expect(textP).rejects.toMatchObject({ name: "AbortError" });
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("strips brackets from IPv6 literal hostnames", async () => {
+    const { agent } = makeAgent();
+    const server = http.createServer((req, res) => res.end("v6"));
+    try {
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "::1", resolve);
+      });
+    } catch (err) {
+      agent.destroy();
+      if (err?.code === "EADDRNOTAVAIL" || err?.code === "EAFNOSUPPORT") return; // no IPv6 loopback in this environment
+      throw err;
+    }
+    try {
+      const port = server.address().port;
+      const res = await fetch2(`http://[::1]:${port}/`, { agent });
+      expect(await res.text()).toBe("v6");
+    } finally {
+      server.close();
+      agent.destroy();
+    }
+  });
+
+  test("accepts status codes outside [200, 599]", async () => {
+    const { agent } = makeAgent();
+    // http.ServerResponse.writeHead rejects 999, so speak raw TCP.
+    const server = net.createServer(sock => {
+      sock.end("HTTP/1.1 999 Custom\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const port = server.address().port;
+      const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+      expect(res.status).toBe(999);
+      expect(res.ok).toBe(false);
+      expect(await res.text()).toBe("ok");
+    } finally {
+      server.close();
+      agent.destroy();
+    }
+  });
+
+  test("request body stream error rejects with FetchError", async () => {
+    const { agent } = makeAgent();
+    try {
+      await withServer(
+        (req, res) => {
+          req.resume();
+          req.on("end", () => res.end("ok"));
+        },
+        async port => {
+          const body = new stream.Readable({ read() {} });
+          const p = fetch2(`http://127.0.0.1:${port}/`, { agent, method: "POST", body });
+          body.destroy(new Error("boom"));
+          await expect(p).rejects.toBeInstanceOf(FetchError);
+        },
+      );
+    } finally {
+      agent.destroy();
+    }
+  });
+
   test("tunnels via a CONNECT-proxy agent", async () => {
     // Minimal CONNECT proxy that records every CONNECT target.
     const targets = [];

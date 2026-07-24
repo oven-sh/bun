@@ -217,9 +217,10 @@ function fetchWithAgent(url, init, counter) {
       } else if (body instanceof Blob) headers.set("content-length", String(body.size));
     }
 
+    const parsedHostname = parsed.hostname;
     const requestOpts = {
       protocol,
-      hostname: parsed.hostname,
+      hostname: parsedHostname[0] === "[" ? parsedHostname.slice(1, -1) : parsedHostname,
       port: parsed.port,
       path: parsed.pathname + parsed.search,
       method,
@@ -230,14 +231,20 @@ function fetchWithAgent(url, init, counter) {
     const send = protocol === "https:" ? https.request : http.request;
     const req = send(requestOpts);
     let settled = false;
+    let bodyStream: any;
 
+    const removeAbort = () => {
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
     const onAbort = () => {
-      if (settled) return;
-      settled = true;
       const err: any = new DOMException("The operation was aborted.", "AbortError");
       err.type = "aborted";
-      reject(err);
-      req.destroy();
+      if (!settled) {
+        settled = true;
+        reject(err);
+      }
+      req.destroy(err);
+      if (bodyStream) bodyStream.destroy(err);
     };
     if (signal) {
       if (signal.aborted) {
@@ -247,16 +254,16 @@ function fetchWithAgent(url, init, counter) {
       signal.addEventListener("abort", onAbort, { once: true });
     }
 
-    req.on("error", err => {
+    const failRequest = err => {
       if (settled) return;
       settled = true;
-      if (signal) signal.removeEventListener("abort", onAbort);
+      removeAbort();
       reject(new FetchError(`request to ${href} failed, reason: ${err.message}`, "system", err));
-    });
+    };
+    req.on("error", failRequest);
 
     req.on("response", (res: any) => {
       if (settled) return;
-      if (signal) signal.removeEventListener("abort", onAbort);
 
       const responseHeaders = new Headers();
       const rawHeaders: string[] = res.rawHeaders;
@@ -266,6 +273,13 @@ function fetchWithAgent(url, init, counter) {
 
       const status: number = res.statusCode;
       if (isRedirect(status)) {
+        const finalize = value => {
+          settled = true;
+          removeAbort();
+          res.resume();
+          if (value instanceof Error) reject(value);
+          else resolve(value);
+        };
         const location = responseHeaders.get("location");
         let locationURL: string | null = null;
         if (location !== null) {
@@ -273,9 +287,7 @@ function fetchWithAgent(url, init, counter) {
             locationURL = new URL(location, href).href;
           } catch {
             if (redirect !== "manual") {
-              settled = true;
-              res.resume();
-              reject(
+              finalize(
                 new FetchError(`uri requested responds with an invalid redirect URL: ${location}`, "invalid-redirect"),
               );
               return;
@@ -283,9 +295,7 @@ function fetchWithAgent(url, init, counter) {
           }
         }
         if (redirect === "error") {
-          settled = true;
-          res.resume();
-          reject(
+          finalize(
             new FetchError(
               `uri requested responds with a redirect, redirect mode is set to error: ${href}`,
               "no-redirect",
@@ -295,15 +305,13 @@ function fetchWithAgent(url, init, counter) {
         }
         if (redirect === "follow" && locationURL !== null) {
           if (counter >= follow) {
-            settled = true;
-            res.resume();
-            reject(new FetchError(`maximum redirect reached at: ${href}`, "max-redirect"));
+            finalize(new FetchError(`maximum redirect reached at: ${href}`, "max-redirect"));
             return;
           }
           const nextHeaders = new Headers(init.headers || undefined);
           const nextInit: any = { ...init, counter: counter + 1, headers: nextHeaders };
           const nextURL = new URL(locationURL);
-          if (nextURL.hostname !== parsed.hostname || nextURL.protocol !== protocol) {
+          if (nextURL.hostname !== parsedHostname || nextURL.protocol !== protocol) {
             for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) nextHeaders.delete(name);
           }
           if (status === 303 || ((status === 301 || status === 302) && method === "POST")) {
@@ -311,46 +319,66 @@ function fetchWithAgent(url, init, counter) {
             nextInit.body = undefined;
             nextHeaders.delete("content-length");
             nextHeaders.delete("content-type");
-          } else if (body != null && typeof body === "object" && typeof (body as any).pipe === "function") {
-            settled = true;
-            res.resume();
-            reject(new FetchError("Cannot follow redirect with body being a readable stream", "unsupported-redirect"));
+          } else if (
+            body != null &&
+            typeof body === "object" &&
+            (typeof (body as any).pipe === "function" || typeof (body as any).getReader === "function")
+          ) {
+            finalize(new FetchError("Cannot follow redirect with body being a readable stream", "unsupported-redirect"));
             return;
           }
-          settled = true;
-          res.resume();
-          resolve(fetchWithAgent(locationURL, nextInit, counter + 1));
+          finalize(fetchWithAgent(locationURL, nextInit, counter + 1));
           return;
         }
         // redirect === "manual" or no location: fall through and return the 3xx response as-is.
       }
 
-      let raw: any = res.pipe(new PassThrough());
+      const out = new PassThrough();
       const codings = (responseHeaders.get("content-encoding") || "").toLowerCase();
+      let decoder: any;
       if (compress && method !== "HEAD" && status !== 204 && status !== 304) {
-        let decoder: any;
         if (codings === "gzip" || codings === "x-gzip")
           decoder = zlib.createGunzip({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
         else if (codings === "deflate" || codings === "x-deflate")
           decoder = zlib.createInflate({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
         else if (codings === "br") decoder = zlib.createBrotliDecompress();
         if (decoder) {
-          const out = new PassThrough();
-          pipeline(raw, decoder, out, () => {});
-          raw = out;
           responseHeaders.delete("content-encoding");
           responseHeaders.delete("content-length");
         }
       }
-
-      settled = true;
-      const response = new Response(status === 204 || status === 304 || method === "HEAD" ? null : raw, {
-        status,
-        statusText: res.statusMessage || "",
-        headers: responseHeaders,
-        url: href,
+      const chain = decoder ? [res, decoder, out] : [res, out];
+      pipeline(chain, err => {
+        if (err) out.destroy(err);
       });
-      if (counter > 0) Object.defineProperty(response, "redirected", { value: true, configurable: true });
+      bodyStream = out;
+      out.once("close", removeAbort);
+
+      let response: Response;
+      try {
+        // node-fetch exposes arbitrary status codes; the native constructor
+        // only accepts 101 / [200, 599], so build with a safe value and
+        // patch the real one on top when it falls outside that range.
+        const safeStatus = (status >= 200 && status <= 599) || status === 101 ? status : 599;
+        response = new Response(status === 204 || status === 304 || method === "HEAD" ? null : out, {
+          status: safeStatus,
+          statusText: res.statusMessage || "",
+          headers: responseHeaders,
+          url: href,
+        });
+        if (safeStatus !== status) {
+          Object.defineProperty(response, "status", { value: status, configurable: true });
+          Object.defineProperty(response, "ok", { value: false, configurable: true });
+        }
+        if (counter > 0) Object.defineProperty(response, "redirected", { value: true, configurable: true });
+      } catch (err) {
+        settled = true;
+        removeAbort();
+        res.destroy();
+        reject(err);
+        return;
+      }
+      settled = true;
       resolve(response);
     });
 
@@ -358,10 +386,7 @@ function fetchWithAgent(url, init, counter) {
       p.then(
         buf => req.end(new Uint8Array(buf)),
         err => {
-          if (!settled) {
-            settled = true;
-            reject(new FetchError(`request to ${href} failed, reason: ${err.message}`, "system", err));
-          }
+          failRequest(err);
           req.destroy(err);
         },
       );
@@ -374,10 +399,11 @@ function fetchWithAgent(url, init, counter) {
       req.end(body instanceof ArrayBuffer ? new Uint8Array(body) : body);
     } else if (body instanceof Blob) {
       sendBuffered(body.arrayBuffer());
-    } else if (typeof (body as any).pipe === "function") {
-      (body as any).pipe(req);
-    } else if (typeof (body as any).getReader === "function") {
-      Readable.fromWeb(body as any).pipe(req);
+    } else if (typeof (body as any).pipe === "function" || typeof (body as any).getReader === "function") {
+      const src = typeof (body as any).pipe === "function" ? body : Readable.fromWeb(body as any);
+      pipeline(src, req, err => {
+        if (err) failRequest(err);
+      });
     } else {
       req.end(String(body));
     }

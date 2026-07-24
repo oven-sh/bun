@@ -2574,6 +2574,25 @@ describe("expect()", () => {
     expect(value).not.toContainEqual(expected);
   });
 
+  test("toContainEqual failure message includes Expected/Received labels", () => {
+    try {
+      expect([{ a: 1 }]).toContainEqual({ a: 2 });
+      expect.unreachable();
+    } catch (e) {
+      expect(e.message).toContain("\n\nExpected to contain: ");
+      expect(e.message).toContain("\nReceived: ");
+      expect(e.message).toContain("a: 2");
+      expect(e.message).toContain("a: 1");
+    }
+    try {
+      expect([{ a: 1 }]).not.toContainEqual({ a: 1 });
+      expect.unreachable();
+    } catch (e) {
+      expect(e.message).toContain("\n\nExpected to not contain: ");
+      expect(e.message).toContain("a: 1");
+    }
+  });
+
   test("toContainKey", () => {
     const o = { a: "foo", b: "bar", c: "baz" };
     expect(o).toContainKey("a");

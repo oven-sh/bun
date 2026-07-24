@@ -1022,7 +1022,50 @@ mod _async_tasks {
     /// any borrowed JS-backed slices so the work-pool callback may run off-thread).
     /// The trait methods are **required** so missing impls are a compile error rather
     /// than a silent UAF/leak.
-    pub trait FsArgument: Sized + Unprotect {
+    /// What the permission model must approve before an fs operation runs.
+    ///
+    /// One variant per distinct `THROW_IF_INSUFFICIENT_PERMISSIONS` sequence in
+    /// <https://github.com/nodejs/node/blob/v26.3.0/src/node_file.cc>. The
+    /// order matters: Node reports the first scope that is denied, and tests
+    /// assert on which flag the message names.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum FsPermission {
+        /// File-descriptor-only operation. The descriptor was already approved
+        /// when it was opened, so Node checks nothing here.
+        None,
+        /// `read(first)` — stat, readdir, readlink, realpath, readFile, access…
+        Read,
+        /// `write(first)` — chmod, chown, utimes, mkdir, rm, unlink, writeFile…
+        Write,
+        /// `read(first)`, `write(second)` — copyFile, cp.
+        ReadThenWrite,
+        /// `read(first)`, `write(first)`, `write(second)` — rename, link and
+        /// symlink all check the source for read *and* write so a symlink
+        /// cannot be used to smuggle a write into an unreadable tree.
+        MoveLike,
+        /// `fs.open` is the only operation whose scopes depend on its arguments
+        /// rather than on the syscall; see `CheckOpenPermissions`.
+        Open,
+    }
+
+    /// The permission-model facts about one `args::*` type. Split out of
+    /// [`FsArgument`] so the fd-only argument types can take the defaults with
+    /// an empty impl.
+    pub trait FsPermissionInfo {
+        const PERMISSION: FsPermission = FsPermission::None;
+
+        /// The operation's path arguments, in the order Node checks them.
+        fn permission_paths(&self) -> (Option<&PathLike>, Option<&PathLike>) {
+            (None, None)
+        }
+
+        /// Only meaningful for [`FsPermission::Open`]: the resolved `O_*` mask.
+        fn permission_open_flags(&self) -> i32 {
+            0
+        }
+    }
+
+    pub trait FsArgument: Sized + Unprotect + FsPermissionInfo {
         const HAVE_ABORT_SIGNAL: bool = false;
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
         /// call frame. Every `args::*` struct already exposes an inherent
@@ -1128,6 +1171,152 @@ mod _async_tasks {
         fn signal(&self) -> Option<&AbortSignal> {
             self.signal.as_deref()
         }
+    }
+
+    /// Implements [`FsPermissionInfo`] for the `args::*` types.
+    ///
+    /// `$perm` is the operation's entry in Node's table; the closure returns the
+    /// path arguments in the order Node checks them. Types not listed here take
+    /// the trait defaults, which is correct for the fd-only operations.
+    macro_rules! impl_fs_permission {
+        ( $( $ty:ty => $perm:ident $( , |$s:ident| $paths:expr )? );+ $(;)? ) => {
+            $( impl FsPermissionInfo for $ty {
+                const PERMISSION: FsPermission = FsPermission::$perm;
+                $(
+                    #[inline]
+                    fn permission_paths(&self) -> (Option<&PathLike>, Option<&PathLike>) {
+                        let $s = self;
+                        $paths
+                    }
+                )?
+            } )+
+        };
+    }
+
+    impl_fs_permission! {
+        // ── read(path) ────────────────────────────────────────────────────
+        args::Access   => Read,  |s| (Some(&s.path), None);
+        args::Stat     => Read,  |s| (Some(&s.path), None);
+        args::StatFS   => Read,  |s| (Some(&s.path), None);
+        args::Readlink => Read,  |s| (Some(&s.path), None);
+        args::Realpath => Read,  |s| (Some(&s.path), None);
+        args::Readdir  => Read,  |s| (Some(&s.path), None);
+        // `fs.exists` takes an optional path: `fs.exists()` with no argument is
+        // a no-op that reports false, and there is nothing to check.
+        args::Exists   => Read,  |s| (s.path.as_ref(), None);
+        args::ReadFile => Read,  |s| (s.path.permission_path(), None);
+
+        // ── write(path) ───────────────────────────────────────────────────
+        args::Chmod     => Write, |s| (Some(&s.path), None);
+        args::Chown     => Write, |s| (Some(&s.path), None);
+        args::Lutimes   => Write, |s| (Some(&s.path), None);
+        args::Mkdir     => Write, |s| (Some(&s.path), None);
+        args::MkdirTemp => Write, |s| (Some(&s.prefix), None);
+        args::RmDir     => Write, |s| (Some(&s.path), None);
+        args::Rm        => Write, |s| (Some(&s.0.path), None);
+        args::Unlink    => Write, |s| (Some(&s.path), None);
+        args::WriteFile => Write, |s| (s.file.permission_path(), None);
+        args::Truncate  => Write, |s| (s.path.permission_path(), None);
+
+        // ── read(src) then write(dest) ────────────────────────────────────
+        args::CopyFile => ReadThenWrite, |s| (Some(&s.src), Some(&s.dest));
+        args::Cp       => ReadThenWrite, |s| (Some(&s.src), Some(&s.dest));
+
+        // ── read(src), write(src), write(dest) ────────────────────────────
+        args::Rename  => MoveLike, |s| (Some(&s.old_path), Some(&s.new_path));
+        args::Link    => MoveLike, |s| (Some(&s.old_path), Some(&s.new_path));
+        args::Symlink => MoveLike, |s| (Some(&s.target_path), Some(&s.new_path));
+
+        // ── file-descriptor-only: nothing to check ────────────────────────
+        args::FdVectorIo => None;
+        args::FTruncate  => None;
+        args::Fchown     => None;
+        args::FChmod     => None;
+        args::Fstat      => None;
+        args::Close      => None;
+        args::Futimes    => None;
+        args::FdataSync  => None;
+        args::Fsync      => None;
+        args::Write      => None;
+        args::Read       => None;
+    }
+
+    /// `fs.open` needs its flags as well as its path, which the macro cannot
+    /// express.
+    impl FsPermissionInfo for args::Open {
+        const PERMISSION: FsPermission = FsPermission::Open;
+        #[inline]
+        fn permission_paths(&self) -> (Option<&PathLike>, Option<&PathLike>) {
+            (Some(&self.path), None)
+        }
+        #[inline]
+        fn permission_open_flags(&self) -> i32 {
+            self.flags.as_int()
+        }
+    }
+
+    /// The single place every `node:fs` entry point asks the permission model.
+    ///
+    /// Runs before the operation does anything, so a denial has no side
+    /// effects. When `--permission` is absent this is one relaxed atomic load.
+    #[inline]
+    pub fn check_fs_permission<A: FsPermissionInfo>(
+        global: &JSGlobalObject,
+        args: &A,
+    ) -> JsResult<()> {
+        if !crate::permission::is_enabled() {
+            return Ok(());
+        }
+        check_fs_permission_slow(global, A::PERMISSION, args)
+    }
+
+    #[cold]
+    fn check_fs_permission_slow<A: FsPermissionInfo>(
+        global: &JSGlobalObject,
+        perm: FsPermission,
+        args: &A,
+    ) -> JsResult<()> {
+        use crate::permission::Scope;
+        if perm == FsPermission::None {
+            return Ok(());
+        }
+        let (first, second) = args.permission_paths();
+        // A path-taking operation that was handed a file descriptor (or, for
+        // `fs.exists()`, nothing at all) has nothing to check.
+        let Some(first) = first else {
+            return Ok(());
+        };
+        let first = first.slice();
+        match perm {
+            FsPermission::None => {}
+            FsPermission::Read => crate::permission::check(global, Scope::FileSystemRead, first)?,
+            FsPermission::Write => crate::permission::check(global, Scope::FileSystemWrite, first)?,
+            FsPermission::ReadThenWrite | FsPermission::MoveLike => {
+                crate::permission::check(global, Scope::FileSystemRead, first)?;
+                if perm == FsPermission::MoveLike {
+                    crate::permission::check(global, Scope::FileSystemWrite, first)?;
+                }
+                if let Some(second) = second {
+                    crate::permission::check(global, Scope::FileSystemWrite, second.slice())?;
+                }
+            }
+            FsPermission::Open => {
+                // `CheckOpenPermissions`: a handle that can read needs read, and
+                // a handle that can write — including the flags that write as a
+                // side effect of an O_RDONLY open — needs write.
+                let flags = args.permission_open_flags();
+                let rwflags = flags & (bun_sys::O::RDONLY | bun_sys::O::WRONLY | bun_sys::O::RDWR);
+                let write_as_side_effect =
+                    flags & (bun_sys::O::APPEND | bun_sys::O::CREAT | bun_sys::O::TRUNC);
+                if rwflags != bun_sys::O::WRONLY {
+                    crate::permission::check(global, Scope::FileSystemRead, first)?;
+                }
+                if rwflags != bun_sys::O::RDONLY || write_as_side_effect != 0 {
+                    crate::permission::check(global, Scope::FileSystemWrite, first)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Convert an async-FS result payload to a `JSValue`.
@@ -2729,9 +2918,9 @@ mod _async_tasks {
     }
 } // mod _async_tasks
 pub use _async_tasks::{
-    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsReturn,
-    IntoResultListEntry, NewAsyncCpTask, ResultListEntry, ResultListEntryValue, ShellAsyncCpTask,
-    UVFSRequest, async_,
+    AsyncCpTask, AsyncFSTask, AsyncReaddirRecursiveTask, CpSingleTask, FsArgument, FsPermission,
+    FsPermissionInfo, FsReturn, IntoResultListEntry, NewAsyncCpTask, ResultListEntry,
+    ResultListEntryValue, ShellAsyncCpTask, UVFSRequest, async_, check_fs_permission,
 };
 
 // ──────────────────────────────────────────────────────────────────────────

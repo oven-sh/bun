@@ -463,6 +463,16 @@ pub fn throw_access_denied(global: &JSGlobalObject, scope: Scope, resource: &[u8
     global.throw_value(access_denied_error(global, scope, resource))
 }
 
+/// Deny `scope` for `resource` unless it is granted. `resource` is the path
+/// being accessed; it is echoed back on the error the way Node does.
+#[inline]
+pub fn check(global: &JSGlobalObject, scope: Scope, resource: &[u8]) -> Result<(), JsError> {
+    if is_granted(scope, Some(resource)) {
+        return Ok(());
+    }
+    Err(throw_access_denied(global, scope, resource))
+}
+
 // ── The warnings Node prints at startup ─────────────────────────────────────
 
 /// `initializePermission` in `lib/internal/process/pre_execution.js`. Called

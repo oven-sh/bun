@@ -7,7 +7,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult, S
 
 use crate::node::fs::{
     self, AsyncCpTask, AsyncReaddirRecursiveTask, Flavor, FsArgument, FsReturn, NodeFS,
-    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, ret,
+    NodeFSDispatch, NodeFSFunctionEnum, Op, args, async_, check_fs_permission, ret,
 };
 
 /// Signature of every generated NodeFS host function.
@@ -45,6 +45,10 @@ where
     if global.has_exception() {
         return Ok(JSValue::ZERO);
     }
+
+    // Ask the permission model before the syscall, so a denial has no side
+    // effects (Node checks in the same place — see node_file.cc).
+    check_fs_permission(global, &args)?;
 
     // R-2: `JsCell::with_mut` scopes the `&mut NodeFS` to the blocking
     // syscall; `dispatch` never re-enters JS, and `Maybe<R>` is fully owned
@@ -115,6 +119,14 @@ fn run_async<A: FsArgument>(
                 return Ok(promise);
             }
         }
+    }
+
+    if let Err(err) = check_fs_permission(global, &args) {
+        args.unprotect();
+        drop(args);
+        // SAFETY: not yet dropped; only drop site for this path.
+        unsafe { ManuallyDrop::drop(&mut slice) };
+        return Err(err);
     }
 
     // The `cp` / `readdir` operations are handled by their dedicated
@@ -205,6 +217,13 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
+        if let Err(err) = check_fs_permission(global, &cp_args) {
+            drop(cp_args);
+            // SAFETY: not yet dropped; only drop site for this path.
+            unsafe { ManuallyDrop::drop(&mut slice) };
+            return Err(err);
+        }
+
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(AsyncCpTask::create(global, this, cp_args, vm))
@@ -222,6 +241,8 @@ impl Binding {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
+
+        check_fs_permission(global, &cp_args)?;
 
         // R-2: blocking syscall — `&mut NodeFS` scoped to the call, no JS re-entry.
         match this.node_fs.with_mut(|nfs| nfs.cp(&cp_args, Flavor::Sync)) {
@@ -254,6 +275,13 @@ impl Binding {
             return Ok(JSValue::ZERO);
         }
 
+        if let Err(err) = check_fs_permission(global, &rd_args) {
+            drop(rd_args);
+            // SAFETY: not yet dropped; only drop site for this path.
+            unsafe { ManuallyDrop::drop(&mut slice) };
+            return Err(err);
+        }
+
         // SAFETY: re-borrow `vm` mutably; the `slice` borrow is no longer used.
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         if rd_args.recursive {
@@ -274,6 +302,13 @@ impl Binding {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
+
+        // fs_event_wrap.cc checks read on the watched path before starting.
+        crate::permission::check(
+            global,
+            crate::permission::Scope::FileSystemRead,
+            watch_args.path.slice(),
+        )?;
 
         // R-2: `NodeFS::watch` only reads `self.vm` (no scratch-buffer write);
         // scoped via `with_mut` so the borrow cannot outlive the call.
@@ -301,6 +336,13 @@ impl Binding {
         if global.has_exception() {
             return Ok(JSValue::ZERO);
         }
+
+        // node_stat_watcher.cc checks read on the watched path before starting.
+        crate::permission::check(
+            global,
+            crate::permission::Scope::FileSystemRead,
+            wf_args.path.slice(),
+        )?;
 
         match this
             .node_fs

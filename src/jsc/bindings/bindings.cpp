@@ -5419,6 +5419,12 @@ restart:
             if (builtinNames.bunNativePtrPrivateName() == prop)
                 return true;
 
+            // Don't echo back the util.inspect.custom hook the inspector just
+            // consulted. It is installed non-enumerable, which is also why node
+            // never prints it.
+            if ((entry.attributes() & PropertyAttribute::DontEnum) != 0 && builtinNames.inspectCustomPublicName() == prop)
+                return true;
+
             if (visitedProperties.contains(Identifier::fromUid(vm, prop))) {
                 return true;
             }
@@ -5517,7 +5523,11 @@ restart:
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
-                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule)
+                        || property == propertyNames->toStringTagSymbol || property == propertyNames->__esModule
+                        // Don't echo back the util.inspect.custom hook the
+                        // inspector just consulted; node hides it for the same
+                        // reason, because it is non-enumerable.
+                        || property == builtinNames.inspectCustomPublicName())
                         continue;
                 }
 

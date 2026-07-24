@@ -240,9 +240,12 @@ JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     JSValue thisValue = callFrame->thisValue();
-    auto* event = JSEvent::toWrapped(vm, thisValue);
-    if (!event) [[unlikely]] {
-        return Bun::ERR::INVALID_THIS(throwScope, lexicalGlobalObject, "Event"_s);
+    // Bun's native inspector consults this hook on Event.prototype itself,
+    // which node's skips (it bails out when value.constructor.prototype ===
+    // value). Hand the value straight back rather than throwing ERR_INVALID_THIS
+    // at something the inspector is legitimately formatting.
+    if (!JSEvent::toWrapped(vm, thisValue)) {
+        return JSValue::encode(thisValue);
     }
 
     double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);

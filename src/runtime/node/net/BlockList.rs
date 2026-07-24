@@ -356,8 +356,20 @@ impl BlockList {
 
     #[bun_jsc::host_fn(getter)]
     pub fn rules(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let _guard = this.mutex.lock_guard();
-        let rules = this.da_rules.get();
+        this.rules_array(global)
+    }
+
+    /// Same array as the `rules` getter (Node v22+ `JSON.stringify` round-trip).
+    /// Native, not patched in `node:net`, so a structured-clone wrapper from a
+    /// realm that never imported `net` still has it.
+    #[bun_jsc::host_fn(method)]
+    pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        this.rules_array(global)
+    }
+
+    fn rules_array(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        let _guard = self.mutex.lock_guard();
+        let rules = self.da_rules.get();
         // GC must be able to visit
         let array = JSValue::create_empty_array(global, rules.len())?;
 

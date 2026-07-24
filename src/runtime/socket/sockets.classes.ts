@@ -439,6 +439,7 @@ export default [
     call: false,
     finalize: true,
     estimatedSize: true,
+    structuredClone: { transferable: false, tag: 249, storable: false },
     JSType: "0b11101110",
     klass: {
       parse: {
@@ -471,11 +472,6 @@ export default [
         enumerable: false,
         configurable: true,
         cache: true,
-      },
-      addrfamily: {
-        getter: "getAddrFamily",
-        enumerable: false,
-        configurable: false,
       },
       flowlabel: {
         getter: "getFlowLabel",
@@ -525,6 +521,10 @@ export default [
       },
       rules: {
         getter: "rules",
+      },
+      toJSON: {
+        fn: "toJSON",
+        length: 0,
       },
     },
   }),

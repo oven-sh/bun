@@ -1,5 +1,114 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { BlockList, isIPv6 } from "node:net";
+import path from "node:path";
+
+// Node's documented round-trip API (v22+): toJSON returns the rules array and
+// JSON.stringify(blockList) emits it; fromJSON rebuilds rules from that array
+// (or its JSON string form).
+describe("net.BlockList JSON round-trip", () => {
+  it("exposes toJSON and fromJSON on the prototype", () => {
+    expect(Object.getOwnPropertyNames(BlockList.prototype).sort()).toEqual([
+      "addAddress",
+      "addRange",
+      "addSubnet",
+      "check",
+      "constructor",
+      "fromJSON",
+      "rules",
+      "toJSON",
+    ]);
+    expect(typeof BlockList.prototype.toJSON).toBe("function");
+    expect(typeof BlockList.prototype.fromJSON).toBe("function");
+  });
+
+  it("JSON.stringify of an empty BlockList is an empty array", () => {
+    expect(JSON.stringify(new BlockList())).toBe("[]");
+  });
+
+  it("toJSON returns the rules array", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("1.2.3.4");
+    expect(blockList.toJSON()).toEqual(["Address: IPv4 1.2.3.4"]);
+    expect(JSON.stringify(blockList)).toBe(JSON.stringify(blockList.rules));
+  });
+
+  it("round-trips every rule kind through toJSON/fromJSON", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("1.2.3.4");
+    blockList.addAddress("abcd::1", "ipv6");
+    blockList.addRange("10.0.0.1", "10.0.0.10");
+    blockList.addSubnet("192.168.0.0", 16);
+    blockList.addSubnet("2001:db8::", 64, "ipv6");
+
+    const restored = new BlockList();
+    restored.fromJSON(blockList.toJSON());
+
+    for (const ip of ["1.2.3.4", "abcd::1", "10.0.0.5", "192.168.1.1"]) {
+      expect(restored.check(ip, isIPv6(ip) ? "ipv6" : "ipv4")).toBe(true);
+    }
+    expect(restored.check("2001:db8::1", "ipv6")).toBe(true);
+    expect(restored.check("11.0.0.1")).toBe(false);
+    // Same set of rules, regardless of ordering.
+    expect(new Set(restored.toJSON())).toEqual(new Set(blockList.toJSON()));
+  });
+
+  it("fromJSON accepts the JSON string form", () => {
+    const blockList = new BlockList();
+    blockList.addAddress("1.2.3.4");
+    const restored = new BlockList();
+    restored.fromJSON(JSON.stringify(blockList.toJSON()));
+    expect(restored.check("1.2.3.4")).toBe(true);
+  });
+
+  it("fromJSON silently ignores malformed rule entries", () => {
+    const blockList = new BlockList();
+    blockList.fromJSON(["nonsense", "Address: 1.2.3.4", "Address: IPv4 bad.addr"]);
+    expect(blockList.toJSON()).toEqual([]);
+  });
+
+  it("fromJSON rejects non-string / non-string[] data with ERR_INVALID_ARG_TYPE", () => {
+    const bad = [5, null, {}, [5], ["ok", 5]];
+    for (const data of bad) {
+      const blockList = new BlockList();
+      expect(() => blockList.fromJSON(data as any)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    }
+  });
+
+  // toJSON is defined on the native prototype, not patched in node:net, so a
+  // structured-clone wrapper created in a realm that never imported net still
+  // has it (worker fan-out via postMessage).
+  it("toJSON is available on a clone in a realm that never imported net", async () => {
+    using dir = tempDir("blocklist-xrealm", {
+      "worker.js": `
+        globalThis.onmessage = e => {
+          const bl = e.data;
+          postMessage({
+            hasToJSON: typeof bl.toJSON === "function",
+            json: JSON.stringify(bl),
+            check: bl.check("1.2.3.4"),
+          });
+        };
+      `,
+    });
+
+    const worker = new Worker(path.join(String(dir), "worker.js"));
+    try {
+      const bl = new BlockList();
+      bl.addAddress("1.2.3.4");
+      const { promise, resolve, reject } = Promise.withResolvers<any>();
+      worker.onmessage = e => resolve(e.data);
+      worker.onerror = reject;
+      worker.postMessage(bl);
+      const result = await promise;
+      expect(result.hasToJSON).toBe(true);
+      expect(result.check).toBe(true);
+      expect(JSON.parse(result.json)).toEqual(["Address: IPv4 1.2.3.4"]);
+    } finally {
+      worker.terminate();
+    }
+  });
+});
 
 // BlockList structured-clone serialize writes the native pointer and takes a
 // single ref. When the same SerializedScriptValue is deserialized more than

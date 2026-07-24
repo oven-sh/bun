@@ -108,6 +108,58 @@ function appendTlsKeylog(line: Buffer) {
 }
 const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
 const BlockList = $rust("node_net_binding.rs", "BlockList");
+
+// `fromJSON` is the documented round-trip counterpart to the native `toJSON`
+// (Node v22+): it parses the rules array (or its JSON string form) back into
+// rules. Kept in JS because the parsing reuses the native add* methods.
+Object.defineProperty(BlockList.prototype, "fromJSON", {
+  value: function fromJSON(this: any, data: any) {
+    if ($isArray(data)) {
+      for (const n of data) {
+        if (typeof n !== "string") throw $ERR_INVALID_ARG_TYPE("data", ["string", "string[]"], data);
+      }
+    } else if (typeof data !== "string") {
+      throw $ERR_INVALID_ARG_TYPE("data", ["string", "string[]"], data);
+    } else {
+      data = JSON.parse(data);
+      if (!$isArray(data)) throw $ERR_INVALID_ARG_TYPE("data", ["string", "string[]"], data);
+      for (const n of data) {
+        if (typeof n !== "string") throw $ERR_INVALID_ARG_TYPE("data", ["string", "string[]"], data);
+      }
+    }
+    for (const rule of data) {
+      const parts = rule.split(" ");
+      if (parts.length < 3) continue;
+      const family = parts[1];
+      if (family !== "IPv4" && family !== "IPv6") continue;
+      const value = parts[2];
+      try {
+        switch (parts[0]) {
+          case "Address:":
+            this.addAddress(value, family);
+            break;
+          case "Range:": {
+            const dash = value.indexOf("-");
+            if (dash >= 0) this.addRange(value.slice(0, dash), value.slice(dash + 1), family);
+            break;
+          }
+          case "Subnet:": {
+            const slash = value.indexOf("/");
+            if (slash >= 0) this.addSubnet(value.slice(0, slash), Number(value.slice(slash + 1)), family);
+            break;
+          }
+        }
+      } catch {
+        // More lenient than Node for hand-authored input: Node lets a failing
+        // add* throw, but the toJSON->fromJSON round-trip never emits such an
+        // entry, so dropping it keeps the documented path working.
+      }
+    }
+  },
+  writable: true,
+  enumerable: false,
+  configurable: true,
+});
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 

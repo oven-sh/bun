@@ -99,17 +99,11 @@ impl Options {
             AF::INET
         };
 
-        // required. Validated by `validatePort`.
+        // Validated with Node's `validatePort` semantics: numbers and numeric
+        // strings are accepted (coerced via `ToNumber`), non-integers and
+        // out-of-range values throw `ERR_SOCKET_BAD_PORT`.
         let _port: u16 = if let Some(p) = obj.get(global, "port")? {
-            // Note: shim until `JSValue::is_finite` lands in bun_jsc.
-            if !(p.is_number() && p.as_number().is_finite()) {
-                return Err(Self::throw_bad_port(global, p));
-            }
-            let port32 = p.to_int32();
-            if port32 < 0 || port32 > i32::from(u16::MAX) {
-                return Err(Self::throw_bad_port(global, p));
-            }
-            u16::try_from(port32).expect("int cast")
+            Self::validate_port(global, p)?
         } else {
             0
         };
@@ -146,6 +140,34 @@ impl Options {
         })
     }
 
+    /// Node `validatePort` (`lib/internal/validators.js`): accepts numbers and
+    /// numeric strings, coercing via `ToNumber`; rejects other types,
+    /// whitespace-only strings, non-integers, negatives, and values `> 65535`.
+    fn validate_port(global: &JSGlobalObject, port: JSValue) -> JsResult<u16> {
+        if !port.is_number() && !port.is_string() {
+            return Err(Self::throw_bad_port(global, port));
+        }
+        // An empty or whitespace-only string coerces to 0 via `ToNumber`, but
+        // Node rejects it because `String.prototype.trim` empties it first.
+        // `trim` strips the full ECMAScript whitespace set, not just ASCII.
+        if port.is_string() {
+            let s = OwnedString::new(BunString::from_js(port, global)?);
+            let blank = if s.is_8bit() {
+                s.latin1().iter().all(|&b| is_js_whitespace(u32::from(b)))
+            } else {
+                s.utf16().iter().all(|&c| is_js_whitespace(u32::from(c)))
+            };
+            if blank {
+                return Err(Self::throw_bad_port(global, port));
+            }
+        }
+        let num = port.to_number(global)?;
+        if !num.is_finite() || num.fract() != 0.0 || num < 0.0 || num > f64::from(u16::MAX) {
+            return Err(Self::throw_bad_port(global, port));
+        }
+        Ok(num as u16)
+    }
+
     fn throw_bad_port(global: &JSGlobalObject, port_: JSValue) -> JsError {
         // OwnedString (returned by determine_specific_type) releases the +1.
         let Ok(ty) = JSGlobalObject::determine_specific_type(global, port_) else {
@@ -165,6 +187,28 @@ impl Options {
             )
             .throw()
     }
+}
+
+/// ECMAScript `StrWhiteSpace`: the code points `String.prototype.trim` strips
+/// (`WhiteSpace` + `LineTerminator`). Used to match Node's `validatePort`
+/// blank-string check, which trims before coercing.
+fn is_js_whitespace(c: u32) -> bool {
+    matches!(
+        c,
+        0x09 | 0x0A
+            | 0x0B
+            | 0x0C
+            | 0x0D
+            | 0x20
+            | 0xA0
+            | 0x1680
+            | 0x2028
+            | 0x2029
+            | 0x202F
+            | 0x205F
+            | 0x3000
+            | 0xFEFF
+    ) || (0x2000..=0x200A).contains(&c)
 }
 
 // =============================================================================
@@ -510,6 +554,98 @@ impl SocketAddress {
 }
 
 // =============================================================================
+// ============================ STRUCTURED CLONE ==============================
+// =============================================================================
+
+/// Writer over the C++ `CloneSerializer` byte sink (see `BlockList`).
+struct StructuredCloneWriter {
+    ctx: *mut core::ffi::c_void,
+    impl_: crate::generated_classes::WriteBytesFn,
+}
+
+impl bun_io::Write for StructuredCloneWriter {
+    #[inline]
+    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+        // SAFETY: `ctx` and `impl_` are supplied together by the C++ writer;
+        // the callback reads exactly `len` bytes from `ptr`.
+        unsafe { (self.impl_)(self.ctx, bytes.as_ptr(), bytes.len() as u32) };
+        Ok(())
+    }
+}
+
+impl SocketAddress {
+    /// `SocketAddress` is an immutable value type, so structured clone writes
+    /// its fields (family tag, port, and the address bytes) directly; each
+    /// deserialize reconstructs a fresh instance with no shared state.
+    pub fn on_structured_clone_serialize(
+        &self,
+        _global: &JSGlobalObject,
+        ctx: *mut core::ffi::c_void,
+        write_bytes: crate::generated_classes::WriteBytesFn,
+    ) {
+        use bun_io::Write as _;
+        let mut writer = StructuredCloneWriter {
+            ctx,
+            impl_: write_bytes,
+        };
+        let port = self.port();
+        if let Some(sin6) = self._addr.as_sin6() {
+            _ = writer.write_int_le::<u8>(6);
+            _ = writer.write_int_le::<u16>(port);
+            _ = writer.write_int_le::<u32>(sin6.flowinfo);
+            _ = writer.write_int_le::<u32>(sin6.scope_id);
+            _ = writer.write_all(&sin6.addr);
+        } else {
+            let sin = self._addr.as_sin().expect("sockaddr is INET or INET6");
+            _ = writer.write_int_le::<u8>(4);
+            _ = writer.write_int_le::<u16>(port);
+            _ = writer.write_all(&sin.addr.to_ne_bytes());
+        }
+    }
+
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn on_structured_clone_deserialize(
+        global: &JSGlobalObject,
+        ptr: *mut *mut u8,
+        end: *const u8,
+    ) -> JsResult<JSValue> {
+        // SAFETY: `*ptr`..`end` bound a contiguous C++-owned buffer (`end >=
+        // *ptr`); `ptr` is a non-null out-param we advance by bytes consumed.
+        let ptr = unsafe { &mut *ptr };
+        let total_length: usize = (end as usize) - (*ptr as usize);
+        // SAFETY: the slice is exactly that buffer and stays valid for `r`.
+        let mut r =
+            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
+
+        let parsed = (|| -> bun_io::Result<SocketAddress> {
+            let is_v6 = r.read_int_le::<u8>()? == 6;
+            let port = r.read_int_le::<u16>()?;
+            if is_v6 {
+                let flowinfo = r.read_int_le::<u32>()?;
+                let scope_id = r.read_int_le::<u32>()?;
+                let mut addr = [0u8; 16];
+                r.read_exact(&mut addr)?;
+                Ok(SocketAddress::init_ipv6(addr, port, flowinfo, scope_id))
+            } else {
+                let mut addr = [0u8; 4];
+                r.read_exact(&mut addr)?;
+                Ok(SocketAddress::init_ipv4(addr, port))
+            }
+        })();
+
+        let Ok(sa) = parsed else {
+            return Err(global.throw(format_args!(
+                "SocketAddress.onStructuredCloneDeserialize failed"
+            )));
+        };
+
+        // SAFETY: `r.pos <= total_length` (`read_exact` bounds-checks).
+        *ptr = unsafe { (*ptr).add(r.pos) };
+        Ok(SocketAddress::new(sa).to_js(global))
+    }
+}
+
+// =============================================================================
 
 impl SocketAddress {
     /// Turn this address into a DTO. `this` is consumed and undefined after this call.
@@ -612,8 +748,7 @@ impl SocketAddress {
 
     /// `sockaddr.family`
     ///
-    /// Returns a string representation of this address' family. Use `getAddrFamily`
-    /// for the numeric value.
+    /// Returns a string representation of this address' family.
     ///
     /// NOTE: node's `net.SocketAddress` wants `"ipv4"` and `"ipv6"` while Bun's APIs
     /// use `"IPv4"` and `"IPv6"`. This is annoying.
@@ -623,12 +758,6 @@ impl SocketAddress {
             AF::INET => global.common_strings().ipv4_lower(),
             AF::INET6 => global.common_strings().ipv6_lower(),
         })
-    }
-
-    /// `sockaddr.addrfamily`
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_addr_family(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(this.family().int()))
     }
 
     /// NOTE: this returns whatever address-family value the system uses,
@@ -709,30 +838,17 @@ impl SocketAddress {
 }
 
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
-    use bun_jsc::js_global_object::SysErrOptions;
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
-        0 => Err(global.throw_sys_error(
-            &SysErrOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                errno: None,
-                name: None,
-            },
-            format_args!("Invalid socket address"),
-        )),
-
-        // Open question: the proper way to
-        // convert a C errno into a JS exception.
-        -1 => Err(global.throw_sys_error(
-            &SysErrOptions {
-                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                errno: Some(bun_sys::last_errno()),
-                name: None,
-            },
-            format_args!("Invalid socket address"),
-        )),
         1 => Ok(()),
-        _ => unreachable!(),
+        // `0` (unparseable) and `-1` (unsupported family / errno) both map to
+        // Node's `ERR_INVALID_ADDRESS` ("Invalid socket address").
+        _ => Err(global
+            .err(
+                bun_jsc::ErrorCode::INVALID_ADDRESS,
+                format_args!("Invalid socket address"),
+            )
+            .throw()),
     }
 }
 

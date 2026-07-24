@@ -126,6 +126,18 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
     JSValue::UNDEFINED
 }
 
+/// See [`VirtualMachine::fatal_exception_in_handler`]. Does not return on the
+/// main thread.
+// HOST_EXPORT(Bun__reportFatalExceptionInHandler, c)
+pub fn report_fatal_exception_in_handler(global: &JSGlobalObject, value: JSValue) {
+    crate::mark_binding!();
+
+    global
+        .bun_vm()
+        .as_mut()
+        .fatal_exception_in_handler(global, value);
+}
+
 /// This function is called on another thread
 /// The main difference: we need to allocate the task & wakeup the thread
 /// We can avoid that if we run it from the main thread.

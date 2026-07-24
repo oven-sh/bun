@@ -60,14 +60,6 @@ pub fn drain_microtasks_from_js(global: &JSGlobalObject, _cf: &CallFrame) -> JSV
     JSValue::UNDEFINED
 }
 
-/// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
-// HOST_EXPORT(Bun__logUnhandledException, c)
-pub fn log_unhandled_exception(exception: JSValue) {
-    VirtualMachine::get()
-        .as_mut()
-        .run_error_handler(exception, None);
-}
-
 /// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
 /// **may run on the heap-collector thread** (see oven-sh/bun#17087); the
 /// underlying method serializes on `remap_stack_frames_mutex`.

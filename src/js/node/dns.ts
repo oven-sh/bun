@@ -214,6 +214,22 @@ function validateOrderOption(options) {
   }
 }
 
+// The record types node's resolveMap has an entry for. Anything else is an
+// ERR_INVALID_ARG_VALUE, checked before the name and callback so that
+// dns.resolve(name, 'toString') reports the rrtype rather than tripping over
+// Object.prototype.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/callback_resolver.js#L95
+const rrtypes = new Set(["A", "AAAA", "ANY", "CAA", "CNAME", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TXT"]);
+
+// Bun has always accepted rrtypes in any case; node only accepts the canonical
+// spelling. Uppercasing here keeps that leniency rather than newly rejecting
+// input that used to work.
+function validateRrtype(rrtype) {
+  if (!rrtypes.has(rrtype.toUpperCase())) {
+    throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype);
+  }
+}
+
 // Validates and returns the callback wrapped by guardCallback.
 // Callers must use the return value, not the argument.
 function validateResolve(name, callback) {
@@ -394,6 +410,7 @@ var InternalResolver = class Resolver {
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
+    validateRrtype(rrtype);
 
     callback = validateResolve(hostname, callback);
 
@@ -809,6 +826,7 @@ const promises = {
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
+    validateRrtype(rrtype);
 
     switch (rrtype?.toLowerCase()) {
       case "a":

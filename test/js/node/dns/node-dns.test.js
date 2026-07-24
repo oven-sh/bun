@@ -543,9 +543,14 @@ describe("uses `dns.promises` implementations for `util.promisify` factory", () 
   });
 
   it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
-    // This test previously used example.com, but that domain has multiple A records, which can cause this test to fail.
-    // As of this writing, google.com has only one A record. If that changes, update this test with a domain that has only one A record.
-    expect(await util.promisify(dns.lookup)("google.com")).toEqual(await dns.promises.lookup("google.com"));
+    // An IP literal short-circuits the resolver, so this stays deterministic. A
+    // real hostname can round-robin between answers and make the two calls
+    // disagree for reasons that have nothing to do with promisify.
+    const promisified = await util.promisify(dns.lookup)("127.0.0.1");
+    // The callback form yields (err, address, family); only the promises
+    // implementation resolves to an object.
+    expect(promisified).toEqual({ address: "127.0.0.1", family: 4 });
+    expect(promisified).toEqual(await dns.promises.lookup("127.0.0.1"));
   });
 });
 

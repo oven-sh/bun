@@ -985,6 +985,8 @@ const sql = new SQL({
 });
 ```
 
+Each connection keeps up to 256 idle prepared statements cached; a statement still referenced by a query (in-flight or completed but not yet garbage-collected) is never evicted, so the count can temporarily exceed that. Past the limit, the least recently used idle statement is deallocated on the server with a `Close` message to make room. Without the cap, a long-lived connection running many distinct query strings (for example, an ORM interpolating identifiers) would accumulate named prepared statements in the server session, and their metadata in the client, until the connection closed.
+
 When `prepare: false` is set:
 
 Queries still use the "extended" protocol, but run as [unnamed prepared statements](https://www.postgresql.org/docs/current/protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY). An unnamed prepared statement lasts only until the next Parse statement specifying the unnamed statement as destination is issued.

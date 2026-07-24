@@ -148,6 +148,17 @@ export function pgCommandComplete(tag: string): Buffer {
   return pgRaw("C", Buffer.concat([Buffer.from(tag), Buffer.from([0])]));
 }
 
+// PostgreSQL FE/BE protocol §55.7 CloseComplete: Byte1('3') Int32(4)
+export function pgCloseComplete(): Buffer {
+  return pgRaw("3", Buffer.alloc(0));
+}
+
+/** Read the NUL-terminated String at `offset` in a frontend message body. `end` is the index past the NUL. */
+export function pgReadCString(body: Buffer, offset: number): { value: string; end: number } {
+  const nul = body.indexOf(0, offset);
+  return { value: body.toString("utf-8", offset, nul), end: nul + 1 };
+}
+
 export type PgRowDescriptionColumn = {
   name: string;
   tableOid?: number;

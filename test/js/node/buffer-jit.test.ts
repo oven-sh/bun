@@ -36,7 +36,7 @@ for (let i = 0; i < buf.length; i++) buf[i] = (i * 37 + 11) & 0xff;
 const N = 20000;
 `;
 
-describe("Buffer accessor JIT", () => {
+describe.concurrent("Buffer accessor JIT", () => {
   test("the JIT path is actually taken, and compile counts converge", async () => {
     const { stdout, stderr, exitCode } = await run(
       prelude +
@@ -77,7 +77,9 @@ describe("Buffer accessor JIT", () => {
         readAt(buf, i & 63);
         writeAt(buf, i & 127, i & 63);
       }
-      const badReceiver = { length: 4 };
+      // Carries the real accessor, so the call reaches it and fails the receiver check itself
+      // (rather than throwing "not a function" at the property lookup).
+      const badReceiver = { length: 4, readInt32LE: Buffer.prototype.readInt32LE };
       const detached = Buffer.alloc(8);
       structuredClone(detached.buffer, { transfer: [detached.buffer] });
       const exits = [
@@ -85,7 +87,7 @@ describe("Buffer accessor JIT", () => {
         () => readAt(buf, -1),                // negative offset
         () => readAt(buf, 1.5),               // fractional offset
         () => readAt(buf, "4"),               // wrong offset type
-        () => readAt.call(null, badReceiver, 0), // wrong receiver (a plain object as this-arg buffer)
+        () => readAt(badReceiver, 0),         // wrong receiver: a plain object
         () => detached.readInt32LE(0),        // detached
         () => writeAt(buf, 200, 0),           // value out of int8 range
         () => writeAt(buf, 1.5, 0),           // fractional value (host truncates; no throw)

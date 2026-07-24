@@ -60,15 +60,6 @@ extern "C" void JSC__VariableEnvironment__add(VariableEnvironment& environment, 
     environment.add(getFromIdentifierArray(vm, identifierArray, index));
 }
 
-extern "C" VariableEnvironment* JSC_JSModuleRecord__declaredVariables(JSModuleRecord* moduleRecord)
-{
-    return const_cast<VariableEnvironment*>(&moduleRecord->declaredVariables());
-}
-extern "C" VariableEnvironment* JSC_JSModuleRecord__lexicalVariables(JSModuleRecord* moduleRecord)
-{
-    return const_cast<VariableEnvironment*>(&moduleRecord->lexicalVariables());
-}
-
 extern "C" JSModuleRecord* JSC_JSModuleRecord__create(JSGlobalObject* globalObject, VM& vm, const Identifier* moduleKey, const SourceCode& sourceCode, const VariableEnvironment& declaredVariables, const VariableEnvironment& lexicalVariables, bool hasImportMeta, bool isTypescript, bool hasTLA)
 {
     JSModuleRecord* result = JSModuleRecord::create(globalObject, vm, globalObject->moduleRecordStructure(), *moduleKey, sourceCode, declaredVariables, lexicalVariables, hasImportMeta ? ImportMetaFeature : 0);

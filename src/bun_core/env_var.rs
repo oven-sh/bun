@@ -99,7 +99,6 @@ new!(pub BUN_INSTALL_STREAMING_MIN_SIZE: unsigned, "BUN_INSTALL_STREAMING_MIN_SI
 // thread schedules a drain; collapses the per-chunk thread-pool futex wake
 // into roughly one per `threshold` bytes.
 new!(pub BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: unsigned, "BUN_INSTALL_STREAMING_DRAIN_THRESHOLD", { default: 256 * 1024 });
-new!(pub BUN_NEEDS_PROC_SELF_WORKAROUND: boolean, "BUN_NEEDS_PROC_SELF_WORKAROUND", { default: false });
 new!(pub BUN_OPTIONS: string, "BUN_OPTIONS", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR: string, "BUN_POSTGRES_SOCKET_MONITOR", {});
 new!(pub BUN_POSTGRES_SOCKET_MONITOR_READER: string, "BUN_POSTGRES_SOCKET_MONITOR_READER", {});
@@ -143,9 +142,6 @@ platform_specific_new!(pub HOME: string, posix = "HOME", windows = "USERPROFILE"
 new!(pub HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET: string, "HYPERFINE_RANDOMIZED_ENVIRONMENT_OFFSET", {});
 new!(pub IS_BUN_AUTO_UPDATE: boolean, "IS_BUN_AUTO_UPDATE", { default: false });
 new!(pub JENKINS_URL: string, "JENKINS_URL", {});
-// Dump mimalloc statistics at the end of the process. Note that this is not the same as
-// `MIMALLOC_VERBOSE`, documented here: https://microsoft.github.io/mimalloc/environment.html
-new!(pub MI_VERBOSE: boolean, "MI_VERBOSE", { default: false });
 new!(pub NO_COLOR: boolean, "NO_COLOR", { default: false });
 new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
 // A string, not a boolean: node suppresses warnings only when the value is
@@ -171,7 +167,6 @@ new!(pub TERM_PROGRAM: string, "TERM_PROGRAM", {});
 platform_specific_new!(pub TMP: string, posix = "TMP", windows = "TMP", {});
 platform_specific_new!(pub TMPDIR: string, posix = "TMPDIR", windows = "TMPDIR", {});
 new!(pub TMUX: string, "TMUX", {});
-new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
 // The same as system_root.

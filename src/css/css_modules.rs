@@ -259,10 +259,6 @@ pub struct Config {
     /// Default is `true`.
     pub animation: bool,
 
-    /// Whether to scope grid names.
-    /// Default is `true`.
-    pub grid: bool,
-
     /// Whether to scope custom identifiers
     /// Default is `true`.
     pub custom_idents: bool,
@@ -274,7 +270,6 @@ impl Default for Config {
             pattern: Pattern::default(),
             dashed_idents: false,
             animation: true,
-            grid: true,
             custom_idents: true,
         }
     }
@@ -467,9 +462,7 @@ impl<'a> CssModuleReference<'a> {
 
 /// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
-/// the *same* hasher without depending on `bun_css`. Re-export here so
-/// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path.
+/// the *same* hasher without depending on `bun_css`.
 #[inline]
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)

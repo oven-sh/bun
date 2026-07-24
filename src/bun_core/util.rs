@@ -1196,12 +1196,6 @@ impl Fd {
         self.native()
     }
 
-    /// Properly converts `Fd::INVALID` into `FdOptional::NONE`.
-    #[inline]
-    pub const fn to_optional(self) -> FdOptional {
-        FdOptional(self.0)
-    }
-
     pub fn stdio_tag(self) -> Option<Stdio> {
         #[cfg(not(windows))]
         {
@@ -1293,36 +1287,6 @@ impl Stdio {
     #[inline]
     pub fn to_int(self) -> i32 {
         self as i32
-    }
-}
-
-/// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
-/// Use instead of encoding the invalid value directly.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct FdOptional(FdBacking);
-impl FdOptional {
-    pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
-    #[inline]
-    pub const fn init(maybe: Option<Fd>) -> FdOptional {
-        match maybe {
-            Some(fd) => fd.to_optional(),
-            None => FdOptional::NONE,
-        }
-    }
-    #[inline]
-    pub const fn unwrap(self) -> Option<Fd> {
-        if self.0 == FdOptional::NONE.0 {
-            None
-        } else {
-            Some(Fd(self.0))
-        }
-    }
-    #[inline]
-    pub fn take(&mut self) -> Option<Fd> {
-        let r = self.unwrap();
-        *self = FdOptional::NONE;
-        r
     }
 }
 

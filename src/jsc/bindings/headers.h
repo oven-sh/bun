@@ -172,7 +172,6 @@ CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
 
 CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
-CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
 
 #pragma mark - JSC::JSGlobalObject
 
@@ -214,7 +213,6 @@ CPP_DECL JSC::EncodedJSValue JSC__JSValue__createEmptyObject(JSC::JSGlobalObject
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createInternalPromise(JSC::JSGlobalObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* arg0, const ZigString* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3, JSC::EncodedJSValue JSValue4);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* arg0, const ZigString* arg1, JSC::JSGlobalObject* arg2);
-CPP_DECL JSC::EncodedJSValue JSC__JSValue__createRopeString(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createStringArray(JSC::JSGlobalObject* arg0, const ZigString* arg1, size_t arg2, bool arg3);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createTypeError(const ZigString* arg0, const ZigString* arg1, JSC::JSGlobalObject* arg2);
 CPP_DECL JSC::EncodedJSValue JSC__JSValue__createUninitializedUint8Array(JSC::JSGlobalObject* arg0, size_t arg1);
@@ -307,7 +305,6 @@ CPP_DECL void JSC__VM__deinit(JSC::VM* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC::VM* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__drainMicrotasks(JSC::VM* arg0);
 CPP_DECL bool JSC__VM__executionForbidden(JSC::VM* arg0);
-CPP_DECL size_t JSC__VM__externalMemorySize(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__heapSize(JSC::VM* arg0);
 CPP_DECL void JSC__VM__holdAPILock(JSC::VM* arg0, void* arg1, void(* ArgFn2)(void* arg0));
 CPP_DECL bool JSC__VM__isEntered(JSC::VM* arg0);
@@ -433,8 +430,6 @@ extern "C" JSC::EncodedJSValue SYSV_ABI Reader__intptr__slowpath(JSC::JSGlobalOb
 #pragma mark - Zig::GlobalObject
 
 CPP_DECL JSC::JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
-CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0);
-CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* arg0, void* arg1);
 
 #ifdef __cplusplus
 

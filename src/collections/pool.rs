@@ -57,31 +57,6 @@ impl<T> Node<T> {
         unsafe { self.data.assume_init_mut() }
     }
 
-    /// Insert a new node after the current one.
-    ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    pub fn insert_after(&mut self, new_node: &mut Node<T>) {
-        new_node.next = self.next;
-        self.next = std::ptr::from_mut::<Node<T>>(new_node);
-    }
-
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    /// Returns:
-    ///     node removed
-    pub fn remove_next(&mut self) -> Option<*mut Node<T>> {
-        let next_node = if self.next.is_null() {
-            return None;
-        } else {
-            self.next
-        };
-        self.next = Node::next_of(next_node);
-        Some(next_node)
-    }
-
     /// Iterate over the singly-linked list from this node, until the final node is found.
     /// This operation is O(N).
     pub fn find_last(&mut self) -> *mut Node<T> {
@@ -268,20 +243,6 @@ impl<T: 'static> PoolStorage<T> for UnwiredStorage {
             core::any::type_name::<T>()
         )
     }
-}
-
-/// Trait alias so callers can name `<Pool as ObjectPoolTrait>::Node` without
-/// knowing the concrete generics.
-pub trait ObjectPoolTrait {
-    type Item;
-    type Node;
-}
-
-impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
-    for ObjectPool<T, TS, MAX, S>
-{
-    type Item = T;
-    type Node = Node<T>;
 }
 
 /// RAII handle for a pooled `T`. Derefs to the inner value; on `Drop`, the

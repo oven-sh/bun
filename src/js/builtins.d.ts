@@ -350,7 +350,6 @@ declare function $fatal(): TODO;
 declare function $filePath(): TODO;
 declare function $filter(): TODO;
 declare function $format(): TODO;
-declare function $fulfillModuleSync(key: string): void;
 declare function $esmNamespaceForCjs(key: string): any | undefined;
 declare function $esmRegistryDelete(key: string): boolean;
 declare function $esmRegistryEvaluatedKeys(): string[];

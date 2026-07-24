@@ -1032,29 +1032,13 @@ pub mod serialize {
             d.write_str(val)
         }
 
-        macro_rules! pseudo {
-            ($d:expr, $field:ident, $s:literal) => {{
-                let class = if let Some(pseudo_classes) = &$d.pseudo_classes {
-                    pseudo_classes.$field
-                } else {
-                    None
-                };
-                if let Some(class) = class {
-                    $d.write_char(b'.')?;
-                    $d.serialize_identifier(class)?;
-                } else {
-                    $d.write_str($s)?;
-                }
-            }};
-        }
-
         match pseudo_class {
             // https://drafts.csswg.org/selectors-4/#useraction-pseudos
-            PseudoClass::Hover => pseudo!(dest, hover, b":hover"),
-            PseudoClass::Active => pseudo!(dest, active, b":active"),
-            PseudoClass::Focus => pseudo!(dest, focus, b":focus"),
-            PseudoClass::FocusVisible => pseudo!(dest, focus_visible, b":focus-visible"),
-            PseudoClass::FocusWithin => pseudo!(dest, focus_within, b":focus-within"),
+            PseudoClass::Hover => dest.write_str(b":hover")?,
+            PseudoClass::Active => dest.write_str(b":active")?,
+            PseudoClass::Focus => dest.write_str(b":focus")?,
+            PseudoClass::FocusVisible => dest.write_str(b":focus-visible")?,
+            PseudoClass::FocusWithin => dest.write_str(b":focus-within")?,
 
             // https://drafts.csswg.org/selectors-4/#time-pseudos
             PseudoClass::Current => dest.write_str(b":current")?,

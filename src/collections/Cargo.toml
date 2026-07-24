@@ -10,7 +10,6 @@ path = "lib.rs"
 workspace = true
 
 [dependencies]
-strum.workspace = true
 # `raw-entry` powers `StringHashMap::{get_hashed, put_static_key_hashed}` — the
 # precomputed-hash probe/insert path the resolver's `DirEntry::add_entry` hot
 # loop uses so it hashes each basename once instead of on every lookup + insert.
@@ -28,7 +27,5 @@ bun_core.workspace = true
 bun_wyhash.workspace = true
 bun_ptr.workspace = true
 rustc-hash = "2"
-
-thiserror.workspace = true
 
 bun_simdutf_sys.workspace = true

@@ -42,8 +42,7 @@ unsafe extern "C" {
     safe fn WebCore__FetchHeaders__count(arg0: &FetchHeaders, arg1: &mut u32, arg2: &mut u32);
     safe fn WebCore__FetchHeaders__createEmpty() -> *mut FetchHeaders;
     // safe: `arg0`/`arg1` are opaque handles to C++-owned request structs
-    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data — same
-    // round-trip contract as `Zig__GlobalObject__resetModuleRegistryMap`.
+    // (PicoHeaders / uWS HttpRequest); never dereferenced as Rust data.
     safe fn WebCore__FetchHeaders__createFromPicoHeaders_(arg0: *const c_void)
     -> *mut FetchHeaders;
     safe fn WebCore__FetchHeaders__createFromUWS(arg1: *mut c_void) -> *mut FetchHeaders;

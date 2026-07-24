@@ -441,32 +441,6 @@ impl<R> CssRuleList<R> {
                 continue;
             }
 
-            // Skip @import rules if collecting dependencies.
-            if let CssRule::Import(import_rule) = rule
-                && dest.remove_imports
-            {
-                let dep = if dest.dependencies.is_some() {
-                    Some(css::dependencies::Dependency::Import(
-                        css::dependencies::ImportDependency::new(
-                            dest.arena,
-                            import_rule,
-                            dest.filename(),
-                            dest.local_names,
-                            dest.symbols,
-                        ),
-                    ))
-                } else {
-                    None
-                };
-
-                if let Some(deps) = dest.dependencies.as_mut() {
-                    if let Some(d) = dep {
-                        deps.push(d);
-                    }
-                    continue;
-                }
-            }
-
             if first {
                 first = false;
             } else {

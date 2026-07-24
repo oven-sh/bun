@@ -27,7 +27,7 @@ pub use crate::css_modules::{
     self, Config as CssModuleConfig, CssModule, CssModuleExports, CssModuleReference,
     CssModuleReferences,
 };
-pub use crate::dependencies::{self, Dependency};
+pub use crate::dependencies;
 pub use crate::error::{
     self as errors_, BasicParseError, BasicParseErrorKind, Err, ErrorLocation, MinifyErr,
     MinifyError, MinifyErrorKind, ParseError, ParserError, PrinterError, PrinterErrorKind,
@@ -2173,16 +2173,12 @@ pub struct ToCssResult {
     /// A map of CSS module references, if the `css_modules` config had
     /// `dashed_idents` enabled.
     pub references: Option<CssModuleReferences<'static>>,
-    /// A list of dependencies (e.g. `@import` or `url()`) found in the style
-    /// sheet, if the `analyze_dependencies` option is enabled.
-    pub dependencies: Option<Vec<Dependency>>,
 }
 
 /// Like `ToCssResult`, but with the css-module maps at their real borrowed lifetime.
 pub struct ToCssResultInternal<'a> {
     pub exports: Option<CssModuleExports<'a>>,
     pub references: Option<CssModuleReferences<'a>>,
-    pub dependencies: Option<Vec<Dependency>>,
 }
 
 #[derive(Default)]
@@ -2554,7 +2550,6 @@ mod stylesheet_impl {
                     return Err(e);
                 }
 
-                let dependencies = printer.dependencies.take().map(|v| v.into_iter().collect());
                 let exports = core::mem::take(
                     &mut printer.css_module.as_mut().unwrap().exports_by_source_index[0],
                 );
@@ -2563,7 +2558,6 @@ mod stylesheet_impl {
                 printer.css_module = None;
 
                 return Ok(ToCssResultInternal {
-                    dependencies,
                     exports: Some(exports),
                     references: Some(references),
                 });
@@ -2571,7 +2565,6 @@ mod stylesheet_impl {
                 self.rules.to_css(printer)?;
                 printer.newline()?;
                 return Ok(ToCssResultInternal {
-                    dependencies: printer.dependencies.take().map(|v| v.into_iter().collect()),
                     exports: None,
                     references: None,
                 });
@@ -2594,7 +2587,6 @@ mod stylesheet_impl {
             let ToCssResultInternal {
                 exports,
                 references,
-                dependencies,
             } = self.to_css_with_writer(
                 arena,
                 &mut dest,
@@ -2616,7 +2608,6 @@ mod stylesheet_impl {
             });
             return Ok(ToCssResult {
                 code: dest,
-                dependencies,
                 exports,
                 references,
             });
@@ -2814,10 +2805,8 @@ mod stylesheet_impl {
 
             self.declarations.to_css(&mut printer)?;
 
-            let dependencies = printer.dependencies.take().map(|v| v.into_iter().collect());
             drop(printer);
             Ok(ToCssResult {
-                dependencies,
                 code: dest,
                 exports: None,
                 references: None,

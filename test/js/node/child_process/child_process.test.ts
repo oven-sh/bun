@@ -426,36 +426,39 @@ describe("spawn()", () => {
         env: bunEnv,
         stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
       });
+      try {
+        const fd3 = child.stdio[3]! as import("stream").Duplex;
+        const fd4 = child.stdio[4]! as import("stream").Duplex;
 
-      const fd3 = child.stdio[3]! as import("stream").Duplex;
-      const fd4 = child.stdio[4]! as import("stream").Duplex;
+        // The fd is adopted synchronously; Node reports the socket as connected
+        // by the time spawn() returns. Before the fix Bun reported
+        // { connecting: true, pending: true } here on every platform.
+        expect({ connecting: (fd3 as any).connecting, pending: (fd3 as any).pending }).toEqual({
+          connecting: false,
+          pending: false,
+        });
 
-      // The fd is adopted synchronously; Node reports the socket as connected
-      // by the time spawn() returns. Before the fix Bun reported
-      // { connecting: true, pending: true } here on every platform.
-      expect({ connecting: (fd3 as any).connecting, pending: (fd3 as any).pending }).toEqual({
-        connecting: false,
-        pending: false,
-      });
+        let out = "";
+        let stderr = "";
+        fd4.on("data", d => (out += d));
+        child.stderr!.on("data", d => (stderr += d));
 
-      let out = "";
-      let stderr = "";
-      fd4.on("data", d => (out += d));
-      child.stderr!.on("data", d => (stderr += d));
+        const writeCb = Promise.withResolvers<unknown>();
+        fd3.write("payload-from-parent", err => writeCb.resolve(err ?? null));
+        fd3.end();
 
-      const writeCb = Promise.withResolvers<unknown>();
-      fd3.write("payload-from-parent", err => writeCb.resolve(err ?? null));
-      fd3.end();
-
-      const [code] = await once(child, "close");
-      // Before the fix, on Windows the write above never reached the child:
-      // `out` was "" and the write callback never fired.
-      expect({ stderr, out, code, writeCb: await writeCb.promise }).toEqual({
-        stderr: "",
-        out: "ECHO:payload-from-parent",
-        code: 0,
-        writeCb: null,
-      });
+        const [code] = await once(child, "close");
+        // Before the fix, on Windows the write above never reached the child:
+        // `out` was "" and the write callback never fired.
+        expect({ stderr, out, code, writeCb: await writeCb.promise }).toEqual({
+          stderr: "",
+          out: "ECHO:payload-from-parent",
+          code: 0,
+          writeCb: null,
+        });
+      } finally {
+        child.kill();
+      }
     });
   });
 

@@ -1761,9 +1761,9 @@ export function assertManifestsPopulated(absCachePath: string, registryUrl: stri
 }
 
 // Make it easier to run some node tests. Node's --expose-gc gc() is a
-// synchronous full collection, so force must default to true here: a bare
-// Bun.gc would take the async path, whose conservative scan can land on a
-// stack state that pins dead objects forever under gc()-polling loops.
+// synchronous full collection; Bun.gc() with no argument only schedules an
+// async one and returns, so vendored tests that poll gc() until an object is
+// collected would spin forever without force=true.
 Object.defineProperty(globalThis, "gc", {
   value: function gc(force = true) {
     return Bun.gc(force);

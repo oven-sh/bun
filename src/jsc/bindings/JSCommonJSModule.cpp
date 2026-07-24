@@ -109,6 +109,7 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" bool Bun__VM__specifierIsWorkerEvalEntry(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
@@ -203,6 +204,13 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
 
     initializeModuleObject();
     RETURN_IF_EXCEPTION(scope, false);
+
+    // worker_threads `eval: true` entry: node passes "[worker eval]" / "." to
+    // the CJS wrapper, not the internal blob URL we loaded the source from.
+    if (Bun__VM__specifierIsWorkerEvalEntry(globalObject->bunVM(), JSValue::encode(filename))) [[unlikely]] {
+        filename = JSC::jsString(vm, WTF::String("[worker eval]"_s));
+        dirname = JSC::jsString(vm, WTF::String("."_s));
+    }
 
     MarkedArgumentBuffer args;
     auto exports = moduleObject->exportsObject();

@@ -1003,7 +1003,7 @@ impl FileSink {
 
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return streams::Writable::Done;
+            return streams::Writable::Owned(0);
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
@@ -1019,7 +1019,7 @@ impl FileSink {
 
     pub fn write_latin1(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return streams::Writable::Done;
+            return streams::Writable::Owned(0);
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
@@ -1030,7 +1030,7 @@ impl FileSink {
 
     pub fn write_utf16(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
-            return streams::Writable::Done;
+            return streams::Writable::Owned(0);
         }
         let buffered_before = self.writer.get().buffered_len();
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
@@ -1048,6 +1048,7 @@ impl FileSink {
         // goes via the stored `*mut FileSink` backref, not this borrow.
         match self.writer.with_mut(|w| w.flush()) {
             WriteResult::Done(written) => {
+                self.done.set(true);
                 self.written.set(self.written.get() + written as usize); // @truncate
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(())
@@ -1067,6 +1068,7 @@ impl FileSink {
                 sys::Result::Ok(())
             }
             WriteResult::Wrote(written) => {
+                self.done.set(true);
                 self.written.set(self.written.get() + written as usize); // @truncate
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(())
@@ -1128,6 +1130,7 @@ impl FileSink {
 
         match flush_result {
             WriteResult::Done(written) => {
+                self.done.set(true);
                 self.update_ref(false);
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
@@ -1187,6 +1190,7 @@ impl FileSink {
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })
             }
             WriteResult::Wrote(written) => {
+                self.done.set(true);
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }

@@ -598,6 +598,14 @@ static int ssl_flush_write_batch(struct loop_ssl_data *loop_ssl_data, struct us_
   if (written < 0) written = 0;
   if ((unsigned int)written < len) {
     unsigned int remainder = len - (unsigned int)written;
+    if (loop_ssl_data->ssl_spill_owner) {
+      /* The spill slot is already taken (a re-entrant JS region under
+       * SNI/ALPN produced one for another socket between the entry-time
+       * gate and this flush). Overwriting it would leak and corrupt that
+       * socket's stream; this socket's remainder is undeliverable. */
+      s->ssl_fatal_error = 1;
+      return 0;
+    }
     char *spill = us_malloc(remainder);
     if (!spill) {
       /* Out of memory with ciphertext in flight: the connection cannot stay

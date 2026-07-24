@@ -3583,6 +3583,10 @@ describe("expect()", () => {
       expect(matchersFirst).toMatchObject(subset);
       expect(matchersFirst.a).toBe(matcherSentinel);
       expect(subset.a).toBe("hello");
+
+      const frozen = Object.freeze({ foo: "foo", bar: "bar" });
+      expect(frozen).toMatchObject({ bar: expect.any(String) });
+      expect(frozen.bar).toBe("bar");
     });
   });
 

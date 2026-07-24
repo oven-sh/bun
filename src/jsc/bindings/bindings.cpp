@@ -1769,7 +1769,9 @@ bool Bun__deepMatch(
 
         if constexpr (enableAsymmetricMatchers) {
             if (subsetPropCell && subsetPropCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope)) {
+                auto result = matchAsymmetricMatcher(globalObject, subsetProp, prop, throwScope);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                switch (result) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
@@ -1779,7 +1781,9 @@ bool Bun__deepMatch(
                     break;
                 }
             } else if (propCell && propCell->type() == JSC::JSType(JSDOMWrapperType)) {
-                switch (matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope)) {
+                auto result = matchAsymmetricMatcher(globalObject, prop, subsetProp, throwScope);
+                RETURN_IF_EXCEPTION(throwScope, false);
+                switch (result) {
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
@@ -1838,6 +1842,9 @@ inline bool deepEqualsWrapperImpl(JSC::EncodedJSValue a, JSC::EncodedJSValue b, 
     RELEASE_AND_RETURN(scope, result);
 }
 
+// Keep this list in sync with the dispatch in
+// `matchAsymmetricMatcherAndGetFlags`; that function is the source of truth
+// for which cell types are asymmetric matchers.
 bool isAsymmetricMatcher(JSValue v)
 {
     if (!v.isCell()) return false;
@@ -1892,18 +1899,26 @@ JSValue substituteAsymmetricMatchersImpl(
     JSObject* cloned = nullptr;
     auto ensureCloned = [&]() -> bool {
         if (cloned) return true;
-        if (isArray(globalObject, value)) {
+        bool valueIsArray = isArray(globalObject, value);
+        if (throwScope.exception()) return false;
+        if (valueIsArray) {
             unsigned len = valueObj->getArrayLength();
             cloned = JSC::constructEmptyArray(globalObject, nullptr, len);
         } else {
-            cloned = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+            // Preserve the original's prototype so the snapshot formatter keeps
+            // the class-name prefix (e.g. `User { ... }`).
+            JSValue proto = valueObj->getPrototype(globalObject);
+            if (throwScope.exception()) return false;
+            JSObject* protoObj = proto.isObject() ? proto.getObject() : globalObject->objectPrototype();
+            cloned = JSC::constructEmptyObject(globalObject, protoObj);
         }
         if (throwScope.exception()) return false;
         gcBuffer.append(cloned);
-        // Shallow-copy so the snapshot retains every original property; the
-        // substitutions below overwrite individual entries.
+        // Copy own properties (including non-enumerable) so the snapshot sees
+        // the same property set that `forEachPropertyOrdered` would on the
+        // original; substitutions below overwrite individual entries.
         PropertyNameArrayBuilder valueProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
-        valueObj->getPropertyNames(globalObject, valueProps, DontEnumPropertiesMode::Exclude);
+        valueObj->methodTable()->getOwnPropertyNames(valueObj, globalObject, valueProps, DontEnumPropertiesMode::Include);
         if (throwScope.exception()) return false;
         for (const auto& p : valueProps) {
             JSValue v = valueObj->getIfPropertyExists(globalObject, p);
@@ -1937,6 +1952,7 @@ JSValue substituteAsymmetricMatchersImpl(
         RETURN_IF_EXCEPTION(throwScope, value);
     }
 
+    seen.erase(JSValue::encode(value));
     return cloned ? JSValue(cloned) : value;
 }
 }

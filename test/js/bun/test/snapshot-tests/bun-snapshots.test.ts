@@ -28,6 +28,31 @@ test("property matchers do not mutate the received object", () => {
   expect(obj.nested.name).toBe("abc");
 });
 
+test("property matchers preserve class name and handle shared references", () => {
+  class User {
+    id: number;
+    name: string;
+    constructor() {
+      this.id = 1;
+      this.name = "alice";
+    }
+  }
+  const user = new User();
+  expect(user).toMatchSnapshot({ id: expect.any(Number) });
+  expect(user.id).toBe(1);
+  expect(user).toBeInstanceOf(User);
+
+  const shared = { x: 1 };
+  const dag = { a: shared, b: shared };
+  expect(dag).toMatchSnapshot({
+    a: { x: expect.any(Number) },
+    b: { x: expect.any(Number) },
+  });
+  expect(dag.a).toBe(shared);
+  expect(dag.b).toBe(shared);
+  expect(shared.x).toBe(1);
+});
+
 describe("toMatchSnapshot errors", () => {
   it("should throw if property matchers exist and received is not an object", () => {
     expect(() => {

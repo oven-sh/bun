@@ -85,3 +85,21 @@ exports[`property matchers do not mutate the received object 1`] = `
   "when": Any<Date>,
 }
 `;
+
+exports[`property matchers preserve class name and handle shared references 1`] = `
+User {
+  "id": Any<Number>,
+  "name": "alice",
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 2`] = `
+{
+  "a": {
+    "x": Any<Number>,
+  },
+  "b": {
+    "x": Any<Number>,
+  },
+}
+`;

@@ -3513,13 +3513,19 @@ impl VirtualMachine {
                         wrapped,
                         UncaughtExceptionOrigin::Rejection,
                     );
+                    let handled = handle_unhandled();
+                    if !handled {
+                        emit_warning(self);
+                    }
+                    drain(self);
+                    return;
                 }
+                // Under hot, fall through to the counter/print tail like
+                // Mode::Bun/Throw so the error is still reported.
                 let handled = handle_unhandled();
                 if !handled {
                     emit_warning(self);
                 }
-                drain(self);
-                return;
             }
             Mode::Throw => {
                 if handle_unhandled() {

@@ -384,7 +384,7 @@ Object.defineProperty(crypto_exports, "fips", {
 
 for (const rng of ["pseudoRandomBytes", "prng", "rng"]) {
   Object.defineProperty(crypto_exports, rng, {
-    value: deprecate(randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
+    value: deprecate(crypto_exports.randomBytes, `crypto.${rng} is deprecated.`, "DEP0115"),
     enumerable: false,
     configurable: true,
   });
@@ -398,7 +398,7 @@ crypto_exports.getDiffieHellman = crypto_exports.createDiffieHellmanGroup = Diff
 crypto_exports.createDiffieHellman = createDiffieHellman;
 crypto_exports.DiffieHellman = DiffieHellman;
 
-crypto_exports.diffieHellman = diffieHellman;
+crypto_exports.diffieHellman = guardLastCallback(diffieHellman);
 
 ECDH.prototype.setPublicKey = deprecate(ECDH.prototype.setPublicKey, "ecdh.setPublicKey() is deprecated.", "DEP0031");
 crypto_exports.ECDH = ECDH;

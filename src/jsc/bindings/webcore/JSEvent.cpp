@@ -64,6 +64,7 @@ using namespace JSC;
 // Functions
 
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_composedPath);
+static JSC_DECLARE_HOST_FUNCTION(jsEventPrototype_inspectCustom);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_stopPropagation);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_stopImmediatePropagation);
 static JSC_DECLARE_HOST_FUNCTION(jsEventPrototypeFunction_preventDefault);
@@ -94,7 +95,7 @@ public:
     static JSEventPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
         JSEventPrototype* ptr = new (NotNull, JSC::allocateCell<JSEventPrototype>(vm)) JSEventPrototype(vm, globalObject, structure);
-        ptr->finishCreation(vm);
+        ptr->finishCreation(vm, globalObject);
         return ptr;
     }
 
@@ -116,7 +117,7 @@ private:
     {
     }
 
-    void finishCreation(JSC::VM&);
+    void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSEventPrototype, JSEventPrototype::Base);
 
@@ -228,13 +229,57 @@ static const HashTableValue JSEventPrototypeTableValues[] = {
     { "BUBBLING_PHASE"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 3 } },
 };
 
+// node collapses an event to its bare constructor name once the depth budget
+// is spent (`util.inspect(new Event('x'), { depth: -1 })` is `'Event'`, not
+// `'[Event]'`). Returning `this` for every other depth hands the value back to
+// the inspector unchanged, so Bun's own richer event formatting is untouched.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/event_target.js#L200
+JSC_DEFINE_HOST_FUNCTION(jsEventPrototype_inspectCustom, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue thisValue = callFrame->thisValue();
+    // Bun's native inspector consults this hook on Event.prototype itself,
+    // which node's skips (it bails out when value.constructor.prototype ===
+    // value). Hand the value straight back rather than throwing ERR_INVALID_THIS
+    // at something the inspector is legitimately formatting.
+    if (!JSEvent::toWrapped(vm, thisValue)) {
+        return JSValue::encode(thisValue);
+    }
+
+    double depth = callFrame->argument(0).toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (!(depth < 0)) {
+        return JSValue::encode(thisValue);
+    }
+
+    // Subclasses print their own name, so this reads `this.constructor.name`
+    // rather than the wrapper's class name.
+    String name = "Event"_s;
+    JSValue constructorValue = thisValue.getObject()->get(lexicalGlobalObject, vm.propertyNames->constructor);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (constructorValue.isObject()) {
+        JSValue nameValue = constructorValue.getObject()->get(lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (nameValue.isString()) {
+            name = nameValue.toWTFString(lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
+    return JSValue::encode(jsString(vm, name));
+}
+
 const ClassInfo JSEventPrototype::s_info = { "Event"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventPrototype) };
 
-void JSEventPrototype::finishCreation(VM& vm)
+void JSEventPrototype::finishCreation(VM& vm, JSC::JSGlobalObject* globalObject)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSEvent::info(), JSEventPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
+        jsEventPrototype_inspectCustom, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::DontEnum | 0);
 }
 
 const ClassInfo JSEvent::s_info = { "Event"_s, &Base::s_info, &JSEventTable

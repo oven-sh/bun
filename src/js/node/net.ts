@@ -39,7 +39,7 @@ const {
 import type { Socket, SocketHandler, SocketListener } from "bun";
 import type { Server as NetServer, Socket as NetSocket, ServerOpts } from "node:net";
 import type { TLSSocket } from "node:tls";
-const { kTimeout, getTimerDuration } = require("internal/timers");
+const { kTimeout, getTimerDuration, setUnrefTimeout } = require("internal/timers");
 const { validateFunction, validateNumber, validateAbortSignal, validatePort, validateBoolean, validateInt32, validateString } = require("internal/validators"); // prettier-ignore
 const { isIPv4, isIPv6, isIP } = require("internal/net/isIP");
 const { kArmHandshakeTimeout, kVerifyError } = require("internal/net/symbols");
@@ -2657,7 +2657,7 @@ Socket.prototype.setTimeout = {
         this.removeListener("timeout", callback);
       }
     } else {
-      this[kTimeout] = setTimeout(this._onTimeout.bind(this), msecs).unref();
+      this[kTimeout] = setUnrefTimeout(this._onTimeout.bind(this), msecs);
 
       if (callback !== undefined) {
         validateFunction(callback, "callback");
@@ -3285,7 +3285,7 @@ function internalConnectMultiple(context, canceled?) {
     $debug("connect/multiple: setting the attempt timeout to %d ms", context.timeout);
 
     // If the attempt has not returned an error, start the connection timer
-    context[kTimeout] = setTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle).unref();
+    context[kTimeout] = setUnrefTimeout(internalConnectMultipleTimeout, context.timeout, context, req, self._handle);
   }
 }
 

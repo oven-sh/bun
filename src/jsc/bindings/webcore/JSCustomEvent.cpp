@@ -59,8 +59,7 @@ template<> CustomEvent::Init convertDictionary<CustomEvent::Init>(JSGlobalObject
     bool isNullOrUndefined = value.isUndefinedOrNull();
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (!isNullOrUndefined && !object) [[unlikely]] {
-        Bun::throwError(&lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE,
-            "The \"options\" argument must be of type object."_s);
+        Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "options"_s, "object"_s, value);
         return {};
     }
     CustomEvent::Init result;

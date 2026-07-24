@@ -768,11 +768,18 @@ impl Channel {
             sock_state_cb_data: std::ptr::from_ref::<C>(this).cast_mut().cast::<c_void>(),
             timeout: options.timeout.unwrap_or(-1),
             tries: options.tries.unwrap_or(4),
+            // Node turns c-ares' answer cache off (its default max TTL is one
+            // hour), so a resolver in Bun must not serve stale answers either.
+            // https://github.com/nodejs/node/blob/v26.3.0/src/cares_wrap.cc#L897
+            qcache_max_ttl: 0,
             ..Default::default()
         };
 
-        let optmask: c_int =
-            ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
+        let optmask: c_int = ARES_OPT_FLAGS
+            | ARES_OPT_TIMEOUTMS
+            | ARES_OPT_SOCK_STATE_CB
+            | ARES_OPT_TRIES
+            | ARES_OPT_QUERY_CACHE;
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
@@ -2004,6 +2011,7 @@ pub const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub const ARES_OPT_TRIES: c_int = 1 << 2;
 pub const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
 pub const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
+pub const ARES_OPT_QUERY_CACHE: c_int = 1 << 21;
 pub const ARES_NI_NAMEREQD: c_int = 1 << 2;
 pub const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
 pub const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;

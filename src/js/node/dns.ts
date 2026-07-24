@@ -10,6 +10,7 @@ const {
   validateBoolean,
   validateNumber,
   validateInt32,
+  validateOneOf,
   validatePort,
 } = require("internal/validators");
 
@@ -164,10 +165,10 @@ function validateFlagsOption(options) {
   }
 }
 
+const validFamilies = [0, 4, 6];
+
 function validateFamily(family) {
-  if (family !== 6 && family !== 4 && family !== 0) {
-    throw $ERR_INVALID_ARG_VALUE("family", family, "must be one of 0, 4 or 6");
-  }
+  validateOneOf(family, "family", validFamilies);
 }
 
 function validateFamilyOption(options) {
@@ -180,7 +181,7 @@ function validateFamilyOption(options) {
         options.family = 6;
         break;
       default:
-        validateFamily(options.family);
+        validateOneOf(options.family, "options.family", validFamilies);
         break;
     }
   }
@@ -213,11 +214,27 @@ function validateOrderOption(options) {
   }
 }
 
+// The record types node's resolveMap has an entry for. Anything else is an
+// ERR_INVALID_ARG_VALUE, checked before the name and callback so that
+// dns.resolve(name, 'toString') reports the rrtype rather than tripping over
+// Object.prototype.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/callback_resolver.js#L95
+const rrtypes = new Set(["A", "AAAA", "ANY", "CAA", "CNAME", "MX", "NAPTR", "NS", "PTR", "SOA", "SRV", "TXT"]);
+
+// Bun has always accepted rrtypes in any case; node only accepts the canonical
+// spelling. Uppercasing here keeps that leniency rather than newly rejecting
+// input that used to work.
+function validateRrtype(rrtype) {
+  if (!rrtypes.has(rrtype.toUpperCase())) {
+    throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype);
+  }
+}
+
 // Validates and returns the callback wrapped by guardCallback.
 // Callers must use the return value, not the argument.
-function validateResolve(hostname, callback) {
-  if (typeof hostname !== "string") {
-    throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
+function validateResolve(name, callback) {
+  if (typeof name !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("name", "string", name);
   }
 
   if (typeof callback !== "function") {
@@ -232,19 +249,6 @@ function validateLocalAddresses(first, second) {
   if (typeof second !== "undefined") {
     validateString(second);
   }
-}
-
-function invalidHostname(hostname) {
-  if (invalidHostname.warned) {
-    return;
-  }
-
-  invalidHostname.warned = true;
-  process.emitWarning(
-    `The provided hostname "${String(hostname)}" is not a valid hostname, and is supported in the dns module solely for compatibility.`,
-    "DeprecationWarning",
-    "DEP0118",
-  );
 }
 
 function translateLookupOptions(options) {
@@ -300,13 +304,7 @@ function lookup(hostname, options, callback) {
   validateLookupOptions(options);
 
   if (!hostname) {
-    invalidHostname(hostname);
-    if (options.all) {
-      callback(null, []);
-    } else {
-      callback(null, null, 4);
-    }
-    return;
+    throw $ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string");
   }
 
   const family = isIP(hostname);
@@ -361,6 +359,9 @@ function lookupService(address, port, callback) {
   }
 
   validateString(address);
+  if (isIP(address) === 0) {
+    throw $ERR_INVALID_ARG_VALUE("address", address);
+  }
   validatePort(port, "port");
 
   callback = guardCallback(callback);
@@ -409,6 +410,7 @@ var InternalResolver = class Resolver {
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
+    validateRrtype(rrtype);
 
     callback = validateResolve(hostname, callback);
 
@@ -472,7 +474,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveAny(hostname, callback) {
+  resolveAny(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -487,7 +492,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveCname(hostname, callback) {
+  resolveCname(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -502,7 +510,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveMx(hostname, callback) {
+  resolveMx(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -517,7 +528,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveNaptr(hostname, callback) {
+  resolveNaptr(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -532,7 +546,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveNs(hostname, callback) {
+  resolveNs(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -547,7 +564,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolvePtr(hostname, callback) {
+  resolvePtr(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -562,7 +582,10 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveSrv(hostname, callback) {
+  resolveSrv(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
+    }
     callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
@@ -577,11 +600,11 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveCaa(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+  resolveCaa(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
     }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveCaa(hostname)
@@ -595,11 +618,11 @@ var InternalResolver = class Resolver {
       );
   }
 
-  resolveTxt(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+  resolveTxt(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
     }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveTxt(hostname)
@@ -612,11 +635,11 @@ var InternalResolver = class Resolver {
         },
       );
   }
-  resolveSoa(hostname, callback) {
-    if (typeof callback !== "function") {
-      throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
+  resolveSoa(hostname, options, callback) {
+    if (typeof options === "function") {
+      callback = options;
     }
-    callback = guardCallback(callback);
+    callback = validateResolve(hostname, callback);
 
     Resolver.#getResolver(this)
       .resolveSoa(hostname)
@@ -750,16 +773,11 @@ const promises = {
     options = translateLookupOptions(options);
     validateLookupOptions(options);
 
+    // Unlike the callback form, the promise form reports an empty hostname by
+    // rejecting: node only reaches this check inside createLookupPromise().
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/dns/promises.js#L124
     if (!hostname) {
-      invalidHostname(hostname);
-      return Promise.$resolve(
-        options.all
-          ? []
-          : {
-              address: null,
-              family: 4,
-            },
-      );
+      return Promise.$reject($ERR_INVALID_ARG_VALUE("hostname", hostname, "must be a non-empty string"));
     }
 
     const family = isIP(hostname);
@@ -780,6 +798,9 @@ const promises = {
     }
 
     validateString(address);
+    if (isIP(address) === 0) {
+      throw $ERR_INVALID_ARG_VALUE("address", address);
+    }
     validatePort(port, "port");
 
     try {
@@ -797,7 +818,7 @@ const promises = {
 
   resolve(hostname, rrtype) {
     if (typeof hostname !== "string") {
-      throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
+      throw $ERR_INVALID_ARG_TYPE("name", "string", hostname);
     }
 
     if (typeof rrtype === "undefined") {
@@ -805,6 +826,7 @@ const promises = {
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
+    validateRrtype(rrtype);
 
     switch (rrtype?.toLowerCase()) {
       case "a":

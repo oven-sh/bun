@@ -29,7 +29,7 @@
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
-const { kTimeout, getTimerDuration } = require("internal/timers");
+const { kTimeout, getTimerDuration, setUnrefTimeout } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -4771,7 +4771,7 @@ function setSessionTimeout(this: Http2Session, msecs, callback) {
     // getter's drain-driven mirror).
     this[kTimeoutWrittenSnapshot] =
       this[bunHTTP2Socket]?._handle?.bytesWritten ?? this[bunHTTP2Socket]?.bytesWritten ?? 0;
-    this[kTimeout] = setTimeout(sessionTimerExpired, msecs, this).unref();
+    this[kTimeout] = setUnrefTimeout(sessionTimerExpired, msecs, this);
     if (callback !== undefined) {
       validateFunction(callback, "callback");
       this.once("timeout", callback);

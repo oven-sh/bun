@@ -130,7 +130,10 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private handleOpenDocument(document: vscode.TextDocument): void {
-    if (this.isTestFile(document) && !this.testController.items.get(windowsVscodeUri(document.uri.fsPath))) {
+    if (!this.isTestFile(document) || !this.documentBelongsToFolder(document.uri)) {
+      return;
+    }
+    if (!this.testController.items.get(windowsVscodeUri(document.uri.fsPath))) {
       this.discoverTests(false, windowsVscodeUri(document.uri.fsPath));
     }
   }
@@ -139,6 +142,12 @@ export class BunTestController implements vscode.Disposable {
     return (
       document?.uri?.scheme === "file" && /\.(test|spec)\.(js|jsx|ts|tsx|cjs|mjs|mts|cts)$/.test(document.uri.fsPath)
     );
+  }
+
+  // Open-document events are workspace-global; only adopt documents inside
+  // this controller's folder, matching findTestFiles and the file watcher.
+  private documentBelongsToFolder(uri: vscode.Uri): boolean {
+    return vscode.workspace.getWorkspaceFolder(uri)?.uri.toString() === this.workspaceFolder.uri.toString();
   }
 
   private async discoverInitialTests(
@@ -156,13 +165,15 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private customFilePattern(): string {
-    return vscode.workspace.getConfiguration("bun.test").get("filePattern", DEFAULT_TEST_PATTERN);
+    return vscode.workspace
+      .getConfiguration("bun.test", this.workspaceFolder.uri)
+      .get("filePattern", DEFAULT_TEST_PATTERN);
   }
 
   private async findTestFiles(cancellationToken?: vscode.CancellationToken): Promise<vscode.Uri[]> {
     const ignoreGlobs = await this.buildIgnoreGlobs(cancellationToken);
     const tests = await vscode.workspace.findFiles(
-      this.customFilePattern(),
+      new vscode.RelativePattern(this.workspaceFolder, this.customFilePattern()),
       "**/node_modules/**",
       // 5k tests is more than enough for most projects.
       // If they need more, they can manually open the files themself and it should be added to the test explorer.
@@ -182,7 +193,7 @@ export class BunTestController implements vscode.Disposable {
 
   private async buildIgnoreGlobs(cancellationToken?: vscode.CancellationToken): Promise<string[]> {
     const ignores = await vscode.workspace.findFiles(
-      "**/.gitignore",
+      new vscode.RelativePattern(this.workspaceFolder, "**/.gitignore"),
       "**/node_modules/**",
       undefined,
       cancellationToken,
@@ -269,15 +280,17 @@ export class BunTestController implements vscode.Disposable {
   }
 
   private getBunExecutionConfig() {
-    const customFlag = vscode.workspace.getConfiguration("bun.test").get("customFlag", "").trim();
-    const customScriptSetting = vscode.workspace.getConfiguration("bun.test").get("customScript", "bun test").trim();
+    const scope = this.workspaceFolder.uri;
+    const testConfig = vscode.workspace.getConfiguration("bun.test", scope);
+    const customFlag = testConfig.get("customFlag", "").trim();
+    const customScriptSetting = testConfig.get("customScript", "bun test").trim();
     const customScript = customScriptSetting.length ? customScriptSetting : "bun test";
 
     const [cmd, ...args] = customScript.split(/\s+/);
 
     let bunCommand = "bun";
     if (cmd === "bun") {
-      const bunRuntime = vscode.workspace.getConfiguration("bun").get<string>("runtime", "bun");
+      const bunRuntime = vscode.workspace.getConfiguration("bun", scope).get<string>("runtime", "bun");
       bunCommand = bunRuntime || "bun";
     } else {
       bunCommand = cmd;
@@ -1479,6 +1492,7 @@ export class BunTestController implements vscode.Disposable {
       shouldUseTestNamePattern: this.shouldUseTestNamePattern.bind(this),
 
       isTestFile: this.isTestFile.bind(this),
+      documentBelongsToFolder: this.documentBelongsToFolder.bind(this),
       customFilePattern: this.customFilePattern.bind(this),
       getBunExecutionConfig: this.getBunExecutionConfig.bind(this),
 

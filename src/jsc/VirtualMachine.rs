@@ -1486,19 +1486,22 @@ impl VirtualMachine {
                 self.unhandled_error_counter += 1;
                 self.exit_handler.exit_code = 1;
                 (self.on_unhandled_rejection)(self, global_object, err);
-                // See the recursion-guard note above: drop it before on_exit
-                // emits 'exit' (a throwing 'exit' listener re-enters here).
-                self.is_handling_uncaught_exception = false;
-                // Mirror run_command's exit_with_unhandled_note order: emit
-                // 'exit' first (Process::m_isExiting makes the process_exit
-                // below skip its own emit), then print the sourcemap note and
-                // version footer so they stay the last stderr lines.
-                self.on_exit();
+                // The drain path would have printed the sourcemap note and
+                // version footer via run_command's exit_with_unhandled_note;
+                // process_exit below bypasses that owner, so emit them here.
+                // Ordering note: process_exit emits 'exit' after this, so an
+                // exit listener writing to stderr lands after the footer
+                // (exit_with_unhandled_note puts the footer last). Cosmetic
+                // only; re-emitting 'exit' here first would double-run
+                // on_exit's cleanup-hook loop.
                 bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
                 bun_core::pretty_errorln!(
                     "<r>\n<d>{}<r>",
                     bun_core::Global::unhandled_error_bun_version_string,
                 );
+                // See the recursion-guard note above: drop it before
+                // process_exit emits 'exit'.
+                self.is_handling_uncaught_exception = false;
                 // SAFETY: see above.
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");

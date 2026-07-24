@@ -949,13 +949,21 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
-        let res = if arguments.len() > 1
-            && this.parse_addr(
+        let res = if arguments.len() > 1 && !arguments[1].is_undefined_or_null() {
+            if !this.parse_addr(
                 global_this,
                 JSValue::js_number(0.0),
                 arguments[1],
                 &mut interface,
             )? {
+                return Err(global_this.throw_value(
+                    bun_sys::Error::from_code_int(
+                        SystemErrno::EINVAL as c_int,
+                        bun_sys::Tag::setsockopt,
+                    )
+                    .to_js(global_this),
+                ));
+            }
             if addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch between address and interface"
@@ -1063,13 +1071,21 @@ impl UDPSocket {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
 
-        let res = if arguments.len() > 2
-            && this.parse_addr(
+        let res = if arguments.len() > 2 && !arguments[2].is_undefined_or_null() {
+            if !this.parse_addr(
                 global_this,
                 JSValue::js_number(0.0),
                 arguments[2],
                 &mut interface,
             )? {
+                return Err(global_this.throw_value(
+                    bun_sys::Error::from_code_int(
+                        SystemErrno::EINVAL as c_int,
+                        bun_sys::Tag::setsockopt,
+                    )
+                    .to_js(global_this),
+                ));
+            }
             if source_addr.ss_family != interface.ss_family {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Family mismatch among source, group and interface addresses"

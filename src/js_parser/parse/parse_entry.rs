@@ -1059,107 +1059,33 @@ impl<'a> Parser<'a> {
                 }
 
                 if !defer_to_cjs_wrapper {
-                    let count = (uses_dirname as usize) + (uses_filename as usize);
-                    let mut declared_symbols =
-                        bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-                    let decls = p
-                        .arena
-                        .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
-                    if uses_dirname {
-                        let value = if let Some((dir_name, _)) = import_meta_names {
-                            let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                            p.new_expr(
-                                E::Dot {
-                                    name: dir_name.into(),
-                                    name_loc: bun_ast::Loc::EMPTY,
-                                    target: import_meta,
-                                    can_be_removed_if_unused: true,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            )
-                        } else {
-                            p.new_expr(
-                                E::String {
-                                    data: p.source.path.name().dir.into(),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            )
-                        };
-                        decls[0] = G::Decl {
-                            binding: p.b(
-                                B::Identifier {
-                                    r#ref: p.dirname_ref,
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
-                            value: Some(value),
-                        };
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: p.dirname_ref,
-                            is_top_level: true,
-                        });
-                    }
-                    if uses_filename {
-                        let value = if let Some((_, path_name)) = import_meta_names {
-                            let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                            p.new_expr(
-                                E::Dot {
-                                    name: path_name.into(),
-                                    name_loc: bun_ast::Loc::EMPTY,
-                                    target: import_meta,
-                                    can_be_removed_if_unused: true,
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            )
-                        } else {
-                            p.new_expr(
-                                E::String {
-                                    data: p.source.path.text.into(),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            )
-                        };
-                        decls[uses_dirname as usize] = G::Decl {
-                            binding: p.b(
-                                B::Identifier {
-                                    r#ref: p.filename_ref,
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
-                            value: Some(value),
-                        };
-                        declared_symbols.append_assume_capacity(DeclaredSymbol {
-                            ref_: p.filename_ref,
-                            is_top_level: true,
-                        });
-                    }
-
-                    let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
-                        p.s(
-                            S::Local {
-                                kind: js_ast::LocalKind::KVar,
-                                decls: {
-                                    let mut dl = G::DeclList::init_capacity(decls.len());
-                                    for d in decls.iter_mut() {
-                                        dl.append_assume_capacity(core::mem::take(d));
-                                    }
-                                    dl
-                                },
+                    let dirname_value = if !uses_dirname {
+                        None
+                    } else if let Some((dir_name, _)) = import_meta_names {
+                        Some(import_meta_dot(p, dir_name))
+                    } else {
+                        Some(p.new_expr(
+                            E::String {
+                                data: p.source.path.name().dir.into(),
                                 ..Default::default()
                             },
                             bun_ast::Loc::EMPTY,
-                        )
-                    });
-                    before.push(js_ast::Part {
-                        stmts: part_stmts.into(),
-                        declared_symbols,
-                        tag: bun_ast::PartTag::DirnameFilename,
-                        ..Default::default()
-                    });
+                        ))
+                    };
+                    let filename_value = if !uses_filename {
+                        None
+                    } else if let Some((_, path_name)) = import_meta_names {
+                        Some(import_meta_dot(p, path_name))
+                    } else {
+                        Some(p.new_expr(
+                            E::String {
+                                data: p.source.path.text.into(),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ))
+                    };
+                    inject_dirname_filename_part(p, &mut before, dirname_value, filename_value);
                 }
                 uses_dirname = false;
                 uses_filename = false;
@@ -1755,85 +1681,10 @@ impl<'a> Parser<'a> {
         //
         if exports_kind == js_ast::ExportsKind::Esm && (uses_dirname || uses_filename) {
             debug_assert!(!p.options.bundle);
-            let count = (uses_dirname as usize) + (uses_filename as usize);
-            let mut declared_symbols =
-                bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-            let decls = p
-                .arena
-                .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
-            if uses_dirname {
-                // var __dirname = import.meta
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                decls[0] = G::Decl {
-                    binding: p.b(
-                        B::Identifier {
-                            r#ref: p.dirname_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(p.new_expr(
-                        E::Dot {
-                            name: b"dir".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: import_meta,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )),
-                };
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: p.dirname_ref,
-                    is_top_level: true,
-                });
-            }
-            if uses_filename {
-                // var __filename = import.meta.path
-                let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
-                decls[uses_dirname as usize] = G::Decl {
-                    binding: p.b(
-                        B::Identifier {
-                            r#ref: p.filename_ref,
-                        },
-                        bun_ast::Loc::EMPTY,
-                    ),
-                    value: Some(p.new_expr(
-                        E::Dot {
-                            name: b"path".into(),
-                            name_loc: bun_ast::Loc::EMPTY,
-                            target: import_meta,
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )),
-                };
-                declared_symbols.append_assume_capacity(DeclaredSymbol {
-                    ref_: p.filename_ref,
-                    is_top_level: true,
-                });
-            }
-
-            let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
-                p.s(
-                    S::Local {
-                        kind: js_ast::LocalKind::KVar,
-                        decls: {
-                            let mut dl = G::DeclList::init_capacity(decls.len());
-                            for d in decls.iter_mut() {
-                                dl.append_assume_capacity(core::mem::take(d));
-                            }
-                            dl
-                        },
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                )
-            });
-            before.push(js_ast::Part {
-                stmts: part_stmts.into(),
-                declared_symbols,
-                tag: bun_ast::PartTag::DirnameFilename,
-                ..Default::default()
-            });
+            // var __dirname = import.meta.dir, __filename = import.meta.path
+            let dirname_value = uses_dirname.then(|| import_meta_dot(p, b"dir"));
+            let filename_value = uses_filename.then(|| import_meta_dot(p, b"path"));
+            inject_dirname_filename_part(p, &mut before, dirname_value, filename_value);
         }
 
         if exports_kind == js_ast::ExportsKind::Esm
@@ -2340,6 +2191,98 @@ impl<'a> Parser<'a> {
 struct PragmaState {
     seen_cjs: bool,
     seen_bytecode: bool,
+}
+
+/// `import.meta.<name>`, marked side-effect-free so the declaration it
+/// initializes can be dropped if the symbol ends up unused.
+fn import_meta_dot<const TS: bool, const SCAN_ONLY: bool>(
+    p: &mut P<'_, TS, SCAN_ONLY>,
+    name: &'static [u8],
+) -> Expr {
+    let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+    p.new_expr(
+        E::Dot {
+            name: name.into(),
+            name_loc: bun_ast::Loc::EMPTY,
+            target: import_meta,
+            can_be_removed_if_unused: true,
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    )
+}
+
+/// Injects `var __dirname = ..., __filename = ...` as its own
+/// `PartTag::DirnameFilename` part. Shared by the bundle-time and runtime
+/// lowering paths so their declaration metadata cannot drift; each caller
+/// supplies only the value expressions (`None` = symbol unused, no decl).
+fn inject_dirname_filename_part<'a, const TS: bool, const SCAN_ONLY: bool>(
+    p: &mut P<'a, TS, SCAN_ONLY>,
+    before: &mut BumpVec<'a, js_ast::Part>,
+    dirname_value: Option<Expr>,
+    filename_value: Option<Expr>,
+) {
+    let count = (dirname_value.is_some() as usize) + (filename_value.is_some() as usize);
+    let mut declared_symbols =
+        bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+    let decls = p
+        .arena
+        .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+    let mut decl_i = 0;
+    if let Some(value) = dirname_value {
+        decls[decl_i] = G::Decl {
+            binding: p.b(
+                B::Identifier {
+                    r#ref: p.dirname_ref,
+                },
+                bun_ast::Loc::EMPTY,
+            ),
+            value: Some(value),
+        };
+        declared_symbols.append_assume_capacity(DeclaredSymbol {
+            ref_: p.dirname_ref,
+            is_top_level: true,
+        });
+        decl_i += 1;
+    }
+    if let Some(value) = filename_value {
+        decls[decl_i] = G::Decl {
+            binding: p.b(
+                B::Identifier {
+                    r#ref: p.filename_ref,
+                },
+                bun_ast::Loc::EMPTY,
+            ),
+            value: Some(value),
+        };
+        declared_symbols.append_assume_capacity(DeclaredSymbol {
+            ref_: p.filename_ref,
+            is_top_level: true,
+        });
+    }
+
+    let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
+        p.s(
+            S::Local {
+                kind: js_ast::LocalKind::KVar,
+                decls: {
+                    let mut dl = G::DeclList::init_capacity(decls.len());
+                    for d in decls.iter_mut() {
+                        dl.append_assume_capacity(core::mem::take(d));
+                    }
+                    dl
+                },
+                ..Default::default()
+            },
+            bun_ast::Loc::EMPTY,
+        )
+    });
+    before.push(js_ast::Part {
+        stmts: part_stmts.into(),
+        declared_symbols,
+        tag: bun_ast::PartTag::DirnameFilename,
+        ..Default::default()
+    });
 }
 
 #[cfg(target_arch = "wasm32")]

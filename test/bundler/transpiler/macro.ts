@@ -23,3 +23,23 @@ export async function ireturnapromise() {
   setTimeout(() => resolve("aaa"), 100);
   return promise;
 }
+
+export function reWithFlags() {
+  return /ab+c/gi;
+}
+
+export function reNoFlags() {
+  return /a\/b/;
+}
+
+export function reEmpty() {
+  return new RegExp("");
+}
+
+export function reUnicode() {
+  return /日本語/u;
+}
+
+export function reNested() {
+  return { pattern: /x[0-9]+/g, list: [/y/, /z/i] };
+}

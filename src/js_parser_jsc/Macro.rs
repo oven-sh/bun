@@ -606,9 +606,29 @@ impl<'a> Run<'a> {
 
     pub fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
-        // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
+        // `Tag::get` returns `TagResult { tag: TagPayload, cell: JSType }`;
         // collapse the payload to its discriminant via `.tag()`.
-        match T::get(value, self.global)?.tag.tag() {
+        let tag_result = T::get(value, self.global)?;
+        // The console formatter classifies RegExpObject as `String` (display text).
+        // That is wrong for AST serialization: emit a regex literal instead so the
+        // inlined value keeps its type at the call site.
+        if tag_result.cell == jsc::JSType::RegExpObject {
+            // RegExp.prototype.toString() yields a valid literal: `/source/flags`
+            // (interior `/` in `source` is escaped per EscapeRegExpPattern).
+            let bun_str = bun_core::OwnedString::new(value.to_bun_string(self.global)?);
+            let bytes: &[u8] = self.bump.alloc_slice_copy(&bun_str.to_owned_slice());
+            let flags_offset = strings::last_index_of_char(bytes, b'/')
+                .filter(|&i| i + 1 < bytes.len())
+                .and_then(|i| u16::try_from(i + 1).ok());
+            return Ok(Expr::init(
+                E::RegExp {
+                    value: E::Str::new(bytes),
+                    flags_offset,
+                },
+                self.caller.loc,
+            ));
+        }
+        match tag_result.tag.tag() {
             T::Error => self.coerce(T::Error, value),
             T::Undefined => self.coerce(T::Undefined, value),
             T::Null => self.coerce(T::Null, value),

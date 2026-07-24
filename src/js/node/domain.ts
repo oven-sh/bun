@@ -27,6 +27,21 @@ domain.createDomain = domain.create = function () {
     d.emit("error", e);
   }
 
+  // Node lets a throw from fn propagate and catches it later via
+  // process._fatalException's domain hook; Bun has no such hook yet, so the
+  // catch here stands in for it. The return value and `this` forwarding match
+  // Node exactly.
+  function runInDomain(thisArg, fn, args) {
+    d.enter();
+    try {
+      return fn.$apply(thisArg, args);
+    } catch (err) {
+      emitError(err);
+    } finally {
+      d.exit();
+    }
+  }
+
   d.add = function (emitter) {
     emitter.on("error", emitError);
   };
@@ -35,14 +50,7 @@ domain.createDomain = domain.create = function () {
   };
   d.bind = function (fn) {
     function runBound() {
-      d.enter();
-      try {
-        return fn.$apply(this, arguments);
-      } catch (err) {
-        emitError(err);
-      } finally {
-        d.exit();
-      }
+      return runInDomain(this, fn, arguments);
     }
     ObjectDefineProperty(runBound, "domain", {
       __proto__: null,
@@ -69,26 +77,11 @@ domain.createDomain = domain.create = function () {
         d.emit("error", er);
         return;
       }
-      var args = Array.prototype.slice.$call(arguments, 1);
-      d.enter();
-      try {
-        return fn.$apply(this, args);
-      } catch (err) {
-        emitError(err);
-      } finally {
-        d.exit();
-      }
+      return runInDomain(this, fn, Array.prototype.slice.$call(arguments, 1));
     };
   };
   d.run = function (fn, ...args) {
-    this.enter();
-    try {
-      return fn.$apply(this, args);
-    } catch (err) {
-      emitError(err);
-    } finally {
-      this.exit();
-    }
+    return runInDomain(this, fn, args);
   };
   d.dispose = function () {
     this.removeAllListeners();

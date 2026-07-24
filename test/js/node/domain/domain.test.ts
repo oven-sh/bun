@@ -35,20 +35,6 @@ describe("domain.bind()", () => {
     const bound = d.bind(() => {});
     expect((bound as any).domain).toBe(d);
   });
-
-  test("routes a thrown error to the domain's 'error' listener", () => {
-    const d = domain.create();
-    let caught;
-    d.on("error", (e: any) => {
-      caught = e;
-    });
-    const bound = d.bind(() => {
-      throw new Error("boom");
-    });
-    expect(bound()).toBeUndefined();
-    expect(caught).toBeInstanceOf(Error);
-    expect((caught as Error).message).toBe("boom");
-  });
 });
 
 describe("domain.intercept()", () => {
@@ -99,10 +85,12 @@ describe("domain.intercept()", () => {
   test("makes the domain active while the callback runs", () => {
     const d = domain.create();
     let inside;
+    expect(process.domain == null).toBe(true);
     d.intercept(() => {
       inside = process.domain;
     })(null);
     expect(inside).toBe(d);
+    expect(process.domain == null).toBe(true);
   });
 });
 

@@ -3586,37 +3586,17 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
-        // Take ownership of the CONNECT accumulation buffer BEFORE entering
-        // ProxyTunnel::start. The envelope has been fully consumed by the
-        // caller (handle_on_data_headers); we leave an empty buffer behind so
-        // that when the tunnel later re-enters handle_on_data_headers with
-        // decrypted upstream bytes, the stale CONNECT envelope isn't re-parsed
-        // as the user-facing response (see #30381). Without this, a split
-        // CONNECT 200 response (envelope arriving across two TCP reads) stays
-        // buffered; the tunnel's re-entry appends the decrypted upstream bytes
-        // onto it, re-parses the envelope as the response (leaking
-        // proxy-agent / connection: close into response.headers), and hands
-        // the upstream's raw HTTP/1.1 bytes to the body unparsed.
-        //
-        // `start_payload` may alias into this buffer's heap storage on the
-        // split-read path, but `std::mem::take` swaps only the `Vec` header —
-        // the heap allocation (and thus the bytes `start_payload` points at)
-        // stays put until `envelope_buf` is dropped at the end of this
-        // function. ProxyTunnel::start copies `start_payload` into the TLS BIO
-        // via start_with_payload -> BIO_write before it returns, so the bytes
-        // are captured before the drop.
-        //
-        // We hold the buffer in a local and drop it AFTER start() rather than
-        // clearing `self.state.response_message_buffer` afterwards:
-        // ProxyTunnel::start has synchronous failure paths (SSLWrapper init
-        // error, or a handshake-traffic error that synchronously fires
-        // on_close) that call close_and_fail -> fail -> the result callback,
-        // which can free the AsyncHTTP that embeds `*self`. Touching `self`
-        // after start() returns would be a use-after-free.
-        let envelope_buf = std::mem::take(&mut self.state.response_message_buffer);
+        // The sole caller (`handle_on_data_headers`) has already moved
+        // `response_message_buffer` into a local, so the CONNECT envelope is
+        // gone from `self` and `start_payload` borrows that caller local (or
+        // `incoming_data`), which outlives this call; the #30381 split-envelope
+        // hazard is handled there. ProxyTunnel::start has synchronous failure
+        // paths (SSLWrapper init error, or a handshake-traffic error that
+        // synchronously fires on_close) that call close_and_fail -> fail -> the
+        // result callback, which can free the AsyncHTTP that embeds `*self`.
+        debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
         ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
         // Must not reference `self` past this point — see comment above.
-        drop(envelope_buf);
     }
 
     pub fn handle_on_data_headers<const IS_SSL: bool>(
@@ -4583,16 +4563,6 @@ impl<'a> HTTPClient<'a> {
                     .get_body_buffer()
                     .append_slice_exact(incoming_data)?;
             }
-
-            if self.state.response_message_buffer.owns(incoming_data) {
-                // i'm not sure why this would happen and i haven't seen it happen
-                // but we should check
-                debug_assert!(
-                    self.state.get_body_buffer().list.as_ptr()
-                        != self.state.response_message_buffer.list.as_ptr()
-                );
-                self.state.response_message_buffer = MutableString::default();
-            }
         }
 
         self.report_progress(incoming_data.len());
@@ -4767,31 +4737,19 @@ impl<'a> HTTPClient<'a> {
         // using content-encoding per chunk is not supported
         self.state.chunked_decoder.consume_trailer = 1;
 
-        // Capture the length up front so no `&[u8]` aliases the live `&mut [u8]` below.
+        // `handle_on_data_headers` moves `response_message_buffer` into a
+        // local before dispatching here, so `incoming_data` never aliases
+        // `self` and the scratch copy is always sufficient (the dispatcher
+        // bounds `incoming_data.len()` to the scratch size).
         let in_len = incoming_data.len();
-        let buffer: &mut [u8] = if self.state.response_message_buffer.owns(incoming_data) {
-            // if we've already copied the buffer once, we can avoid copying it again.
-            // SAFETY: `incoming_data` is a subslice of `response_message_buffer.list`
-            // (`owns` just verified).
-            // `incoming_data.as_ptr() as *mut u8` would carry SharedReadOnly provenance
-            // (it came from a `&[u8]`) and writing through it is UB. Derive the mutable
-            // slice from the owning Vec instead so the write has Unique provenance.
-            let base = self.state.response_message_buffer.list.as_mut_ptr();
-            let off = incoming_data.as_ptr() as usize - base as usize;
-            // SAFETY: `owns()` proved `[base+off, base+off+in_len)` lies within
-            // `response_message_buffer.list`; `base` carries Unique provenance.
-            unsafe { bun_core::ffi::slice_mut(base.add(off), in_len) }
-        } else {
-            small[0..in_len].copy_from_slice(incoming_data);
-            &mut small[0..in_len]
-        };
+        let buffer = &mut small[0..in_len];
+        buffer.copy_from_slice(incoming_data);
 
         let mut bytes_decoded = in_len;
         // phr_decode_chunked mutates in-place
         // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
         // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (no live borrow of `self` at this
-        // point — `buffer` is raw-derived or borrows `small`).
+        // disjoint field of `self.state` (`buffer` borrows `small`).
         let pret = unsafe {
             picohttp::phr_decode_chunked(
                 &raw mut self.state.chunked_decoder,

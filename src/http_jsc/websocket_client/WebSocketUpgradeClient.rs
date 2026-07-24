@@ -403,8 +403,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             using_proxy
         );
 
-        let loop_ = vm.uws_loop();
-        let group = vm.rare_data().ws_upgrade_group::<SSL>(loop_);
+        let loop_ = global.bun_vm().uws_loop();
+        let group = global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
         } else {

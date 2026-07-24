@@ -547,14 +547,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
         let _guard = this.ref_guard();
 
-        let vm = self.get_handlers().vm;
-        // SAFETY: per-thread VM singleton; `VirtualMachine::get()` yields the
-        // canonical `*mut` (write provenance) — never derive `&mut` from the
-        // `&'static` borrow stored on Handlers (that's `invalid_reference_casting`).
-        let group = VirtualMachine::get()
-            .as_mut()
-            .rare_data()
-            .bun_connect_group::<SSL>(vm.uws_loop());
+        // `VirtualMachine::get()` yields the canonical `*mut` (write
+        // provenance) — never derive `&mut` from the `&'static` borrow stored
+        // on Handlers (that's `invalid_reference_casting`).
+        let vm = VirtualMachine::get().as_mut();
+        let loop_ = vm.uws_loop();
+        let group = vm.rare_data().bun_connect_group::<SSL>(loop_);
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
         } else {
@@ -3491,11 +3489,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `on_open`/`start_tls_handshake`.
 
         let sni: Option<&core::ffi::CStr> = cfg.and_then(|c| c.server_name_cstr());
-        // SAFETY: per-thread VM singleton; no aliasing `&mut` held.
+        let loop_ = vm.uws_loop();
         let group = VirtualMachine::get()
             .as_mut()
             .rare_data()
-            .bun_connect_group::<true>(vm.uws_loop());
+            .bun_connect_group::<true>(loop_);
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.

@@ -721,11 +721,17 @@ impl ErrorDeferred {
         let vm = global_this.bun_vm();
         // Worker terminate's `close_dns_for_terminate` fires EDESTRUCTION with
         // `is_shutting_down` already set; the task queue is about to be
-        // drained-without-run and ManagedTask has no cleanup here, so enqueuing
-        // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
-        // JSC is still live so the Strong handle releases cleanly.
+        // drained-without-run, so enqueuing is pointless. Drop now while JSC
+        // is still live so the Strong handle releases cleanly.
         if vm.is_shutting_down() {
             return;
+        }
+
+        // Reclaim for a rejection still queued at worker terminate: the
+        // drain runs this on the JS thread with the VM alive.
+        fn cleanup(p: *mut Context) {
+            // SAFETY: `p` is the queue-owned heap `Context`, sole owner.
+            drop(unsafe { bun_core::heap::take(p) });
         }
 
         let context = bun_core::heap::into_raw(Box::new(Context {
@@ -736,9 +742,10 @@ impl ErrorDeferred {
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
         vm.as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new_with_cleanup(
                 context,
                 Context::callback,
+                cleanup,
             ));
     }
 }

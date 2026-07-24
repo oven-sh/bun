@@ -309,6 +309,20 @@ impl ConcurrentTask {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
+    /// [`Self::from_callback`] plus a cleanup run if the task is reclaimed
+    /// unrun at VM teardown (`EventLoop::deinit`); the cleanup must release
+    /// whatever the callback would have (drain runs pre-teardown, VM alive).
+    pub fn from_callback_with_cleanup<T>(
+        ptr: *mut T,
+        callback: fn(*mut T) -> crate::JsResult<()>,
+        cleanup: fn(*mut T),
+    ) -> core::ptr::NonNull<ConcurrentTask> {
+        bun_core::mark_binding!();
+        Self::create(ManagedTask::ManagedTask::new_with_cleanup(
+            ptr, callback, cleanup,
+        ))
+    }
+
     pub fn from<T: Taskable>(
         &mut self,
         of: *mut T,

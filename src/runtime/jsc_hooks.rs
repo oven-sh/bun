@@ -1487,6 +1487,7 @@ pub(crate) static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     retroactively_report_discovered_tests,
     cancel_all_timers,
     close_dns_for_terminate,
+    abort_pending_transfers,
 };
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1587,6 +1588,32 @@ fn cron_clear_all_reload(vm: &mut VirtualMachine) {
 /// Main-thread only; called from `global_exit` after `is_shutting_down` is set.
 fn terminate_all_workers_and_wait(timeout_ms: u64) {
     bun_jsc::web_worker::terminate_all_and_wait(timeout_ms);
+}
+
+/// `RuntimeHooks::abort_pending_transfers` — walk the VM's
+/// `terminate_abort_registry` so every in-flight transfer is aborted and its
+/// producer pin drops promptly.
+///
+/// # Safety
+/// `vm` is the live per-thread VM on its own JS thread, pre-teardown.
+unsafe fn abort_pending_transfers(vm: *mut VirtualMachine) {
+    // Loop until the registry stays empty: an abort can run user JS (fetch's
+    // sink cancel) that starts new transfers, which must be aborted too or
+    // their pins would stall the gate close on a slow server. Bounded so a
+    // pathological cancel handler that keeps starting transfers cannot spin
+    // terminate forever (leftovers still resolve via their pins).
+    for _ in 0..64 {
+        // SAFETY: `vm` per fn contract (JS thread, pre-teardown).
+        let aborts = unsafe { &(*vm).terminate_abort_registry }
+            .borrow_mut()
+            .take_all();
+        if aborts.is_empty() {
+            return;
+        }
+        for abort in aborts {
+            abort();
+        }
+    }
 }
 
 /// `RuntimeHooks::cancel_all_timers` — cancel every `TimeoutObject` /

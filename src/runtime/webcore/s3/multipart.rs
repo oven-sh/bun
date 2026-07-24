@@ -102,7 +102,6 @@ use bun_core::{declare_scope, scoped_log};
 use bun_io::KeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::GlobalRef;
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -137,7 +136,6 @@ pub struct MultiPartUpload {
     pub request_payer: bool,
     pub credentials: bun_ptr::IntrusiveRc<S3Credentials>,
     pub poll_ref: KeepAlive,
-    pub vm: &'static VirtualMachine,
     // JSC_BORROW per LIFETIMES.tsv row 1886 — rust_type `&JSGlobalObject` used verbatim
     pub global_this: GlobalRef,
 
@@ -180,6 +178,16 @@ impl MultiPartUpload {
     // `ref_()`/`deref()` are provided by `#[derive(CellRefCounted)]`.
     // Inherent associated types (`pub type Ref = ...` inside `impl`) are
     // unstable; the alias lives at module scope as `MultiPartUploadRef`.
+    /// Terminate-drain release for a queued-but-unrun response whose ctx is
+    /// the upload itself: drops the request-held ref the JS callback would
+    /// have dropped (JS thread, VM alive).
+    ///
+    /// # Safety
+    /// `ctx` is the live `MultiPartUpload` registered as callback context.
+    pub(crate) unsafe fn release_unrun_ctx(ctx: *mut Self) {
+        Self::deref_(ctx);
+    }
+
     /// # Safety
     /// `this` must be a live heap-allocated `MultiPartUpload` created via
     /// `heap::alloc` with a non-zero intrusive refcount.
@@ -221,6 +229,17 @@ pub struct UploadPartResult {
 }
 
 impl UploadPart {
+    /// Terminate-drain release for a queued-but-unrun part response: drops
+    /// the ctx ref taken in `start()` (JS thread, VM alive). The part itself
+    /// stays owned by the upload's queue.
+    ///
+    /// # Safety
+    /// `part` is the live `UploadPart` registered as callback context.
+    pub(crate) unsafe fn release_unrun_part_ctx(part: *mut Self) {
+        // SAFETY: caller contract; the BackRef target outlives the part.
+        MultiPartUpload::deref_(unsafe { (*part).ctx.as_ptr() });
+    }
+
     fn free_allocated_slice(&mut self) {
         if self.allocated_size > 0 {
             // SAFETY: `data.ptr` was allocated by the global allocator with capacity == allocated_size
@@ -362,6 +381,7 @@ impl UploadPart {
             },
             s3_simple_request::S3Callback::Part(Self::on_part_response),
             callback_context,
+            s3_simple_request::ContextRelease::of(UploadPart::release_unrun_part_ctx),
         )
     }
 
@@ -395,7 +415,6 @@ impl Drop for MultiPartUpload {
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
-        let _ = self.vm;
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
@@ -448,6 +467,7 @@ impl MultiPartUpload {
                         },
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                         callback_context,
+                        s3_simple_request::ContextRelease::of(MultiPartUpload::release_unrun_ctx),
                     )?;
 
                     Ok(())
@@ -829,6 +849,7 @@ impl MultiPartUpload {
             },
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
             callback_context,
+            s3_simple_request::ContextRelease::of(MultiPartUpload::release_unrun_ctx),
         )
     }
 
@@ -860,6 +881,7 @@ impl MultiPartUpload {
             },
             s3_simple_request::S3Callback::Upload(Self::on_rollback_multi_part_request),
             callback_context,
+            s3_simple_request::ContextRelease::of(MultiPartUpload::release_unrun_ctx),
         )
     }
 
@@ -896,6 +918,7 @@ impl MultiPartUpload {
                 },
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
                 callback_context,
+                s3_simple_request::ContextRelease::of(MultiPartUpload::release_unrun_ctx),
             )?;
         } else if self.state == State::MultipartCompleted {
             // SAFETY: part points into self.queue which is live; reborrow disjoint from self fields used above
@@ -1038,6 +1061,7 @@ impl MultiPartUpload {
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
                 callback_context,
+                s3_simple_request::ContextRelease::of(MultiPartUpload::release_unrun_ctx),
             ); // TODO: properly propagate exception upwards
         } else {
             // we need to split

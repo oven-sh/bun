@@ -373,11 +373,19 @@ pub(super) mod lib_uv_backend {
     }
 
     impl Holder {
-        fn run(held: *mut c_void) -> jsc::AnyTask::JsResult<()> {
+        fn run(held: *mut Self) -> jsc::AnyTask::JsResult<()> {
             // SAFETY: held was heap-allocated in on_raw_libuv_complete
-            let held = unsafe { bun_core::heap::take(held.cast::<Self>()) };
+            let held = unsafe { bun_core::heap::take(held) };
             GetAddrInfoRequest::on_libuv_complete(held.uv_info);
             Ok(())
+        }
+
+        /// Reclaimed unrun by the terminate drain. The libuv request the
+        /// holder points at is owned by the loop; only the queue-owned box
+        /// itself is freed.
+        fn release_unrun(held: *mut Self) {
+            // SAFETY: queue-owned box popped by the drain; sole owner.
+            drop(unsafe { bun_core::heap::take(held) });
         }
     }
 
@@ -400,10 +408,11 @@ pub(super) mod lib_uv_backend {
         }));
         // SAFETY: holder is a valid heap allocation
         unsafe {
-            (*holder).task = jsc::AnyTask::AnyTask {
-                ctx: NonNull::new(holder.cast()),
-                callback: Holder::run,
-            };
+            (*holder).task = jsc::AnyTask::AnyTask::from_typed_with_dispose(
+                holder,
+                Holder::run,
+                Holder::release_unrun,
+            );
             (*this)
                 .head
                 .global_this()
@@ -939,12 +948,25 @@ impl CAresNameInfo {
     /// SAFETY: see `process_resolve`.
     pub(crate) unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: see fn contract — `this` is a live node.
-        let mut promise = unsafe { core::mem::take(&mut (*this).promise) };
-        // SAFETY: see fn contract — `this` is a live node.
-        let global_this = unsafe { (*this).global_this() };
-        let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
-        // SAFETY: see fn contract.
-        unsafe { Self::destroy(this) };
+        unsafe {
+            let global_this = (*this).global_this();
+            if result.is_empty() {
+                // Result conversion threw (e.g. worker.terminate() requested
+                // mid-completion): resolving with an empty JSValue is UB.
+                error_to_deferred(
+                    c_ares::Error::ECANCELLED,
+                    b"getnameinfo",
+                    Some((*this).name.as_ref()),
+                    &mut (*this).promise,
+                )
+                .reject_later(global_this);
+                Self::destroy(this);
+                return;
+            }
+            let mut promise = core::mem::take(&mut (*this).promise);
+            let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
+            Self::destroy(this);
+        }
     }
 
     /// Conditionally free a heap-allocated tail node. Head nodes (`allocated == false`)
@@ -1322,6 +1344,29 @@ pub mod get_addr_info_request {
             match self {
                 Backend::Libc(l) => &mut l.uv,
                 _ => unreachable!(),
+            }
+        }
+    }
+}
+
+impl GetAddrInfoRequest {
+    /// Reclaim a queued-but-unrun completion during the terminate drain
+    /// (JS thread, VM alive): frees the request and every chained lookup box
+    /// (their Drops release poll refs and resolver refs normally). The
+    /// resolver's pending-host cache entry is NOT evicted — sound only
+    /// because the per-VM resolver dies with the VM right after the drain.
+    ///
+    /// # Safety
+    /// `this` is the queue-owned heap request popped by the drain.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: caller contract.
+        unsafe {
+            let mut next = (*this).head.next;
+            drop(bun_core::heap::take(this));
+            while let Some(node) = next {
+                let node = bun_core::heap::take(node.as_ptr());
+                next = node.next;
             }
         }
     }
@@ -1729,8 +1774,24 @@ impl CAresReverse {
     pub(crate) unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
+            if result.is_empty() {
+                // Result conversion threw (e.g. worker.terminate() requested
+                // mid-completion): resolving with an empty JSValue is UB.
+                error_to_deferred(
+                    c_ares::Error::ECANCELLED,
+                    b"getHostByAddr",
+                    Some(&(*this).name),
+                    &mut (*this).promise,
+                )
+                .reject_later(global_this);
+                if let Some(resolver) = (*this).resolver.as_ref() {
+                    (*resolver.as_ptr()).request_completed();
+                }
+                Self::destroy(this);
+                return;
+            }
+            let mut promise = core::mem::take(&mut (*this).promise);
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -1879,8 +1940,24 @@ impl<T: CAresRecordType> CAresLookup<T> {
     pub(crate) unsafe fn on_complete(this: *mut Self, result: JSValue) {
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
-            let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
+            if result.is_empty() {
+                // Result conversion threw (e.g. worker.terminate() requested
+                // mid-completion): resolving with an empty JSValue is UB.
+                error_to_deferred(
+                    c_ares::Error::ECANCELLED,
+                    T::SYSCALL.as_bytes(),
+                    Some(&(*this).name),
+                    &mut (*this).promise,
+                )
+                .reject_later(global_this);
+                if let Some(resolver) = (*this).resolver.as_ref() {
+                    (*resolver.as_ptr()).request_completed();
+                }
+                Self::destroy(this);
+                return;
+            }
+            let mut promise = core::mem::take(&mut (*this).promise);
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
             if let Some(resolver) = (*this).resolver.as_ref() {
                 // IntrusiveRc holds a live ref; request_completed mutates pending_requests counter only.
@@ -2057,6 +2134,23 @@ impl DNSLookup {
         bun_output::scoped_log!(DNSLookup, "onCompleteWithArray");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
+            if result.is_empty() {
+                // Result conversion threw (e.g. worker.terminate() requested
+                // mid-completion): resolving with an empty JSValue is UB.
+                let global_this = (*this).global_this();
+                error_to_deferred(
+                    c_ares::Error::ECANCELLED,
+                    b"getaddrinfo",
+                    None,
+                    &mut (*this).promise,
+                )
+                .reject_later(global_this);
+                if let Some(resolver) = (*this).resolver.as_ref() {
+                    (*resolver.as_ptr()).request_completed();
+                }
+                Self::destroy(this);
+                return;
+            }
             let mut promise = core::mem::take(&mut (*this).promise);
             let global_this = (*this).global_this();
             let _ = promise.resolve_task(global_this, result); // TODO: properly propagate exception upwards
@@ -4525,9 +4619,11 @@ impl Resolver {
                 let new_global = (*value.as_ptr()).global_this();
                 pending = (*value.as_ptr()).next;
                 if !core::ptr::eq(prev_global, new_global) {
+                    // On conversion failure (termination/OOM) fall through with
+                    // an empty value — `on_complete_with_array` rejects it.
                     array = super::options_jsc::result_any_to_js(result, new_global)
                         .unwrap_or(None)
-                        .unwrap(); // TODO: properly propagate exception upwards
+                        .unwrap_or(JSValue::ZERO);
                     prev_global = new_global;
                 }
 

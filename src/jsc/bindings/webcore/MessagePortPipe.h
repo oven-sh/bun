@@ -50,6 +50,9 @@ public:
         QueuedShift = 8,
         QueuedOne = 1ull << QueuedShift,
     };
+    // Count of undelivered messages: the inbox plus the message currently
+    // being dispatched (its unit is released only once dispatch returns, so
+    // hasPendingActivity() keeps the receiving wrapper alive throughout).
     static constexpr uint64_t queuedCount(uint64_t s) { return s >> QueuedShift; }
 
     // Sender-thread operations.

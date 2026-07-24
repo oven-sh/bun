@@ -509,9 +509,7 @@ describe("dns.lookupService", () => {
 // https://github.com/nodejs/node/blob/v26.3.0/lib/dns.js#L180
 describe("lookup with an empty hostname", () => {
   it.each([undefined, false, null, NaN, ""])("dns.lookup(%p) throws", domain => {
-    expect(() => dns.lookup(domain, () => {})).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
+    expect(() => dns.lookup(domain, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
   });
 
   it.each([undefined, false, null, NaN, ""])("dns.promises.lookup(%p) rejects", async domain => {

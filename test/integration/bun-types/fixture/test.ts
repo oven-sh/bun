@@ -421,3 +421,108 @@ unknownMatchers.toContainEqual([""]);
 unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
+
+// test.extend() fixtures (#8257)
+{
+  // plain test callbacks still accept a done callback
+  test("done still works", done => {
+    expectType<(err?: unknown) => void>(done);
+    done();
+  });
+
+  const withValue = test.extend({ port: 3000 });
+  withValue("value fixture", ({ port }) => {
+    expectType<number>(port);
+  });
+  withValue("context param", context => {
+    expectType<number>(context.port);
+  });
+  // extended tests receive the context, not a done callback
+  withValue("no done", arg => {
+    // @ts-expect-error the first parameter is the fixture context, not a done callback
+    arg();
+  });
+
+  interface DB {
+    query(sql: string): Promise<unknown[]>;
+  }
+  const withDb = withValue.extend<{ db: DB; user: string }>({
+    db: async ({ port }, use) => {
+      expectType<number>(port);
+      expectType<(value: DB) => Promise<void>>(use);
+      await use({ query: async () => [] });
+    },
+    user: async ({ db }, use) => {
+      expectType<DB>(db);
+      await use("alice");
+    },
+  });
+  withDb("chained fixtures merge contexts", ({ port, db, user }) => {
+    expectType<number>(port);
+    expectType<DB>(db);
+    expectType<string>(user);
+  });
+
+  // modifiers preserve the context type
+  withDb.skip("skip", ({ db }) => {
+    expectType<DB>(db);
+  });
+  withDb.todoIf(false)("todoIf", ({ user }) => {
+    expectType<string>(user);
+  });
+  withDb.each([1, 2])("each %d", (n, { db }) => {
+    expectType<number>(n);
+    expectType<DB>(db);
+  });
+
+  // [value, options] tuple form
+  test.extend<{ log: string[] }>({
+    log: [
+      async ({}, use) => {
+        await use([]);
+      },
+      { auto: true },
+    ],
+  });
+
+  // function-typed fixtures are declared with the setup-function form
+  test.extend<{ fn: () => void }>({
+    fn: async ({}, use) => {
+      await use(() => {});
+    },
+  });
+
+  // invalid fixture value types are rejected
+  const typed = test.extend<{ port: number }>({ port: 3000 });
+  // @ts-expect-error string is not assignable to number
+  typed.extend<{ port: number }>({ port: "nope" });
+
+  // re-extending the same fixture name with a different type: the later type wins
+  const retyped = test.extend<{ v: number }>({ v: 1 }).extend<{ v: string }>({ v: "s" });
+  retyped("override replaces the fixture type", ({ v }) => {
+    expectType<string>(v);
+  });
+
+  // return-style fixtures: the setup function may return the value instead of
+  // calling use(); disposable values are disposed after the test
+  const withDisposable = test.extend<{ res: { tag: string } & AsyncDisposable; plain: number }>({
+    res: () => ({
+      tag: "r",
+      async [Symbol.asyncDispose]() {},
+    }),
+    plain: ctx => {
+      expectType<string>(ctx.res.tag);
+      return 42;
+    },
+  });
+  withDisposable("return-style fixtures are typed", ({ res, plain }) => {
+    expectType<string>(res.tag);
+    expectType<number>(plain);
+  });
+
+  // return-style fixtures must return the declared fixture type
+  test.extend<{ port: number }>({
+    // @ts-expect-error string is not assignable to the declared fixture type
+    port: () => "nope",
+  });
+}

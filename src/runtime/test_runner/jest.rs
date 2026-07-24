@@ -335,6 +335,7 @@ pub mod Jest {
             global_object,
             ScopeKind::Test,
             JSValue::ZERO,
+            JSValue::ZERO,
             BaseScopeCfg::default(),
             scope_strings::TEST(),
         )?;
@@ -344,6 +345,7 @@ pub mod Jest {
         let xtest_scope_functions = create_bound(
             global_object,
             ScopeKind::Test,
+            JSValue::ZERO,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
             scope_strings::XTEST(),
@@ -355,6 +357,7 @@ pub mod Jest {
             global_object,
             ScopeKind::Describe,
             JSValue::ZERO,
+            JSValue::ZERO,
             BaseScopeCfg::default(),
             scope_strings::DESCRIBE(),
         )?;
@@ -363,6 +366,7 @@ pub mod Jest {
         let xdescribe_scope_functions = create_bound(
             global_object,
             ScopeKind::Describe,
+            JSValue::ZERO,
             JSValue::ZERO,
             BaseScopeCfg { self_mode: ScopeMode::Skip, ..Default::default() },
             scope_strings::XDESCRIBE(),

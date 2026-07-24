@@ -470,6 +470,31 @@ test("foo, bar, baz", () => {
 
 Call `mock.restore()` in an `afterEach` block, or in your test preload script, instead of repeating cleanup in every test.
 
+### Reset Modules
+
+`jest.resetModules()` (and its `vi.resetModules()` alias) clears the module registry so the next `require()` or dynamic `import()` re-evaluates the module from scratch. This is useful when a module keeps top-level state that should not bleed between tests:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { beforeEach, expect, jest, test } from "bun:test";
+
+beforeEach(() => {
+  jest.resetModules();
+});
+
+test("fresh module state", () => {
+  const counter = require("./counter");
+  counter.increment();
+  expect(counter.get()).toBe(1);
+});
+
+test("state is reset", () => {
+  const counter = require("./counter");
+  expect(counter.get()).toBe(0);
+});
+```
+
+Module mocks registered with `jest.mock()` / `mock.module()` survive `resetModules()` and continue to intercept subsequent loads.
+
 ## Vitest Compatibility
 
 For added compatibility with tests written for Vitest, Bun provides the `vi` object as an alias for parts of the Jest mocking API:
@@ -491,6 +516,7 @@ test("vitest compatibility", () => {
   // vi.restoreAllMocks
   // vi.resetAllMocks
   // vi.clearAllMocks
+  // vi.resetModules
 });
 ```
 

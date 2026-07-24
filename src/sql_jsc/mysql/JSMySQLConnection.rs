@@ -60,10 +60,10 @@ pub struct JSMySQLConnection {
     vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
-    // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
-    // via a `ParentRef<JSMySQLConnection>` shared borrow; the inner protocol
-    // struct's `get_js_connection()` recovers the embedding via
-    // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
+    // pub(crate): `MySQLRequestQueue::advance(&JSMySQLConnection)` reaches
+    // `connection.get().queue`; the inner protocol struct recovers this
+    // wrapper via `js_connection_ref()` (`from_field_ptr!` — offset unchanged,
+    // `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
     pub auto_flusher: JsCell<AutoFlusher>,
@@ -175,7 +175,7 @@ impl JSMySQLConnection {
     pub(crate) fn connection_mut(&self) -> &mut my_sql_connection::MySQLConnection {
         // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
         // `&mut` is fresh per call site; reentrancy through
-        // `MySQLConnection::get_js_connection()` forms a shared
+        // `MySQLConnection::js_connection_ref()` forms a shared
         // `&JSMySQLConnection` only.
         unsafe { self.connection.get_mut() }
     }
@@ -698,15 +698,15 @@ impl JSMySQLConnection {
     }
     #[inline]
     pub fn can_pipeline(&self) -> bool {
-        self.connection_mut().can_pipeline()
+        self.connection.get().can_pipeline()
     }
     #[inline]
     pub fn can_prepare_query(&self) -> bool {
-        self.connection_mut().can_prepare_query()
+        self.connection.get().can_prepare_query()
     }
     #[inline]
     pub fn can_execute_query(&self) -> bool {
-        self.connection_mut().can_execute_query()
+        self.connection.get().can_execute_query()
     }
     #[inline]
     pub fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {

@@ -594,9 +594,10 @@ test.concurrent("run(): a user test writing the run-event marker cannot error th
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const seen = JSON.parse(stdout.trim() || "{}");
-  expect({ streamError: seen.streamError, passes: seen.passes, exitCode }).toEqual({
+  expect({ streamError: seen.streamError, passes: seen.passes, stderr, exitCode }).toEqual({
     streamError: null,
     passes: ["writes hostile marker lines"],
+    stderr: "",
     exitCode: 0,
   });
 });

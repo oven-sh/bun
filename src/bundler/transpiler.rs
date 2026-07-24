@@ -548,7 +548,7 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        self.options.load_defines(Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {

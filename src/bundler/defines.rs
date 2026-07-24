@@ -53,18 +53,15 @@ pub type Data = DefineData;
 
 fn env_string_store_put(
     store: &mut UserDefinesArray,
-    bump: &bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
-    // The `E.String` slab must NOT live in the thread-local
-    // `Expr.Data.Store` — `configureDefines` resets that store on return, so
-    // the env-define payloads must outlive it. Allocate from `bump` (the
-    // transpiler arena) so the slab is bulk-freed with the `Define` table
-    // instead of leaking a `Box` per env var. Value bytes alias the long-lived
-    // env-map storage.
+    // The `E.String` slab lives in the define table's own `AstArena` so it is
+    // bulk-freed with the `Define` table instead of leaking a `Box` per env
+    // var. Value bytes alias the long-lived env-map storage.
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
-        bump.alloc(bun_ast::E::EString::init(value)),
+        alloc.store(bun_ast::E::EString::init(value)),
     ));
     let data = DefineData::init(Options {
         value,
@@ -91,7 +88,7 @@ pub fn copy_env_for_define(
     framework_defaults_values: &[&[u8]],
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
-    bump: &bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
     const INVALID_HASH: u64 = u64::MAX - 1;
@@ -143,14 +140,14 @@ pub fn copy_env_for_define(
                         key_buf.clear();
                         key_buf.extend_from_slice(PROCESS_ENV);
                         key_buf.extend_from_slice(k);
-                        env_string_store_put(to_string, bump, &key_buf, value)?;
+                        env_string_store_put(to_string, alloc, &key_buf, value)?;
                     } else {
                         let hash = bun_wyhash::hash(k);
                         debug_assert!(hash != INVALID_HASH);
                         if let Some(key_i) = string_map_hashes.iter().position(|&h| h == hash) {
                             env_string_store_put(
                                 to_string,
-                                bump,
+                                alloc,
                                 framework_defaults_keys[key_i],
                                 value,
                             )?;
@@ -160,7 +157,7 @@ pub fn copy_env_for_define(
                     key_buf.clear();
                     key_buf.extend_from_slice(PROCESS_ENV);
                     key_buf.extend_from_slice(k);
-                    env_string_store_put(to_string, bump, &key_buf, value)?;
+                    env_string_store_put(to_string, alloc, &key_buf, value)?;
                 }
             }
         }
@@ -195,6 +192,7 @@ pub trait DefineExt: Sized {
         string_defines: Option<UserDefinesArray>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
+        ast_arena: bun_alloc::AstArena,
     ) -> Result<Box<Define>, bun_alloc::AllocError>;
 }
 
@@ -228,11 +226,13 @@ impl DefineExt for Define {
         string_defines: Option<UserDefinesArray>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
+        ast_arena: bun_alloc::AstArena,
     ) -> Result<Box<Define>, bun_alloc::AllocError> {
         let mut define = Box::new(Define {
             identifiers: StringHashMap::default(),
             dots: StringHashMap::default(),
             drop_debugger,
+            ast_arena,
         });
         define.dots.reserve(124);
 
@@ -328,7 +328,7 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<DefineData, crate::Error>;
 
     fn from_mergeable_input_entry(
@@ -338,14 +338,14 @@ pub trait DefineDataExt: Sized {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<(), crate::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<UserDefines, crate::Error>;
 }
 
@@ -357,7 +357,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<(), crate::Error> {
         user_defines.put_assume_capacity(
             key,
@@ -367,7 +367,7 @@ impl DefineDataExt for DefineData {
                 value_is_undefined,
                 method_call_must_be_replaced_with_undefined_,
                 log,
-                bump,
+                alloc,
             )?,
         );
         Ok(())
@@ -379,7 +379,7 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<DefineData, crate::Error> {
         let mut key_splitter = key.split(|b| *b == b'.');
         while let Some(part) = key_splitter.next() {
@@ -456,10 +456,8 @@ impl DefineDataExt for DefineData {
         // `"production"` / `"test"` for `process.env.NODE_ENV` & `BUN_ENV`, and
         // `true` / `false` for `process.browser`) — the entire default define
         // set on the `bun run` path. Build the `DefineData` straight from
-        // process-lifetime statics: skips the `bump.alloc_slice_copy` +
-        // `json_parser::parse_env_json` + `Expr::deep_clone` round-trip and,
-        // crucially, never touches the thread-local AST `Expr`/`Stmt` stores
-        // (created lazily below only when a value really needs JSON parsing).
+        // process-lifetime statics: skips the `alloc_slice_copy` +
+        // `json_parser::parse_env_json` + `Expr::deep_clone` round-trip below.
         if let Some(value) = const_default_define_value(value_str) {
             let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
             return Ok(DefineData {
@@ -479,22 +477,18 @@ impl DefineDataExt for DefineData {
             });
         }
 
-        let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
+        // Both the source bytes and the payload `StoreRef`s produced by
+        // `parse_env_json` / `deep_clone` below live in `alloc` (the define
+        // table's own `AstArena`) so they share the `Define` table's lifetime.
+        let arena_value: &[u8] = alloc.arena().alloc_slice_copy(value_str);
         let source = bun_ast::Source {
             // `Source.contents` is typed `&'static [u8]` as a stand-in for an
-            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
-            // which the caller (`Define::init`) owns for the lifetime of the
-            // `Define` table — i.e. as long as any `ExprData` produced here is
-            // reachable. Route through `StoreStr` for the lifetime erasure.
+            // arena lifetime (see logger/lib.rs `Str` note). Route through
+            // `StoreStr` for the lifetime erasure.
             contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
             path: defines_path(),
             ..Default::default()
         };
-        // The `AstArena` is placed in `bump` so its backing mi_heap shares the
-        // define table's lifetime (payload `StoreRef`s produced by
-        // `parse_env_json` and `deep_clone` below point into it).
-        let ast_arena: &bun_alloc::AstArena = bump.alloc(bun_alloc::AstArena::new());
-        let alloc = ast_arena.alloc();
         let expr = bun_parsers::json_parser::parse_env_json(&source, log, alloc)?;
         let data: ExprData = expr.data.deep_clone(alloc)?;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
@@ -519,7 +513,7 @@ impl DefineDataExt for DefineData {
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &mut bun_ast::Log,
-        bump: &bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<UserDefines, crate::Error> {
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);
@@ -531,7 +525,7 @@ impl DefineDataExt for DefineData {
                 false,
                 false,
                 log,
-                bump,
+                alloc,
             )?;
         }
 
@@ -544,7 +538,7 @@ impl DefineDataExt for DefineData {
                     true,
                     true,
                     log,
-                    bump,
+                    alloc,
                 )?;
             }
         }

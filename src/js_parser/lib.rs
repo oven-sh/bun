@@ -499,9 +499,22 @@ pub mod defines {
         pub identifiers: StringHashMap<IdentifierDefine>,
         pub dots: StringHashMap<Vec<DotDefine>>,
         pub drop_debugger: bool,
+        /// Owns the node payloads any `DefineData.value` `StoreRef` in this
+        /// table points into (JSON-parsed `--define` values, env-define
+        /// `E::String` slabs). Dropped with the table so those slabs don't
+        /// leak; unused (empty) when every value resolved through the
+        /// literal/identifier fast path.
+        pub ast_arena: bun_alloc::AstArena,
     }
 
     impl Define {
+        /// `AstAlloc` into this table's [`Self::ast_arena`] for building
+        /// `DefineData` payloads that must share its lifetime.
+        #[inline]
+        pub fn alloc(&self) -> bun_alloc::AstAlloc {
+            self.ast_arena.alloc()
+        }
+
         pub fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);

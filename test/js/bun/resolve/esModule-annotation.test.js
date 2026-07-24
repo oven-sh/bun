@@ -112,12 +112,10 @@ describe.concurrent("accessor properties on module.exports", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("with __esModule, getters are still invoked for named exports", async () => {
+  test("without __esModule, a named import of an accessor-backed property is a link-time error", async () => {
     const src = `
-      import * as ns from ${JSON.stringify(join(fixtures, "export-esModule-with-getter.cjs"))};
-      process.stdout.write("imported\\n");
-      process.stdout.write("keys=" + Object.keys(ns).sort().join(",") + "\\n");
-      process.stdout.write("lightBlue=" + ns.lightBlue + "\\n");
+      import { lightBlue } from ${JSON.stringify(join(fixtures, "export-with-getter.cjs"))};
+      console.log(lightBlue);
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--input-type=module", "-e", src],
@@ -126,8 +124,30 @@ describe.concurrent("accessor properties on module.exports", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("GETTER:lightBlue\nimported\nkeys=default,lightBlue,red\nlightBlue=#0ff\n");
-    expect(exitCode).toBe(0);
+    expect(stderr).toContain("SyntaxError");
+    expect(stderr).toContain("'lightBlue'");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
   });
+
+  for (const dir of ["without-type-module", "with-type-module"]) {
+    test(`with __esModule (${dir}), getters are still invoked for named exports`, async () => {
+      const src = `
+        import * as ns from ${JSON.stringify(join(import.meta.dir, dir, "export-esModule-with-getter.cjs"))};
+        process.stdout.write("imported\\n");
+        process.stdout.write("lightBlue=" + ns.lightBlue + "\\n");
+        process.stdout.write("hasKey=" + Object.keys(ns).includes("lightBlue") + "\\n");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--input-type=module", "-e", src],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("GETTER:lightBlue\nimported\nlightBlue=#0ff\nhasKey=true\n");
+      expect(exitCode).toBe(0);
+    });
+  }
 });

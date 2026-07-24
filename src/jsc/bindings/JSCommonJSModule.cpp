@@ -1004,8 +1004,8 @@ void populateESMExports(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (auto* exports = result.getObject()) {
-        bool hasESModuleMarker = false;
-        if (!ignoreESModuleAnnotation) {
+        bool fileHasESModule = false;
+        {
             PropertySlot slot(exports, PropertySlot::InternalMethodType::VMInquiry, &vm);
             auto has = exports->getPropertySlot(globalObject, esModuleMarker, slot);
             scope.assertNoException();
@@ -1014,11 +1014,12 @@ void populateESMExports(
                 CLEAR_IF_EXCEPTION(scope);
                 if (!value.isUndefinedOrNull()) {
                     if (value.pureToBoolean() == TriState::True) {
-                        hasESModuleMarker = true;
+                        fileHasESModule = true;
                     }
                 }
             }
         }
+        bool hasESModuleMarker = fileHasESModule && !ignoreESModuleAnnotation;
 
         auto* structure = exports->structure();
 
@@ -1122,12 +1123,18 @@ void populateESMExports(
                 RETURN_IF_EXCEPTION(scope, );
                 if (!has) continue;
 
-                // Without __esModule, skip JS accessor properties. Node's
-                // cjs-module-lexer never discovers these for plain CJS, so
-                // it never invokes them; invoking them here triggers user
-                // side effects (e.g. deprecation warnings) at import time.
-                // https://github.com/oven-sh/bun/issues/6747
-                if (slot.isAccessor()) {
+                // When module.exports has no __esModule marker, skip JS
+                // accessor properties instead of invoking them. Reading
+                // them here runs user side effects (deprecation warnings,
+                // lazy requires) before any importer code executes. Node
+                // only reads accessor-backed exports when cjs-module-lexer
+                // statically detected the name via a preceding
+                // `exports.x = ...` sentinel, which runtime enumeration
+                // cannot distinguish; transpiled output that emits such
+                // sentinels also sets __esModule, so gating on
+                // fileHasESModule covers the patterns Node actually
+                // supports. https://github.com/oven-sh/bun/issues/6747
+                if (slot.isAccessor() && !fileHasESModule) {
                     continue;
                 }
 

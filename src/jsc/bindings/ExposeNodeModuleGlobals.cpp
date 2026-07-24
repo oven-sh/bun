@@ -93,6 +93,49 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 #undef PUT_CUSTOM_GETTER_SETTER
 }
 
+// `--print` output: node logs the completion value through console.log, whose
+// rendering is util.inspect with default options. Bun's native console
+// formatter deliberately differs from node's, so `-p` routes its final value
+// through the node util.inspect port for byte-level output parity.
+// Returns the inspected string, or empty (after clearing the exception, like
+// Bun__preExecutionBootstrap above) so the Rust caller can fall back to the
+// native console formatter.
+extern "C" [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__inspectEvalResultForPrint(
+    Zig::GlobalObject* globalObject, JSC::EncodedJSValue encodedValue, bool colors)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSValue util = globalObject->internalModuleRegistry()->requireId(
+        globalObject, vm, Bun::InternalModuleRegistry::NodeUtil);
+    if (scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
+    if (!util.isObject())
+        return {};
+    JSC::JSValue inspect = util.get(globalObject, JSC::Identifier::fromString(vm, "inspect"_s));
+    if (scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
+    auto callData = JSC::getCallData(inspect);
+    if (callData.type == JSC::CallData::Type::None)
+        return {};
+    auto* options = JSC::constructEmptyObject(globalObject);
+    options->putDirect(vm, JSC::Identifier::fromString(vm, "colors"_s), JSC::jsBoolean(colors));
+    JSC::MarkedArgumentBuffer args;
+    args.append(JSC::JSValue::decode(encodedValue));
+    args.append(options);
+    JSC::JSValue result = JSC::call(globalObject, inspect, callData, util, args);
+    if (scope.exception()) [[unlikely]] {
+        CLEAR_IF_EXCEPTION(scope);
+        return {};
+    }
+    if (!result.isString())
+        return {};
+    return JSC::JSValue::encode(result);
+}
+
 // Evaluate `internal/process/pre_execution` before any user code runs.
 // Called from VirtualMachine::reload_entry_point when argv carries a
 // Node.js `--trace-*` flag. The registry caches the module, so repeat calls

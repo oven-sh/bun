@@ -108,14 +108,23 @@ pub fn set_override_module_run_main_promise(
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.
+///
+/// `is_async_capability`: `result` is the module's internal async-capability
+/// promise (top-level-await path), not the user-visible completion value, so
+/// `--print` must unwrap it rather than log it.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
-pub fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
+pub fn set_entry_point_eval_result_esm(
+    this: &mut VirtualMachine,
+    result: JSValue,
+    is_async_capability: bool,
+) {
     // allow esm evaluate to set value multiple times
     if !this.entry_point_result.cjs_set_value {
         // `global()` returns `&'static`, decoupled from `this` for the
         // disjoint `&mut this.entry_point_result` borrow.
         let global = this.global();
         this.entry_point_result.value.set(global, result);
+        this.entry_point_result.esm_capability = is_async_capability;
     }
 }
 

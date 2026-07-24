@@ -1,6 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
+import { inspect } from "util";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
@@ -53,7 +54,13 @@ for (const flag of ["-e", "--print"]) {
         });
 
         expect(stderr.toString("utf8")).toBe("");
-        expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        // `--print` renders with node's util.inspect (single-quoted strings);
+        // `-e` goes through console.log (double-quoted), which JSON can parse.
+        if (flag === "--print") {
+          expect(stdout.toString("utf8")).toBe(inspect(expected) + "\n");
+        } else {
+          expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        }
         expect(exitCode).toBe(0);
       }
 

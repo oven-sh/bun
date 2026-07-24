@@ -73,6 +73,14 @@ pub type ExceptionList = Vec<crate::schema_api::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
+    /// `value` is the internal async-capability promise of a top-level-await
+    /// module (see `EvalGlobalObject::moduleLoaderEvaluate`), not the user's
+    /// completion value — `--print` unwraps it instead of logging it.
+    pub esm_capability: bool,
+    /// `--print` already emitted its output. The print must happen exactly
+    /// once, on the first of event-loop drain or `process.exit()` — mirrors
+    /// node's `runScriptInContext` (beforeExit/exit pair).
+    pub printed: bool,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.
@@ -191,6 +199,9 @@ pub struct VirtualMachine {
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
+    /// `--print` (`bun -p`): [`print_eval_result_if_needed`] logs the
+    /// entry-point completion value on drain or `process.exit()`.
+    pub eval_and_print: bool,
     // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
     // dep); stored as its `u8` repr.
     pub dns_result_order: u8,
@@ -1486,6 +1497,89 @@ impl VirtualMachine {
         }
     }
 
+    /// `--print`: log the entry-point completion value exactly once, without
+    /// unwrapping promises — node prints `util.inspect` of the value on the
+    /// first of beforeExit/exit (`runScriptInContext` in
+    /// lib/internal/process/execution.js), so `-p 'Promise.resolve(42)'`
+    /// prints `Promise { 42 }` and a promise still pending when
+    /// `process.exit()` fires prints `Promise { <pending> }`.
+    ///
+    /// Only the CJS eval path takes this route; the ESM top-level-await path
+    /// stores an internal capability promise (see `setEntryPointEvalResultESM`
+    /// in ZigGlobalObject.cpp) that `Run::start` unwraps — node refuses ESM
+    /// `--print` input outright (`ERR_EVAL_ESM_CANNOT_PRINT`), so that
+    /// unwrapping remains a Bun extension.
+    pub fn print_eval_result_if_needed(&mut self) {
+        if !self.eval_and_print
+            || self.entry_point_result.printed
+            || self.entry_point_result.esm_capability
+            || !self.entry_point_result.value.has()
+        {
+            return;
+        }
+        self.entry_point_result.printed = true;
+        let result = self
+            .entry_point_result
+            .value
+            .get()
+            .unwrap_or(JSValue::UNDEFINED);
+
+        // node prints through console.log: a string value is written verbatim,
+        // everything else renders with util.inspect defaults. Bun's native
+        // console formatter deliberately differs from node's inspect, so route
+        // through the node util.inspect port for output parity — except JSX,
+        // a Bun extension node has no rendering for, which keeps the native
+        // console's `<hello>world</hello>` form.
+        if result.is_string() {
+            if let Ok(text) = crate::bun_string_jsc::from_js(result, self.global()) {
+                let utf8 = text.to_utf8();
+                bun_core::Output::println(format_args!("{}", bstr::BStr::new(utf8.slice())));
+                bun_core::Output::flush();
+                return;
+            }
+        }
+        let is_jsx = matches!(
+            crate::console_object::Tag::get_advanced(
+                result,
+                self.global(),
+                crate::console_object::TagOptions::HIDE_GLOBAL,
+            )
+            .map(|r| r.tag.tag()),
+            Ok(crate::console_object::Tag::JSX)
+        );
+        let inspected = if is_jsx {
+            JSValue::ZERO
+        } else {
+            crate::cpp::Bun__inspectEvalResultForPrint(
+                self.global(),
+                result,
+                bun_core::Output::enable_ansi_colors_stdout(),
+            )
+        };
+        if !inspected.is_empty_or_undefined_or_null() && inspected.is_string() {
+            if let Ok(text) = crate::bun_string_jsc::from_js(inspected, self.global()) {
+                let utf8 = text.to_utf8();
+                bun_core::Output::println(format_args!("{}", bstr::BStr::new(utf8.slice())));
+                bun_core::Output::flush();
+                return;
+            }
+        }
+
+        // Fallback (inspect unavailable or threw): the native console formatter.
+        // SAFETY: `&raw const result` is a single live stack slot; a null
+        // `ctype` routes to the per-VM console (stdout).
+        unsafe {
+            crate::console_object::message_with_type_and_level(
+                ::core::ptr::null_mut(),
+                crate::console_object::MessageType::Log,
+                crate::console_object::MessageLevel::Log,
+                self.global(),
+                &raw const result,
+                1,
+            );
+        }
+    }
+
     pub fn on_exit(&mut self) {
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
@@ -2113,6 +2207,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
             addr_of_mut!((*vm).smol).write(opts.smol);
+            addr_of_mut!((*vm).eval_and_print).write(opts.eval_mode);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid
             // range (not the `&[u8]` null-ptr) as the enum niche, so all-zero
@@ -4744,6 +4839,8 @@ impl VirtualMachine {
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();
         self.entry_point_result.cjs_set_value = false;
+        self.entry_point_result.esm_capability = false;
+        self.entry_point_result.printed = false;
         if let Some(promise) = self.pending_internal_promise {
             if self.pending_internal_promise_is_protected {
                 JSValue::from_cell(promise).unprotect();

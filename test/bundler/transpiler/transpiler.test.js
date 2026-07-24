@@ -2030,6 +2030,38 @@ export default <>hi</>
     expect(fragment.includes("var JSXFrag = foo.frag,")).toBe(true);
   });
 
+  // https://github.com/oven-sh/bun/issues/3528
+  describe('tsconfig jsxImportSource uses the automatic runtime for any package', () => {
+    for (const pkg of ["solid-js", "preact", "@emotion/react"]) {
+      it(`"${pkg}"`, async () => {
+        for (const tsconfig of [
+          { compilerOptions: { jsx: "react-jsx", jsxImportSource: pkg } },
+          JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: pkg } }),
+        ]) {
+          const bun = new Bun.Transpiler({ loader: "tsx", autoImportJSX: true, tsconfig });
+          for (const out of [
+            bun.transformSync(`export default <div>hi</div>`),
+            await bun.transform(`export default <div>hi</div>`),
+          ]) {
+            expect(out).not.toContain("React.createElement");
+            expect(out).toContain(`"${pkg}/jsx-`);
+          }
+        }
+      });
+    }
+
+    it("does not require jsx to be set alongside jsxImportSource", () => {
+      const bun = new Bun.Transpiler({
+        loader: "tsx",
+        autoImportJSX: true,
+        tsconfig: { compilerOptions: { jsxImportSource: "solid-js" } },
+      });
+      const out = bun.transformSync(`export default <div>hi</div>`);
+      expect(out).not.toContain("React.createElement");
+      expect(out).toContain(`"solid-js/jsx-`);
+    });
+  });
+
   it('logLevel: "error" throws', () => {
     var bun = new Bun.Transpiler({
       loader: "jsx",

@@ -480,11 +480,6 @@ impl TSConfigJSON {
             // Parse "jsxImportSource"
             if let Some(jsx_prop) = jsx_import_source_v {
                 if let Some(str) = jsx_prop.as_str() {
-                    if str.len() >= b"solid-js".len() && &str[..b"solid-js".len()] == b"solid-js" {
-                        result.jsx.runtime = options::jsx::Runtime::Solid;
-                        result.jsx_flags.insert(JsxField::Runtime);
-                    }
-
                     result.jsx.package_name = str.to_vec().into();
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);

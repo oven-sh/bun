@@ -314,6 +314,7 @@ static inline JSC::EncodedJSValue jsClipboardItemPrototypeFunction_getTypeBody(J
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto type = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    throwScope.release();
     // MIME types are matched by their lowercased serialization.
     impl.getType(type.convertToASCIILowercase(), WTF::move(promise));
     return JSValue::encode(jsUndefined());

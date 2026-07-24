@@ -167,6 +167,7 @@ static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_readTextBody(JSC:
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
+    throwScope.release();
     impl.readText(WTF::move(promise));
     return JSValue::encode(jsUndefined());
 }
@@ -187,6 +188,7 @@ static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeTextBody(JSC
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto data = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    throwScope.release();
     impl.writeText(WTF::move(data), WTF::move(promise));
     return JSValue::encode(jsUndefined());
 }
@@ -203,6 +205,7 @@ static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_readBody(JSC::JSG
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     auto& impl = castedThis->wrapped();
+    throwScope.release();
     impl.read(WTF::move(promise));
     return JSValue::encode(jsUndefined());
 }
@@ -223,6 +226,7 @@ static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeBody(JSC::JS
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto data = convert<IDLSequence<IDLInterface<ClipboardItem>>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "data"_s, "Clipboard"_s, "write"_s, "ClipboardItem"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    throwScope.release();
     impl.write(WTF::move(data), WTF::move(promise));
     return JSValue::encode(jsUndefined());
 }

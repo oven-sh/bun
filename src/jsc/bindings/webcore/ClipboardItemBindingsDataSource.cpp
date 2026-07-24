@@ -219,6 +219,10 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
             return;
         didSettleAllTypes();
     });
+    // whenSettled only throws for termination, in which case no reaction was
+    // registered; the completion handler is already retired on re-collect.
+    if (catchScope.exception()) [[unlikely]]
+        catchScope.clearException();
 }
 
 void ClipboardItemBindingsDataSource::didSettleAllTypes()

@@ -805,27 +805,31 @@ test.concurrent("run(): verdict numbering, file ordinals, causes, and summary ke
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(JSON.parse(stdout.trim() || "null")).toEqual({
-    verdicts: [
-      ["one-a", 1],
-      ["one-b", 2],
-      ["two-a", 3],
-      ["two-b", 4],
-    ],
-    completes: [
-      ["one-a", 1],
-      ["one-b", 2],
-      ["one.test.mjs", 1],
-      ["two-a", 1],
-      ["two-b", 2],
-      ["two.test.mjs", 2],
-    ],
-    causes: {
-      twoA: { type: "number", value: 42 },
-      twoB: { name: "AssertionError", nameEnumerable: false, actual: 1, expected: 2, operator: "strictEqual" },
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    stderr: "",
+    exitCode: 0,
+    result: {
+      verdicts: [
+        ["one-a", 1],
+        ["one-b", 2],
+        ["two-a", 3],
+        ["two-b", 4],
+      ],
+      completes: [
+        ["one-a", 1],
+        ["one-b", 2],
+        ["one.test.mjs", 1],
+        ["two-a", 1],
+        ["two-b", 2],
+        ["two.test.mjs", 2],
+      ],
+      causes: {
+        twoA: { type: "number", value: 42 },
+        twoB: { name: "AssertionError", nameEnumerable: false, actual: 1, expected: 2, operator: "strictEqual" },
+      },
+      summaryKeys: ["tests", "failed", "passed", "cancelled", "skipped", "todo", "topLevel", "suites"],
     },
-    summaryKeys: ["tests", "failed", "passed", "cancelled", "skipped", "todo", "topLevel", "suites"],
   });
 });
 
@@ -917,11 +921,13 @@ test.concurrent.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Verbatim node v26.3.0 output for this fixture.
-  expect(JSON.parse(stdout.trim() || "null")).toEqual([
-    { name: "s", msg: "failed running after hook", causeMsg: "after boom" },
-  ]);
+  expect({ fails: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    fails: [{ name: "s", msg: "failed running after hook", causeMsg: "after boom" }],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("junit reporter escapes attribute quotes exactly like node", async () => {
@@ -978,12 +984,14 @@ test.concurrent.each([
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Same events and side effects real node v26.3.0 produces.
   expect({
     events: JSON.parse(stdout.trim() || "null"),
     secondBefore: existsSync(join(String(dir), "second-before.txt")),
     ownAfter: existsSync(join(String(dir), "own-after.txt")),
+    stderr,
+    exitCode,
   }).toEqual({
     events: [
       ["a", "cancelledByParent"],
@@ -991,6 +999,8 @@ test.concurrent.each([
     ],
     secondBefore: false,
     ownAfter: true,
+    stderr: "",
+    exitCode: 0,
   });
 });
 
@@ -1261,8 +1271,8 @@ test.concurrent("run({isolation:'none'}): a suite's duration spans all of its ch
   const { suiteDuration } = JSON.parse(stdout.trim() || "null");
   // node reports the full span (>=200ms for two 100ms tests); a clock started
   // at the first child's completion sees only the second test (~100ms).
+  expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   expect(suiteDuration).toBeGreaterThan(180);
-  expect(exitCode).toBe(0);
 });
 
 test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to the inner test", async () => {
@@ -1299,8 +1309,11 @@ test.concurrent("run({isolation:'none'}): .only inside describe.only narrows to 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Same event stream real node v26.3.0 emits for this fixture.
-  expect(JSON.parse(stdout.trim() || "null")).toEqual({ passed: ["b", "s"], failed: [] });
-  expect(exitCode).toBe(0);
+  expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    result: { passed: ["b", "s"], failed: [] },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {

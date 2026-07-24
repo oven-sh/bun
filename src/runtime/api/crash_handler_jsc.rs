@@ -216,8 +216,16 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         let (start, end) = crash_handler::cli_state::jit_pool_range();
         let arr = JSValue::create_empty_array(global, 2)?;
-        arr.put_index(global, 0, JSValue::from_uint64_no_truncate(global, start as u64))?;
-        arr.put_index(global, 1, JSValue::from_uint64_no_truncate(global, end as u64))?;
+        arr.put_index(
+            global,
+            0,
+            JSValue::from_uint64_no_truncate(global, start as u64),
+        )?;
+        arr.put_index(
+            global,
+            1,
+            JSValue::from_uint64_no_truncate(global, end as u64),
+        )?;
         Ok(arr)
     }
 

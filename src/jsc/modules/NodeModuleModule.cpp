@@ -12,10 +12,14 @@
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+#include <JavaScriptCore/JSModuleNamespaceObject.h>
+#include <JavaScriptCore/ModuleRegistryEntry.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
 
+#include "ModuleLoader.h"
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
@@ -854,10 +858,86 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPreloadModules,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// Re-binds every named export of an already-imported builtin to the value its
+// CommonJS exports object currently holds. Mirrors node's syncBuiltinESMExports
+// (lib/internal/modules/esm/utils.js): names that were dropped from the exports
+// object become undefined, names added to it afterwards are not new exports, and
+// `default` is left pointing at the exports object itself.
+static void syncBuiltinESMExportsForModule(Zig::GlobalObject* globalObject, JSC::ThrowScope& scope, JSC::AbstractModuleRecord* record, JSC::JSObject* exportsObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+
+    auto* namespaceObject = record->getModuleNamespace(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (!namespaceObject)
+        return;
+
+    for (const auto& exportEntry : record->exportEntries()) {
+        auto exportName = JSC::Identifier::fromUid(vm, exportEntry.key.get());
+        if (exportName == vm.propertyNames->defaultKeyword)
+            continue;
+
+        JSValue value = jsUndefined();
+        bool hasOwnProperty = exportsObject->hasOwnProperty(globalObject, exportName);
+        RETURN_IF_EXCEPTION(scope, );
+        if (hasOwnProperty) {
+            value = exportsObject->get(globalObject, exportName);
+            RETURN_IF_EXCEPTION(scope, );
+        }
+
+        namespaceObject->overrideExportValue(globalObject, exportName, value);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
-    (JSGlobalObject * globalObject,
+    (JSGlobalObject * lexicalGlobalObject,
         JSC::CallFrame* callFrame))
 {
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* moduleLoader = globalObject->moduleLoader();
+
+    // Snapshot the keys before touching any of them: reading an export can run a
+    // getter, which can load another module and rehash the registry underneath us.
+    Vector<JSC::Identifier, 8> builtinKeys;
+    for (auto& [key, entry] : moduleLoader->moduleMap()) {
+        if (!key.first || !entry)
+            continue;
+        if (!Bun::isBuiltinModule(String { key.first }))
+            continue;
+        builtinKeys.append(JSC::Identifier::fromUid(vm, key.first));
+    }
+
+    for (const auto& moduleKey : builtinKeys) {
+        auto* entry = moduleLoader->registryEntry(moduleKey);
+        if (!entry)
+            continue;
+        auto* record = entry->record();
+        if (!record)
+            continue;
+        // A record exists before it is linked (an in-flight dynamic import), and an
+        // unlinked one has no bindings for anyone to observe yet. getModuleNamespace
+        // requires a linked record, so skip it the way every other registry walker does.
+        if (!record->moduleEnvironmentMayBeNull())
+            continue;
+
+        WTF::String keyString = moduleKey.string();
+        BunString specifier = Bun::toString(keyString);
+        JSValue exportsValue = Bun::resolveAndFetchBuiltinModule(globalObject, &specifier);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        // Builtins that are real ES modules (bun:wrap, bun:main) have no CommonJS
+        // exports object to read from, so there is nothing to sync.
+        auto* exportsObject = exportsValue ? exportsValue.getObject() : nullptr;
+        if (!exportsObject)
+            continue;
+
+        syncBuiltinESMExportsForModule(globalObject, scope, record, exportsObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 

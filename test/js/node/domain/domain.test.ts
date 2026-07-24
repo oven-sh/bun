@@ -95,11 +95,16 @@ test("child domain added to a parent routes error to the parent's listener witho
   expect(r.exitCode).toBe(0);
 });
 
-test("process.domain accessor is configurable (matches Node)", async () => {
+test("process.domain / exports._stack / exports.active accessors are configurable (matches Node)", async () => {
   const r = await run(
-    `require("domain"); console.log(Object.getOwnPropertyDescriptor(process, "domain").configurable)`,
+    `const d = require("domain");
+     console.log(
+       Object.getOwnPropertyDescriptor(process, "domain").configurable,
+       Object.getOwnPropertyDescriptor(d, "_stack").configurable,
+       Object.getOwnPropertyDescriptor(d, "active").configurable,
+     );`,
   );
-  expect(r.stdout.trim()).toBe("true");
+  expect(r.stdout.trim()).toBe("true true true");
   expect(r.exitCode).toBe(0);
 });
 

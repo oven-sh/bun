@@ -204,6 +204,7 @@ ObjectDefineProperty(process, "domain", {
 // materializes via its before() hook rather than storing.
 ObjectDefineProperty(exports, "_stack", {
   __proto__: null,
+  configurable: true,
   enumerable: true,
   get: function () {
     return currentStack();
@@ -216,6 +217,7 @@ ObjectDefineProperty(exports, "_stack", {
 // The active domain is always the one that we're currently in.
 ObjectDefineProperty(exports, "active", {
   __proto__: null,
+  configurable: true,
   enumerable: true,
   get: function () {
     return currentActive();

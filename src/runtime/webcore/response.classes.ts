@@ -189,6 +189,7 @@ export default [
       // This is *not* spec-compliant.
       lastModified: {
         getter: "getLastModified",
+        setter: "setLastModified",
       },
 
       // Non-standard, s3 + BunFile support

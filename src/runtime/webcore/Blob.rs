@@ -254,6 +254,7 @@ pub trait BlobExt {
     ) -> JsResult<()>;
     fn get_loader(&self, jsc_vm: &VirtualMachine) -> Option<bun_ast::Loader>;
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue;
+    fn set_last_modified(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()>;
     fn get_size_for_bindings(&self) -> u64;
     fn get_stat(&self, global_this: &JSGlobalObject, callback: &CallFrame) -> JsResult<JSValue>;
     fn get_size(&self, _: &JSGlobalObject) -> JSValue;
@@ -2168,11 +2169,12 @@ impl BlobExt for Blob {
             }
         }
 
-        if self.is_jsdom_file.get() {
-            return JSValue::js_number(self.last_modified.get());
-        }
+        JSValue::js_number(self.last_modified.get())
+    }
 
-        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
+    fn set_last_modified(&self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        self.last_modified.set(value.to_number(global_this)?);
+        Ok(())
     }
 
     fn get_size_for_bindings(&self) -> u64 {

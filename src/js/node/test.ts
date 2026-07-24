@@ -467,12 +467,10 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   // events (the file node's enqueue/dequeue) are not emitted into no listeners.
   await Promise.resolve();
 
-  let globalTeardownFunction: Function | undefined;
   try {
     // node awaits the globalSetup module (its bootstrap promise) before the
     // run's own setup callback — runner.js runChain().
     const globalHooks = await loadGlobalSetupModule(opts.globalSetupPath as string | undefined, opts.cwd as string);
-    globalTeardownFunction = globalHooks?.globalTeardownFunction;
     if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
@@ -534,7 +532,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     });
     // node runs globalTeardown from the root's postRun, after the summary, and
     // skips it entirely when globalSetup threw (harness.js:280).
-    if (globalTeardownFunction !== undefined) await globalTeardownFunction();
+    if (globalHooks?.globalTeardownFunction !== undefined) await globalHooks.globalTeardownFunction();
   } catch (err) {
     reporter.destroy(err as Error);
     return;
@@ -3651,10 +3649,8 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   // Callers attach listeners synchronously on the returned stream; yield first.
   await Promise.resolve();
 
-  let globalTeardownFunction: Function | undefined;
   try {
     const globalHooks = await loadGlobalSetupModule(opts.globalSetupPath as string | undefined, opts.cwd as string);
-    globalTeardownFunction = globalHooks?.globalTeardownFunction;
     if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
@@ -3774,7 +3770,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       duration_ms: durationMs,
       file: undefined,
     });
-    if (globalTeardownFunction !== undefined) await globalTeardownFunction();
+    if (globalHooks?.globalTeardownFunction !== undefined) await globalHooks.globalTeardownFunction();
   } catch (err) {
     restoreAfterInProcessRun();
     reporter.destroy(err as Error);
@@ -3836,18 +3832,16 @@ async function runStandalone() {
   // first test executes and its globalTeardown after the run, in every mode —
   // including a file run directly, without --test.
   const globalSetupPath = readExecArgvValue("--test-global-setup");
-  let globalTeardownFunction: Function | undefined;
 
   try {
     const globalHooks = await loadGlobalSetupModule(globalSetupPath, process.cwd());
-    globalTeardownFunction = globalHooks?.globalTeardownFunction;
     if (globalHooks?.globalSetupFunction !== undefined) await globalHooks.globalSetupFunction();
     const hookError = await executeStandaloneQueue(root);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
     }
-    if (globalTeardownFunction !== undefined) await globalTeardownFunction();
+    if (globalHooks?.globalTeardownFunction !== undefined) await globalHooks.globalTeardownFunction();
   } catch (err) {
     console.error(err);
     counts.failed++;
@@ -4651,14 +4645,19 @@ test.after = after;
 test.beforeEach = beforeEach;
 test.afterEach = afterEach;
 test.assert = assert;
-// node exposes these lazily through a getter on module.exports (lib/test.js:44).
+// node exposes these lazily through a cached getter on module.exports
+// (lib/test.js:44) so requiring node:test does not pull the snapshot module in.
+let lazySnapshotNamespace;
 Object.defineProperty(test, "snapshot", {
   __proto__: null,
   configurable: true,
   enumerable: true,
   get() {
-    const { setDefaultSnapshotSerializers, setResolveSnapshotPath } = require("internal/test/snapshot");
-    return { __proto__: null, setDefaultSnapshotSerializers, setResolveSnapshotPath };
+    if (lazySnapshotNamespace === undefined) {
+      const { setDefaultSnapshotSerializers, setResolveSnapshotPath } = require("internal/test/snapshot");
+      lazySnapshotNamespace = { __proto__: null, setDefaultSnapshotSerializers, setResolveSnapshotPath };
+    }
+    return lazySnapshotNamespace;
   },
 });
 test.run = run;

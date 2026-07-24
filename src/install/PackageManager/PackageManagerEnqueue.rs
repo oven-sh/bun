@@ -2330,10 +2330,7 @@ fn get_or_put_resolved_package(
                             // make sure verifyResolutions sees this resolution as a valid package id
                             success_fn(this, dependency_id, workspace_package_id);
                             return Ok(Some(ResolvedPackageResult {
-                                package: *this
-                                    .lockfile
-                                    .packages
-                                    .get(workspace_package_id as usize),
+                                package: *this.lockfile.packages.get(workspace_package_id as usize),
                                 is_first_time: false,
                                 task: None,
                             }));

@@ -127,14 +127,7 @@ test("dependency on workspace without version in package.json", async () => {
     "latest",
     "",
   ];
-  const shouldNotWork: string[] = [
-    "1",
-    "1.*",
-    "1.1.*",
-    "1.1.0",
-    "*-pre+build",
-    "*+build",
-  ];
+  const shouldNotWork: string[] = ["1", "1.*", "1.1.*", "1.1.0", "*-pre+build", "*+build"];
 
   for (const version of shouldWork) {
     writeFileSync(

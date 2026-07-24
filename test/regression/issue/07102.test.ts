@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
 import { open } from "node:fs/promises";

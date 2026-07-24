@@ -20,7 +20,7 @@ impl ProgressStrings {
         ProgressStrings::DOWNLOAD_NO_EMOJI_
     )
     .as_bytes();
-    pub const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
+    pub const DOWNLOAD_EMOJI: &'static str = "🔍 ";
 
     const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
     const EXTRACT_NO_EMOJI: &'static [u8] =
@@ -30,7 +30,7 @@ impl ProgressStrings {
         ProgressStrings::EXTRACT_NO_EMOJI_
     )
     .as_bytes();
-    pub const EXTRACT_EMOJI: &'static str = "  🚚 ";
+    pub const EXTRACT_EMOJI: &'static str = "🚚 ";
 
     pub const INSTALL_NO_EMOJI_: &'static str = "Installing";
     const INSTALL_NO_EMOJI: &'static [u8] =
@@ -40,13 +40,13 @@ impl ProgressStrings {
         ProgressStrings::INSTALL_NO_EMOJI_
     )
     .as_bytes();
-    pub const INSTALL_EMOJI: &'static str = "  📦 ";
+    pub const INSTALL_EMOJI: &'static str = "📦 ";
 
     pub const SAVE_NO_EMOJI_: &'static str = "Saving lockfile";
     const SAVE_NO_EMOJI: &'static [u8] = ProgressStrings::SAVE_NO_EMOJI_.as_bytes();
     const SAVE_WITH_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::SAVE_EMOJI, ProgressStrings::SAVE_NO_EMOJI_).as_bytes();
-    pub const SAVE_EMOJI: &'static str = "  🔒 ";
+    pub const SAVE_EMOJI: &'static str = "🔒 ";
 
     pub const SCRIPT_NO_EMOJI_: &'static str = "Running script";
     const SCRIPT_NO_EMOJI: &'static [u8] =
@@ -56,7 +56,7 @@ impl ProgressStrings {
         ProgressStrings::SCRIPT_NO_EMOJI_
     )
     .as_bytes();
-    pub const SCRIPT_EMOJI: &'static str = "  ⚙️  ";
+    pub const SCRIPT_EMOJI: &'static str = "⚙️ ";
 
     #[inline]
     pub fn download() -> &'static [u8] {

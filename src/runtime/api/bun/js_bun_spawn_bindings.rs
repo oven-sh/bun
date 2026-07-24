@@ -967,6 +967,39 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
+    // Index into stdio[0..3] when "ipc" occupies stdin/stdout/stderr. Node's
+    // stdio array index is the child fd, so the channel must be dup2'd onto
+    // that fd rather than appended as an extra fd. Computed here (after the
+    // stdio array / shortcut-option parsing and the terminal override have all
+    // finished mutating stdio[0..3]) so it reflects what spawn_process will
+    // actually see. Windows still routes 'ipc' at 0-2 through an extra_fds
+    // slot (libuv named pipe); only POSIX can dup2 the socketpair onto
+    // stdin/out/err.
+    #[cfg(unix)]
+    let ipc_stdio_index: i32 = {
+        let idx = stdio
+            .iter()
+            .position(|s| matches!(s, Stdio::Ipc))
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+        if idx != -1 && (IS_SYNC || maybe_ipc_mode.is_none()) {
+            // spawnSync / Bun.spawn without an ipc callback: nothing will read
+            // spawned.ipc, so creating a socketpair would leave the child with
+            // a broken-peer socket and its first write() raises SIGPIPE. Fall
+            // back to /dev/null (the pre-existing behaviour for this slot).
+            for s in stdio.iter_mut() {
+                if matches!(s, Stdio::Ipc) {
+                    *s = Stdio::Ignore;
+                }
+            }
+            -1
+        } else {
+            idx
+        }
+    };
+    #[cfg(not(unix))]
+    let ipc_stdio_index: i32 = -1;
+
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe
     let mut ipc_env_buf: [u8; 32] = [0; 32];
     if !IS_SYNC {
@@ -986,6 +1019,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 return Ok(JSValue::ZERO);
             }
             let ipc_fd: i32 = 'brk: {
+                if ipc_stdio_index != -1 {
+                    // "ipc" is at stdin/stdout/stderr; the channel is that fd
+                    // in the child and no extra_fds slot is appended.
+                    break 'brk ipc_stdio_index;
+                }
                 if ipc_channel == -1 {
                     // If the user didn't specify an IPC channel, we need to add one
                     ipc_channel = i32::try_from(extra_fds.len()).expect("int cast");
@@ -1269,6 +1307,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let spawned_stdin = spawned.stdin.take();
     let spawned_stdout = spawned.stdout.take();
     let spawned_stderr = spawned.stderr.take();
+    #[cfg(unix)]
+    let spawned_ipc = spawned.ipc.take();
     let mut spawned_extra_pipes = core::mem::take(&mut spawned.extra_pipes);
     // `to_process` returns a freshly Box-allocated `Process` carrying an
     // intrusive `ThreadSafeRefCount` initialized to 1. `Subprocess.process`
@@ -1279,8 +1319,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     #[cfg(unix)]
     let posix_ipc_fd = if !IS_SYNC && maybe_ipc_mode.is_some() {
-        spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
+        if ipc_stdio_index != -1 {
+            spawned_ipc.unwrap_or(Fd::INVALID)
+        } else {
+            spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
+        }
     } else {
+        // The ipc_stdio_index scan above rewrote Stdio::Ipc at 0-2 to Ignore
+        // when there is no IPC consumer, so spawn_process_posix never populated
+        // spawned.ipc on this branch.
+        debug_assert!(spawned_ipc.is_none());
         Fd::INVALID
     };
 
@@ -1397,6 +1445,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 if let Some(fd) = spawned_stderr {
                     fd.close();
                 }
+                if ipc_stdio_index != -1 && posix_ipc_fd != Fd::INVALID {
+                    posix_ipc_fd.close();
+                }
             }
             #[cfg(not(unix))]
             {
@@ -1505,6 +1556,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Ensure we kill the process so we don't leave things in an unexpected state.
         let _ = subprocess.try_kill(subprocess.kill_signal);
 
+        #[cfg(unix)]
+        if ipc_stdio_index != -1 && posix_ipc_fd != Fd::INVALID {
+            posix_ipc_fd.close();
+        }
+
         if global_this.has_exception() {
             return Err(JsError::Thrown);
         }
@@ -1540,6 +1596,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     IPC::SocketUnion::Uninitialized,
                 )));
                 posix_ipc_info = Some(IPC::Socket::from(socket));
+            } else if ipc_stdio_index != -1 && posix_ipc_fd != Fd::INVALID {
+                // Not in stdio_pipes; close it here so it isn't leaked. The
+                // extra_fds path leaves it OwnedFd in stdio_pipes for
+                // finalize_streams to close.
+                posix_ipc_fd.close();
             }
         }
     }
@@ -1559,9 +1620,15 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 }
             }
             // uws owns the fd now (owns_fd=1); neutralize the slot so finalizeStreams doesn't double-close.
-            subprocess.stdio_pipes.with_mut(|v| {
-                v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
-            });
+            // Only when the channel actually came from extra_fds: if
+            // ipc_stdio_index is set, uws took spawned.ipc and the extra_fds
+            // slot (if any) is a separate OwnedFd that finalize_streams should
+            // still close.
+            if ipc_channel != -1 && ipc_stdio_index == -1 {
+                subprocess.stdio_pipes.with_mut(|v| {
+                    v[usize::try_from(ipc_channel).expect("int cast")] = ExtraPipe::Unavailable;
+                });
+            }
         }
         #[cfg(not(unix))]
         {

@@ -773,8 +773,35 @@ pub unsafe fn spawn_process_posix(
             PosixStdio::Inherit => {
                 actions.inherit(fileno)?;
             }
-            PosixStdio::Ipc | PosixStdio::Ignore => {
+            PosixStdio::Ignore => {
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
+            }
+            PosixStdio::Ipc => {
+                // Node's stdio array index IS the child fd, including 'ipc':
+                // `['ipc','pipe','pipe']` means the channel is the child's fd 0.
+                // Mirror the extra_fds IPC handling (socketpair + dup2) so the
+                // requested slot is the channel instead of /dev/null.
+                let fds: [Fd; 2] =
+                    match bun_sys::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, true) {
+                        Ok(p) => p,
+                        Err(e) => return Ok(Err(e)),
+                    };
+                cleanup.to_close_at_end.push(fds[1]);
+                if spawned.ipc.is_none() {
+                    cleanup.to_close_on_error.push(fds[0]);
+                    spawned.ipc = Some(fds[0]);
+                } else {
+                    // node:child_process rejects multiple 'ipc' entries; for a
+                    // direct Bun.spawn caller the first slot is the channel and
+                    // later slots are dead sockets. Close the parent end
+                    // unconditionally so it isn't leaked (to_close_on_error is
+                    // disarmed on success).
+                    cleanup.to_close_at_end.push(fds[0]);
+                }
+                actions.dup2(fds[1], fileno)?;
+                if fds[1] != fileno {
+                    actions.close(fds[1])?;
+                }
             }
             PosixStdio::Path(path) => {
                 actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;

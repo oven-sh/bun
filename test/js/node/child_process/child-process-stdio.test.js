@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { execSync, spawn } from "node:child_process";
 import { once } from "node:events";
 
@@ -164,5 +164,43 @@ describe("child.stdin", () => {
       ret: false,
       cbCode: "ERR_STREAM_DESTROYED",
     });
+  });
+});
+
+// Node's stdio array index is the child fd number, including for 'ipc'.
+// Placing 'ipc' at index 0/1/2 must wire the channel to that fd, not fd 3.
+describe.skipIf(isWindows).each([
+  [0, ["ipc", "pipe", "pipe"]],
+  [1, ["pipe", "ipc", "pipe"]],
+  [2, ["pipe", "pipe", "ipc"]],
+])("stdio 'ipc' at index %d", (index, stdio) => {
+  it("places the channel at the requested fd", async () => {
+    // The child must not touch stdout/stderr directly (those may be the
+    // channel itself); it reports back via process.send.
+    const CHILD = `
+      const fs = require("node:fs");
+      process.once("message", ping => {
+        process.send({
+          ping,
+          fdIsSocket: fs.fstatSync(${index}).isSocket(),
+        });
+        process.exit(0);
+      });
+    `;
+    const child = spawn(bunExe(), ["-e", CHILD], { env: bunEnv, stdio });
+    const { promise, resolve, reject } = Promise.withResolvers();
+    child.once("message", resolve);
+    child.once("error", reject);
+    child.once("exit", (code, signal) =>
+      reject(new Error(`child exited before message (code=${code} signal=${signal})`)),
+    );
+    child.send("ping");
+    const msg = await promise;
+    expect(msg).toEqual({
+      ping: "ping",
+      // Requested slot must be the socketpair end, not /dev/null.
+      fdIsSocket: true,
+    });
+    expect(child.stdio[index]).toBe(null);
   });
 });

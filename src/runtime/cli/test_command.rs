@@ -3057,24 +3057,26 @@ impl TestCommand {
             // multi-file run. Must precede the GC-root release below; handlers
             // are user JS and may touch still-live state.
             let drain = reporter.summary().files <= 1;
-            let prev_unhandled = vm.unhandled_error_counter;
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
             vm.run_with_api_lock(|| unsafe {
+                let prev_unhandled = (*vm_ptr).unhandled_error_counter;
                 if drain {
                     (*vm_ptr).on_before_exit();
                 }
                 (*vm_ptr).global().handle_rejected_promises();
+                // The drain runs after `active_file` is cleared and after the
+                // exit-code decision above, so an uncaught throw it surfaces
+                // prints but reaches neither; propagate it here. A throw from
+                // inside an `'exit'` listener stays outside this check to keep
+                // main's existing behavior for `bun test`.
+                if (*vm_ptr).unhandled_error_counter > prev_unhandled {
+                    (*vm_ptr).exit_handler.exit_code = 1;
+                }
                 (*vm_ptr).on_exit();
             });
-            // The drain and handlers above run after `active_file` is cleared,
-            // so an uncaught throw there prints but does not reach the
-            // exit-code decision above; propagate it here.
-            if vm.unhandled_error_counter > prev_unhandled {
-                vm.exit_handler.exit_code = 1;
-            }
             // on_exit() already set is_shutting_down; global_exit() asserts it.
         } else {
             vm.is_shutting_down = true;

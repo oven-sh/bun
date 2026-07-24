@@ -1532,8 +1532,12 @@ describe("bun test", () => {
     using dir = tempDir("bun-test-node-drain-throw", {
       "drain-throw.test.ts": `
         import { test } from "node:test";
-        test("a", () => {});
-        setTimeout(() => { throw new Error("boom") }, 500);
+        test("a", () => {
+          // Arm from inside the body so the timer is due after the per-file
+          // loop exits; the end-of-run drain is the first place that ticks it.
+          setTimeout(() => { throw new Error("boom") }, 20);
+        });
+        process.on("exit", code => console.log("exit code seen:", code));
       `,
     });
 
@@ -1546,6 +1550,7 @@ describe("bun test", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("boom");
+    expect(stdout).toContain("exit code seen: 1");
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(1);
   });

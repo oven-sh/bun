@@ -705,6 +705,15 @@ impl CompileC {
             }
         }
 
+        // Bundled N-API headers (`<bun-cc>/node`), so `#include <node_api.h>`
+        // works in addition to `#include <node/node_api.h>` (resolved via the
+        // `<bun-cc>` sysinclude path above).
+        if let Some(node_dir) = CompilerRT::node_dir() {
+            if state.add_sys_include_path(node_dir).is_err() {
+                bun_output::scoped_log!(TCC, "TinyCC failed to add sysinclude path");
+            }
+        }
+
         #[cfg(target_os = "macos")]
         {
             let mut pathbuf = PathBuffer::uninit();
@@ -2744,6 +2753,9 @@ struct CompilerRT;
 // Process-lifetime singleton — PORTING.md §Forbidden: use OnceLock, never
 // `static mut` + leak.
 static COMPILER_RT_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
+// `<COMPILER_RT_DIR>/node` — the bundled N-API headers, so `cc()` sources can
+// `#include <node_api.h>` (node-gyp style) as well as `#include <node/node_api.h>`.
+static COMPILER_RT_NODE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 
 struct CompilerRtSources;
 impl CompilerRtSources {
@@ -2755,6 +2767,24 @@ impl CompilerRtSources {
         ("tgmath.h", include_bytes!("./ffi-tgmath.h")),
         ("stddef.h", include_bytes!("./ffi-stddef.h")),
         ("varargs.h", b"// empty"),
+    ];
+
+    /// N-API headers, written to `<bun-cc>/node/` so that
+    /// `#include <node/node_api.h>` works out of the box for `cc()`
+    /// sources using `napi_env`/`napi_value` — no system Node.js install
+    /// required. These are the same headers Bun's own napi bindings build
+    /// against.
+    const NODE_HEADERS: &'static [(&'static str, &'static [u8])] = &[
+        ("node_api.h", include_bytes!("../napi/node_api.h")),
+        (
+            "node_api_types.h",
+            include_bytes!("../napi/node_api_types.h"),
+        ),
+        ("js_native_api.h", include_bytes!("../napi/js_native_api.h")),
+        (
+            "js_native_api_types.h",
+            include_bytes!("../napi/js_native_api_types.h"),
+        ),
     ];
 }
 
@@ -2786,11 +2816,35 @@ impl CompilerRT {
         };
         // `ZBox::from_bytes` panics on OOM.
         let _ = COMPILER_RT_DIR.set(ZBox::from_bytes(&*path));
+
+        // Bundle the N-API headers under `<bun-cc>/node/`. `<bun-cc>` is on the
+        // sysinclude path, so `#include <node/node_api.h>` resolves; the `node/`
+        // dir is also added so `#include <node_api.h>` (node-gyp style) works.
+        let Ok(node_dir) = bun_cc.make_open_path(b"node", bun_sys::OpenDirOptions::default())
+        else {
+            return;
+        };
+        for (name, source) in CompilerRtSources::NODE_HEADERS {
+            let name_z = ZBox::from_bytes(name.as_bytes());
+            let _ = bun_sys::File::write_file(node_dir.fd(), name_z.as_zstr(), source);
+        }
+        if let Ok(node_path) = bun_sys::get_fd_path(node_dir.fd(), &mut path_buf) {
+            let _ = COMPILER_RT_NODE_DIR.set(ZBox::from_bytes(&*node_path));
+        }
     }
 
     pub(crate) fn dir() -> Option<&'static ZStr> {
         CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
         COMPILER_RT_DIR
+            .get()
+            .map(|b| b.as_zstr())
+            .filter(|d| !d.is_empty())
+    }
+
+    /// `<bun-cc>/node` — where the bundled N-API headers live.
+    pub(crate) fn node_dir() -> Option<&'static ZStr> {
+        CREATE_COMPILER_RT_DIR_ONCE.call_once(Self::create_compiler_rt_dir);
+        COMPILER_RT_NODE_DIR
             .get()
             .map(|b| b.as_zstr())
             .filter(|d| !d.is_empty())

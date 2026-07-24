@@ -475,7 +475,7 @@ class Database implements SqliteTypes.Database {
 
   [Symbol.dispose]() {
     if (!this.#hasClosed) {
-      this.close(true);
+      this.close();
     }
   }
 

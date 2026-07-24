@@ -63,11 +63,7 @@ describe("__dirname/__filename resolve at runtime in bundled output", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       const out = JSON.parse(stdout.trim());
       // All four should point at the *runtime* bundle location, not the source
@@ -127,11 +123,7 @@ describe("__dirname/__filename resolve at runtime in bundled output", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout.trim())).toEqual({
         dirname: String(runDir),
@@ -156,11 +148,7 @@ describe("__dirname/__filename resolve at runtime in bundled output", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      build.stdout.text(),
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain("var __dirname =");
     expect(stdout).not.toContain("import.meta");

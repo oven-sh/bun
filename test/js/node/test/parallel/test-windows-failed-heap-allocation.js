@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 
 // This test ensures that an out of memory error exits with code 134 on Windows
 

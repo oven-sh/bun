@@ -1,6 +1,5 @@
 'use strict';
 const common = require('../common');
-if (common.isWindows) return; // TODO: BUN
 const net = require('net');
 
 // This file tests the option handling of net.connect,
@@ -21,7 +20,7 @@ const CLIENT_VARIANTS = 12;
     socket.end('ok');
   }, CLIENT_VARIANTS))
   .listen(serverPath, common.mustCall(function() {
-    const getConnectCb = () => common.mustCall(function() {
+    const getConnectCb = common.mustCallAtLeast(() => common.mustCall(function() {
       this.end();
       this.on('close', common.mustCall(function() {
         counter++;
@@ -29,7 +28,7 @@ const CLIENT_VARIANTS = 12;
           server.close();
         }
       }));
-    });
+    }));
 
     // CLIENT_VARIANTS depends on the following code
     net.connect(serverPath, getConnectCb()).resume();

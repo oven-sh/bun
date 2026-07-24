@@ -488,10 +488,7 @@ if (isGitPresent) {
 {
   // IBMi has a different access permission mechanism
   // This test should not be run as `root`
-  // Bun: on Windows an Administrators-group process bypasses `everyone:deny`
-  // ACLs, so icacls cannot make the directory read-only and even Node fails
-  // this block. Bun's CI runs elevated; skip the Windows path there.
-  if (!common.isIBMi && !common.isWindows && process.getuid() !== 0) {
+  if (!common.isIBMi && (common.isWindows || process.getuid() !== 0)) {
     function makeDirectoryReadOnly(dir, allowExecute) {
       let accessErrorCode = 'EACCES';
       if (common.isMacOS && allowExecute) {

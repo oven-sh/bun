@@ -258,8 +258,11 @@ class InspectorCDPAdapter {
               );
               return;
             }
-            // Primitive / thrown: nothing to await; primitives already carry
-            // value regardless of returnByValue.
+            // Primitive / thrown: nothing to await. Primitives already carry
+            // value regardless of returnByValue; a thrown non-primitive comes
+            // back as an objectId (the first step forced returnByValue:false),
+            // which DevTools/vscode-js-debug inspect via exceptionDetails, so
+            // we do not re-serialize it to honour the client's returnByValue.
             this.#replyToClient(id, this.#translateResult(method, result));
           });
           return;
@@ -408,6 +411,11 @@ class InspectorCDPAdapter {
           jscParams.urlRegex = urlRegex;
         } else if (url) {
           jscParams.urlRegex = breakpointUrlRegex(url);
+        } else if (params.scriptHash) {
+          // CDP also accepts scriptHash; JSC has no content-hash addressing
+          // (Debugger.scriptParsed carries no hash to match against).
+          this.#replyErrorToClient(id, -32000, "scriptHash breakpoints are not supported");
+          return;
         } else {
           this.#replyErrorToClient(id, -32602, "Either url or urlRegex must be specified.");
           return;

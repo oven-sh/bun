@@ -892,16 +892,17 @@ struct HttpResponseData;
             return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_INVALID_HTTP_VERSION);
         }
 
-        /* RFC 9110: 5.5 Field Values (TLDR; anything above 31 is allowed; htab (9) is also allowed)
+        /* RFC 9110: 5.5 Field Values (field-vchar = VCHAR / obs-text = %x21-7E / %x80-FF; SP/HTAB allowed inside)
         * Field values are usually constrained to the range of US-ASCII characters [...]
         * Field values containing CR, LF, or NUL characters are invalid and dangerous [...]
-        * Field values containing other CTL characters are also invalid. */
+        * Field values containing other CTL characters are also invalid.
+        * That "other CTL" set includes DEL (0x7F), so stop on bytes < 0x20 as well as 0x7F. */
         static inline char * tryConsumeFieldValue(char *p) {
             for (; true; p += 8) {
                 uint64_t word;
                 memcpy(&word, p, sizeof(uint64_t));
-                if (hasLess(word, 32)) {
-                    while (*(unsigned char *)p > 31) p++;
+                if (hasLess(word, 32) | hasLess(word ^ (~0ULL/255*0x7F), 1)) {
+                    while (*(unsigned char *)p > 31 && *(unsigned char *)p != 0x7F) p++;
                     return p;
                 }
             }

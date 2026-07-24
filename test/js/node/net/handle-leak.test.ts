@@ -21,7 +21,6 @@ const server = net
   .on("listening", () => resolve())
   .on("error", reject);
 await listening;
-expect(server.address()).toBe(listen_path);
 
 // Counts and margins are calibrated against bun v1.2.22 (the last release with
 // the #22913 bug): at 60k measured connections it produces ~21-31 MB of growth
@@ -58,6 +57,8 @@ async function run(total: number) {
 
 let warmup_rss: number, post_rss: number;
 try {
+  expect(server.address()).toBe(listen_path);
+
   await run(warmup_total);
   Bun.gc(true);
   warmup_rss = process.memoryUsage.rss();

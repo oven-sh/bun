@@ -23,5 +23,6 @@ test("Can create SourceMap instance from node:module", () => {
 
   const sourceMap = new SourceMap(payload);
   expect(sourceMap).toBeInstanceOf(SourceMap);
-  expect(sourceMap.payload).toBe(payload);
+  expect(sourceMap.payload).toEqual(payload);
+  expect(sourceMap.payload).not.toBe(payload);
 });

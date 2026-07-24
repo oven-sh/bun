@@ -273,6 +273,53 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
+// end() called after a backpressured write() whose promise the caller
+// discarded, with the reader already gone: end_from_js's flush() sees EPIPE
+// synchronously. Throwing it would report the failure to end()'s caller and
+// then let the auto-flush/error path reject the orphaned write() promise as an
+// unhandledRejection; instead the error is delivered to that pending promise
+// and end() returns the same promise, so the failure is reported exactly once.
+it.skipIf(!isPosix)(
+  "end() after a discarded backpressured write() delivers EPIPE once, with no unhandled rejection",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
+    let unhandled: any = null;
+    function onUnhandled(e: unknown) {
+      unhandled = e;
+    }
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      // Discarded on purpose: the write's promise must not surface on its own.
+      sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      let caught: any;
+      try {
+        await sink.end();
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+
+      // Bounded window for a stray second rejection to surface.
+      for (let i = 0; i < 10; i++) await Bun.sleep(1);
+      expect(unhandled).toBeNull();
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      try {
+        await sink.end();
+      } catch {}
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
+    }
+  },
+);
+
 // The deferred auto-flush microtask runs at the first microtask checkpoint
 // after write() backpressures. If its flush() hit EPIPE, it discarded the
 // error and then let `run_pending_later()` resolve the pending write() promise

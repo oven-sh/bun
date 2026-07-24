@@ -4781,8 +4781,17 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> crate::Result<bool> {
+        // The single-packet path decodes into a 16 KiB scratch so a small
+        // compressed body can be handed straight to `decompress_bytes` without
+        // ever allocating `compressed_body`. For identity bodies that shortcut
+        // doesn't exist: scratch copy + `append_slice_exact` is one memcpy more
+        // than `_from_multiple_packets`' append + decode-in-tail + truncate, so
+        // route identity bodies there unconditionally.
         let small_len = 16 * 1024usize;
-        if incoming_data.len() <= small_len && self.state.get_body_buffer().list.is_empty() {
+        if self.state.encoding.is_compressed()
+            && incoming_data.len() <= small_len
+            && self.state.get_body_buffer().list.is_empty()
+        {
             self.handle_response_body_chunked_encoding_from_single_packet(incoming_data)
         } else {
             self.handle_response_body_chunked_encoding_from_multiple_packets(incoming_data)

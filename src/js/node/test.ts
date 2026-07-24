@@ -450,9 +450,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
       for (; nextFile < files.length; nextFile++) {
         reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
       }
-    }
-
-    if (state.interrupted) {
+    } else if (state.interrupted) {
       // node reports the file-level tests that were still running.
       counts.failed++;
       reporter.emitMessage("test:interrupted", {
@@ -717,14 +715,15 @@ async function runOneFile(
 }
 
 // Reverses the serializer's non-finite re-tagging (JSON emits null for
-// NaN/Infinity, so they cross the pipe as { nonFinite: "NaN" }).
+// NaN/Infinity, so they cross the pipe as { nonFinite: "NaN" }). Gated on the
+// three exact strings the serializer produces so a user's own
+// { nonFinite: 'anything' } actual/expected is not misread as the envelope.
 function reviveSerializedValue(value: unknown) {
-  return value !== null &&
-    typeof value === "object" &&
-    typeof (value as { nonFinite?: unknown }).nonFinite === "string" &&
-    Object.keys(value as object).length === 1
-    ? Number((value as { nonFinite: string }).nonFinite)
-    : value;
+  if (value !== null && typeof value === "object" && Object.keys(value as object).length === 1) {
+    const nf = (value as { nonFinite?: unknown }).nonFinite;
+    if (nf === "NaN" || nf === "Infinity" || nf === "-Infinity") return Number(nf);
+  }
+  return value;
 }
 
 function rebuildError(serialized: any, depth = 0): Error {

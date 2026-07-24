@@ -61,7 +61,6 @@ using namespace JSC;
     macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
-    macro(checkBufferRead) \
     macro(checks) \
     macro(cloneArrayBuffer) \
     macro(close) \
@@ -74,7 +73,6 @@ using namespace JSC;
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
     macro(data) \
-    macro(dataView) \
     macro(decode) \
     macro(dest) \
     macro(dirname) \

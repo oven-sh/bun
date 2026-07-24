@@ -338,7 +338,6 @@ declare function $controller(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
-declare function $dataView(): TODO;
 declare function $decode(): TODO;
 declare function $dirname(): TODO;
 declare function $disturbed(): TODO;
@@ -691,8 +690,6 @@ declare function $ERR_HTTP2_PING_CANCEL(): Error;
 declare function $toClass(fn: Function, name: string, base?: Function | undefined | null);
 
 declare function $min(a: number, b: number): number;
-
-declare function $checkBufferRead(buf: Buffer, offset: number, byteLength: number): undefined;
 
 /**
  * Schedules a callback to be invoked as a microtask.

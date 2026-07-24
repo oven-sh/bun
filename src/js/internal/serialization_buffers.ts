@@ -21,6 +21,10 @@
 const { Buffer } = require("node:buffer");
 const BufferPrototype = Buffer.prototype;
 const isBuffer = Buffer.isBuffer;
+const ObjectKeys = Object.keys;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const SafeSet = Set;
 
 /** Returns null when `value` holds no Buffers, else the [value, buffers] envelope. */
 function tagBuffers(value: unknown): [unknown, unknown[]] | null {
@@ -30,7 +34,7 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
   while (stack.length !== 0) {
     const current = stack.pop();
     if (current === null || typeof current !== "object") continue;
-    visited ??= new Set();
+    visited ??= new SafeSet();
     if (visited.$has(current)) continue;
     visited.$add(current);
     if ($isTypedArrayView(current)) {
@@ -51,9 +55,9 @@ function tagBuffers(value: unknown): [unknown, unknown[]] | null {
     }
     // Objects, arrays and errors: the serializer walks own enumerable
     // properties. Only data properties are descended so no getter runs here.
-    const keys = Object.keys(current);
+    const keys = ObjectKeys(current);
     for (let i = 0; i < keys.length; i++) {
-      const desc = Object.getOwnPropertyDescriptor(current, keys[i]);
+      const desc = ObjectGetOwnPropertyDescriptor(current, keys[i]);
       if (desc && "value" in desc) stack.push(desc.value);
     }
   }
@@ -73,7 +77,7 @@ function restoreBuffers(envelope: unknown): unknown {
   for (let i = 0; i < buffers.length; i++) {
     const view = buffers[i];
     // Fresh from deserialization: plain Uint8Arrays the sender tagged.
-    if ($isTypedArrayView(view)) Object.setPrototypeOf(view, BufferPrototype);
+    if ($isTypedArrayView(view)) ObjectSetPrototypeOf(view, BufferPrototype);
   }
   return (envelope as unknown[])[0];
 }

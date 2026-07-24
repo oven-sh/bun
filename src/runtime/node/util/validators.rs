@@ -339,51 +339,31 @@ pub(crate) fn validate_object(
     name: impl fmt::Display + Copy,
     options: ValidateObjectOptions,
 ) -> JsResult<()> {
-    if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
-        if value.is_null() || value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(
+    // `is_object()` is JSC's `isObjectType` (cell with JSType >= Object), not JS `typeof`: it is
+    // true for functions and false for null, so the allow_function/nullable opt-ins are handled
+    // explicitly rather than folded into the final `!is_object()` term.
+    if value.is_null() {
+        return if options.allow_nullable() {
+            Ok(())
+        } else {
+            Err(throw_err_invalid_arg_type(
                 global_this,
                 name,
                 "object",
                 value,
-            ));
-        }
-
-        if !value.is_object() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-    } else {
-        if !options.allow_nullable() && value.is_null() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !options.allow_array() && value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !value.is_object() && (!options.allow_function() || !value.js_type().is_function()) {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
+            ))
+        };
+    }
+    if (!options.allow_array() && value.js_type().is_array())
+        || (!options.allow_function() && value.is_callable())
+        || !value.is_object()
+    {
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "object",
+            value,
+        ));
     }
     Ok(())
 }

@@ -449,6 +449,54 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
+/// npm-package-arg classifies a version spec as a dist-tag whenever
+/// node-semver's `validRange` rejects it. Bun's semver parser is more lenient
+/// (it reads `2x` as `2.x`), so `Tag::infer` does a focused grammar check for
+/// digit-prefixed specs: each of major/minor/patch must be either digits or a
+/// lone `x`/`X`/`*`, separated by `.`. `2x`, `1beta`, `1.2x` fail this and are
+/// dist-tags; `1.x`, `1.2.3-beta`, `1 || 2` pass.
+pub(crate) fn is_semver_range_like(dep: &[u8]) -> bool {
+    debug_assert!(dep.first().is_some_and(u8::is_ascii_digit));
+    // node-semver (loose) drops invalid comparators from both `||` unions and
+    // whitespace-separated sets, so `2x || 1` and `2x 1` are ranges. `|` and
+    // whitespace are also forbidden in npm dist-tag names, so any spec
+    // containing one is range syntax regardless of the first component.
+    if dep
+        .iter()
+        .any(|&b| matches!(b, b'|' | b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C))
+    {
+        return true;
+    }
+    let mut i = 0;
+    let mut part = 0u8;
+    loop {
+        if i >= dep.len() {
+            return true;
+        }
+        match dep[i] {
+            b'0'..=b'9' => {
+                i += 1;
+                while i < dep.len() && dep[i].is_ascii_digit() {
+                    i += 1;
+                }
+            }
+            b'x' | b'X' | b'*' => i += 1,
+            _ => return false,
+        }
+        part += 1;
+        if i >= dep.len() {
+            return true;
+        }
+        match dep[i] {
+            b'.' if part < 3 => i += 1,
+            // node-semver (loose) accepts `+build` metadata after any
+            // component and an immediate prerelease after patch (`1.2.3rc1`).
+            b'+' => return true,
+            _ => return part >= 3,
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Compat aliases: dependents reference `dependency::version::Tag`,
 // `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
@@ -836,11 +884,15 @@ impl TagExt for Tag {
             }
             // 1.2.3
             // 123.tar.gz
+            // 2x (dist-tag)
             b'0'..=b'9' => {
                 if is_tarball(dependency) {
                     return Tag::Tarball;
                 }
-                return Tag::Npm;
+                if is_semver_range_like(dependency) {
+                    return Tag::Npm;
+                }
+                return Tag::DistTag;
             }
             // foo.tgz
             // foo/repo
@@ -1054,7 +1106,7 @@ impl TagExt for Tag {
                     return Tag::DistTag;
                 }
                 return match dependency[1] {
-                    b'0'..=b'9' => Tag::Npm,
+                    b'0'..=b'9' if is_semver_range_like(&dependency[1..]) => Tag::Npm,
                     _ => Tag::DistTag,
                 };
             }

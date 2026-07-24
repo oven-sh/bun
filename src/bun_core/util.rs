@@ -4248,7 +4248,10 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
         unsafe extern "system" {
             fn GetCurrentDirectoryW(nBufferLength: u32, lpBuffer: *mut u16) -> u32;
         }
-        let mut wbuf = WPathBuffer::ZEROED;
+        // Write-only scratch: `GetCurrentDirectoryW` fills `wbuf[..n]` and
+        // only that range is read below, so skip the ~64 KB zero-fill (see
+        // `WPathBuffer::uninit`); relative paths hit this on every syscall.
+        let mut wbuf = WPathBuffer::uninit();
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {

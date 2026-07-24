@@ -582,11 +582,7 @@ describe.concurrent("__dirname/__filename resolve at runtime in bundled output",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, buildStderr, buildExit] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       expect(buildStderr).not.toContain("error:");
       expect(buildExit).toBe(0);
 
@@ -646,11 +642,7 @@ describe.concurrent("__dirname/__filename resolve at runtime in bundled output",
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [, buildStderr, buildExit] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
       expect(buildStderr).not.toContain("error:");
       expect(buildExit).toBe(0);
 

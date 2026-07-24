@@ -2777,6 +2777,53 @@ it.concurrent(
   20_000,
 );
 
+it.concurrent(
+  "idleTimeout reaps a hung handler after the request body is received",
+  async () => {
+    const aborted: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      idleTimeout: 2,
+      fetch(req, srv) {
+        const p = new URL(req.url).pathname;
+        req.signal.addEventListener("abort", () => aborted.push(p));
+        if (p === "/t6") srv.timeout(req, 6);
+        return new Promise<Response>(() => {});
+      },
+    });
+
+    const raw = (name: string, wire: string) =>
+      new Promise<{ name: string; closed: boolean }>((resolve, reject) => {
+        const s = net.connect(server.port as number, "127.0.0.1");
+        s.on("connect", () => s.write(wire));
+        s.on("error", reject);
+        s.on("close", () => resolve({ name, closed: true }));
+      });
+
+    const results = await Promise.all([
+      raw("get", "GET /get HTTP/1.1\r\nHost: a\r\n\r\n"),
+      raw("post-cl", "POST /post-cl HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"),
+      raw(
+        "post-chunked",
+        "POST /post-chunked HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n0\r\n\r\n",
+      ),
+      raw("post-t6", "POST /t6 HTTP/1.1\r\nHost: a\r\nContent-Length: 1\r\n\r\nx"),
+    ]);
+
+    expect(results).toEqual([
+      { name: "get", closed: true },
+      { name: "post-cl", closed: true },
+      { name: "post-chunked", closed: true },
+      { name: "post-t6", closed: true },
+    ]);
+    expect(aborted.sort()).toEqual(["/get", "/post-chunked", "/post-cl", "/t6"]);
+    expect(server.pendingRequests).toBe(0);
+  },
+  20_000,
+);
+
 it.concurrent("#6462", async () => {
   let headers: string[] = [];
   using server = Bun.serve({

@@ -1037,8 +1037,16 @@ static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQ
     bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
+const MAX_RESPONSE_HEADERS_INLINE: usize = 256;
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<
+    [picohttp::Header; MAX_RESPONSE_HEADERS_INLINE],
+> = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_RESPONSE_HEADERS_INLINE]);
+
+// Spillover for responses with more than MAX_RESPONSE_HEADERS_INLINE header
+// fields. Sized on demand to the header-block line count, so the 1 MB byte
+// cap (MAX_RESPONSE_HEADER_BUFFER) on the header block bounds the slot count.
+static SHARED_RESPONSE_HEADERS_OVERFLOW: bun_core::RacyCell<Vec<picohttp::Header>> =
+    bun_core::RacyCell::new(Vec::new());
 
 // the first packet for Transfer-Encoding: chunked
 // is usually pretty small or sometimes even just a length
@@ -1061,9 +1069,15 @@ mod scratch {
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
     }
     #[inline]
-    pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
+    pub(super) fn response_headers() -> &'static mut [picohttp::Header; MAX_RESPONSE_HEADERS_INLINE]
+    {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
+    }
+    #[inline]
+    pub(super) fn response_headers_overflow() -> &'static mut Vec<picohttp::Header> {
+        // SAFETY: see module-level INVARIANT.
+        unsafe { &mut *SHARED_RESPONSE_HEADERS_OVERFLOW.get() }
     }
     #[inline]
     pub(super) fn single_packet_small_buffer() -> &'static mut [u8; 16 * 1024] {
@@ -3701,12 +3715,34 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
 
-            let shared_resp = scratch::response_headers();
-            let response = match picohttp::Response::parse_parts(
+            let mut parse_result = picohttp::Response::parse_parts(
                 to_read!(),
-                shared_resp,
+                scratch::response_headers(),
                 Some(&mut amount_read),
+            );
+            if matches!(
+                parse_result,
+                Err(picohttp::ParseResponseError::TooManyHeaders)
             ) {
+                // More than MAX_RESPONSE_HEADERS_INLINE fields. Size the
+                // overflow scratch to the header-block line count (a strict
+                // upper bound on the field count) and reparse. Count only up
+                // to the terminating CRLF CRLF when present so a newline-dense
+                // body in the same read doesn't inflate the slot count.
+                let buf = to_read!();
+                let header_end = bun_core::strings::index_of(buf, b"\r\n\r\n")
+                    .map(|i| i + 4)
+                    .unwrap_or(buf.len());
+                let needed = bun_core::strings::count_char(&buf[..header_end], b'\n');
+                let overflow = scratch::response_headers_overflow();
+                overflow.resize(needed, picohttp::Header::ZERO);
+                parse_result = picohttp::Response::parse_parts(
+                    to_read!(),
+                    overflow.as_mut_slice(),
+                    Some(&mut amount_read),
+                );
+            }
+            let response = match parse_result {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
@@ -3739,8 +3775,12 @@ impl<'a> HTTPClient<'a> {
             };
 
             // we save the successful parsed response
-            // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
-            // both of which outlive this fn; widen to 'static for storage.
+            // SAFETY: `response` borrows SHARED_RESPONSE_HEADERS_BUF (fixed
+            // static) or SHARED_RESPONSE_HEADERS_OVERFLOW (Vec; buffer moves on
+            // resize) plus response_message_buffer / incoming_data. The erased
+            // borrow is overwritten with `Response::default()` at the top of
+            // each loop iteration before the next resize/append, and
+            // `clone_metadata()` deep-copies before this fn returns.
             // Rebind `response` to the detached `'static` copy so it no longer
             // borrows `to_read` (lets the `to_read` reassignment below pass
             // borrowck — `RawSlice::slice` ties output to `&to_read`).
@@ -3797,19 +3837,8 @@ impl<'a> HTTPClient<'a> {
             }
         };
         // handle_response_metadata may mutate `response`; mirror it back so
-        // clone_metadata() sees the up-to-date headers regardless of the
-        // content-encoding branch below.
+        // clone_metadata() sees the up-to-date headers.
         self.state.pending_response = Some(response);
-
-        if (self.state.content_encoding_i as usize) < response.headers.list.len()
-            && !self.state.flags.did_set_content_encoding
-        {
-            // if it compressed with this header, it is no longer because we will decompress it
-            self.state.flags.did_set_content_encoding = true;
-            self.state.content_encoding_i = u8::MAX;
-            // we need to reset the pending response because we removed a header
-            self.state.pending_response = Some(response);
-        }
 
         if should_continue == ShouldContinue::Finished {
             if self.state.flags.is_redirect_pending {
@@ -4967,7 +4996,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
-        for (header_i, header) in response.headers.list.iter().enumerate() {
+        for header in response.headers.list.iter() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // RFC 9110 section 9.3.6: a client MUST ignore
@@ -5019,18 +5048,14 @@ impl<'a> HTTPClient<'a> {
                             || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
                         {
                             self.state.encoding = Encoding::Gzip;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(
                             value, b"deflate",
                         ) {
                             self.state.encoding = Encoding::Deflate;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                             self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
-                            self.state.content_encoding_i = header_i as u8;
                         }
                     }
                 }

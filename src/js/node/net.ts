@@ -1663,6 +1663,10 @@ function Socket(options?) {
             this.emit("close", true);
           }
         });
+        // Node never starts the handle reading when readable is false, so peer
+        // bytes sit in the kernel buffer. Without this the first data callback
+        // pushes into an already-ended readable (ERR_STREAM_PUSH_AFTER_EOF).
+        if (optionsReadable === false) this._handle?.pause?.();
       }
     } else if (optionsWritable === true) {
       // Adopt pipe/character-device/file fds with synchronous writes so data

@@ -1049,20 +1049,27 @@ describe("Socket fd adoption", () => {
   });
 
   it.skipIf(isWindows)("new Socket({ fd, readable: false }) writes but reports readable=false", async () => {
+    // PARENT-HELLO is already sitting in the kernel receive buffer when the
+    // child adopts the fd. With readable: false the native handle must not
+    // read it: a push into the already-ended readable side would be
+    // ERR_STREAM_PUSH_AFTER_EOF. Let a poll cycle pass before reporting so a
+    // read would have fired if it were going to.
     const child = `
       const net = require("node:net");
       const rep = {};
       const s = new net.Socket({ fd: 3, readable: false });
       rep.readable = s.readable;
       rep.writable = s.writable;
-      s.write("CHILD-HELLO\\n", e => {
-        rep.writecb = e && e.code;
+      s.on("error", e => (rep.error = e.code));
+      s.write("CHILD-HELLO\\n", e => (rep.writecb = e && e.code));
+      setImmediate(() => setImmediate(() => {
         console.log(JSON.stringify(rep));
         s.destroy();
-      });
+      }));
     `;
     const { rep, parentGot } = await runFdChild(child);
     expect(rep.writecb).toBe(null);
+    expect(rep.error).toBeUndefined();
     expect(rep.readable).toBe(false);
     expect(rep.writable).toBe(true);
     expect(parentGot).toBe("CHILD-HELLO\n");

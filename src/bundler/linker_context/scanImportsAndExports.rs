@@ -517,10 +517,12 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // No post-fan-out ownership transfer is needed: `do_step5` only grows
-        // global-allocator `Vec`s (`part.dependencies`, `declared_symbols`),
-        // which are thread-safe to grow per-row, and never pushes to the
-        // arena-backed `PartList`/import-record columns.
+        // No post-fan-out ownership transfer is needed: `do_step5` re-tags the
+        // `AstVec`s it grows (`part.dependencies`, `local_parts_with_uses`) to
+        // its own worker's `AstAlloc` before pushing, so each task's growth is
+        // a per-thread bump and the blocking `each()` above joins every writer
+        // before step 6 reads them. It never pushes to the arena-backed
+        // `PartList`/import-record columns.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -752,6 +754,10 @@ pub fn scan_imports_and_exports(
                             let total_len = parts_declaring_symbol.len()
                                 + re_exports.len()
                                 + part.dependencies.len() as usize;
+                            // After step 5 this vec's allocator may be a
+                            // worker arena; re-tag to the linker arena so the
+                            // growth below stays on this thread.
+                            ast_alloc.adopt_vec(&mut part.dependencies);
                             part.dependencies.ensure_total_capacity(total_len);
 
                             // Depend on the file containing the imported symbol

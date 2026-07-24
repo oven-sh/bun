@@ -487,6 +487,27 @@ impl AstAlloc {
         core::mem::replace(v, Vec::new_in(self))
     }
 
+    /// Re-point `v`'s allocator to `self` so subsequent growth allocates into
+    /// this arena instead of the one `v` was created in. The existing buffer
+    /// stays in place; `deallocate` is a no-op, so nothing is freed, and
+    /// `grow`'s copy-then-abandon path moves the data into `self` on the next
+    /// reallocation.
+    ///
+    /// Used when a vec created on one thread's arena must be grown on another
+    /// (e.g. the bundler's parallel `do_step5` growing parser-built
+    /// `part.dependencies`): routing growth through the calling thread's
+    /// arena avoids a data race on the original arena's `bump_cursor`.
+    #[inline]
+    pub fn adopt_vec<T>(self, v: &mut AstVec<T>) {
+        let old = core::mem::ManuallyDrop::new(core::mem::replace(v, Vec::new_in(self)));
+        // SAFETY: `ptr/len/cap` are the live header just taken from `*v`.
+        // `AstAlloc::deallocate` is a no-op, so handing the buffer to a
+        // different `AstAlloc` cannot double-free it; `grow` either
+        // `mi_expand`s the block in place (heap-agnostic) or allocates fresh
+        // in `self` and abandons the old block.
+        *v = unsafe { Vec::from_raw_parts_in(old.as_ptr().cast_mut(), old.len(), old.capacity(), self) };
+    }
+
     /// See [`AstBox`] for the drop-safety contract.
     #[inline]
     pub fn boxed<T>(self, value: T) -> AstBox<T> {

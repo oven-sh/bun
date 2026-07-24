@@ -904,11 +904,11 @@ impl<'a> LinkerGraph<'a> {
     /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
     ///
     /// `Vec<T, &Arena>` stores its allocator, so swap it here.
-    /// `part.dependencies` and `symbols` need no transfer:
-    /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
-    /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
-    /// ZST, so there is nothing to retag) and new symbols feed through
-    /// `self.symbols: symbol::Map` (global).
+    /// `part.dependencies` and `symbols` are not transferred here:
+    /// `DependencyList` is `Vec<_, AstAlloc>` and is re-tagged per-row inside
+    /// `do_step5` / step 6 via [`bun_alloc::AstAlloc::adopt_vec`] before any
+    /// linker-side grow; new symbols feed through `self.symbols: symbol::Map`
+    /// (global).
     pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);

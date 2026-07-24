@@ -315,6 +315,12 @@ impl LinkerContext<'_> {
             // PERF: iterate the keys slice directly (the index-based
             // form re-loaded `keys.len()` and bounds-checked each access).
             let part_index_u32 = part_index as u32;
+            // `part.dependencies` was built by the parser with that worker's
+            // `AstAlloc`; this task may run on a different worker, and peer
+            // tasks for other files may share the same parser arena. Re-tag
+            // to this worker's arena so `push` below is a per-thread bump
+            // (no cross-thread `bump_cursor` race).
+            ast_alloc.adopt_vec(&mut part.dependencies);
             let dependencies = &mut part.dependencies;
             for &ref_ in part.symbol_uses.keys() {
                 debug_assert!({
@@ -357,6 +363,9 @@ impl LinkerContext<'_> {
                     // SAFETY: `named_imports` is a stable column pointer; this
                     // task owns row `id` exclusively (see split_raw note).
                     if let Some(existing) = unsafe { (*named_imports).get_ptr_mut(&ref_) } {
+                        // Parser-built `AstVec`; re-tag to this worker's arena
+                        // for the same reason as `part.dependencies` above.
+                        ast_alloc.adopt_vec(&mut existing.local_parts_with_uses);
                         existing.local_parts_with_uses.push(part_index_u32);
                     }
                 }

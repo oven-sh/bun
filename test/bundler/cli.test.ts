@@ -186,6 +186,9 @@ console.log(utils());`,
       });
       const baseDir = baseDirPath + "";
 
+      // `--compile` bundles for Bun's runtime, so `__dirname`/`__filename`
+      // resolve to the compiled executable's virtual `$bunfs` path at runtime
+      // instead of the build machine's source path (#4216).
       const { exited } = Bun.spawn({
         cmd: [
           bunExe(),
@@ -211,8 +214,23 @@ console.log(utils());`,
       const text = await proc.stdout.text();
       await proc.exited;
 
-      expect(text).toContain(path.join(baseDir, "我") + "\n");
-      expect(text).toContain(path.join(baseDir, "我", "我.ts") + "\n");
+      const bunfsRoot = isWindows ? "B:\\~BUN\\root" : "/$bunfs/root";
+      expect(text).toBe(bunfsRoot + "\n" + path.join(bunfsRoot, "exe.exe") + "\n");
+
+      // The browser target has no runtime source for `__dirname`, so it still
+      // inlines the source path as a string literal. Exercise the UTF-8 path
+      // round-trip this test originally covered there.
+      await using browserBuild = Bun.spawn({
+        cmd: [bunExe(), "build", path.join(baseDir, "我/我.ts"), "--target=browser"],
+        env: bunEnv,
+        cwd: baseDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [browserOut, browserExit] = await Promise.all([browserBuild.stdout.text(), browserBuild.exited]);
+      expect(browserOut).toContain(JSON.stringify(path.join(baseDir, "我")));
+      expect(browserOut).toContain(JSON.stringify(path.join(baseDir, "我", "我.ts")));
+      expect(browserExit).toBe(0);
     });
 
     test.skipIf(!isWindows)("should be able to handle pretty path when using pnpm +  #14685", async () => {

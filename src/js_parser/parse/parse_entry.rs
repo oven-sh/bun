@@ -93,6 +93,12 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
+    /// The bundle target. Controls whether `__dirname` / `__filename` are
+    /// inlined as build-time string literals (browser) or lowered to
+    /// `import.meta.dir` / `import.meta.path` so they resolve at runtime
+    /// (Bun / Node ESM output). Only consulted when `bundle` is set.
+    pub target: js_ast::Target,
+
     /// When using react fast refresh or server components, the framework is
     /// able to customize what import sources are used.
     pub framework: Option<&'a options::Framework>, // TYPE_ONLY: was bun_runtime::bake::Framework
@@ -132,6 +138,7 @@ impl<'a> Default for Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            target: js_ast::Target::Browser,
             framework: None,
             repl_mode: false,
         }
@@ -215,6 +222,7 @@ impl<'a> Options<'a> {
             transform_only: self.transform_only,
             import_meta_main_value: self.import_meta_main_value,
             lower_import_meta_main_for_node_js: self.lower_import_meta_main_for_node_js,
+            target: self.target,
             framework: self.framework,
             repl_mode: self.repl_mode,
         }
@@ -282,6 +290,7 @@ impl<'a> Options<'a> {
             transform_only: false,
             import_meta_main_value: None,
             lower_import_meta_main_for_node_js: false,
+            target: js_ast::Target::Browser,
             framework: None,
             repl_mode: false,
         };
@@ -1013,79 +1022,141 @@ impl<'a> Parser<'a> {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
+        // When bundling for Bun or Node, the build machine's absolute source
+        // path is the wrong value: the bundle will typically run from a
+        // different location (and on a different machine). For ESM output we
+        // instead emit `var __dirname = import.meta.dir` (Bun) or
+        // `import.meta.dirname` (Node), so it resolves to the output file's
+        // directory at runtime. For CJS output on those targets the runtime
+        // already provides `__dirname`/`__filename` via the module wrapper, so
+        // we emit nothing and let references fall through.
+        //
+        // https://github.com/oven-sh/bun/issues/4216
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
-                let count = (uses_dirname as usize) + (uses_filename as usize);
-                let mut declared_symbols =
-                    bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
-                let decls = p
-                    .arena
-                    .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
-                if uses_dirname {
-                    decls[0] = G::Decl {
-                        binding: p.b(
-                            B::Identifier {
-                                r#ref: p.dirname_ref,
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                        value: Some(p.new_expr(
-                            E::String {
-                                data: p.source.path.name().dir.into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        )),
+                // `(dir_property, path_property)` — `Some` when the target
+                // runtime exposes these on `import.meta`, `None` to fall back
+                // to the build-time string literal.
+                let import_meta_names: Option<(&'static [u8], &'static [u8])> =
+                    if p.options.bundle && p.options.output_format == options::Format::Esm {
+                        if p.options.target.is_bun() {
+                            Some((b"dir", b"path"))
+                        } else if p.options.target.is_node() {
+                            Some((b"dirname", b"filename"))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     };
-                    declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: p.dirname_ref,
-                        is_top_level: true,
-                    });
-                }
-                if uses_filename {
-                    decls[uses_dirname as usize] = G::Decl {
-                        binding: p.b(
-                            B::Identifier {
-                                r#ref: p.filename_ref,
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                        value: Some(p.new_expr(
-                            E::String {
-                                data: p.source.path.text.into(),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        )),
-                    };
-                    declared_symbols.append_assume_capacity(DeclaredSymbol {
-                        ref_: p.filename_ref,
-                        is_top_level: true,
-                    });
-                }
 
-                let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
-                    p.s(
-                        S::Local {
-                            kind: js_ast::LocalKind::KVar,
-                            decls: {
-                                let mut dl = G::DeclList::init_capacity(decls.len());
-                                for d in decls.iter_mut() {
-                                    dl.append_assume_capacity(core::mem::take(d));
-                                }
-                                dl
+                let defer_to_cjs_wrapper = p.options.bundle
+                    && p.options.output_format == options::Format::Cjs
+                    && (p.options.target.is_bun() || p.options.target.is_node());
+
+                if !defer_to_cjs_wrapper {
+                    let count = (uses_dirname as usize) + (uses_filename as usize);
+                    let mut declared_symbols =
+                        bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+                    let decls = p
+                        .arena
+                        .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
+                    if uses_dirname {
+                        let value = if let Some((dir_name, _)) = import_meta_names {
+                            let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+                            p.new_expr(
+                                E::Dot {
+                                    name: dir_name.into(),
+                                    name_loc: bun_ast::Loc::EMPTY,
+                                    target: import_meta,
+                                    can_be_removed_if_unused: true,
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            )
+                        } else {
+                            p.new_expr(
+                                E::String {
+                                    data: p.source.path.name().dir.into(),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            )
+                        };
+                        decls[0] = G::Decl {
+                            binding: p.b(
+                                B::Identifier {
+                                    r#ref: p.dirname_ref,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            value: Some(value),
+                        };
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: p.dirname_ref,
+                            is_top_level: true,
+                        });
+                    }
+                    if uses_filename {
+                        let value = if let Some((_, path_name)) = import_meta_names {
+                            let import_meta = p.new_expr(E::ImportMeta {}, bun_ast::Loc::EMPTY);
+                            p.new_expr(
+                                E::Dot {
+                                    name: path_name.into(),
+                                    name_loc: bun_ast::Loc::EMPTY,
+                                    target: import_meta,
+                                    can_be_removed_if_unused: true,
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            )
+                        } else {
+                            p.new_expr(
+                                E::String {
+                                    data: p.source.path.text.into(),
+                                    ..Default::default()
+                                },
+                                bun_ast::Loc::EMPTY,
+                            )
+                        };
+                        decls[uses_dirname as usize] = G::Decl {
+                            binding: p.b(
+                                B::Identifier {
+                                    r#ref: p.filename_ref,
+                                },
+                                bun_ast::Loc::EMPTY,
+                            ),
+                            value: Some(value),
+                        };
+                        declared_symbols.append_assume_capacity(DeclaredSymbol {
+                            ref_: p.filename_ref,
+                            is_top_level: true,
+                        });
+                    }
+
+                    let part_stmts = p.arena.alloc_slice_fill_with(1, |_| {
+                        p.s(
+                            S::Local {
+                                kind: js_ast::LocalKind::KVar,
+                                decls: {
+                                    let mut dl = G::DeclList::init_capacity(decls.len());
+                                    for d in decls.iter_mut() {
+                                        dl.append_assume_capacity(core::mem::take(d));
+                                    }
+                                    dl
+                                },
+                                ..Default::default()
                             },
-                            ..Default::default()
-                        },
-                        bun_ast::Loc::EMPTY,
-                    )
-                });
-                before.push(js_ast::Part {
-                    stmts: part_stmts.into(),
-                    declared_symbols,
-                    tag: bun_ast::PartTag::DirnameFilename,
-                    ..Default::default()
-                });
+                            bun_ast::Loc::EMPTY,
+                        )
+                    });
+                    before.push(js_ast::Part {
+                        stmts: part_stmts.into(),
+                        declared_symbols,
+                        tag: bun_ast::PartTag::DirnameFilename,
+                        ..Default::default()
+                    });
+                }
                 uses_dirname = false;
                 uses_filename = false;
             }

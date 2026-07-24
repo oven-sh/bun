@@ -140,10 +140,6 @@ pub fn do_patch_commit(
 
     let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(&lockfile);
     let mut resolution_buf = [0u8; 1024];
-    // reshaped for borrowck — `compute_cache_dir_and_subpath` borrows
-    // `manager` mutably while the package name/resolution borrow `lockfile`
-    // (which itself sometimes aliases `manager.lockfile`). Clone the slice/
-    // resolution out first, then compute, then assemble the result tuple.
     let (cache_dir, cache_dir_subpath, changes_dir, pkg): (Fd, &ZStr, Vec<u8>, Package) =
         match arg_kind {
             PatchArgKind::Path => 'result: {
@@ -241,11 +237,11 @@ pub fn do_patch_commit(
                     }
                 };
 
-                let name = lockfile.str(&package.name).to_vec();
+                let name = lockfile.str(&package.name);
                 let resolution_clone = actual_package.resolution;
                 let cache_result = compute_cache_dir_and_subpath(
                     manager,
-                    &name,
+                    name,
                     &resolution_clone,
                     &mut folder_path_buf,
                     None,
@@ -275,14 +271,11 @@ pub fn do_patch_commit(
                 .to_vec();
                 let pkg = *lockfile.packages.get(pkg_id as usize);
 
-                let pkg_name_slice = pkg
-                    .name
-                    .slice(lockfile.buffers.string_bytes.as_slice())
-                    .to_vec();
+                let pkg_name_slice = pkg.name.slice(lockfile.buffers.string_bytes.as_slice());
                 let resolution_clone = pkg.resolution;
                 let cache_result = compute_cache_dir_and_subpath(
                     manager,
-                    &pkg_name_slice,
+                    pkg_name_slice,
                     &resolution_clone,
                     &mut folder_path_buf,
                     None,

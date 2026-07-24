@@ -190,15 +190,13 @@ impl Seq {
 
         Self::state_mut(interp, cmd).state = State::Done;
         if needs_io {
-            Self::state_mut(interp, cmd).buf = out;
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            // NOTE: reshaped for borrowck — clone the slice so the &mut
-            // on stdout doesn't alias `buf`.
-            let buf = Self::state_mut(interp, cmd).buf.clone();
-            return Builtin::of_mut(interp, cmd)
+            let yld = Builtin::of_mut(interp, cmd)
                 .stdout
-                .enqueue(child, &buf, safeguard);
+                .enqueue(child, &out, safeguard);
+            Self::state_mut(interp, cmd).buf = out;
+            return yld;
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)

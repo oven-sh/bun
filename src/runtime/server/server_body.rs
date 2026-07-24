@@ -999,11 +999,11 @@ impl ServePlugins {
 
     fn load_and_resolve_plugins(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(matches!(self.state, ServePluginsState::Unqueued(_)));
-        let ServePluginsState::Unqueued(plugin_list) = &self.state else {
+        let ServePluginsState::Unqueued(plugin_list) =
+            mem::replace(&mut self.state, ServePluginsState::Err)
+        else {
             unreachable!()
         };
-        // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
-        let plugin_list: Vec<_> = plugin_list.iter().collect();
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
         let bunfig_folder: &[u8] = bun_paths::resolve_path::dirname::<
             bun_paths::resolve_path::platform::Auto,
@@ -1019,8 +1019,8 @@ impl ServePlugins {
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
         let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
         let mut bunstring_array: Vec<BunString> = Vec::with_capacity(plugin_list.len());
-        for raw_plugin in &plugin_list {
-            bunstring_array.push(BunString::init(&***raw_plugin));
+        for raw_plugin in plugin_list.iter() {
+            bunstring_array.push(BunString::init(&**raw_plugin));
         }
         let plugin_js_array = bun_string_jsc::to_js_array(global, &bunstring_array)?;
         let bunfig_folder_bunstr = jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;

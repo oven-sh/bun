@@ -2132,21 +2132,17 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
-                    // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
-                    // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
-                    // until after the last `*value_ptr` access below.
-                    let (found_existing, value_ptr): (bool, *mut u32) = {
-                        let entry = self
-                            .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
-                            .expect("oom");
-                        (
-                            entry.found_existing,
-                            std::ptr::from_mut::<u32>(entry.value_ptr),
-                        )
-                    };
-                    if !found_existing {
+                    if let Some(existing) = self
+                        .path_to_source_index_map(target)
+                        .get(path_primary.text)
+                    {
+                        let record: &mut ImportRecord =
+                            &mut self.graph.ast.items_import_records_mut()
+                                [import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [import_record.import_record_index as usize];
+                        record.source_index = Index::init(existing);
+                    } else {
                         let loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
@@ -2176,22 +2172,15 @@ pub mod bv2_impl {
                                 import_record.original_target,
                             )
                             .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
-                        unsafe { *value_ptr = idx };
+                        self.path_to_source_index_map(target)
+                            .put(path_primary.text, idx)
+                            .expect("oom");
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
                         record.source_index = Index::init(idx);
-                    } else {
-                        let record: &mut ImportRecord =
-                            &mut self.graph.ast.items_import_records_mut()
-                                [import_record.importer_source_index as usize]
-                                .as_mut_slice()
-                                [import_record.import_record_index as usize];
-                        // SAFETY: see `value_ptr` note above.
-                        record.source_index = Index::init(unsafe { *value_ptr });
                     }
                     return;
                 }
@@ -2437,9 +2426,6 @@ pub mod bv2_impl {
                 // For example, it is silly to bundle index.css depended on by client+server twice.
                 // It makes sense to separate these for JS because the target affects DCE
                 if self.transpiler.options.server_components && !loader.is_javascript_like() {
-                    // reshaped for borrowck — cannot hold two `&mut` into
-                    // `self.graph` simultaneously, so re-derive the map per insert.
-                    let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     let main_target = self.transpiler.options.target;
                     let separate_ssr = self
                         .framework
@@ -2455,11 +2441,11 @@ pub mod bv2_impl {
                         _ => (Target::Browser, Target::ServerComponentsSsr),
                     };
                     self.path_to_source_index_map(ta)
-                        .put(&key_text, idx)
+                        .put(path.text, idx)
                         .expect("oom");
                     if separate_ssr {
                         self.path_to_source_index_map(tb)
-                            .put(&key_text, idx)
+                            .put(path.text, idx)
                             .expect("oom");
                     }
                 }

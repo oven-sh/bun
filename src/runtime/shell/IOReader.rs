@@ -315,8 +315,7 @@ impl IOReader {
         self.set_reading(false);
         let s = self.state();
         s.raw_err = Some(err.clone());
-        // NOTE: reshaped for borrowck — copy out before dispatching.
-        let readers: Vec<ChildPtr> = s.readers.clone();
+        let readers = std::mem::take(&mut s.readers);
         let interp = s.interp;
         for r in readers {
             // Re-derive a fresh SystemError per callee (see

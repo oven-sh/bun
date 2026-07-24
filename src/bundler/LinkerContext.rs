@@ -2476,14 +2476,9 @@ impl<'a> LinkerContext<'a> {
         chunk_visit_map.set(index as usize);
 
         // Visit the other chunks that this chunk imports before visiting this chunk
-        // Note: reshaped for borrowck — collect imports first to avoid aliasing &chunks[index] with recursive &mut chunks
-        let cross_chunk_imports: Vec<u32> = chunks[index as usize]
-            .cross_chunk_imports
-            .slice()
-            .iter()
-            .map(|import| import.chunk_index)
-            .collect();
-        for chunk_index in cross_chunk_imports {
+        let n = chunks[index as usize].cross_chunk_imports.slice().len();
+        for i in 0..n {
+            let chunk_index = chunks[index as usize].cross_chunk_imports.slice()[i].chunk_index;
             self.append_isolated_hashes_for_imported_chunks(
                 hash,
                 chunks,
@@ -2496,24 +2491,20 @@ impl<'a> LinkerContext<'a> {
         // express cross-chunk dependencies via `cross_chunk_imports` above, but
         // HTML (and CSS) chunks only reference other chunks through pieces, so
         // recurse on those too.
-        // Note: reshaped for borrowck — collect piece queries first so the
-        // `&chunks[index]` borrow is dropped before the recursive `&mut chunks`
-        // calls in the Chunk/Scb arms below. `final_rel_path` is re-indexed per
-        // Asset arm (not hoisted) because it is now `Box<[u8]>` (not `Copy`).
-        let piece_queries: Vec<(crate::chunk::QueryKind, u32)> =
-            if let crate::chunk::IntermediateOutput::Pieces(pieces) =
-                &chunks[index as usize].intermediate_output
-            {
-                pieces
-                    .slice()
-                    .iter()
-                    .map(|p| (p.query.kind(), p.query.index()))
-                    .collect()
-            } else {
-                Vec::new()
+        let pieces_len = match &chunks[index as usize].intermediate_output {
+            crate::chunk::IntermediateOutput::Pieces(pieces) => pieces.slice().len(),
+            _ => 0,
+        };
+        for i in 0..pieces_len {
+            let (kind, piece_index) = {
+                let crate::chunk::IntermediateOutput::Pieces(pieces) =
+                    &chunks[index as usize].intermediate_output
+                else {
+                    unreachable!()
+                };
+                let p = &pieces.slice()[i];
+                (p.query.kind(), p.query.index())
             };
-
-        for (kind, piece_index) in piece_queries {
             match kind {
                 crate::chunk::QueryKind::Asset => {
                     let mut from_chunk_dir = bun_paths::resolve_path::dirname::<

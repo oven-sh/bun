@@ -1740,11 +1740,10 @@ impl Reader {
             return Err(AnyPostgresError::ShortRead);
         }
 
-        // reshaped for borrowck — capture as `RawSlice` before calling
-        // skip(); the read_buffer backing storage is not reallocated by skip().
-        let slice = bun_ptr::RawSlice::new(&remaining[..count]);
+        let head = self.read_buffer().head as usize;
         self.skip(count);
-        Ok(Data::Temporary(slice))
+        let slice = &self.read_buffer().byte_list[head..head + count];
+        Ok(Data::Temporary(bun_ptr::RawSlice::new(slice)))
     }
 
     pub(crate) fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
@@ -2404,21 +2403,15 @@ impl PostgresSQLConnection {
                     .statement_mut()
                     .ok_or(AnyPostgresError::ExpectedStatement)?;
                 let mut structure: JSValue = JSValue::UNDEFINED;
-                // reshaped for borrowck — `statement.structure()` borrows
-                // `&mut *statement` and returns `&CachedStructure`; capture it as a
-                // `ParentRef` (lifetime-erased `&T`) so `&statement.fields` below
-                // does not conflict, and `as_deref` for `to_js` at the call site.
-                // `*statement` outlives this arm (held via `request.statement`'s
-                // intrusive ref), satisfying the `ParentRef` liveness invariant.
-                let mut cached_structure: Option<ParentRef<PostgresCachedStructure>> = None;
+                let mut cached_structure: Option<&PostgresCachedStructure> = None;
                 let request_flags = request.flags.get();
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
                         let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
-                        let cs = statement.structure(owner, self.global());
-                        structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
-                        cached_structure = Some(ParentRef::new(cs));
+                        statement.structure(owner, self.global());
+                        structure = statement.cached_structure.js_value().unwrap_or(JSValue::UNDEFINED);
+                        cached_structure = Some(&statement.cached_structure);
                     }
                     SQLQueryResultMode::Raw | SQLQueryResultMode::Values => {
                         // no need to check for duplicate fields or structure
@@ -2495,9 +2488,7 @@ impl PostgresSQLConnection {
                     structure,
                     statement.fields_flags,
                     request_flags.result_mode,
-                    // `ParentRef::Deref` recovers `&CachedStructure`; statement
-                    // outlives this call (held via `request.statement` ref).
-                    cached_structure.as_deref(),
+                    cached_structure,
                 )?;
 
                 if pending_value.is_empty() {

@@ -13,6 +13,7 @@
 //! this simplifies management of the file descriptor.
 
 use bun_collections::VecExt;
+use bun_collections::smallvec::SmallVec;
 use core::cell::UnsafeCell;
 #[cfg(not(windows))]
 use core::ffi::c_void;
@@ -830,9 +831,9 @@ impl IOWriter {
     fn broken_pipe_for_writers(&self) {
         let s = self.state();
         debug_assert!(s.flags.broken_pipe);
-        // NOTE: reshaped for borrowck — collect targets first so we don't
-        // hold `&mut s.writers` across `cancel_chunks`/`run_yield`.
-        let mut targets: Vec<ChildPtr> = Vec::new();
+        // Snapshot targets first: run_yield/cancel_chunks re-enter state() and
+        // mutate s.writers, so we cannot iterate it across those calls.
+        let mut targets: SmallVec<[ChildPtr; 4]> = SmallVec::new();
         for w in &s.writers[s.writer_idx..] {
             if w.is_dead() {
                 continue;

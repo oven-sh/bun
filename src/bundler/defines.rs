@@ -206,16 +206,11 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        // reshaped for borrowck — getOrPut split into entry-style match.
         if let Some(existing) = self.dots.get_mut(key) {
-            let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
-            list.extend_from_slice(existing);
-            list.push(DotDefine {
+            existing.push(DotDefine {
                 parts,
                 data: value_define.clone(),
             });
-            // The old value is freed by Vec drop on assign.
-            *existing = list;
         } else {
             let list: Vec<DotDefine> = vec![DotDefine {
                 parts,

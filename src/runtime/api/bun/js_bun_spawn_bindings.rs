@@ -1095,23 +1095,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         jsc_vm.event_loop()
     };
 
-    // Note: reshaped for borrowck — `defer!` is non-`move`, so the closure
-    // would capture the *place* `*jsc_vm_ptr` and conflict with later
-    // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
-    // local so the closure's captured place is disjoint.
-    let jsc_vm_ptr_cleanup = jsc_vm_ptr;
-    scopeguard::defer! {
+    let _cleanup = scopeguard::guard(jsc_vm_ptr, |p| {
         if IS_SYNC {
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
-                let main_loop = (*jsc_vm_ptr_cleanup).event_loop();
-                (*jsc_vm_ptr_cleanup)
+                let main_loop = (*p).event_loop();
+                (*p)
                     .rare_data()
-                    .spawn_sync_event_loop(&mut *jsc_vm_ptr_cleanup)
-                    .cleanup(jsc_vm_ptr_cleanup.cast(), main_loop.cast());
+                    .spawn_sync_event_loop(&mut *p)
+                    .cleanup(p.cast(), main_loop.cast());
             }
         }
-    }
+    });
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
@@ -1710,14 +1705,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // Note: reshaped for borrowck — copy `subprocess_ptr` so the
-    // non-`move` `defer!` closure captures a disjoint place from the
-    // `(*subprocess_ptr).abort_signal = …` writes that follow.
-    let subprocess_ptr_exit = subprocess_ptr;
-    scopeguard::defer! {
+    let _exit_guard = scopeguard::guard(subprocess_ptr, |p| {
         if send_exit_notification {
             // SAFETY: subprocess_ptr is live for the lifetime of this defer.
-            let proc = unsafe { &*subprocess_ptr_exit }.process_mut();
+            let proc = unsafe { &*p }.process_mut();
             if proc.has_exited() {
                 // process has already exited, we called wait4(), but we did not call onProcessExit()
                 // SAFETY: all-zero is a valid Rusage (POD).
@@ -1729,7 +1720,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 proc.wait(IS_SYNC);
             }
         }
-    }
+    });
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, both PipeReaders have taken their

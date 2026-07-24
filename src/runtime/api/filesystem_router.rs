@@ -442,11 +442,7 @@ impl FileSystemRouter {
     pub fn bust_dir_cache(&self, global_this: &JSGlobalObject) {
         let dir =
             strings::paths::without_trailing_slash_windows_path(&self.router.get().config.dir);
-        // Note: reshaped for borrowck — `dir` borrows `self.router.config.dir`; the
-        // recursive walk re-derives the path from the resolver per-iteration so a one-time
-        // copy is sufficient.
-        let dir = dir.to_vec();
-        self.bust_dir_cache_recursive(global_this, &dir);
+        self.bust_dir_cache_recursive(global_this, dir);
     }
 
     #[bun_jsc::host_fn(method)]

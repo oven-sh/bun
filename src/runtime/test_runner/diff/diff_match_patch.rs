@@ -982,8 +982,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
     // Stack of indices where equalities are found.
     let mut equalities: Vec<isize> = Vec::new();
     // Always equal to equalities[equalitiesLength-1][1]
-    // reshaped for borrowck — owned copy of last_equality
-    let mut last_equality: Option<Box<[Unit]>> = None;
+    let mut last_equality_len: Option<usize> = None;
     let mut pointer: isize = 0; // Index of current position.
     // Number of characters that changed prior to the equality.
     let mut length_insertions1: usize = 0;
@@ -1000,7 +999,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
             length_deletions1 = length_deletions2;
             length_insertions2 = 0;
             length_deletions2 = 0;
-            last_equality = Some(dupe(&diffs[p].text));
+            last_equality_len = Some(diffs[p].text.len());
         } else {
             // an insertion or deletion
             if diffs[p].operation == Operation::Insert {
@@ -1010,17 +1009,18 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
             }
             // Eliminate an equality that is smaller or equal to the edits on both
             // sides of it.
-            if let Some(le) = &last_equality {
-                if le.len() <= length_insertions1.max(length_deletions1)
-                    && le.len() <= length_insertions2.max(length_deletions2)
+            if let Some(le_len) = last_equality_len {
+                if le_len <= length_insertions1.max(length_deletions1)
+                    && le_len <= length_insertions2.max(length_deletions2)
                 {
                     let eq_idx = usize::try_from(equalities[equalities.len() - 1]).unwrap();
                     // Duplicate record.
+                    let text = dupe(&diffs[eq_idx].text);
                     diffs.insert(
                         eq_idx,
                         Diff {
                             operation: Operation::Delete,
-                            text: dupe(le),
+                            text,
                         },
                     );
                     // Change second copy to insert.
@@ -1039,7 +1039,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                     length_deletions1 = 0;
                     length_insertions2 = 0;
                     length_deletions2 = 0;
-                    last_equality = None;
+                    last_equality_len = None;
                     changes = true;
                 }
             }

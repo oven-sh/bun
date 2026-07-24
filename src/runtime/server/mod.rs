@@ -864,7 +864,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// the live response handle for the request being resumed.
     pub(crate) fn on_saved_request<const ARG_COUNT: usize>(
         this: *mut Self,
-        req: SavedRequestUnion<'_>,
+        mut req: SavedRequestUnion<'_>,
         resp: *mut uws_sys::NewAppResponse<SSL>,
         callback: JSValue,
         extra_args: [JSValue; ARG_COUNT],
@@ -879,15 +879,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
-        let prepared: PreparedRequest<SSL, DEBUG> = match &req {
+        let prepared: PreparedRequest<SSL, DEBUG> = match &mut req {
             SavedRequestUnion::Stack(r) => {
-                // reshaped for borrowck — decouple the inner
-                // `&mut uws::Request` lifetime from the `req` match guard.
-                let r = std::ptr::from_ref::<uws::Request>(*r).cast_mut();
                 match Self::prepare_js_request_context(
                     this,
-                    // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
-                    bun_opaque::opaque_deref_mut(r),
+                    &mut **r,
                     resp,
                     None,
                     CreateJsRequest::Bake,

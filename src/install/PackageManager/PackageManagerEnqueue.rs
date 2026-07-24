@@ -108,21 +108,19 @@ pub fn enqueue_dependency_list(
     // through "dependencies", skip it
     if end - begin > 1 && lockfile.buffers.dependencies[0].behavior.is_peer() {
         let mut peer_i: usize = 0;
-        // reshaped for borrowck — index into the slice instead of holding &mut across loop
         while lockfile.buffers.dependencies[peer_i].behavior.is_peer() {
             let mut dep_i: usize = (end - 1) as usize;
-            let mut dep = lockfile.buffers.dependencies[dep_i].clone();
-            while !dep.behavior.is_peer() {
-                if !dep.behavior.is_dev() {
-                    if lockfile.buffers.dependencies[peer_i].name_hash == dep.name_hash {
-                        lockfile.buffers.dependencies[peer_i] =
-                            lockfile.buffers.dependencies[begin as usize].clone();
-                        begin += 1;
-                        break;
-                    }
+            while !lockfile.buffers.dependencies[dep_i].behavior.is_peer() {
+                if !lockfile.buffers.dependencies[dep_i].behavior.is_dev()
+                    && lockfile.buffers.dependencies[peer_i].name_hash
+                        == lockfile.buffers.dependencies[dep_i].name_hash
+                {
+                    lockfile.buffers.dependencies[peer_i] =
+                        lockfile.buffers.dependencies[begin as usize].clone();
+                    begin += 1;
+                    break;
                 }
                 dep_i -= 1;
-                dep = lockfile.buffers.dependencies[dep_i].clone();
             }
             peer_i += 1;
             if peer_i == end as usize {
@@ -992,14 +990,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             );
                         }
                     } else if version.tag.is_npm() {
-                        // reshaped for borrowck — `name_str` borrows
-                        // `this.lockfile.buffers.string_bytes`. Route the whole
-                        // branch through a raw root so the slice and the
-                        // `&mut PackageManager` calls below can coexist.
-                        // Snapshot the manifest disk-cache scalars while we
-                        // still hold `&mut this` exclusively — taking it via
-                        // `&mut *this_ptr` after `name_str`/`scope` exist
-                        // would pop their borrow-stack tags under SB.
                         let cache_ctx = this.manifest_disk_cache_ctx();
                         let this_ptr: *mut PackageManager = this;
                         // Owned copy: `get_or_put_resolved_package_with_find_result`

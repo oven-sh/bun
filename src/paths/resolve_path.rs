@@ -1432,20 +1432,16 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
-    // reshaped for borrowck — capture buf base ptr before sub-borrow
-    let buf_base = buf.as_mut_ptr();
+    let buf_base = buf.as_ptr() as usize;
     let buf_len = buf.len();
     let (start_offset, len) = {
         let joined = join_string_buf::<P>(&mut buf[..buf_len - 1], parts);
-        (
-            (joined.as_ptr() as usize) - (buf_base as usize),
-            joined.len(),
-        )
+        ((joined.as_ptr() as usize) - buf_base, joined.len())
     };
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
     // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
+    unsafe { ZStr::from_raw(buf[start_offset..].as_ptr(), len) }
 }
 
 pub fn join_string_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a [u8] {
@@ -1508,20 +1504,16 @@ pub(crate) fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
 }
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
-    // reshaped for borrowck — capture buf base ptr before sub-borrow
-    let buf_base = buf.as_mut_ptr();
+    let buf_base = buf.as_ptr() as usize;
     let buf_len = buf.len();
     let (start_offset, len) = {
         let joined = join_string_buf_t::<u8, P>(&mut buf[..buf_len - 1], parts);
-        (
-            (joined.as_ptr() as usize) - (buf_base as usize),
-            joined.len(),
-        )
+        ((joined.as_ptr() as usize) - buf_base, joined.len())
     };
     debug_assert!(start_offset + len < buf_len);
     buf[start_offset + len] = 0;
     // SAFETY: NUL written at buf[start_offset + len]; slice is within buf
-    unsafe { ZStr::from_raw(buf_base.add(start_offset), len) }
+    unsafe { ZStr::from_raw(buf[start_offset..].as_ptr(), len) }
 }
 
 pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(

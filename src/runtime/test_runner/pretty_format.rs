@@ -127,6 +127,13 @@ pub struct FormatOptions {
     pub quote_strings: bool,
 }
 
+/// https://console.spec.whatwg.org/#formatter
+/// Only `vals[0]` is a format string, and only when it is a primitive string.
+/// Later arguments are data: a `%s` inside one of them prints verbatim.
+fn is_format_string(value: JSValue, tag: Tag, any_printed: bool, remaining: &[JSValue]) -> bool {
+    !any_printed && !remaining.is_empty() && tag == Tag::String && value.is_string_literal()
+}
+
 impl JestPrettyFormat {
     pub fn format<W: bun_io::Write>(
         level: MessageLevel,
@@ -203,12 +210,12 @@ impl JestPrettyFormat {
                     if any {
                         let _ = writer.write_all(b" ");
                     }
-                    any = true;
 
                     tag = Tag::get(this_value, global)?;
-                    if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
+                    if is_format_string(this_value, tag.tag, any, fmt.remaining_values) {
                         tag.tag = Tag::StringPossiblyFormatted;
                     }
+                    any = true;
 
                     fmt.format::<W, true>(tag, writer, this_value, global)?;
                     if fmt.remaining_values.is_empty() {
@@ -226,11 +233,12 @@ impl JestPrettyFormat {
                     if any {
                         let _ = writer.write_all(b" ");
                     }
-                    any = true;
+
                     tag = Tag::get(this_value, global)?;
-                    if tag.tag == Tag::String && !fmt.remaining_values.is_empty() {
+                    if is_format_string(this_value, tag.tag, any, fmt.remaining_values) {
                         tag.tag = Tag::StringPossiblyFormatted;
                     }
+                    any = true;
 
                     fmt.format::<W, false>(tag, writer, this_value, global)?;
                     if fmt.remaining_values.is_empty() {

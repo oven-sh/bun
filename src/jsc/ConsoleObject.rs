@@ -1414,6 +1414,21 @@ impl FormatOptions {
 // format2
 // ───────────────────────────────────────────────────────────────────────────
 
+/// https://console.spec.whatwg.org/#formatter
+/// Only `vals[0]` is a format string, and only when it is a primitive string.
+/// Later arguments are data: a `%s` inside one of them prints verbatim.
+fn is_format_string(
+    value: JSValue,
+    tag: TagPayload,
+    any_printed: bool,
+    remaining: &[JSValue],
+) -> bool {
+    !any_printed
+        && !remaining.is_empty()
+        && matches!(tag, TagPayload::String)
+        && value.is_string_literal()
+}
+
 pub fn format2(
     level: MessageLevel,
     global: &JSGlobalObject,
@@ -1517,12 +1532,12 @@ pub fn format2(
             if any {
                 let _ = writer.write_all(b" ");
             }
-            any = true;
 
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            if is_format_string(this_value, tag.tag, any, fmt.remaining()) {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
+            any = true;
 
             fmt.format::<true>(tag, writer, this_value, global)?;
             if fmt.remaining().is_empty() {
@@ -1540,11 +1555,12 @@ pub fn format2(
             if any {
                 let _ = writer.write_all(b" ");
             }
-            any = true;
+
             tag = formatter::Tag::get(this_value, global)?;
-            if matches!(tag.tag, TagPayload::String) && !fmt.remaining().is_empty() {
+            if is_format_string(this_value, tag.tag, any, fmt.remaining()) {
                 tag.tag = TagPayload::StringPossiblyFormatted;
             }
+            any = true;
 
             fmt.format::<false>(tag, writer, this_value, global)?;
             if fmt.remaining().is_empty() {

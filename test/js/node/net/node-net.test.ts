@@ -990,22 +990,118 @@ describe("Socket fd adoption", () => {
     expect(() => fs.fstatSync(fd)).toThrow();
   });
 
-  it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {
-    let error: any;
-    try {
-      new Socket({ fd: 0x7ffff, writable: true });
-    } catch (e) {
-      error = e;
+  it("throws ERR_INVALID_FD_TYPE for an fd that cannot be fstat'ed", () => {
+    for (const opts of [{ fd: 0x7ffff, writable: true }, { fd: 0x7ffff }]) {
+      let error: any;
+      try {
+        new Socket(opts);
+      } catch (e) {
+        error = e;
+      }
+      expect(error?.code).toBe("ERR_INVALID_FD_TYPE");
+      expect(error?.message).toBe("Unsupported fd type: UNKNOWN");
     }
-    expect(error?.code).toBe("ERR_INVALID_FD_TYPE");
-    expect(error?.message).toBe("Unsupported fd type: UNKNOWN");
   });
 
-  it("a bare { fd } does not throw so connect({ fd }) can attach a native handle", () => {
-    // No explicit writable: true -> no adoption, no fstat. child_process
-    // extra stdio relies on this path (connect({ fd }) attaches natively).
-    expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  // Wrapping an already-connected TCP socket fd (inherited connection /
+  // inetd / live connection handed over stdio). POSIX-only: fd inheritance
+  // via stdio is POSIX, and us_socket_from_fd is a no-op on Windows.
+  it.skipIf(isWindows)("new Socket({ fd }) over a connected TCP socket reads and writes", async () => {
+    const child = `
+      const net = require("node:net");
+      const rep = { events: [], read: "" };
+      const s = new net.Socket({ fd: 3 });
+      rep.readable = s.readable;
+      rep.writable = s.writable;
+      rep.pending = s.pending;
+      s.on("connect", () => rep.events.push("connect"));
+      s.on("data", d => { rep.read += d; if (rep.read.includes("\\n")) s.end(); });
+      s.on("error", e => rep.events.push("error:" + e.code));
+      s.on("close", h => {
+        rep.events.push("close:" + h);
+        console.log(JSON.stringify(rep));
+      });
+      s.write("CHILD-HELLO\\n", e => rep.events.push("writecb:" + (e && e.code)));
+    `;
+    const { rep, parentGot } = await runFdChild(child);
+    expect(rep.read).toBe("PARENT-HELLO\n");
+    expect(rep.events).toEqual(["writecb:null", "close:false"]);
+    expect(rep.readable).toBe(true);
+    expect(rep.writable).toBe(true);
+    expect(rep.pending).toBe(false);
+    expect(parentGot).toBe("CHILD-HELLO\n");
   });
+
+  it.skipIf(isWindows)("new Socket({ fd, writable: false }) reads but reports writable=false", async () => {
+    const child = `
+      const net = require("node:net");
+      const rep = { read: "" };
+      const s = new net.Socket({ fd: 3, writable: false });
+      rep.readable = s.readable;
+      rep.writable = s.writable;
+      s.on("data", d => { rep.read += d; if (rep.read.includes("\\n")) s.destroy(); });
+      s.on("close", () => console.log(JSON.stringify(rep)));
+    `;
+    const { rep } = await runFdChild(child);
+    expect(rep.read).toBe("PARENT-HELLO\n");
+    expect(rep.readable).toBe(true);
+    expect(rep.writable).toBe(false);
+  });
+
+  it.skipIf(isWindows)("new Socket({ fd, readable: false }) writes but reports readable=false", async () => {
+    const child = `
+      const net = require("node:net");
+      const rep = {};
+      const s = new net.Socket({ fd: 3, readable: false });
+      rep.readable = s.readable;
+      rep.writable = s.writable;
+      s.write("CHILD-HELLO\\n", e => {
+        rep.writecb = e && e.code;
+        console.log(JSON.stringify(rep));
+        s.destroy();
+      });
+    `;
+    const { rep, parentGot } = await runFdChild(child);
+    expect(rep.writecb).toBe(null);
+    expect(rep.readable).toBe(false);
+    expect(rep.writable).toBe(true);
+    expect(parentGot).toBe("CHILD-HELLO\n");
+  });
+
+  async function runFdChild(childScript: string) {
+    const server = createServer({ pauseOnConnect: true });
+    try {
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const connP = once(server, "connection");
+      const cli = connect((server.address() as any).port, "127.0.0.1");
+      cli.on("error", () => {});
+      let parentGot = "";
+      cli.on("data", d => (parentGot += d));
+      await once(cli, "connect");
+      const [ss] = await connP;
+      ss.on("error", () => {});
+      cli.write("PARENT-HELLO\n");
+      const cliClosed = new Promise<void>(r => cli.on("close", () => r()));
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childScript],
+        env: bunEnv,
+        stdio: ["ignore", "pipe", "inherit", ss._handle.fd],
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // The parent's fd and the child's fd are independent references to the
+      // same open file description (stdio inheritance dups). Close the parent
+      // end now the child has exited so `cli` sees the peer close.
+      ss.destroy();
+      await cliClosed;
+      cli.destroy();
+      expect(stdout.trim()).not.toBe("");
+      expect(exitCode).toBe(0);
+      const rep = JSON.parse(stdout.trim());
+      return { rep, parentGot };
+    } finally {
+      server.close();
+    }
+  }
 });
 
 describe("paused socket whose peer sends RST", () => {

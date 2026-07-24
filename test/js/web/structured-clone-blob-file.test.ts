@@ -609,6 +609,71 @@ describe("structuredClone with Blob and File", () => {
       });
     });
 
+    test("crafted NaN lastModified deserializes to a number, never a forged JSValue", async () => {
+      // `File`/`Blob` store `lastModified` as a raw f64 on the wire. A crafted
+      // payload can plant any NaN bit pattern there; JSVALUE64 boxing is only
+      // sound for non-NaN or the single canonical NaN, so an impure NaN decodes
+      // as a forged immediate (boolean/undefined/int32) or a cell pointer that
+      // segfaults when touched. The getter must purify every NaN, so a
+      // deserialized `.lastModified` is always a Number. Run in a child: the
+      // pre-fix debug build trips the `!isImpureNaN(d)` assert at boxing time,
+      // and the cell-pointer case segfaults on release.
+      const sentinelBE = Buffer.from([0x3a, 0x1b, 0x2c, 0x3d, 0x4e, 0x5f, 0x60, 0x71]);
+      const sentinel = sentinelBE.readDoubleBE(0);
+      const sentinelLE = Buffer.alloc(8);
+      sentinelLE.writeDoubleLE(sentinel, 0);
+      const base = Buffer.from(serialize(new File(["x"], "a.txt", { lastModified: sentinel })));
+      const at = base.indexOf(sentinelLE);
+      expect(at).toBeGreaterThanOrEqual(0);
+
+      const payloads = [
+        "fffe000000000007", // would forge boolean true
+        "fffe00000000000a", // would forge undefined
+        "fffc000012345678", // would forge int32 0x12345678
+        "fffe000000001008", // would forge an unmapped cell pointer -> SEGV
+      ];
+
+      const childScript = `
+        const { serialize, deserialize } = require("bun:jsc");
+        const v8 = require("node:v8");
+        const base = Buffer.from(process.argv[1], "base64");
+        const at = Number(process.argv[2]);
+        const payloads = process.argv[3].split(",");
+        for (const bits of payloads) {
+          const patched = Buffer.from(base);
+          Buffer.from(bits, "hex").reverse().copy(patched, at); // native-endian
+          for (const de of [deserialize, buf => v8.deserialize(Buffer.from(buf))]) {
+            const lm = de(patched).lastModified;
+            // touch it as an object: a forged cell derefs and crashes here.
+            Object.prototype.toString.call(lm);
+            process.stdout.write(JSON.stringify({ type: typeof lm, isNaN: Number.isNaN(lm) }) + "\\n");
+          }
+        }
+      `;
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childScript, base.toString("base64"), String(at), payloads.join(",")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const lines = stdout
+        .split("\n")
+        .filter(Boolean)
+        .map(l => JSON.parse(l));
+      // Two deserialize entry points per payload, all purified to number NaN.
+      expect(lines).toEqual(
+        payloads.flatMap(() => [
+          { type: "number", isNaN: true },
+          { type: "number", isNaN: true },
+        ]),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
     test("truncated payload at every byte boundary throws cleanly", () => {
       // Every truncation point must surface as a thrown error (never a
       // partially-constructed Blob, never a crash). This is the functional

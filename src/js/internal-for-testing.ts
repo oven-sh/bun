@@ -104,6 +104,8 @@ export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") a
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
+  abort: () => void;
+  trap: () => void;
   raiseIgnoringPanicHandler: () => void;
 };
 
@@ -234,6 +236,17 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  // Node's internal/fixed_queue module IS the FixedQueue class.
+  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
+  "internal/freelist": require("internal/freelist"),
+  "internal/validators": require("internal/validators"),
+  "internal/fs/utils": {
+    // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
+    // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
+    // the production behavior through these.
+    stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
+    validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+  },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };
@@ -312,9 +325,10 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 );
 
 /**
- * The syscalls instrumented in bsd.c, plus "ssl_loop_buffer" — not a syscall,
- * but the per-loop TLS plaintext buffer allocation, whose failure path is
- * unreachable on an overcommitting kernel. Arming anything else is rejected.
+ * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
+ * paths are otherwise unreachable without injection ("ssl_loop_buffer",
+ * "poll_start"; see fault_inject.h for the per-hook description). Arming
+ * anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -324,7 +338,8 @@ export type SocketFaultSyscall =
   | "recvmsg"
   | "connect"
   | "accept"
-  | "ssl_loop_buffer";
+  | "ssl_loop_buffer"
+  | "poll_start";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;

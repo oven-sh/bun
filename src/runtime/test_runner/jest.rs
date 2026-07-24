@@ -125,13 +125,8 @@ pub struct TestRunner<'a> {
     /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
     /// `test_command.rs` where this is populated.
     pub concurrent_test_glob: Option<&'a [&'a [u8]]>,
-    pub last_file: u64,
     pub bail: u32,
     pub max_concurrency: u32,
-
-    pub drainer: jsc::AnyTask::AnyTask,
-
-    pub has_pending_tests: bool,
 
     pub snapshots: Snapshots<'a>,
 
@@ -232,8 +227,7 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            let result = bun_glob::matcher::r#match(pattern, file_path);
-            if result == bun_glob::matcher::MatchResult::Match {
+            if bun_glob::matcher::r#match(pattern, file_path).matches() {
                 return true;
             }
         }
@@ -241,11 +235,7 @@ impl<'a> TestRunner<'a> {
     }
 
     pub fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        // TODO: this is wrong. you can't put a hash as the key in a hashmap.
-        let entry = self
-            .index
-            .get_or_put(bun_wyhash::hash(file_path) as u32)
-            .expect("unreachable");
+        let entry = self.index.get_or_put(file_path).expect("unreachable");
         if entry.found_existing {
             return GetOrPutFileResult {
                 file_id: *entry.value_ptr,
@@ -255,7 +245,6 @@ impl<'a> TestRunner<'a> {
         self.files
             .append(File {
                 source: bun_ast::Source::init_empty_file(file_path),
-                ..Default::default()
             })
             .expect("unreachable");
         *entry.value_ptr = file_id;
@@ -291,16 +280,6 @@ pub struct GetOrPutFileResult {
 
 pub struct File {
     pub source: bun_ast::Source,
-    pub log: bun_ast::Log,
-}
-
-impl Default for File {
-    fn default() -> Self {
-        Self {
-            source: bun_ast::Source::init_empty_file(b""),
-            log: bun_ast::Log::init_comptime(),
-        }
-    }
 }
 
 pub(crate) type FileList = MultiArrayList<File>;
@@ -309,11 +288,11 @@ pub(crate) type FileId = u32;
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
         source: bun_ast::Source,
-        log: bun_ast::Log,
     }
 }
-// u32 keys hash as identity in bun_collections.
-pub(crate) type FileMap = ArrayHashMap<u32, u32>;
+// Keyed by the interned `&'static [u8]` path from `FilenameStore`, so no
+// allocation and distinct paths never alias.
+pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 
 #[allow(non_snake_case)]
 pub mod Jest {
@@ -494,8 +473,7 @@ pub mod Jest {
         if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
-            let arguments = callframe.arguments_old::<2>();
-            let arguments = arguments.slice();
+            let arguments = callframe.arguments();
 
             if arguments.len() < 1 || !arguments[0].is_string() {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
@@ -519,8 +497,7 @@ pub mod Jest {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         if arguments.len() < 1 || !arguments[0].is_number() {
             return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
         }

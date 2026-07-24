@@ -1,6 +1,6 @@
-// WebStreamsInspectCustom.h — the one shared helper every Web Streams prototype's
-// [Symbol.for("nodejs.util.inspect.custom")] host function routes through, so
-// `console.log(stream)` matches Node's output shape: `ClassName { field: value, ... }`.
+// The shared helper a prototype's [Symbol.for("nodejs.util.inspect.custom")] routes
+// through so `console.log(x)` matches Node's `ClassName { field: value, ... }` shape.
+// Named for its Web Streams origin; CryptoKey uses it too.
 #pragma once
 
 #include "root.h"

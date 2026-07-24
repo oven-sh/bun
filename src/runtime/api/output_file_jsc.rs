@@ -17,7 +17,6 @@ use bun_http_types::MimeType::MimeType;
 use crate::api::js_bundler::BuildArtifact;
 use crate::node::types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::Blob;
-use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{SizeType as BlobSizeType, Store as BlobStore};
 
@@ -38,35 +37,6 @@ fn set_blob_mime(blob: &mut Blob, mime: MimeType) {
         // SAFETY: `store` is the freshly-allocated backing store uniquely owned
         // by `blob`; no other borrow exists yet.
         unsafe { (*store.as_ptr()).mime_type = mime };
-    }
-}
-
-pub struct SavedFile;
-
-impl SavedFile {
-    pub fn to_js(global_this: &JSGlobalObject, path: &[u8], byte_size: usize) -> JSValue {
-        // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a
-        // Bun-owned global; we hold a unique `&mut` only for this call.
-        let mime_type = global_this.bun_vm().as_mut().mime_type(path);
-        // An owned `PathLike::String` (a `CowSlice`) frees its buffer in
-        // `PathLike::drop`, so the backing buffer must be owned by the store,
-        // not borrowed from `path`.
-        let store = BlobStore::init_file(
-            PathOrFileDescriptor::Path(PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
-                path.to_vec().into_boxed_slice(),
-            ))),
-            mime_type,
-        )
-        .expect("unreachable");
-
-        let blob = Blob::init_with_store(store, global_this);
-        // `init_with_store` already populated `blob.content_type` from the
-        // store's `File` mime, so no separate assignment is needed.
-        blob.size.set(byte_size as BlobSizeType);
-        let ptr = Blob::new(blob);
-        // SAFETY: `ptr` is a freshly heap-allocated `*mut Blob` from
-        // `Blob::new`; ownership transfers to the JS wrapper.
-        unsafe { (*ptr).to_js(global_this) }
     }
 }
 

@@ -664,11 +664,15 @@ export function findRustLld(os: OS): {
   const rustup = findTool({ names: ["rustup"], paths: [join(cargoHome, "bin")], required: false })?.path;
   const channel = readRustToolchainChannel();
   if (rustup !== undefined && channel !== undefined) {
-    spawnSync(rustup, ["toolchain", "install", channel, "--force", "--profile", "minimal", "--component", "rust-src"], {
-      encoding: "utf8",
-      timeout: 300_000,
-      stdio: ["ignore", "ignore", "inherit"], // surface download/error output
-    });
+    spawnSync(
+      rustup,
+      ["-q", "toolchain", "install", channel, "--no-self-update", "--profile", "minimal", "--component", "rust-src"],
+      {
+        encoding: "utf8",
+        timeout: 300_000,
+        stdio: ["ignore", "ignore", "inherit"], // surface download/error output; `-q` hides `info:` noise
+      },
+    );
   }
 
   // One spawn for both sysroot and host triple / LLVM version. `-vV` prints

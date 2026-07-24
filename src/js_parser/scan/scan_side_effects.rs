@@ -116,10 +116,6 @@ impl SideEffects {
     pub fn typeof_(data: &ExprData) -> Option<&'static [u8]> {
         data.to_typeof()
     }
-    #[inline(always)]
-    pub fn to_type_of(data: &ExprData) -> Option<&'static [u8]> {
-        data.to_typeof()
-    }
 
     pub fn is_primitive_to_reorder(data: &ExprData) -> bool {
         matches!(

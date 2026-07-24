@@ -16,7 +16,7 @@
 //! ## Layout
 //!
 //! `main()`'s callee chain — the C-ABI leaves (`bun_initialize_process`,
-//! `bun_warn_avx_missing`, the `__wrap_*` shims, …) plus `cli::Cli::start`
+//! the `__wrap_*` shims, …) plus `cli::Cli::start`
 //! and everything `bun run` reaches under it — sits on the cold-start
 //! critical path: each call can fault a fresh page run. A
 //! `--symbol-ordering-file` 2-pass relink that clustered these onto shared
@@ -199,22 +199,6 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     //    wires stdout/stderr `Source`s.
     output::stdio::init();
     let _flush = output::flush_guard();
-
-    // `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
-    #[cfg(all(target_arch = "x86_64", unix))]
-    if bun_core::Environment::ENABLE_SIMD {
-        unsafe extern "C" {
-            fn bun_warn_avx_missing(url: *const core::ffi::c_char);
-        }
-        // SAFETY: BUN__GITHUB_BASELINE_URL is a NUL-terminated static; the C
-        // side only reads it to print the suggested download URL.
-        unsafe {
-            bun_warn_avx_missing(
-                bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL
-                    .as_ptr(),
-            );
-        }
-    }
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();

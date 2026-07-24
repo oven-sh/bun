@@ -133,9 +133,7 @@ pub(crate) extern "C" fn Bun__onPosixSignal(number: i32) {
     let _ = number;
 }
 
-pub struct PosixSignalTask {
-    pub number: u8,
-}
+pub struct PosixSignalTask;
 
 impl Taskable for PosixSignalTask {
     const TAG: bun_event_loop::TaskTag = task_tag::PosixSignalTask;
@@ -146,11 +144,6 @@ unsafe extern "C" {
 }
 
 impl PosixSignalTask {
-    // `pub const new = bun.TrivialNew(@This());`
-    pub fn new(init: Self) -> Box<Self> {
-        Box::new(init)
-    }
-
     pub fn run_from_js_thread(number: u8, global_object: &JSGlobalObject) {
         Bun__onSignalForJS(i32::from(number), global_object);
     }

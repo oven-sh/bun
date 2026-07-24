@@ -143,6 +143,10 @@ it("should have checkServerIdentity", async () => {
 
 it("should thow ECONNRESET if FIN is received before handshake", async () => {
   await using server = net.createServer(c => {
+    // resume() so the ClientHello the peer still sends is discarded and `c`
+    // can reach 'end' -> autoDestroy; Node buffers otherwise and server.close()
+    // (from await using) would wait on it forever.
+    c.resume();
     c.end();
   });
   await once(server.listen(0, "127.0.0.1"), "listening");
@@ -154,6 +158,47 @@ it("should thow ECONNRESET if FIN is received before handshake", async () => {
   expect(error).toBeDefined();
   expect((error as Error).code as string).toBe("ECONNRESET");
 });
+it("initializes authorizationError to null in the TLSSocket constructor", () => {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L556
+  // Node's onServerSocketSecure/onConnectSecure only assign on failure; a
+  // clean handshake leaves the constructor's null untouched.
+  const socket = new tls.TLSSocket();
+  expect({ value: socket.authorizationError, hasOwn: "authorizationError" in socket }).toEqual({
+    value: null,
+    hasOwn: true,
+  });
+  socket.destroy();
+});
+
+it("setMaxSendFragment mirrors OpenSSL's [512, 16384] acceptance without throwing", async () => {
+  // Node returns whatever SSL_set_max_send_fragment returns: OpenSSL rejects a
+  // size outside [512, 16384] with 0 (-> false). BoringSSL clamps and always
+  // returns 1, so bun enforces the same contract in the native binding.
+  const server = tls.createServer(COMMON_CERT_, s => s.on("data", () => {}));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const connected = Promise.withResolvers<void>();
+  const client = tls.connect(
+    { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
+    connected.resolve,
+  );
+  client.on("error", connected.reject);
+  try {
+    await connected.promise;
+    const results = [0, -1, 511, 512, 16384, 16385].map(size => [size, client.setMaxSendFragment(size)]);
+    expect(results).toEqual([
+      [0, false],
+      [-1, false],
+      [511, false],
+      [512, true],
+      [16384, true],
+      [16385, false],
+    ]);
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("should be able to grab the JSStreamSocket constructor", () => {
   // this keep http2-wrapper compatibility with node.js
   const socket = new tls.TLSSocket(new stream.PassThrough());
@@ -746,4 +791,363 @@ it("https.request reports an impossible version window as a TLS error, not a cer
   response.on("data", (chunk: Buffer) => (body += chunk));
   await once(response, "end");
   expect(body).toBe("ok");
+});
+
+describe("rejectUnauthorized only treats a literal `false` as opting out", () => {
+  // Node applies `options.rejectUnauthorized !== false`, so other falsy
+  // values must keep peer verification enabled.
+  it.each([null, 0, ""])("rejects a self-signed peer when rejectUnauthorized is %p", async value => {
+    const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
+    let client: TLSSocket | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { promise, resolve, reject } = Promise.withResolvers<Error & { code?: string }>();
+      client = tlsConnect(
+        { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: value as any },
+        () => reject(new Error("secureConnect must not be reached")),
+      );
+      client.on("error", resolve);
+      const error = await promise;
+      expect(error.code).toBe("DEPTH_ZERO_SELF_SIGNED_CERT");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
+  it("still completes the handshake unauthorized for a literal `false`", async () => {
+    const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
+    let client: TLSSocket | undefined;
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      client = tlsConnect(
+        { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
+        resolve,
+      );
+      client.on("error", reject);
+      await promise;
+      expect(client.authorized).toBe(false);
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+});
+
+it("a server using `crl` must not poison the process-wide default CA store", async () => {
+  // An mTLS server with `crl` and no `ca` shares the process-wide default
+  // root store; the CRL flags must land on a private copy or every later
+  // default-CA verification in the process fails with UNABLE_TO_GET_CRL.
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  const agent6KeyPath = join(fixturesDir, "agent6-key.pem");
+  const agent6CertPath = join(fixturesDir, "agent6-cert.pem");
+  const crlPath = join(import.meta.dir, "..", "test", "fixtures", "keys", "ca2-crl.pem");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const { once } = require("node:events");
+    const key = readFileSync(${JSON.stringify(agent6KeyPath)}, "utf8");
+    const cert = readFileSync(${JSON.stringify(agent6CertPath)}, "utf8");
+    const crl = readFileSync(${JSON.stringify(crlPath)}, "utf8");
+    async function main() {
+      const poison = tls.createServer({ key, cert, requestCert: true, crl });
+      poison.listen(0, "127.0.0.1");
+      await once(poison, "listening");
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      // No \`ca\`: relies on NODE_EXTRA_CA_CERTS reaching the default store.
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined });
+      await once(socket, "secureConnect");
+      console.log("authorized=" + socket.authorized);
+      socket.end();
+      poison.close();
+      server.close();
+    }
+    main().catch(error => {
+      console.error(error?.code || error?.message || String(error));
+      process.exit(1);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, "ca1-cert.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is drained but only surfaced on failure: debug builds may emit
+  // benign warnings, so it must never be asserted to be empty.
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "authorized=true",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("a no-`ca` tls.connect({ crl }) applies the CRL to its own copy of the default roots", async () => {
+  // The context starts on SSL_CTX_new()'s empty store; it must be seeded with
+  // a private copy of the default roots that the per-socket attach keeps, so
+  // CRL checking fails closed exactly like Node (no CRL covers the ca1 chain).
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  const crlPath = join(import.meta.dir, "..", "test", "fixtures", "keys", "ca2-crl.pem");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const { once } = require("node:events");
+    const key = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-key.pem"))}, "utf8");
+    const cert = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-cert.pem"))}, "utf8");
+    const crl = readFileSync(${JSON.stringify(crlPath)}, "utf8");
+    async function main() {
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined, crl });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        process.exit(0);
+      });
+      await once(socket, "secureConnect");
+      console.log("authorized=" + socket.authorized);
+      process.exit(0);
+    }
+    main().catch(error => {
+      console.error(error?.code || error?.message || String(error));
+      process.exit(1);
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, "ca1-cert.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // stderr is drained but only surfaced on failure (debug builds may warn).
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=UNABLE_TO_GET_CRL",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("TLSSocket._requestCert follows Node's _init rule", () => {
+  // Clients always request the peer certificate; servers only when asked.
+  // Must be decided in the constructor, before a server wrap starts its
+  // upgrade: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L845-L848
+  // Like the JSStreamSocket test above, the detached wrappers are not
+  // destroyed: tearing down a never-connected duplex wrap is its own quirk.
+  const cases = [
+    new TLSSocket(new stream.PassThrough()), // client
+    new TLSSocket(new stream.PassThrough(), { isServer: true }),
+    new TLSSocket(new stream.PassThrough(), { isServer: true, requestCert: true }),
+  ];
+  expect(cases.map(s => (s as any)._requestCert)).toEqual([true, false, true]);
+});
+
+it("socket.ssl is assignable like Node's plain own property", async () => {
+  // Node assigns `this.ssl` in _init and nulls it in _destroySSL, so it must
+  // accept writes; a getter-only accessor would throw in strict mode.
+  const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
+  let client: TLSSocket | undefined;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const connected = Promise.withResolvers<void>();
+    client = tlsConnect(
+      { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
+      connected.resolve,
+    );
+    client.on("error", connected.reject);
+    await connected.promise;
+    expect(typeof (client as any).ssl?.verifyError).toBe("function");
+    (client as any).ssl = null;
+    expect((client as any).ssl).toBeNull();
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
+it("rejects a `ca` option that contains no certificates at construction time", () => {
+  // Deliberately stricter than Node here: Node tolerates an unusable `ca`
+  // (zero certificates parse) and only fails later at verification with an
+  // empty trust store; Bun rejects the option itself, so a misconfigured pin
+  // can never silently fall back to any other roots.
+  let err: any;
+  try {
+    tls.createSecureContext({ ca: "\n" });
+  } catch (e) {
+    err = e;
+  }
+  expect(err?.message).toBe("Invalid CA");
+});
+
+it("a `ca` that parses to zero certificates is an empty pin set, never the default roots", async () => {
+  // A key PEM passed as `ca` is tolerated (like Node) and adds nothing; the
+  // resulting empty own store must fail closed instead of falling back to the
+  // default roots, which NODE_EXTRA_CA_CERTS makes able to verify this chain:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831
+  const fixturesDir = join(import.meta.dir, "fixtures");
+  const script = `
+    const tls = require("node:tls");
+    const { readFileSync } = require("node:fs");
+    const { once } = require("node:events");
+    const key = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-key.pem"))}, "utf8");
+    const cert = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-cert.pem"))}, "utf8");
+    async function main() {
+      const server = tls.createServer({ key, cert }, s => s.end());
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const socket = tls.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        ca: key,
+        allowPartialTrustChain: true,
+        checkServerIdentity: () => undefined,
+      });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        server.close();
+      });
+      socket.on("secureConnect", () => {
+        console.log("secureConnect authorized=" + socket.authorized);
+        socket.end();
+        server.close();
+      });
+    }
+    main();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_EXTRA_CA_CERTS: join(fixturesDir, "ca1-cert.pem") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("tls.connect({rejectUnauthorized: undefined}) with NODE_TLS_REJECT_UNAUTHORIZED=0 still rejects", async () => {
+  // Node's spread `{rejectUnauthorized: !allowUnauthorized, ...options}`:
+  // an explicit own-property `undefined` overrides the env-derived default and
+  // then coerces to true via `!== false`; only an OMITTED key falls through to
+  // the env var. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1732-L1781
+  const script = `
+    const tls = require("node:tls");
+    const { once } = require("node:events");
+    const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, s => s.end());
+    server.listen(0, "127.0.0.1");
+    server.on("listening", () => {
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: undefined });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        socket.destroy();
+        server.close();
+      });
+      socket.on("secureConnect", () => {
+        console.log("secureConnect authorized=" + socket.authorized);
+        socket.end();
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=DEPTH_ZERO_SELF_SIGNED_CERT",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("an inherited rejectUnauthorized cannot disable certificate verification", async () => {
+  // Node merges the user options with an own-property spread, so a polluted
+  // Object.prototype never reaches the socket and the peer is still verified.
+  const script = `
+    Object.prototype.rejectUnauthorized = false;
+    const tls = require("node:tls");
+    const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, s => s.end());
+    server.listen(0, "127.0.0.1");
+    server.on("listening", () => {
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1" });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        socket.destroy();
+        server.close();
+      });
+      socket.on("secureConnect", () => {
+        console.log("secureConnect authorized=" + socket.authorized);
+        socket.end();
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "error=DEPTH_ZERO_SELF_SIGNED_CERT",
+    exitCode: 0,
+    failureDetail: "",
+  });
+});
+
+it("an inherited checkServerIdentity cannot become the hostname verifier", async () => {
+  // Node installs its own default before spreading the user options, so a
+  // polluted Object.prototype never reaches the socket. Trusting the cert makes
+  // verification succeed, which is the only path that runs the identity check.
+  const script = `
+    let called = false;
+    Object.prototype.checkServerIdentity = () => { called = true; };
+    const tls = require("node:tls");
+    const c = ${JSON.stringify(COMMON_CERT_)};
+    const server = tls.createServer({ key: c.key, cert: c.cert }, s => s.end());
+    server.listen(0, "127.0.0.1", () => {
+      const socket = tls.connect({
+        port: server.address().port,
+        host: "127.0.0.1",
+        ca: [c.cert],
+        servername: "localhost",
+      });
+      socket.on("secureConnect", () => {
+        console.log("polluted=" + called);
+        socket.end();
+        server.close();
+      });
+      socket.on("error", error => {
+        console.log("error=" + error.code);
+        socket.destroy();
+        server.close();
+      });
+    });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode, failureDetail: exitCode === 0 ? "" : stderr }).toEqual({
+    stdout: "polluted=false",
+    exitCode: 0,
+    failureDetail: "",
+  });
 });

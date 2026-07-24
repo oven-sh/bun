@@ -1,6 +1,5 @@
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::VecExt;
-use core::ffi::c_void;
 use core::mem::MaybeUninit;
 
 use crate::Error;
@@ -24,13 +23,7 @@ use bun_ast::{B, E, Expr, G, S, Stmt};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
 pub type JavaScriptParser<'a> = P<'a, false, false>;
-pub type JSXParser<'a> = P<'a, false, false>;
-pub type TypeScriptParser<'a> = P<'a, true, false>;
 pub type TSXParser<'a> = P<'a, true, false>;
-pub type JavaScriptImportScanner<'a> = P<'a, false, true>;
-pub type JSXImportScanner<'a> = P<'a, false, true>;
-pub type TypeScriptImportScanner<'a> = P<'a, true, true>;
-pub type TSXImportScanner<'a> = P<'a, true, true>;
 
 // In AST crates, ListManaged(T) backed by the arena → bumpalo Vec.
 type BumpVec<'bump, T> = bun_alloc::ArenaVec<'bump, T>;
@@ -78,7 +71,6 @@ pub struct Options<'a> {
     pub preserve_unused_imports_ts: bool,
     pub use_define_for_class_fields: bool,
     pub suppress_warnings_about_weird_code: bool,
-    pub filepath_hash_for_hmr: u32,
     pub features: RuntimeFeatures,
 
     pub tree_shaking: bool,
@@ -127,7 +119,6 @@ impl<'a> Default for Options<'a> {
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: false,
             suppress_warnings_about_weird_code: true,
-            filepath_hash_for_hmr: 0,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
@@ -176,7 +167,6 @@ impl<'a> Options<'a> {
             preserve_unused_imports_ts: self.preserve_unused_imports_ts,
             use_define_for_class_fields: self.use_define_for_class_fields,
             suppress_warnings_about_weird_code: self.suppress_warnings_about_weird_code,
-            filepath_hash_for_hmr: self.filepath_hash_for_hmr,
             features: RuntimeFeatures {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
@@ -212,9 +202,6 @@ impl<'a> Options<'a> {
                 bundler_feature_flags: None,
                 repl_mode: f.repl_mode,
                 jsx_optimization_inline: f.jsx_optimization_inline,
-                dynamic_require: f.dynamic_require,
-                remove_whitespace: f.remove_whitespace,
-                use_import_meta_require: f.use_import_meta_require,
             },
             tree_shaking: self.tree_shaking,
             bundle: self.bundle,
@@ -279,7 +266,6 @@ impl<'a> Options<'a> {
             preserve_unused_imports_ts: false,
             use_define_for_class_fields: false,
             suppress_warnings_about_weird_code: true,
-            filepath_hash_for_hmr: 0,
             features: RuntimeFeatures::default(),
             tree_shaking: false,
             bundle: false,
@@ -333,17 +319,6 @@ impl<'a> Parser<'a> {
             source,
             log: log_ptr,
         })
-    }
-
-    /// Reborrow the shared `Log`. Callers must not hold two results live at
-    /// once (or alongside `self.lexer.log()`).
-    #[inline]
-    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
-        // SAFETY: `log` was created from the `&'a mut Log` passed to `init`,
-        // which outlives `'a` (and therefore `self`). `self.lexer.log` aliases
-        // the same allocation as a `NonNull` (not `&mut`), so this transient
-        // reborrow does not invalidate it.
-        unsafe { self.log.as_mut() }
     }
 }
 
@@ -623,98 +598,6 @@ impl<'a> Parser<'a> {
             WrapMode::None,
             b"",
         )?))
-    }
-
-    pub fn analyze(
-        &mut self,
-        context: *mut c_void,
-        callback: &dyn Fn(*mut c_void, &mut TSXParser, &mut [js_ast::Part]) -> Result<(), Error>,
-    ) -> Result<(), Error> {
-        // See `_scan_imports`: move lexer/options out, leaving inert
-        // placeholders so `self` may drop without double-free.
-        //
-        // The placeholder lexer gets its own arena `Log` so it does not alias
-        // `self.log` (see `_scan_imports`).
-        let lexer = core::mem::replace(
-            &mut self.lexer,
-            js_lexer::Lexer::init_without_reading(
-                // Disjoint dummy `Log` (empty `Vec`, arena-leaked); the
-                // placeholder is never read after this point.
-                self.bump.alloc(bun_ast::Log::default()),
-                self.source,
-                self.bump,
-            ),
-        );
-        let options = core::mem::take(&mut self.options);
-        // `P.log` and `Lexer.log` are both `NonNull<Log>` (see P.rs / lexer.rs
-        // field docs), so handing the same raw pointer to both is defined —
-        // no `&mut` is materialized.
-        let mut __p = init_p!(TSXParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
-        // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut TSXParser<'_> = unsafe { __p.assume_init_mut() };
-
-        // Consume a leading hashbang comment
-        let mut hashbang: &[u8] = b"";
-        if p.lexer.token == js_lexer::T::THashbang {
-            hashbang = p.lexer.identifier;
-            p.lexer.next()?;
-        }
-        let _ = hashbang;
-
-        // Parse the file in the first pass, but do not bind symbols
-        let mut opts = ParseStatementOptions {
-            is_module_scope: true,
-            ..Default::default()
-        };
-        let mut parse_tracer = bun_core::perf::trace("JSParser.parse");
-
-        let stmts = match p.parse_stmts_up_to(js_lexer::T::TEndOfFile, &mut opts) {
-            Ok(s) => s,
-            Err(e) => {
-                #[cfg(target_arch = "wasm32")]
-                {
-                    Output::print(format_args!(
-                        "JSParser.parse: caught error {} at location: {}\n",
-                        e.name(),
-                        p.lexer.loc().start
-                    ));
-                    let _ = p.log().print(Output::writer());
-                }
-                return Err(e);
-            }
-        };
-
-        parse_tracer.end();
-
-        // `p.log` and
-        // `self.log` alias the same `NonNull<Log>` so either is fine — route
-        // through `p` for clarity.
-        if p.log().errors > 0 {
-            #[cfg(target_arch = "wasm32")]
-            {
-                // Each message is emitted unbuffered (one console.log line per
-                // write on wasm32). Diagnostics formatting only.
-                for msg in p.log().msgs.as_slice() {
-                    let mut m: bun_ast::Msg = *msg;
-                    let _ = m.write_format(Output::writer(), true);
-                }
-            }
-            return Err(crate::Error::SyntaxError);
-        }
-
-        let mut visit_tracer = bun_core::perf::trace("JSParser.visit");
-        p.prepare_for_visit_pass()?;
-
-        let mut parts = BumpVec::new_in(p.arena);
-
-        p.append_part(&mut parts, stmts.into_bump_slice_mut())?;
-        visit_tracer.end();
-
-        let mut analyze_tracer = bun_core::perf::trace("JSParser.analyze");
-        callback(context, p, parts.as_mut_slice())?;
-        analyze_tracer.end();
-        Ok(())
     }
 
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {

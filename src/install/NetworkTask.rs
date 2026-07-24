@@ -64,7 +64,6 @@ pub struct NetworkTask {
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub url_buf: Box<[u8]>,
     pub retried: u16,
-    pub request_buffer: MutableString,
     pub response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
     // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
@@ -673,7 +672,6 @@ impl NetworkTask {
         };
 
         if PackageManager::verbose_install() {
-            self.http_mut().verbose = HTTPVerboseLevel::Headers;
             self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
         }
 
@@ -945,7 +943,7 @@ impl NetworkTask {
     /// value — the slot is freshly poisoned/uninit from `get()`.
     ///
     /// Caller-initialized fields (`unsafe_http_client`, `callback`,
-    /// `request_buffer`, `response_buffer`) are written here with drop-safe
+    /// `response_buffer`) are written here with drop-safe
     /// placeholders so subsequent `=` assignments in `for_manifest`/
     /// `for_tarball` do not drop uninitialized memory. `unsafe_http_client`
     /// stays bitwise-untouched (it is `MaybeUninit`, so leaving it uninit is
@@ -986,7 +984,6 @@ impl NetworkTask {
             // Caller-initialized fields: write drop-safe placeholders so the
             // plain `=` in `for_manifest`/`for_tarball` drops a valid value.
             // (`unsafe_http_client` is `MaybeUninit` — left uninitialized.)
-            addr_of_mut!((*slot).request_buffer).write(MutableString::init_empty());
             addr_of_mut!((*slot).response_buffer).write(MutableString::init_empty());
             addr_of_mut!((*slot).callback).write(Callback::LocalTarball);
         }

@@ -373,7 +373,9 @@ impl ClientSession {
             self.detach(stream);
             // SAFETY: re-derive — detach() invalidated the prior Unique tag.
             let client = client_mut(client_ptr);
-            client.state.flags.received_last_chunk = true;
+            if let Err(err) = client.state.finalize_body_on_eof() {
+                return client.fail_from_h2(err);
+            }
             return finish(client);
         }
     }

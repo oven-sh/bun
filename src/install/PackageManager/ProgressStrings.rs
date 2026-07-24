@@ -22,7 +22,7 @@ impl ProgressStrings {
     .as_bytes();
     pub const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
 
-    pub const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
+    const EXTRACT_NO_EMOJI_: &'static str = "Resolving & extracting";
     const EXTRACT_NO_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::EXTRACT_NO_EMOJI_, "\n").as_bytes();
     const EXTRACT_WITH_EMOJI: &'static [u8] = concatcp!(
@@ -173,35 +173,4 @@ impl PackageManager {
         self.progress = Default::default();
         self.downloads_node = None;
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface. Thin shims over the
-// `impl PackageManager` bodies above so `pub use progress_mod::{...}` in
-// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn set_node_name<const IS_FIRST: bool>(
-    this: &mut PackageManager,
-    node: &mut ProgressNode,
-    name: &[u8],
-    emoji: &[u8],
-) {
-    this.set_node_name::<IS_FIRST>(node, name, emoji)
-}
-
-#[inline]
-pub fn start_progress_bar_if_none(manager: &mut PackageManager) {
-    manager.start_progress_bar_if_none()
-}
-
-#[inline]
-pub fn start_progress_bar(manager: &mut PackageManager) {
-    manager.start_progress_bar()
-}
-
-#[inline]
-pub fn end_progress_bar(manager: &mut PackageManager) {
-    manager.end_progress_bar()
 }

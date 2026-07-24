@@ -10,25 +10,9 @@ use bun_alloc::AllocError;
 // 4096 is the conservative minimum page size on every platform Bun ships on.
 const PAGE_SIZE_MIN: usize = 4096;
 
-/// Selects the fifo's backing-storage strategy.
-///
-/// Rust cannot branch struct layout on a const-generic enum payload, so
-/// dispatch is done via the [`LinearFifoBuffer`] trait below; this enum is
-/// kept for API parity.
-pub enum LinearFifoBufferType {
-    /// The buffer is internal to the fifo; it is of the specified size.
-    Static(usize),
-    /// The buffer is passed as a slice to the initialiser.
-    Slice,
-    /// The buffer is managed dynamically using a `mem.Allocator`.
-    Dynamic,
-}
-
 /// Backing-storage abstraction; `DYNAMIC` is true for the `.Dynamic` variant.
 // Trait + assoc-consts encode the structurally different layouts per
-// variant. No in-tree caller
-// instantiates `SliceBuffer` directly; `threading::Channel::init_slice` wraps
-// it for `.Slice` API parity.
+// variant.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
@@ -38,12 +22,6 @@ pub trait LinearFifoBuffer<T> {
     #[inline]
     fn len(&self) -> usize {
         self.as_slice().len()
-    }
-
-    /// Reallocate to exactly `new_size` elements, preserving the prefix.
-    /// Static/Slice variants are unreachable (callers gate on `DYNAMIC`).
-    fn realloc(&mut self, _new_size: usize) -> Result<(), AllocError> {
-        unreachable!("realloc on non-Dynamic LinearFifo buffer")
     }
 
     /// Allocate fresh storage of `new_size` and return the old buffer so the
@@ -141,25 +119,6 @@ impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
     }
 }
 
-// ── .Slice ────────────────────────────────────────────────────────────────────
-
-/// `buffer_type == .Slice` — caller-provided `[]T`.
-pub struct SliceBuffer<'a, T>(&'a mut [T]);
-
-impl<'a, T> LinearFifoBuffer<T> for SliceBuffer<'a, T> {
-    const POWERS_OF_TWO: bool = false; // Any size slice could be passed in
-    const DYNAMIC: bool = false;
-
-    #[inline]
-    fn as_slice(&self) -> &[T] {
-        self.0
-    }
-    #[inline]
-    fn as_mut_slice(&mut self) -> &mut [T] {
-        self.0
-    }
-}
-
 // ── .Dynamic ──────────────────────────────────────────────────────────────────
 
 /// `buffer_type == .Dynamic` — heap-allocated, growable. Global mimalloc
@@ -177,15 +136,6 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
     #[inline]
     fn as_mut_slice(&mut self) -> &mut [T] {
         assume_init_slice_mut(&mut self.0)
-    }
-
-    fn realloc(&mut self, new_size: usize) -> Result<(), AllocError> {
-        let mut new = Box::<[T]>::new_uninit_slice(new_size);
-        let n = self.0.len().min(new_size);
-        // SAFETY: disjoint allocations; MaybeUninit copy is always sound.
-        unsafe { ptr::copy_nonoverlapping(self.0.as_ptr(), new.as_mut_ptr(), n) };
-        self.0 = new;
-        Ok(())
     }
 
     fn alloc_swap(&mut self, new_size: usize) -> Result<Box<[MaybeUninit<T>]>, AllocError> {
@@ -213,18 +163,6 @@ impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     pub fn init() -> Self {
         Self {
             buf: StaticBuffer([const { MaybeUninit::uninit() }; N]),
-            head: 0,
-            count: 0,
-            _marker: PhantomData,
-        }
-    }
-}
-
-impl<'a, T> LinearFifo<T, SliceBuffer<'a, T>> {
-    /// `init` for `.Slice`.
-    pub fn init(buf: &'a mut [T]) -> Self {
-        Self {
-            buf: SliceBuffer(buf),
             head: 0,
             count: 0,
             _marker: PhantomData,
@@ -330,23 +268,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 );
             }
         }
-    }
-
-    /// Reduce allocated capacity to `size`.
-    pub fn shrink(&mut self, size: usize) {
-        debug_assert!(size >= self.count);
-        if B::DYNAMIC {
-            self.realign();
-            match self.buf.realloc(size) {
-                Ok(()) => {}
-                Err(AllocError) => return, // no problem, capacity is still correct then.
-            }
-        }
-    }
-
-    #[deprecated(note = "deprecated; call `ensure_unused_capacity` or `ensure_total_capacity`")]
-    pub fn ensure_capacity(&mut self, _size: usize) {
-        unreachable!("deprecated; call ensure_unused_capacity or ensure_total_capacity");
     }
 
     /// Ensure that the buffer can fit at least `size` items
@@ -715,48 +636,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
         self.count -= 1;
     }
-
-    /// Pump data from a reader into a writer
-    /// stops when reader returns 0 bytes (EOF)
-    /// Buffer size must be set before calling; a buffer length of 0 is invalid.
-    // The closure bounds encode duck-typed streams:
-    // `src_reader(buf)` ≙ `reader.read(buf)`, `dest_writer(buf)` ≙
-    // `writer.write(buf)`, both returning a count (`Ok(0)` from the reader
-    // means EOF). This keeps `pump` generic over `T`, which `std::io` cannot.
-    pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
-    where
-        R: FnMut(&mut [T]) -> Result<usize, E>,
-        W: FnMut(&[T]) -> Result<usize, E>,
-    {
-        debug_assert!(self.buf_len() > 0);
-        loop {
-            if self.writable_length() > 0 {
-                // reshaped for borrowck.
-                let n = {
-                    let ws = self.writable_slice(0);
-                    src_reader(ws)?
-                };
-                if n == 0 {
-                    break; // EOF
-                }
-                self.update(n);
-            }
-            let written = {
-                let rs = self.readable_slice(0);
-                dest_writer(rs)?
-            };
-            self.discard(written);
-        }
-        // flush remaining data
-        while self.readable_length() > 0 {
-            let written = {
-                let rs = self.readable_slice(0);
-                dest_writer(rs)?
-            };
-            self.discard(written);
-        }
-        Ok(())
-    }
 }
 
 // ── Reader/Writer adapters ────────────────────────────────────────────────────
@@ -913,8 +792,6 @@ mod tests {
             assert_eq!(b"ab", &result[..n]);
         }
 
-        fifo.shrink(0);
-
         {
             use core::fmt::Write as _;
             write!(fifo, "{}, {}!", "Hello", "World").unwrap();
@@ -930,29 +807,6 @@ mod tests {
             std::io::Read::read_to_end(&mut fifo, &mut drained).unwrap();
             let words: Vec<&[u8]> = drained.split(|&c| c == b' ').collect();
             assert_eq!(vec![&b"This"[..], b"is", b"a", b"test"], words);
-        }
-
-        // Pump from an in-memory reader into a fixed output buffer. The
-        // closures play the reader/writer roles.
-        {
-            fifo.ensure_total_capacity(1).unwrap();
-            let input: &[u8] = b"pump test";
-            let mut cursor = 0usize;
-            let mut out: Vec<u8> = Vec::new();
-            fifo.pump(
-                |buf: &mut [u8]| -> Result<usize, ()> {
-                    let n = buf.len().min(input.len() - cursor);
-                    buf[..n].copy_from_slice(&input[cursor..cursor + n]);
-                    cursor += n;
-                    Ok(n)
-                },
-                &mut |bytes: &[u8]| {
-                    out.extend_from_slice(bytes);
-                    Ok(bytes.len())
-                },
-            )
-            .unwrap();
-            assert_eq!(input, &out[..]);
         }
     }
 
@@ -991,15 +845,13 @@ mod tests {
         }
     }
 
-    // The element types are crossed with all three buffer kinds.
+    // The element types are crossed with both buffer kinds.
     #[test]
     fn linear_fifo_generic_matrix() {
         macro_rules! per_type {
             ($($T:ty),* $(,)?) => {$(
                 run_generic_fifo_test(LinearFifo::<$T, StaticBuffer<$T, 32>>::init());
                 run_generic_fifo_test(LinearFifo::<$T, DynamicBuffer<$T>>::init());
-                let mut backing = [<$T>::from(0u8); 32];
-                run_generic_fifo_test(LinearFifo::<$T, SliceBuffer<$T>>::init(&mut backing));
             )*};
         }
         per_type!(u8, u16, u64);

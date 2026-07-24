@@ -787,14 +787,36 @@ describe("fetch", () => {
     expect(await response.text()).toBe("buntastic");
   });
 
-  ["GET", "HEAD", "OPTIONS"].forEach(method =>
+  ["GET", "HEAD", "TRACE"].forEach(method =>
     it.concurrent(`fail on ${method} with body`, async () => {
-      const url = `http://${server.hostname}:${server.port}`;
+      // The request is rejected before any network I/O, so the URL is irrelevant.
       expect(async () => {
-        await fetch(url, { body: "buntastic" });
-      }).toThrow("fetch() request with GET/HEAD/OPTIONS method cannot have body.");
+        await fetch("http://example.invalid/", { method, body: "buntastic" });
+      }).toThrow("fetch() request with GET/HEAD method cannot have body.");
     }),
   );
+
+  // WHATWG Fetch only forbids a body for GET and HEAD. OPTIONS with content is
+  // legal HTTP (RFC 9110 §9.3.7) and must be sent, not rejected.
+  it.concurrent("OPTIONS with body is sent and delivered", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        return Response.json({
+          method: req.method,
+          cl: req.headers.get("content-length"),
+          body: await req.text(),
+        });
+      },
+    });
+    const res = await fetch(server.url, {
+      method: "OPTIONS",
+      body: "PAYLOAD",
+      headers: { "content-type": "text/plain" },
+    });
+    expect(await res.json()).toEqual({ method: "OPTIONS", cl: "7", body: "PAYLOAD" });
+    expect(res.status).toBe(200);
+  });
 
   it.concurrent("content length is inferred", async () => {
     using server = Bun.serve({

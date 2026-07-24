@@ -28,7 +28,6 @@ type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
-use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
@@ -127,8 +126,6 @@ pub struct Context<'a> {
 pub struct Stats {
     pub unpacked_size: usize,
     pub total_files: usize,
-    pub ignored_files: usize,
-    pub ignored_directories: usize,
     pub packed_size: usize,
     pub bundled_deps: usize,
 }
@@ -310,49 +307,6 @@ impl PackCommand {
             }
         }
         Ok(())
-    }
-
-    pub fn exec(ctx: Command::Context<'_>) -> crate::Result<()> {
-        let cli =
-            bun_install::package_manager::command_line_arguments::CommandLineArguments::parse(
-                bun_install::Subcommand::Pack,
-            )?;
-
-        let silent = cli.silent;
-        let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli, bun_install::Subcommand::Pack) {
-                Ok(v) => v,
-                Err(err) => {
-                    if !silent {
-                        if err == bun_install::Error::MissingPackageJSON {
-                            let mut cwd_buf = PathBuffer::uninit();
-                            match bun_sys::getcwd_z(&mut cwd_buf) {
-                                Ok(cwd) => {
-                                    Output::err_generic(
-                                        "failed to find project package.json from: \"{}\"",
-                                        format_args!("{}", bstr::BStr::new(cwd.as_bytes())),
-                                    );
-                                }
-                                Err(_) => {
-                                    Output::err_generic(
-                                        "failed to find project package.json",
-                                        format_args!(""),
-                                    );
-                                }
-                            }
-                        } else {
-                            Output::err_generic(
-                                "failed to initialize bun install: {}",
-                                format_args!("{}", err.name()),
-                            );
-                        }
-                    }
-                    Global::crash();
-                }
-            };
-        drop(original_cwd);
-
-        Self::exec_with_manager(ctx, manager)
     }
 }
 
@@ -599,12 +553,8 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    match glob::r#match(include.glob.slice(), match_path) {
-                        GlobMatchResult::Match => included = true,
-                        GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => {
-                            unreachable!()
-                        }
-                        _ => {}
+                    if glob::r#match(include.glob.slice(), match_path).matches() {
+                        included = true;
                     }
                 }
             }
@@ -627,11 +577,9 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    // NOTE: These patterns have `!` so `.match` logic is
-                    // inverted here
-                    match glob::r#match(exclude.glob.slice(), match_path) {
-                        GlobMatchResult::NegateNoMatch => included = false,
-                        _ => {}
+                    let result = glob::r#match(exclude.glob.slice(), match_path);
+                    if result.is_negated() && !result.matches() {
+                        included = false;
                     }
                 }
             }
@@ -1626,14 +1574,9 @@ fn is_unconditionally_excluded(
     if dir_depth == 1 {
         // check default ignores that only apply to the root project directory
         for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
-            match glob::r#match(pattern, entry_name) {
-                GlobMatchResult::Match => {
-                    // cannot be reversed
-                    return Some((pattern, IgnorePatternsKind::Default));
-                }
-                GlobMatchResult::NoMatch => {}
-                // default patterns don't use `!`
-                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            if glob::r#match(pattern, entry_name).matches() {
+                // cannot be reversed
+                return Some((pattern, IgnorePatternsKind::Default));
             }
         }
     }
@@ -1642,11 +1585,8 @@ fn is_unconditionally_excluded(
         if can_override {
             continue;
         }
-        match glob::r#match(pattern, entry_name) {
-            GlobMatchResult::Match => return Some((pattern, IgnorePatternsKind::Default)),
-            GlobMatchResult::NoMatch => {}
-            // default patterns don't use `!`
-            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+        if glob::r#match(pattern, entry_name).matches() {
+            return Some((pattern, IgnorePatternsKind::Default));
         }
     }
 
@@ -1686,19 +1626,14 @@ fn is_excluded<'a>(
         if !can_override {
             continue;
         }
-        match glob::r#match(pattern, entry_name) {
-            GlobMatchResult::Match => {
-                ignored = true;
-                ignore_pattern = pattern;
-                ignore_kind = IgnorePatternsKind::Default;
+        if glob::r#match(pattern, entry_name).matches() {
+            ignored = true;
+            ignore_pattern = pattern;
+            ignore_kind = IgnorePatternsKind::Default;
 
-                // break. doesn't matter if more default patterns
-                // match this path
-                break;
-            }
-            GlobMatchResult::NoMatch => {}
-            // default patterns don't use `!`
-            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            // break. doesn't matter if more default patterns
+            // match this path
+            break;
         }
     }
 
@@ -1727,14 +1662,15 @@ fn is_excluded<'a>(
             } else {
                 entry_name
             };
-            match glob::r#match(pattern.glob.slice(), match_path) {
-                GlobMatchResult::Match => {
-                    ignored = true;
-                    ignore_pattern = pattern.glob.slice();
-                    ignore_kind = ignore.kind;
+            let result = glob::r#match(pattern.glob.slice(), match_path);
+            if result.is_negated() {
+                if !result.matches() {
+                    ignored = false;
                 }
-                GlobMatchResult::NegateNoMatch => ignored = false,
-                _ => {}
+            } else if result.matches() {
+                ignored = true;
+                ignore_pattern = pattern.glob.slice();
+                ignore_kind = ignore.kind;
             }
         }
     }
@@ -4078,8 +4014,7 @@ pub mod bindings {
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = call_frame.arguments_old::<1>();
-        let args = arguments.slice();
+        let args = call_frame.arguments();
         if args.len() < 1 || !args[0].is_string() {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }

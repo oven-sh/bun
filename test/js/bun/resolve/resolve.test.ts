@@ -309,7 +309,7 @@ it("import override to bun", async () => {
   expect(await import("#bun")).toBeDefined();
 });
 
-it.todo("import override to bun:test", async () => {
+it("import override to bun:test", async () => {
   // @ts-expect-error
   expect(await import("#bun_test")).toBeDefined();
 });

@@ -7,7 +7,6 @@
 //!
 //! Ported from TypeScript `src/Utils/DisjointSet.ts`.
 
-use std::collections::HashSet;
 use std::hash::Hash;
 
 use crate::collections::IndexMap;
@@ -83,20 +82,6 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
         self.entries.contains_key(&item)
     }
 
-    /// Forces the set into canonical form (all items pointing directly to their
-    /// root) and returns a map of items to their roots.
-    ///
-    /// Corresponds to TS `canonicalize(): Map<T, T>`.
-    pub fn canonicalize(&mut self) -> IndexMap<K, K> {
-        let mut result = IndexMap::new();
-        let keys: Vec<K> = self.entries.keys().copied().collect();
-        for item in keys {
-            let root = self.find(item);
-            result.insert(item, root);
-        }
-        result
-    }
-
     /// Calls the provided callback once for each item in the disjoint set,
     /// passing the item and the group root to which it belongs.
     ///
@@ -110,29 +95,6 @@ impl<K: Copy + Eq + Hash> DisjointSet<K> {
             let group = self.find(item);
             f(item, group);
         }
-    }
-
-    /// Groups all items by their root and returns the groups as a list of sets.
-    ///
-    /// Corresponds to TS `buildSets(): Array<Set<T>>`.
-    pub fn build_sets(&mut self) -> Vec<HashSet<K>> {
-        let mut group_to_index: IndexMap<K, usize> = IndexMap::new();
-        let mut sets: Vec<HashSet<K>> = Vec::new();
-        let keys: Vec<K> = self.entries.keys().copied().collect();
-        for item in keys {
-            let group = self.find(item);
-            let idx = match group_to_index.get(&group) {
-                Some(&idx) => idx,
-                None => {
-                    let idx = sets.len();
-                    group_to_index.insert(group, idx);
-                    sets.push(HashSet::new());
-                    idx
-                }
-            };
-            sets[idx].insert(item);
-        }
-        sets
     }
 
     /// Returns the number of items in the set.

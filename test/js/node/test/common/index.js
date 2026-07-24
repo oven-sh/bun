@@ -139,7 +139,13 @@ if (process.argv.length === 2 &&
         continue;
       }
       if ((flag === "--expose-gc" || flag === "--expose_gc") && process.versions.bun) {
-        globalThis.gc ??= () => Bun.gc(true);
+        // onGCSweepSync (common/gc.js) clears [[KeptAlive]] then collects and
+        // checks onGC()'s WeakRefs synchronously, so ongc() fires before gc()
+        // returns and upstream onGC's one-setImmediate contract holds
+        // regardless of FinalizationRegistry-vs-setImmediate task ordering.
+        const { onGCSweepSync } = require('./gc');
+        const { releaseWeakRefs } = require('bun:jsc');
+        globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
         break;
       }
       if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
@@ -1112,6 +1118,12 @@ function expectRequiredModule(mod, expectation, checkESModule = true) {
   assert.deepStrictEqual(clone, { ...expectation });
 }
 
+function sleepSync(ms) {
+  const sab = new SharedArrayBuffer(4);
+  const i32 = new Int32Array(sab);
+  Atomics.wait(i32, 0, 0, ms);
+}
+
 const common = {
   allowGlobals,
   buildType,
@@ -1170,6 +1182,7 @@ const common = {
   skipIfInspectorDisabled,
   skipIfSQLiteMissing,
   skipIfWorker,
+  sleepSync,
   spawnPromisified,
 
   get enoughTestMem() {

@@ -1,6 +1,5 @@
 //! HTML `FormData` parsing + JS bridge.
 
-use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
@@ -15,13 +14,7 @@ use crate::webcore::BlobExt as _;
 
 declare_scope!(FormData, visible);
 
-pub struct FormData<'a> {
-    pub fields: Map<'a>,
-    /// Borrows into caller-owned input.
-    pub buffer: &'a [u8],
-}
-
-pub type Map<'a> = ArrayHashMap<bun_semver::String, FieldEntry<'a>>;
+pub struct FormData {}
 
 // `Encoding`, `get_boundary`, and `AsyncFormData` are JSC-free and live in the
 // lower-tier `bun_core::form_data` so `Body`/`Request`/`Response` can name them
@@ -103,29 +96,7 @@ impl Default for Field<'_> {
     }
 }
 
-pub enum FieldEntry<'a> {
-    Field(Field<'a>),
-    List(Vec<Field<'a>>),
-}
-
-#[repr(C)]
-pub struct FieldExternal {
-    pub name: ZigString,
-    pub value: ZigString,
-    pub blob: *mut Blob,
-}
-
-impl Default for FieldExternal {
-    fn default() -> Self {
-        FieldExternal {
-            name: ZigString::default(),
-            value: ZigString::default(),
-            blob: core::ptr::null_mut(),
-        }
-    }
-}
-
-impl FormData<'_> {
+impl FormData {
     pub fn to_js(
         global: &JSGlobalObject,
         input: &[u8],
@@ -145,9 +116,7 @@ impl FormData<'_> {
 
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_old::<2>();
-    let input_value = args.ptr[0];
-    let boundary_value = args.ptr[1];
+    let [input_value, boundary_value] = frame.arguments_as_array::<2>();
     let boundary_slice: ZigStringSlice;
 
     let mut encoding = Encoding::URLEncoded;

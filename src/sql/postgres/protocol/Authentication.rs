@@ -10,7 +10,6 @@ pub enum Authentication {
     ClearTextPassword,
     MD5Password { salt: [u8; 4] },
     KerberosV5,
-    SCMCredential,
     GSS,
     GSSContinue { data: Data },
     SSPI,
@@ -182,11 +181,5 @@ impl Authentication {
 
             _ => Ok(Authentication::Unknown),
         }
-    }
-
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }

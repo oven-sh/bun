@@ -154,30 +154,6 @@ const isAsyncFunction = v =>
 const isGeneratorFunction = v =>
   typeof v === "function" && StringPrototypeMatch(FunctionPrototypeToString(v), /^(async\s+)?function *\*/);
 
-function vmSafeInstanceof(val, ctor) {
-  if (val instanceof ctor) return true;
-  // instanceof doesn't work across vm boundaries, so check the whole inheritance chain
-  while (val) {
-    if (typeof val !== "object") return false;
-    if (ctor.name === internalGetConstructorName(val)) return true;
-    val = ObjectGetPrototypeOf(val);
-  }
-  return false;
-}
-function checkBox(ctor) {
-  return val => {
-    if (!vmSafeInstanceof(val, ctor)) return false;
-    try {
-      ctor.prototype.valueOf.$call(val);
-    } catch {
-      return false;
-    }
-    return true;
-  };
-}
-const isBigIntObject = checkBox(BigInt);
-const isSymbolObject = checkBox(Symbol);
-
 const {
   //! The native versions of the commented out functions are currently buggy, so we use the polyfills above for now.
   //isAsyncFunction,
@@ -185,28 +161,26 @@ const {
   isAnyArrayBuffer,
   isArrayBuffer,
   isArgumentsObject,
-  isBoxedPrimitive: _native_isBoxedPrimitive,
+  isBigIntObject,
+  isBooleanObject,
+  isBoxedPrimitive,
   isDataView,
   isExternal,
   isMap,
   isMapIterator,
   isModuleNamespaceObject,
   isNativeError,
+  isNumberObject,
   isPromise,
   isSet,
   isSetIterator,
+  isStringObject,
   isWeakMap,
   isWeakSet,
   isRegExp,
   isDate,
   isTypedArray,
-  isStringObject,
-  isNumberObject,
-  isBooleanObject,
 } = require("node:util/types");
-
-//! temp workaround to apply is{BigInt,Symbol}Object fix
-const isBoxedPrimitive = val => isBigIntObject(val) || isSymbolObject(val) || _native_isBoxedPrimitive(val);
 
 // We need this duplicate here to avoid a circular dependency between node:assert and node:util.
 class AssertionError extends Error {

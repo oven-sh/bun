@@ -157,8 +157,6 @@ pub struct TSConfigJSON {
     pub jsx: options::jsx::Pragma,
     pub jsx_flags: JsxFieldSet,
 
-    pub use_define_for_class_fields: Option<bool>,
-
     pub preserve_imports_not_used_as_values: Option<bool>,
 
     pub emit_decorator_metadata: bool,
@@ -175,7 +173,6 @@ impl Default for TSConfigJSON {
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
-            use_define_for_class_fields: None,
             preserve_imports_not_used_as_values: Some(false),
             emit_decorator_metadata: false,
             experimental_decorators: false,
@@ -378,7 +375,6 @@ impl TSConfigJSON {
             let mut jsx_fragment_factory_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut jsx_v: Option<&bun_ast::E::JsonValue> = None;
             let mut jsx_import_source_v: Option<&bun_ast::E::JsonValue> = None;
-            let mut use_define_v: Option<&bun_ast::E::JsonValue> = None;
             let mut imports_not_used_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut module_suffixes_v: Option<(&bun_ast::E::JsonValue, bun_ast::Loc)> = None;
             let mut paths_v: Option<&bun_ast::E::JsonValue> = None;
@@ -404,9 +400,6 @@ impl TSConfigJSON {
                         b"jsx" if jsx_v.is_none() => jsx_v = Some(value),
                         b"jsxImportSource" if jsx_import_source_v.is_none() => {
                             jsx_import_source_v = Some(value)
-                        }
-                        b"useDefineForClassFields" if use_define_v.is_none() => {
-                            use_define_v = Some(value)
                         }
                         b"importsNotUsedAsValues" if imports_not_used_v.is_none() => {
                             imports_not_used_v = Some((value, loc))
@@ -496,11 +489,6 @@ impl TSConfigJSON {
                     result.jsx.set_import_source();
                     result.jsx_flags.insert(JsxField::ImportSource);
                 }
-            }
-
-            // Parse "useDefineForClassFields"
-            if let Some(&bun_ast::E::JsonValue::Boolean(val)) = use_define_v {
-                result.use_define_for_class_fields = Some(val);
             }
 
             // Parse "importsNotUsedAsValues"

@@ -250,7 +250,6 @@ pub mod options {
     /// `options.Format` — many ported call-sites spell this `OutputFormat`.
     pub use bun_options_types::Format as OutputFormat;
     pub use bun_options_types::schema::api::DotEnvBehavior as EnvBehavior;
-    pub type Options<'a> = super::BundleOptions<'a>;
 
     /// Output kind of a build artifact (`OutputFile.output_kind`).
     ///
@@ -309,8 +308,8 @@ pub mod options {
 
 /// Re-export so `crate::RuntimeTranspilerCache` resolves for `transpiler::ParseOptions`
 /// and downstream callers (`jsc_hooks` / `RuntimeTranspilerStore`). The struct
-/// is canonical in `bun_js_parser`; the bundler-tier `disabled`/`set_disabled`
-/// live on `RuntimeTranspilerCacheExt`.
+/// is canonical in `bun_js_parser`; the bundler-tier `disabled` lives on
+/// `RuntimeTranspilerCacheExt`.
 pub use cache::RuntimeTranspilerCacheExt;
 
 // ──────────────────────────────────────────────────────────────────────────

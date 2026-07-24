@@ -65,11 +65,6 @@ bitflags::bitflags! {
 
 impl ColumnFlags {
     #[inline]
-    pub fn to_int(self) -> u16 {
-        self.bits()
-    }
-
-    #[inline]
     pub fn from_int(flags: u16) -> ColumnFlags {
         ColumnFlags::from_bits_retain(flags)
     }

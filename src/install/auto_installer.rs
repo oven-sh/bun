@@ -185,10 +185,6 @@ impl hooks::AutoInstaller for PackageManager {
             .map_err(Into::into)
     }
 
-    fn lockfile_str<'a>(&'a self, s: &'a SemverString) -> &'a [u8] {
-        self.lockfile.str(s)
-    }
-
     // ── Lockfile writes ───────────────────────────────────────────────────
 
     fn lockfile_append_from_package_json(

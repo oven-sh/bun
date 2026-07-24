@@ -24,7 +24,7 @@ use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
-use crate::webcore::s3_stub as S3;
+use crate::webcore::s3 as S3;
 use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams};
 
 bun_core::define_scoped_log!(debug, Blob, visible);
@@ -107,8 +107,6 @@ pub trait ReadBytesHandler {
 pub use bun_jsc::webcore_types::{
     Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
 };
-
-pub type Ref = bun_ptr::ExternalShared<Blob>;
 
 /// 1: Initial
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
@@ -214,16 +212,8 @@ pub trait BlobExt {
     ) -> JsResult<JSValue>;
     fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_text_transfer(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_array_buffer_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
     fn get_array_buffer_clone(
         &self,
         global_this: &JSGlobalObject,
@@ -231,10 +221,6 @@ pub trait BlobExt {
     fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
-    fn get_bytes_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated>;
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
@@ -399,7 +385,6 @@ pub trait BlobExt {
     where
         Self: Sized;
     fn is_all_ascii(&self) -> Option<bool>;
-    fn take_ownership(&mut self) -> Blob;
 }
 
 /// C-ABI trampoline for `Blob::shared_view` so C++ (`ZigGeneratedClasses`)
@@ -1241,14 +1226,6 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
 
-    fn get_text_transfer(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Transfer))
-    }
-
     fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_json_share(global_this)?)
     }
@@ -1256,14 +1233,6 @@ impl BlobExt for Blob {
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated> {
         let _store = self.store.get().clone();
         JSPromise::wrap(global_object, |g| self.to_json(g, Lifetime::Share))
-    }
-
-    fn get_array_buffer_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Transfer))
     }
 
     fn get_array_buffer_clone(
@@ -1285,14 +1254,6 @@ impl BlobExt for Blob {
 
     fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Ok(self.get_bytes_clone(global_this)?)
-    }
-
-    fn get_bytes_transfer(
-        &self,
-        global_this: &JSGlobalObject,
-    ) -> Result<JSValue, jsc::JsTerminated> {
-        let _store = self.store.get().clone();
-        JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Transfer))
     }
 
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
@@ -1325,9 +1286,8 @@ impl BlobExt for Blob {
         JSValue::from(bun_sys::S::ISREG(file.mode) || bun_sys::S::ISFIFO(file.mode))
     }
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1398,9 +1358,8 @@ impl BlobExt for Blob {
     }
 
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), callframe.arguments());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1743,12 +1702,8 @@ impl BlobExt for Blob {
     }
 
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<1>();
-        // Index the fixed-size buffer (`arguments.ptr[0]`), not the
-        // len-bounded view, so the slot reads `.zero` when no arg was passed
-        // instead of panicking on `arguments[0]`.
-        let arg0 = arguments_.ptr[0];
-        let has_args = arguments_.len > 0;
+        let [arg0] = callframe.arguments_as_array::<1>();
+        let has_args = callframe.arguments_count() > 0;
 
         if !arg0.is_empty_or_undefined_or_null() && !arg0.is_object() {
             return Err(global_this
@@ -2037,9 +1992,9 @@ impl BlobExt for Blob {
 
     /// https://w3c.github.io/FileAPI/#slice-method-algo
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let mut arguments_ = callframe.arguments_old::<3>();
+        let mut arguments_ = callframe.arguments_as_array::<3>();
         // index the full fixed-3 array (args[2] is written below regardless of len).
-        let args = &mut arguments_.ptr[..];
+        let args = &mut arguments_[..];
 
         if self.size.get() == 0 {
             let ptr = Blob::new(Blob::init_empty(global_this));
@@ -2063,7 +2018,7 @@ impl BlobExt for Blob {
             args[1] = JSValue::ZERO;
         }
 
-        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
+        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
                 let start = start_.to_int64();
@@ -2419,8 +2374,7 @@ impl BlobExt for Blob {
     }
     fn constructor(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<*mut Blob> {
         let blob: Blob;
-        let arguments = callframe.arguments_old::<2>();
-        let args = arguments.slice();
+        let args = callframe.arguments();
 
         match args.len() {
             0 => {
@@ -3830,13 +3784,6 @@ impl BlobExt for Blob {
             strings::AsciiStatus::AllAscii => Some(true),
             strings::AsciiStatus::NonAscii => Some(false),
         }
-    }
-
-    /// Takes ownership of `self` by value. Invalidates `self`.
-    fn take_ownership(&mut self) -> Blob {
-        let mut result = std::mem::take(self);
-        result.set_not_heap_allocated();
-        result
     }
 }
 
@@ -5628,8 +5575,7 @@ pub fn jsdom_file_construct_(
 ) -> JsResult<*mut Blob> {
     jsc::mark_binding();
     let blob: Blob;
-    let arguments = callframe.arguments_old::<3>();
-    let args = arguments.slice();
+    let args = callframe.arguments();
 
     if args.len() < 2 {
         return Err(global_this.throw_invalid_arguments(format_args!(
@@ -5737,8 +5683,7 @@ pub fn construct_bun_file(
 ) -> JsResult<JSValue> {
     // SAFETY: bun_vm() never returns null for a Bun-owned global.
     let vm = global_object.bun_vm();
-    let arguments = callframe.arguments_old::<2>();
-    let arguments_slice = arguments.slice();
+    let arguments_slice = callframe.arguments();
     let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
@@ -5804,22 +5749,6 @@ pub fn construct_bun_file(
 // ──────────────────────────────────────────────────────────────────────────
 // getStream / toStreamWithOffset / lifetimeWrap / accessor host fns
 // ──────────────────────────────────────────────────────────────────────────
-
-pub fn to_stream_with_offset(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let this = callframe
-        .this()
-        .as_class_ref::<Blob>()
-        .unwrap_or_else(|| panic!("this is not a Blob"));
-    let args = callframe.arguments_old::<1>();
-    ReadableStream::from_file_blob_with_offset(
-        global_this,
-        this,
-        usize::try_from(args.slice()[0].to_int64()).expect("int cast"),
-    )
-}
 
 // The `Lifetime` collapses to a
 // captured constant inside `JSPromise::wrap`'s `FnOnce(&JSGlobalObject)`, so
@@ -6020,10 +5949,10 @@ pub fn on_file_stream_resolve_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<2>();
+    let args = callframe.arguments();
     // SAFETY: last arg is a promise-ptr created by FileStreamWrapper::new in pipe_readable_stream_to_blob.
     let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
+        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
     let strong = core::mem::take(&mut this.readable_stream_ref);
     if let Some(stream) = strong.get(global_this) {
@@ -6037,15 +5966,15 @@ pub fn on_file_stream_reject_request_stream(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args = callframe.arguments_old::<2>();
+    let args = callframe.arguments();
     // Take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper.
     // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
     // through `then()` from the resolve path; we are the sole consumer here.
     let mut this: Box<FileStreamWrapper> = unsafe {
-        bun_core::heap::take(args.ptr[args.len - 1].as_number() as usize as *mut FileStreamWrapper)
+        bun_core::heap::take(args[args.len() - 1].as_number() as usize as *mut FileStreamWrapper)
     };
-    let err = args.ptr[0];
+    let err = args[0];
 
     let strong = core::mem::take(&mut this.readable_stream_ref);
 
@@ -6282,12 +6211,6 @@ fn resolve_file_stat(store: &StoreRef) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// constructor / finalize / init* / dupe / toJS / deinit / sharedView
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use crate::webcore::Lifetime as BlobLifetime;
-
-// ──────────────────────────────────────────────────────────────────────────
 // `ZigString` JSC methods (`to_js`, `to_external_value`, `external`,
 // `to_json_object`, `with_encoding`) live on `bun_jsc::ZigStringJsc`;
 // `zig_string_to_external_u16` is the free-fn form re-exported from
@@ -6478,13 +6401,6 @@ impl Any {
             }
             Any::InternalBlob(ib) => ib.memory_cost(),
         }
-    }
-
-    pub fn has_one_ref(&self) -> bool {
-        if let Some(s) = self.store() {
-            return s.has_one_ref();
-        }
-        false
     }
 
     pub fn get_file_name(&self) -> Option<&[u8]> {
@@ -6949,8 +6865,6 @@ pub struct Inline {
     pub was_string: bool,
 }
 
-pub type InlineIntSize = u8;
-
 impl Inline {
     const REAL_BLOB_SIZE: usize = core::mem::size_of::<Blob>();
     // Inherent assoc types are nightly-only;
@@ -6993,26 +6907,6 @@ impl Inline {
         Self::internal_init(data, false)
     }
 
-    pub fn init_string(data: &[u8]) -> Inline {
-        Self::internal_init(data, true)
-    }
-
-    pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        if self.len == 0 {
-            return ZigString::EMPTY.to_js(global_this);
-        }
-
-        let mut str = ZigString::init(self.slice_const());
-        if !strings::is_all_ascii(self.slice_const()) {
-            str.mark_utf8();
-        }
-
-        let out = str.to_js(global_this);
-        out.ensure_still_alive();
-        self.len = 0;
-        out
-    }
-
     pub fn content_type(&self) -> &'static [u8] {
         // see Internal::content_type — MimeType consts are `const`, not `static`.
         if self.was_string {
@@ -7029,18 +6923,6 @@ impl Inline {
         let len = self.len as usize;
         &mut self.bytes[..len]
     }
-
-    #[inline]
-    pub fn slice_const(&self) -> &[u8] {
-        let len = self.len as usize;
-        &self.bytes[..len]
-    }
-
-    pub fn to_owned_slice(&mut self) -> &mut [u8] {
-        self.slice()
-    }
-
-    pub fn clear_and_free(&mut self) {}
 }
 
 impl Default for Inline {
@@ -7265,7 +7147,6 @@ pub trait FileCloser: Sized {
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
-    fn set_close_after_io(&mut self, v: bool);
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
@@ -7337,17 +7218,3 @@ pub trait FileCloser: Sized {
         false
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// isAllASCII / takeOwnership / heap-alloc helpers / external_shared_descriptor
-// ──────────────────────────────────────────────────────────────────────────
-
-pub mod external_shared_descriptor {
-    pub use bun_jsc::webcore_types::Blob__deref as deref;
-    pub use bun_jsc::webcore_types::Blob__ref as ref_;
-}
-
-/// Bindgen adapter for `Blob`. The cycle was broken by hoisting the `Blob`
-/// struct into `bun_jsc::webcore_types`, so the canonical alias lives in
-/// `bun_jsc::bindgen`; re-export it here for `bun_runtime` callers.
-pub use bun_jsc::bindgen::BindgenBlob;

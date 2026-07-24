@@ -93,7 +93,9 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     addonPath = join(dir, "build", "Release", "addon.node");
   }, 180_000);
 
-  describe("process.dlopen duplicate loads", () => {
+  // Each test spawns an isolated child (dlopen state is process-global), so
+  // they are safe to run in parallel once the addon has been built.
+  describe.concurrent("process.dlopen duplicate loads", () => {
     test("should load the same module twice successfully", async () => {
       const testScript = `
       // First load
@@ -120,6 +122,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe("");
       expect(stdout).toContain("First load: hello exists? true");
       expect(stdout).toContain("Second load: hello exists? true");
       expect(stdout).toContain("First module result: world");
@@ -150,6 +153,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe("");
       expect(stdout).toContain("m1.exports.hello: world");
       expect(stdout).toContain("m2.exports.initial: true");
       expect(stdout).toContain("m2.exports.hello: world");
@@ -157,7 +161,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
     });
   });
 
-  describe("process.dlopen with non-object exports", () => {
+  describe.concurrent("process.dlopen with non-object exports", () => {
     test("should throw error when exports is null", async () => {
       const testScript = `
       const m = { exports: null };
@@ -178,6 +182,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe("");
       expect(stdout).toContain("SUCCESS:");
       expect(stdout).toContain("null is not an object");
       expect(exitCode).toBe(0);
@@ -203,6 +208,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+      expect(stderr).toBe("");
       expect(stdout).toContain("SUCCESS:");
       expect(stdout).toContain("undefined is not an object");
       expect(exitCode).toBe(0);
@@ -227,6 +233,7 @@ NODE_MODULE_CONTEXT_AWARE(addon, demo::Initialize)
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // Should not crash - primitives get converted to wrapper objects
+      expect(stderr).toBe("");
       expect(stdout).toContain("Type: string");
       expect(stdout).toContain("Value: primitive");
       expect(exitCode).toBe(0);

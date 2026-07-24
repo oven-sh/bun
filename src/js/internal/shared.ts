@@ -30,8 +30,8 @@ function throwNotImplemented(feature: string, issue?: number, extra?: string): n
 }
 
 function hideFromStack(...fns: Function[]) {
-  for (const fn of fns) {
-    Object.defineProperty(fn, "name", {
+  for (let i = 0, len = fns.length; i < len; i++) {
+    Object.defineProperty(fns[i], "name", {
       value: "::bunternal::",
     });
   }

@@ -1,7 +1,9 @@
 // Hardcoded module "node:path"
 const { validateString } = require("internal/validators");
 
-const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
+const pathBindings = $cpp("Path.cpp", "createNodePathBinding");
+const bindingPosix = pathBindings[0];
+const bindingWin32 = pathBindings[1];
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
 const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
 const posix = {

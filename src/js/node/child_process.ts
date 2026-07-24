@@ -37,6 +37,8 @@ var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
 var StringPrototypeIncludes = String.prototype.includes;
+var StringPrototypeIndexOf = String.prototype.indexOf;
+var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
@@ -430,7 +432,7 @@ const customPromiseExecFunction = orig => {
   return (...args) => {
     const { resolve, reject, promise } = Promise.withResolvers();
 
-    promise.child = orig(...args, (err, stdout, stderr) => {
+    ArrayPrototypePush.$call(args, (err, stdout, stderr) => {
       if (err !== null) {
         err.stdout = stdout;
         err.stderr = stderr;
@@ -439,6 +441,7 @@ const customPromiseExecFunction = orig => {
         resolve({ stdout, stderr });
       }
     });
+    promise.child = orig.$apply(undefined, args);
 
     return promise;
   };
@@ -545,6 +548,12 @@ function spawnSync(file, args, options) {
     }
   }
 
+  // normalizeSpawnArguments prepended argv0 to its own copy of args; Bun.spawn wants
+  // cmd[0] = file and a separate argv0, so save argv0 and overwrite index 0 in place.
+  const cmd = options.args;
+  const argv0 = cmd[0];
+  cmd[0] = options.file;
+
   var error;
   try {
     var {
@@ -556,10 +565,7 @@ function spawnSync(file, args, options) {
       exitedDueToMaxBuffer,
       pid,
     } = Bun.spawnSync({
-      // normalizeSpawnargs has already prepended argv0 to the spawnargs array
-      // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
-      // so we have to set argv0 to spawnargs[0] and cmd[0] to file
-      cmd: [options.file, ...Array.prototype.slice.$call(options.args, 1)],
+      cmd,
       // The normalized env (kBunEnv) is built from the live process.env when
       // options.env is not given, so runtime mutations of process.env reach
       // the child like in Node.js.
@@ -571,7 +577,7 @@ function spawnSync(file, args, options) {
       gid: options.gid,
       windowsVerbatimArguments: options.windowsVerbatimArguments,
       windowsHide: options.windowsHide,
-      argv0: options.args[0],
+      argv0,
       timeout: options.timeout,
       killSignal: options.killSignal,
       maxBuffer: options.maxBuffer,
@@ -791,7 +797,10 @@ function fork(modulePath, args = [], options) {
     }
   }
 
-  args = [...execArgv, modulePath, ...args];
+  const forkArgs = ArrayPrototypeSlice.$call(execArgv, 0);
+  ArrayPrototypePush.$call(forkArgs, modulePath);
+  ArrayPrototypePush.$apply(forkArgs, args);
+  args = forkArgs;
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
@@ -978,7 +987,7 @@ function normalizeSpawnArguments(file, args, options) {
   // Handle shell
   if (shell) {
     validateArgumentNullCheck(shell, "options.shell");
-    const command = ArrayPrototypeJoin.$call([file, ...args], " ");
+    const command = args.length > 0 ? file + " " + ArrayPrototypeJoin.$call(args, " ") : file;
     // Set the shell, switches, and commands.
     if (process.platform === "win32") {
       if (typeof shell === "string") file = shell;
@@ -1037,7 +1046,8 @@ function normalizeSpawnArguments(file, args, options) {
     });
   }
 
-  for (const key of envKeys) {
+  for (let i = 0, len = envKeys.length; i < len; i++) {
+    const key = envKeys[i];
     const value = env[key];
     if (value !== undefined) {
       validateArgumentNullCheck(key, `options.env['${key}']`);
@@ -1084,9 +1094,11 @@ function checkExecSyncError(ret, args, cmd?) {
 function parseEnvPairs(envPairs: string[] | undefined): Record<string, string> | undefined {
   if (!envPairs) return undefined;
   const resEnv = {};
-  for (const line of envPairs) {
-    const [key, ...value] = line.split("=", 2);
-    resEnv[key] = value.join("=");
+  for (let i = 0, len = envPairs.length; i < len; i++) {
+    const line = envPairs[i];
+    const eq = StringPrototypeIndexOf.$call(line, "=");
+    if (eq === -1) resEnv[line] = "";
+    else resEnv[StringPrototypeSlice.$call(line, 0, eq)] = StringPrototypeSlice.$call(line, eq + 1);
   }
   return resEnv;
 }
@@ -1402,10 +1414,12 @@ class ChildProcess extends EventEmitter {
     // normalizeSpawnargs has already prepended argv0 to the spawnargs array
     // Bun.spawn() expects cmd[0] to be the command to run, and argv0 to replace the first arg when running the command,
     // so we have to set argv0 to spawnargs[0] and cmd[0] to file
+    const cmd = ArrayPrototypeSlice.$call(spawnargs, 0);
+    cmd[0] = file;
 
     try {
       this.#handle = Bun.spawn({
-        cmd: [file, ...Array.prototype.slice.$call(spawnargs, 1)],
+        cmd,
         stdio: bunStdio,
         cwd: options.cwd || undefined,
         env: env,
@@ -1463,8 +1477,9 @@ class ChildProcess extends EventEmitter {
       }
 
       if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio) {
-          item?.ref?.();
+        const stdio = this.stdio;
+        for (let i = 0, len = stdio.length; i < len; i++) {
+          stdio[i]?.ref?.();
         }
       }
     } catch (ex) {

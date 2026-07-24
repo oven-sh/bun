@@ -169,10 +169,18 @@ describe.concurrent("require.cache", () => {
       const dir = tempDirWithFiles("require-cache-bug-leak-4", {
         "index.js": text,
         "require-cache-bug-leak-fixture.js": `
+          import { heapStats } from "bun:jsc";
           const path = require.resolve("./index.js");
           const gc = global.gc || globalThis?.Bun?.gc || (() => {});
           function bust() {
             delete require.cache[path];
+          }
+          // Live page count from the heap walk (not the aggregate counter,
+          // which can under-count across threads).
+          function livePages() {
+            let n = 0;
+            for (const h of heapStats({ dump: true }).mimallocDump.heaps) n += h.pages.length;
+            return n;
           }
 
           for (let i = 0; i < 50; i++) {
@@ -180,19 +188,19 @@ describe.concurrent("require.cache", () => {
             bust();
           }
           gc(true);
-          const baseline = process.memoryUsage.rss();
+          const baselinePages = livePages();
+          const baselineRss = process.memoryUsage.rss();
           for (let i = 0; i < 250; i++) {
             await import(path);
             bust(path);
           }
           gc(true);
-          const rss = process.memoryUsage.rss();
-          const diff = rss - baseline;
-          console.log("RSS diff", (diff / 1024 / 1024) | 0, "MB");
-          console.log("RSS", (diff / 1024 / 1024) | 0, "MB");
-          if (diff > ${isASAN ? 320 : 64} * 1024 * 1024) {
-            // Bun v1.1.21 reported 423 MB here on macoS arm64.
-            // Bun v1.1.22 reported 4 MB here on macoS arm64.
+          const pageDiff = livePages() - baselinePages;
+          const rssDiff = process.memoryUsage.rss() - baselineRss;
+          console.log("mimalloc page diff", pageDiff, "RSS diff", (rssDiff / 1024 / 1024) | 0, "MB");
+          // ASAN routes SourceProvider storage through system malloc, so fall
+          // back to RSS there. Retaining the source is ~+290 MB / +2666 pages.
+          if (${isASAN} ? rssDiff > 320 * 1024 * 1024 : pageDiff > 100) {
             throw new Error("Memory leak detected");
           }
 

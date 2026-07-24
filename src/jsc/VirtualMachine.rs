@@ -4356,6 +4356,9 @@ impl VirtualMachine {
                             import_kind,
                             err: bun_ast::Error::ModuleNotFound,
                         }),
+                        notes: crate::ResolveMessage::notes_for_module_not_found(
+                            specifier_utf8.slice(),
+                        ),
                         ..Default::default()
                     }
                 });

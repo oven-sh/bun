@@ -106,6 +106,68 @@ describe("ResolveMessage", () => {
     expect(log.specifier).toBe("./na\u00efve-missing.js");
   });
 
+  // #5541 / #10712 — `$app/*`, `$env/*` (SvelteKit) and `~/`, `~~/` (Nuxt)
+  // are bundler aliases usually configured in vite.config.js, which Bun's
+  // resolver does not read. The error should carry a note pointing at
+  // tsconfig paths / Bun.plugin so people aren't left guessing.
+  describe("path-alias hint on ModuleNotFound", () => {
+    const hint = "This looks like a path alias";
+
+    it.each(["$app/environment", "$env/dynamic/private", "~/components/Foo", "~~/server/util"])(
+      "prints a note for '%s'",
+      async specifier => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `await import(${JSON.stringify(specifier)})`],
+          env: bunEnv,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect(stdout).toBe("");
+        expect(stderr).toContain(`Cannot find module '${specifier}'`);
+        expect(stderr).toContain(hint);
+        expect(stderr).toContain('tsconfig.json "paths"');
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    it.each(["totally-nonexistent-xyz-pkg", "~something", "./local-missing.ts", "@scope/missing"])(
+      "does NOT print a note for '%s'",
+      async specifier => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `await import(${JSON.stringify(specifier)})`],
+          env: bunEnv,
+          stderr: "pipe",
+          stdout: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([
+          proc.stdout.text(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect(stdout).toBe("");
+        expect(stderr).not.toContain(hint);
+        expect(exitCode).toBe(1);
+      },
+    );
+
+    it("note is not part of .message", async () => {
+      let err: any;
+      try {
+        await import("$app/environment");
+        expect.unreachable();
+      } catch (e) {
+        err = e;
+      }
+      expect(err.message).toContain("Cannot find module '$app/environment'");
+      expect(err.message).not.toContain(hint);
+    });
+  });
+
   it("invalid data URL import", async () => {
     expect(async () => {
       // @ts-ignore

@@ -130,6 +130,34 @@ impl ResolveMessage {
         Ok(JSValue::from(0_i32))
     }
 
+    /// A follow-up note for ModuleNotFound when the specifier looks like a
+    /// framework/bundler path alias (e.g. SvelteKit's `$app/*`, Nuxt's `~/*`).
+    /// These are commonly set up by a Vite plugin rather than tsconfig `paths`,
+    /// so Bun's resolver (and Node's) cannot see them.
+    pub fn notes_for_module_not_found(specifier: &[u8]) -> Box<[bun_ast::Data]> {
+        let looks_like_alias = match specifier.first() {
+            // `$` is not a valid leading byte for an npm package name, so any
+            // `$...` specifier that reached ModuleNotFound is almost certainly
+            // a path alias (SvelteKit uses `$app/*`, `$env/*`, `$lib/*`).
+            Some(b'$') => true,
+            // `~/` and `~~/` are Nuxt/Vite conventions for srcDir/rootDir.
+            Some(b'~') => {
+                matches!(specifier.get(1), Some(b'/')) || specifier.starts_with(b"~~/")
+            }
+            _ => false,
+        };
+        if !looks_like_alias {
+            return Box::default();
+        }
+        Box::new([bun_ast::range_data(
+            None,
+            bun_ast::Range::NONE,
+            b"This looks like a path alias. Bun does not read vite.config.js; \
+              configure the alias in tsconfig.json \"paths\", or register it with \
+              Bun.plugin / mock.module.",
+        )])
+    }
+
     pub fn fmt(
         specifier: &[u8],
         referrer: &[u8],

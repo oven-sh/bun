@@ -39,9 +39,7 @@ test("dead extern C symbols removed in #35437 do not reappear", () => {
     ["src/jsc/bindings/SQLClient.cpp", /\bJSC__createEmptyObjectWithStructure\b/],
     ["src/jsc/bindings/RegularExpression.cpp", /\bYarr__RegularExpression__searchRev\b/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(src(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
@@ -54,9 +52,7 @@ test("dead JS builtins removed in #35437 do not reappear", () => {
     ["src/js/internal/http.ts", /const kUpgradeOrConnect = Symbol/],
     ["src/js/builtins/BunBuiltinNames.h", /macro\(fulfillModuleSync\)/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(src(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
@@ -69,9 +65,7 @@ test("dead CSS option chains removed in #35437 do not reappear", () => {
     ["src/css/css_modules.rs", /pub grid:/],
     ["src/css/error.rs", /ambiguous_url_in_custom_property/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(src(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });
 
@@ -83,8 +77,6 @@ test("dead Rust pub items removed in #35437 do not reappear", () => {
     ["src/bun_core/util.rs", /pub struct FdOptional\b/],
     ["src/bun_core/env_var.rs", /\bBUN_NEEDS_PROC_SELF_WORKAROUND\b/],
   ];
-  const resurrected = checks
-    .filter(([file, re]) => re.test(src(file)))
-    .map(([file, re]) => `${file}: ${re.source}`);
+  const resurrected = checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
   expect(resurrected).toEqual([]);
 });

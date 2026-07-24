@@ -867,9 +867,10 @@ function emitRunChildPlanOnExit() {
 }
 
 // True when the run-child event synthesis should be active — either a run()
-// child streaming to its parent, or standalone mode reporting in-process.
+// child streaming to its parent, or standalone / in-process run() reporting
+// via the sink (mirrors inStandaloneMode's inProcessRunActive check).
 function runEventsEnabled(): boolean {
-  return runChildReporterEnabled || standaloneActive;
+  return runChildReporterEnabled || standaloneActive || inProcessRunActive;
 }
 
 // t.diagnostic(): routes through the reporter stream like every other per-test
@@ -3395,7 +3396,7 @@ async function executeStandaloneQueue(root: TestNode, signal?: AbortSignal): Pro
     // Entries can register more entries (rare); index loop tolerates growth.
     for (let i = 0; i < standaloneQueue.length; i++) {
       if (signal?.aborted) break;
-      await runStandaloneEntry(standaloneQueue[i]);
+      await runStandaloneEntry(standaloneQueue[i], signal);
     }
   } else {
     // Node's root Test.postRun cancels each pending subtest; matches the
@@ -3715,7 +3716,7 @@ function standaloneSinkImpl(
   republishChildEvent({ type, data }, Bun.main, stream, counts, numbering);
 }
 
-async function runStandaloneEntry(entry: StandaloneEntry) {
+async function runStandaloneEntry(entry: StandaloneEntry, signal?: AbortSignal) {
   const { node, fn, isSuite, mode, importError } = entry;
   activeRunFile = node.filePath ?? null;
   if (importError !== undefined) {
@@ -3787,7 +3788,8 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     }
   } else {
     for (const child of node.standaloneChildren ?? []) {
-      await runStandaloneEntry(child);
+      if (signal?.aborted) break;
+      await runStandaloneEntry(child, signal);
     }
   }
   for (const hook of node.hooks.after) {

@@ -1062,16 +1062,32 @@ test.concurrent.each([
   },
 );
 
-test.concurrent("run({isolation:'none'}): opts.signal stops between queued entries", async () => {
-  // The in-process entry loop checks the signal between tests, so aborting
-  // from inside the first test means the second never runs (the eval driver's
-  // SIGINT handler routes through this signal under --test-isolation=none).
-  using dir = tempDir("node-test-inprocess-signal", {
-    "f.test.mjs": `
+test.concurrent.each([
+  [
+    "top-level",
+    `
       import { test } from 'node:test';
       test('first', () => { globalThis.__abort(); });
       test('second', () => {});
     `,
+  ],
+  [
+    "inside a describe",
+    `
+      import { describe, test } from 'node:test';
+      describe('s', () => {
+        test('first', () => { globalThis.__abort(); });
+        test('second', () => {});
+      });
+    `,
+  ],
+] as const)("run({isolation:'none'}): opts.signal stops between %s entries", async (_label, fixture) => {
+  // The in-process entry loop (top-level and per-suite) checks the signal
+  // between tests, so aborting from inside the first test means the second
+  // never runs (the eval driver's SIGINT handler routes through this signal
+  // under --test-isolation=none).
+  using dir = tempDir("node-test-inprocess-signal", {
+    "f.test.mjs": fixture,
     "driver.mjs": `
       import { run } from 'node:test';
       import { fileURLToPath } from 'node:url';

@@ -1114,8 +1114,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
-        } else if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunAsNodeCommand)
-            && args.flag(b"--test")
+        } else if matches!(
+            cmd,
+            CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+        ) && args.flag(b"--test")
         {
             // Cmd gate first: `args.flag` asserts the name exists in the
             // table, and only AUTO/RUN declare the node `--test` family.

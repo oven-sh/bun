@@ -877,10 +877,17 @@ function emitWindowsAsanRuntime(n: Ninja, cfg: Config, exe: string): string | un
     "Windows ASAN build needs the clang resource dir to locate clang_rt.asan_dynamic; -print-resource-dir returned nothing",
   );
   const dllName = "clang_rt.asan_dynamic-x86_64.dll";
-  const src = resolve(cfg.clangResourceDir, "lib", "windows", dllName);
+  // A patched runtime (e.g. one built with the foreign-thread adoption
+  // change in patches/compiler-rt/) can be supplied explicitly; otherwise
+  // ship the toolchain's stock runtime. The override is deliberate and
+  // env-driven so a stock build never picks up a stale local DLL.
+  const patched = process.env.BUN_ASAN_RUNTIME_DLL;
+  const src = patched ? resolve(patched) : resolve(cfg.clangResourceDir, "lib", "windows", dllName);
   assert(
     existsSync(src),
-    `Windows ASAN runtime not found at ${src} — is the LLVM toolchain missing its compiler-rt libs?`,
+    patched
+      ? `BUN_ASAN_RUNTIME_DLL points at ${src}, which does not exist`
+      : `Windows ASAN runtime not found at ${src} — is the LLVM toolchain missing its compiler-rt libs?`,
   );
   const out = resolve(cfg.buildDir, dllName);
   n.rule("asan_runtime", {

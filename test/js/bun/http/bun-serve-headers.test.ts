@@ -9,6 +9,23 @@ import * as path from "node:path";
 // exactly one Content-Type and exactly one Date (RFC 9110 forbids duplicate
 // Content-Type; an origin server MUST send a valid Date).
 describe("empty header value does not duplicate auto-headers", () => {
+  async function readHead(port: number): Promise<string> {
+    const socket = net.connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      let raw = "";
+      await new Promise<void>((resolve, reject) => {
+        socket.on("data", c => (raw += c.toString("latin1")));
+        socket.on("error", reject);
+        socket.on("close", resolve);
+      });
+      return raw.split("\r\n\r\n")[0];
+    } finally {
+      socket.destroy();
+    }
+  }
+
   async function rawHead(makeResponse: () => Response): Promise<string> {
     using server = Bun.serve({
       port: 0,
@@ -16,20 +33,7 @@ describe("empty header value does not duplicate auto-headers", () => {
       development: false,
       fetch: makeResponse,
     });
-    const socket = net.connect(server.port, "127.0.0.1");
-    try {
-      socket.on("error", () => {});
-      await once(socket, "connect");
-      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-      let raw = "";
-      await new Promise<void>(resolve => {
-        socket.on("data", c => (raw += c.toString("latin1")));
-        socket.on("close", resolve);
-      });
-      return raw.split("\r\n\r\n")[0];
-    } finally {
-      socket.destroy();
-    }
+    return await readHead(server.port);
   }
 
   const lines = (head: string, name: string) => head.split("\r\n").filter(l => l.toLowerCase().startsWith(name + ":"));
@@ -89,20 +93,7 @@ describe("empty header value does not duplicate auto-headers", () => {
         return new Response("unreachable");
       },
     });
-    const socket = net.connect(server.port, "127.0.0.1");
-    try {
-      socket.on("error", () => {});
-      await once(socket, "connect");
-      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-      let raw = "";
-      await new Promise<void>(resolve => {
-        socket.on("data", c => (raw += c.toString("latin1")));
-        socket.on("close", resolve);
-      });
-      return raw.split("\r\n\r\n")[0];
-    } finally {
-      socket.destroy();
-    }
+    return await readHead(server.port);
   }
 
   test("static route: content-type empty", async () => {

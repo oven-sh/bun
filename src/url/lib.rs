@@ -400,9 +400,12 @@ impl<'a> URL<'a> {
         }
     }
 
+    /// Everything after the `://` of an `s3://bucket/key` URL, or the whole
+    /// string when there is no protocol. `parse_protocol` only sets `protocol`
+    /// when `://` follows it, so `protocol.len() + 3` is always in bounds here.
     pub fn s3_path(&self) -> &'a [u8] {
         if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
-            &self.href[self.protocol.len() + 2..]
+            &self.href[self.protocol.len() + 3..]
         } else {
             self.href
         }

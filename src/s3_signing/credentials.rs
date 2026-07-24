@@ -338,32 +338,31 @@ impl S3Credentials {
         } else {
             guess_region(&self.endpoint)
         };
-        let mut full_path = request_path;
-        // handle \\ on bucket name
-        if strings::starts_with(full_path, b"/") || strings::starts_with(full_path, b"\\") {
-            full_path = &full_path[1..];
-        }
-
-        let mut path: &[u8] = full_path;
+        let mut path: &[u8] = request_path;
         let mut bucket: &[u8] = &self.bucket;
 
-        if !self.virtual_hosted_style {
-            if bucket.is_empty() {
-                // guess bucket using path
-                if let Some(end) = strings::index_of(full_path, b"/") {
-                    bucket = &full_path[..end];
-                    path = &full_path[end + 1..];
-                } else if let Some(backslash_index) = strings::index_of(full_path, b"\\") {
-                    bucket = &full_path[..backslash_index];
-                    path = &full_path[backslash_index + 1..];
-                } else {
-                    return Err(SignError::InvalidPath);
-                }
+        if !self.virtual_hosted_style && bucket.is_empty() {
+            // No bucket configured, so the path carries it: `[/]bucket/key`.
+            // Only this form has a leading separator to drop; everywhere else
+            // the path is the object key, which is an opaque byte string.
+            let mut full_path = request_path;
+            if strings::starts_with(full_path, b"/") || strings::starts_with(full_path, b"\\") {
+                full_path = &full_path[1..];
+            }
+            if let Some(end) = strings::index_of(full_path, b"/") {
+                bucket = &full_path[..end];
+                path = &full_path[end + 1..];
+            } else if let Some(backslash_index) = strings::index_of(full_path, b"\\") {
+                bucket = &full_path[..backslash_index];
+                path = &full_path[backslash_index + 1..];
+            } else {
+                return Err(SignError::InvalidPath);
             }
         }
 
-        let path = normalize_name(path);
-        let bucket = normalize_name(bucket);
+        // A bucket name cannot contain a path separator, so trimming one is
+        // always safe; the object key is passed through untouched.
+        let bucket = strings::trim(bucket, b"/\\");
 
         // if we allow path.len == 0 it will list the bucket for now we disallow
         if !ALLOW_EMPTY_PATH && path.is_empty() {
@@ -1208,13 +1207,6 @@ pub fn encode_uri_component<'b, const ENCODE_SLASH: bool>(
 
     // `written <= buffer.len()` by construction; safe sub-slice of the owning buffer.
     Ok(&buffer[..written])
-}
-
-fn normalize_name(name: &[u8]) -> &[u8] {
-    if name.is_empty() {
-        return name;
-    }
-    strings::trim(name, b"/\\")
 }
 
 // ──────────────────────────────────────────────────────────────────────────

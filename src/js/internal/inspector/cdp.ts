@@ -282,10 +282,19 @@ function originalToGenerated(
 const SOURCE_MAPPING_URL_COMMENT = "//# sourceMappingURL=";
 
 // The original file's own sourceMappingURL, if it has one. Bun's is stripped:
-// it describes the generated text, which a CDP client never sees.
+// it describes the generated text, which a CDP client never sees. Only a
+// marker at start-of-line (after whitespace) counts, approximating the
+// comment-directive scan engines use — a raw lastIndexOf would also match
+// inside string literals and block comments.
 function ownSourceMappingURL(source: string): string {
-  const at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT);
-  if (at < 0) return "";
+  let at = source.length;
+  while (true) {
+    at = source.lastIndexOf(SOURCE_MAPPING_URL_COMMENT, at - 1);
+    if (at < 0) return "";
+    const lineStart = source.lastIndexOf("\n", at - 1) + 1;
+    if (source.slice(lineStart, at).trim() === "") break;
+    if (at === 0) return "";
+  }
   const end = source.indexOf("\n", at);
   return source.slice(at + SOURCE_MAPPING_URL_COMMENT.length, end < 0 ? source.length : end).trim();
 }

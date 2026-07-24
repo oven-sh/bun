@@ -1373,6 +1373,39 @@ test("Session.post matches node's return and throw contract", async () => {
   }
 });
 
+test("pending posts at disconnect settle with node's -32000 error", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  const { promise, resolve } = Promise.withResolvers<any>();
+  session.post("Runtime.evaluate", { expression: "new Promise(() => {})", awaitPromise: true }, err => resolve(err));
+  session.disconnect();
+  const err = await promise;
+  expect(err?.code).toBe("ERR_INSPECTOR_COMMAND");
+  expect(err?.message).toBe("Inspector error -32000: Execution context was destroyed.");
+});
+
+test("session.disconnect() from a paused listener detaches after the dispatch, not mid-pause", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+session.on("Debugger.paused", function onPaused() {
+  session.disconnect();
+});
+session.post("Runtime.evaluate", { expression: "debugger; 42" });
+console.log("survived");`,
+    ],
+    env: injectedScriptChildEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "survived", stderr: "", exitCode: 0 });
+});
+
 test("Debugger.stepOver from a paused listener re-pauses instead of resuming", async () => {
   // The pause loop's auto-continue must not run when the listener already
   // ended the pause with a step: continueProgram() clears the next-pause

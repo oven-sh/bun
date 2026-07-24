@@ -5,7 +5,7 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
-const { SafeSet } = require("internal/primordials");
+const { SafeMap, SafeSet } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { Buffer } = require("node:buffer");
 const { pathToFileURL } = require("node:url");
@@ -178,7 +178,10 @@ function waitForDebugger() {
 // the calling thread. All in-process sessions share the one native channel;
 // each session owns an adapter and matches replies by command id.
 let InspectorCDPAdapter: any;
-const inProcessAdapters = new Set<any>();
+// SafeSet/SafeMap for every module-level collection iterated on the user's
+// main thread: for..of over the built-ins routes through user-tamperable
+// prototype iterators.
+const inProcessAdapters = new SafeSet<any>();
 let drainScheduled = false;
 // JSC broadcasts every backend reply to every attached frontend, so backend
 // command ids must be unique across all in-process adapters and above the
@@ -487,13 +490,13 @@ class NetworkRequestEntry {
 // enable()/disable() cannot disturb another's buffered requests.
 class NetworkState {
   // Insertion-ordered: the oldest entry is evicted first once the total cap is hit.
-  requests = new Map<string, NetworkRequestEntry>();
+  requests = new SafeMap<string, NetworkRequestEntry>();
   maxResourceBufferSize = kDefaultMaxResourceBufferSize;
   maxTotalBufferSize = kDefaultMaxTotalBufferSize;
   totalBufferSize = 0;
 }
 
-const networkEnabledSessions = new Map<Session, NetworkState>();
+const networkEnabledSessions = new SafeMap<Session, NetworkState>();
 
 function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
   if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
@@ -844,7 +847,7 @@ guardEventParams(Network);
 // --- DOMStorage domain ------------------------------------------------------
 // Mirrors src/inspector/dom_storage_agent.cc: validate then emit. Only the
 // event surface exists; there is no storage backend to inspect.
-const domStorageEnabledSessions = new Set<Session>();
+const domStorageEnabledSessions = new SafeSet<Session>();
 
 function emitDOMStorageEvent(method: string, params: object) {
   for (const session of domStorageEnabledSessions) emitToSession(session, method, params);

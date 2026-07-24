@@ -60,10 +60,10 @@ pub struct JSMySQLConnection {
     vm: BackRef<VirtualMachine>,
     poll_ref: JsCell<KeepAlive>,
 
-    // pub(crate): MySQLRequestQueue::advance reaches `connection.get().queue`
-    // via a `ParentRef<JSMySQLConnection>` shared borrow; the inner protocol
-    // struct's `get_js_connection()` recovers the embedding via
-    // `from_field_ptr!` (offset unchanged — `JsCell` is transparent).
+    // pub(crate): `MySQLRequestQueue::advance(&JSMySQLConnection)` reaches
+    // `connection.get().queue`; the inner protocol struct recovers this
+    // wrapper via `js_connection_ref()` (`from_field_ptr!` — offset unchanged,
+    // `JsCell` is transparent).
     pub(crate) connection: JsCell<my_sql_connection::MySQLConnection>,
 
     pub auto_flusher: JsCell<AutoFlusher>,

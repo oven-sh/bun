@@ -1581,9 +1581,9 @@ impl Writer {
         //
         // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
         // an intermediate `&mut MySQLConnection`, which could alias the
-        // caller's own `&mut self` (see the aliasing note on `Reader` below).
-        // Callers never touch `write_buffer` through `&mut self` while a
-        // `Writer` is live, so no two `&mut OffsetByteList` coexist.
+        // caller's own `&mut self`. Callers never touch `write_buffer`
+        // through `&mut self` while a `Writer` is live, so no two
+        // `&mut OffsetByteList` coexist.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
     }
 }

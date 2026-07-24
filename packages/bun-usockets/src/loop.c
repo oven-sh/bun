@@ -533,6 +533,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
+                        s->fin_deferred = 0;
+                        s->readable_ended = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -844,7 +846,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
-                if(s->flags.allow_half_open) {
+                if (s->readable_ended) {
+                    /* on_end already fired (half-open); a level-triggered EOF
+                     * hint re-derived it. Don't re-dispatch or force WRITABLE;
+                     * drop READABLE in case something re-armed it regardless. */
+                    us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                } else if(s->flags.allow_half_open) {
                     /* EOF with half-open allowed: stop polling readable but KEEP
                      * polling writable. Masking with the current events dropped
                      * writable when the EOF landed before the poll had been
@@ -855,6 +862,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                      * http response tests hung on every Linux target. The
                      * writable dispatch disables writable polling again once
                      * the buffer is drained, so this does not busy-poll. */
+                    s->readable_ended = 1;
                     us_poll_change(&s->p, loop, LIBUS_SOCKET_WRITABLE);
                     s = s->ssl ? us_internal_ssl_on_end(s) : us_dispatch_end(s);
                 } else {

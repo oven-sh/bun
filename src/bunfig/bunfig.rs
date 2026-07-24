@@ -1053,6 +1053,34 @@ impl<'a> Parser<'a> {
             }
         }
 
+        if let Some(expr) = json.get(b"resolve") {
+            self.expect(&expr, ExprTag::EObject)?;
+
+            if let Some(conds_expr) = expr.get(b"conditions") {
+                self.expect(&conds_expr, ExprTag::EArray)?;
+                let array = conds_expr
+                    .data
+                    .e_array()
+                    .expect("infallible: variant checked");
+                let items = array.items.slice();
+                // Validate all entries into a local vec first, then append to
+                // any existing conditions so configs stack rather than clobber.
+                // Building first keeps ctx.args.conditions intact if a later
+                // entry is invalid (a bad element must not wipe CLI conditions
+                // already set, especially on the `bun run` deferred-load path
+                // where the parse error is swallowed).
+                let mut parsed: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                for item in items {
+                    self.expect_string(item)?;
+                    let ExprData::EString(s) = &item.data else {
+                        unreachable!("expect_string returned Ok for non-EString")
+                    };
+                    parsed.push(estring_to_owned(s, self.bump));
+                }
+                self.ctx.args.conditions.extend(parsed);
+            }
+        }
+
         if let Some(expr) = json.get(b"loader") {
             self.expect(&expr, ExprTag::EObject)?;
             let obj = expr.data.e_object().expect("infallible: variant checked");

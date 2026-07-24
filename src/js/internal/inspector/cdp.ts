@@ -458,8 +458,10 @@ class InspectorCDPAdapter {
     // socket closes; drop the per-session state (script records now carry
     // full source text + mappings) so a closed session retains O(1).
     this.#scripts.$clear();
-    this.#scriptIdsByUrl.$clear();
-    this.#preParseBreakpoints.$clear();
+    // Plain methods: these two are SafeMaps (null prototype — the $-intrinsic
+    // private-name lookup cannot reach them).
+    this.#scriptIdsByUrl.clear();
+    this.#preParseBreakpoints.clear();
     this.#breakpointIdAliases.$clear();
     this.#pending.$clear();
     this.#profilerStopClientIds.length = 0;

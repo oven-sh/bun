@@ -1876,7 +1876,7 @@ extern "C" napi_status napi_create_dataview(napi_env env, size_t length,
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
     auto arraybufferPtr = dynamicDowncast<JSC::JSArrayBuffer>(arraybufferValue);
-    NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_invalid_arg);
 
     if (byte_offset + length > arraybufferPtr->impl()->byteLength()) {
         napi_throw_range_error(env, "ERR_NAPI_INVALID_DATAVIEW_ARGS", "byte_offset + byte_length should be less than or equal to the size in bytes of the array passed in");
@@ -1972,26 +1972,41 @@ extern "C" napi_status napi_create_typedarray(
     NAPI_CHECK_ARG(env, result);
     JSValue arraybufferValue = toJS(arraybuffer);
     auto arraybufferPtr = dynamicDowncast<JSC::JSArrayBuffer>(arraybufferValue);
-    NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_arraybuffer_expected);
+    NAPI_RETURN_EARLY_IF_FALSE(env, arraybufferPtr, napi_invalid_arg);
+
+    size_t size_of_element;
+    const char* alignment_msg;
     switch (type) {
-    case napi_int8_array:
-    case napi_uint8_array:
-    case napi_uint8_clamped_array:
-    case napi_int16_array:
-    case napi_uint16_array:
-    case napi_int32_array:
-    case napi_uint32_array:
-    case napi_float32_array:
-    case napi_float64_array:
-    case napi_bigint64_array:
-    case napi_biguint64_array:
-    case napi_float16_array: {
+#define NAPI_TYPED_ARRAY_CASE(napi_type, js_type, size)                                \
+    case napi_type:                                                                    \
+        size_of_element = size;                                                        \
+        alignment_msg = "start offset of " #js_type " should be a multiple of " #size; \
         break;
+        NAPI_TYPED_ARRAY_CASE(napi_int8_array, Int8Array, 1)
+        NAPI_TYPED_ARRAY_CASE(napi_uint8_array, Uint8Array, 1)
+        NAPI_TYPED_ARRAY_CASE(napi_uint8_clamped_array, Uint8ClampedArray, 1)
+        NAPI_TYPED_ARRAY_CASE(napi_int16_array, Int16Array, 2)
+        NAPI_TYPED_ARRAY_CASE(napi_uint16_array, Uint16Array, 2)
+        NAPI_TYPED_ARRAY_CASE(napi_int32_array, Int32Array, 4)
+        NAPI_TYPED_ARRAY_CASE(napi_uint32_array, Uint32Array, 4)
+        NAPI_TYPED_ARRAY_CASE(napi_float32_array, Float32Array, 4)
+        NAPI_TYPED_ARRAY_CASE(napi_float64_array, Float64Array, 8)
+        NAPI_TYPED_ARRAY_CASE(napi_bigint64_array, BigInt64Array, 8)
+        NAPI_TYPED_ARRAY_CASE(napi_biguint64_array, BigUint64Array, 8)
+        NAPI_TYPED_ARRAY_CASE(napi_float16_array, Float16Array, 2)
+#undef NAPI_TYPED_ARRAY_CASE
+    default:
+        return napi_set_last_error(env, napi_invalid_arg);
     }
-    default: {
-        napi_set_last_error(env, napi_invalid_arg);
-        return napi_invalid_arg;
+
+    if (size_of_element > 1 && byte_offset % size_of_element != 0) {
+        napi_throw_range_error(env, "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", alignment_msg);
+        return napi_set_last_error(env, napi_generic_failure);
     }
+    size_t buffer_len = arraybufferPtr->impl()->byteLength();
+    if (byte_offset > buffer_len || length > (buffer_len - byte_offset) / size_of_element) {
+        napi_throw_range_error(env, "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH", "Invalid typed array length");
+        return napi_set_last_error(env, napi_generic_failure);
     }
 
     JSC::JSArrayBufferView* view = createArrayBufferView(globalObject, type, arraybufferPtr->impl(), byte_offset, length);

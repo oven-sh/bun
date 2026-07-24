@@ -1437,14 +1437,13 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
+    // Node.js gates on IsTypedArray(); `from_js_type` covers every typed-array
+    // JSType (including Float16Array) and returns None for DataView/ArrayBuffer.
+    let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type) else {
+        return env.invalid_arg();
+    };
     // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
     if let Some(ty) = unsafe { maybe_type.as_mut() } {
-        // The `ArrayBuffer.typed_array_type` field is already a `JSType`, so map it
-        // straight to `napi_typedarray_type`.
-        let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
-        else {
-            return env.invalid_arg();
-        };
         *ty = napi_ty;
     }
 
@@ -1505,11 +1504,11 @@ pub(super) extern "C" fn napi_get_dataview_info(
     let env = get_env!(env_);
     env.check_gc();
     let dataview = dataview_.get();
-    if dataview.is_empty() {
+    if dataview.is_empty() || dataview.js_type_loose() != jsc::JSType::DataView {
         return env.invalid_arg();
     }
     let Some(array_buffer) = dataview.as_array_buffer(env.to_js()) else {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
+        return env.invalid_arg();
     };
     write_out(maybe_bytelength, array_buffer.byte_len);
     write_out(maybe_data, array_buffer.ptr);

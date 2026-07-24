@@ -2055,6 +2055,31 @@ export default <>hi</>
     ).toThrow();
   });
 
+  it("invalid define value surfaces the JSON parser diagnostic", () => {
+    // `configure_defines` writes the parse error into `options.log`, which
+    // `set_log` used to leave pointing at the constructor's moved-from stack
+    // slot — so `config.log` stayed empty and the generic `throw_error` path
+    // was taken instead of `log.to_js`.
+    let err;
+    try {
+      new Bun.Transpiler({ define: { X: '{"a":' } });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeDefined();
+    expect(err.message).not.toContain("ParserError");
+    expect(err.message).toContain("Unexpected end of file");
+    expect(err.position).toEqual({
+      lineText: '{"a":',
+      file: "defines.json",
+      namespace: "internal",
+      line: 1,
+      column: 5,
+      length: 0,
+      offset: 5,
+    });
+  });
+
   it("define with an empty-string key is ignored without leaving uninitialized slots", async () => {
     // `JSPropertyIterator` skips empty-name properties, but `names`/`values` were being
     // indexed by the property position instead of a dense counter, leaving garbage in the

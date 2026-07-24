@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isDebug, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, randomPort, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -304,8 +304,9 @@ describe("websocket", () => {
 // ThrowScope and then tail-call into an impl that declares its own; without a
 // RELEASE_AND_RETURN the first Runtime.evaluate aborts under exception-check validation with
 // "Unchecked JS exception ... jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension".
-// validateExceptionChecks is compiled out of release builds, so this is debug-only.
-test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation", async () => {
+// ENABLE_EXCEPTION_SCOPE_VERIFICATION is (ASSERT_ENABLED || ASAN_ENABLED), so this runs on
+// debug and asan builds; plain release compiles it out.
+test.skipIf(!isDebug && !isASAN)("Runtime.evaluate does not trip exception-check validation", async () => {
   await using child = spawn({
     cwd: import.meta.dir,
     cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", "inspectee.js"],
@@ -344,9 +345,10 @@ test.skipIf(!isDebug)("Runtime.evaluate does not trip exception-check validation
     });
 
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
-    reply = await new Promise<unknown>(resolve => {
+    reply = await new Promise<unknown>((resolve, reject) => {
       ws.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))));
       ws.addEventListener("close", ({ code, reason }) => resolve({ closed: { code, reason } }));
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
     });
   } finally {
     ws.close();

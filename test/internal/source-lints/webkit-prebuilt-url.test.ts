@@ -123,4 +123,11 @@ describe("WebKit prebuilt URL", () => {
   test("WEBKIT_VERSION is either a 40-hex sha or an autobuild-* tag", () => {
     expect(/^[0-9a-f]{40}$/.test(WEBKIT_VERSION) || WEBKIT_VERSION.startsWith("autobuild-")).toBe(true);
   });
+
+  // autobuild-preview-pr-* releases are deleted when the oven-sh/WebKit PR
+  // merges or closes, which would 404 every fresh build of main. Preview pins
+  // are fine on a branch while iterating; this test is the merge gate.
+  test("WEBKIT_VERSION is not an autobuild-preview-* tag (preview releases are deleted on upstream merge)", () => {
+    expect(WEBKIT_VERSION.startsWith("autobuild-preview-")).toBe(false);
+  });
 });

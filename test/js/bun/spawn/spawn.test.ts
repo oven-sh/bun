@@ -85,6 +85,20 @@ for (let [gcTick, label] of [
           });
         }).toThrow("no such file or directory");
       });
+
+      it("Bun.file() as stdout truncates the destination", () => {
+        const out = join(tmpdirSync(), "stdout-trunc-sync.txt");
+        writeFileSync(out, "OLD-CONTENT-0123456789ABCDEF");
+        gcTick();
+        const { exitCode } = spawnSync({
+          cmd: [bunExe(), "-e", "process.stdout.write('NEW')"],
+          env: bunEnv,
+          stdout: Bun.file(out),
+        });
+        gcTick();
+        expect(readFileSync(out, "utf8")).toBe("NEW");
+        expect(exitCode).toBe(0);
+      });
     });
 
     describe("spawn", () => {
@@ -303,6 +317,36 @@ for (let [gcTick, label] of [
         await exited;
         gcTick();
         expect(await Bun.file(tmp + "out.123.txt").text()).toBe("hello\n");
+      });
+
+      it("Bun.file() as stdout truncates the destination", async () => {
+        const out = join(tmpdirSync(), "stdout-trunc.txt");
+        writeFileSync(out, "OLD-CONTENT-0123456789ABCDEF");
+        gcTick();
+        const { exited } = spawn({
+          cmd: [bunExe(), "-e", "process.stdout.write('NEW')"],
+          env: bunEnv,
+          stdout: Bun.file(out),
+        });
+        const exitCode = await exited;
+        gcTick();
+        expect(readFileSync(out, "utf8")).toBe("NEW");
+        expect(exitCode).toBe(0);
+      });
+
+      it("Bun.file() as stderr truncates the destination", async () => {
+        const out = join(tmpdirSync(), "stderr-trunc.txt");
+        writeFileSync(out, "OLD-CONTENT-0123456789ABCDEF");
+        gcTick();
+        const { exited } = spawn({
+          cmd: [bunExe(), "-e", "process.stderr.write('NEW')"],
+          env: bunEnv,
+          stderr: Bun.file(out),
+        });
+        const exitCode = await exited;
+        gcTick();
+        expect(readFileSync(out, "utf8")).toBe("NEW");
+        expect(exitCode).toBe(0);
       });
 
       it("Bun.file() works as stdin", async () => {

@@ -777,7 +777,8 @@ pub unsafe fn spawn_process_posix(
                 actions.open_z(fileno, c"/dev/null", flag | bun_sys::O::CREAT as u32, 0o664)?;
             }
             PosixStdio::Path(path) => {
-                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32, 0o664)?;
+                let trunc: u32 = if i == 0 { 0 } else { bun_sys::O::TRUNC as u32 };
+                actions.open(fileno, path, flag | bun_sys::O::CREAT as u32 | trunc, 0o664)?;
             }
             PosixStdio::Buffer => {
                 #[cfg(any(target_os = "linux", target_os = "android"))]

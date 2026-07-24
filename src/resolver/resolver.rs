@@ -2400,7 +2400,44 @@ impl<'a> Resolver<'a> {
             }
             MatchStatus::Pending(p) => ResultUnion::Pending(*p),
             MatchStatus::Failure(p) => ResultUnion::Failure(p),
-            MatchStatus::NotFound => ResultUnion::NotFound,
+            MatchStatus::NotFound => {
+                // When a package that the importer's own `package.json` lists
+                // under `peerDependenciesMeta` with `"optional": true` is not
+                // installed, resolve to a disabled path instead of failing the
+                // build. At runtime the call would throw `MODULE_NOT_FOUND`;
+                // the package's own code (e.g. NestJS `optionalRequire`) is
+                // written to catch it. Only applies to `require` / dynamic
+                // `import()` / `require.resolve`, where deferring the error to
+                // runtime is sound; a static ESM `import` still errors.
+                if matches!(
+                    kind,
+                    ast::ImportKind::Require
+                        | ast::ImportKind::RequireResolve
+                        | ast::ImportKind::Dynamic
+                ) {
+                    if let Some(pkg) = source_dir_info.enclosing_package_json {
+                        if pkg.is_optional_peer_dependency(unremapped_import_path) {
+                            let mut primary = Path::init(unremapped_import_path);
+                            primary.is_disabled = true;
+                            let mut flags = ResultFlags::IS_MISSING_OPTIONAL_PEER;
+                            flags.set_is_from_node_modules(
+                                source_dir_info.is_inside_node_modules(),
+                            );
+                            return ResultUnion::Success(Result {
+                                path_pair: PathPair {
+                                    primary,
+                                    secondary: None,
+                                },
+                                diff_case: None,
+                                jsx: self.opts.jsx.clone(),
+                                flags,
+                                ..Default::default()
+                            });
+                        }
+                    }
+                }
+                ResultUnion::NotFound
+            }
         }
     }
 

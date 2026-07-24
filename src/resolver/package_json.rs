@@ -124,6 +124,16 @@ pub struct PackageJSON {
 
     pub exports: Option<ExportsMap>,
     pub imports: Option<ExportsMap>,
+
+    /// Package names listed in `peerDependenciesMeta` with `"optional": true`.
+    ///
+    /// When a `require()` from a file inside this package targets one of these
+    /// names and the package is not installed, the bundler replaces the call
+    /// with a runtime throw instead of emitting a build-time "Could not
+    /// resolve" error. Packages such as `@nestjs/core` depend on this: they
+    /// reference optional peers through a `try { require('x') } catch {}`
+    /// helper that the bundler cannot see through.
+    pub optional_peer_dependencies: Box<[Box<[u8]>]>,
 }
 
 // hand-rolled `Default` because `#[derive(Default)]` would zero
@@ -151,6 +161,7 @@ impl Default for PackageJSON {
             browser_map: BrowserMap::default(),
             exports: None,
             imports: None,
+            optional_peer_dependencies: Box::default(),
         }
     }
 }
@@ -207,6 +218,37 @@ impl PackageJSON {
         let mut normalized = path.to_vec();
         bun_paths::slashes_to_posix_in_place(&mut normalized[..]);
         Ok(normalized)
+    }
+
+    /// Is `import_path`'s package name listed in this package.json's
+    /// `peerDependenciesMeta` with `"optional": true`?
+    ///
+    /// `import_path` is a bare specifier (`"pkg"`, `"pkg/sub"`, `"@scope/pkg"`,
+    /// `"@scope/pkg/sub"`); the subpath is stripped before comparing.
+    pub fn is_optional_peer_dependency(&self, import_path: &[u8]) -> bool {
+        if self.optional_peer_dependencies.is_empty() {
+            return false;
+        }
+        let name: &[u8] = if import_path.first() == Some(&b'@') {
+            match strings::index_of_char(&import_path[1..], b'/') {
+                Some(first) => {
+                    let after_scope = 2 + first as usize;
+                    match strings::index_of_char(&import_path[after_scope..], b'/') {
+                        Some(second) => &import_path[..after_scope + second as usize],
+                        None => import_path,
+                    }
+                }
+                None => import_path,
+            }
+        } else {
+            match strings::index_of_char(import_path, b'/') {
+                Some(i) => &import_path[..i as usize],
+                None => import_path,
+            }
+        };
+        self.optional_peer_dependencies
+            .iter()
+            .any(|p| strings::eql(p, name))
     }
 }
 
@@ -527,6 +569,7 @@ impl PackageJSON {
             side_effects: SideEffects::Unspecified,
             exports: None,
             imports: None,
+            optional_peer_dependencies: Box::default(),
         };
         // shadow as `&Source`; the owned value is reconstructed at the bottom
         // (Source isn't `Clone`).
@@ -687,6 +730,29 @@ impl PackageJSON {
         if let Some(imports_prop) = json.as_property(b"imports") {
             if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.expr) {
                 package_json.imports = Some(imports_map);
+            }
+        }
+
+        if let Some(meta_prop) = json.as_property(b"peerDependenciesMeta") {
+            if let js_ast::ExprData::EObjectJSON(meta_obj) = &meta_prop.expr.data {
+                let properties = meta_obj.get().properties();
+                let mut names = Vec::<Box<[u8]>>::with_capacity(properties.len());
+                for prop in properties {
+                    let Some(entry) = prop.value.as_object() else {
+                        continue;
+                    };
+                    if !matches!(entry.get(b"optional"), Some(js_ast::E::JsonValue::Boolean(true))) {
+                        continue;
+                    }
+                    let key = prop.key.slice();
+                    if key.is_empty() {
+                        continue;
+                    }
+                    names.push(Box::from(key));
+                }
+                if !names.is_empty() {
+                    package_json.optional_peer_dependencies = names.into_boxed_slice();
+                }
             }
         }
 

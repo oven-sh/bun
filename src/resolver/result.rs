@@ -136,6 +136,12 @@ bitflags::bitflags! {
         const IS_STANDALONE_MODULE = 1 << 2;
         // This is true when the package was loaded from within the node_modules directory.
         const IS_FROM_NODE_MODULES = 1 << 3;
+        /// The specifier matched an entry in the importing package's
+        /// `peerDependenciesMeta` with `"optional": true`, and the package was
+        /// not installed. `path_pair.primary.is_disabled` is also set; the
+        /// bundler uses this flag to emit a runtime throw instead of an empty
+        /// module.
+        const IS_MISSING_OPTIONAL_PEER = 1 << 4;
         const EMIT_DECORATOR_METADATA = 1 << 5;
         const EXPERIMENTAL_DECORATORS = 1 << 6;
         // _padding: u1
@@ -171,6 +177,10 @@ impl ResultFlags {
     #[inline]
     pub fn set_is_from_node_modules(&mut self, v: bool) {
         self.set(Self::IS_FROM_NODE_MODULES, v)
+    }
+    #[inline]
+    pub fn is_missing_optional_peer(self) -> bool {
+        self.contains(Self::IS_MISSING_OPTIONAL_PEER)
     }
     #[inline]
     pub fn emit_decorator_metadata(self) -> bool {

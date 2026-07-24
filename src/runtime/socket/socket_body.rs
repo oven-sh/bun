@@ -359,14 +359,6 @@ impl PendingSystemError {
     }
 }
 
-impl Drop for PendingSystemError {
-    fn drop(&mut self) {
-        if let Some(err) = self.0.take() {
-            err.deref();
-        }
-    }
-}
-
 /// `needs_deref` releases the ref the now-detached native socket held. The idle
 /// teardown is gated on the socket still holding the `Handlers` we entered with:
 /// `onConnectError` can reconnect, and we must not tear that connection down.
@@ -723,18 +715,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<2>();
+        let [enabled_arg, initial_delay_arg] = callframe.arguments_as_array::<2>();
 
-        let enabled: bool = if args.len >= 1 {
-            args.ptr[0].to_boolean()
+        let enabled: bool = if callframe.arguments_count() >= 1 {
+            enabled_arg.to_boolean()
         } else {
             false
         };
 
         // `initialDelay` is documented in milliseconds; TCP_KEEPIDLE is seconds.
-        let initial_delay_ms: u32 = if args.len > 1 {
+        let initial_delay_ms: u32 = if callframe.arguments_count() > 1 {
             u32::try_from(global.validate_integer_range(
-                args.ptr[1],
+                initial_delay_arg,
                 0i32,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
@@ -761,9 +753,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
-        let enabled: bool = if args.len >= 1 {
-            args.ptr[0].to_boolean()
+        let [enabled_arg] = callframe.arguments_as_array::<1>();
+        let enabled: bool = if callframe.arguments_count() >= 1 {
+            enabled_arg.to_boolean()
         } else {
             true
         };
@@ -782,9 +774,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
-        let tos: i32 = if args.len >= 1 {
-            let arg = args.ptr[0];
+        let [arg] = callframe.arguments_as_array::<1>();
+        let tos: i32 = if callframe.arguments_count() >= 1 {
             // validate_integer_range maps NaN to the default; node:net rejects
             // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
             if arg.is_number() && arg.as_number().is_nan() {
@@ -830,19 +821,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<2>();
+        let [ctx_arg, is_error_arg] = callframe.arguments_as_array::<2>();
         log!("resumeSNI");
         let socket = this.socket.get();
         if socket.is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let is_error = args.len > 1 && args.ptr[1].to_boolean();
+        let is_error = callframe.arguments_count() > 1 && is_error_arg.to_boolean();
         // The selected context: a native SecureContext (borrow() hands back an
         // owned SSL_CTX reference that us_socket_sni_resolve consumes) or null
         // to fall through to the listener's default context.
-        let ctx_ptr = if args.len >= 1 && !is_error {
+        let ctx_ptr = if callframe.arguments_count() >= 1 && !is_error {
             if let Some(sc) =
-                args.ptr[0].as_class_ref::<crate::api::bun_secure_context::SecureContext>()
+                ctx_arg.as_class_ref::<crate::api::bun_secure_context::SecureContext>()
             {
                 sc.borrow()
             } else {
@@ -1176,13 +1167,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             };
             SystemError {
                 errno: -errno_,
-                message: BunString::static_("Failed to connect"),
-                syscall: BunString::static_("connect"),
-                code: code_,
-                path: BunString::EMPTY,
-                hostname: BunString::EMPTY,
-                fd: c_int::MIN,
-                dest: BunString::EMPTY,
+                message: BunString::static_("Failed to connect").into(),
+                syscall: BunString::static_("connect").into(),
+                code: code_.into(),
+                ..Default::default()
             }
         };
 
@@ -1203,10 +1191,6 @@ impl<const SSL: bool> NewSocket<SSL> {
                 let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
                 let err_value = err.to_error_instance_with_async_stack(&global, js_promise);
                 js_promise.reject(&global, Ok(err_value))?;
-            } else {
-                // No callback and no promise (the duplex TLS upgrade flow):
-                // nothing consumed `err`, so release the strings it holds.
-                err.deref();
             }
 
             return Ok(());
@@ -1218,7 +1202,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // callback returns. The on-stack `this_value` keeps it alive for the call.
         this.this_value.with_mut(|r| r.downgrade());
 
-        let mut err_for_promise = PendingSystemError(Some(err.dupe()));
+        let mut err_for_promise = PendingSystemError(Some(err.clone()));
         let err_value = err.to_error_instance(&global);
         let result = match callback.call(&global, this_value, &[this_value, err_value]) {
             Ok(v) => v,
@@ -2211,14 +2195,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
+        let [t_arg] = callframe.arguments_as_array::<1>();
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        if args.len == 0 {
+        if callframe.arguments_count() == 0 {
             return Err(global.throw(format_args!("Expected 1 argument, got 0")));
         }
-        let t = args.ptr[0].coerce::<i32>(global)?;
+        let t = t_arg.coerce::<i32>(global)?;
         if t < 0 {
             return Err(global.throw(format_args!("Timeout must be a positive integer")));
         }
@@ -2234,14 +2218,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
         self.verify_error.get().as_ref().map(|stored| {
             let err = SystemError {
-                errno: 0,
-                code: BunString::clone_utf8(&stored.code),
-                message: BunString::clone_utf8(&stored.reason),
-                path: BunString::EMPTY,
-                syscall: BunString::EMPTY,
-                hostname: BunString::EMPTY,
-                fd: c_int::MIN,
-                dest: BunString::EMPTY,
+                code: BunString::clone_utf8(&stored.code).into(),
+                message: BunString::clone_utf8(&stored.reason).into(),
+                ..Default::default()
             };
             err.to_error_instance(global)
         })
@@ -2275,14 +2254,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         let reason: &[u8] = ssl_error.reason_bytes();
 
         let fallback = SystemError {
-            errno: 0,
-            code: BunString::clone_utf8(code),
-            message: BunString::clone_utf8(reason),
-            path: BunString::EMPTY,
-            syscall: BunString::EMPTY,
-            hostname: BunString::EMPTY,
-            fd: c_int::MIN,
-            dest: BunString::EMPTY,
+            code: BunString::clone_utf8(code).into(),
+            message: BunString::clone_utf8(reason).into(),
+            ..Default::default()
         };
 
         Ok(fallback.to_error_instance(global))
@@ -3071,8 +3045,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
-        if args.len > 0 && args.ptr[0].to_boolean() {
+        let [arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() > 0 && arg.to_boolean() {
             this.socket.get().shutdown_read();
         } else {
             this.socket.get().shutdown();
@@ -3256,9 +3230,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
+        let [opts] = callframe.arguments_as_array::<1>();
 
-        if args.len < 1 {
+        if callframe.arguments_count() < 1 {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
 
@@ -3266,7 +3240,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(JSValue::UNDEFINED);
         }
 
-        let opts = args.ptr[0];
         if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw(format_args!("Expected options object")));
         }
@@ -3320,11 +3293,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
-        if args.len < 1 {
+        let [opts] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global.throw(format_args!("Expected 1 arguments")));
         }
-        Self::upgrade_tls_impl(this, global, args.ptr[0], false)
+        Self::upgrade_tls_impl(this, global, opts, false)
     }
 
     /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
@@ -4465,17 +4438,15 @@ pub fn js_upgrade_duplex_to_tls(
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let args = callframe.arguments_old::<2>();
-    if args.len < 2 {
+    let [duplex, opts] = callframe.arguments_as_array::<2>();
+    if callframe.arguments_count() < 2 {
         return Err(global.throw(format_args!("Expected 2 arguments")));
     }
-    let duplex = args.ptr[0];
     // TODO: do better type checking
     if duplex.is_empty_or_undefined_or_null() {
         return Err(global.throw(format_args!("Expected a Duplex instance")));
     }
 
-    let opts = args.ptr[1];
     if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
         return Err(global.throw(format_args!("Expected options object")));
     }
@@ -4750,11 +4721,14 @@ pub fn js_is_named_pipe_socket(
 ) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = callframe.arguments_old::<3>();
-    if arguments.len < 1 {
-        return Err(global.throw_not_enough_arguments("isNamedPipeSocket", 1, arguments.len));
+    let [socket, _, _] = callframe.arguments_as_array::<3>();
+    if callframe.arguments_count() < 1 {
+        return Err(global.throw_not_enough_arguments(
+            "isNamedPipeSocket",
+            1,
+            callframe.arguments_count() as usize,
+        ));
     }
-    let socket = arguments.ptr[0];
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
         return Ok(JSValue::from(this.socket.get().is_named_pipe()));
     } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
@@ -4767,11 +4741,14 @@ pub fn js_is_named_pipe_socket(
 pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();
 
-    let arguments = callframe.arguments_old::<3>();
-    if arguments.len < 1 {
-        return Err(global.throw_not_enough_arguments("getBufferedAmount", 1, arguments.len));
+    let [socket, _, _] = callframe.arguments_as_array::<3>();
+    if callframe.arguments_count() < 1 {
+        return Err(global.throw_not_enough_arguments(
+            "getBufferedAmount",
+            1,
+            callframe.arguments_count() as usize,
+        ));
     }
-    let socket = arguments.ptr[0];
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
         return Ok(JSValue::js_number(
             this.buffered_data_for_node_net.get().len() as f64,

@@ -49,6 +49,9 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypePush = Array.prototype.push;
 const MathMax = Math.max;
 const MathMin = Math.min;
+// Captured at module load so user code clobbering globalThis.reportError cannot
+// defeat the uncaughtException routing below.
+const reportError = globalThis.reportError;
 
 const { UV_ECANCELED, UV_ENOBUFS, UV_ETIMEDOUT } = process.binding("uv");
 const isWindows = process.platform === "win32";
@@ -329,6 +332,24 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
+// Readable.push() synchronously runs user 'data' listeners. A throw escaping
+// this handler is caught by the native socket dispatch and routed to the
+// handler table's `error` entry, which is for transport failures (ECONNRESET
+// etc.), so a programming error in a 'data' listener would be reported as a
+// socket 'error' and the connection torn down. Node surfaces the throw as
+// uncaughtException and leaves the socket reading; the next chunk is still
+// delivered. Catching here keeps the socket alive and matches that.
+function pushDataToSocket(self, socket, buffer) {
+  let full;
+  try {
+    full = self.push(buffer) === false;
+  } catch (e) {
+    reportError(e);
+    return;
+  }
+  if (full) socket.pause();
+}
+
 const SocketHandlers: SocketHandler = {
   close(socket, err) {
     const self = socket.data;
@@ -345,9 +366,7 @@ const SocketHandlers: SocketHandler = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      socket.pause();
-    }
+    pushDataToSocket(self, socket, buffer);
   },
   drain(socket) {
     const self = socket.data;
@@ -706,9 +725,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) {
-      socket.pause();
-    }
+    pushDataToSocket(self, socket, buffer);
   },
   keylog(socket, line) {
     const { data: self } = socket;
@@ -1183,7 +1200,15 @@ function onconnection(err, clientHandle) {
   }
   if (isTLS) initAcceptedTLSSocket(self, _socket);
 
-  self.emit("connection", _socket);
+  // A 'connection' listener throw that reached the native open dispatch would
+  // be treated as an open failure and the accepted socket closed. Node reports
+  // it as uncaughtException and the connection stays established; match that
+  // and fall through so reading is still started.
+  try {
+    self.emit("connection", _socket);
+  } catch (e) {
+    reportError(e);
+  }
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
@@ -1224,7 +1249,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) socket.pause();
+    pushDataToSocket(self, socket, buffer);
   },
   drain(socket) {
     $debug("Bun.Socket drain");

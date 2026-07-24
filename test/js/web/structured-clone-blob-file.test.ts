@@ -664,7 +664,12 @@ describe("structuredClone with Blob and File", () => {
         .filter(Boolean)
         .map(l => JSON.parse(l));
       // Two deserialize entry points per payload, all purified to number NaN.
-      expect(lines).toEqual(payloads.flatMap(() => [{ type: "number", isNaN: true }, { type: "number", isNaN: true }]));
+      expect(lines).toEqual(
+        payloads.flatMap(() => [
+          { type: "number", isNaN: true },
+          { type: "number", isNaN: true },
+        ]),
+      );
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });

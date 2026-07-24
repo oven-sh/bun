@@ -4,7 +4,7 @@ const tmpdir = require('../common/tmpdir');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const fsp = require('node:fs/promises');
-const { test, describe, jest } = require('bun:test');
+const test = require('node:test');
 const data = 'foo';
 let cnt = 0;
 
@@ -22,10 +22,8 @@ test('validation', () => {
   }
 });
 
-test('performs flush', () => {
-  jest.restoreAllMocks();
-  const { promise, resolve: done } = Promise.withResolvers();
-  const spy = jest.spyOn(fs, 'fsync');
+test('performs flush', (t, done) => {
+  const spy = t.mock.method(fs, 'fsync');
   const file = nextFile();
   const stream = fs.createWriteStream(file, { flush: true });
 
@@ -33,21 +31,20 @@ test('performs flush', () => {
     stream.close(common.mustSucceed(() => {
       const calls = spy.mock.calls;
       assert.strictEqual(calls.length, 1);
-      assert.strictEqual(calls[0].length, 2);
-      assert.strictEqual(typeof calls[0][0], 'number');
-      assert.strictEqual(typeof calls[0][1], 'function');
+      assert.strictEqual(calls[0].result, undefined);
+      assert.strictEqual(calls[0].error, undefined);
+      assert.strictEqual(calls[0].arguments.length, 2);
+      assert.strictEqual(typeof calls[0].arguments[0], 'number');
+      assert.strictEqual(typeof calls[0].arguments[1], 'function');
       assert.strictEqual(fs.readFileSync(file, 'utf8'), data);
       done();
     }));
   }));
-  return promise;
 });
 
-test('does not perform flush', () => {
-  jest.restoreAllMocks();
-  const { promise, resolve: done } = Promise.withResolvers();
+test('does not perform flush', (t, done) => {
   const values = [undefined, null, false];
-  const spy = jest.spyOn(fs, 'fsync');
+  const spy = t.mock.method(fs, 'fsync');
   let cnt = 0;
 
   for (const flush of values) {
@@ -66,7 +63,6 @@ test('does not perform flush', () => {
       }));
     }));
   }
-  return promise;
 });
 
 test('works with file handles', async () => {

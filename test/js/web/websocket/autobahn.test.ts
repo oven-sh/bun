@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { isDockerEnabled } from "harness";
 import * as dockerCompose from "../../../docker/index.ts";
 
@@ -120,32 +120,46 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
 
     console.log(`Running ${testCases.length} of ${count} test cases`);
 
-    for (const i of testCases) {
-      if (i > count) continue;
+    // Each case runs on its own WebSocket connection and the fuzzingserver
+    // stores results per (agent, case) pair, so cases are independent and can
+    // overlap. The Twisted reactor is single-threaded but yields while a case
+    // waits for the client echo or a closeAfter/killAfter timer, so a bounded
+    // fan-out overlaps those waits instead of paying them serially.
+    const concurrency = 16;
+    const failures: { case: number; behavior: string }[] = [];
+    let cursor = 0;
+    async function worker() {
+      while (true) {
+        const idx = cursor++;
+        if (idx >= testCases.length) return;
+        const i = testCases[idx];
+        if (i > count) continue;
 
-      // Run test case
-      await runTestCase(i);
-      const result = (await getCaseStatus(i)) as { behavior: string };
-
-      // Check result
-      try {
-        expect(result.behavior).toBeOneOf(["OK", "INFORMATIONAL", "NON-STRICT"]);
-      } catch (e) {
-        // getCaseInfo is only needed for the failure message; fetching it
-        // lazily skips one WebSocket round trip per case on the happy path.
-        let label = `Test case ${i}`;
-        try {
-          const info = (await getCaseInfo(i)) as { id: string; description: string };
-          label = `Test case ${info.id} (${info.description})`;
-        } catch {}
-        throw new Error(`${label} failed: behavior was ${result.behavior}`);
+        await runTestCase(i);
+        const result = (await getCaseStatus(i)) as { behavior: string };
+        if (!["OK", "INFORMATIONAL", "NON-STRICT"].includes(result.behavior)) {
+          failures.push({ case: i, behavior: result.behavior });
+        }
       }
     }
-  }, 300000); // 5 minute timeout
+    await Promise.all(Array.from({ length: concurrency }, worker));
 
-  afterAll(() => {
-    // Container managed by docker-compose, no need to kill
-  });
+    failures.sort((a, b) => a.case - b.case);
+    if (failures.length > 0) {
+      // getCaseInfo is only needed for the failure message; fetching it
+      // lazily skips one WebSocket round trip per case on the happy path.
+      await Promise.all(
+        failures.map(async f => {
+          try {
+            Object.assign(f, (await getCaseInfo(f.case)) as { id: string; description: string });
+          } catch {}
+        }),
+      );
+    }
+    // Surface every failing case at once instead of only the first, and keep
+    // the per-case OK / NON-STRICT / FAILED behavior in the diff output.
+    expect(failures).toEqual([]);
+  }, 300000); // 5 minute timeout
 });
 
 // last test is 13.7.18

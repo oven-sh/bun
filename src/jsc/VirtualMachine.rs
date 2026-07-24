@@ -157,6 +157,9 @@ pub struct VirtualMachine {
     /// `main()`.
     main: bun_ptr::RawSlice<u8>,
     pub main_is_html_entrypoint: bool,
+    /// `bun inspect` / `node inspect`: load the internal debugger CLI module
+    /// instead of resolving `main` as a user entry point.
+    pub main_is_node_inspect: bool,
     pub main_resolved_path: bun_core::String,
     pub main_hash: u32,
     /// Set if code overrides Bun.main to a custom value.
@@ -1960,6 +1963,8 @@ unsafe extern "C" {
     // ABI-identical to a non-null `*mut`); remaining args are by-value scalars.
     // The returned cell pointer is GC-owned (caller checks before deref).
     safe fn Bun__loadHTMLEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
+    // safe: same contract as `Bun__loadHTMLEntryPoint`.
+    safe fn Bun__loadNodeInspectEntryPoint(global: &JSGlobalObject) -> *mut JSInternalPromise;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -2329,7 +2334,7 @@ impl VirtualMachine {
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
 
-        if !self.main_is_html_entrypoint {
+        if !self.main_is_html_entrypoint && !self.main_is_node_inspect {
             if let Some(hooks) = hooks {
                 let watch = self.is_watcher_enabled();
                 if !(hooks.generate_entry_point)(self, watch, entry_path) {
@@ -2379,7 +2384,16 @@ impl VirtualMachine {
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
-            let promise = if !self.main_is_html_entrypoint {
+            let promise = if self.main_is_node_inspect {
+                let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global_ref, || {
+                    Bun__loadNodeInspectEntryPoint(global_ref)
+                })
+                .map_err(|_| crate::CrateError::JSError)?;
+                if p.is_null() {
+                    return Err(crate::CrateError::JSError);
+                }
+                p
+            } else if !self.main_is_html_entrypoint {
                 let name = bun_core::String::borrow_utf8(MAIN_FILE_NAME);
                 jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&name))
                     .map(NonNull::as_ptr)

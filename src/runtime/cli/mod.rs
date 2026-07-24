@@ -1455,6 +1455,13 @@ pub mod command {
             }
         }
 
+        // `bun inspect [...]` launches the Node-compatible CLI debugger, like
+        // `node inspect`. Only the bare `bun inspect` form is special-cased;
+        // `bun run inspect` still resolves a package.json script of that name.
+        if tag == Tag::AutoCommand && ctx.positionals.first().is_some_and(|p| &**p == b"inspect") {
+            return run_command::RunCommand::exec_inspect(ctx);
+        }
+
         if !ctx.positionals.is_empty() {
             let cfg = run_command::ExecCfg {
                 bin_dirs_only: tag == Tag::AutoCommand,

@@ -30,8 +30,6 @@ pub enum Error {
     StreamAlreadyUsed,
     #[error("InvalidStream")]
     InvalidStream,
-    #[error("UnsupportedStreamType")]
-    UnsupportedStreamType,
     #[error("JSError")]
     JSError,
     #[error("ERR_TLS_CERT_ALTNAME_INVALID")]
@@ -602,7 +600,6 @@ impl Error {
             Self::FmtError => "FmtError",
             Self::StreamAlreadyUsed => "StreamAlreadyUsed",
             Self::InvalidStream => "InvalidStream",
-            Self::UnsupportedStreamType => "UnsupportedStreamType",
             Self::JSError => "JSError",
             Self::ERR_TLS_CERT_ALTNAME_INVALID => "ERR_TLS_CERT_ALTNAME_INVALID",
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",

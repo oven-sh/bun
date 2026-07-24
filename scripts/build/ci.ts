@@ -16,6 +16,7 @@ import { generateOrderFile } from "../orderfile/generate.ts";
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
+import { windowsAsanRuntime } from "./deps/webkit.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { orderFilePath, usesOrderFile } from "./flags.ts";
@@ -270,6 +271,11 @@ export function uploadArtifacts(cfg: Config, output: BunOutput): void {
         depPaths.push(relative(cfg.buildDir, lib));
       }
     }
+    // Matches the bk_upload edge in bun.ts: link-only needs the DLL to
+    // place next to bun-asan.exe.
+    if (cfg.windows && cfg.asan && cfg.webkit === "prebuilt") {
+      depPaths.push(relative(cfg.buildDir, windowsAsanRuntime(cfg).dll));
+    }
     console.log(`Uploading ${depPaths.length} dep libs...`);
     upload(depPaths, cfg.buildDir);
   }
@@ -408,6 +414,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
+    // The ASAN runtime is a DLL even for /MT builds (LLVM 17 removed the
+    // static runtime); bun-asan.exe fails image load without it beside
+    // the exe. emitWindowsAsanRuntime() has already copied it there.
+    if (cfg.asan) files.push("clang_rt.asan_dynamic-x86_64.dll");
   } else if (cfg.darwin) {
     files.push(`${exeName}.dSYM`);
   }

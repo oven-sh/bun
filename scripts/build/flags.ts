@@ -311,6 +311,16 @@ export const globalFlags: Flag[] = [
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
   },
+  {
+    // The MS STL's std::string/std::vector container-overflow annotations
+    // call into stl_asan.lib, which is a separate VS component that the
+    // xwin splat doesn't ship (and the WebKit -asan prebuilt was built
+    // with these disabled too — keeping them in sync avoids ODR mismatch
+    // on WTF::Vector-adjacent inlines). Core ASAN checks are unaffected.
+    flag: ["-D_DISABLE_STRING_ANNOTATION", "-D_DISABLE_VECTOR_ANNOTATION"],
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN: disable MS STL container annotations (stl_asan.lib not in xwin splat)",
+  },
 
   // ─── C++ language behavior ───
   {
@@ -419,8 +429,27 @@ export const globalFlags: Flag[] = [
   // ─── Windows-specific codegen ───
   {
     flag: "/GF",
-    when: c => c.windows,
+    when: c => c.windows && !c.asan,
     desc: "String pooling (merge identical string literals)",
+  },
+  {
+    // `/O2` implies `/GF`, so it has to be explicitly disabled. With `/GF`
+    // on, each string literal is a SELECT_ANY COMDAT named by content
+    // (`??_C@_00...`), so an ASAN-instrumented `""` from bun's TUs and an
+    // uninstrumented `""` from ICU (shipped uninstrumented inside the
+    // WebKit -asan prebuilt) share a name and the linker keeps one copy.
+    // The ASAN descriptor for the instrumented copy still registers and
+    // poisons `[size, size_with_redzone)` past the kept section's end, so
+    // ICU's first read of its own `""` trips global-buffer-overflow in
+    // `u_getTimeZoneFilesDirectory` on first VM init. With `/GF-`, bun's
+    // literals are private unnamed constants that never share a COMDAT with
+    // ICU's. (WTF/JSC inside the prebuilt were also compiled with `/GF`,
+    // but `jsc.exe` from the same tarball runs clean, so the WTF/ICU
+    // pairing alone is benign; it's the three-way merge with bun's
+    // descriptors that poisons the wrong region.)
+    flag: "/GF-",
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN: keep string literals private so they can't COMDAT-merge with uninstrumented ICU",
   },
   {
     flag: "/GA",
@@ -636,6 +665,17 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Raise constexpr limits (JSC uses heavy constexpr; the embedded module registry literals are large)",
   },
   {
+    // Only needed with assertions: ASSERT_UNDER_CONSTEXPR_CONTEXT in
+    // ASCIILiteral's ctor loops every byte of the embedded module registry
+    // literals (NodeHttp2Code is ~170 KB) and blows clang's default limit.
+    // Plain release Windows has ASSERT_ENABLED=0, so the loop is a no-op
+    // there. /clang: prefix — clang-cl has no /constexpr: spelling of its own.
+    flag: ["/clang:-fconstexpr-steps=6000000", "/clang:-fconstexpr-depth=54"],
+    when: c => c.windows && c.assertions,
+    lang: "cxx",
+    desc: "Raise constexpr limits (Windows assertions build: ASCIILiteral per-byte ASSERT loop)",
+  },
+  {
     flag: ["-fno-pic", "-fno-pie"],
     when: c => c.unix && c.abi !== "android",
     desc: "No position-independent code (we're a final executable)",
@@ -810,6 +850,17 @@ export const linkerFlags: Flag[] = [
     desc: "Link ASAN runtime",
   },
   {
+    // clang-cl -fsanitize=address embeds a /INFERASANLIBS directive in each
+    // object; lld-link then searches its own lib paths for the runtime.
+    // We link the version-matched runtime from the WebKit prebuilt
+    // explicitly (bun.ts emitWindowsAsanRuntime), so suppress inference to
+    // avoid picking up a mismatched-version lib from the host toolchain or
+    // failing the link when the cross sysroot has none.
+    flag: "/INFERASANLIBS:NO",
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN: link the bundled runtime explicitly, not by inference",
+  },
+  {
     flag: "-fsanitize=null",
     when: c =>
       c.unix &&
@@ -950,21 +1001,29 @@ export const linkerFlags: Flag[] = [
     desc: "Emit PDB so the crash handler can symbolize stack traces",
   },
   {
+    // SAFEICF (lld-specific) only folds functions whose address is never
+    // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
+    // import libs, the prebuilt ICU data — are treated conservatively), so
+    // JSC ClassInfo native constructors — stored as pointers and compared
+    // for identity — stay distinct. /OPT:ICF (aggressive) folded
+    // callBigIntConstructor with constructBigInt → "not a constructor",
+    // and broke expect.any(Constructor); see commit 218430c731. Mirrors
+    // Linux `-Wl,-icf=safe`. lldtailmerge (lld-specific; MSVC link.exe has
+    // no equivalent) tail-merges string literals across TUs.
+    //
+    // Not under ASAN: the runtime registers a redzone + descriptor per TU
+    // for every instrumented global (string literals included). ICF and tail
+    // merging then give two distinct registrations the same address, which
+    // the runtime reports as an odr-violation at startup (e.g. "127.0.0.1"
+    // size 10 vs "127.0.0.1\0" size 11).
+    flag: ["/OPT:SAFEICF", "/OPT:lldtailmerge"],
+    when: c => c.windows && c.release && !c.asan,
+    desc: "Safe identical-COMDAT folding and string-literal tail merging",
+  },
+  {
     flag: [
       "/LTCG",
       "/OPT:REF",
-      // SAFEICF (lld-specific) only folds functions whose address is never
-      // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
-      // import libs, the prebuilt ICU data — are treated conservatively), so
-      // JSC ClassInfo native constructors — stored as pointers and compared
-      // for identity — stay distinct. /OPT:ICF (aggressive) folded
-      // callBigIntConstructor with constructBigInt → "not a constructor",
-      // and broke expect.any(Constructor); see commit 218430c731. Mirrors
-      // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
-      // String-literal tail merging (lld-specific; MSVC link.exe has no
-      // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
-      "/OPT:lldtailmerge",
       // 512-byte section file alignment (default is 4 KB). Was present in
       // the pre-ninja CMake config; harmless to page-in cost since sections
       // are few and large.

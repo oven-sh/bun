@@ -2912,12 +2912,30 @@ pub fn return_address() -> usize {
     if cfg!(miri) {
         return 0;
     }
-    #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+    // The `[fp + PC_OFFSET]` slot is in the caller's stack area past the
+    // current frame's locals. Under `-Zsanitizer=address` a Rust-level
+    // pointer deref of that slot is instrumented and can land in a region
+    // ASAN has marked `f8` (stack-use-after-scope) for an inlined sibling
+    // scope, tripping a false positive. Fold the load into the same asm
+    // block so ASAN never sees it.
+    #[cfg(target_arch = "x86_64")]
     {
-        let fp = debug::frame_address();
-        // SAFETY: `fp` is this function's own valid frame pointer; the
-        // return-address slot at `[fp + PC_OFFSET]` is always mapped.
-        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
+        let pc: usize;
+        // SAFETY: rbp is the frame pointer (`-Cforce-frame-pointers=yes`);
+        // `[rbp + 8]` is the saved return address per the x86-64 ABI.
+        unsafe {
+            core::arch::asm!("mov {}, [rbp + 8]", out(reg) pc, options(nostack, preserves_flags))
+        };
+        pc
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        let pc: usize;
+        // SAFETY: x29 is the frame pointer; `[x29, #8]` is the saved LR.
+        unsafe {
+            core::arch::asm!("ldr {}, [x29, #8]", out(reg) pc, options(nostack, preserves_flags))
+        };
+        pc
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {

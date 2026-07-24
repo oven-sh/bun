@@ -237,10 +237,6 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
-function detachSocket(self) {
-  if (!self) self = this;
-  self._handle = null;
-}
 function destroyNT(self, err) {
   self.destroy(err);
 }
@@ -334,8 +330,9 @@ const SocketHandlers: SocketHandler = {
     const self = socket.data;
     if (!self || self[kclosed]) return;
     self[kclosed] = true;
-    //socket cannot be used after close
-    detachSocket(self);
+    // Node keeps `_handle` attached until Socket.prototype._destroy: a live,
+    // half-closed socket must not report `pending === true`. The native handle
+    // is already detached internally, so every method on it is a safe no-op.
     SocketEmitEndNT(self, err);
     self.data = null;
   },
@@ -809,8 +806,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     {
       if (!data[kclosed]) {
         data[kclosed] = true;
-        //socket cannot be used after close
-        detachSocket(data);
+        // See SocketHandlers.close: `_handle` stays attached until _destroy.
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;

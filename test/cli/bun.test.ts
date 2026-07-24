@@ -142,5 +142,29 @@ describe("bun", () => {
         fs.unlinkSync(path);
       }
     });
+
+    test("-c=path loads bunfig like --config=path, issue #21431", () => {
+      using dir = tempDir("config-short-flag-value", {
+        "custom.toml": `preload = ["./preload.ts"]`,
+        "preload.ts": `globalThis.__bunConfigLoaded = true;`,
+        "index.ts": `console.log(globalThis.__bunConfigLoaded === true ? "loaded" : "missing");`,
+      });
+
+      for (const args of [
+        ["-c=custom.toml", "index.ts"],
+        ["-c=custom.toml", "run", "index.ts"],
+        ["run", "-c=custom.toml", "index.ts"],
+      ]) {
+        const { stdout, exitCode } = Bun.spawnSync({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: bunEnv,
+          stderr: "inherit",
+        });
+
+        expect(stdout.toString()).toBe("loaded\n");
+        expect(exitCode).toBe(0);
+      }
+    });
   });
 });

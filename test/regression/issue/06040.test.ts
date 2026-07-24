@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/6040
 // spyOn()/mockImplementation() installed at the top level of one test file
 // must be restored before the next test file runs.
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 async function runTests(
@@ -152,10 +152,7 @@ describe.concurrent("spyOn is scoped to the test file that installed it", () => 
       `,
     });
 
-    const { stderr, exitCode } = await runTests(String(dir), ["a.test.ts", "b.test.ts"], [
-      "--preload",
-      "./preload.ts",
-    ]);
+    const { stderr, exitCode } = await runTests(String(dir), ["a.test.ts", "b.test.ts"], ["--preload", "./preload.ts"]);
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);

@@ -958,7 +958,7 @@ describe("mkdirSync", () => {
         // @ts-expect-error
         { recursive: "lalala" },
       ),
-    ).toThrow('The "recursive" property must be of type boolean, got string');
+    ).toThrow("The \"options.recursive\" property must be of type boolean. Received type string ('lalala')");
   });
 });
 

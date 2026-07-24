@@ -449,6 +449,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             callback: Self::async_job_run_task,
         });
         this.poll_ref().with_mut(|p| p.ref_(vm));
+        // Hold the worker-shutdown barrier open until the pool thread has
+        // finished `do_work()` and posted the completion; matched by
+        // `work_pool_task_unref()` at the end of `async_job_run`.
+        vm.event_loop_shared().work_pool_task_ref();
         WorkPool::schedule(this.task().as_ptr());
 
         Ok(JSValue::UNDEFINED)
@@ -487,10 +491,18 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `enqueue_task_concurrent` body only touches the lock-free
         // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
         // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
-        // until `run_from_js_thread` runs and calls `deref()`.
+        // until `run_from_js_thread` runs and calls `deref()`. Liveness of the
+        // VM across a worker terminate is guaranteed by the
+        // `work_pool_task_ref()` taken in `write()`: `WebWorker::shutdown`
+        // blocks on that count reaching zero before freeing the JSC heap or
+        // the VM box, so `global_this`, `vm` and `event_loop` are all still
+        // valid here.
         unsafe {
             (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
         }
+        // Last VM access; pairs with `work_pool_task_ref()` in `write()` and
+        // releases `WebWorker::shutdown`'s barrier.
+        vm.event_loop_shared().work_pool_task_unref();
     }
 
     /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
@@ -564,6 +576,44 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         if this.pending_close().get() {
             Self::close_internal(&this);
+        }
+
+        this.poll_ref().with_mut(|p| p.unref(vm));
+        // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
+        // and is not accessed after this call.
+        unsafe { T::deref(this_ptr) };
+    }
+
+    /// Shutdown-drain counterpart of [`Self::run_from_js_thread`]: releases the
+    /// resources `write()` acquired (Strong `this_value`, pinned input/output
+    /// buffers, `poll_ref`, the `ref_()` +1) without invoking JS callbacks.
+    /// Called from `__bun_release_task_at_shutdown` for a completion that
+    /// reached the queue after the worker thread stopped ticking. Runs on the
+    /// worker's JS thread with the JSC heap and VM still live (before
+    /// `teardownJSCVM`).
+    ///
+    /// SAFETY: same contract as [`Self::run_from_js_thread`].
+    pub(crate) unsafe fn release_unrun(this_ptr: *mut T) {
+        let this = ParentRef::from(NonNull::new(this_ptr).expect("release_unrun: this"));
+        let global: &JSGlobalObject = this.global_this();
+        let vm = global.bun_vm();
+
+        this.write_in_progress().set(false);
+
+        if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
+            for pinned in [
+                T::pending_input_get_cached(this_value),
+                T::pending_output_get_cached(this_value),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if pinned.is_cell() {
+                    if let Some(buf) = pinned.as_array_buffer(global) {
+                        buf.unpin();
+                    }
+                }
+            }
         }
 
         this.poll_ref().with_mut(|p| p.unref(vm));

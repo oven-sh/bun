@@ -95,7 +95,7 @@ impl StaticRoute {
         }
 
         // Generate ETag if not already present
-        if headers.get(b"etag").is_none_or(|v| v.is_empty()) {
+        if headers.get(b"etag").is_none() {
             if !blob.slice().is_empty() {
                 append_etag(blob.slice(), &mut headers);
             }
@@ -244,7 +244,7 @@ impl StaticRoute {
             );
 
             // Generate ETag if not already present
-            if headers.get(b"etag").is_none_or(|v| v.is_empty()) {
+            if headers.get(b"etag").is_none() {
                 if !blob.slice().is_empty() {
                     append_etag(blob.slice(), &mut headers);
                 }

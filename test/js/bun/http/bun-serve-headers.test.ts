@@ -170,11 +170,12 @@ describe("empty header value does not duplicate auto-headers", () => {
     }
   });
 
-  test("static route: empty etag gets the auto content-hash", async () => {
+  test("static route: empty etag is dropped", async () => {
+    // An empty user etag is not overwritten with the auto content-hash (that
+    // would leave two snapshot entries and render_precondition reads the first),
+    // so the write-loop skip drops it and the route simply has no ETag.
     const head = await rawHeadStatic(new Response("x", { headers: { etag: "" } }));
-    const etag = lines(head, "etag");
-    expect(etag).toHaveLength(1);
-    expect(etag[0]).toMatch(/^etag: "\S/);
+    expect(lines(head, "etag")).toEqual([]);
   });
 });
 

@@ -159,10 +159,20 @@ impl Lazy {
                     'brk: {
                         #[cfg(unix)]
                         {
-                            let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
+                            // libuv `uv_tty_init`: reopen the tty with the fd's
+                            // existing access mode so the fresh file description
+                            // keeps O_RDWR when the original had it, then `dup2`
+                            // it back onto the stdio fd. That leaves fd 0 itself
+                            // nonblocking without touching the file description
+                            // shared with the parent shell.
+                            let accmode = sys::get_fcntl_flags(*pl_fd)
+                                .map(|f| f as i32 & sys::O::ACCMODE)
+                                .unwrap_or(sys::O::RDONLY);
+                            let rc = open_as_nonblocking_tty(pl_fd.native(), accmode);
                             if rc > -1 {
                                 is_nonblocking = true;
                                 file.is_atty = Some(true);
+                                let _ = sys::dup2(Fd::from_native(rc), *pl_fd);
                                 break 'brk Fd::from_native(rc);
                             }
                         }
@@ -248,6 +258,18 @@ impl Lazy {
             } else {
                 FileType::File
             };
+
+            // libuv `uv_pipe_open` / `uv_tty_init` set O_NONBLOCK on the adopted
+            // stdio fd. Node exposes that via `process.stdin`: once the stream
+            // is started, `fs.readSync(0, …)` returns EAGAIN instead of blocking
+            // (issue #5305). The tty path above already swapped in a nonblocking
+            // file description; this covers pipe/socket stdio and the tty
+            // fallback when reopening failed.
+            if fd.stdio_tag().is_some() && this.pollable && !is_nonblocking {
+                if sys::set_nonblocking(fd).is_ok() {
+                    is_nonblocking = true;
+                }
+            }
 
             // pretend it's a non-blocking pipe if it's a TTY
             if is_nonblocking && this.file_type != FileType::Socket {

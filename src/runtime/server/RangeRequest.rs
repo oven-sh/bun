@@ -91,21 +91,21 @@ pub fn parse_raw(header: &[u8]) -> Raw {
     let end_s = strings::trim(&rest[dash + 1..], b" \t");
 
     if start_s.is_empty() {
-        let Some(n) = bun_core::fmt::parse_decimal::<u64>(end_s) else {
+        let Ok(n) = bun_core::fmt::parse_unsigned::<u64>(end_s, 10) else {
             return Raw::None;
         };
         return Raw::Suffix(n);
     }
 
-    let Some(start) = bun_core::fmt::parse_decimal::<u64>(start_s) else {
+    let Ok(start) = bun_core::fmt::parse_unsigned::<u64>(start_s, 10) else {
         return Raw::None;
     };
     let end: Option<u64> = if end_s.is_empty() {
         None
     } else {
-        match bun_core::fmt::parse_decimal::<u64>(end_s) {
-            Some(v) => Some(v),
-            None => return Raw::None,
+        match bun_core::fmt::parse_unsigned::<u64>(end_s, 10) {
+            Ok(v) => Some(v),
+            Err(_) => return Raw::None,
         }
     };
     Raw::Bounded { start, end }

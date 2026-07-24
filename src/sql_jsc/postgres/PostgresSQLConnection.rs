@@ -2694,6 +2694,14 @@ impl PostgresSQLConnection {
                         }
                         debug!("SASLContinue");
 
+                        // RFC 5802 §5.1: a reserved-mext ("m=") in a server message
+                        // MUST fail authentication at a client that doesn't implement
+                        // the signalled mandatory extension (libpq rejects this too).
+                        if cont.data.slice().starts_with(b"m=") {
+                            debug!("SASLContinue mandatory extension not supported");
+                            return Err(AnyPostgresError::InvalidMessage);
+                        }
+
                         // RFC 5802 §5.1: the server's combined nonce MUST begin with
                         // the client nonce we sent in the client-first-message.
                         if !cont.r.slice().starts_with(sasl.nonce()) {
@@ -2748,16 +2756,17 @@ impl PostgresSQLConnection {
                         .map_err(pg_err)?;
                         drop(server_salt_decoded_base64);
 
+                        // RFC 5802 §3 AuthMessage: sign the server-first-message as received
+                        // (cont.data), not a rebuilt "r=,s=,i=", so any RFC-legal extension
+                        // attributes the server sent are covered by the proof.
                         let mut auth_string: Vec<u8> = Vec::new();
                         {
                             use std::io::Write as _;
                             let _ = write!(
                                 &mut auth_string,
-                                "n=*,r={},r={},s={},i={},c=biws,r={}",
+                                "n=*,r={},{},c=biws,r={}",
                                 bstr::BStr::new(sasl.nonce()),
-                                bstr::BStr::new(cont.r.slice()),
-                                bstr::BStr::new(cont.s.slice()),
-                                bstr::BStr::new(cont.i.slice()),
+                                bstr::BStr::new(cont.data.slice()),
                                 bstr::BStr::new(cont.r.slice()),
                             );
                         }
@@ -2823,19 +2832,22 @@ impl PostgresSQLConnection {
 
                         let server_signature = sasl.server_signature();
 
-                        // This will usually start with "v="
-                        let comparison_signature = final_data.slice();
+                        // RFC 5802 §7: server-final-message = (server-error / verifier)
+                        // ["," extensions]. Compare only the verifier value up to the
+                        // first ',' and require the "v=" prefix.
+                        let server_final = final_data.slice();
+                        let first_attr = match strings::index_of_char(server_final, b',') {
+                            Some(i) => &server_final[..i as usize],
+                            None => server_final,
+                        };
 
-                        if comparison_signature.len() < 2
-                            || !BoringSSL::c::constant_time_eq(
-                                server_signature,
-                                &comparison_signature[2..],
-                            )
+                        if !first_attr.starts_with(b"v=")
+                            || !BoringSSL::c::constant_time_eq(server_signature, &first_attr[2..])
                         {
                             debug!(
                                 "SASLFinal - SASL Server signature mismatch\nExpected: {}\nActual: {}",
                                 bstr::BStr::new(server_signature),
-                                bstr::BStr::new(&comparison_signature[2..])
+                                bstr::BStr::new(server_final)
                             );
                             self.fail(
                                 b"The server did not return the correct signature",

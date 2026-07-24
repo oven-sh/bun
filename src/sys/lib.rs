@@ -6491,56 +6491,104 @@ pub fn normalize_path_windows_opts<'a>(
     opts: NormalizePathWindowsOpts,
 ) -> Maybe<&'a bun_core::WStr> {
     use bun_core::WStr;
+    use bun_paths::is_sep_any_t as is_sep;
     let too_long = || Error::from_code(E::ENAMETOOLONG, Tag::open);
 
     let mut path = path;
+
+    // `RtlGetFullPathName_U` applies DOS-device translation only to Relative /
+    // Rooted / Drive* inputs (never UNC, `\\.\`, `\\?\`, `\??\`); `\\?\X:` is
+    // treated as DriveAbsolute since `slice_z_with_force_copy` emits it.
+    let win32_normalizes = if path.len() >= 2 && is_sep(path[0]) {
+        if is_sep(path[1]) {
+            path.len() >= 6
+                && path[2] == b'?' as u16
+                && is_sep(path[3])
+                && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[4])
+                && path[5] == b':' as u16
+        } else {
+            !(path.len() >= 4
+                && path[1] == b'?' as u16
+                && path[2] == b'?' as u16
+                && is_sep(path[3]))
+        }
+    } else {
+        true
+    };
+
+    if win32_normalizes {
+        // Locate the final path component: after the last separator, or after
+        // a leading `C:` when no separator is present.
+        let comp_start = path
+            .iter()
+            .rposition(|&c| is_sep(c))
+            .map(|i| i + 1)
+            .unwrap_or_else(|| {
+                if path.len() >= 2
+                    && bun_paths::resolve_path::is_drive_letter_t::<u16>(path[0])
+                    && path[1] == b':' as u16
+                {
+                    2
+                } else {
+                    0
+                }
+            });
+
+        // Reserved DOS device names (`NUL`, `CON`, `PRN`, `AUX`, `COM/LPT1-9`)
+        // name a device regardless of directory prefix; `NtCreateFile` does
+        // not know about them, so a bare `nul` would create a literal file.
+        if let Some(device) = bun_paths::windows_reserved_device_name_t(&path[comp_start..]) {
+            let prefix: &[u16] = if opts.add_nt_prefix {
+                bun_core::w!("\\??\\")
+            } else {
+                bun_core::w!("\\\\.\\")
+            };
+            let total = prefix.len() + device.len();
+            if buf.len() <= total {
+                return Err(too_long());
+            }
+            buf[..prefix.len()].copy_from_slice(prefix);
+            for (i, &b) in device.iter().enumerate() {
+                buf[prefix.len() + i] = b as u16;
+            }
+            buf[total] = 0;
+            return Ok(WStr::from_buf(&buf[..], total));
+        }
+    }
+
     if bun_paths::is_absolute_windows_wtf16(path) {
-        // Three special-cases that must run BEFORE
+        // Two special-cases that must run BEFORE
         // `normalizeStringGenericTZ`, otherwise device paths get mangled:
-        if path.len() >= 4 {
-            // (a) `…\nul` / `…\NUL` → literal NT object path `\??\NUL`.
-            const BS_NUL_LO: [u16; 4] = [b'\\' as u16, b'n' as u16, b'u' as u16, b'l' as u16];
-            const BS_NUL_UP: [u16; 4] = [b'\\' as u16, b'N' as u16, b'U' as u16, b'L' as u16];
-            let tail = &path[path.len() - 4..];
-            if tail == BS_NUL_LO || tail == BS_NUL_UP {
-                const NT_NUL: [u16; 7] = [
-                    b'\\' as u16,
-                    b'?' as u16,
-                    b'?' as u16,
-                    b'\\' as u16,
-                    b'N' as u16,
-                    b'U' as u16,
-                    b'L' as u16,
-                ];
-                if buf.len() <= NT_NUL.len() {
+        if path.len() >= 4 && is_sep(path[1]) && is_sep(path[3]) {
+            if path[2] == b'.' as u16
+                || (path[2] == b'?' as u16 && !path[4..].iter().any(|&c| is_sep(c)))
+            {
+                // `\\.\…` and bare `\\?\<name>` name `\??\…` in DosDevices;
+                // `NtCreateFile` only accepts that spelling, so emit it for NT
+                // callers (with `/`→`\`) and keep the Win32 form for kernel32.
+                if path.len() >= buf.len() {
                     return Err(too_long());
                 }
-                buf[..NT_NUL.len()].copy_from_slice(&NT_NUL);
-                buf[NT_NUL.len()] = 0;
-                return Ok(WStr::from_buf(&buf[..], NT_NUL.len()));
+                let prefix: &[u16] = if opts.add_nt_prefix {
+                    bun_core::w!("\\??\\")
+                } else {
+                    bun_core::w!("\\\\.\\")
+                };
+                buf[..4].copy_from_slice(prefix);
+                for (i, &c) in path[4..].iter().enumerate() {
+                    buf[4 + i] = if opts.add_nt_prefix && c == b'/' as u16 {
+                        b'\\' as u16
+                    } else {
+                        c
+                    };
+                }
+                buf[path.len()] = 0;
+                return Ok(WStr::from_buf(&buf[..], path.len()));
             }
-            use bun_paths::is_sep_any_t as is_sep;
-            if is_sep(path[1]) && is_sep(path[3]) {
-                // (b) `\\.\…` device path → preserve verbatim so `\\.\pipe\foo`
-                // is not collapsed to `\pipe\foo` by the normalizer.
-                if path[2] == b'.' as u16 {
-                    if path.len() >= buf.len() {
-                        return Err(too_long());
-                    }
-                    buf[0] = b'\\' as u16;
-                    buf[1] = b'\\' as u16;
-                    buf[2] = b'.' as u16;
-                    buf[3] = b'\\' as u16;
-                    let rest = &path[4..];
-                    buf[4..4 + rest.len()].copy_from_slice(rest);
-                    buf[path.len()] = 0;
-                    return Ok(WStr::from_buf(&buf[..], path.len()));
-                }
-                // (c) `\??\…` / `\\?\…` already prefixed → strip the 4-u16
-                // prefix before re-normalizing to avoid a double `\??\`.
-                if path[2] == b'?' as u16 {
-                    path = &path[4..];
-                }
+            // `\??\…` / `\\?\…` already prefixed → strip the 4-u16
+            // prefix before re-normalizing to avoid a double `\??\`.
+            if path[2] == b'?' as u16 {
+                path = &path[4..];
             }
         }
         if opts.add_nt_prefix {
@@ -6756,35 +6804,6 @@ pub fn normalize_path_windows_opts<'a>(
     Ok(WStr::from_buf(&buf[..], g + prefix_len + sub_len))
 }
 
-/// Open a `\\.\…` device path via kernel32 `CreateFileW`
-/// (NtCreateFile cannot open device paths).
-#[cfg(windows)]
-fn open_windows_device_path(
-    path: &bun_core::WStr,
-    desired_access: u32,
-    creation_disposition: u32,
-    flags_and_attributes: u32,
-) -> Maybe<Fd> {
-    use bun_windows_sys::externs as w;
-    // SAFETY: path is NUL-terminated UTF-16.
-    let rc = unsafe {
-        w::CreateFileW(
-            path.as_ptr(),
-            desired_access,
-            FILE_SHARE,
-            core::ptr::null_mut(),
-            creation_disposition,
-            flags_and_attributes,
-            core::ptr::null_mut(),
-        )
-    };
-    if rc == bun_windows_sys::INVALID_HANDLE_VALUE {
-        let errno = windows::Win32Error::get().to_e();
-        return Err(Error::from_code(errno, Tag::open));
-    }
-    Ok(Fd::from_system(rc))
-}
-
 /// Absolute NT object names our producers emit: `\??\…` or `\Device\…`. Only
 /// these get `RootDirectory = null`; any other rooted string stays
 /// dirfd-relative so `NtCreateFile` rejects it (`OBJECT_PATH_SYNTAX_BAD`).
@@ -6828,30 +6847,7 @@ pub fn open_dir_at_windows_nt_path(
         0
     };
 
-    // NtCreateFile seems to not function on device paths. Since it is
-    // absolute, it can just use CreateFileW.
     let p = path.as_slice();
-    if p.len() >= 4
-        && p[0] == b'\\' as u16
-        && p[1] == b'\\' as u16
-        && p[2] == b'.' as u16
-        && p[3] == b'\\' as u16
-    {
-        return open_windows_device_path(
-            path,
-            flags,
-            if options.op != WindowsOpenDirOp::OnlyOpen {
-                w::FILE_OPEN_IF
-            } else {
-                w::FILE_OPEN
-            },
-            w::FILE_DIRECTORY_FILE
-                | w::FILE_SYNCHRONOUS_IO_NONALERT
-                | windows::FILE_OPEN_FOR_BACKUP_INTENT
-                | open_reparse,
-        );
-    }
-
     let path_len_bytes = (p.len() * 2) as u16;
     let mut nt_name = w::UNICODE_STRING {
         Length: path_len_bytes,
@@ -9692,6 +9688,74 @@ mod normalize_path_windows_tests {
     }
 
     #[test]
+    fn dos_device_names_resolve_to_nt_device() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let cwd = Fd::cwd();
+        // Bare, mixed case, relative, absolute, forward-slash, drive-relative,
+        // `\\?\`-prefixed (the prefix does not suppress device recognition
+        // here; node:fs hands every absolute path through with that prefix).
+        for input in [
+            "nul",
+            "NUL",
+            "Nul",
+            "nUl",
+            "nul.",
+            "nul ",
+            "nul. ",
+            "C:nul",
+            "sub\\nul",
+            "sub/nul",
+            "./nul",
+            "C:\\a\\Nul",
+            "C:\\a\\nul ",
+            "\\\\?\\C:\\a\\nul",
+            "\\\\?\\C:\\a\\NUL",
+        ] {
+            assert_eq!(normalize(cwd, input), "\\??\\NUL", "{input:?}");
+            assert_eq!(normalize_opts(cwd, input, false), "\\\\.\\NUL", "{input:?}");
+        }
+        assert_eq!(normalize(cwd, "con"), "\\??\\CON");
+        assert_eq!(normalize(cwd, "pRn"), "\\??\\PRN");
+        assert_eq!(normalize(cwd, "Aux"), "\\??\\AUX");
+        assert_eq!(normalize(cwd, "com1"), "\\??\\COM1");
+        assert_eq!(normalize(cwd, "LPT9"), "\\??\\LPT9");
+        assert_eq!(normalize(cwd, "\\a\\Nul"), "\\??\\NUL");
+        // Near-misses take the ordinary file path.
+        for input in ["nul.txt", "nula", "null", "com0", "com10", "nul\\x"] {
+            let got = normalize(cwd, input);
+            assert!(!got.starts_with("\\??\\NUL"), "{input:?} -> {got}");
+            assert!(!got.starts_with("\\??\\COM"), "{input:?} -> {got}");
+        }
+        // UNC, `\\.\`, `\\?\UNC\` and `\??\` paths are never device-translated
+        // by Win32; named pipes and SMB files can legally use these names.
+        // `\\.\` and bare `\\?\<name>` become `\??\` for NT (with `/`→`\`).
+        assert_eq!(normalize(cwd, "\\\\.\\pipe\\com1"), "\\??\\pipe\\com1");
+        assert_eq!(normalize(cwd, "\\\\.\\pipe\\Nul"), "\\??\\pipe\\Nul");
+        assert_eq!(normalize(cwd, "\\\\.\\nul"), "\\??\\nul");
+        assert_eq!(normalize(cwd, "\\\\.\\pipe/name"), "\\??\\pipe\\name");
+        assert_eq!(normalize(cwd, "\\\\?\\nul"), "\\??\\nul");
+        assert_eq!(normalize(cwd, "\\\\?\\Nul"), "\\??\\Nul");
+        assert_eq!(normalize_opts(cwd, "\\\\.\\nul", false), "\\\\.\\nul");
+        assert_eq!(
+            normalize_opts(cwd, "\\\\.\\pipe\\com1", false),
+            "\\\\.\\pipe\\com1"
+        );
+        for input in [
+            "\\\\server\\share\\aux",
+            "\\\\?\\UNC\\srv\\s\\nul",
+            "\\??\\C:\\a\\nul",
+        ] {
+            let got = normalize(cwd, input);
+            assert_ne!(got, "\\??\\AUX", "{input:?} -> {got}");
+            assert_ne!(got, "\\??\\NUL", "{input:?} -> {got}");
+            assert!(
+                got.ends_with(&input[input.len() - 3..]),
+                "{input:?} -> {got}"
+            );
+        }
+    }
+
+    #[test]
     fn relative_resolves_to_nt_device_name() {
         let _g = crate::file::tests::FD_TEST_LOCK.lock();
         let tree = TempTree::new("nt_norm_rel");
@@ -10156,18 +10220,22 @@ mod normalize_path_windows_tests {
         // The compose/None-query failure arms are not constructible from a
         // real handle; `clamp_prefix_len_pairs` covers them at the unit level.
         let nul_path = wide("\\\\.\\NUL\0");
-        let nul = scopeguard::guard(
-            open_windows_device_path(
-                bun_core::WStr::from_buf(&nul_path[..], nul_path.len() - 1),
+        // SAFETY: `nul_path` is NUL-terminated and outlives the call.
+        let h = unsafe {
+            w::CreateFileW(
+                nul_path.as_ptr(),
                 w::GENERIC_READ,
+                FILE_SHARE,
+                core::ptr::null_mut(),
                 w::OPEN_EXISTING,
                 0,
+                core::ptr::null_mut(),
             )
-            .expect("open NUL"),
-            |fd| {
-                let _ = close(fd);
-            },
-        );
+        };
+        assert_ne!(h, bun_windows_sys::INVALID_HANDLE_VALUE);
+        let nul = scopeguard::guard(Fd::from_system(h), |fd| {
+            let _ = close(fd);
+        });
         assert_eq!(normalize_err(*nul, ".\\x").get_errno(), E::BADFD);
     }
 

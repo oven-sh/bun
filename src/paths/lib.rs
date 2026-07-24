@@ -99,6 +99,129 @@ pub fn is_absolute_windows_wtf16(p: &[u16]) -> bool {
     is_absolute_windows_t::<u16>(p)
 }
 
+// The set `RtlIsDosDeviceName_U` recognises (unchanged since DOS); see
+// https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file.
+// `COM0`/`LPT0` and superscript-digit variants are build-dependent and omitted.
+bun_core::comptime_string_map! {
+    static WINDOWS_RESERVED_DEVICE_NAMES: &'static [u8] = {
+        b"nul" => b"NUL", b"con" => b"CON", b"prn" => b"PRN", b"aux" => b"AUX",
+        b"com1" => b"COM1", b"com2" => b"COM2", b"com3" => b"COM3",
+        b"com4" => b"COM4", b"com5" => b"COM5", b"com6" => b"COM6",
+        b"com7" => b"COM7", b"com8" => b"COM8", b"com9" => b"COM9",
+        b"lpt1" => b"LPT1", b"lpt2" => b"LPT2", b"lpt3" => b"LPT3",
+        b"lpt4" => b"LPT4", b"lpt5" => b"LPT5", b"lpt6" => b"LPT6",
+        b"lpt7" => b"LPT7", b"lpt8" => b"LPT8", b"lpt9" => b"LPT9",
+    };
+}
+
+/// Recognise a reserved Win32 DOS device name (`NUL`, `CON`, `PRN`, `AUX`,
+/// `COM1`-`COM9`, `LPT1`-`LPT9`) in a single path component and return its
+/// canonical uppercase spelling, or `None`. Mirrors `RtlIsDosDeviceName_U`
+/// enough that every spelling Win32's `CreateFileW` would redirect is caught:
+/// trailing `.`/` ` are ignored and the match is ASCII-case-insensitive.
+/// Unlike the Win32 routine no extension/stream suffix is stripped, so
+/// `nul.txt` is not a device; modern Windows and Node agree on that.
+pub fn windows_reserved_device_name_t<T: PathChar>(component: &[T]) -> Option<&'static [u8]> {
+    let end = component
+        .iter()
+        .rposition(|c| !c.eq_ascii(b'.') && !c.eq_ascii(b' '))
+        .map_or(0, |i| i + 1);
+    if !(3..=4).contains(&end) {
+        return None;
+    }
+    let mut stem = [0u8; 4];
+    for (i, c) in component[..end].iter().enumerate() {
+        stem[i] = c.to_ascii()?;
+    }
+    WINDOWS_RESERVED_DEVICE_NAMES
+        .get_ascii_case_insensitive(&stem[..end])
+        .copied()
+}
+
+#[cfg(test)]
+mod windows_reserved_device_name_tests {
+    use super::windows_reserved_device_name_t as check;
+
+    #[track_caller]
+    fn both(s: &str, want: Option<&[u8]>) {
+        assert_eq!(check(s.as_bytes()), want, "{s:?} (u8)");
+        let w: Vec<u16> = s.encode_utf16().collect();
+        assert_eq!(check::<u16>(&w), want, "{s:?} (u16)");
+    }
+
+    #[test]
+    fn three_char_devices() {
+        for (s, want) in [
+            ("nul", b"NUL" as &[u8]),
+            ("NUL", b"NUL"),
+            ("Nul", b"NUL"),
+            ("nUl", b"NUL"),
+            ("con", b"CON"),
+            ("CoN", b"CON"),
+            ("prn", b"PRN"),
+            ("aux", b"AUX"),
+            ("AUX", b"AUX"),
+        ] {
+            both(s, Some(want));
+        }
+    }
+
+    #[test]
+    fn numbered_devices() {
+        both("com1", Some(b"COM1"));
+        both("COM9", Some(b"COM9"));
+        both("Com5", Some(b"COM5"));
+        both("lpt1", Some(b"LPT1"));
+        both("LpT9", Some(b"LPT9"));
+        both("com0", None);
+        both("lpt0", None);
+        both("com10", None);
+        both("comA", None);
+        both("coma", None);
+    }
+
+    #[test]
+    fn trailing_dots_and_spaces_ignored() {
+        both("nul.", Some(b"NUL"));
+        both("nul ", Some(b"NUL"));
+        both("nul. ", Some(b"NUL"));
+        both("nul .", Some(b"NUL"));
+        both("Nul .. ", Some(b"NUL"));
+        both("com1  ", Some(b"COM1"));
+        both("aux.", Some(b"AUX"));
+    }
+
+    #[test]
+    fn near_misses() {
+        for s in [
+            "",
+            "n",
+            "nu",
+            "null",
+            "nul1",
+            "nu1",
+            "nula",
+            "anul",
+            " nul",
+            ".nul",
+            "con1",
+            "conn",
+            "nul.txt",
+            "nul:stream",
+            "aux1",
+            "co",
+            "com",
+            "lpt",
+            "c:nul",
+        ] {
+            both(s, None);
+        }
+        // Non-ASCII in a would-be match position.
+        let w: Vec<u16> = "n\u{00fc}l".encode_utf16().collect();
+        assert_eq!(check::<u16>(&w), None);
+    }
+}
+
 /// Returns the leading drive
 /// designator (e.g. `C:` or `\\server\share`) or empty.
 ///

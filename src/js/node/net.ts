@@ -110,6 +110,8 @@ const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
 const BlockList = $rust("node_net_binding.rs", "BlockList");
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
+const permissionModelEnabled = $rust("permission.rs", "isPermissionModelEnabled");
+let netAccessDeniedError;
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
@@ -1514,6 +1516,14 @@ function kConnectPipe(self, req, address) {
 }
 
 function kConnectDispatch(self, req, opts) {
+  if (permissionModelEnabled) {
+    // TCPWrap::Connect / PipeWrap::Connect return the ERR_ACCESS_DENIED object
+    // rather than an errno; both callers below hand it to
+    // ExceptionWithHostPort, which special-cases it.
+    netAccessDeniedError ??= $newRustFunction("permission.rs", "netAccessDeniedError", 1);
+    const denied = netAccessDeniedError(opts.hostname);
+    if (denied) return denied;
+  }
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.

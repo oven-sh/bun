@@ -285,6 +285,23 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-addons                       Throw an error if process.dlopen is called, and disable export condition \"node-addons\""
     ),
+    // Node's permission model. Hidden from `--help` (empty description, the
+    // same convention the node trace flags use) because the filesystem scope is
+    // only enforced for `node:fs`: the module loader, `Bun.file` and the
+    // compile cache still read and write outside the grants. Advertising
+    // `--allow-fs-read` would promise a sandbox with known holes. Un-hide these
+    // once every path to the filesystem goes through the model. The flags are
+    // still parsed, so `process.permission` reports what was granted and the
+    // scopes that *are* enforced (node:fs, net) hold.
+    parse_param!("--permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!("--allow-child-process"),
+    parse_param!("--allow-worker"),
+    parse_param!("--allow-addons"),
+    parse_param!("--allow-net"),
+    parse_param!("--allow-wasi"),
+    parse_param!("--allow-inspector"),
     parse_param!(
         "--unhandled-rejections <STR>      One of \"strict\", \"throw\", \"warn\", \"none\", or \"warn-with-error-code\""
     ),
@@ -1077,6 +1094,34 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // used for disabling process.dlopen and
             // for disabling export condition "node-addons"
             opts.allow_addons = Some(false);
+        }
+
+        if args.flag(b"--permission") {
+            // https://github.com/nodejs/node/blob/v26.3.0/src/env.cc#L952 —
+            // the entry point and any preloaded module are implicitly readable,
+            // but only when there is an entry point to run (`--eval`/`--print`
+            // and the REPL get nothing).
+            let mut implicit_read: Vec<&'static [u8]> = Vec::new();
+            let has_eval = args.option(b"--eval").is_some() || args.option(b"--print").is_some();
+            if !has_eval {
+                implicit_read.extend_from_slice(args.options(b"--preload"));
+                if let Some(entry) = args.positionals().first() {
+                    implicit_read.push(entry);
+                }
+            }
+            let mut fs_read: Vec<&'static [u8]> = args.options(b"--allow-fs-read").to_vec();
+            fs_read.append(&mut implicit_read);
+
+            crate::permission::init_from_cli(&crate::permission::CliGrants {
+                fs_read: &fs_read,
+                fs_write: args.options(b"--allow-fs-write"),
+                child: args.flag(b"--allow-child-process"),
+                worker: args.flag(b"--allow-worker"),
+                inspector: args.flag(b"--allow-inspector"),
+                wasi: args.flag(b"--allow-wasi"),
+                net: args.flag(b"--allow-net"),
+                addon: args.flag(b"--allow-addons"),
+            });
         }
 
         if let Some(unhandled_rejections) = args.option(b"--unhandled-rejections") {

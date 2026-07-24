@@ -52,26 +52,34 @@ function warnNotImplementedOnce(feature: string, issue?: number) {
 
 let util: typeof import("node:util");
 class ExceptionWithHostPort extends Error {
-  errno: number;
+  errno: number | Error;
   syscall: string;
   port?: number;
   address: string;
 
-  constructor(err: number, syscall: string, address: string, port?: number, additional?: string) {
+  constructor(err: number | Error, syscall: string, address: string, port?: number, additional?: string) {
     // TODO(joyeecheung): We have to use the type-checked
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
     // is no longer exposed to user land.
     util ??= require("node:util");
-    const code = util.getSystemErrorName(err);
+    let code;
     let details = "";
-    if (port && port > 0) {
-      details = ` ${address}:${port}`;
-    } else if (address) {
-      details = ` ${address}`;
-    }
-    if (additional) {
-      details += ` - Local (${additional})`;
+    // True when the permission model is enabled: `err` is the ERR_ACCESS_DENIED
+    // object the native connect returned instead of an errno.
+    if (typeof err !== "number" && (err as any)?.code === "ERR_ACCESS_DENIED") {
+      code = (err as any).code;
+      details = ` ${err.message}`;
+    } else {
+      code = util.getSystemErrorName(err);
+      if (port && port > 0) {
+        details = ` ${address}:${port}`;
+      } else if (address) {
+        details = ` ${address}`;
+      }
+      if (additional) {
+        details += ` - Local (${additional})`;
+      }
     }
 
     super(`${syscall} ${code}${details}`);

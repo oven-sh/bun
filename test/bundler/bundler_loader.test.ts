@@ -251,6 +251,42 @@ describe("bundler", async () => {
     run: { stdout: "[true,true,true]" },
   });
 
+  // The linker rewrites a lazy export's properties to reference the generated
+  // named-export variables. Dropping the property flags there undoes the
+  // parser's computed key, and renaming makes it a prototype setter again.
+  itBundled("bun/loader-json-proto-key-named-import-minified", {
+    target: "bun",
+    minifyIdentifiers: true,
+    files: {
+      "/entry.ts": /* js */ `
+    import data, { __proto__ as p } from './data.json';
+    console.write(JSON.stringify([
+      p,
+      Object.hasOwn(data, "__proto__"),
+      Object.getPrototypeOf(data) === Object.prototype,
+    ]));
+  `,
+      "/data.json": `{"__proto__": {"polluted": true}, "a": 1}`,
+    },
+    run: { stdout: '[{"polluted":true},true,true]' },
+  });
+
+  // When the namespace escapes, the linker materializes it with
+  // `__export(exports, { alias: () => var })`. A bare `__proto__:` key there is
+  // a prototype setter too, which drops that named export entirely.
+  itBundled("bun/loader-json-proto-key-namespace", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+    import * as ns from './data.json';
+    const get = (k: string) => (ns as any)[k];
+    console.write(JSON.stringify([Object.keys(ns).sort(), get("__proto__"), get("a")]));
+  `,
+      "/data.json": `{"__proto__": {"polluted": true}, "a": 1}`,
+    },
+    run: { stdout: '[["__proto__","a","default"],{"polluted":true},1]' },
+  });
+
   itBundled("bun/wasm-is-copied-to-outdir", {
     target: "bun",
     outdir: "/out",

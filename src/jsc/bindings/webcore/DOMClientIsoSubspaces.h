@@ -152,8 +152,8 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForApplePayShippingContactSelectedEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForApplePayShippingMethodSelectedEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForApplePayValidateMerchantEvent;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboard;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardItem;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboard;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardItem;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMCache;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMCacheStorage;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForContactsManager;
@@ -487,7 +487,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBroadcastChannel;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCDATASection;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCharacterData;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForComment;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCompositionEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCustomElementRegistry;

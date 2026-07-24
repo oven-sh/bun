@@ -126,6 +126,7 @@ new!(pub CLAUDECODE: boolean, "CLAUDECODE", { default: false });
 new!(pub COLORTERM: string, "COLORTERM", {});
 new!(pub CURSOR_AGENT_RULE_DISABLED: boolean, "CURSOR_AGENT_RULE_DISABLED", { default: false });
 new!(pub CURSOR_TRACE_ID: boolean, "CURSOR_TRACE_ID", { default: false });
+platform_specific_new!(pub DISPLAY: string, posix = "DISPLAY", windows = None, {});
 new!(pub DO_NOT_TRACK: boolean, "DO_NOT_TRACK", { default: false });
 platform_specific_new!(pub DYLD_ROOT_PATH: string, posix = "DYLD_ROOT_PATH", windows = None, {});
 // TODO(markovejnovic): We should support enums in this library, and force_color's usage is,
@@ -174,6 +175,7 @@ new!(pub TMUX: string, "TMUX", {});
 new!(pub TODIUM: string, "TODIUM", {});
 platform_specific_new!(pub USER: string, posix = "USER", windows = "USERNAME", {});
 new!(pub WANTS_LOUD: boolean, "WANTS_LOUD", { default: false });
+platform_specific_new!(pub WAYLAND_DISPLAY: string, posix = "WAYLAND_DISPLAY", windows = None, {});
 // The same as system_root.
 // TODO(markovejnovic): Perhaps we could add support for aliases in the library, so you could
 //                      specify both WINDIR and SYSTEMROOT and the loader would check both?

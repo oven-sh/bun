@@ -550,6 +550,101 @@ int64_t bun_coregraphics_clipboard_change_count()
     return pb ? msg<long>(s, pb, s->sel_registerName("changeCount")) : -1;
 }
 
+// ── NSPasteboard reader / writer for `navigator.clipboard` ─────────────────
+// A two-phase read: this call reports the representation's size and hands back
+// a retained NSData in `*out_data`, then the caller sizes its buffer and copies
+// with `bun_coregraphics_clipboard_take_data`, which releases the retain. The
+// handle is explicit rather than thread-local state so the two phases cannot be
+// mismatched (a stale stash, a UTI that disagrees with the one probed) and the
+// retain has exactly one owner. `*out_data` is null ⇔ the representation is
+// absent; a present 0-byte NSData is a non-null handle with `*out_len` of 0.
+// The pasteboard server promotes legacy flavours and converts images to
+// `public.png` on demand, so one `dataForType:` per UTI suffices.
+int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, size_t* out_len)
+{
+    *out_data = nullptr;
+    *out_len = 0;
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    Pool pool(s);
+
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    CFRef ustr = s->CFStringCreateWithCString(nullptr, uti, kBunCFStringEncodingUTF8);
+    if (!ustr) return CG_UNAVAILABLE;
+    CFRef nsdata = msg<CFRef>(s, pb, s->sel_registerName("dataForType:"), ustr);
+    s->CFRelease(ustr);
+    if (!nsdata)
+        return CG_OK; // that representation is absent — not an error
+    // dataForType: returns autoreleased; retain so it survives the pool drain
+    // before the caller copies it out. A present 0-byte NSData still retains:
+    // `*out_data` is null ⇔ the representation is absent.
+    *out_data = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+    if (!*out_data) return CG_UNAVAILABLE;
+    long n = s->CFDataGetLength(nsdata);
+    *out_len = n > 0 ? static_cast<size_t>(n) : 0;
+    return CG_OK;
+}
+
+// Copies the bytes of a `bun_coregraphics_clipboard_read_type` handle into `out`
+// (which must have room for the length that call reported) and releases it.
+int32_t bun_coregraphics_clipboard_take_data(void* data, uint8_t* out)
+{
+    auto s = load();
+    // Never report success over an unwritten buffer: the caller would hand a run
+    // of zeroes to JS as the clipboard's contents.
+    if (!s) return CG_UNAVAILABLE;
+    long n = s->CFDataGetLength(data);
+    if (n > 0) std::memcpy(out, s->CFDataGetBytePtr(data), static_cast<size_t>(n));
+    s->CFRelease(data);
+    return CG_OK;
+}
+
+// One `clearContents` then one `setData:forType:` per representation — the
+// documented multi-flavour write. Every CFData/CFString is created before the
+// destructive clear, so a failed write never costs the previous contents.
+int32_t bun_coregraphics_clipboard_write_types(const char* const* utis, const uint8_t* const* datas, const size_t* lens, size_t count)
+{
+    auto s = load();
+    if (!s) return CG_UNAVAILABLE;
+    Pool pool(s);
+    CFRef pb = generalPasteboard(s);
+    if (!pb) return CG_UNAVAILABLE;
+    // The Rust caller never passes 0 or more than the 3 supported MIME types.
+    enum { kMaxRepresentations = 8 };
+    if (count == 0 || count > kMaxRepresentations) return CG_ENCODE_FAILED;
+    // CFData wants a real base pointer even for length 0 (Rust hands us a
+    // dangling sentinel for an empty slice).
+    static const uint8_t kEmpty = 0;
+    CFRef cfData[kMaxRepresentations] = {};
+    CFRef cfType[kMaxRepresentations] = {};
+    int32_t status = CG_OK;
+    for (size_t i = 0; i < count; i++) {
+        cfData[i] = s->CFDataCreateWithBytesNoCopy(nullptr, lens[i] ? datas[i] : &kEmpty, static_cast<long>(lens[i]), *s->kCFAllocatorNull);
+        cfType[i] = cfData[i] ? s->CFStringCreateWithCString(nullptr, utis[i], kBunCFStringEncodingUTF8) : nullptr;
+        if (!cfType[i]) {
+            status = CG_ENCODE_FAILED;
+            break;
+        }
+    }
+    if (status == CG_OK) {
+        msg<long>(s, pb, s->sel_registerName("clearContents"));
+        for (size_t i = 0; i < count; i++) {
+            // BOOL is `signed char` on x86_64 and `bool` on arm64; both return
+            // in the low byte, so read it as `signed char`.
+            if (msg<signed char>(s, pb, s->sel_registerName("setData:forType:"), cfData[i], cfType[i]) == 0) {
+                status = CG_ENCODE_FAILED;
+                break;
+            }
+        }
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (cfData[i]) s->CFRelease(cfData[i]);
+        if (cfType[i]) s->CFRelease(cfType[i]);
+    }
+    return status;
+}
+
 } // extern "C"
 
 #else
@@ -562,4 +657,7 @@ extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*,
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
 extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
 extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
+extern "C" int bun_coregraphics_clipboard_read_type(const char*, void**, unsigned long*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_take_data(void*, unsigned char*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_write_types(const char* const*, const void* const*, const unsigned long*, unsigned long) { return 1; }
 #endif

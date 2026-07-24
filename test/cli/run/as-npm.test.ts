@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { copyFileSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/5995
 // With `--bun`, the shim directory that provides a `node` symlink to bun also

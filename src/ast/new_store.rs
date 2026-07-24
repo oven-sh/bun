@@ -325,160 +325,31 @@ macro_rules! new_store {
 }
 
 // ───────────────────────────────────────────────────────────────────────────
-// thread_local_ast_store! — the per-thread *front-end* wrapper around a
-// `new_store!`-generated slab.
+// thread_local_ast_store! — front-end namespace for `Expr`/`Stmt` node
+// allocation.
 //
-// `Expr` and `Stmt` each need three `#[thread_local]` slots (instance ptr,
-// optional `ASTMemoryAllocator` override, `disable_reset` flag) plus the
-// twelve identical accessor/lifecycle fns. The two hand-written copies in
-// expr.rs / stmt.rs were byte-for-byte twins modulo the backing type and the
-// "Expr"/"Stmt" panic-string label. This macro stamps out one
-// `pub mod Store { … }` per call site so the duplication lives here once.
-//
-// Why a macro and not a generic struct: `#[thread_local] static` cannot be
-// generic over `T`, so a `struct Front<B>` with `static INSTANCE: Cell<*mut B>`
-// is rejected; the storage must be monomorphised at the item level.
+// The thread-local slab/override machinery is gone: `append` takes the
+// [`bun_alloc::AstAlloc`] handle explicitly and routes straight into its
+// `MimallocArena`. The `$Backing` type list is kept only for the
+// [`StoredIn`] compile-time membership check.
 //
 // Usage (inside `pub mod data { use super::*; … }`):
 //   crate::thread_local_ast_store!(expr_store::Store, "Expr");
-//
-// Expects in scope via `use super::*;`: the `$Backing` path and a
-// `type Disabler = DebugOnlyDisabler<…>;` alias for the debug re-entrancy
-// guard called from `append()`.
 #[macro_export]
 macro_rules! thread_local_ast_store {
     ($Backing:path, $label:literal) => {
         #[allow(non_snake_case)]
         pub mod Store {
             use super::*;
-            use ::core::cell::Cell;
             type Backing = $Backing;
-
-            // `#[thread_local]` (bare `__thread` slot) — `memory_allocator()` is
-            // read on every node `alloc` (the hottest TLS in the parser), and
-            // the `thread_local!` macro's `LocalKey` wrapper showed up in
-            // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
-            // const init).
-            #[thread_local]
-            pub(crate) static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
-            /// Back-reference to the `ASTMemoryAllocator` installed by the
-            /// enclosing `ASTMemoryAllocatorScope` stack frame. Stored as
-            /// `Option<BackRef>` (vs. raw `*mut`) so `append()` can read it via
-            /// safe `Deref`; the back-reference invariant (pointee outlives every
-            /// copy) is upheld by `ASTMemoryAllocatorScope::{enter,exit}`, which
-            /// always restores the previous value before its frame returns.
-            #[thread_local]
-            pub(crate) static MEMORY_ALLOCATOR: Cell<
-                Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator>>,
-            > = Cell::new(None);
-            #[thread_local]
-            pub(crate) static DISABLE_RESET: Cell<bool> = Cell::new(false);
-
-            #[inline]
-            fn instance() -> *mut Backing {
-                INSTANCE.get()
-            }
-            /// Reborrow the thread-local backing store. Centralises the raw
-            /// deref so `begin`/`reset`/`append` stay safe; `None` iff
-            /// `create()` has not run (or `deinit()` cleared it).
-            #[inline]
-            fn instance_mut<'a>() -> Option<&'a mut Backing> {
-                // SAFETY: `INSTANCE` is thread-local; the `*mut Backing` it holds
-                // is either null or was returned by `Backing::init()` (a `Box`
-                // leaked via `bun_core::heap::into_raw`) and remains valid
-                // until `deinit()` clears it.
-                // Single-threaded access — no other `&mut` to the slab is live.
-                unsafe { INSTANCE.get().as_mut() }
-            }
-            #[inline]
-            pub fn memory_allocator() -> *mut $crate::ASTMemoryAllocator {
-                MEMORY_ALLOCATOR
-                    .get()
-                    .map_or(::core::ptr::null_mut(), ::bun_ptr::BackRef::as_ptr)
-            }
-            #[inline]
-            pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
-                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(::bun_ptr::BackRef::from));
-            }
-
-            pub fn create() {
-                if !instance().is_null() || !memory_allocator().is_null() {
-                    return;
-                }
-                INSTANCE.set(Backing::init());
-            }
-
-            /// create || reset
-            pub(crate) fn begin() {
-                if !memory_allocator().is_null() {
-                    return;
-                }
-                match instance_mut() {
-                    None => create(),
-                    Some(store) => {
-                        if !DISABLE_RESET.get() {
-                            Backing::reset(store);
-                        }
-                    }
-                }
-            }
-
-            pub fn reset() {
-                if DISABLE_RESET.get() || !memory_allocator().is_null() {
-                    return;
-                }
-                // Caller contract — instance is set when reset() is called.
-                Backing::reset(
-                    instance_mut().expect(concat!($label, " Store::reset: instance not set")),
-                );
-            }
-
-            /// Toggled by long-lived
-            /// callers (transpiler, bundler) that want the Store to persist
-            /// across multiple parse calls.
-            #[inline]
-            pub(crate) fn set_disable_reset(b: bool) {
-                DISABLE_RESET.set(b);
-            }
-            #[inline]
-            pub fn disable_reset() -> bool {
-                DISABLE_RESET.get()
-            }
-
-            pub fn deinit() {
-                if instance().is_null() || !memory_allocator().is_null() {
-                    return;
-                }
-                // SAFETY: checked non-null above; `destroy` frees the `Store`
-                // box and its lazily-allocated block chain.
-                unsafe { Backing::destroy(instance()) };
-                INSTANCE.set(::core::ptr::null_mut());
-            }
-
-            #[inline]
-            pub(crate) fn assert() {
-                if cfg!(debug_assertions) {
-                    if instance().is_null() && memory_allocator().is_null() {
-                        unreachable!("Store must be init'd");
-                    }
-                }
-            }
+            const _: &str = $label;
 
             #[inline]
             pub fn append<T: $crate::new_store::StoredIn<Backing>>(
+                alloc: ::bun_alloc::AstAlloc,
                 value: T,
             ) -> $crate::StoreRef<T> {
-                if let Some(ma) = MEMORY_ALLOCATOR.get() {
-                    // `BackRef<ASTMemoryAllocator>: Deref` — owning scope outlives this call.
-                    return ma.append(value);
-                }
-                Disabler::assert();
-                // assert() guarantees instance is non-null on this thread; slab
-                // returns stable addresses until reset().
-                $crate::StoreRef::from_non_null(Backing::append(
-                    instance_mut().expect(concat!($label, " Store must be init'd")),
-                    value,
-                ))
+                $crate::StoreRef::from_bump(alloc.arena().alloc(value))
             }
         }
     };

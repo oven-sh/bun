@@ -9,21 +9,6 @@ pub struct Stmt {
 }
 
 impl Stmt {
-    /// Associated wrapper so downstream crates can call
-    /// `crate::Stmt::data_store_reset()` without naming the thread-local
-    /// Store module path.
-    #[inline]
-    pub fn data_store_reset() {
-        data::Store::reset();
-    }
-
-    /// Initializes the thread-local statement-data `Store` for the current
-    /// thread; counterpart of `data_store_reset()`.
-    #[inline]
-    pub fn data_store_create() {
-        data::Store::create();
-    }
-
     pub fn assign(a: Expr, b: Expr) -> Stmt {
         Stmt::alloc(
             S::SExpr {
@@ -87,8 +72,8 @@ const NONE: S::Empty = S::Empty {};
 pub trait StatementData: Sized {
     /// Wrap an already-allocated payload.
     fn wrap_ref(ptr: StoreRef<Self>) -> Data;
-    /// Store-append `self` and wrap.
-    fn store_alloc(self) -> Data;
+    /// Allocate `self` in `alloc`'s arena and wrap.
+    fn store_alloc(self, alloc: bun_alloc::AstAlloc) -> Data;
     /// Arena-allocate `self` and wrap.
     fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data;
 }
@@ -106,7 +91,7 @@ impl Stmt {
     fn comptime_alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
         Stmt {
             loc,
-            data: orig_data.store_alloc(),
+            data: orig_data.store_alloc(alloc),
         }
     }
 
@@ -123,7 +108,6 @@ impl Stmt {
 
     #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
-        data::Store::assert();
         Stmt::comptime_alloc(orig_data, loc)
     }
 }
@@ -139,7 +123,6 @@ impl Stmt {
         orig_data: T,
         loc: crate::Loc,
     ) -> Stmt {
-        data::Store::assert();
         Stmt::allocate_data(bump, orig_data, loc)
     }
 
@@ -166,8 +149,8 @@ macro_rules! impl_statement_data {
                 #[inline]
                 fn wrap_ref(ptr: StoreRef<Self>) -> Data { Data::$variant(ptr) }
                 #[inline]
-                fn store_alloc(self) -> Data {
-                    Data::$variant(data::Store::append(self))
+                fn store_alloc(self, alloc: ::bun_alloc::AstAlloc) -> Data {
+                    Data::$variant(data::Store::append(alloc, self))
                 }
                 #[inline]
                 fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
@@ -184,7 +167,7 @@ macro_rules! impl_statement_data {
                 #[inline]
                 fn wrap_ref(_ptr: StoreRef<Self>) -> Data { Data::$ivariant(<$ity>::default()) }
                 #[inline]
-                fn store_alloc(self) -> Data { Data::$ivariant(self) }
+                fn store_alloc(self, _alloc: ::bun_alloc::AstAlloc) -> Data { Data::$ivariant(self) }
                 #[inline]
                 fn arena_alloc(self, _bump: &bun_alloc::Arena) -> Data { Data::$ivariant(self) }
             }

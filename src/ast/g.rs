@@ -203,19 +203,20 @@ impl Property {
 
     pub fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
+        into: bun_alloc::AstAlloc,
     ) -> core::result::Result<Property, bun_alloc::AllocError> {
+        let bump = into.arena();
         let mut class_static_block: Option<crate::StoreRef<ClassStaticBlock>> = None;
         if let Some(csb_ref) = self.class_static_block_ref() {
             let new_block: &mut ClassStaticBlock = bump.alloc(ClassStaticBlock {
                 loc: csb_ref.loc,
-                stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
+                stmts: into.vec_from_slice(csb_ref.stmts.slice()),
             });
             class_static_block = Some(crate::StoreRef::from_bump(new_block));
         }
         Ok(Property {
             initializer: match self.initializer {
-                Some(init) => Some(init.deep_clone(bump)?),
+                Some(init) => Some(init.deep_clone(into)?),
                 None => None,
             },
             kind: self.kind,
@@ -224,13 +225,13 @@ impl Property {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+                .try_deep_clone_with(|e| e.deep_clone(into))?,
             key: match self.key {
-                Some(key) => Some(key.deep_clone(bump)?),
+                Some(key) => Some(key.deep_clone(into)?),
                 None => None,
             },
             value: match self.value {
-                Some(value) => Some(value.deep_clone(bump)?),
+                Some(value) => Some(value.deep_clone(into)?),
                 None => None,
             },
             ts_metadata: self.ts_metadata.clone(),
@@ -306,12 +307,13 @@ impl Default for Fn {
 impl Fn {
     pub fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
+        into: bun_alloc::AstAlloc,
     ) -> core::result::Result<Fn, bun_alloc::AllocError> {
+        let bump = into.arena();
         let src_args: &[Arg] = self.args.slice();
         let args: &mut [Arg] = bump.alloc_slice_fill_default::<Arg>(src_args.len());
         for i in 0..args.len() {
-            args[i] = src_args[i].deep_clone(bump)?;
+            args[i] = src_args[i].deep_clone(into)?;
         }
         Ok(Fn {
             name: self.name,
@@ -354,16 +356,16 @@ impl Default for Arg {
 impl Arg {
     pub fn deep_clone(
         &self,
-        bump: &bun_alloc::Arena,
+        into: bun_alloc::AstAlloc,
     ) -> core::result::Result<Arg, bun_alloc::AllocError> {
         Ok(Arg {
             // Vec<Expr> per-element deep clone.
             ts_decorators: self
                 .ts_decorators
-                .try_deep_clone_with(|e| e.deep_clone(bump))?,
+                .try_deep_clone_with(|e| e.deep_clone(into))?,
             binding: self.binding,
             default: match self.default {
-                Some(d) => Some(d.deep_clone(bump)?),
+                Some(d) => Some(d.deep_clone(into)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,

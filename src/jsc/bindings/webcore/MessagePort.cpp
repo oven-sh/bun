@@ -627,7 +627,7 @@ void emitMessagePortAsyncHooksInit(WebCore::ScriptExecutionContext& context, Web
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSValue moduleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::InternalAsyncHooksTick);
+    JSC::JSValue moduleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::InternalAsyncHooks);
     RETURN_IF_EXCEPTION(scope, void());
     JSC::JSObject* moduleObject = moduleValue.getObject();
     if (!moduleObject)

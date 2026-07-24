@@ -985,8 +985,35 @@ export const linkerFlags: Flag[] = [
       "/delayload:IPHLPAPI.dll",
       "/delayload:CRYPT32.dll",
     ],
-    when: c => c.windows && c.release,
+    // Not under ASAN: /OPT:SAFEICF and /OPT:lldtailmerge fold identical
+    // globals (empty string literals in particular) to one address, but ASAN
+    // registers each string global with its own bounds and redzone — folded
+    // globals then read as global-buffer-overflow. See the asan entry below.
+    when: c => c.windows && c.release && !c.asan,
     desc: "Release link opts + delay-load non-critical DLLs (faster startup)",
+  },
+  {
+    // Windows ASAN: keep the harmless parts of the release link (debug
+    // info, delayloads) but explicitly DISABLE identical-COMDAT folding and
+    // string tail-merging. Each instrumented global carries its own
+    // registered size and redzone; merging two of them at one address makes
+    // ASAN report a read of the merged global as an overflow of the other.
+    // /OPT:REF is fine (it drops sections, never merges).
+    flag: [
+      "/OPT:REF",
+      "/OPT:NOICF",
+      "/DEBUG:FULL",
+      "/delayload:ole32.dll",
+      "/delayload:WINMM.dll",
+      "/delayload:dbghelp.dll",
+      "/delayload:WS2_32.dll",
+      "/delayload:WSOCK32.dll",
+      "/delayload:ADVAPI32.dll",
+      "/delayload:IPHLPAPI.dll",
+      "/delayload:CRYPT32.dll",
+    ],
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN link: no global folding/merging (ASAN redzones)",
   },
 
   // ─── macOS ───

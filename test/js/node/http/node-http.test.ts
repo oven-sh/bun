@@ -159,9 +159,12 @@ describe("node:http", () => {
 
       expect(server.listening).toBe(false);
       server.listen(0);
-      await once(server, "listening");
-      expect(server.listening).toBe(true);
-      server.close();
+      try {
+        await once(server, "listening");
+        expect(server.listening).toBe(true);
+      } finally {
+        server.close();
+      }
       expect(server.listening).toBe(false);
     });
 

@@ -879,6 +879,9 @@ function serializeRunCause(cause: unknown, depth: number) {
   if (Error.isError(cause)) return serializeRunError(cause, depth);
   const t = typeof cause;
   if (t === "bigint") return { __proto__: null, nonError: true, bigint: String(cause) };
+  // JSON silently turns NaN/Infinity into null (no throw); re-tag like BigInt
+  // so the parent restores the real value, as node's v8 serializer does.
+  if (t === "number" && !Number.isFinite(cause)) return { __proto__: null, nonError: true, num: String(cause) };
   if (t !== "symbol" && t !== "function") {
     try {
       JSON.stringify(cause);
@@ -908,7 +911,9 @@ function serializeRunError(error: unknown, depth = 0) {
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
       const t = typeof value;
-      if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
+      // JSON emits null for non-finite numbers; re-tag so the parent revives.
+      if (t === "number" && !Number.isFinite(value)) out[key] = { __proto__: null, nonFinite: String(value) };
+      else if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
     }
     return out;
   }

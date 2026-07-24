@@ -91,7 +91,12 @@ function internalBinding(name: string) {
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
-      return { isInsideNodeModules };
+      return {
+        isInsideNodeModules,
+        // node's util binding exposes engine-private symbols; vendored
+        // internal/errors.js stores its arrow message under this one.
+        privateSymbols: { arrow_message_private_symbol: Symbol("node:arrowMessage") },
+      };
     // The icu-era binding node exposed until nodejs/node#55156; vendored
     // tests like test-icu-punycode still consume it.
     case "icu": {

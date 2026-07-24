@@ -8,6 +8,7 @@ const path = require('path');
 const util = require('util');
 
 const VENDORED = new Set([
+  'internal/errors',
   'internal/webidl',
   'internal/socket_list',
   'internal/fs/utils',
@@ -18,7 +19,7 @@ const VENDORED = new Set([
 
 // ---------------- primordials emulator ----------------
 const globalsMap = {
-  Array, ArrayBuffer, BigInt, Boolean, DataView, Date, Error, EvalError,
+  AggregateError, Array, ArrayBuffer, BigInt, Boolean, DataView, Date, Error, EvalError,
   FinalizationRegistry, Function, JSON, Map, Math, Number, Object, Promise,
   Proxy, RangeError, ReferenceError, Reflect, RegExp, Set, String, Symbol,
   SyntaxError, TypeError, URIError, WeakMap, WeakRef, WeakSet,

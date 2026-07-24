@@ -43,7 +43,6 @@ const {
 
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
-const PromiseReject = Promise.$reject;
 
 var isWritable;
 
@@ -903,6 +902,7 @@ var kPrompt = Symbol("_prompt");
 var kPushToKillRing = Symbol("_pushToKillRing");
 var kPushToUndoStack = Symbol("_pushToUndoStack");
 var kQuestionCallback = Symbol("_questionCallback");
+var kQuestionReject = Symbol("_questionReject");
 var kRedo = Symbol("_redo");
 var kRedoStack = Symbol("_redoStack");
 var kRefreshLine = Symbol("_refreshLine");
@@ -1403,6 +1403,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void | Interface}
    */
   pause() {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (this.paused) return;
     this.input.pause();
     this.paused = true;
@@ -1415,6 +1418,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void | Interface}
    */
   resume() {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (!this.paused) return;
     this.input.resume();
     this.paused = false;
@@ -1435,6 +1441,9 @@ var _Interface = class Interface extends InterfaceConstructor {
    * @returns {void}
    */
   write(d, key) {
+    if (this.closed) {
+      throw $ERR_USE_AFTER_CLOSE("readline");
+    }
     if (this.paused) this.resume();
     if (this.terminal) {
       this[kTtyWrite](d, key);
@@ -1955,6 +1964,7 @@ var _Interface = class Interface extends InterfaceConstructor {
           } else {
             // This readline instance is finished
             this.close();
+            this[kQuestionReject]?.($makeAbortError("Aborted with Ctrl+C"));
           }
           break;
 
@@ -1966,6 +1976,7 @@ var _Interface = class Interface extends InterfaceConstructor {
           if (this.cursor === 0 && this.line.length === 0) {
             // This readline instance is finished
             this.close();
+            this[kQuestionReject]?.($makeAbortError("Aborted with Ctrl+D"));
           } else if (this.cursor < this.line.length) {
             this[kDeleteRight]();
           }
@@ -2256,7 +2267,7 @@ Interface.prototype.question[promisify.custom] = {
     var signal = options?.signal;
 
     if (signal && signal.aborted) {
-      return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
+      return Promise.$reject($makeAbortError(undefined, { cause: signal.reason }));
     }
 
     return new Promise((resolve, reject) => {
@@ -2698,28 +2709,35 @@ var PromisesInterface = class Interface extends _Interface {
   constructor(input, output, completer, terminal) {
     super(input, output, completer, terminal);
   }
+  // Any synchronous failure (signal validation, ERR_USE_AFTER_CLOSE from
+  // [kQuestion]) must become a rejection: node runs this whole body inside
+  // the Promise executor (lib/readline/promises.js).
   question(query, options = kEmptyObject) {
-    var signal = options?.signal;
-    if (signal) {
-      validateAbortSignal(signal, "options.signal");
-      if (signal.aborted) {
-        return PromiseReject($makeAbortError(undefined, { cause: signal.reason }));
-      }
-    }
     const { promise, resolve, reject } = $newPromiseCapability(Promise);
-    var cb = resolve;
-    if (options?.signal) {
-      var onAbort = () => {
-        this[kQuestionCancel]();
-        reject($makeAbortError(undefined, { cause: signal.reason }));
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      cb = answer => {
-        signal.removeEventListener("abort", onAbort);
-        resolve(answer);
-      };
+    try {
+      var cb = resolve;
+      var signal = options?.signal;
+      if (signal) {
+        validateAbortSignal(signal, "options.signal");
+        if (signal.aborted) {
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+          return promise;
+        }
+        var onAbort = () => {
+          this[kQuestionCancel]();
+          reject($makeAbortError(undefined, { cause: signal.reason }));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        cb = answer => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(answer);
+        };
+      }
+      this[kQuestionReject] = reject;
+      this[kQuestion](query, cb);
+    } catch (err) {
+      reject(err);
     }
-    this[kQuestion](query, cb);
     return promise;
   }
 };
@@ -2738,7 +2756,9 @@ export default {
   promises: {
     Readline,
     Interface: PromisesInterface,
-    createInterface(input, output, completer, terminal) {
+    // A real function declaration-style expression: node's createInterface is
+    // constructible and tests call `new readline.createInterface(...)`.
+    createInterface: function createInterface(input, output, completer, terminal) {
       return new PromisesInterface(input, output, completer, terminal);
     },
   },

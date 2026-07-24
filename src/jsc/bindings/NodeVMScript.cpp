@@ -360,7 +360,11 @@ public:
         if (m_saved.isEmpty())
             return;
         m_emitter = &emitter;
-        m_emitter->removeAllListeners(m_sigint);
+        // Remove from the map directly so onDidChangeListeners does not fire:
+        // the SIGINT entry stays in signalToContextIdsMap, so a mid-run
+        // process.on("SIGINT") takes the contains() early-out instead of
+        // sigaction()-ing forwardSignal over SigintWatcher's handler.
+        m_emitter->eventListenerMap().removeAll(m_sigint);
     }
 
     ~SigintHandlersScope()

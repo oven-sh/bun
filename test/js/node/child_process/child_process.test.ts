@@ -404,6 +404,64 @@ describe("spawn()", () => {
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
     });
+
+    // Regression for #27977 / #15679 / #17989: net.connect({ fd }) (used for
+    // stdio[i], i >= 3) fires SocketHandlers.open synchronously inside
+    // doConnect(). Socket.prototype.connect then re-set `connecting = true`,
+    // so every parent->child write buffered in _pendingData waiting for a
+    // "connect" that had already fired. On Windows named pipes no later drain
+    // rescues the buffered write, so Playwright's chromium.launch() (which
+    // writes CDP on fd 3 via --remote-debugging-pipe) hung forever.
+    it("extra pipe (fd >= 3) parent->child write round-trips; socket not left connecting", async () => {
+      // Child: echo everything received on fd 3 back on fd 4.
+      const echo = `
+        const fs = require("node:fs");
+        let buf = "";
+        const r = fs.createReadStream(null, { fd: 3 });
+        const w = fs.createWriteStream(null, { fd: 4 });
+        r.on("data", d => (buf += d));
+        r.on("end", () => w.end("ECHO:" + buf));
+      `;
+      const child = spawn(bunExe(), ["-e", echo], {
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+      });
+      try {
+        const fd3 = child.stdio[3]! as import("stream").Duplex;
+        const fd4 = child.stdio[4]! as import("stream").Duplex;
+
+        // The fd is adopted synchronously; Node reports the socket as connected
+        // by the time spawn() returns. Before the fix Bun reported
+        // { connecting: true, pending: true } here on every platform.
+        expect({ connecting: (fd3 as any).connecting, pending: (fd3 as any).pending }).toEqual({
+          connecting: false,
+          pending: false,
+        });
+
+        let out = "";
+        let stderr = "";
+        fd4.on("data", d => (out += d));
+        child.stderr!.on("data", d => (stderr += d));
+
+        const writeCb = Promise.withResolvers<unknown>();
+        fd3.write("payload-from-parent", err => writeCb.resolve(err ?? null));
+        fd3.end();
+
+        // ChildProcess 'close' only waits for stdout/stderr (#closesNeeded does
+        // not count extra stdio), so wait for fd4 to drain explicitly.
+        const [, [code]] = await Promise.all([once(fd4, "end"), once(child, "close")]);
+        // Before the fix, on Windows the write above never reached the child:
+        // `out` was "" and the write callback never fired.
+        expect({ stderr, out, code, writeCb: await writeCb.promise }).toEqual({
+          stderr: "",
+          out: "ECHO:payload-from-parent",
+          code: 0,
+          writeCb: null,
+        });
+      } finally {
+        child.kill();
+      }
+    });
   });
 
   it.skipIf(isWindows)(

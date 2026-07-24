@@ -1471,28 +1471,6 @@ impl VirtualMachine {
                 unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
                 panic!("made it past process.exit()");
             }
-            // Node's fatal path exits without another loop turn: already
-            // queued I/O completions, timers, immediates, and later ticks
-            // never run — only 'exit' listeners do (via process_exit). Print
-            // through the same reporter the drain path used, then exit.
-            // Entry-point rejections keep their run_command owner (it already
-            // exits promptly via exit_with_unhandled_note), watch/hot mode
-            // keeps the process alive for reload, and a worker falls through
-            // to route the error to its parent.
-            if self.is_main_thread()
-                && self.hot_reload == 0
-                && origin != UncaughtExceptionOrigin::EntryPointRejection
-            {
-                self.unhandled_error_counter += 1;
-                self.exit_handler.exit_code = 1;
-                (self.on_unhandled_rejection)(self, global_object, err);
-                // See the recursion-guard note above: drop it before
-                // process_exit emits 'exit'.
-                self.is_handling_uncaught_exception = false;
-                // SAFETY: see above.
-                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
-                panic!("made it past process.exit()");
-            }
             // TODO maybe we want a separate code path for uncaught exceptions
             // NOTE: --abort-on-uncaught-exception is handled inside
             // Bun__handleUncaughtException (before any monitor/listeners

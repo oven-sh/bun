@@ -637,7 +637,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 needs_decl: true,
                                             };
                                         if p.commonjs_named_exports_needs_conversion == u32::MAX {
-                                            p.commonjs_named_exports_needs_conversion = index as u32;
+                                            p.commonjs_named_exports_needs_conversion =
+                                                index as u32;
                                         }
                                         new_ref
                                     };

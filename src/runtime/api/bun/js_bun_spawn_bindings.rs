@@ -1100,8 +1100,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             // SAFETY: defer runs while `jsc_vm` (the thread VM) is still live.
             unsafe {
                 let main_loop = (*p).event_loop();
-                (*p)
-                    .rare_data()
+                (*p).rare_data()
                     .spawn_sync_event_loop(&mut *p)
                     .cleanup(p.cast(), main_loop.cast());
             }

@@ -81,6 +81,8 @@ initMySQL(
 
 export interface MySQLDotZig {
   init: (
+    // The OK packet's last_insert_id / affected_rows are u64: they arrive as a
+    // number while they fit Number.MAX_SAFE_INTEGER, and as a BigInt past it.
     onResolveQuery: (
       query: Query<any, any>,
       result: SQLResultArray,
@@ -88,6 +90,8 @@ export interface MySQLDotZig {
       count: number,
       queries: any,
       is_last: boolean,
+      last_insert_rowid: number | bigint,
+      affected_rows: number | bigint,
     ) => void,
     onRejectQuery: (query: Query<any, any>, err: Error, queries) => void,
   ) => void;

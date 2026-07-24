@@ -616,6 +616,128 @@ it("should include unused resolutions in the lockfile", async () => {
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
 
+it("resolves a peer dependency provided by a file: dependency without the registry", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // `zz-host-a` only exists as a local folder. The registry must never be
+  // asked for it just because another local package lists it as a peer.
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "peer-from-local-source",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-a": "file:./vendor/zz-plugin-a",
+          "zz-host-a": "file:./vendor/zz-host-a",
+        },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-host-a", "package.json"),
+      JSON.stringify({ name: "zz-host-a", version: "1.0.0" }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-a", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-a",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-a": ">=1.0.0" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "zz-host-a", "package.json")).json()).toEqual({
+    name: "zz-host-a",
+    version: "1.0.0",
+  });
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  // the peer resolves to the local folder, never to a second copy from the registry
+  expect([...new Set(lockfile.match(/"zz-host-a@[^"]*"/g))]).toEqual(['"zz-host-a@file:vendor/zz-host-a"']);
+
+  // the lockfile bun just wrote loads back, satisfies --frozen-lockfile, and
+  // a second install is a no-op.
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(err).not.toContain("Saved lockfile");
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
+it("resolves a peer dependency the package also lists in optionalDependencies or dependencies", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // the pre-`peerDependenciesMeta` optional peer idiom: the same name in both
+  // `peerDependencies` and `optionalDependencies` (or `dependencies`). every
+  // variant must resolve offline and must not place the folder package twice
+  // under the same path (a duplicate key makes the lockfile unparseable).
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "optional-peer-idiom",
+        version: "1.0.0",
+        dependencies: {
+          "zz-plugin-c": "file:./vendor/zz-plugin-c",
+          "zz-plugin-d": "file:./vendor/zz-plugin-d",
+          "zz-plugin-e": "file:./vendor/zz-plugin-e",
+        },
+      }),
+    ),
+    ...["c", "d", "e"].map(s =>
+      write(
+        join(packageDir, "vendor", `zz-host-${s}`, "package.json"),
+        JSON.stringify({ name: `zz-host-${s}`, version: "1.0.0" }),
+      ),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-c", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-c",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-c": "*" },
+        optionalDependencies: { "zz-host-c": "file:../zz-host-c" },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-d", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-d",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-d": "*" },
+        dependencies: { "zz-host-d": "file:../zz-host-d" },
+      }),
+    ),
+    write(
+      join(packageDir, "vendor", "zz-plugin-e", "package.json"),
+      JSON.stringify({
+        name: "zz-plugin-e",
+        version: "1.0.0",
+        peerDependencies: { "zz-host-e": "file:../zz-host-e" },
+        dependencies: { "zz-host-e": "file:../zz-host-e" },
+      }),
+    ),
+  ]);
+
+  await runBunInstall(env, packageDir);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  // the peers resolve to the local folders, never to a second copy from the registry
+  expect([...new Set(lockfile.match(/"zz-host-c@[^"]*"/g))]).toEqual(['"zz-host-c@file:vendor/zz-host-c"']);
+  expect([...new Set(lockfile.match(/"zz-host-d@[^"]*"/g))]).toEqual(['"zz-host-d@file:vendor/zz-host-d"']);
+  expect([...new Set(lockfile.match(/"zz-host-e@[^"]*"/g))]).toEqual(['"zz-host-e@file:vendor/zz-host-e"']);
+  // no duplicate package paths (a duplicate key makes bun reject its own lockfile)
+  const paths = [...lockfile.matchAll(/^    ("[^"]*"): \[/gm)].map(m => m[1]);
+  expect(paths).toEqual([...new Set(paths)]);
+
+  await runBunInstall(env, packageDir, { frozenLockfile: true });
+  const { err } = await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(err).not.toContain("Saved lockfile");
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+});
+
 it("requires an integrity hash for an off-registry npm tarball URL at lockfileVersion 2", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 

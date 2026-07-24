@@ -2815,7 +2815,7 @@ pub fn parse_into_binary_lockfile(
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
                 else {
-                    if dep.behavior.contains(Behavior::OPTIONAL) {
+                    if dependency_can_be_unresolved(dep) {
                         continue;
                     }
                     dependency_resolution_failure(
@@ -2903,7 +2903,7 @@ pub fn parse_into_binary_lockfile(
                             .or_else(|| pkg_map.get(dep_name))
                             .copied()
                     }) else {
-                        if dep.behavior.contains(Behavior::OPTIONAL) {
+                        if dependency_can_be_unresolved(dep) {
                             continue;
                         }
                         dependency_resolution_failure(
@@ -2977,7 +2977,7 @@ pub fn parse_into_binary_lockfile(
                                 return Err(ParseError::InvalidPackageKey);
                             }
                             Err(ResolveError::Unresolvable) => {
-                                if dep.behavior.contains(Behavior::OPTIONAL) {
+                                if dependency_can_be_unresolved(dep) {
                                     continue 'deps;
                                 }
                                 dependency_resolution_failure(
@@ -3163,6 +3163,13 @@ fn map_dep_to_pkg(
             };
         }
     }
+}
+
+/// The installer never fails on an unresolved optional or peer dependency
+/// (`verify_resolutions` skips both), so the lockfile it writes can contain
+/// one. Loading has to tolerate exactly what saving tolerated.
+fn dependency_can_be_unresolved(dep: &Dependency) -> bool {
+    dep.behavior.contains(Behavior::OPTIONAL) || dep.behavior.is_peer()
 }
 
 fn dependency_resolution_failure(

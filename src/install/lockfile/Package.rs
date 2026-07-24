@@ -1753,8 +1753,29 @@ impl Package<u64> {
                 let relative =
                     resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                 // if relative is empty, we are linking the package to itself
-                dependency_version.value.folder = string_builder
-                    .append::<String>(if relative.is_empty() { b"." } else { relative });
+                let folder_path: &[u8] = if relative.is_empty() { b"." } else { relative };
+                // `relative` uses the platform separator, but folder paths are
+                // stored (and serialized into the lockfile) with posix separators.
+                #[cfg(windows)]
+                {
+                    if String::can_inline(folder_path) {
+                        let mut copy = string_builder.append::<String>(folder_path);
+                        path::dangerously_convert_path_to_posix_in_place::<u8>(&mut copy.bytes);
+                        dependency_version.value.folder = copy;
+                    } else {
+                        let str_ = string_builder.append::<String>(folder_path);
+                        let ptr = str_.ptr();
+                        path::dangerously_convert_path_to_posix_in_place::<u8>(
+                            &mut string_builder.string_bytes
+                                [ptr.off as usize..(ptr.off + ptr.len) as usize],
+                        );
+                        dependency_version.value.folder = str_;
+                    }
+                }
+                #[cfg(not(windows))]
+                {
+                    dependency_version.value.folder = string_builder.append::<String>(folder_path);
+                }
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {

@@ -2216,6 +2216,15 @@ fn get_or_put_resolved_package(
                                 ..Default::default()
                             }));
                         }
+
+                        if resolution_provides_peer(&existing_resolution, version) {
+                            success_fn(this, dependency_id, existing_id);
+                            return Ok(Some(ResolvedPackageResult {
+                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                package: *this.lockfile.packages.get(existing_id as usize),
+                                ..Default::default()
+                            }));
+                        }
                     }
                 }
                 PackageIndexEntry::Ids(list) => {
@@ -2264,6 +2273,19 @@ fn get_or_put_resolved_package(
                             return Ok(Some(ResolvedPackageResult {
                                 // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
                                 package: *this.lockfile.packages.get(existing_package_id as usize),
+                                ..Default::default()
+                            }));
+                        }
+                    }
+
+                    for &existing_id in list.iter() {
+                        if (existing_id as usize) < resolutions.len()
+                            && resolution_provides_peer(&resolutions[existing_id as usize], version)
+                        {
+                            success_fn(this, dependency_id, existing_id);
+                            return Ok(Some(ResolvedPackageResult {
+                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+                                package: *this.lockfile.packages.get(existing_id as usize),
                                 ..Default::default()
                             }));
                         }
@@ -2573,6 +2595,17 @@ fn get_or_put_resolved_package(
                     }
                 }
 
+                // two dependencies naming the same folder (e.g. a peer next to a
+                // `dependencies` entry) must share one package entry, or the tree
+                // writes the same package path twice and the lockfile no longer parses.
+                if let Some(existing_id) = this.lockfile.get_package_id(
+                    name_hash,
+                    Some(version),
+                    &Resolution::init(ResolutionTagged::Folder(folder)),
+                ) {
+                    break 'res FolderResolutionValue::PackageId(existing_id);
+                }
+
                 let mut package = Package::default();
 
                 {
@@ -2603,7 +2636,6 @@ fn get_or_put_resolved_package(
                     builder.clamp();
                 }
 
-                // these are always new
                 package = this.lockfile.append_package(&package).unwrap_or_oom();
 
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
@@ -2723,6 +2755,28 @@ fn get_or_put_resolved_package(
 
         _ => Ok(None),
     }
+}
+
+/// An already-resolved package with the peer's name provides that peer even when
+/// `resolution_satisfies_dependency` cannot check the range against it: these
+/// resolutions come from an explicit non-registry source (`file:`, `link:`, a
+/// tarball, a git repo) that records no semver version for an npm range or
+/// dist-tag to compare with. Peers requested from a specific source (`file:`,
+/// `git:`, ...) keep resolving through that source.
+fn resolution_provides_peer(resolution: &Resolution, version: &dependency::Version) -> bool {
+    matches!(
+        version.tag,
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag
+    ) && matches!(
+        resolution.tag,
+        ResolutionTag::Folder
+            | ResolutionTag::Symlink
+            | ResolutionTag::LocalTarball
+            | ResolutionTag::RemoteTarball
+            | ResolutionTag::SingleFileModule
+            | ResolutionTag::Git
+            | ResolutionTag::Github
+    )
 }
 
 fn resolution_satisfies_dependency(

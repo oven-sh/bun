@@ -4480,7 +4480,7 @@ describe("transitive file dependencies", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "14 packages installed",
+      "13 packages installed",
     ]);
 
     await checkHoistedFiles();
@@ -4495,7 +4495,7 @@ describe("transitive file dependencies", () => {
     expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun install v1."),
       "",
-      "14 packages installed",
+      "13 packages installed",
     ]);
 
     await checkHoistedFiles();
@@ -4529,7 +4529,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "14 packages installed",
+      "13 packages installed",
     ]);
 
     await checkHoistedFiles();
@@ -4560,7 +4560,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "14 packages installed",
+      "13 packages installed",
     ]);
   });
 
@@ -4622,7 +4622,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4645,7 +4645,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.1",
       "+ self-file-dep@1.0.1",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4680,7 +4680,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]);
 
     await checkUnhoistedFiles();
@@ -4711,7 +4711,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]);
   });
 
@@ -4766,7 +4766,7 @@ describe("transitive file dependencies", () => {
       "+ missing-file-dep@1.0.0",
       "+ self-file-dep@1.0.0",
       "",
-      "13 packages installed",
+      "12 packages installed",
     ]);
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());

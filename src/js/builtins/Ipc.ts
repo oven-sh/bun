@@ -211,7 +211,10 @@ export function serialize(message, handle, options, target) {
     // The raw descriptor is the native payload (node's dgram conversion has no
     // postSend close). A missing/negative fd falls through do_send's int32
     // branch to its EBADF SystemError path.
-    return [typeof fd === "number" ? fd : -1, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
+    return [
+      typeof fd === "number" ? fd : -1,
+      { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type },
+    ];
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }

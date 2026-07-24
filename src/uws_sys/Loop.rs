@@ -644,10 +644,21 @@ pub use c::{us_loop_run, us_wakeup_loop};
 unsafe extern "C" {
     // safe: no args; clears the C side's thread-local loop pointer — no preconditions.
     safe fn bun_clear_loop_at_thread_exit();
+    // safe: no args; frees the C side's thread-local loop wrapper if one exists.
+    safe fn bun_free_loop_wrapper_at_thread_exit();
 }
 
 /// Clears the C side's thread-local loop pointer. Call when a thread that ran
 /// a uws loop (e.g. a Worker thread) exits.
 pub fn on_thread_exit() {
     bun_clear_loop_at_thread_exit()
+}
+
+/// Frees this thread's uws loop wrapper (recv/send/cork buffers) regardless of
+/// `cleanMe`. [`on_thread_exit`] is gated on `cleanMe`, which `uWS::Loop::get`
+/// only sets when no native-loop hint was passed; on Windows
+/// [`WindowsLoop::get`] always passes one, so a short-lived thread must call
+/// this instead and then close the native `uv_loop_t` it owns.
+pub fn free_loop_wrapper_at_thread_exit() {
+    bun_free_loop_wrapper_at_thread_exit()
 }

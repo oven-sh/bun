@@ -64,12 +64,16 @@ impl WaitGroup {
         // We are (or a concurrent `add` may yet make us not) the last one.
         // Publish `raw_count == 0` only while holding the mutex so `wait()`,
         // which checks the count under the same mutex, cannot return until our
-        // `unlock()` below. Signal before unlocking so the waiter's reacquire
-        // serializes after every `self` access we make.
+        // `unlock()` below. Broadcast before unlocking so every waiter's
+        // reacquire serializes after every `self` access we make. `broadcast`
+        // (not `signal`): when several threads share one `WaitGroup`
+        // (`ThreadPool::wait_for_all` from concurrent bundler threads), the
+        // 1→0 transition happens exactly once and must release all of them.
+        // Multiple waiters require the `WaitGroup` to outlive every `wait()`.
         self.mutex.lock();
         let old_count = self.raw_count.fetch_sub(1, Ordering::AcqRel);
         debug_assert!(old_count >= 1);
-        self.cond.signal();
+        self.cond.broadcast();
         self.mutex.unlock();
     }
 

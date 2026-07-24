@@ -1530,29 +1530,44 @@ struct ModuleBufs {
     resolve_target_buf2: PathBuffer,
 }
 
+// Heap-allocate the buffer struct on first use and store only a pointer in TLS
+// so the static-TLS template stays small (PE/COFF has no TLS-BSS; ELF PT_TLS
+// MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
+// resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call
+// themselves), so a RefCell + escaped `&mut PathBuffer` would create aliased
+// `&mut` at the inner call → UB. Use raw-pointer access; only form
+// `&mut PathBuffer` inside the non-recursive `String` arms where the buffers
+// are actually written (no overlap with a live outer `&mut`).
+//
+// `ModuleBufsSlot::drop` reclaims the box so short-lived threads that touch
+// the resolver (`bun_bundler::BundleThread` overflow threads) do not strand it.
+struct ModuleBufsSlot(core::cell::Cell<*mut ModuleBufs>);
+impl Drop for ModuleBufsSlot {
+    fn drop(&mut self) {
+        let p = self.0.get();
+        if !p.is_null() {
+            // SAFETY: produced by `heap::into_raw` in `module_bufs` below; this
+            // thread is exiting so no `resolve_target*` frame holds a borrow.
+            drop(unsafe { Box::from_raw(p) });
+        }
+    }
+}
 thread_local! {
-    // Heap-allocate the buffer struct on first use and store only a pointer
-    // in TLS so the static-TLS template stays small (PE/COFF has no
-    // TLS-BSS; ELF PT_TLS MemSiz scales with this — see test/js/bun/binary/tls-segment-size).
-    // resolve_target / resolve_target_reverse are RECURSIVE (Map/Array arms call themselves), so a
-    // RefCell + escaped `&mut PathBuffer` would create aliased `&mut` at the inner call → UB.
-    // Use raw-pointer access; only form `&mut PathBuffer` inside the non-recursive `String` arms
-    // where the buffers are actually written (no overlap with a live outer `&mut`).
-    static MODULE_BUFS: core::cell::Cell<*mut ModuleBufs> =
-        const { core::cell::Cell::new(core::ptr::null_mut()) };
+    static MODULE_BUFS: ModuleBufsSlot =
+        const { ModuleBufsSlot(core::cell::Cell::new(core::ptr::null_mut())) };
 }
 
 #[inline]
 fn module_bufs() -> *mut ModuleBufs {
     MODULE_BUFS.with(|c| {
-        let mut p = c.get();
+        let mut p = c.0.get();
         if p.is_null() {
             p = bun_core::heap::into_raw(Box::new(ModuleBufs {
                 resolved_path_buf_percent: PathBuffer::ZEROED,
                 resolve_target_buf: PathBuffer::ZEROED,
                 resolve_target_buf2: PathBuffer::ZEROED,
             }));
-            c.set(p);
+            c.0.set(p);
         }
         p
     })

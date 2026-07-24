@@ -1991,5 +1991,12 @@ __attribute__((callback (corker, ctx)))
       uWS::Loop::clearLoopAtThreadExit();
   }
 
+  // Frees this thread's uWS::Loop wrapper (recv/send/cork buffers) regardless
+  // of cleanMe. A caller that passed a native loop hint to get() owns the
+  // native loop and must close it separately afterwards.
+  extern "C" void bun_free_loop_wrapper_at_thread_exit() {
+      uWS::Loop::freeLoopWrapperAtThreadExit();
+  }
+
 #pragma clang attribute pop
 }

@@ -145,8 +145,10 @@ mod io_thread_pool {
             // 2 means initialized and referenced by one `ThreadPool`.
             REF_COUNT.store(2, Ordering::Release);
         } else {
-            // NOTE: a racing acquirer that reaches here does not bump the ref
-            // count — a latent under-count, preserved intentionally.
+            // A racing acquirer that lost the init race still needs its ref.
+            // `Relaxed` suffices: MUTEX is held, and the winning thread's
+            // `store(2, Release)` already published `THREAD_POOL`.
+            REF_COUNT.fetch_add(1, Ordering::Relaxed);
         }
         // Just initialized (or observed initialized) above. `UnsafeCell::get` never returns null.
         NonNull::new(THREAD_POOL.get().cast::<ThreadPoolLib::ThreadPool>())

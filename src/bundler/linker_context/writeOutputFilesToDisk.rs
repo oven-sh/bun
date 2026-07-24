@@ -18,7 +18,7 @@ use crate::output_file::{
     BakeExtra, Index as OutputFileIndex, IndexOptional, Options as OutputFileInit,
     OptionsData as OutputFileData, SavedFile, Value as OutputFileValue,
 };
-use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
+use crate::{BundleV2, Chunk, ContentHasher, cheap_prefix_normalizer};
 
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
@@ -156,7 +156,7 @@ pub fn write_output_files_to_disk(
                             side: Some(options::Side::Client),
                             entry_point_index: None,
                             is_executable: false,
-                            hash: None,
+                            hash: Some(ContentHasher::run(&output_source_map)),
                             source_map_index: None,
                             bytecode_index: None,
                             module_info_index: None,
@@ -353,7 +353,7 @@ pub fn write_output_files_to_disk(
                     side: Some(options::Side::Client),
                     entry_point_index: None,
                     is_executable: false,
-                    hash: None,
+                    hash: Some(ContentHasher::run(&output_source_map)),
                     source_map_index: None,
                     bytecode_index: None,
                     module_info_index: None,

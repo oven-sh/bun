@@ -2184,7 +2184,9 @@ impl<'a> ESModule<'a> {
                     if result.status == Status::InvalidPackageTarget
                         || result.status == Status::Null
                     {
+                        *self.module_type = prev_module_type;
                         last_exception = result.status;
+                        continue;
                     }
 
                     if result.status.is_undefined() {

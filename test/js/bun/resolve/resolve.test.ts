@@ -589,6 +589,148 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+// An array target in `exports`/`imports` is a fallback list: Node's
+// PACKAGE_TARGET_RESOLVE continues past entries that throw Invalid Package
+// Target (a string that doesn't start with "./", or a "./node_modules/..."
+// segment) and past `null`, only stopping on the first entry that actually
+// resolves. A valid target that points at a missing file is not a fallback
+// point on either runtime.
+describe("package.json exports/imports array target fallback", () => {
+  function fixture(prefix: string) {
+    return tempDir(prefix, {
+      "package.json": JSON.stringify({
+        name: "host",
+        type: "module",
+        imports: {
+          "#inv": ["./node_modules/dep/x.js", "./imp.mjs"],
+          "#nul": [null, "./imp.mjs"],
+          "#ctl": ["./imp.mjs", "./other-imp.mjs"],
+        },
+      }),
+      "imp.mjs": "export default 'imp.mjs';\n",
+      "other-imp.mjs": "export default 'other-imp.mjs';\n",
+      "node_modules/arrpkg/package.json": JSON.stringify({
+        name: "arrpkg",
+        exports: {
+          "./inv": ["not-relative-invalid-target", "./real.js"],
+          "./nul": [null, "./real.js"],
+          "./ctl": ["./real.js", "./other.js"],
+          "./cond": [{ "no-such-condition": "./other.js" }, "./real.js"],
+          "./condinv": [{ "import": "not-relative" }, "./real.js"],
+          "./condnul": [{ "require": null }, "./real.js"],
+          "./miss": ["./does-not-exist.js", "./real.js"],
+          "./allinv": ["also-not-relative", "not-relative-invalid-target"],
+          "./allnul": [null, null],
+        },
+      }),
+      "node_modules/arrpkg/real.js": "module.exports = 'real.js';\n",
+      "node_modules/arrpkg/other.js": "module.exports = 'other.js';\n",
+      "probe.mjs": `
+        import { createRequire } from "node:module";
+        const req = createRequire(import.meta.url);
+        const out = {};
+        for (const s of ["arrpkg/inv", "arrpkg/nul", "arrpkg/ctl", "arrpkg/cond", "arrpkg/condinv", "arrpkg/condnul", "#inv", "#nul", "#ctl"]) {
+          try { out["import " + s] = (await import(s)).default; }
+          catch (e) { out["import " + s] = "THREW " + (e.code || e.name); }
+          try { const v = req(s); out["require " + s] = v?.default ?? v; }
+          catch (e) { out["require " + s] = "THREW " + (e.code || e.name); }
+        }
+        for (const s of ["arrpkg/miss", "arrpkg/allinv", "arrpkg/allnul"]) {
+          try { await import(s); out["import " + s] = "resolved"; }
+          catch (e) { out["import " + s] = "THREW " + (e.code || e.name); }
+        }
+        console.log(JSON.stringify(out));
+      `,
+    });
+  }
+
+  it.concurrent("Bun.resolveSync falls through invalid/null array entries", () => {
+    using dir = fixture("resolver-exports-array-sync");
+    const root = String(dir);
+    const real = join(root, "node_modules/arrpkg/real.js");
+    const imp = join(root, "imp.mjs");
+
+    expect({
+      inv: Bun.resolveSync("arrpkg/inv", root),
+      nul: Bun.resolveSync("arrpkg/nul", root),
+      ctl: Bun.resolveSync("arrpkg/ctl", root),
+      cond: Bun.resolveSync("arrpkg/cond", root),
+      condinv: Bun.resolveSync("arrpkg/condinv", root),
+      condnul: Bun.resolveSync("arrpkg/condnul", root),
+      "#inv": Bun.resolveSync("#inv", root),
+      "#nul": Bun.resolveSync("#nul", root),
+      "#ctl": Bun.resolveSync("#ctl", root),
+    }).toEqual({
+      inv: real,
+      nul: real,
+      ctl: real,
+      cond: real,
+      condinv: real,
+      condnul: real,
+      "#inv": imp,
+      "#nul": imp,
+      "#ctl": imp,
+    });
+
+    const resolveError = (spec: string) => {
+      try {
+        return { resolved: Bun.resolveSync(spec, root) };
+      } catch (e: any) {
+        return { name: e.name, code: e.code };
+      }
+    };
+    // Node reports ERR_INVALID_PACKAGE_TARGET for allinv and ERR_PACKAGE_PATH_NOT_EXPORTED
+    // for allnul; Bun currently surfaces all three as ERR_MODULE_NOT_FOUND.
+    expect({
+      miss: resolveError("arrpkg/miss"),
+      allinv: resolveError("arrpkg/allinv"),
+      allnul: resolveError("arrpkg/allnul"),
+    }).toEqual({
+      miss: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+      allinv: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+      allnul: { name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" },
+    });
+  });
+
+  it.concurrent("import() and require() fall through invalid/null array entries", async () => {
+    using dir = fixture("resolver-exports-array-runtime");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "probe.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "import arrpkg/inv": "real.js",
+      "require arrpkg/inv": "real.js",
+      "import arrpkg/nul": "real.js",
+      "require arrpkg/nul": "real.js",
+      "import arrpkg/ctl": "real.js",
+      "require arrpkg/ctl": "real.js",
+      "import arrpkg/cond": "real.js",
+      "require arrpkg/cond": "real.js",
+      "import arrpkg/condinv": "real.js",
+      "require arrpkg/condinv": "real.js",
+      "import arrpkg/condnul": "real.js",
+      "require arrpkg/condnul": "real.js",
+      "import #inv": "imp.mjs",
+      "require #inv": "imp.mjs",
+      "import #nul": "imp.mjs",
+      "require #nul": "imp.mjs",
+      "import #ctl": "imp.mjs",
+      "require #ctl": "imp.mjs",
+      "import arrpkg/miss": "THREW ERR_MODULE_NOT_FOUND",
+      "import arrpkg/allinv": "THREW ERR_MODULE_NOT_FOUND",
+      "import arrpkg/allnul": "THREW ERR_MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("package.json exports target percent-encoding", () => {
   // ESModule.finalize short-circuits when the resolved path contains no '%'.
   // These cases exercise both that branch and the decode branch to keep them in lockstep.

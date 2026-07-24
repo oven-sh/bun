@@ -9,7 +9,7 @@
 
 import { existsSync } from "node:fs";
 import { enableService, ensureDirectory, shellScript } from "../../ops-posix.ts";
-import { download, log, runOutput, sudo } from "../../runtime.ts";
+import { download, log, sudo } from "../../runtime.ts";
 import type { LinuxContext } from "../component.ts";
 import { artifact } from "../component.ts";
 import { appendToProfiles } from "../environment.ts";
@@ -30,19 +30,13 @@ export type PackageManager = {
    * machine runs it. (systemd distros also have a tmp.mount to mask;
    * OpenRC ones don't.) */
   readonly init: "systemd" | "openrc";
-  /** Refresh the package index. */
-  updateIndex(): Promise<void>;
   /** Install packages, non-interactively. */
   install(ctx: LinuxContext, packages: readonly string[]): Promise<void>;
-  /** Distro-specific extras run right after the build-essentials install. */
-  afterBuildEssentials(ctx: LinuxContext): Promise<void>;
   /** Install docker: from packages already listed, or the upstream script. */
   installDocker(ctx: LinuxContext): Promise<void>;
   /** Install LLVM's `major`: apt.llvm.org's llvm.sh, or the distro's
    * versioned packages. */
   installLlvm(ctx: LinuxContext): Promise<void>;
-  /** Drop the package cache before capture. */
-  cleanCache(): Promise<void>;
 };
 
 async function installLogged(
@@ -59,37 +53,18 @@ async function installLogged(
 // apt (Debian, Ubuntu)
 // ---------------------------------------------------------------------------
 
-/** True when apt has an installable candidate for a package (renamed
- * packages, libasound2 → libasound2t64). */
-async function aptHasCandidate(name: string): Promise<boolean> {
-  const output = await runOutput(["apt-cache", "policy", name], { allowFailure: true });
-  return output.includes(name) && !/Candidate: \(none\)/.test(output);
-}
-
 export const apt: PackageManager = {
   name: "apt",
   userFlavor: "shadow",
   cmakeIsPackaged: false,
   pythonFuseIsPackaged: true,
   init: "systemd",
-  async updateIndex() {
-    await sudo(["apt-get", "update", "-y"], { env: { DEBIAN_FRONTEND: "noninteractive" } });
-  },
   async install(_ctx, packages) {
     await installLogged("apt", packages, () =>
       sudo(["apt-get", "install", "--yes", "--no-install-recommends", "--fix-missing", ...packages], {
         env: { DEBIAN_FRONTEND: "noninteractive" },
       }).then(() => undefined),
     );
-  },
-  async afterBuildEssentials(ctx) {
-    // alsa: newer ubuntu renamed libasound2 → libasound2t64.
-    for (const candidate of ["libasound2t64", "libasound2"]) {
-      if (await aptHasCandidate(candidate)) {
-        await this.install(ctx, [candidate]);
-        break;
-      }
-    }
   },
   async installDocker(ctx) {
     const script = await download(artifact(ctx.artifacts, "dockerInstaller"), { name: "get-docker.sh" });
@@ -119,10 +94,6 @@ export const apt: PackageManager = {
     // llvm-ar etc. resolve (debian only symlinks a subset).
     await appendToProfiles(ctx, [`export PATH="/usr/lib/llvm-${llvm.major}/bin:$PATH"`]);
   },
-  async cleanCache() {
-    await sudo(["apt-get", "clean"]);
-    await shellScript({ describe: "drop apt package lists", root: true, script: "rm -rf /var/lib/apt/lists/*" });
-  },
 };
 
 // ---------------------------------------------------------------------------
@@ -135,15 +106,11 @@ export const apk: PackageManager = {
   cmakeIsPackaged: true,
   pythonFuseIsPackaged: false,
   init: "openrc",
-  async updateIndex() {
-    await sudo(["apk", "update"]);
-  },
   async install(_ctx, packages) {
     await installLogged("apk", packages, () =>
       sudo(["apk", "add", "--no-cache", "--no-interactive", "--no-progress", ...packages]).then(() => undefined),
     );
   },
-  async afterBuildEssentials() {},
   async installDocker() {
     // docker + compose come from the apk package list.
     await enableService("docker", { start: true }, this.init);
@@ -152,9 +119,6 @@ export const apk: PackageManager = {
     // Alpine ships LLVM as versioned apk packages (llvm{N}, clang{N}, ...),
     // listed on the image's packages.llvm.
     await this.install(ctx, ctx.image.packages.llvm);
-  },
-  async cleanCache() {
-    await shellScript({ describe: "drop apk cache", root: true, script: "rm -rf /var/cache/apk/*" });
   },
 };
 

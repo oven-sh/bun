@@ -46,12 +46,6 @@ export function nodeGypCache(os: "linux" | "windows", home: string, nodeVersion:
 }
 
 /** The core-dump directory the test runner reads (from the pattern). */
-export function coresDir(image: LinuxImage): string {
-  return image.paths.coresDirPattern
-    .replace("{distro}", image.distro)
-    .replace("{release}", image.release)
-    .replace("{arch}", image.arch);
-}
 
 // ---------------------------------------------------------------------------
 // Windows

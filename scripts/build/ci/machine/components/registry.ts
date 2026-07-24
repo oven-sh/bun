@@ -14,6 +14,8 @@
 
 import type { LinuxImage, WindowsImage } from "../../types.ts";
 import type { Download } from "../artifacts.ts";
+import { shellScript } from "../ops-posix.ts";
+import { powershellScript } from "../ops-windows.ts";
 import type { Step } from "../runtime.ts";
 import type { ArtifactBundle, LinuxComponent, LinuxContext, WindowsComponent, WindowsContext } from "./component.ts";
 import { chrome, chromium } from "./linux/browsers.ts";
@@ -35,7 +37,6 @@ import {
   bun as linuxBun,
   curlH3 as linuxCurlH3,
 } from "./linux/runtimes.ts";
-import { baseSystem, cleanup, coreDumps } from "./linux/system.ts";
 import { cmake, docker, rust as linuxRust, llvm, pythonFuse, tailscale } from "./linux/toolchain.ts";
 import { nodejs as windowsNodejs } from "./windows/nodejs.ts";
 import { prefetch as windowsPrefetch } from "./windows/prefetch.ts";
@@ -46,7 +47,6 @@ import {
 } from "./windows/runtimes.ts";
 import { rust as windowsRust } from "./windows/rust.ts";
 import { scoop } from "./windows/scoop.ts";
-import { defenderRemoval, optimizeWindows } from "./windows/system.ts";
 import { ccache, intelSde, openssh, pdbAddr2line, powershell, visualStudio } from "./windows/toolchain.ts";
 
 const linuxRegistry = register([
@@ -57,7 +57,6 @@ const linuxRegistry = register([
   age,
   linuxPrefetch,
   ciUser,
-  baseSystem,
   cmake,
   llvm,
   pythonFuse,
@@ -66,8 +65,6 @@ const linuxRegistry = register([
   tailscale,
   chrome,
   chromium,
-  coreDumps,
-  cleanup,
   crossBinutils,
   androidNdk,
   freebsdSysroot,
@@ -83,7 +80,6 @@ const windowsRegistry = register([
   windowsCurlH3,
   windowsBuildkiteAgent,
   windowsPrefetch,
-  optimizeWindows,
   scoop,
   powershell,
   openssh,
@@ -92,7 +88,6 @@ const windowsRegistry = register([
   visualStudio,
   intelSde,
   windowsRust,
-  defenderRemoval,
 ]);
 
 function register<T extends { name: string }>(components: readonly T[]): Map<string, T> {
@@ -173,4 +168,24 @@ function mergeArtifacts(
     }
   }
   return merged;
+}
+
+/**
+ * Steps for an entry's systemSetup / systemCleanup command list: one step
+ * per command, named by its first line so the log shows progress and a
+ * failure points at the exact command. Linux strings run via `sh -c` as
+ * root, Windows strings as PowerShell scripts — the normal script ops.
+ */
+export function commandSteps(os: "linux" | "windows", label: string, commands: readonly string[]): Step[] {
+  return commands.map(command => {
+    const firstLine = command.split("\n")[0]!;
+    const name = `${label}: ${firstLine.length > 100 ? `${firstLine.slice(0, 100)}…` : firstLine}`;
+    return {
+      name,
+      run: async () => {
+        if (os === "linux") await shellScript({ describe: name, script: command, root: true });
+        else await powershellScript({ describe: name, script: command });
+      },
+    };
+  });
 }

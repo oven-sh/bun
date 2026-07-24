@@ -216,16 +216,17 @@ export type LinuxImageBase = {
        * warmed from the repo's package.json + test/package.json. */
       readonly install: string | null;
     };
-    /** Core dumps: %e = executable, %p = pid. scripts/runner.node.mjs reads
-     * cores from this same directory pattern. */
-    readonly coresDirPattern: string;
   };
-  /** CI-only kernel/systemd/apt tuning. */
-  readonly system: {
-    readonly limits: readonly string[];
-    /** nofile/nproc can't be "unlimited"; everything else is. */
-    readonly countedLimits: { readonly [limit: string]: number };
-  };
+  /** Commands run at the START of the bake, before any component:
+   * package index + base packages, ulimits, and other host setup. Each
+   * string is one `sh -c` invocation, run as root, in order, fail-fast.
+   * Literal commands, so what runs on the machine is exactly what is
+   * hashed — a changed command renames the image and re-bakes it. */
+  readonly systemSetup: readonly string[];
+  /** Commands run at the END of the bake, after every component: core
+   * dumps, cache cleanup, disk trim — the finalize-before-capture set.
+   * Same semantics as systemSetup (root, in order, fail-fast). */
+  readonly systemCleanup: readonly string[];
 };
 
 /** Fields that differ by CPU architecture on linux. */
@@ -277,7 +278,6 @@ export type LinuxSharedFields = Pick<
   | "pythonFuse"
   | "rust"
   | "paths"
-  | "system"
   | "dockerInstallUrl"
   | "tailscaleInstallUrl"
 >;
@@ -373,10 +373,14 @@ export type WindowsImageBase = {
   };
   /** CI-only optimizations (Defender off, services disabled, high-perf
    * power). */
-  readonly optimize: {
-    readonly disabledServices: readonly string[];
-    readonly powerScheme: string;
-  };
+  /** PowerShell commands run at the START of the bake, before any
+   * component: Defender off, telemetry/services stopped, high-perf power
+   * scheme. Each string is one PowerShell script, in order, fail-fast. */
+  readonly systemSetup: readonly string[];
+  /** PowerShell commands run at the END of the bake, after every
+   * component (e.g. the Defender feature uninstall, which only takes
+   * effect on the post-bake reboot). */
+  readonly systemCleanup: readonly string[];
 };
 
 /** x64 Windows: has the Intel SDE (verify-baseline emulates a pre-AVX CPU)
@@ -424,7 +428,8 @@ export type WindowsSharedFields = Pick<
   | "nssmFallbackZipUrl"
   | "pdbAddr2line"
   | "paths"
-  | "optimize"
+  | "systemSetup"
+  | "systemCleanup"
 >;
 
 export type Image = LinuxImage | WindowsImage;

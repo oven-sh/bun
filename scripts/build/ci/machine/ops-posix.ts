@@ -13,7 +13,7 @@
 // exception visible in the code and the log.
 
 import type { RunOptions, RunResult } from "./runtime.ts";
-import { log, run, runOutput, sudo, verify, which } from "./runtime.ts";
+import { log, run, runOutput, sudo, verify } from "./runtime.ts";
 
 // ---------------------------------------------------------------------------
 // Files and directories (all system paths → run as root)
@@ -177,51 +177,6 @@ export async function enableService(name: string, options: { start: boolean }, i
     // (same best-effort start as the systemd branch above)
     if (options.start) await sudo(["rc-service", name, "start"], { allowFailure: true });
   }
-}
-
-/** Stop and disable a service if it exists (systemd only). */
-export async function disableServiceNow(name: string, init: Init): Promise<void> {
-  if (init !== "systemd") return;
-  const units = await runOutput(["sh", "-c", `systemctl list-unit-files ${name} 2>/dev/null || true`]);
-  if (!units.includes(name)) {
-    log(`service ${name} not present; nothing to disable`);
-    return;
-  }
-  log(`disabling service ${name} now`);
-  await sudo(["systemctl", "disable", "--now", name], { allowFailure: true });
-}
-
-/** systemd: mask a unit so nothing can start it. */
-export async function maskUnit(name: string, init: Init): Promise<void> {
-  if (init !== "systemd") {
-    log(`no systemd; not masking ${name}`);
-    return;
-  }
-  log(`masking unit ${name}`);
-  await sudo(["systemctl", "mask", name]);
-}
-
-export async function reloadServiceManager(init: Init): Promise<void> {
-  if (init !== "systemd") return;
-  // Best-effort: a reload failure means only that new units apply on boot.
-  await sudo(["systemctl", "daemon-reload"], { allowFailure: true });
-}
-
-/** Load kernel settings from a sysctl.d file now (values apply on boot
- * regardless). Best-effort: some knobs are read-only in some VMs. */
-export async function applySysctlFile(path: string): Promise<void> {
-  log(`applying sysctl settings from ${path}`);
-  await sudo(["sysctl", "-p", path], { allowFailure: true });
-}
-
-/** Discard free space so the captured image is small. */
-export async function trimFilesystems(): Promise<void> {
-  if (!which("fstrim")) {
-    log("no fstrim; skipping trim");
-    return;
-  }
-  log("trimming filesystems (fstrim -av)");
-  await sudo(["fstrim", "-av"], { allowFailure: true });
 }
 
 // ---------------------------------------------------------------------------

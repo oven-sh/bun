@@ -103,18 +103,46 @@ const windowsShared: WindowsSharedFields = {
     },
     node: "C:\\Scoop\\apps\\nodejs\\current\\node.exe",
   },
-  optimize: {
-    disabledServices: [
+  // CI tuning run before any component. The Defender feature uninstall
+  // is here (not at the end) on purpose: prefetch's clone/install subprocess
+  // churn has left the parent unable to launch the next child on some hosts
+  // with Defender still installed, and the uninstall only takes effect on
+  // the post-bake reboot — so scheduling it before the cache warm-up is safe
+  // and correct.
+  systemSetup: [
+    // Defender realtime scanning turns a 2-minute bun install into 20.
+    `Set-MpPreference -DisableRealtimeMonitoring $true
+Add-MpPreference -ExclusionPath 'C:\\', 'D:\\'
+$atp = 'HKLM:\\SOFTWARE\\Policies\\Microsoft\\Windows Advanced Threat Protection'
+if (Test-Path $atp) { Set-ItemProperty -Path $atp -Name 'ForceDefenderPassiveMode' -Value 1 -Type DWORD }`,
+    // Stop and disable services CI never needs.
+    ...[
       "WSearch", //         Windows Search
       "wuauserv", //        Windows Update
       "DiagTrack", //       Connected User Experiences and Telemetry
       "dmwappushservice", // WAP Push Message Routing Service
       "PcaSvc", //          Program Compatibility Assistant
       "SysMain", //         Superfetch
-    ],
-    // High performance
-    powerScheme: "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
-  },
+    ].map(
+      service => `$s = Get-Service -Name '${service}' -ErrorAction SilentlyContinue
+if ($s) { Stop-Service '${service}' -Force -ErrorAction SilentlyContinue; Set-Service '${service}' -StartupType Disabled -ErrorAction SilentlyContinue }`,
+    ),
+    // High-performance power scheme; no sleep/hibernate timeouts.
+    `powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+powercfg /change monitor-timeout-ac 0
+powercfg /change monitor-timeout-dc 0
+powercfg /change standby-timeout-ac 0
+powercfg /change standby-timeout-dc 0
+powercfg /change hibernate-timeout-ac 0
+powercfg /change hibernate-timeout-dc 0`,
+    // Uninstall the Defender feature outright (no-op on SKUs without it).
+    `if (Get-Command Uninstall-WindowsFeature -ErrorAction SilentlyContinue) {
+Uninstall-WindowsFeature -Name Windows-Defender
+} else {
+Write-Output "Uninstall-WindowsFeature unavailable on this SKU (Defender stays disabled, not removed)"
+}`,
+  ],
+  systemCleanup: [],
 };
 
 /** The install sequence every windows image shares. visual-studio
@@ -123,7 +151,6 @@ const windowsShared: WindowsSharedFields = {
  * Build Tools installs — pdb-addr2line's `cargo install` cannot link
  * without them. */
 const windowsCommonComponents = [
-  "optimize-windows",
   "scoop",
   "nodejs",
   "powershell",
@@ -136,11 +163,6 @@ const windowsCommonComponents = [
   "pdb-addr2line",
   "intel-sde",
   "buildkite-agent",
-  // defender-removal precedes prefetch: prefetch's clone/install subprocess
-  // churn has been leaving the parent unable to launch the next child on
-  // some hosts; the removal only takes effect on reboot, so it is safe (and
-  // correct) to schedule it before the cache warm-up.
-  "defender-removal",
   "prefetch",
 ] as const;
 

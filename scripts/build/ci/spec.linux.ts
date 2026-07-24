@@ -69,26 +69,6 @@ const linuxPaths: LinuxImageBase["paths"] = {
     // Not warming a `bun install` cache right now; set a path to re-enable.
     install: null,
   },
-  coresDirPattern: "/var/bun-cores-{distro}-{release}-{arch}",
-};
-
-const linuxSystem: LinuxImageBase["system"] = {
-  limits: [
-    "core",
-    "data",
-    "fsize",
-    "memlock",
-    "nofile",
-    "rss",
-    "stack",
-    "cpu",
-    "nproc",
-    "as",
-    "locks",
-    "sigpending",
-    "msgqueue",
-  ],
-  countedLimits: { nofile: 1048576, nproc: 1048576 },
 };
 
 const aptCommon = [
@@ -278,18 +258,130 @@ const linuxShared: LinuxSharedFields = {
   pythonFuse,
   rust: linuxRust,
   paths: linuxPaths,
-  system: linuxSystem,
   // FLOATING installer scripts.
   dockerInstallUrl: "https://get.docker.com",
   tailscaleInstallUrl: "https://tailscale.com/install.sh",
 };
+
+// ---------------------------------------------------------------------------
+// System setup / cleanup commands
+// ---------------------------------------------------------------------------
+// Literal `sh -c` commands run as root: systemSetup at the START of a bake
+// (before any component), systemCleanup at the END (after every component).
+// They are what actually runs on the machine, so they live in the entry and
+// are hashed — change a command, the image renames and re-bakes. No package
+// manager object, no runtime probes: each distro's commands are written out.
+
+/** Raise the process limits so builds and tests aren't capped. */
+const openFiles = 1048576;
+const processes = 1048576;
+const unlimitedLimits = [
+  "core",
+  "data",
+  "fsize",
+  "memlock",
+  "rss",
+  "stack",
+  "cpu",
+  "as",
+  "locks",
+  "sigpending",
+  "msgqueue",
+];
+
+/** /etc/security/limits.d — the counted limits plus everything unlimited,
+ * for root and every user. Shared by every linux image. */
+const limitsFile =
+  [
+    ...["root", "*"].flatMap(who => [
+      `${who} soft nofile ${openFiles}`,
+      `${who} hard nofile ${openFiles}`,
+      `${who} soft nproc ${processes}`,
+      `${who} hard nproc ${processes}`,
+      ...unlimitedLimits.flatMap(limit => [`${who} soft ${limit} unlimited`, `${who} hard ${limit} unlimited`]),
+    ]),
+  ].join("\n") + "\n";
+
+/** systemd default limits, as a system.conf.d drop-in with its own
+ * [Manager] header (systemd >= 256 ships no /etc/systemd/system.conf, and
+ * DefaultLimit lines with no section header are ignored). */
+const systemdLimits =
+  [
+    "[Manager]",
+    `DefaultLimitNOFILE=${openFiles}`,
+    `DefaultLimitNPROC=${processes}`,
+    ...unlimitedLimits.map(limit => `DefaultLimit${limit.toUpperCase()}=infinity`),
+  ].join("\n") + "\n";
+
+/** Write `content` to `path` verbatim (single-quoted heredoc: no expansion). */
+function writeFile(path: string, content: string): string {
+  return `mkdir -p "$(dirname ${path})" && cat > ${path} <<'BUN_EOF'\n${content}BUN_EOF`;
+}
+
+/** systemSetup for an apt image (debian/ubuntu, systemd). */
+function aptSystemSetup(packages: LinuxPackages): string[] {
+  return [
+    "DEBIAN_FRONTEND=noninteractive apt-get update -y",
+    `DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends --fix-missing ${packages.common.join(" ")}`,
+    `DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends --fix-missing ${[...packages.buildEssentials, ...packages.qemu].join(" ")}`,
+    // alsa for the audio tests (the t64 name post-time_t transition).
+    "DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends libasound2t64",
+    writeFile("/etc/security/limits.d/99-unlimited.conf", limitsFile),
+    writeFile("/etc/systemd/system.conf.d/99-bun-limits.conf", systemdLimits),
+    // pam_limits applies the limits.d values to login sessions.
+    "grep -qxF 'session optional pam_limits.so' /etc/pam.d/common-session || echo 'session optional pam_limits.so' >> /etc/pam.d/common-session",
+    "grep -qxF 'session optional pam_limits.so' /etc/pam.d/common-session-noninteractive || echo 'session optional pam_limits.so' >> /etc/pam.d/common-session-noninteractive",
+    "systemctl daemon-reload",
+  ];
+}
+
+/** systemSetup for an apk image (alpine, OpenRC). rc_ulimit is the ONLY
+ * thing raising limits for rc-started services (no systemd, no pam);
+ * without it fd-heavy tests EMFILE at the OpenRC default of 1024. */
+function apkSystemSetup(packages: LinuxPackages): string[] {
+  const rcUlimit = ["c", "d", "e", "f", "i", "l", "m", "n", "q", "r", "s", "t", "u", "v", "x"]
+    .map(flag => (flag === "n" ? `-n ${openFiles}` : flag === "u" ? `-u ${processes}` : `-${flag} unlimited`))
+    .join(" ");
+  return [
+    "apk update",
+    `apk add --no-cache --no-interactive --no-progress ${packages.common.join(" ")}`,
+    `apk add --no-cache --no-interactive --no-progress ${[...packages.buildEssentials, ...packages.qemu].join(" ")}`,
+    writeFile("/etc/security/limits.d/99-unlimited.conf", limitsFile),
+    `grep -qxF 'rc_ulimit="${rcUlimit}"' /etc/rc.conf || echo 'rc_ulimit="${rcUlimit}"' >> /etc/rc.conf`,
+  ];
+}
+
+/** systemCleanup shared by every linux image: core dumps for the test
+ * runner (scripts/runner.node.mjs reads the same directory via the sysctl),
+ * then finalize the disk before capture. Cache clean is per manager. */
+function linuxSystemCleanup(coresDir: string, cacheClean: string, systemd: boolean): string[] {
+  return [
+    `mkdir -p ${coresDir} && chmod 777 ${coresDir}`,
+    // %e = executable filename, %p = pid
+    `mkdir -p /etc/sysctl.d && grep -qxF 'kernel.core_pattern = ${coresDir}/%e-%p.core' /etc/sysctl.d/local.conf 2>/dev/null || echo 'kernel.core_pattern = ${coresDir}/%e-%p.core' >> /etc/sysctl.d/local.conf`,
+    // apport overrides core_pattern where it exists (systemd distros).
+    ...(systemd
+      ? [
+          "if systemctl list-unit-files apport.service >/dev/null 2>&1; then systemctl disable --now apport.service || true; fi",
+        ]
+      : []),
+    "sysctl -p /etc/sysctl.d/local.conf || true",
+    // /sbin on PATH for the buildkite user's shells (sysctl and friends).
+    `for f in /etc/profile.d/bun-ci.sh /home/*/.bashrc /root/.bashrc; do [ -e "$f" ] || continue; grep -qxF 'export PATH="/sbin:$PATH"' "$f" || echo 'export PATH="/sbin:$PATH"' >> "$f"; done`,
+    // disk-backed /tmp: mask the tmpfs mount (systemd only; needs a reboot).
+    ...(systemd ? ["systemctl mask tmp.mount"] : []),
+    "rm -rf /tmp/* /var/tmp/* /tmp/.[!.]* /var/tmp/.[!.]* 2>/dev/null || true",
+    cacheClean,
+    // Trim so the captured image is as small as the filesystem allows.
+    "fstrim -av || true",
+  ];
+}
 
 // FLOATING: Google's current stable Chrome deb (x64 only; no arm64 build).
 const chromeDebUrl = "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
 
 /** The install head every linux image runs, in order. */
 const linuxInstallComponents = [
-  "base-system",
   "ci-user",
   "nodejs",
   "bun",
@@ -308,7 +400,7 @@ const linuxInstallComponents = [
  * (a browser, a cross toolchain) belong BEFORE it: cleanup empties /tmp
  * (the download scratch) and trims disks for capture, so nothing may
  * install after it. */
-const linuxFinalization = ["buildkite-agent", "prefetch", "core-dumps", "cleanup"] as const;
+const linuxFinalization = ["buildkite-agent", "prefetch"] as const;
 
 /** The cross toolchains the build host installs so it can cross-compile
  * for every target. */
@@ -348,6 +440,12 @@ export const linuxBuildHost: LinuxBuildHostImage = {
   base: debianAmi("aarch64"),
   bake: linuxBake("aarch64"),
   packages: debianPackages,
+  systemSetup: aptSystemSetup(debianPackages),
+  systemCleanup: linuxSystemCleanup(
+    "/var/bun-cores-debian-13-aarch64",
+    "apt-get clean && rm -rf /var/lib/apt/lists/*",
+    true,
+  ),
   crossToolchains,
 };
 
@@ -364,6 +462,12 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     base: debianAmi("x64"),
     bake: linuxBake("x64"),
     packages: debianPackages,
+    systemSetup: aptSystemSetup(debianPackages),
+    systemCleanup: linuxSystemCleanup(
+      "/var/bun-cores-debian-13-x64",
+      "apt-get clean && rm -rf /var/lib/apt/lists/*",
+      true,
+    ),
     chromeDebUrl,
   },
   {
@@ -378,6 +482,12 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     base: ubuntuAmi("25.04", "aarch64"),
     bake: linuxBake("aarch64"),
     packages: ubuntuPackages,
+    systemSetup: aptSystemSetup(ubuntuPackages),
+    systemCleanup: linuxSystemCleanup(
+      "/var/bun-cores-ubuntu-25.04-aarch64",
+      "apt-get clean && rm -rf /var/lib/apt/lists/*",
+      true,
+    ),
   },
   {
     ...linuxShared,
@@ -391,6 +501,12 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     base: ubuntuAmi("25.04", "x64"),
     bake: linuxBake("x64"),
     packages: ubuntuPackages,
+    systemSetup: aptSystemSetup(ubuntuPackages),
+    systemCleanup: linuxSystemCleanup(
+      "/var/bun-cores-ubuntu-25.04-x64",
+      "apt-get clean && rm -rf /var/lib/apt/lists/*",
+      true,
+    ),
     chromeDebUrl,
   },
   {
@@ -405,6 +521,12 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     base: alpineAmi("aarch64"),
     bake: linuxBake("aarch64"),
     packages: alpinePackages("aarch64"),
+    systemSetup: apkSystemSetup(alpinePackages("aarch64")),
+    systemCleanup: linuxSystemCleanup(
+      `/var/bun-cores-alpine-${alpineRelease}-aarch64`,
+      "rm -rf /var/cache/apk/*",
+      false,
+    ),
   },
   {
     ...linuxShared,
@@ -418,6 +540,8 @@ export const linuxTestImages: readonly LinuxTestImage[] = [
     base: alpineAmi("x64"),
     bake: linuxBake("x64"),
     packages: alpinePackages("x64"),
+    systemSetup: apkSystemSetup(alpinePackages("x64")),
+    systemCleanup: linuxSystemCleanup(`/var/bun-cores-alpine-${alpineRelease}-x64`, "rm -rf /var/cache/apk/*", false),
     chromeDebUrl: null,
   },
 ];

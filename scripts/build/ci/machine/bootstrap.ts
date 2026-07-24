@@ -11,7 +11,7 @@
 import { parseArgs } from "node:util";
 import { imageEntry } from "../naming.ts";
 import { managerFor } from "./components/linux/package-manager.ts";
-import { linuxArtifacts, linuxSteps, windowsArtifacts, windowsSteps } from "./components/registry.ts";
+import { commandSteps, linuxArtifacts, linuxSteps, windowsArtifacts, windowsSteps } from "./components/registry.ts";
 import { detectHost } from "./host.ts";
 import { banner, log, runSteps } from "./runtime.ts";
 
@@ -64,13 +64,21 @@ async function main(): Promise<void> {
     }
     const manager = managerFor(image.packages.manager);
     const ctx = { image, host, ci, repoRef, artifacts: linuxArtifacts(image), manager };
-    await runSteps(`Bootstrap ${image.key}`, linuxSteps(image, ctx));
+    await runSteps(`Bootstrap ${image.key}`, [
+      ...commandSteps("linux", "setup", image.systemSetup),
+      ...linuxSteps(image, ctx),
+      ...commandSteps("linux", "cleanup", image.systemCleanup),
+    ]);
   } else {
     if (host.os !== "windows") {
       throw new Error(`Image "${image.key}" is windows but this host is ${host.os}.`);
     }
     const ctx = { image, host, ci, repoRef, artifacts: windowsArtifacts(image) };
-    await runSteps(`Bootstrap ${image.key}`, windowsSteps(image, ctx));
+    await runSteps(`Bootstrap ${image.key}`, [
+      ...commandSteps("windows", "setup", image.systemSetup),
+      ...windowsSteps(image, ctx),
+      ...commandSteps("windows", "cleanup", image.systemCleanup),
+    ]);
   }
 }
 

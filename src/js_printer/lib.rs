@@ -1334,7 +1334,6 @@ pub mod __gated_printer {
     use super::*;
     use bun_ast::ImportRecordTag;
     use bun_ptr::BackRef;
-    use js_ast::Symbol;
     use js_ast::binding::{Binding, Data as BindingData};
     use js_ast::expr::{Data as ExprData, Expr};
     use js_ast::op::{Level, Op as OpInfo};
@@ -1670,7 +1669,7 @@ pub mod __gated_printer {
         }
 
         pub fn mangled_prop_name(&mut self, ref_: Ref) -> &'a [u8] {
-            let ref_ = self.symbols().follow(ref_);
+            let ref_ = self.follow_ref(ref_);
             // TODO: we don't support that
             if let Some(mangled_props) = self.options.mangled_props {
                 if let Some(name) = mangled_props.get(&ref_) {
@@ -2352,8 +2351,7 @@ pub mod __gated_printer {
                     if ident.ref_.is_source_contents_slice() {
                         return false;
                     }
-                    let Some(symbol) = self.symbols().get_const(self.symbols().follow(ident.ref_))
-                    else {
+                    let Some(symbol) = self.get_symbol(self.follow_ref(ident.ref_)) else {
                         return false;
                     };
                     symbol.kind == js_ast::symbol::Kind::Unbound
@@ -2364,8 +2362,33 @@ pub mod __gated_printer {
         }
 
         #[inline]
-        fn symbols(&self) -> &js_ast::symbol::Map {
-            self.renamer.symbols()
+        fn follow_ref(&self, ref_: Ref) -> Ref {
+            self.renamer.symbols().follow(ref_)
+        }
+
+        /// Look up a symbol and return it detached from `&self` so the borrow
+        /// can be held across `&mut self` print calls.
+        #[inline]
+        fn get_symbol(&self, ref_: Ref) -> Option<&'a js_ast::Symbol> {
+            let sym = self.renamer.symbols().get_const(ref_)?;
+            // SAFETY: `get_const` returns a `&Symbol` into the inner
+            // `Vec<Symbol>` heap buffer (via `Vec::as_ptr`), a separate
+            // allocation from the renamer struct whose inline `Map` header we
+            // reached it through. That buffer is never reallocated during the
+            // print pass (the only `symbols.get_mut` callers run before
+            // `Printer::init`), and `self.renamer: Renamer<'a, 'a>` borrows the
+            // owning renamer struct for `'a`, so the `Vec` it holds outlives
+            // `'a`. Detaching only this heap-backed reference leaves nothing
+            // pointing at the renamer's inline bytes, so later
+            // `&mut self.renamer` reborrows (`name_for_symbol`) do not alias it.
+            Some(unsafe { &*std::ptr::from_ref(sym) })
+        }
+
+        #[inline]
+        fn get_symbol_with_link(&self, ref_: Ref) -> Option<&'a js_ast::Symbol> {
+            let sym = self.renamer.symbols().get_with_link_const(ref_)?;
+            // SAFETY: see `get_symbol` (`get_with_link_const` delegates to `get_const`).
+            Some(unsafe { &*std::ptr::from_ref(sym) })
         }
 
         /// Borrowck-reshape helper: `Renamer::name_for_symbol` returns a slice
@@ -2404,7 +2427,7 @@ pub mod __gated_printer {
                 return false;
             };
             let ref_ = id.ref_;
-            let Some(symbol) = self.symbols().get_const(self.symbols().follow(ref_)) else {
+            let Some(symbol) = self.get_symbol(self.follow_ref(ref_)) else {
                 return false;
             };
             symbol.kind == js_ast::symbol::Kind::Unbound
@@ -3935,15 +3958,11 @@ pub mod __gated_printer {
                     let mut did_print = false;
 
                     let ref_ = if self.options.module_type != bundle_opts::Format::InternalBakeDev {
-                        self.symbols().follow(e.ref_)
+                        self.follow_ref(e.ref_)
                     } else {
                         e.ref_
                     };
-                    // reshaped for borrowck — `get_const` borrows self;
-                    // capture as `BackRef` so the `&self` borrow is dropped before the
-                    // `&mut self` print calls below. Symbol table is arena-backed and
-                    // outlives the print pass (BackRef invariant).
-                    let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
+                    let symbol = self.get_symbol(ref_).unwrap();
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
                         self.print_undefined(expr.loc, level);
@@ -4617,11 +4636,11 @@ pub mod __gated_printer {
                                     }
                                 }
                                 ExprData::EImportIdentifier(e) => 'inner: {
-                                    let ref_ = self.symbols().follow(e.ref_);
+                                    let ref_ = self.follow_ref(e.ref_);
                                     if self.options.input_files_for_dev_server.is_some() {
                                         break 'inner;
                                     }
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
+                                    if let Some(symbol) = self.get_symbol(ref_) {
                                         if symbol.namespace_alias.is_none()
                                             && key_str.slice8() == self.name_for_symbol(e.ref_)
                                         {
@@ -4659,8 +4678,8 @@ pub mod __gated_printer {
                                     }
                                 }
                                 ExprData::EImportIdentifier(e) => {
-                                    let ref_ = self.symbols().follow(e.ref_);
-                                    if let Some(symbol) = self.symbols().get_const(ref_) {
+                                    let ref_ = self.follow_ref(e.ref_);
+                                    if let Some(symbol) = self.get_symbol(ref_) {
                                         if symbol.namespace_alias.is_none()
                                             && strings::utf16_eql_string(
                                                 key_str.slice16(),
@@ -5285,11 +5304,7 @@ pub mod __gated_printer {
                                 self.print_space();
                                 let last = slice_of(s.items).len() - 1;
                                 for (i, item) in slice_of(s.items).iter().enumerate() {
-                                    // reshaped for borrowck — detach symbol from
-                                    // `&self` via `BackRef` (arena-backed table outlives print).
-                                    let symbol = BackRef::<Symbol>::new(
-                                        self.symbols().get_with_link_const(item.name.ref_).unwrap(),
-                                    );
+                                    let symbol = self.get_symbol_with_link(item.name.ref_).unwrap();
                                     let name = symbol.original_name.slice();
                                     let mut did_print = false;
 
@@ -5356,13 +5371,7 @@ pub mod __gated_printer {
                             let item = array[i];
 
                             if !item.original_name.slice().is_empty() {
-                                // reshaped for borrowck — detach symbol from
-                                // `&self` via `BackRef` (arena-backed; outlives the print pass).
-                                let symbol = self
-                                    .symbols()
-                                    .get_const(item.name.ref_)
-                                    .map(BackRef::<Symbol>::new);
-                                if let Some(symbol) = symbol {
+                                if let Some(symbol) = self.get_symbol(item.name.ref_) {
                                     if let Some(namespace) = &symbol.namespace_alias {
                                         if namespace.was_originally_property_access {
                                             let import_record = self.import_record(
@@ -6384,8 +6393,8 @@ pub mod __gated_printer {
             name: &[u8],
         ) -> Option<js_ast::InlinedEnumValueDecoded> {
             if let ExprData::EImportIdentifier(id) = &target.data {
-                let ref_ = self.symbols().follow(id.ref_);
-                if let Some(symbol) = self.symbols().get_const(ref_) {
+                let ref_ = self.follow_ref(id.ref_);
+                if let Some(symbol) = self.get_symbol(ref_) {
                     if symbol.kind == js_ast::symbol::Kind::TsEnum {
                         if let Some(enum_value) = self.options.ts_enums.and_then(|m| m.get(&ref_)) {
                             if let Some(value) = enum_value.get(name) {

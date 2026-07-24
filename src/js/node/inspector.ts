@@ -5,8 +5,9 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
-const { SafeSet } = require("internal/primordials");
+const { SafeSet, SafeMap } = require("internal/primordials");
 const EventEmitter = require("node:events");
+const { Buffer } = require("node:buffer");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
 const DateNow = Date.now;
@@ -15,6 +16,15 @@ const DateNow = Date.now;
 // receives the plain `{ code, message }` object (Node delivers protocol
 // errors as plain objects, not Error instances).
 const kProtocolError = Symbol("kProtocolError");
+// #handleMethod return marker: the method is not handled locally and must be
+// dispatched through the in-process CDP backend by post().
+const kInProcess = Symbol("kInProcess");
+
+// Node surfaces a backend protocol error to the callback as an Error whose
+// message is "Inspector error <code>: <message>" and code ERR_INSPECTOR_COMMAND.
+function makeProtocolError(error: { code?: number; message?: string }) {
+  return $ERR_INSPECTOR_COMMAND(`${error.code ?? -32000}: ${error.message ?? "Unknown error"}`);
+}
 
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
@@ -35,9 +45,39 @@ const waitForNodeInspectorConnection = $newCppFunction(
   0,
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
+// In-process CDP: dispatch translated JSC-protocol messages against this
+// realm's inspector controller synchronously on the calling thread, and get
+// back every message the backend produced (see BunDebugger.cpp).
+const dispatchInProcessInspectorMessage = $newCppFunction(
+  "BunDebugger.cpp",
+  "jsFunction_dispatchInProcessInspectorMessage",
+  2,
+);
+const drainInProcessInspectorMessages = $newCppFunction(
+  "BunDebugger.cpp",
+  "jsFunction_drainInProcessInspectorMessages",
+  0,
+);
+const disconnectInProcessInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_disconnectInProcessInspector", 0);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
 
+// Captured at module load so the console-hook stack capture keeps working
+// (and stays safe) after user code replaces or freezes globalThis.Error.
+const ErrorObject = globalThis.Error;
+const errorCaptureStackTrace = ErrorObject.captureStackTrace;
+
 let activeInspectorUrl: string | undefined;
+
+// Same check as Node's internal/net.js isLoopback().
+function isLoopbackHost(host: string) {
+  const hostLower = host.toLowerCase();
+  return (
+    hostLower === "localhost" ||
+    hostLower.startsWith("127.") ||
+    hostLower === "[::1]" ||
+    hostLower === "[0:0:0:0:0:0:0:1]"
+  );
+}
 
 function open(port?: number, host?: string, wait?: boolean) {
   if (activeInspectorUrl !== undefined) {
@@ -52,6 +92,17 @@ function open(port?: number, host?: string, wait?: boolean) {
     if (typeof port !== "number" || !Number.isInteger(port) || port < 0 || port > 65535) {
       throw $ERR_OUT_OF_RANGE("port", ">= 0 && <= 65535", port);
     }
+  }
+  // Node warns whenever a non-loopback host is passed, before binding.
+  if (typeof host === "string" && host && !isLoopbackHost(host)) {
+    process.emitWarning(
+      "Binding the inspector to a public IP with an open port is insecure, " +
+        "as it allows external hosts to connect to the inspector " +
+        "and perform a remote code execution attack. " +
+        "Documentation can be found at " +
+        "https://nodejs.org/api/cli.html#--inspecthostport",
+      "SecurityWarning",
+    );
   }
   const portNumber = port === undefined || port === null ? process.debugPort : port;
   const hostname = typeof host === "string" && host.length > 0 ? host : "127.0.0.1";
@@ -96,7 +147,9 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
-  process.stderr.write(`Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`);
+  process.stderr.write(
+    `Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
+  );
 
   if (wait) {
     waitForNodeInspectorConnection();
@@ -125,6 +178,53 @@ function waitForDebugger() {
     throw $ERR_INSPECTOR_NOT_ACTIVE();
   }
   waitForNodeInspectorConnection();
+}
+
+// --- In-process CDP backend --------------------------------------------------
+// Methods the hand-written Session switch does not cover are translated by the
+// same CDP<->JSC adapter the WebSocket server uses (internal/inspector/cdp),
+// and dispatched synchronously against this realm's inspector controller on
+// the calling thread. All in-process sessions share the one native channel;
+// each session owns an adapter and matches replies by command id.
+let InspectorCDPAdapter: any;
+const inProcessAdapters: Set<any> = new SafeSet();
+let drainScheduled = false;
+// JSC broadcasts every backend reply to every attached frontend, so backend
+// command ids must be unique across all in-process adapters and above the
+// range remote WebSocket clients count from (they start at 1).
+const kFirstInProcessBackendId = 100_000_000;
+const kLastInProcessBackendId = 2_000_000_000;
+let nextInProcessBackendId = kFirstInProcessBackendId;
+function allocateInProcessBackendId() {
+  const id = nextInProcessBackendId++;
+  if (nextInProcessBackendId > kLastInProcessBackendId) nextInProcessBackendId = kFirstInProcessBackendId;
+  return id;
+}
+
+// Fans a backend message out to every session adapter; each ignores ids it
+// did not issue. Delivery to user code is deferred by the adapter's
+// writeToClient, so nothing here re-enters user JS.
+function deliverBackendMessages(messages: string[]) {
+  for (const message of messages) {
+    for (const adapter of inProcessAdapters) adapter.handleBackendMessage(message);
+  }
+}
+
+// Delivers whatever the native channel buffered outside a synchronous
+// dispatch (Debugger.scriptParsed raised while user code compiles, deferred
+// Runtime.awaitPromise replies, ...). Registered natively as the channel's
+// wake callback and also scheduled after each dispatch.
+function drainInProcessBackend() {
+  drainScheduled = false;
+  if (inProcessAdapters.size === 0) return;
+  const messages = drainInProcessInspectorMessages();
+  if (messages.length) deliverBackendMessages(messages);
+}
+
+function scheduleBackendDrain() {
+  if (drainScheduled) return;
+  drainScheduled = true;
+  queueMicrotask(drainInProcessBackend);
 }
 
 // Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
@@ -196,7 +296,7 @@ function toRemoteObject(arg: unknown): object {
 // original method but are not re-emitted.
 let emittingConsoleAPI = false;
 
-function emitConsoleAPICalled(type: string, args: unknown[]) {
+function emitConsoleAPICalled(type: string, args: unknown[], stackTrace?: object) {
   if (emittingConsoleAPI) return;
   emittingConsoleAPI = true;
   try {
@@ -209,15 +309,14 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
       try {
         // A fresh message per session: a listener that mutates its payload
         // must not contaminate what the next session receives.
-        const message = {
-          method: "Runtime.consoleAPICalled",
-          params: {
-            type,
-            args: args.map(toRemoteObject),
-            executionContextId: 1,
-            timestamp,
-          },
+        const params: any = {
+          type,
+          args: args.map(toRemoteObject),
+          executionContextId: 1,
+          timestamp,
         };
+        if (stackTrace !== undefined) params.stackTrace = stackTrace;
+        const message = { method: "Runtime.consoleAPICalled", params };
         // Node's Session#onMessage emits the method-specific event first,
         // then the generic "inspectorNotification".
         session.emit("Runtime.consoleAPICalled", message);
@@ -240,11 +339,102 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
   }
 }
 
+// V8 attaches the JS call stack to Runtime.consoleAPICalled; clients (and
+// Node's tests) navigate from the top frame to the console call site. The
+// CallSite objects Bun's captureStackTrace produces already carry
+// source-mapped (original) positions, unlike raw JSC frames.
+function returnCallSites(_error, sites) {
+  return sites;
+}
+
+function dispatchInProcessBackendMessage(backendMessage: string) {
+  // The command executes here, on this thread; hand every message it
+  // produced (response + events) back through the adapters.
+  deliverBackendMessages(dispatchInProcessInspectorMessage(backendMessage, drainInProcessBackend));
+  scheduleBackendDrain();
+}
+
+function settleInProcessPost(callback, error, value) {
+  if (!callback) return;
+  if (error === null || error === undefined) callback(null, value);
+  else callback(makeProtocolError(error), undefined);
+}
+
+function settleLocalPost(callback, result) {
+  if (result instanceof Error) {
+    callback(result, undefined);
+  } else if (result !== null && typeof result === "object" && kProtocolError in result) {
+    callback(result[kProtocolError], undefined);
+  } else {
+    callback(null, result);
+  }
+}
+
+function captureConsoleStackTrace(hook: Function) {
+  const holder: { stack?: any } = {};
+  const previousPrepare = ErrorObject.prepareStackTrace;
+  const previousLimit = ErrorObject.stackTraceLimit;
+  try {
+    ErrorObject.prepareStackTrace = returnCallSites;
+    ErrorObject.stackTraceLimit = 30;
+    errorCaptureStackTrace.$call(ErrorObject, holder, hook);
+    const sites = holder.stack;
+    if (!$isJSArray(sites)) return undefined;
+    const callFrames: object[] = [];
+    for (const site of sites) {
+      let fileName: string | undefined;
+      let functionName: string | undefined;
+      let line = 0;
+      let column = 0;
+      try {
+        fileName = site.getFileName();
+        functionName = site.getFunctionName();
+        line = site.getLineNumber() | 0;
+        column = site.getColumnNumber() | 0;
+      } catch {
+        continue;
+      }
+      if (!fileName) continue;
+      let url = fileName;
+      if (isAbsolute(fileName)) {
+        try {
+          url = pathToFileURL(fileName).href;
+        } catch {}
+      }
+      $arrayPush(callFrames, {
+        functionName: functionName ?? "",
+        scriptId: "",
+        url,
+        lineNumber: line > 0 ? line - 1 : 0,
+        columnNumber: column > 0 ? column - 1 : 0,
+      });
+    }
+    return { callFrames };
+  } finally {
+    ErrorObject.prepareStackTrace = previousPrepare;
+    ErrorObject.stackTraceLimit = previousLimit;
+  }
+}
+
+// The stack capture writes Error's statics; if user code froze them or
+// swapped Error, degrade to no stackTrace — a console call must never throw.
+function tryCaptureConsoleStackTrace(hook: Function) {
+  try {
+    return captureConsoleStackTrace(hook);
+  } catch {
+    return undefined;
+  }
+}
+
 function makeConsoleHook(type: string, original: Function): Function {
-  return function (this: unknown, ...args: unknown[]) {
-    emitConsoleAPICalled(type, args);
+  const hook = function (this: unknown, ...args: unknown[]) {
+    // Skip the stack capture entirely when the emit is guarded out.
+    if (!emittingConsoleAPI && runtimeEnabledSessions.size > 0) {
+      emitConsoleAPICalled(type, args, tryCaptureConsoleStackTrace(hook));
+    }
     return original.$apply(this, args);
   };
+  return hook;
 }
 
 function installConsoleHooks() {
@@ -271,6 +461,469 @@ function removeConsoleHooks() {
   }
   hookedConsoleMethods.length = 0;
 }
+
+// --- Network domain -------------------------------------------------------
+// Mirrors src/inspector/network_agent.cc from Node: the public inspector.Network
+// entry points validate and buffer here, and only the commands below hand data
+// back to a frontend.
+
+// Node caps a single resource at 5MB and the whole buffer at 100MB, silently
+// dropping a blob that would exceed either.
+const kDefaultMaxResourceBufferSize = 5 * 1024 * 1024;
+const kDefaultMaxTotalBufferSize = 100 * 1024 * 1024;
+
+class NetworkRequestEntry {
+  isStreaming = false;
+  isRequestFinished: boolean;
+  isResponseFinished = false;
+  requestIsUTF8: boolean;
+  responseIsUTF8 = false;
+  requestDataBlobs: Uint8Array[] = [];
+  responseDataBlobs: Uint8Array[] = [];
+  bufferSize = 0;
+  maxResourceBufferSize: number;
+
+  constructor(hasPostData: boolean, requestIsUTF8: boolean, maxResourceBufferSize: number) {
+    // A request with no body is born finished; only hasPostData obliges the
+    // caller to send dataSent({ finished: true }).
+    this.isRequestFinished = !hasPostData;
+    this.requestIsUTF8 = requestIsUTF8;
+    // Captured per entry: a later enable() must not retroactively shrink it.
+    this.maxResourceBufferSize = maxResourceBufferSize;
+  }
+}
+
+// Node keeps the buffer on the per-session NetworkAgent, so one session's
+// enable()/disable() cannot disturb another's buffered requests.
+class NetworkState {
+  // Insertion-ordered: the oldest entry is evicted first once the total cap is hit.
+  requests: Map<string, NetworkRequestEntry> = new SafeMap();
+  maxResourceBufferSize = kDefaultMaxResourceBufferSize;
+  maxTotalBufferSize = kDefaultMaxTotalBufferSize;
+  totalBufferSize = 0;
+}
+
+const networkEnabledSessions: Map<Session, NetworkState> = new SafeMap();
+
+function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
+  if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
+  // Copy: Node's Binary::fromUint8Array eagerly copies, so a caller that
+  // recycles its chunk buffer must not corrupt what we buffered.
+  blobs.push(new Uint8Array(blob));
+  entry.bufferSize += blob.byteLength;
+  state.totalBufferSize += blob.byteLength;
+  while (state.totalBufferSize > state.maxTotalBufferSize) {
+    let oldest: string | undefined;
+    let oldestEntry: NetworkRequestEntry | undefined;
+    for (const { 0: key, 1: value } of state.requests) {
+      oldest = key;
+      oldestEntry = value;
+      break;
+    }
+    if (oldest === undefined) break;
+    state.totalBufferSize -= oldestEntry!.bufferSize;
+    state.requests.delete(oldest);
+  }
+}
+
+function dropNetworkEntry(state: NetworkState, requestId: string, entry: NetworkRequestEntry) {
+  state.totalBufferSize -= entry.bufferSize;
+  state.requests.delete(requestId);
+}
+
+function concatBlobs(blobs: Uint8Array[]) {
+  let total = 0;
+  for (const blob of blobs) total += blob.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const blob of blobs) {
+    out.set(blob, offset);
+    offset += blob.byteLength;
+  }
+  return out;
+}
+
+// Node reports a missing property and a wrong-typed one identically; `label`
+// carries the dotted path it uses for nested fields ("request.url").
+function requireEventString(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "string") throw new TypeError(`Missing ${label} in event`);
+  return value;
+}
+
+// ObjectGetDouble: any JS number.
+function requireEventNumber(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "number") throw new TypeError(`Missing ${label} in event`);
+  return value;
+}
+
+// ObjectGetInt: Node requires a real Int32 here, not just a number.
+function requireEventInt(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+    throw new TypeError(`Missing ${label} in event`);
+  }
+  return value;
+}
+
+function requireEventObject(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "object" || value === null) throw new TypeError(`Missing ${label} in event`);
+  return value;
+}
+
+function requireEventUint8Array(params: any, key: string) {
+  requireEventObject(params, key);
+  const value = params[key];
+  if (!(value instanceof Uint8Array)) throw new TypeError("Expected data to be Uint8Array in event");
+  return value as Uint8Array;
+}
+
+// Header values must be protocol strings; Node rejects anything else outright.
+function headersFromObject(source: any, key: string, label: string) {
+  const raw = requireEventObject(source, key, label);
+  const headers: Record<string, string> = { __proto__: null } as any;
+  for (const name of Object.keys(raw)) {
+    const value = raw[name];
+    if (typeof value !== "string") throw new TypeError("Invalid header value in event");
+    headers[name] = value;
+  }
+  return headers;
+}
+
+function requestFromObject(params: any) {
+  const request = requireEventObject(params, "request");
+  const url = requireEventString(request, "url", "request.url");
+  const method = requireEventString(request, "method", "request.method");
+  const headers = headersFromObject(request, "headers", "request.headers");
+  // Node's ObjectGetBool yields false for any non-boolean, so `hasPostData: 1`
+  // must not arm the dataSent({ finished: true }) handshake.
+  // Extra properties are dropped: Node emits exactly this shape.
+  return { url, method, hasPostData: request.hasPostData === true, headers };
+}
+
+function responseFromObject(params: any, key: string, withUrl: boolean) {
+  const response = requireEventObject(params, key);
+  const status = requireEventInt(response, "status", "response.status");
+  const statusText = requireEventString(response, "statusText", "response.statusText");
+  const headers = headersFromObject(response, "headers", "response.headers");
+  if (!withUrl) return { status, statusText, headers };
+  const url = requireEventString(response, "url", "response.url");
+  return {
+    url,
+    status,
+    statusText,
+    headers,
+    mimeType: typeof response.mimeType === "string" ? response.mimeType : "",
+    charset: typeof response.charset === "string" ? response.charset : "",
+  };
+}
+
+// Each session's delivery is isolated: a throwing listener becomes a
+// process warning (Node's contract) and never starves other sessions.
+function emitToSession(session: Session, method: string, params: object) {
+  const message = { method, params };
+  try {
+    session.emit(method, message);
+    session.emit("inspectorNotification", message);
+  } catch (error) {
+    process.emitWarning(toWarning(error));
+  }
+}
+
+// process.emitWarning throws ERR_INVALID_ARG_TYPE for values that are neither
+// strings nor Errors, so a listener throwing `{}` must not defeat the
+// isolation guards above/below. Mirrors emitConsoleAPICalled's handling.
+function toWarning(e: unknown): Error {
+  try {
+    return e instanceof Error ? e : new ErrorObject(String(e));
+  } catch {
+    return new ErrorObject("inspector listener threw a value that could not be stringified");
+  }
+}
+
+// Each enabled session owns its buffer, so the event is applied once per session.
+// The per-event context rides as an explicit argument so the per-session
+// callbacks can be hoisted module-level functions instead of per-event
+// closures (no-inline-closures rule).
+function forEachNetworkSession<C>(fn: (session: Session, state: NetworkState, ctx: C) => void, ctx: C) {
+  for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state, ctx);
+}
+
+const Network = {
+  requestWillBeSent(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const wallTime = requireEventNumber(params, "wallTime");
+    const request = requestFromObject(params);
+    // The request charset sits at the top level, not inside `request`.
+    const requestIsUTF8 = params.charset === "utf-8";
+    forEachNetworkSession(sessionRequestWillBeSent, { requestId, request, requestIsUTF8, timestamp, wallTime });
+  },
+
+  responseReceived(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const type = requireEventString(params, "type");
+    const response = responseFromObject(params, "response", true);
+    forEachNetworkSession(sessionResponseReceived, { requestId, timestamp, type, response });
+  },
+
+  loadingFinished(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    forEachNetworkSession(sessionLoadingFinished, { requestId, timestamp });
+  },
+
+  loadingFailed(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const type = requireEventString(params, "type");
+    const errorText = requireEventString(params, "errorText");
+    forEachNetworkSession(sessionLoadingFailed, { requestId, timestamp, type, errorText });
+  },
+
+  // dataSent is never emitted; it only feeds Network.getRequestPostData.
+  dataSent(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    // `finished` short-circuits before any other field is read.
+    const finished = params.finished === true;
+    if (!finished) {
+      requireEventNumber(params, "timestamp");
+      requireEventInt(params, "dataLength");
+      requireEventUint8Array(params, "data");
+    }
+    forEachNetworkSession(sessionDataSent, { requestId, finished, data: params.data });
+  },
+
+  dataReceived(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const dataLength = requireEventInt(params, "dataLength");
+    const encodedDataLength = requireEventInt(params, "encodedDataLength");
+    const data = requireEventUint8Array(params, "data");
+    forEachNetworkSession(sessionDataReceived, { requestId, timestamp, dataLength, encodedDataLength, data });
+  },
+
+  webSocketCreated(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const url = requireEventString(params, "url");
+    forEachNetworkSession(sessionWebSocketCreated, { requestId, url });
+  },
+
+  webSocketClosed(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    forEachNetworkSession(sessionWebSocketClosed, { requestId, timestamp });
+  },
+
+  webSocketHandshakeResponseReceived(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const response = responseFromObject(params, "response", false);
+    forEachNetworkSession(sessionWebSocketHandshakeResponseReceived, { requestId, timestamp, response });
+  },
+};
+
+function sessionRequestWillBeSent(session, state, ctx) {
+  const { requestId, request } = ctx;
+  // A duplicate requestId drops the whole event for that session.
+  if (state.requests.has(requestId)) return;
+  state.requests.set(
+    requestId,
+    new NetworkRequestEntry(request.hasPostData, ctx.requestIsUTF8, state.maxResourceBufferSize),
+  );
+  emitToSession(session, "Network.requestWillBeSent", {
+    requestId,
+    request,
+    timestamp: ctx.timestamp,
+    wallTime: ctx.wallTime,
+    initiator: { type: "script" },
+  });
+}
+
+function sessionResponseReceived(session, state, ctx) {
+  const { requestId, response } = ctx;
+  const entry = state.requests.get(requestId);
+  if (entry === undefined) return;
+  entry.responseIsUTF8 = response.charset === "utf-8";
+  emitToSession(session, "Network.responseReceived", {
+    requestId,
+    timestamp: ctx.timestamp,
+    type: ctx.type,
+    response,
+  });
+}
+
+function sessionLoadingFinished(session, state, ctx) {
+  const { requestId } = ctx;
+  // Node emits before the lookup, so an unknown requestId still reaches the frontend.
+  emitToSession(session, "Network.loadingFinished", { requestId, timestamp: ctx.timestamp });
+  const entry = state.requests.get(requestId);
+  if (entry === undefined) return;
+  if (entry.isStreaming) dropNetworkEntry(state, requestId, entry);
+  else entry.isResponseFinished = true;
+}
+
+function sessionLoadingFailed(session, state, ctx) {
+  const { requestId } = ctx;
+  emitToSession(session, "Network.loadingFailed", {
+    requestId,
+    timestamp: ctx.timestamp,
+    type: ctx.type,
+    errorText: ctx.errorText,
+  });
+  const entry = state.requests.get(requestId);
+  if (entry !== undefined) dropNetworkEntry(state, requestId, entry);
+}
+
+function sessionDataSent(_session, state, ctx) {
+  const entry = state.requests.get(ctx.requestId);
+  if (entry === undefined) return;
+  if (ctx.finished) {
+    entry.isRequestFinished = true;
+    return;
+  }
+  pushNetworkBlob(state, entry, entry.requestDataBlobs, ctx.data);
+}
+
+function sessionDataReceived(session, state, ctx) {
+  const { requestId, data } = ctx;
+  const entry = state.requests.get(requestId);
+  if (entry === undefined) return;
+  // Buffer until a frontend asks to stream, then emit live.
+  if (entry.isStreaming) {
+    emitToSession(session, "Network.dataReceived", {
+      requestId,
+      timestamp: ctx.timestamp,
+      dataLength: ctx.dataLength,
+      encodedDataLength: ctx.encodedDataLength,
+      data: Buffer.from(data).toString("base64"),
+    });
+  } else {
+    pushNetworkBlob(state, entry, entry.responseDataBlobs, data);
+  }
+}
+
+function sessionWebSocketCreated(session, _state, ctx) {
+  emitToSession(session, "Network.webSocketCreated", {
+    requestId: ctx.requestId,
+    url: ctx.url,
+    initiator: { type: "script" },
+  });
+}
+
+function sessionWebSocketClosed(session, _state, ctx) {
+  emitToSession(session, "Network.webSocketClosed", { requestId: ctx.requestId, timestamp: ctx.timestamp });
+}
+
+function sessionWebSocketHandshakeResponseReceived(session, _state, ctx) {
+  emitToSession(session, "Network.webSocketHandshakeResponseReceived", {
+    requestId: ctx.requestId,
+    timestamp: ctx.timestamp,
+    response: ctx.response,
+  });
+}
+
+// Node routes every entry point through broadcastToFrontend, which defaults a
+// missing params to {} and then validateObject()s it.
+function guardEventParams(domain: Record<string, Function>) {
+  for (const name of Object.keys(domain)) {
+    const original = domain[name];
+    domain[name] = function (params = {}) {
+      if (typeof params !== "object" || params === null || $isArray(params)) {
+        // Node's validateObject renders this type name lowercase.
+        throw $ERR_INVALID_ARG_TYPE("params", "object", params);
+      }
+      return original.$call(this, params);
+    };
+  }
+}
+guardEventParams(Network);
+
+// --- DOMStorage domain ------------------------------------------------------
+// Mirrors src/inspector/dom_storage_agent.cc: validate then emit. Only the
+// event surface exists; there is no storage backend to inspect.
+const domStorageEnabledSessions: Set<Session> = new SafeSet();
+
+function emitDOMStorageEvent(method: string, params: object) {
+  for (const session of domStorageEnabledSessions) emitToSession(session, method, params);
+}
+
+// storageId sub-fields carry their own error wording ("... in storageId").
+function storageIdFromObject(params: any) {
+  const raw = requireEventObject(params, "storageId");
+  const securityOrigin = raw.securityOrigin;
+  if (typeof securityOrigin !== "string") throw new TypeError("Missing securityOrigin in storageId");
+  const storageKey = raw.storageKey;
+  if (typeof storageKey !== "string") throw new TypeError("Missing storageKey in storageId");
+  return { securityOrigin, isLocalStorage: raw.isLocalStorage === true, storageKey };
+}
+
+const DOMStorage = {
+  domStorageItemAdded(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    const key = requireEventString(params, "key");
+    const newValue = requireEventString(params, "newValue");
+    emitDOMStorageEvent("DOMStorage.domStorageItemAdded", { storageId, key, newValue });
+  },
+
+  domStorageItemRemoved(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    const key = requireEventString(params, "key");
+    emitDOMStorageEvent("DOMStorage.domStorageItemRemoved", { storageId, key });
+  },
+
+  domStorageItemUpdated(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    const key = requireEventString(params, "key");
+    const oldValue = requireEventString(params, "oldValue");
+    const newValue = requireEventString(params, "newValue");
+    emitDOMStorageEvent("DOMStorage.domStorageItemUpdated", { storageId, key, oldValue, newValue });
+  },
+
+  domStorageItemsCleared(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    const storageId = storageIdFromObject(params);
+    emitDOMStorageEvent("DOMStorage.domStorageItemsCleared", { storageId });
+  },
+
+  // Pseudo-event (not part of CDP): seeds the agent's storage map. There
+  // is no backing storage here, but the payload is still validated the way
+  // Node does, including hostile Proxy storage maps.
+  registerStorage(params: any) {
+    if (domStorageEnabledSessions.size === 0) return;
+    if (typeof params.isLocalStorage !== "boolean") throw new TypeError("Missing isLocalStorage in event");
+    const storageMap = requireEventObject(params, "storageMap");
+    let keys: string[];
+    try {
+      keys = Object.getOwnPropertyNames(storageMap);
+    } catch {
+      throw new TypeError("Failed to get property names from storageMap");
+    }
+    for (const key of keys) {
+      try {
+        String(storageMap[key]);
+      } catch {
+        throw new TypeError("Failed to get value from storageMap");
+      }
+    }
+  },
+};
+guardEventParams(DOMStorage);
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
 // ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
@@ -412,6 +1065,9 @@ function collectCoverageScripts(): any[] | Error {
   }
 }
 
+// Mirrors Node v26.3.0 lib/inspector.js Session (connect/post/EventEmitter
+// contract), with dispatch translated onto JSC's protocol via the in-process
+// CDP adapter instead of V8's connection.
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
@@ -422,6 +1078,104 @@ class Session extends EventEmitter {
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
+  #adapter: any = undefined;
+  // Resolvers for in-flight in-process commands, keyed by client command id.
+  #pendingResults: Map<number, (err: any, result?: any) => void> = new SafeMap();
+  #nextCommandId = 1;
+  #dispatchingClientCommand = false;
+
+  // Lazily route this session's untranslated commands through the CDP<->JSC
+  // adapter and the in-process native channel; replies land in
+  // #pendingResults keyed by command id, events go to session listeners.
+  #inProcessAdapter() {
+    if (this.#adapter !== undefined) return this.#adapter;
+    InspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter;
+    const adapter = new InspectorCDPAdapter(
+      dispatchInProcessBackendMessage,
+      this.#deliverClientMessage.bind(this),
+      // No wait-for-debugger or exit-handshake state: an in-process Session
+      // never retains the context, matching Node's non-preventShutdown path.
+      undefined,
+      undefined,
+      allocateInProcessBackendId,
+    );
+    inProcessAdapters.add(adapter);
+    this.#adapter = adapter;
+    return adapter;
+  }
+
+  // Runs Node's Session#onMessage contract for one adapter message: a reply
+  // completes its post() callback, an event is emitted (method-specific first).
+  // A throw from user code becomes a process warning, never a swallowed error.
+  #onClientMessage(parsed: any) {
+    const { id, error, method } = parsed;
+    try {
+      if (id !== undefined) {
+        const done = this.#pendingResults.get(id);
+        if (done === undefined) return;
+        this.#pendingResults.delete(id);
+        if (error) done({ code: error.code, message: error.message });
+        else done(null, parsed.result ?? {});
+        return;
+      }
+      if (typeof method === "string") {
+        const message = { method, params: parsed.params ?? {} };
+        this.emit(method, message);
+        this.emit("inspectorNotification", message);
+      }
+    } catch (thrown) {
+      process.emitWarning(toWarning(thrown));
+    }
+  }
+
+  // Command replies (messages with an id) produced during a post() dispatch
+  // are delivered after the dispatch unwinds, so a throwing callback can
+  // neither be misread by the adapter as a command failure nor run before
+  // post() returns. Events (messages with a method) always deliver
+  // immediately — a Debugger.paused from a pause nested inside a dispatch
+  // must reach listeners before execution continues, and #onClientMessage
+  // already contains listener throws.
+  #deliverClientMessage(clientMessage: string) {
+    let parsed;
+    try {
+      parsed = JSON.parse(clientMessage);
+    } catch {
+      return;
+    }
+    if (this.#dispatchingClientCommand && parsed?.id !== undefined) {
+      queueMicrotask(this.#onClientMessage.bind(this, parsed));
+    } else {
+      this.#onClientMessage(parsed);
+    }
+  }
+
+  // Streams a V8-format heap snapshot to this session as
+  // HeapProfiler.addHeapSnapshotChunk events, matching V8's chunked delivery.
+  #emitHeapSnapshot() {
+    const snapshot = Bun.generateHeapSnapshot("v8");
+    const chunkSize = 100 * 1024;
+    for (let offset = 0; offset < snapshot.length; offset += chunkSize) {
+      emitToSession(this, "HeapProfiler.addHeapSnapshotChunk", { chunk: snapshot.slice(offset, offset + chunkSize) });
+    }
+  }
+
+  // Dispatches `method` through the in-process CDP backend. `done` is called
+  // exactly once with (protocolError, result).
+  #postInProcess(method: string, params: object | undefined, done: (err: any, result?: any) => void) {
+    const adapter = this.#inProcessAdapter();
+    const id = this.#nextCommandId++;
+    this.#pendingResults.set(id, done);
+    const message = JSON.stringify(params === undefined ? { id, method } : { id, method, params });
+    const wasDispatching = this.#dispatchingClientCommand;
+    this.#dispatchingClientCommand = true;
+    try {
+      adapter.handleClientMessage(message);
+    } finally {
+      // Restore rather than clear: a post() re-entered from a listener must not
+      // flip the outer dispatch back to synchronous delivery.
+      this.#dispatchingClientCommand = wasDispatching;
+    }
+  }
 
   connect() {
     if (this.#connected) {
@@ -448,7 +1202,22 @@ class Session extends EventEmitter {
     this.#connected = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
+    networkEnabledSessions.delete(this);
+    domStorageEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
+    if (this.#adapter !== undefined) {
+      inProcessAdapters.delete(this.#adapter);
+      this.#adapter = undefined;
+      // Node's contract: every callback still waiting on a reply is failed
+      // with "Inspector error -32000: Execution context was destroyed."
+      // (ERR_INSPECTOR_COMMAND), like any in-flight command at teardown.
+      const pending = this.#pendingResults;
+      this.#pendingResults = new SafeMap();
+      for (const done of pending.values()) {
+        process.nextTick(done, { code: -32000, message: "Execution context was destroyed." });
+      }
+      if (inProcessAdapters.size === 0) disconnectInProcessInspector();
+    }
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
     // pausing the process, matching Node's disconnect() contract.
@@ -470,45 +1239,42 @@ class Session extends EventEmitter {
       params = undefined;
     }
     if (params !== undefined && params !== null && typeof params !== "object") {
-      throw $ERR_INVALID_ARG_TYPE("params", "Object", params);
+      throw $ERR_INVALID_ARG_TYPE("params", "object", params);
     }
     if (callback !== undefined) validateFunction(callback, "callback");
 
     if (!this.#connected) {
       const error = $ERR_INSPECTOR_NOT_CONNECTED();
       if (callback) {
-        queueMicrotask(() => callback(error));
+        queueMicrotask(callback.bind(undefined, error));
         return;
       }
       throw error;
     }
 
-    const result = this.#handleMethod(method, params as object | undefined);
+    let result = this.#handleMethod(method, params as object | undefined);
+
+    // Methods without local handling execute on the real inspector backend.
+    // The in-process backend is bound to the main realm; worker sessions
+    // keep Node's method-not-found protocol error instead.
+    if (result === kInProcess) {
+      if (!Bun.isMainThread) {
+        result = $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
+      } else {
+        // Node's post() is asynchronous: with a callback the reply arrives
+        // through it; without one nothing is returned and a protocol error
+        // is neither thrown nor otherwise observable.
+        this.#postInProcess(method, params as object | undefined, settleInProcessPost.bind(undefined, callback));
+        return;
+      }
+    }
 
     if (callback) {
-      // Callback API - async
-      queueMicrotask(() => {
-        if (result instanceof Error) {
-          callback(result, undefined);
-        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
-          callback(result[kProtocolError], undefined);
-        } else {
-          callback(null, result);
-        }
-      });
-    } else {
-      // Sync throw for errors when no callback
-      if (result instanceof Error) {
-        throw result;
-      }
-      if (result !== null && typeof result === "object" && kProtocolError in result) {
-        const protocolError = result[kProtocolError];
-        const error = new Error(protocolError.message);
-        error.code = protocolError.code;
-        throw error;
-      }
-      return result;
+      queueMicrotask(settleLocalPost.bind(undefined, callback, result));
     }
+    // Node's post() always returns undefined, and without a callback a
+    // protocol error is neither thrown nor otherwise observable (verified on
+    // v26.3.0 — errors are callback-only).
   }
 
   #handleMethod(method: string, params?: object): any {
@@ -522,6 +1288,77 @@ class Session extends EventEmitter {
         runtimeEnabledSessions.delete(this);
         if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
         return {};
+
+      case "Network.enable": {
+        // Node rebuilds this session's buffer on every enable, discarding prior state.
+        const state = new NetworkState();
+        // Node's dispatcher delivers these as Maybe<int>, so clamp to finite
+        // non-negative int32 and fall through to the defaults otherwise: NaN
+        // would disable eviction and a negative would evict the entry just
+        // written. Gate on the ToInt32-converted value so a finite input
+        // above 2^31 cannot wrap negative past the sign check.
+        const maxTotal = (params as any)?.maxTotalBufferSize;
+        const maxResource = (params as any)?.maxResourceBufferSize;
+        if (typeof maxTotal === "number" && Number.isFinite(maxTotal)) {
+          const v = maxTotal | 0;
+          if (v >= 0) state.maxTotalBufferSize = v;
+        }
+        if (typeof maxResource === "number" && Number.isFinite(maxResource)) {
+          const v = maxResource | 0;
+          if (v >= 0) state.maxResourceBufferSize = v;
+        }
+        networkEnabledSessions.set(this, state);
+        return {};
+      }
+
+      case "Network.disable":
+        networkEnabledSessions.delete(this);
+        return {};
+
+      case "DOMStorage.enable":
+        domStorageEnabledSessions.add(this);
+        return {};
+
+      case "DOMStorage.disable":
+        domStorageEnabledSessions.delete(this);
+        return {};
+
+      case "Network.streamResourceContent": {
+        const state = networkEnabledSessions.get(this);
+        const requestId = (params as any)?.requestId;
+        const entry = state?.requests.get(requestId);
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        entry.isStreaming = true;
+        const buffered = concatBlobs(entry.responseDataBlobs);
+        entry.bufferSize -= buffered.byteLength;
+        state.totalBufferSize -= buffered.byteLength;
+        entry.responseDataBlobs = [];
+        if (entry.isResponseFinished) dropNetworkEntry(state, requestId, entry);
+        return { bufferedData: Buffer.from(buffered).toString("base64") };
+      }
+
+      case "Network.getResponseBody": {
+        const state = networkEnabledSessions.get(this);
+        const requestId = (params as any)?.requestId;
+        const entry = state?.requests.get(requestId);
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        if (entry.isStreaming) return $ERR_INSPECTOR_COMMAND("-32602: Response body of the request is been streamed");
+        if (!entry.isResponseFinished) return $ERR_INSPECTOR_COMMAND("-32602: Response data is not finished yet");
+        const body = concatBlobs(entry.responseDataBlobs);
+        dropNetworkEntry(state, requestId, entry);
+        if (entry.responseIsUTF8) return { body: Buffer.from(body).toString("utf8"), base64Encoded: false };
+        return { body: Buffer.from(body).toString("base64"), base64Encoded: true };
+      }
+
+      case "Network.getRequestPostData": {
+        const state = networkEnabledSessions.get(this);
+        const requestId = (params as any)?.requestId;
+        const entry = state?.requests.get(requestId);
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        if (!entry.isRequestFinished) return $ERR_INSPECTOR_COMMAND("-32602: Request data is not finished yet");
+        if (!entry.requestIsUTF8) return $ERR_INSPECTOR_COMMAND("-32000: Unable to serialize binary request body");
+        return { postData: Buffer.from(concatBlobs(entry.requestDataBlobs)).toString("utf8") };
+      }
 
       case "Profiler.enable":
         this.#profilerEnabled = true;
@@ -618,11 +1455,28 @@ class Session extends EventEmitter {
         return { result: buildScriptCoverageList(scripts, false, false) };
       }
 
-      // Configuration-only Debugger commands are forwarded to the inspector
-      // server started by inspector.open() (vitest --inspect-brk uses
-      // Debugger.enable + Debugger.setBreakpointByUrl to stop at the first
-      // test file). The forwarding is fire-and-forget: results such as
-      // breakpointId are not available in-process.
+      // HeapProfiler snapshotting: V8 streams the snapshot as
+      // addHeapSnapshotChunk events and then answers the command. There is no
+      // allocation-tracking timeline to keep, so start/stopTrackingHeapObjects
+      // reduce to "no-op" and "emit a snapshot" respectively.
+      // collectGarbage falls through to kInProcess so it maps onto Heap.gc
+      // via the adapter, matching the remote path (and Node).
+      case "HeapProfiler.enable":
+      case "HeapProfiler.disable":
+      case "HeapProfiler.startTrackingHeapObjects":
+        return {};
+
+      case "HeapProfiler.takeHeapSnapshot":
+      case "HeapProfiler.stopTrackingHeapObjects": {
+        this.#emitHeapSnapshot();
+        return {};
+      }
+
+      // When an inspector server is active (inspector.open() / vitest
+      // --inspect-brk), Debugger configuration must reach that server's
+      // backend so breakpoints pause where the remote debugger controls
+      // resumption. The forwarding is fire-and-forget. Without a server these
+      // fall through to the in-process backend below.
       case "Debugger.enable":
       case "Debugger.disable":
       case "Debugger.setBreakpointByUrl":
@@ -632,11 +1486,7 @@ class Session extends EventEmitter {
       case "Debugger.setSkipAllPauses":
       case "Debugger.setAsyncCallStackDepth":
       case "Debugger.setBlackboxPatterns": {
-        if (activeInspectorUrl === undefined) {
-          return $ERR_INSPECTOR_COMMAND(
-            `-32000: Inspector method "${method}" requires an active inspector (call inspector.open() first)`,
-          );
-        }
+        if (activeInspectorUrl === undefined) return kInProcess;
         if (!this.#forwardedDebugger) {
           this.#forwardedDebugger = true;
           postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
@@ -648,11 +1498,14 @@ class Session extends EventEmitter {
       case "NodeWorker.enable": {
         // Minimal NodeWorker domain stub for test-worker-name only: a session
         // connected from inside a worker reports itself. Main-thread child
-        // enumeration is NOT implemented — return an error there instead of
-        // silent success so callers know.
+        // enumeration is NOT implemented — deliver an error through the
+        // callback so callers know (node succeeds with {} and emits
+        // attachedToWorker per worker; silently faking that would leave
+        // listeners waiting forever). Without a callback this is silent,
+        // like every other protocol error.
         const wt = require("node:worker_threads");
         if (wt.isMainThread) {
-          return new Error("Inspector method NodeWorker.enable is not supported on the main thread yet");
+          return $ERR_INSPECTOR_COMMAND("-32000: NodeWorker.enable is not supported on the main thread yet");
         }
         const title = `[worker ${wt.threadId}] ${wt.threadName}`;
         const workerInfo = { workerId: String(wt.threadId), type: "worker", title };
@@ -712,8 +1565,11 @@ class Session extends EventEmitter {
         return {};
       }
 
+      // Everything else (Runtime.evaluate/getProperties/callFunctionOn,
+      // Debugger.getScriptSource/getPossibleBreakpoints, HeapProfiler, ...)
+      // is translated and executed by the in-process CDP backend.
       default:
-        return $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
+        return kInProcess;
     }
   }
 }
@@ -732,6 +1588,8 @@ export default {
   url,
   waitForDebugger,
   Session,
+  Network,
+  DOMStorage,
 };
 
 hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);

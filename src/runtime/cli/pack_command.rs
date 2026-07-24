@@ -28,7 +28,6 @@ type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
-use bun_glob::matcher::MatchResult as GlobMatchResult;
 use bun_paths::resolve_path;
 use bun_semver as Semver;
 use bun_sha_hmac::sha;
@@ -88,7 +87,7 @@ fn pm_workspace_cache<'a>(
     unsafe { &mut (*m).workspace_package_json_cache }
 }
 #[inline]
-fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader<'static> {
+fn pm_env(m: &PackageManager) -> *mut bun_dotenv::Loader {
     // Set during `PackageManager::init`.
     m.env
         .map(|p| p.as_ptr())
@@ -554,12 +553,8 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    match glob::r#match(include.glob.slice(), match_path) {
-                        GlobMatchResult::Match => included = true,
-                        GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => {
-                            unreachable!()
-                        }
-                        _ => {}
+                    if glob::r#match(include.glob.slice(), match_path).matches() {
+                        included = true;
                     }
                 }
             }
@@ -582,11 +577,9 @@ fn iterate_included_project_tree(
                     } else {
                         entry_subpath.as_bytes()
                     };
-                    // NOTE: These patterns have `!` so `.match` logic is
-                    // inverted here
-                    match glob::r#match(exclude.glob.slice(), match_path) {
-                        GlobMatchResult::NegateNoMatch => included = false,
-                        _ => {}
+                    let result = glob::r#match(exclude.glob.slice(), match_path);
+                    if result.is_negated() && !result.matches() {
+                        included = false;
                     }
                 }
             }
@@ -1581,14 +1574,9 @@ fn is_unconditionally_excluded(
     if dir_depth == 1 {
         // check default ignores that only apply to the root project directory
         for &pattern in ROOT_DEFAULT_IGNORE_PATTERNS {
-            match glob::r#match(pattern, entry_name) {
-                GlobMatchResult::Match => {
-                    // cannot be reversed
-                    return Some((pattern, IgnorePatternsKind::Default));
-                }
-                GlobMatchResult::NoMatch => {}
-                // default patterns don't use `!`
-                GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            if glob::r#match(pattern, entry_name).matches() {
+                // cannot be reversed
+                return Some((pattern, IgnorePatternsKind::Default));
             }
         }
     }
@@ -1597,11 +1585,8 @@ fn is_unconditionally_excluded(
         if can_override {
             continue;
         }
-        match glob::r#match(pattern, entry_name) {
-            GlobMatchResult::Match => return Some((pattern, IgnorePatternsKind::Default)),
-            GlobMatchResult::NoMatch => {}
-            // default patterns don't use `!`
-            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+        if glob::r#match(pattern, entry_name).matches() {
+            return Some((pattern, IgnorePatternsKind::Default));
         }
     }
 
@@ -1641,19 +1626,14 @@ fn is_excluded<'a>(
         if !can_override {
             continue;
         }
-        match glob::r#match(pattern, entry_name) {
-            GlobMatchResult::Match => {
-                ignored = true;
-                ignore_pattern = pattern;
-                ignore_kind = IgnorePatternsKind::Default;
+        if glob::r#match(pattern, entry_name).matches() {
+            ignored = true;
+            ignore_pattern = pattern;
+            ignore_kind = IgnorePatternsKind::Default;
 
-                // break. doesn't matter if more default patterns
-                // match this path
-                break;
-            }
-            GlobMatchResult::NoMatch => {}
-            // default patterns don't use `!`
-            GlobMatchResult::NegateNoMatch | GlobMatchResult::NegateMatch => unreachable!(),
+            // break. doesn't matter if more default patterns
+            // match this path
+            break;
         }
     }
 
@@ -1682,14 +1662,15 @@ fn is_excluded<'a>(
             } else {
                 entry_name
             };
-            match glob::r#match(pattern.glob.slice(), match_path) {
-                GlobMatchResult::Match => {
-                    ignored = true;
-                    ignore_pattern = pattern.glob.slice();
-                    ignore_kind = ignore.kind;
+            let result = glob::r#match(pattern.glob.slice(), match_path);
+            if result.is_negated() {
+                if !result.matches() {
+                    ignored = false;
                 }
-                GlobMatchResult::NegateNoMatch => ignored = false,
-                _ => {}
+            } else if result.matches() {
+                ignored = true;
+                ignore_pattern = pattern.glob.slice();
+                ignore_kind = ignore.kind;
             }
         }
     }
@@ -2081,7 +2062,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `Transpiler::env` is a process-singleton `*mut` (set by `init`); pass as
     // raw pointer so `run_package_script_foreground` can `&mut` it without
     // conflicting with our `&Transpiler` borrow.
-    let transpiler_env: *mut bun_dotenv::Loader<'static> = this_transpiler.env;
+    let transpiler_env: *mut bun_dotenv::Loader = this_transpiler.env;
     manager.env_mut().map.put(b"npm_command", b"pack")?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
@@ -2980,7 +2961,7 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
     script: &[u8],
     name: &[u8],
     abs_workspace_path: &[u8],
-    env: *mut bun_dotenv::Loader<'static>,
+    env: *mut bun_dotenv::Loader,
     silent: bool,
 ) -> Result<(), PackError<FOR_PUBLISH>> {
     // Note: `ctx.command_ctx` and `env` are reborrowed via raw pointer
@@ -4033,8 +4014,7 @@ pub mod bindings {
         global: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = call_frame.arguments_old::<1>();
-        let args = arguments.slice();
+        let args = call_frame.arguments();
         if args.len() < 1 || !args[0].is_string() {
             return Err(global.throw(format_args!("expected tarball path string argument")));
         }

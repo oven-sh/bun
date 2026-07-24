@@ -19,7 +19,7 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let (this, value, not) =
         this.matcher_prelude(global, frame.this(), "toEqualIgnoringWhitespace", "<green>expected<r>")?;
 
-    let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!(

@@ -368,6 +368,10 @@ public:
         bool sendPingsAutomatically = true;
         /* Maximum socket lifetime in minutes before forced closure (defaults to disabled) */
         unsigned short maxLifetime = 0;
+        /* Also route a present-but-not-24-char Sec-WebSocket-Key to the custom
+         * upgrade handler, which then decides. Node's inspector does not
+         * validate the key; note the accept header is generated from 24 bytes. */
+        bool allowAnySecWebSocketKey = false;
         MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *, WebSocketContext<SSL, true, UserData> *)> upgrade = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *)> open = nullptr;
         MoveOnlyFunction<void(WebSocket<SSL, true, UserData> *, std::string_view, OpCode)> message = nullptr;
@@ -418,19 +422,16 @@ public:
 
         /* Terminate on misleading idleTimeout values */
         if (behavior.idleTimeout && behavior.idleTimeout < 8) {
-            std::cerr << "Error: idleTimeout must be either 0 or greater than 8!" << std::endl;
             std::terminate();
         }
 
         /* Maximum idleTimeout is 16 minutes */
         if (behavior.idleTimeout > 240 * 4) {
-            std::cerr << "Error: idleTimeout must not be greater than 960 seconds!" << std::endl;
             std::terminate();
         }
 
         /* Maximum maxLifetime is 4 hours */
         if (behavior.maxLifetime > 240) {
-            std::cerr << "Error: maxLifetime must not be greater than 240 minutes!" << std::endl;
             std::terminate();
         }
 
@@ -550,7 +551,7 @@ public:
 
             /* If we have this header set, it's a websocket */
             std::string_view secWebSocketKey = req->getHeader("sec-websocket-key");
-            if (secWebSocketKey.length() == 24) {
+            if (secWebSocketKey.length() == 24 || (behavior.allowAnySecWebSocketKey && behavior.upgrade && secWebSocketKey.length())) {
 
                 /* Emit upgrade handler */
                 if (behavior.upgrade) {

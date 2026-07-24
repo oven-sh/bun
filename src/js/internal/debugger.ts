@@ -1,4 +1,5 @@
 import type { ServerWebSocket, Socket, WebSocketHandler, Server as WebSocketServer } from "bun";
+import type { InspectorCDPAdapter } from "./inspector/cdp";
 const enum FramerState {
   WaitingForLength,
   WaitingForMessage,
@@ -94,10 +95,35 @@ type CreateBackendFn = (
   executionContextId: number,
   refEventLoop: boolean,
   receive: (...messages: string[]) => void,
+  // Marks a connection whose frontend speaks CDP, so the inspected thread can
+  // send it events only InspectorCDPAdapter understands.
+  isCDP?: boolean,
+  // Node's InspectorSession::preventShutdown(): a remote frontend takes part in
+  // the exit handshake; the in-process inspector.Session does not.
+  preventShutdown?: boolean,
 ) => unknown;
 
 // CDP translation is only needed for node:inspector servers, so load it lazily.
 let lazyInspectorCDPAdapter: any;
+// JSC's FrontendRouter broadcasts every backend response to every attached
+// frontend, so backend command ids must be disjoint across ALL remote/CDP
+// adapters on this controller or one adapter resolves another's pending
+// request. In-process inspector.Session adapters count from 100_000_000
+// (inspector.ts kFirstInProcessBackendId); every remote adapter shares this
+// counter instead of starting its own at 1. JSC-protocol frontends on the
+// same router (debug.bun.sh, the VSCode extension) send their own command
+// ids from 1, so remote adapters start at 50M to stay disjoint from both.
+let nextRemoteBackendId = 50_000_000;
+function allocateRemoteBackendId() {
+  const id = nextRemoteBackendId++;
+  // Wrap below the in-process range (inspector.ts counts from 100M) so a
+  // long-lived session can never collide with in-process command ids.
+  if (nextRemoteBackendId >= 100_000_000) nextRemoteBackendId = 50_000_000;
+  return id;
+}
+
+function discardSessionClientMessage() {}
+
 function cdpAdapterConstructor() {
   return (lazyInspectorCDPAdapter ??= require("internal/inspector/cdp").InspectorCDPAdapter);
 }
@@ -112,7 +138,14 @@ export default function (
   urlIsServer: boolean,
   isNodeInspector: boolean,
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
+  enableNodeCDP: boolean,
+  isWaitingForDebuggerFor: (executionContextId: number) => boolean,
+  isAcceptingConnectionsFor: (executionContextId: number) => boolean,
 ): void {
+  // Per context: a waiting worker must not answer for the main thread.
+  const isWaitingForDebugger = isWaitingForDebuggerFor.bind(undefined, executionContextId);
+  // False once the exit handshake has begun; see #fetch.
+  const isAcceptingConnections = isAcceptingConnectionsFor.bind(undefined, executionContextId);
   if (urlIsServer) {
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
@@ -140,6 +173,10 @@ export default function (
           try {
             sessionBackend?.close();
             sessionBackend = undefined;
+            // The leaked native connection keeps the adapter reachable; drop
+            // its per-session script/breakpoint state like Debugger.#close
+            // does for WebSocket adapters.
+            sessionAdapter?.handleClientDisconnect();
             sessionAdapter = undefined;
             sessionRefs = 0;
             debug?.stop();
@@ -162,6 +199,7 @@ export default function (
           sessionRefs = 0;
           sessionBackend?.close();
           sessionBackend = undefined;
+          sessionAdapter?.handleClientDisconnect();
           sessionAdapter = undefined;
           return;
         case "open": {
@@ -169,7 +207,17 @@ export default function (
           // start a new server on this already-running debugger thread and
           // report its URL back.
           try {
-            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
+            debug = new Debugger(
+              executionContextId,
+              parsed.url,
+              createBackend,
+              send,
+              close,
+              true,
+              false,
+              isWaitingForDebugger,
+              isAcceptingConnections,
+            );
             reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
           } catch (error) {
             reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
@@ -184,14 +232,21 @@ export default function (
           if (!debug) return;
           if (!sessionAdapter) {
             let adapter: any;
-            sessionBackend = debug.createSessionBackend((...messages: string[]) => {
+            function handleSessionBackendMessages(...messages: string[]) {
               for (const backendMessage of messages) {
                 adapter.handleBackendMessage(backendMessage);
               }
-            });
+            }
+            function writeSessionCommandToBackend(backendMessage: string) {
+              void sessionBackend?.write(backendMessage);
+            }
+            sessionBackend = debug.createSessionBackend(handleSessionBackendMessages);
             adapter = new (cdpAdapterConstructor())(
-              (backendMessage: string) => void sessionBackend?.write(backendMessage),
-              () => {},
+              writeSessionCommandToBackend,
+              discardSessionClientMessage,
+              isWaitingForDebugger,
+              undefined,
+              allocateRemoteBackendId,
             );
             sessionAdapter = adapter;
             sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
@@ -205,7 +260,17 @@ export default function (
     };
 
     try {
-      debug = new Debugger(executionContextId, url, createBackend, send, close, true);
+      debug = new Debugger(
+        executionContextId,
+        url,
+        createBackend,
+        send,
+        close,
+        true,
+        false,
+        isWaitingForDebugger,
+        isAcceptingConnections,
+      );
     } catch (error) {
       // Register the control callback even though the server failed to start
       // (e.g. the port is in use), so a later inspector.open() can retry with
@@ -220,7 +285,17 @@ export default function (
 
   let debug: Debugger | undefined;
   try {
-    debug = new Debugger(executionContextId, url, createBackend, send, close);
+    debug = new Debugger(
+      executionContextId,
+      url,
+      createBackend,
+      send,
+      close,
+      false,
+      enableNodeCDP,
+      isWaitingForDebugger,
+      isAcceptingConnections,
+    );
   } catch (error) {
     exit("Failed to start inspector:\n", error);
   }
@@ -238,6 +313,15 @@ export default function (
           Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
         }
         Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+        // Node's banner, verbatim, for the CDP endpoint served alongside the
+        // JSC one: Node-shaped tools scrape stderr for this exact line.
+        const cdpUrl = debug.cdpUrl;
+        if (cdpUrl) {
+          Bun.write(
+            Bun.stderr,
+            `Debugger listening on ${cdpUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
+          );
+        }
       }
     } else {
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
@@ -284,13 +368,69 @@ function unescapeUnixSocketUrl(href: string) {
   return href;
 }
 
+class BackendHandle {
+  #backend;
+  #send;
+  #close;
+
+  constructor(backend: unknown, send: (message: string | string[]) => void, close: () => void) {
+    this.#backend = backend;
+    this.#send = send;
+    this.#close = close;
+  }
+
+  write(message: string | string[]) {
+    this.#send.$call(this.#backend, message);
+    return true;
+  }
+
+  close() {
+    this.#close.$call(this.#backend);
+  }
+}
+
 class Debugger {
   #url?: URL;
-  #createBackend: (refEventLoop: boolean, receive: (...messages: string[]) => void) => Backend;
+  #backendFactory: CreateBackendFn;
+  #backendSend: (message: string | string[]) => void;
+  #backendClose: () => void;
+  #executionContextId: number;
+
+  #createBackend(
+    refEventLoop: boolean,
+    receive: (...messages: string[]) => void,
+    isCDP = false,
+    preventShutdown = false,
+  ): Backend {
+    const backend = this.#backendFactory(this.#executionContextId, refEventLoop, receive, isCDP, preventShutdown);
+    return new BackendHandle(backend, this.#backendSend, this.#backendClose);
+  }
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
+  // --inspect* mode: a second pathname (plus the /json discovery endpoints)
+  // serving the V8 CDP. The JSC-protocol pathname above is unaffected.
+  #cdpPathname?: string;
+  // Host advertised in the "Debugger listening on" line; Node prints 127.0.0.1
+  // for the default bind, not "localhost".
+  #cdpHost?: string;
+  #enableNodeCDP = false;
+  // Reads the inspected context's wait-for-frontend state; see cdp.ts.
+  #isWaitingForDebugger: () => boolean;
+  // False once the inspected thread has begun its exit handshake.
+  #isAcceptingConnections: () => boolean;
+  // Shared by every CDP session on this server so the exit handshake's
+  // notify-vs-executionContextDestroyed choice is made across sessions, as
+  // Node's notifyWaitingForDisconnect does. `adapters` is populated by cdp.ts.
+  #disconnectNotify: { handshakeStarted: boolean; retaining: number; adapters: Set<InspectorCDPAdapter> | undefined } =
+    {
+      handshakeStarted: false,
+      retaining: 0,
+      adapters: undefined,
+    };
   #server?: WebSocketServer;
+  // Secondary loopback listener; see #listen().
+  #loopbackServer?: WebSocketServer;
 
   constructor(
     executionContextId: number,
@@ -299,18 +439,18 @@ class Debugger {
     send: (message: string | string[]) => void,
     close: () => void,
     isNodeInspector: boolean = false,
+    enableNodeCDP: boolean = false,
+    isWaitingForDebugger: () => boolean = () => false,
+    isAcceptingConnections: () => boolean = () => true,
   ) {
     this.#nodeInspector = isNodeInspector;
-    this.#createBackend = (refEventLoop, receive) => {
-      const backend = createBackend(executionContextId, refEventLoop, receive);
-      return {
-        write: (message: string | string[]) => {
-          send.$call(backend, message);
-          return true;
-        },
-        close: () => close.$call(backend),
-      };
-    };
+    this.#enableNodeCDP = enableNodeCDP;
+    this.#isWaitingForDebugger = isWaitingForDebugger;
+    this.#isAcceptingConnections = isAcceptingConnections;
+    this.#backendFactory = createBackend;
+    this.#backendSend = send;
+    this.#backendClose = close;
+    this.#executionContextId = executionContextId;
 
     if (url.startsWith("unix://")) {
       this.#connectOverSocket({
@@ -349,11 +489,20 @@ class Debugger {
     return this.#url;
   }
 
+  // The CDP endpoint's ws:// URL, when one is served alongside the JSC one
+  // (--inspect*). Undefined for node:inspector servers and non-listening modes.
+  get cdpUrl(): string | undefined {
+    if (!this.#cdpPathname || !this.#url) return undefined;
+    return `ws://${this.#cdpHost ?? this.#url.host}${this.#cdpPathname}`;
+  }
+
   // Stops the node:inspector server and terminates its connections
   // (inspector.close() on the inspected thread).
   stop(): void {
     this.#server?.stop(true);
     this.#server = undefined;
+    this.#loopbackServer?.stop(true);
+    this.#loopbackServer = undefined;
     // server.stop(true) has fired each connection's close callback, which
     // downgrades the ServerWebSocket wrapper's Strong handle to Weak; the Rust
     // box behind it is only freed when GC sweeps the now-collectable wrapper.
@@ -365,7 +514,7 @@ class Debugger {
   // A backend connection that is not tied to a WebSocket client, used for
   // commands forwarded from the in-process inspector.Session.
   createSessionBackend(receive: (...messages: string[]) => void): Backend {
-    return this.#createBackend(true, receive);
+    return this.#createBackend(true, receive, true);
   }
 
   #listen(): void {
@@ -383,6 +532,37 @@ class Debugger {
       this.#server = server;
       this.#url!.hostname = server.hostname;
       this.#url!.port = `${server.port}`;
+      if (this.#enableNodeCDP) {
+        // A distinct random pathname, like the JSC one, so it also acts as a
+        // bearer token: knowing the port is not enough to attach.
+        this.#cdpPathname = `/${randomId()}`;
+        if (hostname === defaultHostname) {
+          // "localhost" binds one address family only, but Node's inspector
+          // listens on 127.0.0.1 and CDP clients dial loopback over either
+          // family. Additively bind whichever loopback address is still free.
+          let v4Held = false;
+          for (const loopback of ["127.0.0.1", "::1"]) {
+            try {
+              this.#loopbackServer = Bun.serve({
+                hostname: loopback,
+                port: server.port,
+                fetch: this.#fetch.bind(this),
+                websocket: this.#websocket,
+              });
+              break;
+            } catch (e) {
+              // Already bound by the primary listener, or unavailable.
+              // EADDRINUSE on 127.0.0.1 is itself proof the primary holds it.
+              if (loopback === "127.0.0.1" && (e as any)?.code === "EADDRINUSE") v4Held = true;
+            }
+          }
+          // Advertise 127.0.0.1 as Node's default bind does, but only when
+          // provably bound: a loopback listener on ::1 implies the primary
+          // holds 127.0.0.1 (else that ::1 bind would have failed too), and
+          // EADDRINUSE from the 127.0.0.1 attempt proves it directly.
+          if (this.#loopbackServer || v4Held) this.#cdpHost = `127.0.0.1:${server.port}`;
+        }
+      }
       return;
     }
 
@@ -449,10 +629,17 @@ class Debugger {
     });
   }
 
-  get #websocket(): WebSocketHandler<Connection> {
+  // internalAllowAnySecWebSocketKey is intentionally absent from the public
+  // WebSocketHandler type, so widen the return type rather than casting the
+  // literal, which would drop checking on every handler in it.
+  get #websocket(): WebSocketHandler<Connection> & { internalAllowAnySecWebSocketKey: boolean } {
     return {
       idleTimeout: 0,
       closeOnBackpressureLimit: false,
+      // Node's inspector accepts a Sec-WebSocket-Key of any length (its own
+      // test helper sends `key==`); Bun otherwise enforces the RFC 6455 shape,
+      // matching `ws`. This server, and only this server, opts out.
+      internalAllowAnySecWebSocketKey: true,
       open: ws => this.#open(ws, webSocketWriter(ws)),
       message: (ws, message) => {
         if (typeof message === "string") {
@@ -472,7 +659,10 @@ class Debugger {
   // not the bind address, matching Node's discovery endpoints. Disallowed Host
   // values are rejected in #fetch before this is called.
   #nodeInspectorTargets(host: string | null): unknown[] {
-    const { hostname, port, pathname } = this.#url!;
+    const { hostname, port } = this.#url!;
+    // For --inspect*, discovery must point CDP clients at the CDP pathname, not
+    // at the JSC-protocol one they cannot speak.
+    const pathname = this.#cdpPathname ?? this.#url!.pathname;
     const id = pathname.slice(1);
     const wsAddress = `${host || `${hostname}:${port}`}${pathname}`;
     return [
@@ -515,19 +705,34 @@ class Debugger {
 
     switch (pathname) {
       case "/json/version":
+        // Unchanged for --inspect*: debug.bun.sh and the VSCode extension
+        // identify a Bun target by these fields.
         return Response.json(this.#nodeInspector ? nodeVersionInfo() : versionInfo());
       case "/json":
       case "/json/list":
-        // Discovery endpoint used by CDP clients (chrome://inspect, vscode-js-debug)
-        // to find the WebSocket URL. Only served for node:inspector servers; the
-        // Bun-protocol inspector has no CDP-speaking clients to discover it.
-        if (this.#nodeInspector) {
+        // Discovery endpoint used by CDP clients (chrome://inspect,
+        // vscode-js-debug) to find the WebSocket URL. Served whenever a
+        // CDP endpoint exists, as Node does.
+        if (this.#nodeInspector || this.#cdpPathname) {
           return Response.json(this.#nodeInspectorTargets(headers.get("Host")));
         }
         break;
     }
 
-    if (!isUnix && this.#url!.pathname !== pathname) {
+    const isCDP = this.#cdpPathname !== undefined && pathname === this.#cdpPathname;
+
+    // Node's InspectorIo::StopAcceptingNewConnections(): the inspected thread
+    // is in its exit handshake and waiting on a fixed set of sessions, so a new
+    // CDP client must be turned away rather than joining a set nobody will wait
+    // for. Refusing here is also what keeps a client that reconnects on close
+    // from holding the process open forever.
+    if ((this.#nodeInspector || isCDP) && !this.#isAcceptingConnections()) {
+      return new Response(null, {
+        status: 503, // Service Unavailable
+      });
+    }
+
+    if (!isUnix && !isCDP && this.#url!.pathname !== pathname) {
       return new Response(null, {
         status: 404, // Not Found
       });
@@ -535,6 +740,7 @@ class Debugger {
 
     const data: Connection = {
       refEventLoop: headers.get("Ref-Event-Loop") === "0",
+      isCDP,
     };
 
     if (!server.upgrade(request, { data })) {
@@ -553,21 +759,42 @@ class Debugger {
 
     const client = bufferedWriter(writer);
 
-    if (this.#nodeInspector) {
+    if (this.#nodeInspector || data.isCDP) {
+      // Node prints this on every remote session attach; tools gate on it.
+      // Written via fs.writeSync so the debugger thread's global never reifies
+      // Bun.stderr: that global is never destroyed, so the lazy Blob behind
+      // Bun.stderr would otherwise leak at exit (LSAN).
+      require("node:fs").writeSync(2, "Debugger attached.\n");
       // node:inspector clients speak CDP; the adapter sits between the
       // WebSocket and the JSC-protocol backend connection. Unlike Bun's own
       // --inspect connections, an attached client must not keep the process
       // alive — Node exits with a debugger attached — so never ref the event
       // loop for these connections (the `true` argument means "do not ref").
       let adapter: any;
-      const backend = this.#createBackend(true, (...messages: string[]) => {
+      function deliverToRemoteAdapter(...messages: string[]) {
         for (const message of messages) {
           adapter.handleBackendMessage(message);
         }
-      });
+      }
+      function writeToRemoteBackend(message: string) {
+        void backend.write(message);
+      }
+      function writeToRemoteClient(message: string) {
+        void client.write(message);
+      }
+      const backend = this.#createBackend(
+        true,
+        deliverToRemoteAdapter,
+        true,
+        // A remote frontend: exit waits for it to disconnect, as Node does.
+        true,
+      );
       adapter = new (cdpAdapterConstructor())(
-        (message: string) => void backend.write(message),
-        (message: string) => void client.write(message),
+        writeToRemoteBackend,
+        writeToRemoteClient,
+        this.#isWaitingForDebugger,
+        this.#disconnectNotify,
+        allocateRemoteBackendId,
       );
 
       data.client = client;
@@ -605,15 +832,25 @@ class Debugger {
 
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
+    adapter?.handleClientDisconnect();
     backend?.close();
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
     const { data } = connection;
-    const { backend } = data;
+    const { backend, adapter } = data;
     console.error(error);
+    // Retire the session and close the socket together, for CDP frontends only:
+    // dropping the backend while leaving the socket up would let the exit
+    // handshake finish with that frontend still connected and none the wiser.
+    // JSC-protocol clients take no part in the handshake, so leave their
+    // long-standing behaviour (backend closed, socket left alone) untouched.
+    adapter?.handleClientDisconnect();
     backend?.close();
+    if (this.#nodeInspector || data.isCDP) {
+      connection.close?.(1003, "Unexpected binary message");
+    }
   }
 }
 
@@ -909,10 +1146,15 @@ function exit(...args: unknown[]): never {
 
 type ConnectionOwner = {
   data: Connection;
+  // Bun.serve passes the ServerWebSocket itself to these handlers; #error
+  // closes it so a retired session cannot linger with its socket open.
+  close?: (code?: number, reason?: string) => void;
 };
 
 type Connection = {
   refEventLoop: boolean;
+  // True for a connection on the CDP pathname of a --inspect* server.
+  isCDP?: boolean;
   client?: Writer;
   backend?: Backend;
   // Present for node:inspector connections, which speak the V8 protocol.

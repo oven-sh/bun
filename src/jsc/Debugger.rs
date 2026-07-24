@@ -117,6 +117,14 @@ pub struct Debugger {
     // default `""`.
     pub from_environment_variable: &'static [u8],
     pub script_execution_context_id: u32,
+    /// Set once the exit handshake has run for this thread; see
+    /// `wait_for_debugger_to_disconnect`.
+    pub has_waited_for_disconnect: bool,
+    /// `process._debugEnd()` on this thread. Node's `_debugEnd` drops this
+    /// agent's IO thread, after which `WaitForDisconnect` has no `io_` and
+    /// does not wait; a later `inspector.open()` undoes it. Per-thread, like
+    /// Node's per-agent state — a worker must not disarm the main thread.
+    pub debug_ended: bool,
     pub next_debugger_id: u64,
     pub poll_ref: KeepAlive,
     pub wait_for_connection: Wait,
@@ -140,6 +148,8 @@ impl Default for Debugger {
             path_or_port: None,
             from_environment_variable: b"",
             script_execution_context_id: 0,
+            has_waited_for_disconnect: false,
+            debug_ended: false,
             next_debugger_id: 1,
             poll_ref: KeepAlive::default(),
             wait_for_connection: Wait::Off,
@@ -160,6 +170,8 @@ impl Default for Debugger {
 // out-param. Remaining args are by-value scalars.
 unsafe extern "C" {
     safe fn Bun__createJSDebugger(global: &JSGlobalObject) -> u32;
+    safe fn BunDebugger__notifyWaitingForDebugger(ctx_id: u32);
+    safe fn BunDebugger__waitForDebuggerToDisconnect(ctx_id: u32, is_worker: bool);
     safe fn Bun__ensureDebugger(ctx_id: u32, wait: bool);
     safe fn Bun__startJSDebuggerThread(
         global: &JSGlobalObject,
@@ -168,11 +180,21 @@ unsafe extern "C" {
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
+        enable_node_cdp: bool,
     );
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
 pub(crate) static HAS_CREATED_DEBUGGER: AtomicBool = AtomicBool::new(false);
+/// Script execution context of the thread currently blocked waiting for a
+/// frontend (`--inspect-brk`, `--inspect-wait`, `inspector.waitForDebugger()`),
+/// or 0 when none is. Contexts are what inspector connections are keyed by, so
+/// a waiting worker must not answer for the main thread. Read from the debugger
+/// thread to answer `NodeRuntime.enable`, hence atomic.
+/// A single slot suffices because only one context can wait today (workers
+/// publish no CDP target); with two simultaneous waiters the second store
+/// would win.
+static WAITING_FOR_DEBUGGER_CONTEXT: AtomicU32 = AtomicU32::new(0);
 
 impl Debugger {
     /// `Debugger.waitForDebuggerIfNecessary(vm)` — block on the futex until
@@ -202,8 +224,16 @@ impl Debugger {
             return;
         }
         let (ctx_id, wait) = (dbg.script_execution_context_id, dbg.wait_for_connection);
-        // Reset `must_block_until_connected` on every exit path.
+        // Reset `must_block_until_connected` on every exit path. The wait is
+        // over once this returns, including the `Wait::Shortly` timeout, so
+        // clear the flag `NodeRuntime.enable` reads here too.
         let _reset = scopeguard::guard((), |()| {
+            let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+                ctx_id,
+                0,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            );
             if let Some(d) = this.debugger_mut() {
                 d.must_block_until_connected = false;
             }
@@ -413,6 +443,10 @@ impl Debugger {
         if dbg.wait_for_connection != Wait::Off {
             dbg.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
             dbg.must_block_until_connected = true;
+            // Armed here, before the debugger thread can accept a frontend, so
+            // a client that attaches immediately still sees the waiting state.
+            // No broadcast: no connection can exist yet.
+            WAITING_FOR_DEBUGGER_CONTEXT.store(dbg.script_execution_context_id, Ordering::Relaxed);
         }
         Ok(())
     }
@@ -521,13 +555,25 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false, false);
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
-            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+            // A `--inspect*` listener keeps its JSC-protocol pathname and adds
+            // Node's `/json` endpoints plus a second, CDP-speaking pathname.
+            // `inspector.open()` servers are already CDP-only.
+            let enable_node_cdp = !is_node_inspector && !is_connect;
+            Bun__startJSDebuggerThread(
+                global,
+                ctx_id,
+                &mut url,
+                0,
+                is_connect,
+                is_node_inspector,
+                enable_node_cdp,
+            );
         }
 
         this.global().handle_rejected_promises();
@@ -655,6 +701,15 @@ pub fn wait_for_node_inspector_connection() {
         }
         dbg.must_block_until_connected = true;
     }
+    // A frontend may already be attached with the NodeRuntime domain enabled
+    // (inspector.open() then waitForDebugger()); Node announces the new wait to
+    // it, so tell the debugger thread before blocking.
+    let ctx_id = match this.debugger.as_deref() {
+        Some(d) => d.script_execution_context_id,
+        None => 0,
+    };
+    WAITING_FOR_DEBUGGER_CONTEXT.store(ctx_id, Ordering::Relaxed);
+    BunDebugger__notifyWaitingForDebugger(ctx_id);
     Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
 
@@ -666,10 +721,69 @@ pub fn abandon_node_inspector_wait() {
     let Some(dbg) = VirtualMachine::get().debugger_mut() else {
         return;
     };
+    let ctx_id = dbg.script_execution_context_id;
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.must_block_until_connected = false;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
+    }
+    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+        ctx_id,
+        0,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
+}
+
+/// Answers `NodeRuntime.enable` on the debugger thread: Node emits
+/// `NodeRuntime.waitingForDebugger` from that command exactly while the
+/// inspected thread is blocked waiting for a frontend.
+// HOST_EXPORT(Debugger__isWaitingForDebugger, c)
+pub fn is_waiting_for_debugger(ctx_id: u32) -> bool {
+    ctx_id != 0 && WAITING_FOR_DEBUGGER_CONTEXT.load(Ordering::Relaxed) == ctx_id
+}
+
+/// Node's `Agent::WaitForDisconnect`, run from the exit funnel: announce the
+/// teardown to every attached CDP frontend and block until each disconnects.
+/// A no-op unless a CDP frontend is attached to this thread's context.
+pub fn wait_for_debugger_to_disconnect(vm: &VirtualMachine) {
+    // The borrow must end before the call below: it blocks, and pumping the
+    // inspector runs user JS on this thread (Runtime.evaluate), which can
+    // re-enter anything that takes `&mut Debugger` — `inspector.open()`, or
+    // `did_connect()` for a frontend finishing its handshake.
+    let ctx_id = {
+        let Some(dbg) = vm.debugger_mut() else {
+            return;
+        };
+        // process.exit() inside an exit handler re-enters the funnel; wait once.
+        if dbg.has_waited_for_disconnect || dbg.debug_ended {
+            return;
+        }
+        dbg.has_waited_for_disconnect = true;
+        dbg.script_execution_context_id
+    };
+    if ctx_id == 0 {
+        return;
+    }
+    BunDebugger__waitForDebuggerToDisconnect(ctx_id, !vm.is_main_thread());
+}
+
+/// `inspector.open()` brings this thread's inspector back up, so a previous
+/// `process._debugEnd()` no longer suppresses the exit handshake. The reopen
+/// path reuses the existing `Debugger`, so clearing it here is required.
+// HOST_EXPORT(Debugger__clearDebugEnd, c)
+pub fn clear_debug_end() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.debug_ended = false;
+    }
+}
+
+/// `process._debugEnd()`. Only the exit-handshake half of Node's `_debugEnd`
+/// is implemented: this thread's listener and any live session stay up.
+// HOST_EXPORT(Debugger__debugEnd, c)
+pub fn debug_end() {
+    if let Some(dbg) = VirtualMachine::get().debugger_mut() {
+        dbg.debug_ended = true;
     }
 }
 
@@ -682,11 +796,20 @@ pub fn did_connect() {
     let Some(dbg) = this.debugger.as_deref_mut() else {
         return;
     };
+    let ctx_id = dbg.script_execution_context_id;
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
         this.event_loop_mut().wakeup();
     }
+    // Matches Node's runIfWaitingForDebugger -> unsetWaitingForDebugger: the
+    // wait is resolved, so NodeRuntime.enable must stop announcing it.
+    let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
+        ctx_id,
+        0,
+        Ordering::Relaxed,
+        Ordering::Relaxed,
+    );
 }
 
 // ──────────────────────────────────────────────────────────────────────────

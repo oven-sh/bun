@@ -146,6 +146,12 @@ function arrayValueSerializer(type: ArrayType, is_numeric: boolean, is_json: boo
   // we do minimal to none type validation, we just try to format nicely and let the server handle if is valid SQL
   // postgres will try to convert string -> array type
   // postgres will emit a nice error saying what value dont have the expected format outputing the value in the error
+  if (value === null) {
+    // Unquoted null is SQL NULL in array literal syntax. typeof null is "object",
+    // so without this check the default branch would JSON.stringify it and emit
+    // the quoted string "null".
+    return "null";
+  }
   if ($isArray(value) || isTypedArray(value)) {
     if (!value.length) return "{}";
     const delimiter = type === "BOX" ? ";" : ",";

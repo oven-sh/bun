@@ -147,41 +147,75 @@ function normalizeSSLMode(value: string): SSLMode {
   throw $ERR_INVALID_ARG_VALUE("sslmode", value, "must be one of: disable, prefer, require, verify-ca, verify-full");
 }
 
+/**
+ * Reject helper keys that are neither identifier-like strings nor small
+ * non-negative integers. Numeric strings are coerced first so the same rule
+ * applies regardless of how the key was spelled.
+ */
+function validateHelperKey(key: unknown): void {
+  if (typeof key === "string") {
+    const asNumber = Number(key);
+    if (Number.isNaN(asNumber)) return;
+    key = asNumber;
+  }
+  if (typeof key !== "string") {
+    if (Number.isSafeInteger(key) && (key as number) >= 0 && (key as number) <= 64 * 1024) return;
+    throw new Error(`Keys must be strings or numbers: ${String(key)}`);
+  }
+}
+
 export type { SQLHelper };
 class SQLHelper<T> {
   public readonly value: T;
   public readonly columns: (keyof T)[];
+  /**
+   * True when the column list was derived from the first row's own keys
+   * rather than supplied explicitly by the caller. The INSERT path uses this
+   * to widen the column list to the union of keys across every row so that
+   * keys first appearing on a later row are not silently dropped.
+   */
+  public readonly autoColumns: boolean;
 
   constructor(value: T, keys?: (keyof T)[]) {
+    let autoColumns = false;
     if (keys !== undefined && keys.length === 0 && ($isObject(value[0]) || $isArray(value[0]))) {
       keys = Object.keys(value[0]) as (keyof T)[];
+      autoColumns = true;
     }
 
     if (keys !== undefined) {
-      for (let key of keys) {
-        if (typeof key === "string") {
-          const asNumber = Number(key);
-          if (Number.isNaN(asNumber)) {
-            continue;
-          }
-          key = asNumber as keyof T;
-        }
-
-        if (typeof key !== "string") {
-          if (Number.isSafeInteger(key)) {
-            if (key >= 0 && key <= 64 * 1024) {
-              continue;
-            }
-          }
-
-          throw new Error(`Keys must be strings or numbers: ${String(key)}`);
-        }
-      }
+      for (const key of keys) validateHelperKey(key);
     }
 
     this.value = value;
     this.columns = keys ?? [];
+    this.autoColumns = autoColumns;
   }
+}
+
+/**
+ * Return the union of own keys across every object in a multi-row array,
+ * seeded from the first row's key list so column order is stable. Used by the
+ * INSERT helper when no explicit column list was given, so a key that first
+ * appears on a later row is still emitted instead of being silently dropped.
+ */
+function unionRowKeys<T>(firstRowKeys: (keyof T)[], items: T[]): (keyof T)[] {
+  const seen = new Set<keyof T>(firstRowKeys);
+  const union = firstRowKeys.slice();
+  for (let i = 1; i < items.length; i++) {
+    const item = items[i];
+    if (item == null || !$isObject(item)) continue;
+    const itemKeys = Object.keys(item);
+    for (let k = 0; k < itemKeys.length; k++) {
+      const key = itemKeys[k] as keyof T;
+      if (!seen.has(key)) {
+        validateHelperKey(key);
+        seen.add(key);
+        union.push(key);
+      }
+    }
+  }
+  return union;
 }
 
 /**
@@ -421,9 +455,11 @@ function normalizeQuery(
           binding_idx += sub_values.length;
         } else if (value instanceof SQLHelper) {
           const command = adapter.getHelperCommand(query);
-          const { columns, value: items } = value as SQLHelper<any>;
+          const { columns, value: items, autoColumns } = value as SQLHelper<any>;
           const columnCount = columns.length;
-          if (columnCount === 0 && command !== SQLCommand.in) {
+          // INSERT widens the column list below and has its own empty-column
+          // guard after widening, so an empty first row is allowed here.
+          if (columnCount === 0 && command !== SQLCommand.in && command !== SQLCommand.insert) {
             throw new SyntaxError(`Cannot ${commandToString(command)} with no columns`);
           }
           const lastColumnIndex = columns.length - 1;
@@ -433,9 +469,18 @@ function normalizeQuery(
             // insert into users ${sql(users)} or insert into users ${sql(user)}
             //
 
+            // When the column list came from Object.keys(rows[0]) and there are
+            // further rows, widen it to the union of keys across every row so a
+            // key that first appears on a later row is still emitted. Explicit
+            // column lists and single-row inserts are left as supplied.
+            const insertColumns =
+              autoColumns && $isArray(items) && items.length > 1 && !$isArray(items[0])
+                ? unionRowKeys(columns, items)
+                : columns;
+
             // Build column list while determining which columns have at least one defined value
             const { definedColumns, columnsSql } = buildDefinedColumnsAndQuery(
-              columns,
+              insertColumns,
               items,
               adapter.escapeIdentifier.bind(adapter),
             );

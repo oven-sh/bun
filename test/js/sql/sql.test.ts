@@ -242,6 +242,23 @@ if (isDockerEnabled()) {
         expect(x).toEqual(["hello", "world", "test"]);
       });
 
+      test("sql.array should encode null elements as SQL NULL", async () => {
+        await using sql = postgres(options);
+        // TEXT[]: null must round-trip as SQL NULL, not the four-character string "null"
+        {
+          const [{ x }] = await sql`select ${sql.array(["a", null, "b"], "TEXT")} as x`;
+          expect(x).toEqual(["a", null, "b"]);
+        }
+        // INTEGER[]: previously the quoted "null" was rejected by the server with 22P02
+        {
+          const [{ second_is_null, arr }] =
+            await sql`select (${sql.array([1, null, 2], "INTEGER")})[2] is null as second_is_null,
+                             ${sql.array([1, null, 2], "INTEGER")}::text as arr`;
+          expect(arr).toBe("{1,NULL,2}");
+          expect(second_is_null).toBe(true);
+        }
+      });
+
       test("sql.array should support BOOLEAN arrays", async () => {
         await using sql = postgres(options);
 
@@ -1055,6 +1072,26 @@ if (isDockerEnabled()) {
         ]);
       } finally {
         await sql`drop table users`;
+      }
+    });
+
+    test("bulk insert unions keys across heterogeneous rows", async () => {
+      const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+      await sql`create table ${sql(random_name)} (id int, a text, b text)`;
+      try {
+        const rows = [
+          { id: 1, a: "onlyA" }, // no `b` key
+          { id: 2, a: "hasB", b: "IMPORTANT-DATA" },
+          { id: 3, b: "b-only" }, // no `a` key
+        ];
+        const result = await sql`insert into ${sql(random_name)} ${sql(rows)} returning id, a, b`;
+        expect(result).toEqual([
+          { id: 1, a: "onlyA", b: null },
+          { id: 2, a: "hasB", b: "IMPORTANT-DATA" },
+          { id: 3, a: null, b: "b-only" },
+        ]);
+      } finally {
+        await sql`drop table ${sql(random_name)}`;
       }
     });
 

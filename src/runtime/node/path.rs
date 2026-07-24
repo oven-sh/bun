@@ -992,7 +992,10 @@ const CHAR_SUPERSCRIPT_THREE: u32 = 0xb3;
 /// a reserved DOS device name? A missing colon reproduces JS `slice(0, -1)`,
 /// which drops the final character ("PRNX" is treated as "PRN").
 /// https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L81-L84
-pub(crate) fn is_windows_reserved_name_t<T: PathCharCwd>(path: &[T], colon_index: Option<usize>) -> bool {
+pub(crate) fn is_windows_reserved_name_t<T: PathCharCwd>(
+    path: &[T],
+    colon_index: Option<usize>,
+) -> bool {
     let end = match colon_index {
         Some(index) => index,
         None => match path.len().checked_sub(1) {
@@ -1010,7 +1013,9 @@ pub(crate) fn is_windows_reserved_name_t<T: PathCharCwd>(path: &[T], colon_index
         name[2].to_ascii_upper().as_u32(),
     ];
     let matches = |candidate: &[u8]| {
-        head[0] == candidate[0] as u32 && head[1] == candidate[1] as u32 && head[2] == candidate[2] as u32
+        head[0] == candidate[0] as u32
+            && head[1] == candidate[1] as u32
+            && head[2] == candidate[2] as u32
     };
     if name.len() == 3 {
         return WINDOWS_RESERVED_NAMES.iter().any(|n| matches(n));
@@ -1028,7 +1033,9 @@ pub(crate) fn is_windows_reserved_name_t<T: PathCharCwd>(path: &[T], colon_index
             (b'1' as u32..=b'9' as u32).contains(&c) || is_superscript_digit(c)
         }
         // UTF-8 paths carry the superscripts as their two-byte encoding.
-        [lead, trail] => !T::IS_U16 && lead.as_u32() == 0xc2 && is_superscript_digit(trail.as_u32()),
+        [lead, trail] => {
+            !T::IS_U16 && lead.as_u32() == 0xc2 && is_superscript_digit(trail.as_u32())
+        }
         _ => false,
     }
 }
@@ -1920,7 +1927,8 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
                         j += 1;
                     }
                     if first_part.len() == 1
-                        && (first_part[0].eq_ascii(CHAR_DOT) || first_part[0].eq_ascii(CHAR_QUESTION_MARK))
+                        && (first_part[0].eq_ascii(CHAR_DOT)
+                            || first_part[0].eq_ascii(CHAR_QUESTION_MARK))
                     {
                         // We matched a device root (e.g. \\\\.\\PHYSICALDRIVE0)
                         // Translated from the following JS code:
@@ -1944,7 +1952,10 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
                                     // device = `\\?\${possibleDevice}`
                                     buf[2] = T::from_u8(CHAR_QUESTION_MARK);
                                     buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
-                                    memmove(&mut buf[4..4 + possible_device.len()], possible_device);
+                                    memmove(
+                                        &mut buf[4..4 + possible_device.len()],
+                                        possible_device,
+                                    );
                                     device_len = Some(4 + possible_device.len());
                                     root_end = 4 + possible_device.len();
                                 }
@@ -2067,7 +2078,10 @@ pub(crate) fn normalize_windows_t<'a, T: PathCharCwd>(path: &[T], buf: &'a mut [
                     needs_dot_prefix = true;
                     break;
                 }
-                index = path[i + 1..].iter().position(|c| c.eq_ascii(CHAR_COLON)).map(|k| i + 1 + k);
+                index = path[i + 1..]
+                    .iter()
+                    .position(|c| c.eq_ascii(CHAR_COLON))
+                    .map(|k| i + 1 + k);
             }
         }
     }

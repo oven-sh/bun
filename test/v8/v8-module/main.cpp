@@ -206,6 +206,19 @@ void test_v8_string_ascii(const FunctionCallbackInfo<Value> &info) {
   perform_string_test_normal_and_internalized(info, "hello world");
 }
 
+void return_empty_string(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().SetEmptyString();
+}
+
+void test_v8_string_empty(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> v8_empty = String::Empty(isolate);
+  LOG_VALUE_KIND(v8_empty);
+  LOG_EXPR(describe(isolate, v8_empty));
+  LOG_EXPR(v8_empty->Length());
+  return ok(info);
+}
+
 void test_v8_string_utf8(const FunctionCallbackInfo<Value> &info) {
   const unsigned char trans_flag_unsigned[] = {240, 159, 143, 179, 239, 184,
                                                143, 226, 128, 141, 226, 154,
@@ -1280,6 +1293,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_number_large_int);
   NODE_SET_METHOD(exports, "test_v8_number_fraction", test_v8_number_fraction);
   NODE_SET_METHOD(exports, "test_v8_string_ascii", test_v8_string_ascii);
+  NODE_SET_METHOD(exports, "test_v8_string_empty", test_v8_string_empty);
+  NODE_SET_METHOD(exports, "return_empty_string", return_empty_string);
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",
                   test_v8_string_invalid_utf8);

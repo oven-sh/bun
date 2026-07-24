@@ -3,6 +3,12 @@ module.exports = debugMode => {
   return {
     ...nativeModule,
 
+    test_v8_return_value_set_empty_string() {
+      const result = nativeModule.return_empty_string();
+      console.log("typeof =", typeof result);
+      console.log("value =", JSON.stringify(result));
+    },
+
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
 

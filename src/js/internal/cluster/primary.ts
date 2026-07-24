@@ -213,6 +213,7 @@ cluster.disconnect = function (cb) {
 };
 
 const methodMessageMapping = {
+  __proto__: null,
   close,
   exitedAfterDisconnect,
   listening,

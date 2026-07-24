@@ -447,7 +447,9 @@ describe("spawn()", () => {
         fd3.write("payload-from-parent", err => writeCb.resolve(err ?? null));
         fd3.end();
 
-        const [code] = await once(child, "close");
+        // ChildProcess 'close' only waits for stdout/stderr (#closesNeeded does
+        // not count extra stdio), so wait for fd4 to drain explicitly.
+        const [, [code]] = await Promise.all([once(fd4, "end"), once(child, "close")]);
         // Before the fix, on Windows the write above never reached the child:
         // `out` was "" and the write callback never fired.
         expect({ stderr, out, code, writeCb: await writeCb.promise }).toEqual({

@@ -8,6 +8,23 @@
 
 const nodeFsConstants = $processBindingConstants.fs;
 
+const {
+  validateArray,
+  validateBoolean,
+  validateFunction,
+  validateInt32,
+  validateObject,
+  validateString,
+  validateUndefined,
+} = require("internal/validators");
+const { kEmptyObject } = require("internal/shared");
+
+const ArrayPrototypeMap = Array.prototype.map;
+const kExitCode = Symbol("kExitCode");
+const kStarted = Symbol("kStarted");
+const kInstance = Symbol("kInstance");
+const kBindingName = Symbol("kBindingName");
+
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
 var __commonJS = (cb, mod: typeof module | undefined = undefined) =>
@@ -784,17 +801,56 @@ var require_wasi = __commonJS({
     }
 
     var WASI = class WASI {
-      constructor(wasiConfig = {}) {
+      constructor(wasiConfig = kEmptyObject) {
+        validateObject(wasiConfig, "options");
+        const {
+          version,
+          args: argsOption,
+          env: envOption,
+          preopens: preopensOption,
+          stdin = 0,
+          stdout = 1,
+          stderr = 2,
+          returnOnExit: returnOnExitOption,
+        } = wasiConfig;
+
+        validateString(version, "options.version");
+        switch (version) {
+          case "unstable":
+            this[kBindingName] = "wasi_unstable";
+            break;
+          case "preview1":
+            this[kBindingName] = "wasi_snapshot_preview1";
+            break;
+          default:
+            throw $ERR_INVALID_ARG_VALUE("options.version", version, "unsupported WASI version");
+        }
+
+        if (argsOption !== undefined) validateArray(argsOption, "options.args");
+        const args = ArrayPrototypeMap.$call(argsOption || [], String);
+
+        if (envOption !== undefined) validateObject(envOption, "options.env");
+        if (preopensOption !== undefined) validateObject(preopensOption, "options.preopens");
+
+        validateInt32(stdin, "options.stdin", 0);
+        validateInt32(stdout, "options.stdout", 0);
+        validateInt32(stderr, "options.stderr", 0);
+
+        let returnOnExit = true;
+        if (returnOnExitOption !== undefined) {
+          validateBoolean(returnOnExitOption, "options.returnOnExit");
+          returnOnExit = returnOnExitOption;
+        }
+
         const defaultConfig = getDefaults();
         this.lastStdin = 0;
         this.sleep = wasiConfig.sleep || defaultConfig.sleep;
         this.getStdin = wasiConfig.getStdin;
         this.sendStdout = wasiConfig.sendStdout;
         this.sendStderr = wasiConfig.sendStderr;
-        let preopens = wasiConfig.preopens ?? defaultConfig.preopens;
-        this.env = wasiConfig.env ?? defaultConfig.env;
+        let preopens = preopensOption ?? defaultConfig.preopens;
+        this.env = envOption ?? defaultConfig.env;
 
-        const args = wasiConfig.args ?? defaultConfig.args;
         this.memory = void 0;
         this.view = void 0;
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
@@ -804,7 +860,7 @@ var require_wasi = __commonJS({
           [
             constants_1.WASI_STDIN_FILENO,
             {
-              real: 0,
+              real: stdin,
               filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
               rights: {
                 base: STDIN_DEFAULT_RIGHTS,
@@ -816,7 +872,7 @@ var require_wasi = __commonJS({
           [
             constants_1.WASI_STDOUT_FILENO,
             {
-              real: 1,
+              real: stdout,
               filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
               rights: {
                 base: STDOUT_DEFAULT_RIGHTS,
@@ -828,7 +884,7 @@ var require_wasi = __commonJS({
           [
             constants_1.WASI_STDERR_FILENO,
             {
-              real: 2,
+              real: stderr,
               filetype: constants_1.WASI_FILETYPE_CHARACTER_DEVICE,
               rights: {
                 base: STDERR_DEFAULT_RIGHTS,
@@ -1856,6 +1912,9 @@ var require_wasi = __commonJS({
           sched_yield() {
             return constants_1.WASI_ESUCCESS;
           },
+          sock_accept() {
+            return constants_1.WASI_ENOSYS;
+          },
           sock_recv() {
             return constants_1.WASI_ENOSYS;
           },
@@ -1872,6 +1931,15 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ENOSYS;
           },
         };
+        if (returnOnExit) {
+          this.wasiImport.proc_exit = rval => {
+            this[kExitCode] = rval;
+            throw kExitCode;
+          };
+        }
+        this[kStarted] = false;
+        this[kExitCode] = 0;
+        this[kInstance] = undefined;
         if (log.enabled) {
           Object.keys(this.wasiImport).forEach(key => {
             const prevImport = this.wasiImport[key];
@@ -1952,21 +2020,42 @@ var require_wasi = __commonJS({
       setMemory(memory) {
         this.memory = memory;
       }
-      start(instance, memory) {
-        const exports2 = instance.exports;
-        if (exports2 === null || typeof exports2 !== "object") {
-          throw new Error(`instance.exports must be an Object. Received ${exports2}.`);
+      finalizeBindings(instance, { memory = instance?.exports?.memory } = kEmptyObject) {
+        if (this[kStarted]) {
+          throw $ERR_WASI_ALREADY_STARTED("WASI instance has already started");
         }
-        if (memory == null) {
-          memory = exports2.memory;
-          if (!(memory instanceof WebAssembly.Memory)) {
-            throw new Error(`instance.exports.memory must be a WebAssembly.Memory. Recceived ${memory}.`);
-          }
+        validateObject(instance, "instance");
+        validateObject(instance.exports, "instance.exports");
+        if (!(memory instanceof WebAssembly.Memory)) {
+          throw $ERR_INVALID_ARG_TYPE("instance.exports.memory", "WebAssembly.Memory", memory);
         }
         this.setMemory(memory);
-        if (exports2._start) {
-          exports2._start();
+        this[kInstance] = instance;
+        this[kStarted] = true;
+      }
+      start(instance) {
+        this.finalizeBindings(instance);
+        const { _start, _initialize } = this[kInstance].exports;
+        validateFunction(_start, "instance.exports._start");
+        validateUndefined(_initialize, "instance.exports._initialize");
+        try {
+          _start();
+        } catch (err) {
+          if (err !== kExitCode) throw err;
         }
+        return this[kExitCode];
+      }
+      initialize(instance) {
+        this.finalizeBindings(instance);
+        const { _start, _initialize } = this[kInstance].exports;
+        validateUndefined(_start, "instance.exports._start");
+        if (_initialize !== undefined) {
+          validateFunction(_initialize, "instance.exports._initialize");
+          _initialize();
+        }
+      }
+      getImportObject() {
+        return { [this[kBindingName]]: this.wasiImport };
       }
       getImports(module2) {
         let namespace: string | null = null;

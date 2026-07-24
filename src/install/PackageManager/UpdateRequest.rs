@@ -33,6 +33,13 @@ pub struct UpdateRequest {
     pub package_id: PackageID,
     pub is_aliased: bool,
     pub failed: bool,
+    /// Set when `bun update <name>` targets a package defined in a `catalog`/
+    /// `catalogs` map rather than a root dependency group. Such requests update
+    /// the catalog definition instead of synthesizing a root dependency.
+    pub is_catalog: bool,
+    /// The catalog group this request updates; empty denotes the default
+    /// (`catalog`) group. Only meaningful when `is_catalog` is true.
+    pub catalog_name: Box<[u8]>,
     /// This must be cloned to handle when the AST store resets.
     /// ARENA-owned (AST `Expr.Data` store) — raw pointer per LIFETIMES.tsv;
     /// only valid while the store that allocated it is alive.
@@ -49,6 +56,8 @@ impl Default for UpdateRequest {
             package_id: INVALID_PACKAGE_ID,
             is_aliased: false,
             failed: false,
+            is_catalog: false,
+            catalog_name: Box::default(),
             e_string: None,
         }
     }

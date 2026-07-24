@@ -1970,20 +1970,36 @@ fn get_or_put_resolved_package_with_find_result(
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
-    let should_update = {
+    // Led by `this.to_update` so plain `bun install` short-circuits before the
+    // root-dependency lookup and catalog scan below.
+    let should_update = this.to_update && {
         let this_ptr: *mut PackageManager = this;
         // SAFETY: `is_root_dependency` reads `manager.root_dependency_list` /
         // `manager.workspace_package_json_cache` only — disjoint from
         // `manager.lockfile`.
-        this.to_update
-            // If updating, only update packages in the current workspace
-            && unsafe { &*(*this_ptr).lockfile }
-                .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
-            // no need to do a look up if update requests are empty (`bun update` with no args)
-            && (this.update_requests.is_empty()
-                || this.updating_packages.contains(
-                    dependency.name.slice(this.lockfile.buffers.string_bytes.as_slice()),
-                ))
+        // If updating, only update packages in the current workspace.
+        let is_root_dep = unsafe { &*(*this_ptr).lockfile }
+            .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id);
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        let dep_name = dependency.name.slice(string_buf);
+        // no need to do a look up if update requests are empty (`bun update` with no args)
+        let in_update_set =
+            this.update_requests.is_empty() || this.updating_packages.contains(dep_name);
+        // A catalog entry is declared at the workspace root but consumed by
+        // member workspaces, so its dependency instance is not a root dependency
+        // of the install's workspace. Allow a named `bun update <pkg>` to
+        // re-resolve a catalog package it targets, scoped to the exact group so
+        // a same-named entry in another catalog is left alone.
+        let is_named_catalog_update = dependency.version.tag == dependency::version::Tag::Catalog
+            && {
+                let dep_catalog = dependency.version.catalog().slice(string_buf);
+                this.update_requests.iter().any(|request| {
+                    request.is_catalog
+                        && strings::eql_long(request.get_name(), dep_name, true)
+                        && strings::eql_long(request.catalog_name.as_ref(), dep_catalog, true)
+                })
+            };
+        in_update_set && (is_root_dep || is_named_catalog_update)
     };
 
     // Was this package already allocated? Let's reuse the existing one.

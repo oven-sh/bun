@@ -86,21 +86,21 @@ describe.concurrent.skipIf(isWindows)("shell completions", () => {
 
   test("bash: includes runtime and per-command flags", async () => {
     const bash = await embeddedCompletions("bash");
-    expect(bash).toMatch(/\bGLOBAL_OPTIONS_LONG="[^"]*--watch\b/);
-    expect(bash).toMatch(/\bGLOBAL_OPTIONS_LONG="[^"]*--hot\b/);
-    expect(bash).toMatch(/\bBUN_TEST_OPTIONS_LONG="[^"]*--update-snapshots\b/);
-    expect(bash).toMatch(/\bBUN_TEST_OPTIONS_LONG="[^"]*--coverage\b/);
-    expect(bash).toMatch(/\bBUN_INSTALL_OPTIONS_LONG="[^"]*--frozen-lockfile\b/);
-    expect(bash).toMatch(/\bBUN_UPDATE_OPTIONS_LONG="[^"]*--latest\b/);
-    expect(bash).toMatch(/\bBUN_BUILD_OPTIONS_LONG="[^"]*--compile\b/);
-    expect(bash).toMatch(/\bBUN_UPGRADE_OPTIONS_LONG="[^"]*--canary\b/);
+    expect(bash).toMatch(/\bGLOBAL_OPTIONS="[^"]*--watch\b/);
+    expect(bash).toMatch(/\bGLOBAL_OPTIONS="[^"]*--hot\b/);
+    expect(bash).toMatch(/\bBUN_TEST_OPTIONS="[^"]*--update-snapshots\b/);
+    expect(bash).toMatch(/\bBUN_TEST_OPTIONS="[^"]*--coverage\b/);
+    expect(bash).toMatch(/\bBUN_INSTALL_OPTIONS="[^"]*--frozen-lockfile\b/);
+    expect(bash).toMatch(/\bBUN_UPDATE_OPTIONS="[^"]*--latest\b/);
+    expect(bash).toMatch(/\bBUN_BUILD_OPTIONS="[^"]*--compile\b/);
+    expect(bash).toMatch(/\bBUN_UPGRADE_OPTIONS="[^"]*--canary\b/);
     for (const name of ["audit", "patch", "publish", "exec", "info", "outdated", "test"]) {
       expect(bash).toMatch(new RegExp(`\\bSUBCOMMANDS="[^"]*\\b${name}\\b`));
     }
-    // Every ${BUN_*_OPTIONS_*} referenced in a case arm must have a matching
+    // Every ${BUN_*_OPTIONS} referenced in a case arm must have a matching
     // `local ...=` declaration, otherwise `set -u` users see "unbound variable".
-    const declared = new Set([...bash.matchAll(/^\s*local (BUN_[A-Z_]+_OPTIONS_(?:LONG|SHORT))=/gm)].map(m => m[1]));
-    const referenced = new Set([...bash.matchAll(/\$\{(BUN_[A-Z_]+_OPTIONS_(?:LONG|SHORT))\}/g)].map(m => m[1]));
+    const declared = new Set([...bash.matchAll(/^\s*local (BUN_[A-Z_]+_OPTIONS)=/gm)].map(m => m[1]));
+    const referenced = new Set([...bash.matchAll(/\$\{(BUN_[A-Z_]+_OPTIONS)\b/g)].map(m => m[1]));
     expect([...referenced].filter(name => !declared.has(name))).toEqual([]);
   });
 

@@ -274,21 +274,17 @@ complete -c bun -n "not __fish_seen_subcommand_from ${allSubTokens}" -s 'v' -l '
 /*                                    bash                                    */
 /* -------------------------------------------------------------------------- */
 
-function bashFlagList(flags: FlagInfo[]): { long: string; short: string } {
-  const longs = new Set<string>();
-  const shorts = new Set<string>();
+function bashFlagList(flags: FlagInfo[]): string {
+  const words = new Set<string>();
   for (const f of flags) {
     if (isShortOnly(f)) {
-      shorts.add(`-${f.shortName ?? f.name}`);
+      words.add(`-${f.shortName ?? f.name}`);
     } else {
-      longs.add(`--${f.name}`);
-      if (f.shortName) shorts.add(`-${f.shortName}`);
+      words.add(`--${f.name}`);
+      if (f.shortName) words.add(`-${f.shortName}`);
     }
   }
-  return {
-    long: [...longs].sort().join(" "),
-    short: [...shorts].sort().join(" "),
-  };
+  return [...words].sort().join(" ");
 }
 
 function generateBash(): string {
@@ -296,15 +292,14 @@ function generateBash(): string {
     .flatMap(c => [c.name, ...(c.aliases?.filter(a => a !== "bunx") ?? [])])
     .sort();
 
-  const global = bashFlagList(data.globalFlags);
+  const globalOptions = bashFlagList(data.globalFlags);
 
-  const perCommand: Record<string, { long: string; short: string; aliases: string[] }> = {};
+  const perCommand: Record<string, { options: string; aliases: string[] }> = {};
   for (const cmd of Object.values(data.commands)) {
     const aliases = [cmd.name, ...(cmd.aliases?.filter(a => a !== "bunx") ?? [])];
     const cmdFlags = flagsFor(cmd);
-    const flags =
-      cmdFlags.length > 0 || !runtimeCommands.has(cmd.name) ? bashFlagList(cmdFlags) : { long: "", short: "" };
-    perCommand[cmd.name] = { ...flags, aliases };
+    const options = cmdFlags.length > 0 || !runtimeCommands.has(cmd.name) ? bashFlagList(cmdFlags) : "";
+    perCommand[cmd.name] = { options, aliases };
   }
 
   const pmSubcommands = Object.keys(data.commands.pm?.subcommands ?? {})
@@ -316,11 +311,12 @@ function generateBash(): string {
   for (const cmd of Object.values(data.commands)) {
     const entry = perCommand[cmd.name];
     const pattern = entry.aliases.join("|");
+    const varName = `BUN_${cmd.name.toUpperCase()}_OPTIONS`;
     if (cmd.name === "run") {
       caseArms.push(
         `        ${pattern})
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?(\$|))";
-            _long_short_completion "\${GLOBAL_OPTIONS_LONG} \${GLOBAL_OPTIONS_SHORT}" "\${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "\${GLOBAL_OPTIONS}";
             _read_scripts_in_package_json;
             return;;`,
       );
@@ -328,15 +324,11 @@ function generateBash(): string {
       caseArms.push(
         `        ${pattern})
             _file_arguments "!(*@(_|.)@(test|spec).@(js|ts|jsx|tsx|mjs|cjs|mts|cts)?(\$|))";
-            _long_short_completion "\${BUN_TEST_OPTIONS_LONG} \${GLOBAL_OPTIONS_LONG} \${BUN_TEST_OPTIONS_SHORT} \${GLOBAL_OPTIONS_SHORT}" "\${BUN_TEST_OPTIONS_SHORT} \${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "\${${varName}} \${GLOBAL_OPTIONS}";
             return;;`,
       );
     } else if (cmd.name === "pm") {
-      const varName = `BUN_${cmd.name.toUpperCase()}_OPTIONS`;
-      const flagLine =
-        entry.long || entry.short
-          ? `\n            _long_short_completion "\${${varName}_LONG} \${${varName}_SHORT}" "\${${varName}_SHORT}";`
-          : "";
+      const flagLine = entry.options ? `\n            _flag_completion "\${${varName}}";` : "";
       caseArms.push(
         `        ${pattern})${flagLine}
             COMPREPLY+=( \$(compgen -W "${pmSubcommands}" -- "\${cur_word}") );
@@ -345,22 +337,20 @@ function generateBash(): string {
     } else if (runtimeCommands.has(cmd.name)) {
       caseArms.push(
         `        ${pattern})
-            _long_short_completion "\${GLOBAL_OPTIONS_LONG} \${GLOBAL_OPTIONS_SHORT}" "\${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "\${GLOBAL_OPTIONS}";
             return;;`,
       );
     } else if (cmd.name === "build") {
-      const varName = `BUN_${cmd.name.toUpperCase()}_OPTIONS`;
       caseArms.push(
         `        ${pattern})
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|css|html)?(\$|))";
-            _long_short_completion "\${${varName}_LONG} \${${varName}_SHORT}" "\${${varName}_SHORT}";
+            _flag_completion "\${${varName}}";
             return;;`,
       );
-    } else if (entry.long || entry.short) {
-      const varName = `BUN_${cmd.name.toUpperCase()}_OPTIONS`;
+    } else if (entry.options) {
       caseArms.push(
         `        ${pattern})
-            _long_short_completion "\${${varName}_LONG} \${${varName}_SHORT}" "\${${varName}_SHORT}";
+            _flag_completion "\${${varName}}";
             return;;`,
       );
     } else {
@@ -373,14 +363,11 @@ function generateBash(): string {
 
   // Option variable declarations.
   const optionVars: string[] = [];
-  optionVars.push(`    local GLOBAL_OPTIONS_LONG="${global.long}";`);
-  optionVars.push(`    local GLOBAL_OPTIONS_SHORT="${global.short}";`);
+  optionVars.push(`    local GLOBAL_OPTIONS="${globalOptions}";`);
   for (const cmd of Object.values(data.commands)) {
     const entry = perCommand[cmd.name];
-    if (!entry.long && !entry.short) continue;
-    const varName = `BUN_${cmd.name.toUpperCase()}_OPTIONS`;
-    optionVars.push(`    local ${varName}_LONG="${entry.long}";`);
-    optionVars.push(`    local ${varName}_SHORT="${entry.short}";`);
+    if (!entry.options) continue;
+    optionVars.push(`    local BUN_${cmd.name.toUpperCase()}_OPTIONS="${entry.options}";`);
   }
 
   const flagsWithDirValue = ["--cwd", "--coverage-dir", "--outdir", "--public-dir", "--cache-dir", "--root"];
@@ -392,8 +379,8 @@ function generateBash(): string {
 _file_arguments() {
     local extensions="\${1}"
     local reset
-    reset="\$(shopt -p globstar extglob 2>/dev/null)"
-    shopt -s globstar extglob 2>/dev/null
+    reset="\$(shopt -p extglob 2>/dev/null)"
+    shopt -s extglob 2>/dev/null
 
     if [[ -z "\${cur_word}" ]]; then
         COMPREPLY+=( \$(compgen -fG -X "\${extensions}" -- "\${cur_word}") );
@@ -404,18 +391,9 @@ _file_arguments() {
     eval "\$reset" 2>/dev/null
 }
 
-_long_short_completion() {
-    local wordlist="\${1}";
-    local short_options="\${2}"
-
-    [[ -z "\${cur_word}" || "\${cur_word}" =~ ^- ]] && {
-        COMPREPLY+=( \$(compgen -W "\${wordlist}" -- "\${cur_word}"));
-        return;
-    }
-    [[ "\${cur_word}" =~ ^-[A-Za-z]+ ]] && {
-        COMPREPLY+=( \$(compgen -W "\${short_options}" -- "\${cur_word}"));
-        return;
-    }
+_flag_completion() {
+    [[ -z "\${cur_word}" || "\${cur_word}" == -* ]] && \\
+        COMPREPLY+=( \$(compgen -W "\${1}" -- "\${cur_word}") );
 }
 
 _read_scripts_in_package_json() {
@@ -475,7 +453,7 @@ ${optionVars.join("\n")}
         help|completions) return;;
 ${caseArms.join("\n")}
         "")
-            _long_short_completion "\${GLOBAL_OPTIONS_LONG} \${GLOBAL_OPTIONS_SHORT}" "\${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "\${GLOBAL_OPTIONS}";
             COMPREPLY+=( \$(compgen -W "\${SUBCOMMANDS}" -- "\${cur_word}") );
             _read_scripts_in_package_json;
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?(\$|))";

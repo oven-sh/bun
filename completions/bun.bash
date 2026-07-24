@@ -5,8 +5,8 @@
 _file_arguments() {
     local extensions="${1}"
     local reset
-    reset="$(shopt -p globstar extglob 2>/dev/null)"
-    shopt -s globstar extglob 2>/dev/null
+    reset="$(shopt -p extglob 2>/dev/null)"
+    shopt -s extglob 2>/dev/null
 
     if [[ -z "${cur_word}" ]]; then
         COMPREPLY+=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
@@ -17,18 +17,9 @@ _file_arguments() {
     eval "$reset" 2>/dev/null
 }
 
-_long_short_completion() {
-    local wordlist="${1}";
-    local short_options="${2}"
-
-    [[ -z "${cur_word}" || "${cur_word}" =~ ^- ]] && {
-        COMPREPLY+=( $(compgen -W "${wordlist}" -- "${cur_word}"));
-        return;
-    }
-    [[ "${cur_word}" =~ ^-[A-Za-z]+ ]] && {
-        COMPREPLY+=( $(compgen -W "${short_options}" -- "${cur_word}"));
-        return;
-    }
+_flag_completion() {
+    [[ -z "${cur_word}" || "${cur_word}" == -* ]] && \
+        COMPREPLY+=( $(compgen -W "${1}" -- "${cur_word}") );
 }
 
 _read_scripts_in_package_json() {
@@ -45,40 +36,23 @@ _read_scripts_in_package_json() {
 _bun_completions() {
     local SUBCOMMANDS="a add audit build c create exec i info init install link outdated patch pm publish remove repl rm run test unlink update upgrade x";
 
-    local GLOBAL_OPTIONS_LONG="--bun --conditions --config --console-depth --cwd --dns-result-order --elide-lines --env-file --eval --expose-gc --fetch-preconnect --filter --help --hot --if-present --import --inspect --inspect-brk --inspect-wait --install --max-http-header-size --no-addons --no-clear-screen --no-deprecation --no-install --port --prefer-latest --prefer-offline --preload --print --redis-preconnect --require --revision --shell --silent --smol --sql-preconnect --throw-deprecation --title --unhandled-rejections --version --watch --zero-fill-buffers";
-    local GLOBAL_OPTIONS_SHORT="-F -b -c -e -h -i -p -r -v";
-    local BUN_TEST_OPTIONS_LONG="--bail --coverage --coverage-dir --coverage-reporter --only --reporter --reporter-outfile --rerun-each --retry --test-name-pattern --timeout --todo --update-snapshots";
-    local BUN_TEST_OPTIONS_SHORT="-t -u";
-    local BUN_X_OPTIONS_LONG="--bun";
-    local BUN_X_OPTIONS_SHORT="";
-    local BUN_INSTALL_OPTIONS_LONG="--analyze --backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dev --dry-run --exact --filter --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --only-missing --optional --peer --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_INSTALL_OPTIONS_SHORT="-E -a -c -d -f -g -h -p -y";
-    local BUN_ADD_OPTIONS_LONG="--analyze --backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dev --dry-run --exact --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --only-missing --optional --peer --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_ADD_OPTIONS_SHORT="-E -a -c -d -f -g -h -p -y";
-    local BUN_REMOVE_OPTIONS_LONG="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_REMOVE_OPTIONS_SHORT="-c -f -g -h -p -y";
-    local BUN_UPDATE_OPTIONS_LONG="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --filter --force --frozen-lockfile --global --help --ignore-scripts --interactive --latest --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --recursive --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_UPDATE_OPTIONS_SHORT="-c -f -g -h -i -p -r -y";
-    local BUN_AUDIT_OPTIONS_LONG="--json";
-    local BUN_AUDIT_OPTIONS_SHORT="";
-    local BUN_OUTDATED_OPTIONS_LONG="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --filter --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --recursive --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_OUTDATED_OPTIONS_SHORT="-F -c -f -g -h -p -r -y";
-    local BUN_LINK_OPTIONS_LONG="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_LINK_OPTIONS_SHORT="-c -f -g -h -p -y";
-    local BUN_UNLINK_OPTIONS_LONG="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_UNLINK_OPTIONS_SHORT="-c -f -g -h -p -y";
-    local BUN_PUBLISH_OPTIONS_LONG="--access --auth-type --backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --gzip-level --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --otp --production --quiet --registry --save --save-text-lockfile --silent --tag --trust --verbose --yarn";
-    local BUN_PUBLISH_OPTIONS_SHORT="-c -f -g -h -p -y";
-    local BUN_PATCH_OPTIONS_LONG="--backend --ca --cache-dir --cafile --commit --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --patches-dir --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_PATCH_OPTIONS_SHORT="-c -f -g -h -p -y";
-    local BUN_INFO_OPTIONS_LONG="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --json --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn";
-    local BUN_INFO_OPTIONS_SHORT="-c -f -g -h -p -y";
-    local BUN_BUILD_OPTIONS_LONG="--app --asset-naming --banner --bytecode --chunk-naming --compile --conditions --css-chunking --debug-dump-server-files --debug-no-minify --emit-dce-annotations --entry-naming --env --external --footer --format --minify --minify-identifiers --minify-syntax --minify-whitespace --no-bundle --no-clear-screen --outdir --outfile --packages --production --public-path --react-compiler --react-fast-refresh --root --server-components --sourcemap --splitting --target --watch --windows-hide-console --windows-icon";
-    local BUN_BUILD_OPTIONS_SHORT="-e";
-    local BUN_INIT_OPTIONS_LONG="--help --minimal --react --yes";
-    local BUN_INIT_OPTIONS_SHORT="-m -r -y";
-    local BUN_UPGRADE_OPTIONS_LONG="--canary --stable";
-    local BUN_UPGRADE_OPTIONS_SHORT="";
+    local GLOBAL_OPTIONS="--bun --conditions --config --console-depth --cwd --dns-result-order --elide-lines --env-file --eval --expose-gc --fetch-preconnect --filter --help --hot --if-present --import --inspect --inspect-brk --inspect-wait --install --max-http-header-size --no-addons --no-clear-screen --no-deprecation --no-install --port --prefer-latest --prefer-offline --preload --print --redis-preconnect --require --revision --shell --silent --smol --sql-preconnect --throw-deprecation --title --unhandled-rejections --version --watch --zero-fill-buffers -F -b -c -e -h -i -p -r -v";
+    local BUN_TEST_OPTIONS="--bail --coverage --coverage-dir --coverage-reporter --only --reporter --reporter-outfile --rerun-each --retry --test-name-pattern --timeout --todo --update-snapshots -t -u";
+    local BUN_X_OPTIONS="--bun";
+    local BUN_INSTALL_OPTIONS="--analyze --backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dev --dry-run --exact --filter --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --only-missing --optional --peer --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -E -a -c -d -f -g -h -p -y";
+    local BUN_ADD_OPTIONS="--analyze --backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dev --dry-run --exact --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --only-missing --optional --peer --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -E -a -c -d -f -g -h -p -y";
+    local BUN_REMOVE_OPTIONS="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -c -f -g -h -p -y";
+    local BUN_UPDATE_OPTIONS="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --filter --force --frozen-lockfile --global --help --ignore-scripts --interactive --latest --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --recursive --registry --save --save-text-lockfile --silent --trust --verbose --yarn -c -f -g -h -i -p -r -y";
+    local BUN_AUDIT_OPTIONS="--json";
+    local BUN_OUTDATED_OPTIONS="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --filter --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --recursive --registry --save --save-text-lockfile --silent --trust --verbose --yarn -F -c -f -g -h -p -r -y";
+    local BUN_LINK_OPTIONS="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -c -f -g -h -p -y";
+    local BUN_UNLINK_OPTIONS="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -c -f -g -h -p -y";
+    local BUN_PUBLISH_OPTIONS="--access --auth-type --backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --gzip-level --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --otp --production --quiet --registry --save --save-text-lockfile --silent --tag --trust --verbose --yarn -c -f -g -h -p -y";
+    local BUN_PATCH_OPTIONS="--backend --ca --cache-dir --cafile --commit --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --patches-dir --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -c -f -g -h -p -y";
+    local BUN_INFO_OPTIONS="--backend --ca --cache-dir --cafile --concurrent-scripts --config --cwd --dry-run --force --frozen-lockfile --global --help --ignore-scripts --json --linker --lockfile-only --network-concurrency --no-cache --no-progress --no-save --no-summary --no-verify --omit --production --quiet --registry --save --save-text-lockfile --silent --trust --verbose --yarn -c -f -g -h -p -y";
+    local BUN_BUILD_OPTIONS="--app --asset-naming --banner --bytecode --chunk-naming --compile --conditions --css-chunking --debug-dump-server-files --debug-no-minify --emit-dce-annotations --entry-naming --env --external --footer --format --minify --minify-identifiers --minify-syntax --minify-whitespace --no-bundle --no-clear-screen --outdir --outfile --packages --production --public-path --react-compiler --react-fast-refresh --root --server-components --sourcemap --splitting --target --watch --windows-hide-console --windows-icon -e";
+    local BUN_INIT_OPTIONS="--help --minimal --react --yes -m -r -y";
+    local BUN_UPGRADE_OPTIONS="--canary --stable";
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
@@ -121,72 +95,72 @@ _bun_completions() {
         help|completions) return;;
         run)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?($|))";
-            _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}" "${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "${GLOBAL_OPTIONS}";
             _read_scripts_in_package_json;
             return;;
         test)
             _file_arguments "!(*@(_|.)@(test|spec).@(js|ts|jsx|tsx|mjs|cjs|mts|cts)?($|))";
-            _long_short_completion "${BUN_TEST_OPTIONS_LONG} ${GLOBAL_OPTIONS_LONG} ${BUN_TEST_OPTIONS_SHORT} ${GLOBAL_OPTIONS_SHORT}" "${BUN_TEST_OPTIONS_SHORT} ${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "${BUN_TEST_OPTIONS} ${GLOBAL_OPTIONS}";
             return;;
         x)
-            _long_short_completion "${BUN_X_OPTIONS_LONG} ${BUN_X_OPTIONS_SHORT}" "${BUN_X_OPTIONS_SHORT}";
+            _flag_completion "${BUN_X_OPTIONS}";
             return;;
         repl)
-            _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}" "${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "${GLOBAL_OPTIONS}";
             return;;
         exec)
-            _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}" "${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "${GLOBAL_OPTIONS}";
             return;;
         install|i)
-            _long_short_completion "${BUN_INSTALL_OPTIONS_LONG} ${BUN_INSTALL_OPTIONS_SHORT}" "${BUN_INSTALL_OPTIONS_SHORT}";
+            _flag_completion "${BUN_INSTALL_OPTIONS}";
             return;;
         add|a)
-            _long_short_completion "${BUN_ADD_OPTIONS_LONG} ${BUN_ADD_OPTIONS_SHORT}" "${BUN_ADD_OPTIONS_SHORT}";
+            _flag_completion "${BUN_ADD_OPTIONS}";
             return;;
         remove|rm)
-            _long_short_completion "${BUN_REMOVE_OPTIONS_LONG} ${BUN_REMOVE_OPTIONS_SHORT}" "${BUN_REMOVE_OPTIONS_SHORT}";
+            _flag_completion "${BUN_REMOVE_OPTIONS}";
             return;;
         update)
-            _long_short_completion "${BUN_UPDATE_OPTIONS_LONG} ${BUN_UPDATE_OPTIONS_SHORT}" "${BUN_UPDATE_OPTIONS_SHORT}";
+            _flag_completion "${BUN_UPDATE_OPTIONS}";
             return;;
         audit)
-            _long_short_completion "${BUN_AUDIT_OPTIONS_LONG} ${BUN_AUDIT_OPTIONS_SHORT}" "${BUN_AUDIT_OPTIONS_SHORT}";
+            _flag_completion "${BUN_AUDIT_OPTIONS}";
             return;;
         outdated)
-            _long_short_completion "${BUN_OUTDATED_OPTIONS_LONG} ${BUN_OUTDATED_OPTIONS_SHORT}" "${BUN_OUTDATED_OPTIONS_SHORT}";
+            _flag_completion "${BUN_OUTDATED_OPTIONS}";
             return;;
         link)
-            _long_short_completion "${BUN_LINK_OPTIONS_LONG} ${BUN_LINK_OPTIONS_SHORT}" "${BUN_LINK_OPTIONS_SHORT}";
+            _flag_completion "${BUN_LINK_OPTIONS}";
             return;;
         unlink)
-            _long_short_completion "${BUN_UNLINK_OPTIONS_LONG} ${BUN_UNLINK_OPTIONS_SHORT}" "${BUN_UNLINK_OPTIONS_SHORT}";
+            _flag_completion "${BUN_UNLINK_OPTIONS}";
             return;;
         publish)
-            _long_short_completion "${BUN_PUBLISH_OPTIONS_LONG} ${BUN_PUBLISH_OPTIONS_SHORT}" "${BUN_PUBLISH_OPTIONS_SHORT}";
+            _flag_completion "${BUN_PUBLISH_OPTIONS}";
             return;;
         patch)
-            _long_short_completion "${BUN_PATCH_OPTIONS_LONG} ${BUN_PATCH_OPTIONS_SHORT}" "${BUN_PATCH_OPTIONS_SHORT}";
+            _flag_completion "${BUN_PATCH_OPTIONS}";
             return;;
         pm)
             COMPREPLY+=( $(compgen -W "bin cache default-trusted hash hash-print hash-string ls migrate pack pkg trust untrusted version view whoami why" -- "${cur_word}") );
             return;;
         info)
-            _long_short_completion "${BUN_INFO_OPTIONS_LONG} ${BUN_INFO_OPTIONS_SHORT}" "${BUN_INFO_OPTIONS_SHORT}";
+            _flag_completion "${BUN_INFO_OPTIONS}";
             return;;
         build)
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|css|html)?($|))";
-            _long_short_completion "${BUN_BUILD_OPTIONS_LONG} ${BUN_BUILD_OPTIONS_SHORT}" "${BUN_BUILD_OPTIONS_SHORT}";
+            _flag_completion "${BUN_BUILD_OPTIONS}";
             return;;
         init)
-            _long_short_completion "${BUN_INIT_OPTIONS_LONG} ${BUN_INIT_OPTIONS_SHORT}" "${BUN_INIT_OPTIONS_SHORT}";
+            _flag_completion "${BUN_INIT_OPTIONS}";
             return;;
         create|c)
             return;;
         upgrade)
-            _long_short_completion "${BUN_UPGRADE_OPTIONS_LONG} ${BUN_UPGRADE_OPTIONS_SHORT}" "${BUN_UPGRADE_OPTIONS_SHORT}";
+            _flag_completion "${BUN_UPGRADE_OPTIONS}";
             return;;
         "")
-            _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}" "${GLOBAL_OPTIONS_SHORT}";
+            _flag_completion "${GLOBAL_OPTIONS}";
             COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
             _read_scripts_in_package_json;
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?($|))";

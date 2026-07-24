@@ -162,14 +162,10 @@ impl ABIType {
 }
 
 impl ABIType {
-    pub const MAX: i32 = ABIType::NapiValue as i32;
-
     /// See [`ABI_TYPE_LABEL`].
     pub const LABEL: &'static __ComptimeStringMap_ABI_TYPE_LABEL = &ABI_TYPE_LABEL;
 
-    /// Returns `None` for
-    /// out-of-range discriminants. The enum is `#[repr(i32)]` with contiguous
-    /// values `0..=MAX` plus `Buffer = 20`, so range-check then match.
+    /// Returns `None` for out-of-range discriminants.
     #[inline]
     pub const fn from_int(n: i32) -> Option<Self> {
         Some(match n {

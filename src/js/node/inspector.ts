@@ -9,6 +9,7 @@ const { SafeSet } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
+const DateNow = Date.now;
 
 // #handleMethod return marker for inspector-protocol errors: the callback
 // receives the plain `{ code, message }` object (Node delivers protocol
@@ -190,7 +191,7 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
   if (emittingConsoleAPI) return;
   emittingConsoleAPI = true;
   try {
-    const timestamp = Date.now();
+    const timestamp = DateNow();
     for (const session of runtimeEnabledSessions) {
       // Neither a throwing listener nor a throwing argument serialization
       // (toRemoteObject reads user-controlled toString) may make the console

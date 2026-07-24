@@ -724,21 +724,26 @@ test("a listener that throws a non-stringifiable value does not break console.lo
   }
 });
 
-test("a tampered Set.prototype[Symbol.iterator] does not break console.log while Runtime is enabled", () => {
+test("a tampered Set.prototype[Symbol.iterator] or Date.now does not break console.log while Runtime is enabled", () => {
   const session = new inspector.Session();
   session.connect();
-  const saved = Set.prototype[Symbol.iterator];
+  const savedIter = Set.prototype[Symbol.iterator];
+  const savedNow = Date.now;
   let logged = "";
   session.on("Runtime.consoleAPICalled", msg => (logged = msg.params.args[0].value));
   try {
     session.post("Runtime.enable");
     Set.prototype[Symbol.iterator] = () => {
-      throw new Error("tampered");
+      throw new Error("tampered iterator");
     };
-    expect(() => console.log("still works after set tamper")).not.toThrow();
-    expect(logged).toBe("still works after set tamper");
+    Date.now = () => {
+      throw new Error("tampered now");
+    };
+    expect(() => console.log("still works after tamper")).not.toThrow();
+    expect(logged).toBe("still works after tamper");
   } finally {
-    Set.prototype[Symbol.iterator] = saved;
+    Set.prototype[Symbol.iterator] = savedIter;
+    Date.now = savedNow;
     session.disconnect();
   }
 });

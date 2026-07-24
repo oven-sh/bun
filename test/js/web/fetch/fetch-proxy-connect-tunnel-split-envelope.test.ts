@@ -245,4 +245,11 @@ describe("handle_on_data_headers split-read header accumulation", () => {
     const res = await serveSplit(30, "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
     expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "hello" });
   });
+
+  test.concurrent("content-length body in the same read as the buffered header tail", async () => {
+    // Non-chunked single-packet body: handle_response_body_from_single_packet
+    // with the body bytes coming from the accumulation buffer.
+    const res = await serveSplit(30, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello");
+    expect({ status: res.status, body: await res.text() }).toEqual({ status: 200, body: "hello" });
+  });
 });

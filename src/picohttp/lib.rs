@@ -544,27 +544,6 @@ impl<'a> Default for Response<'a> {
 }
 
 impl<'a> Response<'a> {
-    /// Widen `status`/`headers` to `'static` for self-referential storage.
-    /// Field-by-field move (no bitwise reinterpret).
-    ///
-    /// # Safety
-    /// Caller guarantees the response buffer / header storage the slices borrow
-    /// outlives every read through the returned value.
-    #[inline]
-    pub unsafe fn detach_lifetime(self) -> Response<'static> {
-        Response {
-            minor_version: self.minor_version,
-            status_code: self.status_code,
-            // SAFETY: caller contract.
-            status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
-            headers: HeaderList {
-                // SAFETY: caller contract.
-                list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
-            },
-            bytes_read: self.bytes_read,
-        }
-    }
-
     pub fn count(&self, builder: &mut StringBuilder) {
         builder.count(self.status);
 
@@ -573,18 +552,24 @@ impl<'a> Response<'a> {
         }
     }
 
-    pub fn clone(&self, headers: &'a mut [Header], builder: &mut StringBuilder) -> Response<'a> {
-        let mut that = *self;
-        // SAFETY: see `Header::clone` — caller keeps `builder` alive.
-        that.status = unsafe { builder.append_raw(self.status) };
-
+    pub fn clone<'out>(
+        &self,
+        headers: &'out mut [Header],
+        builder: &mut StringBuilder,
+    ) -> Response<'out> {
         for (i, header) in self.headers.list.iter().enumerate() {
             headers[i] = header.clone(builder);
         }
-
-        that.headers.list = &headers[0..self.headers.list.len()];
-
-        that
+        Response {
+            minor_version: self.minor_version,
+            status_code: self.status_code,
+            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
+            status: unsafe { builder.append_raw(self.status) },
+            headers: HeaderList {
+                list: &headers[0..self.headers.list.len()],
+            },
+            bytes_read: self.bytes_read,
+        }
     }
 
     pub fn parse_parts(

@@ -359,17 +359,16 @@ impl HTTPClient<'_> {
     /// undo the HTTP/1.1-specific framing decisions that don't apply when the
     /// transport delimits the body (h2 DATA frames / h3 STREAM frames).
     ///
-    /// SAFETY CONTRACT: `headers` borrows caller-owned storage
-    /// (`stream.decoded_bytes` for h2, the lsquic hset for h3) that is
-    /// lifetime-erased into `state.pending_response`. The caller MUST invoke
-    /// `clone_metadata` (which deep-copies the header bytes) synchronously
-    /// before that backing storage is freed. Both call sites already do.
+    /// Returns the (possibly-mutated) response so the caller can pass it to
+    /// `clone_metadata` once the redirect decision has been made; the borrow of
+    /// `headers` flows through, so the deep copy is checked by the compiler
+    /// rather than by a call-ordering contract.
     #[inline]
-    pub(crate) fn apply_multiplexed_headers(
+    pub(crate) fn apply_multiplexed_headers<'h>(
         &mut self,
         status_code: u32,
-        headers: &[picohttp::Header],
-    ) -> crate::Result<HeaderResult> {
+        headers: &'h [picohttp::Header],
+    ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
         let mut response = picohttp::Response {
             minor_version: 0,
             status_code,
@@ -377,14 +376,7 @@ impl HTTPClient<'_> {
             headers: picohttp::HeaderList { list: headers },
             bytes_read: 0,
         };
-        // SAFETY: see fn doc — erased borrow is deep-copied by `clone_metadata`
-        // before the backing storage is released.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         let should_continue = self.handle_response_metadata(&mut response)?;
-        // handle_response_metadata may mutate `response` (e.g. the 304 rewrite
-        // for force_last_modified); clone_metadata reads pending_response, so
-        // re-sync. SAFETY: same lifetime erase as above.
-        self.state.pending_response = Some(unsafe { response.detach_lifetime() });
         // h2/h3 framing delimits the body; chunked transfer-encoding and the
         // HTTP/1.1 "no Content-Length ⇒ no keep-alive" rule don't apply.
         self.state.transfer_encoding = Encoding::Identity;
@@ -392,11 +384,12 @@ impl HTTPClient<'_> {
             self.state.response_stage = ResponseStage::Body;
         }
         self.state.flags.allow_keepalive = true;
-        Ok(if should_continue == ShouldContinue::Finished {
+        let result = if should_continue == ShouldContinue::Finished {
             HeaderResult::Finished
         } else {
             HeaderResult::HasBody
-        })
+        };
+        Ok((result, response))
     }
 }
 
@@ -3650,11 +3643,9 @@ impl<'a> HTTPClient<'a> {
             }};
         }
 
-        loop {
+        let shared_resp = scratch::response_headers();
+        let mut response = loop {
             let mut amount_read: usize = 0;
-
-            // we reset the pending_response each time wich means that on parse error this will be always be empty
-            self.state.pending_response = Some(picohttp::Response::default());
 
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
@@ -3662,48 +3653,40 @@ impl<'a> HTTPClient<'a> {
                 short_read!();
             }
 
-            let shared_resp = scratch::response_headers();
-            let response =
-                match picohttp::Response::parse_parts(to_read, shared_resp, Some(&mut amount_read))
-                {
-                    Ok(r) => r,
-                    Err(picohttp::ParseResponseError::ShortRead) => {
-                        // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                        // request-side knob (Node `--max-http-header-size`); reusing
-                        // it here rejects legitimate responses with large
-                        // `Location`/`Set-Cookie` headers. The intent is to bound
-                        // `response_message_buffer` growth, so use a generous fixed
-                        // cap independent of that knob.
-                        const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                        if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
-                            self.close_and_fail::<IS_SSL>(
-                                crate::Error::ResponseHeadersTooLarge,
-                                socket,
-                            );
-                            return;
-                        }
-                        short_read!();
-                    }
-                    Err(e) => {
-                        self.close_and_fail::<IS_SSL>(e.into(), socket);
+            let parsed = match picohttp::Response::parse_parts(
+                to_read,
+                &mut shared_resp[..],
+                Some(&mut amount_read),
+            ) {
+                Ok(r) => r,
+                Err(picohttp::ParseResponseError::ShortRead) => {
+                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
+                    // request-side knob (Node `--max-http-header-size`); reusing
+                    // it here rejects legitimate responses with large
+                    // `Location`/`Set-Cookie` headers. The intent is to bound
+                    // `response_message_buffer` growth, so use a generous fixed
+                    // cap independent of that knob.
+                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
+                        self.close_and_fail::<IS_SSL>(
+                            crate::Error::ResponseHeadersTooLarge,
+                            socket,
+                        );
                         return;
                     }
-                };
-
-            // we save the successful parsed response
-            // SAFETY: header name/value slices borrow `to_read` (→ `buffer` /
-            // `incoming_data`) and the thread-local scratch header array, both
-            // of which outlive every read of `pending_response` below;
-            // `clone_metadata()` deep-copies before `buffer` drops. Widen to
-            // `'static` so it can be stored in `self.state`.
-            let response = unsafe { response.detach_lifetime() };
-            self.state.pending_response = Some(response);
+                    short_read!();
+                }
+                Err(e) => {
+                    self.close_and_fail::<IS_SSL>(e.into(), socket);
+                    return;
+                }
+            };
 
             let bytes_read =
-                (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
+                (usize::try_from(parsed.bytes_read).expect("int cast")).min(to_read.len());
             to_read = &to_read[bytes_read..];
 
-            if response.status_code == 101 {
+            if parsed.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
                     || (self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
                 {
@@ -3715,14 +3698,13 @@ impl<'a> HTTPClient<'a> {
                 self.flags.upgrade_state = HTTPUpgradeState::Upgraded;
                 // start draining the request body
                 self.flush_stream::<IS_SSL>(socket);
-                break;
+                break parsed;
             }
 
             // handle the case where we have a 100 Continue
-            if response.status_code >= 100 && response.status_code < 200 {
+            if parsed.status_code >= 100 && parsed.status_code < 200 {
                 bun_core::scoped_log!(fetch, "information headers");
 
-                self.state.pending_response = None;
                 if to_read.is_empty() {
                     if !needs_move {
                         buffer.list.clear();
@@ -3735,12 +3717,8 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            break;
-        }
-        // pending_response is already `Option<Response<'static>>` (set just above).
-        // NOTE: copy (Response is Copy), do NOT .take() — clone_metadata() below
-        // requires pending_response to remain Some.
-        let mut response: picohttp::Response<'static> = self.state.pending_response.unwrap();
+            break parsed;
+        };
         let should_continue = match self.handle_response_metadata(&mut response) {
             Ok(s) => s,
             Err(err) => {
@@ -3748,10 +3726,6 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
         };
-        // handle_response_metadata may mutate `response`; mirror it back so
-        // clone_metadata() sees the up-to-date headers regardless of the
-        // content-encoding branch below.
-        self.state.pending_response = Some(response);
 
         if (self.state.content_encoding_i as usize) < response.headers.list.len()
             && !self.state.flags.did_set_content_encoding
@@ -3759,8 +3733,6 @@ impl<'a> HTTPClient<'a> {
             // if it compressed with this header, it is no longer because we will decompress it
             self.state.flags.did_set_content_encoding = true;
             self.state.content_encoding_i = u8::MAX;
-            // we need to reset the pending response because we removed a header
-            self.state.pending_response = Some(response);
         }
 
         if should_continue == ShouldContinue::Finished {
@@ -3770,7 +3742,7 @@ impl<'a> HTTPClient<'a> {
             }
             // this means that the request ended
             // clone metadata and return the progress at this point
-            self.clone_metadata();
+            self.clone_metadata(&response);
             // if is chuncked but no body is expected we mark the last chunk
             self.state.flags.received_last_chunk = true;
             // if is not we ignore the content_length
@@ -3786,7 +3758,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         // we have body data incoming so we clone metadata and keep going
-        self.clone_metadata();
+        self.clone_metadata(&response);
 
         if to_read.is_empty() {
             // no body data yet, but we can report the headers
@@ -3856,7 +3828,6 @@ impl<'a> HTTPClient<'a> {
         // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
         // records must keep reaching the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            self.state.pending_response = None;
             self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
             return;
         }
@@ -3904,7 +3875,6 @@ impl<'a> HTTPClient<'a> {
             }
             ResponseStage::Fail => {}
             _ => {
-                self.state.pending_response = None;
                 self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
                 return;
             }
@@ -3989,50 +3959,36 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    // We have to clone metadata immediately after use
-    pub fn clone_metadata(&mut self) {
-        debug_assert!(self.state.pending_response.is_some());
-        // `Response<'static>` is `Copy`; bind by value so no borrow
-        // of `self.state` is held across the `pending_response = None` write
-        // below.
-        if let Some(response) = self.state.pending_response {
-            if let Some(old) = self.state.cloned_metadata.take() {
-                drop(old); // deinit
-            }
-            let mut builder = picohttp::StringBuilder::default();
-            response.count(&mut builder);
-            builder.count(self.url.href);
-            let _ = builder.allocate();
-            // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-            // `Response::clone` ties its return lifetime to
-            // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
-            // the cloned response can be stored in `HTTPResponseMetadata`.
-            // Reclaimed by `Drop for HTTPResponseMetadata`.
-            let headers_buf = bun_core::heap::release(
-                vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
-            );
-            let cloned_response = response.clone(headers_buf, &mut builder);
-
-            // we clean the temporary response since cloned_metadata is now the owner
-            self.state.pending_response = None;
-
-            // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
-            // buffer is transferred to `owned_buf` immediately below and stored
-            // alongside `href` in `HTTPResponseMetadata`.
-            let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
-            // Transfer the single backing allocation out of the builder
-            // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-            let owned_buf = builder.move_to_slice();
-            self.state.cloned_metadata = Some(HTTPResponseMetadata {
-                owned_buf,
-                response: cloned_response,
-                url: href,
-            });
-        } else {
-            // we should never clone metadata that dont exists
-            // we added a empty metadata just in case but will hit the assert
-            self.state.cloned_metadata = Some(HTTPResponseMetadata::default());
-        }
+    /// Deep-copy `response` (headers, status, and this request's `url.href`)
+    /// into owned storage on `state.cloned_metadata` so the caller can drop the
+    /// buffer the parsed slices borrow.
+    pub fn clone_metadata(&mut self, response: &picohttp::Response<'_>) {
+        self.state.cloned_metadata = None;
+        let mut builder = picohttp::StringBuilder::default();
+        response.count(&mut builder);
+        builder.count(self.url.href);
+        let _ = builder.allocate();
+        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
+        // `Response::clone` ties its return lifetime to
+        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
+        // the cloned response can be stored in `HTTPResponseMetadata`.
+        // Reclaimed by `Drop for HTTPResponseMetadata`.
+        let headers_buf = bun_core::heap::release(
+            vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
+        );
+        let cloned_response = response.clone(headers_buf, &mut builder);
+        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
+        // buffer is transferred to `owned_buf` immediately below and stored
+        // alongside `href` in `HTTPResponseMetadata`.
+        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
+        // Transfer the single backing allocation out of the builder
+        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
+        let owned_buf = builder.move_to_slice();
+        self.state.cloned_metadata = Some(HTTPResponseMetadata {
+            owned_buf,
+            response: cloned_response,
+            url: href,
+        });
     }
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):

@@ -800,6 +800,220 @@ describe.concurrent("bun-install", () => {
     expect(exitCode).toBe(0);
   });
 
+  // Registry serves manifests from one origin and tarballs from a separate
+  // authenticated origin (Artifactory/Nexus with a CDN host). The same-origin
+  // guard above strips the registry Authorization for the CDN host, so users
+  // add an explicit `.npmrc` `//cdn-host/:_authToken=` entry for it. npm
+  // honours that (npm-registry-fetch resolves auth by the fetch URL), and bun
+  // must too: send the user-configured credential to the host the user named,
+  // and never forward the registry token to any host the user did not name.
+  it("should send .npmrc //host/:_authToken= to a tarball host that is not the registry", async () => {
+    const regToken = "registry-token";
+    const cdnToken = "cdn-token";
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+    const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+
+    const cdnAuth: (string | null)[] = [];
+    const unrelatedAuth: (string | null)[] = [];
+
+    // Authenticated tarball host: requires its own Bearer token.
+    await using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        cdnAuth.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== `Bearer ${cdnToken}`) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        return new Response(Bun.file(tgz));
+      },
+    });
+
+    // A third origin the user configured NO auth for. A registry that points
+    // dist.tarball here must not receive the registry token or the CDN token.
+    await using unrelated = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        unrelatedAuth.push(req.headers.get("authorization"));
+        return new Response(Bun.file(tgz));
+      },
+    });
+
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const url = new URL(req.url);
+        const manifest = (name: string, host: number) =>
+          Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name,
+                version: "1.0.0",
+                dist: { integrity, tarball: `http://127.0.0.1:${host}/${name}/-/${name}-1.0.0.tgz` },
+              },
+            },
+          });
+        if (url.pathname === "/on-cdn") return manifest("on-cdn", cdn.port);
+        if (url.pathname === "/on-unrelated") return manifest("on-unrelated", unrelated.port);
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("tarball-auth-cdn", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "on-cdn": "1.0.0", "on-unrelated": "1.0.0" },
+      }),
+      ".npmrc": [
+        `registry=http://127.0.0.1:${registry.port}/`,
+        `//127.0.0.1:${registry.port}/:_authToken=${regToken}`,
+        // User-configured credential for the tarball host; must be sent.
+        `//127.0.0.1:${cdn.port}/:_authToken=${cdnToken}`,
+        // No entry for the `unrelated` host.
+        ``,
+      ].join("\n"),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, cdnAuth, unrelatedAuth }).toEqual({
+      stderr: expect.stringContaining("Saved lockfile"),
+      // CDN host received the user-configured CDN token (not the registry token).
+      cdnAuth: [`Bearer ${cdnToken}`],
+      // Unconfigured host received no Authorization at all.
+      unrelatedAuth: [null],
+    });
+    expect(stdout).toContain("2 packages installed");
+    expect(exitCode).toBe(0);
+  });
+
+  it("should send .npmrc //host/:username+_password Basic auth to a tarball host that is not the registry", async () => {
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+    const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+    const basic = Buffer.from("cdnuser:cdnpass").toString("base64");
+
+    const cdnAuth: (string | null)[] = [];
+
+    await using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        cdnAuth.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== `Basic ${basic}`) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        return new Response(Bun.file(tgz));
+      },
+    });
+
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/pkg") {
+          return Response.json({
+            name: "pkg",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "pkg",
+                version: "1.0.0",
+                dist: { integrity, tarball: `http://127.0.0.1:${cdn.port}/pkg/-/pkg-1.0.0.tgz` },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("tarball-auth-cdn-basic", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { pkg: "1.0.0" } }),
+      ".npmrc": [
+        `registry=http://127.0.0.1:${registry.port}/`,
+        `//127.0.0.1:${cdn.port}/:username=cdnuser`,
+        `//127.0.0.1:${cdn.port}/:_password=${Buffer.from("cdnpass").toString("base64")}`,
+        ``,
+      ].join("\n"),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, cdnAuth }).toEqual({
+      stderr: expect.stringContaining("Saved lockfile"),
+      cdnAuth: [`Basic ${basic}`],
+    });
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  });
+
+  // A direct URL tarball dependency ("pkg": "https://host/pkg.tgz") is
+  // enqueued with Authorization::NoAuthorization (no registry scope applies).
+  // npm-registry-fetch still resolves auth by the fetch URL for these, so a
+  // matching `.npmrc` `//host/:_authToken=` entry must be honored.
+  it("should send .npmrc //host/:_authToken= to a direct URL tarball dependency", async () => {
+    const cdnToken = "cdn-token";
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+
+    const cdnAuth: (string | null)[] = [];
+
+    await using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        cdnAuth.push(req.headers.get("authorization"));
+        if (req.headers.get("authorization") !== `Bearer ${cdnToken}`) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        return new Response(Bun.file(tgz));
+      },
+    });
+
+    using dir = tempDir("tarball-auth-direct-url", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { pkg: `http://127.0.0.1:${cdn.port}/pkg-1.0.0.tgz` },
+      }),
+      ".npmrc": `//127.0.0.1:${cdn.port}/:_authToken=${cdnToken}\n`,
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, cdnAuth }).toEqual({
+      stderr: expect.stringContaining("Saved lockfile"),
+      cdnAuth: [`Bearer ${cdnToken}`],
+    });
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+  });
+
   it("should handle empty string in dependencies", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

@@ -343,6 +343,8 @@ impl NetworkTask {
 
 #[derive(Clone, Copy)]
 pub enum Authorization {
+    /// Do not attach the package scope's registry credential. `.npmrc`
+    /// `//host/:*=` entries that match the tarball URL are still honored.
     NoAuthorization,
     AllowAuthorization,
 }
@@ -372,6 +374,52 @@ fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope)
         return;
     }
     header_builder.append("npm-auth-type", "legacy");
+}
+
+/// Look up a `.npmrc` `//host/path/:*=` auth entry for a tarball URL. The
+/// entry's host (including port) must match exactly; its pathname must be a
+/// path prefix of the tarball pathname (npm walks the target path upward until
+/// a matching key is found). Returns the entry with the longest matching
+/// pathname so more specific entries win.
+fn tarball_url_auth_for<'a>(
+    entries: &'a [npm::registry::Scope],
+    tarball: &URL<'_>,
+) -> Option<&'a npm::registry::Scope> {
+    let tarball_path = tarball.pathname;
+    // `.npmrc` keys have no scheme, so a portless key can only mean "default
+    // port for the tarball's scheme" (npm builds the key from
+    // `new URL(uri).host`, which strips default ports). Normalize on the
+    // tarball side so `//cdn/:_authToken=` matches `https://cdn:443/...`.
+    let tarball_port_is_default = tarball.get_port() == Some(tarball.get_default_port());
+    let mut best: Option<(&'a npm::registry::Scope, usize)> = None;
+    for entry in entries {
+        let entry_url = entry.url.url();
+        let host_matches = if entry_url.port.is_empty() && tarball_port_is_default {
+            entry_url.hostname == tarball.hostname
+        } else {
+            strings::without_trailing_slash(entry_url.host)
+                == strings::without_trailing_slash(tarball.host)
+        };
+        if !host_matches {
+            continue;
+        }
+        let entry_path = strings::without_trailing_slash(entry_url.pathname);
+        // `without_trailing_slash` keeps a lone `/`; treat it as the root
+        // prefix that matches every path.
+        let is_prefix = entry_path.is_empty()
+            || entry_path == b"/"
+            || (tarball_path.len() >= entry_path.len()
+                && tarball_path[..entry_path.len()] == *entry_path
+                && (tarball_path.len() == entry_path.len()
+                    || tarball_path[entry_path.len()] == b'/'));
+        if !is_prefix {
+            continue;
+        }
+        if best.is_none_or(|(_, len)| entry_path.len() > len) {
+            best = Some((entry, entry_path.len()));
+        }
+    }
+    best.map(|(s, _)| s)
 }
 
 fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
@@ -800,28 +848,43 @@ impl NetworkTask {
         // registries emit `dist.tarball` URLs with the default port spelled
         // out; without normalization those installs lose the `Authorization`
         // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
-            let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
-                && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
-        };
+        //
+        // When the origin does NOT match, fall back to `.npmrc` `//host/:*=`
+        // entries the user configured explicitly for the tarball host
+        // (`options.tarball_url_auth`), so registries that serve tarballs from
+        // a separate authenticated origin have a config escape hatch. This is
+        // how `npm-registry-fetch` resolves auth: by the URL being fetched,
+        // not by the package scope.
+        let auth_scope: Option<&npm::registry::Scope> =
+            if matches!(authorization, Authorization::AllowAuthorization) {
+                let tarball = URL::parse(&self.url_buf);
+                let registry = scope.url.url();
+                if tarball.protocol == registry.protocol
+                    && tarball.hostname == registry.hostname
+                    && tarball.get_port_auto() == registry.get_port_auto()
+                {
+                    Some(scope)
+                } else {
+                    tarball_url_auth_for(&pm.options.tarball_url_auth, &tarball)
+                }
+            } else {
+                tarball_url_auth_for(&pm.options.tarball_url_auth, &URL::parse(&self.url_buf))
+            };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
         let mut header_buf: &'static [u8] = b"";
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
+        if let Some(auth_scope) = auth_scope {
+            count_auth(&mut header_builder, auth_scope);
         }
 
         if header_builder.header_count > 0 {
             header_builder.allocate()?;
 
-            if send_auth {
-                append_auth(&mut header_builder, scope);
+            if let Some(auth_scope) = auth_scope {
+                append_auth(&mut header_builder, auth_scope);
             }
 
             // SAFETY: `written_slice()` is the safe (ptr,len) accessor; only the

@@ -19,13 +19,19 @@ const target = path.join(root, "src", "js_printer", "lib.rs");
 
 const lines = (await file(target).text()).split("\n");
 
+// The `Symbol` import is gone from `__gated_printer`, so a reintroduction
+// would most naturally be spelled `BackRef::<js_ast::Symbol>` (or the crate
+// name `bun_ast::Symbol`). Accept an optional path qualifier and tolerate
+// whitespace / the turbofish.
+const BACKREF_SYMBOL = /BackRef\s*(?:::)?\s*<\s*(?:(?:js_ast|bun_ast)\s*::\s*)?Symbol\s*>/;
+
 test("js_printer: symbol lookups go through get_symbol(), not per-site BackRef<Symbol>", () => {
   const offenders: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     // Skip full-line comments so prose mentions don't count.
     if (/^\s*\/\//.test(line)) continue;
-    if (/BackRef::<Symbol>|BackRef<Symbol>/.test(line)) {
+    if (BACKREF_SYMBOL.test(line)) {
       offenders.push(`src/js_printer/lib.rs:${i + 1}: ${line.trim()}`);
     }
   }

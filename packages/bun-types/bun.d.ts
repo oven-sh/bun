@@ -9057,12 +9057,28 @@ declare module "bun" {
   }
 
   /**
+   * A single archive entry. Either the file contents directly, or an object
+   * carrying the contents plus an optional Unix file mode. `mode` is validated
+   * like the `node:fs` mode argument: a non-negative integer or an octal string.
+   *
+   * @example
+   * ```ts
+   * new Bun.Archive({
+   *   "bin/mytool": { data: bytes, mode: 0o755 },
+   *   "README.md": "hello",
+   * });
+   * ```
+   */
+  type ArchiveEntry = BlobPart | { data: BlobPart; mode?: number | string };
+
+  /**
    * Input data for creating an archive. Can be:
-   * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer)
+   * - An object mapping paths to file contents (string, Blob, TypedArray, or ArrayBuffer),
+   *   or to `{ data, mode }` entries to set a per-entry Unix file mode (default `0o644`)
    * - A Blob containing existing archive data
    * - A TypedArray or ArrayBuffer containing existing archive data
    */
-  type ArchiveInput = Record<string, BlobPart> | Blob | ArrayBufferView | ArrayBufferLike;
+  type ArchiveInput = Record<string, ArchiveEntry> | Blob | ArrayBufferView | ArrayBufferLike;
 
   /**
    * Compression format for archive output.
@@ -9212,6 +9228,15 @@ declare module "bun" {
      * const archive = new Bun.Archive({
      *   "hello.txt": "Hello, World!",
      *   "nested/file.txt": "Nested content",
+     * });
+     * ```
+     *
+     * @example
+     * **Set a per-entry Unix file mode (e.g. mark a binary executable):**
+     * ```ts
+     * const archive = new Bun.Archive({
+     *   "bin/mytool": { data: bytes, mode: 0o755 },
+     *   "README.md": "hello",
      * });
      * ```
      *

@@ -219,6 +219,11 @@ impl CreateOptions {
             }
         };
 
+        // `bun create <template> ...` forwards every extra flag to the
+        // underlying `bunx create-<template>` tool, so unknown flags here are
+        // that tool's flags, not ours.
+        let _ = diag;
+
         let mut opts = CreateOptions {
             // clap positionals borrow from process argv; dupe each
             // entry into the process-lifetime CLI arena to obtain

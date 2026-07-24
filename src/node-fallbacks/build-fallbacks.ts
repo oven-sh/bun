@@ -27,7 +27,7 @@ for (let fileIndex = 0; fileIndex < allFiles.length; fileIndex++) {
   // Build all files at once with specific options
   const externalModules = builtins
     .concat(moduleFiles.filter(f => f !== name))
-    .flatMap(b => [`--external:node:${b}`, `--external:${b}`])
+    .flatMap(b => [`--external node:${b}`, `--external ${b}`])
     .join(" ");
 
   // Create the build command with all the specified options

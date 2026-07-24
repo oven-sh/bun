@@ -106,8 +106,18 @@ export var __toCommonJS = from => {
 /*__PURE__*/
 var __moduleCache;
 
-// When you do know the module is CJS
-export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+// When you do know the module is CJS.
+// Node removes a module from require.cache when its evaluation throws, so a
+// later require() re-evaluates it instead of returning the partial exports.
+export var __commonJS = (cb, mod) => () => {
+  if (!mod)
+    try {
+      cb((mod = { exports: {} }).exports, mod);
+    } catch (e) {
+      throw ((mod = 0), e);
+    }
+  return mod.exports;
+};
 
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
@@ -318,7 +328,19 @@ export var __decorateElement = (array, flags, name, decorators, target, extra) =
   );
 };
 
-export var __esm = (fn, res) => () => (fn && (res = fn((fn = 0))), res);
+// Lazily-evaluated ESM module body. ECMA-262 memoizes a failed evaluation:
+// re-importing must re-throw the same error, never succeed with a partial
+// namespace. `err` boxes the value so falsy throws still count as failed.
+export var __esm = (fn, res, err) => () => {
+  if (err) throw err[0];
+  if (fn)
+    try {
+      res = fn((fn = 0));
+    } catch (e) {
+      throw ((err = [e]), e);
+    }
+  return res;
+};
 
 // This is used for JSX inlining with React.
 export var $$typeof = /* @__PURE__ */ Symbol.for("react.element");

@@ -1420,7 +1420,7 @@ session.on("Debugger.paused", function onPaused() {
 session.post("Runtime.evaluate", { expression: "debugger; 42" });
 console.log("survived");`,
     ],
-    env: injectedScriptChildEnv,
+    env: inspectorChildEnv,
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

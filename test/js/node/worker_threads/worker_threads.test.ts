@@ -487,16 +487,27 @@ describe("execArgv option", async () => {
         ).on("message", t => { console.log(t); process.exit(0); });`,
     });
     const p = join(String(dir), "preload-rt.js");
-    for (const form of [`-r${p}`, `-r=${p}`]) {
+    const cases: [string[], string[]][] = [
+      [[`-r${p}`], ["-r", p]],
+      [[`-r=${p}`], ["-r", p]],
+      // chained boolean short before the value-taking short, glued value
+      [[`-br${p}`], ["-b", "-r", p]],
+      // chained, value in the next argv token
+      [["-br", p], ["-b", "-r", p]],
+      // same round-trip on the `bun run` entry point
+      [["run", `-r${p}`], ["-r", p]],
+    ];
+    for (const [launch, normalized] of cases) {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), form, "main.js"],
+        cmd: [bunExe(), ...launch, "main.js"],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
-        lines: [JSON.stringify(["-r", p]), "R"],
+      expect({ launch, lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+        launch,
+        lines: [JSON.stringify(normalized), "R"],
         stderr: "",
         exitCode: 0,
       });

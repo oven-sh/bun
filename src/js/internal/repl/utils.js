@@ -18,6 +18,7 @@ const {
   StringPrototypeLastIndexOf,
   StringPrototypeReplaceAll,
   StringPrototypeSlice,
+  StringPrototypeStartsWith,
   StringPrototypeToLowerCase,
   StringPrototypeTrim,
   Symbol,
@@ -27,7 +28,7 @@ const {
 // stays deferred until isRecoverableError/isValidSyntax first runs.
 const acorn = require("internal/repl/acorn");
 
-const { sendInspectorCommand, getBuiltinLibs } = require("internal/repl/node-shims");
+const { sendInspectorCommand } = require("internal/repl/node-shims");
 
 const { ERR_INSPECTOR_NOT_AVAILABLE } = require("internal/repl/node-errors").codes;
 
@@ -800,9 +801,13 @@ function getREPLResourceName() {
 
 const globalBuiltins = new SafeSet(vm.runInNewContext("Object.getOwnPropertyNames(globalThis)"));
 
-// node-shims' getBuiltinLibs() also excludes Bun-specific entries (`bun*`,
-// `undici`, `ws`) so completion doesn't offer e.g. `node:undici`.
-let _builtinLibs = getBuiltinLibs().slice();
+// Node's filter, verbatim (lib/internal/repl/utils.js). Unlike getBuiltinLibs()
+// (REPL auto-globals), this keeps `bun*`/`undici`/`ws` so require()/import
+// completion matches module.builtinModules.
+let _builtinLibs = ArrayPrototypeFilter(
+  CJSModule.builtinModules,
+  e => e[0] !== "_" && !StringPrototypeStartsWith(e, "node:"),
+);
 
 // Note: the `getReplBuiltinLibs` and `setReplBuiltinLibs` are functions used to provide getters and
 //       setters for the `builtinModules` and `_builtinLibs` properties of the repl module and for making

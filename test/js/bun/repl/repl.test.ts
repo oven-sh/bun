@@ -1507,8 +1507,10 @@ describe.concurrent("--interactive", () => {
   );
 
   // node's `-i` is an alias for --interactive. Bun's own `-i` is
-  // --install=fallback, which has no meaning under node emulation, so the node
-  // meaning wins there; everywhere else `-i` stays --install=fallback.
+  // --install=fallback, which has no meaning under node emulation or on an
+  // invocation that reaches the REPL (bare `bun -i` boots it with the
+  // bunfig/default resolver options); `-i <script>` and `-i -e code` keep
+  // the auto-install meaning.
   test(
     "bun-as-node: `node -i` enters the REPL",
     async () => {
@@ -1528,6 +1530,80 @@ describe.concurrent("--interactive", () => {
     },
     interactiveTimeout,
   );
+
+  test.each([
+    ["bare bun -i", ["-i"]],
+    ["bun run -i --interactive", ["run", "-i", "--interactive"]],
+    ["bun -i -e ''", ["-i", "-e", ""]],
+  ])(
+    "%s reaches the REPL",
+    async (_label, extra) => {
+      // The three -i spellings the install-meaning predicate must classify as
+      // REPL-bound (Arguments.rs repl_bound_i).
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...extra],
+        env,
+        stdin: Buffer.from("1+1\n"),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toContain("Welcome to Bun");
+      expect(stdout).toContain("2");
+      expect({ stderrHasError: stderr.includes("error"), exitCode }).toEqual({ stderrHasError: false, exitCode: 0 });
+    },
+    interactiveTimeout,
+  );
+
+  test.each(["module", "commonjs", "module-typescript", "commonjs-typescript"])(
+    "--input-type=%s with a file entry is ignored like node",
+    async inputType => {
+      using dir = tempDir("input-type-file", { "entry.js": `console.log("ran");` });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--input-type=${inputType}`, "entry.js"],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe("ran");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  test("--input-type with an invalid value exits 9 with node's message", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=bogus", "-e", "1"],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Verbatim node v26.3.0 wording, including the missing space.
+    expect(stderr).toContain('--input-type must be "module","commonjs", "module-typescript" or "commonjs-typescript"');
+    expect(exitCode).toBe(9);
+  });
+
+  test.each(["module", "commonjs"])("--input-type=%s with --eval runs the matching grammar", async inputType => {
+    // Bun's eval grammar accepts ESM and CJS in one source, so both
+    // spellings' requested parse semantics are satisfied by acceptance
+    // (the vendored test-assert-esm-cjs-message-verify.js relies on this).
+    const src =
+      inputType === "module"
+        ? 'import assert from "assert"; assert.ok(1); console.log("ok");'
+        : 'const assert = require("assert"); assert.ok(1); console.log("ok");';
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), `--input-type=${inputType}`, "-e", src],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
 
   test(
     "bun run --interactive is not a silent no-op",
@@ -1581,6 +1657,34 @@ describe.concurrent("--interactive", () => {
       expect(stdout).toContain("external-repl-42");
       expect(stdout).not.toContain("Welcome");
       expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // Node places the --input-type rejection inside the else of the
+  // NODE_REPL_EXTERNAL_MODULE branch (lib/internal/main/repl.js), so an
+  // external replacement loads regardless. The env-file case guards against
+  // the gate and the bootstrap reading different env stores (libc environ vs
+  // the DotEnv loader behind process.env).
+  test.each([
+    ["process env", { env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" } }],
+    ["--env-file", { args: ["--env-file=ext.env"] }],
+  ])(
+    "NODE_REPL_EXTERNAL_MODULE via %s wins over the --input-type rejection",
+    async (_, { env: extraEnv, args = [] }: { env?: Record<string, string>; args?: string[] }) => {
+      using dir = tempDir("ext-repl-input-type", {
+        "ext.js": `console.log("external-repl-42")`,
+        "ext.env": "NODE_REPL_EXTERNAL_MODULE=./ext.js\n",
+      });
+      const { stdout, stderr, exitCode } = await runInteractive([...args, "--input-type=module"], "", {
+        cwd: String(dir),
+        env: extraEnv,
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: expect.stringContaining("external-repl-42"),
+        stderr: expect.not.stringContaining("Cannot specify --input-type for REPL"),
+      });
       expect(exitCode).toBe(0);
     },
     interactiveTimeout,

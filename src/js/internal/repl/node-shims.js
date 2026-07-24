@@ -6,6 +6,7 @@ const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
 const {
+  ArrayPrototypeIncludes,
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
   ArrayPrototypePush,
@@ -14,7 +15,9 @@ const {
   RegExpPrototypeSymbolReplace,
   RegExpPrototypeSymbolSplit,
   StringPrototypeIncludes,
+  StringPrototypeSlice,
   StringPrototypeSplit,
+  StringPrototypeStartsWith,
 } = require("internal/repl/node-primordials");
 
 // ---- internal/util ----------------------------------------------------
@@ -125,8 +128,19 @@ const { addAbortListener } = require("internal/abort_listener");
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
-    // Bare names; completion.js prefixes them with "node:" itself.
-    return ["test"];
+    // Bare names; completion.js prefixes them with "node:" itself. Derived
+    // from the `node:`-prefixed builtinModules entries (e.g. node:sqlite);
+    // `test` resolves as node:test but is missing from builtinModules.
+    const names = ["test"];
+    // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator].
+    const modules = Module.builtinModules;
+    for (let i = 0; i < modules.length; i++) {
+      const id = modules[i];
+      if (!StringPrototypeStartsWith(id, "node:")) continue;
+      const bare = StringPrototypeSlice(id, 5);
+      if (!ArrayPrototypeIncludes(names, bare)) ArrayPrototypePush(names, bare);
+    }
+    return names;
   },
   exists(id) {
     return Module.isBuiltin(id);

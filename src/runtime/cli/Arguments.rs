@@ -307,6 +307,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    parse_param!("--input-type <STR>"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -1063,9 +1064,29 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             bun_options_types::offline_mode::OfflineMode::Online
         });
 
+        // `-i` that will reach the REPL carries node's --interactive meaning,
+        // so both REPL spellings keep the resolver options bunfig/defaults
+        // produced instead of --install=fallback. Mirrors the exec_node_repl
+        // dispatch in mod.rs: interactive, not --print, and no run target
+        // (RunCommand's positionals carry a leading "run").
+        let repl_no_target = match cmd {
+            CommandTag::AutoCommand => ctx.positionals.is_empty(),
+            CommandTag::RunCommand => match ctx.positionals.as_slice() {
+                [] => true,
+                [only] => only.as_ref() == b"run",
+                _ => false,
+            },
+            _ => false,
+        };
+        let repl_bound_i = repl_no_target
+            && args.flag(b"-i")
+            && args.option(b"--print").is_none()
+            && (args.flag(b"--interactive")
+                || (cmd == CommandTag::AutoCommand
+                    && args.option(b"--eval").is_none_or(<[u8]>::is_empty)));
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand && !repl_bound_i {
             // Under node emulation `-i` is node's --interactive alias, not
             // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
@@ -1094,8 +1115,35 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        // Plain `bun -i` with nothing to run (previously the help screen) also starts
+        // the REPL; `-i <script>` / `-i -e` keep bun's auto-install semantics.
         ctx.runtime_options.interactive = args.flag(b"--interactive")
-            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"))
+            || (cmd == CommandTag::AutoCommand
+                && args.flag(b"-i")
+                && ctx.positionals.is_empty()
+                && ctx.runtime_options.eval.script.is_empty());
+        if let Some(input_type) = args.option(b"--input-type") {
+            match input_type {
+                b"module" | b"commonjs" | b"module-typescript" | b"commonjs-typescript" => {}
+                _ => {
+                    // Node v26.3.0 validates the value at parse time for every
+                    // mode and exits 9; wording verbatim (including the
+                    // missing space after "module",).
+                    bun_core::pretty_errorln!(
+                        "--input-type must be \"module\",\"commonjs\", \"module-typescript\" or \"commonjs-typescript\""
+                    );
+                    Output::flush();
+                    Global::exit(9);
+                }
+            }
+            // Node applies --input-type to -e/-p/STDIN string input. Bun's
+            // eval grammar accepts ESM and CJS in the same source, so every
+            // valid spelling's requested parse semantics are already
+            // satisfied; accept them. A file entry point ignores the option
+            // and the REPL rejects it (src/js/eval/node-repl.ts), both like
+            // node.
+        }
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");

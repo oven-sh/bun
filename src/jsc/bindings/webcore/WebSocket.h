@@ -199,10 +199,10 @@ public:
     void didConnect();
     void disablePendingActivity();
     void didStartClosingHandshake();
-    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason);
+    void didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason, size_t bufferedAmountSnapshot = 0);
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
-    void didFailWithErrorCode(Bun::WebSocketErrorCode code);
+    void didFailWithErrorCode(Bun::WebSocketErrorCode code, size_t bufferedAmount = 0);
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);

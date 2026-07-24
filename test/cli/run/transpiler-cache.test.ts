@@ -231,7 +231,8 @@ describe("transpiler cache", () => {
     // C source as TSX instead of using the file loader.
     writeFileSync(join(temp_dir, "impl.c"), "#include <stdio.h>\nint main() { return 0; }\n");
     // Entry file large enough to be cached, importing an unknown-extension file.
-    const code = 'import src from "./impl.c";\nconsole.log(typeof src === "string" && src.endsWith("impl.c") ? "file-loader-ok" : src);\n';
+    const code =
+      'import src from "./impl.c";\nconsole.log(typeof src === "string" && src.endsWith("impl.c") ? "file-loader-ok" : src);\n';
     writeFileSync(join(temp_dir, "entry.ts"), code + "//" + Buffer.alloc(50 * 1024, "x").toString() + "\n");
 
     const run = (label: string) => {

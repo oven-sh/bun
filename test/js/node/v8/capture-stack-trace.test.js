@@ -1115,9 +1115,82 @@ test("lazy error-info materialization does not store an empty stack value when t
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // V8 does not invoke an accessor `.message` when composing the default stack header for
+  // an Error, so the getter does not fire and prepareStackTrace runs. Both reads succeed.
   expect({ stdout: stdout.trim(), signalCode: proc.signalCode }).toEqual({
-    stdout: JSON.stringify({ first: "msg-boom", secondType: "undefined" }),
+    stdout: JSON.stringify({ first: "no-throw", secondType: "string" }),
     signalCode: null,
   });
   expect(exitCode).toBe(0);
+});
+
+test("Error.captureStackTrace on a non-Error target uses its name and message", () => {
+  const cases = [
+    [{ name: "MyThing", message: "it broke" }, "MyThing: it broke"],
+    [{ message: "only-message" }, "Error: only-message"],
+    [{ name: "OnlyName" }, "OnlyName"],
+    [{}, "Error"],
+    [{ name: "", message: "" }, ""],
+    [{ name: 42, message: 7 }, "42: 7"],
+    [{ name: null }, "null"],
+    [{ message: null }, "Error: null"],
+    [{ name: undefined, message: "x" }, "Error: x"],
+    [{ name: "N", message: undefined }, "N"],
+    [
+      {
+        get name() {
+          return "Getter";
+        },
+        get message() {
+          return "gm";
+        },
+      },
+      "Getter: gm",
+    ],
+  ];
+
+  for (const [target, expected] of cases) {
+    Error.captureStackTrace(target);
+    expect(target.stack.split("\n")[0]).toBe(expected);
+  }
+});
+
+test("Error.captureStackTrace reads name and message off the prototype chain", () => {
+  function Base() {}
+  Base.prototype.name = "BaseName";
+  function Derived() {}
+  Derived.prototype = Object.create(Base.prototype);
+  Derived.prototype.message = "derived";
+
+  const target = new Derived();
+  Error.captureStackTrace(target);
+  expect(target.stack.split("\n")[0]).toBe("BaseName: derived");
+});
+
+test("the pre-class custom error idiom labels its stack", () => {
+  function MyError(message) {
+    this.name = "MyError";
+    this.message = message;
+    Error.captureStackTrace(this, MyError);
+  }
+  MyError.prototype = Object.create(Error.prototype);
+
+  const err = new MyError("boom");
+  expect(err.stack.split("\n")[0]).toBe("MyError: boom");
+  expect(err.stack).not.toContain("at new MyError");
+});
+
+test("the default-formatted stack passed to Error.prepareStackTrace is labelled with the error's name", () => {
+  Error.prepareStackTrace = (err, callSites) => err.stack.split("\n")[0];
+
+  expect(new TypeError("boom").stack).toBe("TypeError: boom");
+
+  class SubError extends Error {
+    name = "SubError";
+  }
+  expect(new SubError("boom").stack).toBe("SubError: boom");
+
+  const target = { name: "Plain", message: "pm" };
+  Error.captureStackTrace(target);
+  expect(target.stack).toBe("Plain: pm");
 });

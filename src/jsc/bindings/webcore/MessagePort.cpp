@@ -31,6 +31,7 @@
 
 #include "BunClientData.h"
 #include "EventNames.h"
+#include "InternalModuleRegistry.h"
 #include "JSMessagePort.h"
 #include "MessageEvent.h"
 #include "MessagePortPipe.h"
@@ -592,3 +593,64 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
 }
 
 } // namespace WebCore
+
+namespace Bun {
+
+// `publishActiveHookCount(n)` from src/js/internal/async_hooks.ts. Keeping the
+// count on the global object (rather than re-reading a JS array) means the
+// MessageChannel constructor's fast path is a single load.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPublishAsyncHooksActiveCount, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t count = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    globalObject->asyncHooksActiveCount = count;
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC::JSValue createAsyncHooksActiveCountBinding(Zig::GlobalObject* globalObject)
+{
+    return JSC::JSFunction::create(globalObject->vm(), globalObject, 1, "publishActiveHookCount"_s, jsFunctionPublishAsyncHooksActiveCount, JSC::ImplementationVisibility::Private);
+}
+
+void emitMessagePortAsyncHooksInit(WebCore::ScriptExecutionContext& context, WebCore::MessagePort& port1, WebCore::MessagePort& port2)
+{
+    auto* contextGlobalObject = context.globalObject();
+    if (!contextGlobalObject)
+        return;
+    auto* globalObject = defaultGlobalObject(contextGlobalObject);
+    if (globalObject->asyncHooksActiveCount == 0) [[likely]]
+        return;
+
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue moduleValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::InternalAsyncHooksTick);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSC::JSObject* moduleObject = moduleValue.getObject();
+    if (!moduleObject)
+        return;
+    JSC::JSValue emitFunction = moduleObject->get(globalObject, JSC::Identifier::fromString(vm, "emitMessagePortInit"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    auto callData = JSC::getCallData(emitFunction);
+    if (callData.type == JSC::CallData::Type::None)
+        return;
+
+    // node constructs port1 then port2 (src/node_messaging.cc MessageChannel), so
+    // the two init events arrive in that order. The JS side swallows a throwing
+    // hook the way node's fatalError does, so nothing but a termination request
+    // comes back here.
+    WebCore::MessagePort* ports[] = { &port1, &port2 };
+    for (auto* port : ports) {
+        JSC::JSValue portValue = WebCore::toJS(globalObject, globalObject, *port);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSC::MarkedArgumentBuffer args;
+        args.append(portValue);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitFunction, callData, JSC::jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
+} // namespace Bun

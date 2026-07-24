@@ -173,3 +173,20 @@ private:
 WebCoreOpaqueRoot root(MessagePort*);
 
 } // namespace WebCore
+
+namespace Zig {
+class GlobalObject;
+}
+
+namespace Bun {
+
+// Dispatches the two MESSAGEPORT async_hooks `init` events node emits when a
+// MessageChannel is constructed. No-op (one counter load) unless a
+// node:async_hooks hook is enabled on this VM.
+void emitMessagePortAsyncHooksInit(WebCore::ScriptExecutionContext&, WebCore::MessagePort& port1, WebCore::MessagePort& port2);
+
+// `$cpp("MessagePort.cpp", "Bun::createAsyncHooksActiveCountBinding")` — lets
+// src/js/internal/async_hooks.ts publish its enabled-hook count to the gate above.
+JSC::JSValue createAsyncHooksActiveCountBinding(Zig::GlobalObject*);
+
+} // namespace Bun

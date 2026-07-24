@@ -1624,6 +1624,33 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_emitWarning, (JSC::JSGlobalObject * lexicalG
         process->wrapped().emit(ident, args);
         return JSValue::encode(jsUndefined());
     } else if (!Bun__NODE_NO_WARNINGS()) {
+        // node prints the warning through the global console object, not the fd:
+        // lib/internal/process/warning.js `writeOut()` calls
+        // `require('internal/console/global').error(message)`.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L53-L56
+        // That routing is observable: a worker thread replaces globalThis.console
+        // with one bound to its captured stdio (src/js/node/worker_threads.ts), so
+        // writing the process-wide fd 2 here made worker warnings bypass
+        // `worker.stderr` entirely. Use `warn` rather than node's `error` because
+        // Bun's console.error renders an Error with a source-code preview block,
+        // which would change the bytes of every warning; `warn` is the level this
+        // call site already used and prints the same text as before.
+        JSValue consoleValue = globalObject->get(globalObject, JSC::Identifier::fromString(vm, "console"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (JSObject* consoleObject = consoleValue.getObject()) {
+            JSValue warnFunction = consoleObject->get(globalObject, JSC::Identifier::fromString(vm, "warn"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            auto callData = JSC::getCallData(warnFunction);
+            if (callData.type != JSC::CallData::Type::None) {
+                JSC::MarkedArgumentBuffer args;
+                args.append(value);
+                JSC::profiledCall(globalObject, ProfilingReason::API, warnFunction, callData, consoleObject, args);
+                RETURN_IF_EXCEPTION(scope, {});
+                return JSValue::encode(jsUndefined());
+            }
+        }
+        // globalThis.console was deleted or replaced with something uncallable —
+        // still surface the warning rather than dropping it.
         auto jsArgs = JSValue::encode(value);
         Bun__ConsoleObject__messageWithTypeAndLevel(reinterpret_cast<Bun::ConsoleObject*>(globalObject->consoleClient().get())->m_client, static_cast<uint32_t>(MessageType::Log), static_cast<uint32_t>(MessageLevel::Warning), globalObject, &jsArgs, 1);
         RETURN_IF_EXCEPTION(scope, {});

@@ -2164,10 +2164,13 @@ impl<'a> Parser<'a> {
 
         #[cfg(not(target_arch = "wasm32"))]
         if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
+            let is_macro_runtime = p.options.features.is_macro_runtime;
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                if p.macro_call_count != 0 {
+                if p.macro_call_count != 0 || is_macro_runtime {
                     // disable this for:
                     // - macros
+                    // - macro-runtime transpiles (nested macro imports are kept
+                    //   as regular imports, which must not reach normal-mode reads)
                     cache.input_hash = None;
                 } else {
                     cache.exports_kind = exports_kind;

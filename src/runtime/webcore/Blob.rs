@@ -4325,17 +4325,11 @@ pub extern "C" fn Blob__dupeFromJS(value: JSValue) -> Option<NonNull<Blob>> {
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
     this.is_jsdom_file.set(true);
-
-    // This is not 100% correct...
-    if let Some(store) = this.store() {
-        if let store::Data::Bytes(bytes) = &mut store.data_mut() {
-            if bytes.stored_name.is_empty() {
-                // Owned heap slice
-                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
-                bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
-            }
-        }
-    }
+    // Store on the per-Blob `name` rather than the (possibly shared) store's
+    // `stored_name`, so the filename assigned by `FormData` does not leak
+    // into the user's original Blob and can be overridden by a later
+    // `FormData.set(name, blob, filename)`.
+    this.name.set(path_str.dupe_ref());
 }
 
 #[unsafe(no_mangle)]
@@ -4345,10 +4339,23 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
+    // Mirror `get_name_string`: per-Blob `name` (set by `Blob__setAsFile` for
+    // entries retrieved from FormData) takes precedence over the store's
+    // `stored_name` / file path.
+    if this.name.get().tag() != bun_core::Tag::Dead {
+        return this.name.get();
+    }
     if let Some(filename) = this.get_file_name() {
         return BunString::from_bytes(filename);
     }
-    BunString::empty()
+    // https://xhr.spec.whatwg.org/#create-an-entry step 3: if the value is a
+    // Blob that is not a File, it becomes a File named "blob". Only called
+    // from `FormData.append`/`set` when no filename argument was provided.
+    if this.is_jsdom_file.get() {
+        BunString::empty()
+    } else {
+        BunString::static_(b"blob")
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -5591,6 +5598,11 @@ pub fn jsdom_file_construct_(
         let name_value_str = OwnedString::new(BunString::from_js(args[1], global_this)?);
 
         blob = Blob::get::<false, true>(global_this, args[0])?;
+        // `get::<_, true>` on a single-Blob sequence returns `dupe()`, which
+        // copies the source blob's per-Blob `name`; override it so
+        // `get_name_string` / `Blob__getFileNameString` reflect this
+        // constructor's argument rather than the inherited value.
+        blob.name.set(name_value_str.dupe_ref());
         if let Some(store_) = blob.store.get() {
             match store_.data_mut() {
                 store::Data::Bytes(bytes) => {
@@ -5600,9 +5612,7 @@ pub fn jsdom_file_construct_(
                     // assignment drops (frees) the previous `Box<[u8]>`.
                     bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
-                store::Data::S3(_) | store::Data::File(_) => {
-                    blob.name.set(name_value_str.dupe_ref());
-                }
+                store::Data::S3(_) | store::Data::File(_) => {}
             }
         } else if !name_value_str.is_empty() {
             // not store but we have a name so we need a store

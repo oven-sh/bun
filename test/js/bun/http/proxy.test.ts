@@ -4,7 +4,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import https from "node:https";
 import net from "node:net";
+import { join } from "node:path";
 import tls from "node:tls";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs = [];
@@ -649,11 +652,25 @@ describe("proxy Basic auth uses standard base64 (#31780)", () => {
 
 test("axios with https-proxy-agent", async () => {
   httpProxyServer.log.length = 0;
-  // Like Node.js, the options passed to the HttpsProxyAgent constructor only
-  // configure the connection to the proxy itself; the TLS options for the
-  // tunneled target connection come from the request options. Axios cannot
-  // pass per-request TLS options, so use an agent subclass that adds them to
-  // the tunneled connection (the usual Node.js workaround).
+  // Unlike Node.js, Bun also applies TLS trust options passed to the
+  // HttpsProxyAgent constructor to the tunneled target connection. Axios has no
+  // way to pass per-request TLS options, so the agent constructor is the only
+  // place to put them.
+  const httpsAgent = new HttpsProxyAgent(httpProxyServer.url, {
+    rejectUnauthorized: false, // this should work with self-signed certs
+  });
+
+  const result = await axios.get(httpsServer.url.href, {
+    httpsAgent,
+  });
+  expect(result.data).toBe("");
+  // did we got proxied?
+  expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+});
+
+test("axios with an https-proxy-agent subclass overriding connect()", async () => {
+  httpProxyServer.log.length = 0;
+  // The Node.js way: a subclass adds the TLS options per tunneled connection.
   class SelfSignedHttpsProxyAgent extends HttpsProxyAgent<string> {
     connect(req: any, opts: any) {
       return super.connect(req, { ...opts, rejectUnauthorized: false });
@@ -665,8 +682,88 @@ test("axios with https-proxy-agent", async () => {
     httpsAgent,
   });
   expect(result.data).toBe("");
-  // did we got proxied?
   expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+});
+
+// GET `url` with node:https and resolve with the status code (response drained).
+async function httpsGetStatus(url: string, options: https.RequestOptions) {
+  const req = https.request(url, options);
+  req.end();
+  const [res] = await once(req, "response");
+  res.resume();
+  await once(res, "end");
+  return res.statusCode as number;
+}
+
+test("https-proxy-agent applies the constructor `ca` to the tunneled connection", async () => {
+  httpProxyServer.log.length = 0;
+  // A CONNECT proxy in front of a server whose certificate needs a custom `ca`:
+  // unlike Node.js, Bun uses the `ca` given to the HttpsProxyAgent constructor
+  // for the target's TLS handshake too (certificate verification left on).
+  const agent = new HttpsProxyAgent(httpProxyServer.url, { ca: tlsCert.cert });
+  try {
+    expect(await httpsGetStatus(httpsServer.url.href, { agent })).toBe(200);
+    expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+  } finally {
+    agent.destroy();
+  }
+});
+
+test("https-proxy-agent applies the constructor `pfx` client identity to the tunneled connection", async () => {
+  httpProxyServer.log.length = 0;
+  // `pfx` is the PKCS#12 spelling of `cert` + `key`. agent1.pfx holds agent1's
+  // key and certificate (issued by ca1, passphrase "sample"), so a target that
+  // requires a client certificate signed by ca1 only completes the handshake
+  // when the constructor `pfx` reaches the tunneled connection.
+  const keys = join(import.meta.dir, "../../node/test/fixtures/keys");
+  const mtlsServer = https.createServer(
+    { ...tlsCert, requestCert: true, rejectUnauthorized: true, ca: readFileSync(join(keys, "ca1-cert.pem")) },
+    (req, res) => res.end(""),
+  );
+  mtlsServer.listen(0);
+  await once(mtlsServer, "listening");
+  const { port } = mtlsServer.address() as net.AddressInfo;
+  const agent = new HttpsProxyAgent(httpProxyServer.url, {
+    ca: tlsCert.cert,
+    pfx: readFileSync(join(keys, "agent1.pfx")),
+    passphrase: "sample",
+  });
+  try {
+    expect(await httpsGetStatus(`https://localhost:${port}/`, { agent })).toBe(200);
+    expect(httpProxyServer.log).toEqual([`CONNECT localhost:${port}`]);
+  } finally {
+    agent.destroy();
+    mtlsServer.close();
+  }
+});
+
+test("per-request TLS options take precedence over the https-proxy-agent constructor options", async () => {
+  httpProxyServer.log.length = 0;
+  // The lax constructor option must never override the strict per-request one.
+  const agent = new HttpsProxyAgent(httpProxyServer.url, { rejectUnauthorized: false });
+  try {
+    await expect(httpsGetStatus(httpsServer.url.href, { agent, rejectUnauthorized: true })).rejects.toMatchObject({
+      code: "DEPTH_ZERO_SELF_SIGNED_CERT",
+    });
+    // The failure must come from the tunneled handshake, not a direct connection.
+    expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+  } finally {
+    agent.destroy();
+  }
+});
+
+test("https-proxy-agent constructor options for the proxy connection do not reach the target handshake", async () => {
+  httpProxyServer.log.length = 0;
+  // `servername` (like host, port, ALPNProtocols, ...) describes the connection
+  // to the proxy. Only TLS trust options are forwarded, so the tunneled
+  // handshake still derives the target's servername from the request.
+  const agent = new HttpsProxyAgent(httpProxyServer.url, { ca: tlsCert.cert, servername: "wrong.invalid" });
+  try {
+    expect(await httpsGetStatus(httpsServer.url.href, { agent })).toBe(200);
+    expect(httpProxyServer.log).toEqual([`CONNECT localhost:${httpsServer.port}`]);
+  } finally {
+    agent.destroy();
+  }
 });
 
 test("HTTPS proxy tunnel keep-alive reuses CONNECT across sequential requests", async () => {

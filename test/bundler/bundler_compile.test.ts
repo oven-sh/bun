@@ -1230,3 +1230,77 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(exitCode).toBe(0);
   }
 }, 60_000);
+
+test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
+  // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target
+  // format's fixed header (or one whose header advertises more load-command bytes than the
+  // file contains) must surface as a clean error instead of a slice-index panic.
+  using dir = tempDir("compile-template-short-header", {
+    "entry.js": `console.log(1);`,
+    // 19 bytes: shorter than mach_header_64 (32), Elf64_Ehdr (64), IMAGE_DOS_HEADER (64).
+    "tiny": "WRONG-STUB-FALLBACK",
+  });
+  const cwd = String(dir);
+
+  const machHeader = (ncmds: number, sizeofcmds: number) => {
+    const b = Buffer.alloc(32);
+    b.writeUInt32LE(0xfeedfacf, 0); // MH_MAGIC_64
+    b.writeInt32LE(0x01000007, 4); // CPU_TYPE_X86_64
+    b.writeInt32LE(3, 8); // cpusubtype
+    b.writeUInt32LE(2, 12); // filetype = MH_EXECUTE
+    b.writeUInt32LE(ncmds, 16);
+    b.writeUInt32LE(sizeofcmds, 20);
+    return b;
+  };
+
+  // mach_header_64 with ncmds=2 sizeofcmds=10000 but only 8 trailing bytes — exercises the
+  // load-command-table bounds check in MachoFile::init (iterator() would otherwise slice OOB).
+  await Bun.write(join(cwd, "badcmds"), Buffer.concat([machHeader(2, 10000), Buffer.alloc(8)]));
+
+  // mach_header_64 + one LC_SEGMENT_64 whose cmdsize (8) is smaller than sizeof(segment_command_64)
+  // (72) — exercises the cast-site guard in write_section().
+  const lc = Buffer.alloc(8);
+  lc.writeUInt32LE(0x19, 0); // LC_SEGMENT_64
+  lc.writeUInt32LE(8, 4); // cmdsize
+  await Bun.write(join(cwd, "shortseg"), Buffer.concat([machHeader(1, 8), lc]));
+
+  const run = async (target: string, template: string) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        `--target=${target}`,
+        "--compile-executable-path",
+        join(cwd, template),
+        join(cwd, "entry.js"),
+        "--outfile",
+        join(cwd, `out-${template}`),
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  for (const [target, template, wantErr, outName] of [
+    ["bun-darwin-x64", "tiny", "InvalidObject", "out-tiny"],
+    ["bun-darwin-x64", "badcmds", "InvalidObject", "out-badcmds"],
+    ["bun-darwin-x64", "shortseg", "InvalidObject", "out-shortseg"],
+    ["bun-linux-x64", "tiny", "InvalidElfFile", "out-tiny"],
+    // build_command.rs appends .exe to the outfile for Windows targets.
+    ["bun-windows-x64", "tiny", "InvalidPEFile", "out-tiny.exe"],
+  ] as const) {
+    const { stderr, exitCode } = await run(target, template);
+    expect({ target, template, stderr }).toEqual({
+      target,
+      template,
+      stderr: expect.stringContaining(wantErr),
+    });
+    expect(await Bun.file(join(cwd, outName)).exists()).toBe(false);
+    expect(exitCode).toBe(1);
+  }
+}, 60_000);

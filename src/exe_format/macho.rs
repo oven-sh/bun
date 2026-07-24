@@ -46,18 +46,34 @@ macro_rules! shift_fields {
     }};
 }
 
+/// Read and validate the `mach_header_64` at the start of `obj`.
+/// `--compile-executable-path` accepts arbitrary files, so reject inputs too
+/// short for the header or whose load-command table runs past EOF; callers
+/// slice `obj[header_size..][..header.sizeofcmds]` on the returned header.
+fn read_macho_header(obj: &[u8]) -> Result<macho::mach_header_64, MachoError> {
+    let header_size = size_of::<macho::mach_header_64>();
+    if obj.len() < header_size {
+        return Err(MachoError::InvalidObject);
+    }
+    let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
+    let cmds_end = (header.sizeofcmds as usize)
+        .checked_add(header_size)
+        .ok_or(MachoError::InvalidObject)?;
+    if cmds_end > obj.len() {
+        return Err(MachoError::InvalidObject);
+    }
+    Ok(header)
+}
+
 impl MachoFile {
     pub fn init(
         obj_file: &[u8],
         blob_to_embed_length: usize,
     ) -> Result<Box<MachoFile>, MachoError> {
+        let header = read_macho_header(obj_file)?;
+
         let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
         data.extend_from_slice(obj_file);
-
-        // data.len() >= sizeof(mach_header_64) is assumed by caller (obj_file is a Mach-O);
-        // the slice index panics on a short input rather than reading OOB.
-        let header: macho::mach_header_64 =
-            read_struct(&data[..size_of::<macho::mach_header_64>()]);
 
         Ok(Box::new(MachoFile {
             header,
@@ -101,7 +117,7 @@ impl MachoFile {
                 macho::LC::SEGMENT_64 => {
                     let command = entry
                         .cast::<macho::segment_command_64>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
                             let section_offset = entry.data.as_ptr() as usize - base_addr;
@@ -487,7 +503,7 @@ impl MachoFile {
             if cmd.cmd == macho::LC::SEGMENT_64 {
                 let seg = entry
                     .cast::<macho::segment_command_64>()
-                    .expect("unreachable");
+                    .ok_or(MachoError::InvalidObject)?;
                 if seg.fileoff < prev_end {
                     return Err(MachoError::OverlappingSegments);
                 }
@@ -562,7 +578,7 @@ pub(crate) struct MachoSigner {
 impl MachoSigner {
     pub(crate) fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
         let header_size = size_of::<macho::mach_header_64>();
-        let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
+        let header = read_macho_header(obj)?;
 
         let mut sig_off: usize = 0;
         let mut sig_sz: usize = 0;
@@ -585,7 +601,7 @@ impl MachoSigner {
             if cmd.cmd() == macho::LC::SEGMENT_64 {
                 let seg = cmd
                     .cast::<macho::segment_command_64>()
-                    .expect("unreachable");
+                    .ok_or(MachoError::InvalidObject)?;
 
                 // Store segment info
                 if seg.seg_name() == SEG_LINKEDIT {
@@ -614,7 +630,7 @@ impl MachoSigner {
                 macho::LC::CODE_SIGNATURE => {
                     let cs = cmd
                         .cast::<macho::linkedit_data_command>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
                     sig_off = cs.dataoff as usize;
                     sig_sz = cs.datasize as usize;
                     cs_cmd_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;

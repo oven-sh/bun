@@ -287,9 +287,6 @@ pub(crate) trait VirtualMachineSqlExt {
     /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
     fn vm_ctx(&self) -> bun_io::EventLoopCtx;
     /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
-    /// Encapsulates the `rare_data(&mut self)` / `*_group(.., &VirtualMachine)`
-    /// borrowck conflict (the two borrows touch field-disjoint state) so the
-    /// four call sites need no per-site raw-pointer dance.
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;
     /// See [`Self::postgres_socket_group`].
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup;

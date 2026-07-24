@@ -264,15 +264,17 @@ impl Listener {
                         // Surface coded syscall failures the way node:net
                         // does (EADDRINUSE vs EACCES need different caller
                         // handling) rather than an invalid-arguments TypeError.
-                        if let ListenPipeError::Sys(sys_err) = &e {
+                        if let ListenPipeError::Sys(sys_err, uv_errno) = &e {
                             // get_error_code_tag_name does not reject EUNKNOWN /
                             // UV_EAI_* (>=3000); neither is a node-style code, so
                             // route those through the generic error below.
                             if let Some((name, se)) = sys_err.get_error_code_tag_name() {
                                 if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
                                     let err = jsc::SystemError {
-                                        // Negated errno per fill_system_error_common.
-                                        errno: -(se as c_int),
+                                        // Raw UV errno (e.g. -4091), which Node
+                                        // reports on err.errno; the SystemErrno
+                                        // ordinal differs on Windows.
+                                        errno: *uv_errno,
                                         code: bun_core::String::static_(name).into(),
                                         message: bun_core::String::clone_utf8(
                                             format!(
@@ -295,7 +297,7 @@ impl Listener {
                         let detail = match &e {
                             ListenPipeError::Other(err) => err.name(),
                             // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
-                            ListenPipeError::Sys(_) => "UNKNOWN",
+                            ListenPipeError::Sys(..) => "UNKNOWN",
                         };
                         return Err(global.throw_invalid_arguments(format_args!(
                             "Failed to listen at {}: {}",
@@ -459,18 +461,18 @@ impl Listener {
                 )
             }),
             UnixOrHost::Fd(fd) => {
-                let err = jsc::SystemError {
-                    errno: bun_sys::SystemErrno::EINVAL as c_int,
-                    code: bun_core::String::static_("EINVAL").into(),
-                    message: bun_core::String::static_(
-                        "Bun does not support listening on a file descriptor.",
+                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                this_ref.group.with_mut(|g| {
+                    g.listen_fd(
+                        kind,
+                        secure_ctx_ptr,
+                        fd_native,
+                        511,
+                        socket_flags,
+                        size_of::<*mut c_void>() as c_int,
+                        &mut errno,
                     )
-                    .into(),
-                    syscall: bun_core::String::static_("listen").into(),
-                    fd: fd.uv(),
-                    ..Default::default()
-                };
-                return Err(global.throw_value(err.to_error_instance(global)));
+                })
             }
         };
         if listen_socket.is_null() {
@@ -487,7 +489,17 @@ impl Listener {
             log!("Failed to listen {}", errno);
             // libuv reports UV_EINVAL for a pipe path it cannot express in a
             // sockaddr_un, which is what Node surfaces for an over-long path.
-            let errno = if errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+            // Node's createServerHandle(fd) calls guessHandleType first and
+            // returns UV_EINVAL for anything that is not TCP or PIPE, so a
+            // non-socket or bad fd surfaces as EINVAL there, not the kernel's
+            // ENOTSOCK/EBADF (or WSAENOTSOCK on Windows).
+            let mapped = bun_sys::SystemErrno::init(errno as i64);
+            let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
+                || (matches!(connection, UnixOrHost::Fd(_))
+                    && matches!(
+                        mapped,
+                        Some(bun_sys::SystemErrno::ENOTSOCK) | Some(bun_sys::SystemErrno::EBADF)
+                    )) {
                 bun_sys::SystemErrno::EINVAL as c_int
             } else {
                 errno
@@ -1021,6 +1033,16 @@ impl Listener {
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
+                    #[cfg(windows)]
+                    let fd = if opts
+                        .get_truthy(global, "fdIsRawSocket")?
+                        .is_some_and(|v| v.to_boolean())
+                    {
+                        Fd::from_system(fd_.to_int32() as u32 as usize as *mut c_void)
+                    } else {
+                        Fd::from_uv(fd_.to_int32())
+                    };
+                    #[cfg(not(windows))]
                     let fd = Fd::from_uv(fd_.to_int32());
                     break 'blk UnixOrHost::Fd(fd);
                 }
@@ -1109,6 +1131,7 @@ impl Listener {
                     }
                     None => false,
                 },
+                UnixOrHost::Fd(fd) if fd.kind() == bun_core::FdKind::System => false,
                 UnixOrHost::Fd(fd) => {
                     let uvfd = fd.uv();
                     let fd_type = uv::uv_guess_handle(uvfd);
@@ -1664,9 +1687,12 @@ pub struct WindowsNamedPipeListeningContext {
 /// `Sys` keeps the structured uv error so the JS error carries its real
 /// code/errno; `Other` covers the non-syscall setup failures, whose payload
 /// names the failure in the caller's generic invalid-arguments message.
+/// The `c_int` is the raw libuv return code (e.g. UV_EADDRINUSE = -4091),
+/// kept so the JS `err.errno` is the platform-correct UV value rather than
+/// the SystemErrno ordinal.
 #[cfg(windows)]
 pub(crate) enum ListenPipeError {
-    Sys(bun_sys::Error),
+    Sys(bun_sys::Error, c_int),
     Other(crate::Error),
 }
 
@@ -1820,8 +1846,9 @@ impl WindowsNamedPipeListeningContext {
             // EACCES (pipe namespace denied) need different caller
             // handling, and a generic bind failure hides that.
             use bun_sys::ReturnCodeExt as _;
+            let raw = listen_rc.int();
             return Err(match listen_rc.to_error(bun_sys::Tag::listen) {
-                Some(err) => ListenPipeError::Sys(err),
+                Some(err) => ListenPipeError::Sys(err, raw),
                 // Unreachable in practice: the uv→errno mapping is total.
                 None => ListenPipeError::Other(crate::Error::FailedToBindPipe),
             });

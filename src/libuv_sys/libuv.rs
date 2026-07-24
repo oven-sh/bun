@@ -1171,6 +1171,11 @@ pub struct Pipe {
 pub type uv_pipe_t = Pipe;
 
 impl Pipe {
+    #[inline]
+    pub fn ipc_remote_pid(&self) -> DWORD {
+        // SAFETY: `conn` is the active variant for a connected IPC pipe (init
+        unsafe { self.pipe.conn.ipc_remote_pid }
+    }
     /// `uv_pipe_init` wrapper. Returns the raw `ReturnCode`; callers
     /// in higher tiers map to `bun_sys::Result` themselves so this crate stays
     /// free of `bun_sys`.

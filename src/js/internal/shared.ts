@@ -351,6 +351,7 @@ export default {
   PerformanceNodeEntry,
 
   kHandle: Symbol("kHandle"),
+  kClusterOwner: Symbol("kClusterOwner"),
   kAutoDestroyed: Symbol("kAutoDestroyed"),
   kWeakHandler: Symbol("kWeak"),
   kGetNativeReadableProto: Symbol("kGetNativeReadableProto"),

@@ -372,6 +372,7 @@ struct us_udp_socket_t {
     uint16_t port;
     uint16_t closed : 1;
     uint16_t connected : 1;
+    uint16_t shared_fd : 1;
     struct us_udp_socket_t *next;
 };
 

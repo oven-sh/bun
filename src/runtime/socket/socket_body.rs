@@ -641,6 +641,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     ssl_ctx,
                     core::mem::size_of::<*mut c_void>() as c_int,
                     f.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
+                    flags,
                     false,
                 );
                 if s.is_null() {

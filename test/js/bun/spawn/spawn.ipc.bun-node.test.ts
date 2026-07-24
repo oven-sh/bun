@@ -20,19 +20,11 @@ p I am your father
 });
 
 test.skipIf(isWindows || !nodeExe())(
-  "releases the descriptor of a received handle whose type it does not accept",
+  "receives a net.Socket handle from a node child and releases its descriptor",
   async () => {
     const parentSource = [
       `const net = require("node:net");`,
-      `let reported = false;`,
-      `const handleFailed = Promise.withResolvers();`,
-      `process.on("uncaughtException", () => {`,
-      `  if (!reported) {`,
-      `    reported = true;`,
-      `    console.log("handle-error");`,
-      `    handleFailed.resolve();`,
-      `  }`,
-      `});`,
+      `const gotHandle = Promise.withResolvers();`,
       `const socketClosed = Promise.withResolvers();`,
       `const server = net.createServer(socket => {`,
       `  socket.resume();`,
@@ -44,12 +36,15 @@ test.skipIf(isWindows || !nodeExe())(
       `  cmd: [process.env.NODE_BIN, "-e", childSource],`,
       `  stdio: ["ignore", "inherit", "inherit"],`,
       `  serialization: "json",`,
-      `  ipc() {},`,
+      `  ipc(message, _subprocess, handle) { gotHandle.resolve({ message, handle }); },`,
       `  env: { ...process.env, HANDLE_PORT: String(server.address().port) },`,
       `});`,
-      `await handleFailed.promise;`,
+      `const { message, handle } = await gotHandle.promise;`,
+      `console.log("message:", message);`,
+      `console.log("handle is a net.Socket:", handle instanceof net.Socket);`,
       `child.kill();`,
       `await child.exited;`,
+      `handle.destroy();`,
       `await socketClosed.promise;`,
       `server.close();`,
       `console.log("socket-closed");`,
@@ -65,7 +60,50 @@ test.skipIf(isWindows || !nodeExe())(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
-      stdout: "handle-error\nsocket-closed",
+      stdout: "message: x\nhandle is a net.Socket: true\nsocket-closed",
+      exitCode: 0,
+    });
+  },
+);
+
+test.skipIf(isWindows || !nodeExe())(
+  "releases the descriptor of a received handle whose type it does not accept",
+  async () => {
+    const parentSource = [
+      `let reported = false;`,
+      `const handleFailed = Promise.withResolvers();`,
+      `process.on("uncaughtException", err => {`,
+      `  if (!reported) {`,
+      `    reported = true;`,
+      `    console.log("handle-error:", err.message);`,
+      `    handleFailed.resolve();`,
+      `  }`,
+      `});`,
+      `const childSource = 'const dgram = require("dgram"); const s = dgram.createSocket("udp4"); s.bind(0, () => { process.send("x", s); });';`,
+      `const child = Bun.spawn({`,
+      `  cmd: [process.env.NODE_BIN, "-e", childSource],`,
+      `  stdio: ["ignore", "inherit", "inherit"],`,
+      `  serialization: "json",`,
+      `  ipc(_message, _subprocess, handle) { console.log("unexpected handle:", String(handle)); },`,
+      `  env: { ...process.env },`,
+      `});`,
+      `await handleFailed.promise;`,
+      `child.kill();`,
+      `await child.exited;`,
+      `console.log("done");`,
+    ].join("\n");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", parentSource],
+      env: { ...bunEnv, NODE_BIN: nodeExe()! },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
+      stdout: "handle-error: dgram.Socket handles are not supported over IPC\ndone",
       exitCode: 0,
     });
   },

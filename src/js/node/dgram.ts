@@ -692,7 +692,8 @@ function bindServerHandle(self, options, errCb) {
       return closeWrap.$apply(this, arguments);
     };
     state.sharedHandle = handle;
-    startBunSocket(self, state, { fd: handle.fd });
+    handle.adopted = true;
+    startBunSocket(self, state, { fd: handle.sharedFd ?? handle.fd, "$sharedFd": true });
   });
 }
 

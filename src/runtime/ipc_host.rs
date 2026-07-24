@@ -33,6 +33,28 @@ pub(crate) enum FromEnum {
     Process,
 }
 
+#[cfg(windows)]
+pub(crate) fn attach_windows_socket_payload(
+    global: &JSGlobalObject,
+    message: JSValue,
+    fd: bun_sys::Fd,
+    peer_pid: u32,
+) -> Option<Box<[u8]>> {
+    if peer_pid == 0 {
+        return None;
+    }
+    let Some(hex) = bun_jsc::ipc::windows_export_socket_hex(fd, peer_pid) else {
+        log!("attachWindowsSocketPayload: WSADuplicateSocketW failed");
+        return None;
+    };
+    let Ok(str_js) = bun_jsc::bun_string_jsc::create_utf8_for_js(global, &hex) else {
+        global.clear_exception();
+        return None;
+    };
+    message.put(global, bun_jsc::ipc::WIN_SOCKET_INFO_KEY, str_js);
+    Some(hex)
+}
+
 #[bun_jsc::host_fn]
 fn emit_process_error_event(
     global_this: &JSGlobalObject,
@@ -75,9 +97,13 @@ pub(crate) fn do_send(
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
     from: FromEnum,
+    peer_pid: u32,
 ) -> JsResult<JSValue> {
     let [mut message, mut handle, options_, mut callback] = call_frame.arguments_as_array::<4>();
+    #[cfg(not(windows))]
+    let _ = peer_pid;
 
+    let mut is_internal = IsInternal::External;
     if handle.is_callable() {
         callback = handle;
         handle = JSValue::UNDEFINED;
@@ -85,6 +111,12 @@ pub(crate) fn do_send(
         callback = options_;
     } else if !options_.is_undefined() {
         global_object.validate_object("options", options_, Default::default())?;
+        if options_
+            .get(global_object, "$internal")?
+            .is_some_and(|v| v.to_boolean())
+        {
+            is_internal = IsInternal::Internal;
+        }
     }
 
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
@@ -123,6 +155,7 @@ pub(crate) fn do_send(
         ));
     }
 
+    let original_message = message;
     if !handle.is_undefined_or_null() {
         let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
         if serialized_array.is_undefined_or_null() {
@@ -136,6 +169,9 @@ pub(crate) fn do_send(
     }
 
     let mut zig_handle: Option<Handle> = None;
+    let mut pause_target = JSValue::UNDEFINED;
+    #[cfg_attr(windows, allow(unused_mut, unused_variables))]
+    let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
@@ -148,23 +184,85 @@ pub(crate) fn do_send(
                     // owned by uSockets; `get_socket` only reinterpret-casts to
                     // `&mut us_socket_t` and `get_fd` is a read-only FFI call.
                     let fd = unsafe { &mut *socket_uws }.get_socket().get_fd();
-                    zig_handle = Some(Handle::init(fd, handle));
+                    #[cfg(not(windows))]
+                    match Handle::init_dup(fd, handle, false) {
+                        Ok(h) => zig_handle = Some(h),
+                        Err(e) => dup_err = Some(e),
+                    }
+                    #[cfg(windows)]
+                    {
+                        zig_handle = Some(Handle::init(fd, handle));
+                    }
                 }
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
-        } else {
-            //
+        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
+            // SAFETY: from_js returned a non-null pointer; the JS wrapper
+            let fd = unsafe { (*socket).socket.get().fd() };
+            if fd != bun_sys::Fd::INVALID {
+                log!("got tcp socket fd");
+                let keep_open = !options_.is_undefined_or_null()
+                    && options_
+                        .get(global_object, "keepOpen")?
+                        .is_some_and(|v| v.to_boolean());
+                if !keep_open {
+                    pause_target = handle;
+                }
+                #[cfg(not(windows))]
+                match Handle::init_dup(fd, handle, !keep_open) {
+                    Ok(h) => zig_handle = Some(h),
+                    Err(e) => dup_err = Some(e),
+                }
+                #[cfg(windows)]
+                {
+                    zig_handle = Some(if keep_open {
+                        Handle::init(fd, handle)
+                    } else {
+                        Handle::init_close_on_complete(fd, handle)
+                    });
+                }
+            }
         }
     }
+    #[cfg(not(windows))]
+    if let Some(e) = dup_err {
+        use bun_jsc::SysErrorJsc as _;
+        return do_send_err(global_object, callback, e.to_js(global_object), from);
+    }
 
-    let status = ipc_data.serialize_and_send(
-        global_object,
-        message,
-        IsInternal::External,
-        callback,
-        zig_handle,
-    );
+    #[cfg(windows)]
+    if let Some(h) = &mut zig_handle {
+        match attach_windows_socket_payload(global_object, message, h.fd, peer_pid) {
+            Some(hex) => {
+                h.win_export_hex = Some(hex);
+                h.peer_pid = peer_pid;
+            }
+            None => zig_handle = None,
+        }
+    }
+    if zig_handle.is_none() {
+        message = original_message;
+        pause_target = JSValue::UNDEFINED;
+    }
+
+    let status =
+        ipc_data.serialize_and_send(global_object, message, is_internal, callback, zig_handle);
+
+    if status != SerializeAndSendResult::Failure
+        && !pause_target.is_undefined()
+        && pause_target.is_object()
+    {
+        match pause_target.get(global_object, "pause") {
+            Ok(Some(f)) if f.is_callable() => {
+                if let Err(e) = f.call(global_object, pause_target, &[]) {
+                    global_object.report_active_exception_as_unhandled(e);
+                }
+            }
+            Ok(_) => {}
+            Err(e) => global_object.report_active_exception_as_unhandled(e),
+        }
+    }
 
     if status == SerializeAndSendResult::Failure {
         let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
@@ -247,5 +345,17 @@ pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> 
     // `None`); the `&mut SendQueue` borrow is scoped to this call and does not
     // alias `vm` (the instance is heap-allocated, not embedded in `vm`).
     let ipc = vm.get_ipc_instance().map(|i| unsafe { &mut (*i).data });
-    do_send(ipc, global, frame, FromEnum::Process)
+    #[cfg(windows)]
+    let peer_pid = {
+        let from_pipe = ipc.as_ref().map(|i| i.ipc_peer_pid()).unwrap_or(0);
+        if from_pipe != 0 {
+            from_pipe
+        } else {
+            // SAFETY: trivial libuv accessor, no preconditions.
+            unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
+        }
+    };
+    #[cfg(not(windows))]
+    let peer_pid = 0;
+    do_send(ipc, global, frame, FromEnum::Process, peer_pid)
 }

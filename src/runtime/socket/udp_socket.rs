@@ -320,6 +320,7 @@ pub struct UDPSocketConfig {
     /// `socket.bind({ fd })` and cluster-shared sockets.
     pub fd: Option<i32>,
     pub binary_type: BinaryType,
+    pub shared_fd: bool,
 }
 
 impl Default for UDPSocketConfig {
@@ -331,6 +332,7 @@ impl Default for UDPSocketConfig {
             flags: 0,
             fd: None,
             binary_type: BinaryType::Buffer,
+            shared_fd: false,
         }
     }
 }
@@ -393,11 +395,16 @@ impl UDPSocketConfig {
             }
         };
 
+        let shared_fd = options
+            .get_truthy(global_this, "$sharedFd")?
+            .is_some_and(|v| v.to_boolean());
+
         let mut config = Self {
             hostname,
             port,
             flags,
             fd,
+            shared_fd,
             ..Default::default()
         };
 
@@ -657,6 +664,7 @@ impl UDPSocket {
                 on_close,
                 on_recv_error,
                 fd,
+                config.shared_fd,
                 Some(&mut err),
                 this_ptr.cast::<c_void>(),
             )
@@ -675,6 +683,9 @@ impl UDPSocket {
             )
         };
         drop(hostname_z);
+        if created.is_null() && err == 0 && config.fd.is_some() {
+            err = libc::EINVAL;
+        }
         this.socket.set(if created.is_null() {
             None
         } else {
@@ -1750,6 +1761,17 @@ impl UDPSocket {
     #[bun_jsc::host_fn(getter)]
     pub fn get_closed(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.closed.get())
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_fd(this: &Self, _: &JSGlobalObject) -> JSValue {
+        if this.closed.get() {
+            return JSValue::js_number(-1.0);
+        }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::js_number(-1.0);
+        };
+        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).fd() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]

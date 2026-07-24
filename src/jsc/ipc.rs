@@ -110,26 +110,6 @@ impl InternalMsgHolder {
 
         let event_loop = global.bun_vm().event_loop_mut();
 
-        if let Some(p) = message.get(global, "ack")? {
-            if !p.is_undefined() {
-                let ack = p.to_int32();
-                // Note: peek the JSValue first (ending the immutable borrow),
-                // then swap_remove (which drops the Strong).
-                let entry = self.callbacks.get(&ack).map(|s| s.get());
-                if let Some(callback_opt) = entry {
-                    if let Some(callback) = callback_opt {
-                        self.callbacks.swap_remove(&ack);
-                        event_loop.run_callback(
-                            callback,
-                            global,
-                            self.worker.get().unwrap(),
-                            &[message, handle],
-                        );
-                    }
-                    return Ok(());
-                }
-            }
-        }
         event_loop.run_callback(cb, global, worker, &[message, handle]);
         Ok(())
     }
@@ -670,6 +650,13 @@ pub type Socket = bun_uws::SocketHandler<false>;
 pub struct Handle {
     pub fd: Fd,
     pub js: Protected,
+    pub close_on_complete: bool,
+    pub owns_fd: bool,
+    pub cluster_seq: Option<i32>,
+    #[cfg(windows)]
+    pub win_export_hex: Option<Box<[u8]>>,
+    #[cfg(windows)]
+    pub peer_pid: u32,
 }
 
 impl Handle {
@@ -677,6 +664,50 @@ impl Handle {
         Self {
             fd,
             js: js.protected(),
+            close_on_complete: false,
+            owns_fd: false,
+            cluster_seq: None,
+            #[cfg(windows)]
+            win_export_hex: None,
+            #[cfg(windows)]
+            peer_pid: 0,
+        }
+    }
+
+    pub fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
+        Self {
+            fd,
+            js: js.protected(),
+            close_on_complete: true,
+            owns_fd: false,
+            cluster_seq: None,
+            #[cfg(windows)]
+            win_export_hex: None,
+            #[cfg(windows)]
+            peer_pid: 0,
+        }
+    }
+
+    pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Result<Self, bun_sys::Error> {
+        let wire_fd = bun_sys::dup(fd)?;
+        Ok(Self {
+            fd: wire_fd,
+            js: js.protected(),
+            close_on_complete,
+            owns_fd: true,
+            cluster_seq: None,
+            #[cfg(windows)]
+            win_export_hex: None,
+            #[cfg(windows)]
+            peer_pid: 0,
+        })
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        if self.owns_fd {
+            FdExt::close(self.fd);
         }
     }
 }
@@ -761,9 +792,51 @@ impl SendHandle {
 
     /// Call the callback and deinit
     pub fn complete(mut self, global: &JSGlobalObject) {
+        if let Some(handle) = &self.handle {
+            if handle.close_on_complete {
+                let js = handle.js.value();
+                if js.is_object() {
+                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                }
+            }
+        }
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
+
+    pub fn abort_unsent(self, global: &JSGlobalObject) {
+        if let Some(handle) = &self.handle {
+            if handle.close_on_complete {
+                let js = handle.js.value();
+                if js.is_object() {
+                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                }
+            }
+        }
+    }
+}
+
+#[bun_jsc::host_fn]
+fn close_sent_handle(global: &JSGlobalObject, callframe: &crate::CallFrame) -> JsResult<JSValue> {
+    let [js] = callframe.arguments_as_array::<1>();
+    if js.is_object() {
+        if let Some(f) = js.get(global, "close")? {
+            if f.is_callable() {
+                f.call(global, js, &[])?;
+            }
+        }
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
+fn close_sent_handle_fn(global: &JSGlobalObject) -> JSValue {
+    crate::JSFunction::create(
+        global,
+        BunString::empty(),
+        __jsc_host_close_sent_handle,
+        1,
+        Default::default(),
+    )
 }
 
 // SendHandle.deinit: all fields Drop; no explicit impl needed.
@@ -1089,6 +1162,17 @@ impl SendQueue {
             return Ok(());
         }
         this.close_event_sent = true;
+        let global = this.get_global_this();
+        if let Some(item) = this.waiting_for_ack.take() {
+            item.complete(&global);
+        }
+        for item in std::mem::take(&mut this.queue) {
+            if item.data.cursor > 0 {
+                item.complete(&global);
+            } else {
+                item.abort_unsent(&global);
+            }
+        }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
         unsafe { (*this.owner).handle_ipc_close() };
         Ok(())
@@ -1146,8 +1230,7 @@ impl SendQueue {
             // prepend (we have not started sending the next message yet because we are waiting for the ack/nack)
             self.queue.insert(0, message);
         } else {
-            // insert at index 1 (we are in the middle of sending a message to the other process)
-            debug_assert!(self.queue[0].is_ack_nack());
+            debug_assert!(self.waiting_for_ack.is_none() || self.queue[0].is_ack_nack());
             self.queue.insert(1, message);
         }
     }
@@ -1169,10 +1252,40 @@ impl SendQueue {
             if self.retry_count < MAX_HANDLE_RETRANSMISSIONS {
                 // retry sending the message
                 item.data.cursor = 0;
+                #[cfg(windows)]
+                {
+                    let handle = item.handle.as_mut().unwrap();
+                    if handle.peer_pid != 0 {
+                        if let Some(old_hex) = handle.win_export_hex.take() {
+                            if let Some(new_hex) =
+                                windows_export_socket_hex(handle.fd, handle.peer_pid)
+                            {
+                                if let Some(pos) = bun_core::memmem(&item.data.list, &old_hex) {
+                                    item.data.list[pos..pos + new_hex.len()]
+                                        .copy_from_slice(&new_hex);
+                                }
+                                handle.win_export_hex = Some(new_hex);
+                            } else {
+                                handle.win_export_hex = Some(old_hex);
+                            }
+                        }
+                    }
+                }
                 let item = self.waiting_for_ack.take().unwrap();
                 self.insert_message(item);
                 log!("IPC call continueSend() from onAckNack retry");
                 return self.continue_send(global, ContinueSendReason::NewMessageAppended);
+            }
+            if let Some(seq) = item.handle.as_ref().and_then(|h| h.cluster_seq) {
+                let entry = self.internal_msg_queue.callbacks.get(&seq).map(|s| s.get());
+                if let Some(Some(cb)) = entry {
+                    let reply = JSValue::create_empty_object(global, 1);
+                    reply.put(global, b"accepted", JSValue::FALSE);
+                    let _ = JSValue::call_next_tick_1(cb, global, reply);
+                    self.internal_msg_queue.callbacks.swap_remove(&seq);
+                } else if entry.is_some() {
+                    self.internal_msg_queue.callbacks.swap_remove(&seq);
+                }
             }
             // too many retries; give up - emit warning if possible
             let mut warning =
@@ -1194,6 +1307,7 @@ impl SendQueue {
         }
         // consume the message and continue sending
         let item = self.waiting_for_ack.take().unwrap();
+        self.retry_count = 0;
         item.complete(global); // call the callback & deinit
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
@@ -1206,14 +1320,19 @@ impl SendQueue {
         if self.queue.is_empty() {
             return false; // nothing to send
         }
-        let first = &self.queue[0];
-        if first.data.cursor > 0 {
-            return true; // send in progress, waiting on writable
-        }
-        if self.write_in_progress {
-            return true; // send in progress (windows), waiting on writable
-        }
-        false // error state.
+        // Anything still queued has not reached the peer, so the loop has to
+        // stay alive; otherwise the process exits and the messages are dropped
+        // without their send() callbacks ever running.
+        //
+        // That includes the head item having sent nothing yet (`cursor == 0`
+        // with no write in flight). This is what a write refused for
+        // backpressure leaves behind and is the ordinary state while waiting
+        // for the socket to become writable again, not an error.
+        //
+        // A closed socket can never drain the queue. `_socket_closed` disables
+        // the keep-alive, and declining to re-arm it here stops a half-sent
+        // queue from pinning the loop open forever.
+        matches!(self.socket, SocketUnion::Open(_))
     }
 
     pub fn update_ref(&mut self, global: &JSGlobalObject) {
@@ -1274,7 +1393,11 @@ impl SendQueue {
         }
         debug_assert!(!self.write_in_progress);
         self.write_in_progress = true;
-        let fd = self.queue[0].handle.as_ref().map(|h| h.fd);
+        let fd = if self.queue[0].data.cursor == 0 {
+            self.queue[0].handle.as_ref().map(|h| h.fd)
+        } else {
+            None
+        };
         // `_write` re-slices `self.queue[0]` internally so we never hand a
         // borrow of `self` into a `&mut self` method (PORTING.md aliased-&mut).
         self._write(fd);
@@ -1314,8 +1437,6 @@ impl SendQueue {
             self.update_ref(&global_this);
             return;
         } else if n > 0 && n < i32::try_from(first.data.list.len()).expect("int cast") {
-            // the item was partially sent; update the cursor and wait for writable to send the rest
-            // (if we tried to send a handle, a partial write means the handle wasn't sent yet.)
             first.data.cursor += usize::try_from(n).expect("int cast");
             self.update_ref(&global_this);
             return;
@@ -1415,6 +1536,15 @@ impl SendQueue {
         }
     }
 
+    #[cfg(windows)]
+    pub fn ipc_peer_pid(&self) -> u32 {
+        match &self.socket {
+            // SAFETY: `p` is a live uv_pipe_t owned until _windowsOnClosed.
+            SocketUnion::Open(p) => unsafe { (**p).ipc_remote_pid() as u32 },
+            _ => 0,
+        }
+    }
+
     /// starts a write request. on posix, this always calls _onWriteComplete immediately. on windows, it may
     /// call _onWriteComplete later.
     ///
@@ -1429,9 +1559,7 @@ impl SendQueue {
         #[cfg(windows)]
         {
             let socket = *self.get_socket().unwrap();
-            if let Some(_) = fd {
-                // TODO: send fd on windows
-            }
+            let _ = fd;
             let pipe: *mut uv::Pipe = socket;
 
             // Copy the outbound bytes into an owned buffer while only holding a
@@ -1743,6 +1871,81 @@ impl Drop for SendQueue {
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
+#[cfg(windows)]
+pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
+    let size = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
+    let mut info = vec![0u8; size];
+    // SAFETY: `info` is `size` bytes as required; `fd.native()` is the SOCKET.
+    let rc = unsafe {
+        bun_uws::socket_transfer::bsd_socket_export(
+            fd.native() as bun_uws::LIBUS_SOCKET_DESCRIPTOR,
+            peer_pid,
+            info.as_mut_ptr().cast::<core::ffi::c_void>(),
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let mut hex = vec![0u8; size * 2];
+    let n = bun_core::strings::encode_bytes_to_hex(&mut hex, &info);
+    debug_assert!(n == size * 2);
+    hex.truncate(n);
+    Some(hex.into_boxed_slice())
+}
+
+pub const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
+
+#[cfg(windows)]
+fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> Option<Fd> {
+    let info_value = match msg_data.get(global, WIN_SOCKET_INFO_KEY) {
+        Ok(Some(v)) if v.is_string() => v,
+        Ok(_) => return None,
+        Err(_) => {
+            global.clear_exception();
+            return None;
+        }
+    };
+    let hex = jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global);
+    let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
+    let mut info = vec![0u8; expected];
+    let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());
+    if decoded != expected {
+        log!(
+            "importWindowsSocketPayload: bad blob length {} (want {})",
+            decoded,
+            expected
+        );
+        return None;
+    }
+    let mut err: c_int = 0;
+    // SAFETY: `info` is a live buffer of export_size() bytes holding the
+    let sock = unsafe {
+        bun_uws::socket_transfer::bsd_socket_import(info.as_mut_ptr().cast::<c_void>(), &mut err)
+    };
+    if sock == bun_uws::LIBUS_SOCKET_DESCRIPTOR::MAX {
+        log!("importWindowsSocketPayload: WSASocketW failed: {}", err);
+        return None;
+    }
+    msg_data.delete_property(global, WIN_SOCKET_INFO_KEY);
+    Some(Fd::from_system(sock as *mut c_void))
+}
+
+fn received_fd_to_js(fd: Fd) -> JSValue {
+    #[cfg(windows)]
+    {
+        let v = fd.native() as u64;
+        if v <= i32::MAX as u64 {
+            JSValue::js_number_from_int32(v as i32)
+        } else {
+            JSValue::js_number_from_uint64(v)
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        JSValue::js_number_from_int32(fd.uv())
+    }
+}
+
 enum IPCCommand {
     Handle(JSValue),
     Ack,
@@ -1812,7 +2015,11 @@ fn handle_ipc_message(
     if let Some(icmd) = internal_command {
         match icmd {
             IPCCommand::Handle(msg_data) => {
-                // Handle NODE_HANDLE message
+                #[cfg(windows)]
+                let imported = import_windows_socket_payload(global_this, msg_data);
+                #[cfg(windows)]
+                let ack = imported.is_some();
+                #[cfg(not(windows))]
                 let ack = send_queue.incoming_fd.is_some();
 
                 let packet = if ack {
@@ -1839,6 +2046,9 @@ fn handle_ipc_message(
                 }
 
                 // Get file descriptor and clear it
+                #[cfg(windows)]
+                let fd: Fd = imported.unwrap();
+                #[cfg(not(windows))]
                 let fd: Fd = send_queue.incoming_fd.take().unwrap();
 
                 let target: JSValue = match send_queue.owner_ref().kind() {
@@ -1849,9 +2059,7 @@ fn handle_ipc_message(
                 // RAII: `enter()` now, `exit()` on drop — covers both the
                 // early-error return and the fall-through.
                 let _scope = global_this.bun_vm().enter_event_loop_scope();
-                // FD.toJS — `uv()` is the user-visible numeric fd on both
-                // platforms (posix == native, windows == uv_file).
-                let fd_js = JSValue::js_number_from_int32(fd.uv());
+                let fd_js = received_fd_to_js(fd);
                 let res = ipc_parse(global_this, target, msg_data, fd_js);
                 if let Err(e) = res {
                     // ack written already, that's okay.
@@ -1877,8 +2085,57 @@ fn handle_ipc_message(
             }
         }
     } else {
+        // Node's child_process materializes the received handle and passes it
+        // as the second arg to the internalMessage listener; cluster's
+        // onmessage/onInternalMessage then see (message, handle):
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L33-L49
+        // Pass the raw descriptor through the same slot so cluster/child.ts
+        // can wrap it, instead of writing it onto the message object.
+        let mut handle_js = JSValue::UNDEFINED;
+        if let DecodedIPCMessage::Internal(msg_data) = &message {
+            let msg_data = *msg_data;
+            if msg_data.is_object() {
+                match msg_data.get(global_this, "$hasHandle") {
+                    Ok(Some(marker)) if marker.to_boolean() => {
+                        #[cfg(windows)]
+                        let imported = import_windows_socket_payload(global_this, msg_data);
+                        #[cfg(windows)]
+                        let ack = imported.is_some();
+                        #[cfg(not(windows))]
+                        let ack = send_queue.incoming_fd.is_some();
+                        let packet = if ack {
+                            get_ack_packet(send_queue.mode)
+                        } else {
+                            get_nack_packet(send_queue.mode)
+                        };
+                        let mut reply = SendHandle {
+                            data: StreamBuffer::default(),
+                            handle: None,
+                            callbacks: CallbackList::AckNack,
+                        };
+                        handle_oom(reply.data.write(packet));
+                        send_queue.insert_message(reply);
+                        log!("IPC call continueSend() from internal $hasHandle ack");
+                        send_queue
+                            .continue_send(global_this, ContinueSendReason::NewMessageAppended);
+                        if !ack {
+                            return;
+                        }
+                        #[cfg(windows)]
+                        let fd = imported.unwrap();
+                        #[cfg(not(windows))]
+                        let fd = send_queue.incoming_fd.take().unwrap();
+                        handle_js = received_fd_to_js(fd);
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        global_this.clear_exception();
+                    }
+                }
+            }
+        }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
-        unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
+        unsafe { (*send_queue.owner).handle_ipc_message(message, handle_js) };
     }
 }
 

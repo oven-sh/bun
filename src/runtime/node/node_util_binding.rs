@@ -38,6 +38,40 @@ pub(crate) fn enobufs_error_code(
     Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn einval_error_code(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::js_number_from_int32(-UV_E::INVAL))
+}
+
+#[bun_jsc::host_fn]
+pub(crate) fn uv_translate_sys_error(
+    _global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let arg = frame.arguments_as_array::<1>()[0];
+    if !arg.is_number() {
+        return Ok(JSValue::js_number_from_int32(-UV_E::INVAL));
+    }
+    let n = arg.to_int32();
+    if n <= 0 {
+        return Ok(JSValue::js_number_from_int32(n));
+    }
+    #[cfg(windows)]
+    {
+        // SAFETY: pure translation function.
+        let uv_err = unsafe { bun_libuv_sys::uv_translate_sys_error(n) };
+        return Ok(JSValue::js_number_from_int32(if uv_err != 0 {
+            uv_err
+        } else {
+            -UV_E::INVAL
+        }));
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(JSValue::js_number_from_int32(-n))
+    }
+}
+
 /// libuv's ECANCELED code (`uv_udp_send` requests cancelled by close). Not a
 /// JS-side literal (unlike EBADF/EINVAL, ECANCELED's number differs across the
 /// POSIX platforms: Linux 125, Darwin 89, FreeBSD 85; synthetic -4081 on

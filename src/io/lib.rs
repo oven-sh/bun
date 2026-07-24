@@ -1880,6 +1880,10 @@ impl FilePollRef {
         self.inner().flags.insert(f);
     }
     #[inline]
+    pub fn unset_flag(self, f: FilePollFlag) {
+        self.inner().flags.remove(f);
+    }
+    #[inline]
     pub fn file_type(self) -> crate::pipes::FileType {
         #[cfg(not(windows))]
         {

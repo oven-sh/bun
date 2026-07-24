@@ -1902,6 +1902,7 @@ Socket.prototype.connect = function connect(...args) {
       doConnect(this._handle, {
         data: this,
         fd: fd,
+        ...(options.fdIsRawSocket === true ? { fdIsRawSocket: true } : {}),
         socket: SocketHandlers,
         // Always half-open natively; see kConnect.
         allowHalfOpen: true,
@@ -1926,7 +1927,7 @@ Socket.prototype.connect = function connect(...args) {
         // attached stays buffered instead of being emitted to nobody.
         if (!this.isPaused()) this.read(0);
       });
-      this.connecting = true;
+      if (!fd) this.connecting = true;
     }
     if (fd) {
       return this;
@@ -3530,6 +3531,7 @@ Server.prototype.unref = function unref() {
 };
 
 Server.prototype.close = function close(callback) {
+  this[kClusterListeningId] = (this[kClusterListeningId] || 0) + 1;
   if (typeof callback === "function") {
     if (!this._handle) {
       this.once("close", function close() {
@@ -3541,7 +3543,11 @@ Server.prototype.close = function close(callback) {
   }
 
   if (this._handle) {
-    this._handle.stop(false);
+    if (typeof this._handle.stop === "function") {
+      this._handle.stop(false);
+    } else {
+      this._handle.close();
+    }
     this._handle = null;
   }
 
@@ -3741,6 +3747,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       error.code = "ERR_INVALID_ARG_VALUE";
       throw error;
     }
+    if (reusePort === true) {
+      exclusive = true;
+    }
+    var clusterHost = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
     hostname = hostname || "::";
   }
 
@@ -3774,11 +3784,27 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options[kSocketClass] = Socket;
     }
 
+    const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
+    let queryAddress = null;
+    let queryPort = port;
+    let queryAddressType = 4;
+    if (path) {
+      queryAddress = path;
+      queryPort = -1;
+      queryAddressType = -1;
+    } else if (typeof fd === "number" && fd >= 0) {
+      queryPort = null;
+      queryAddressType = null;
+    } else if (typeof clusterHost === "string") {
+      queryAddress = clusterHost;
+      queryAddressType = isIP(clusterHost) || 4;
+    }
+
     listenInCluster(
       this,
-      null,
-      port,
-      4,
+      queryAddress,
+      queryPort,
+      queryAddressType,
       backlog,
       fd,
       exclusive,
@@ -3786,7 +3812,7 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       reusePort,
       readableAll,
       writableAll,
-      undefined,
+      flags,
       undefined,
       path,
       hostname,
@@ -3818,6 +3844,9 @@ Server.prototype[kRealListen] = function (
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
   // semantics itself, so the server option is consumed in JS only.
+  if (reusePort) {
+    exclusive = false;
+  }
   if (path) {
     this._handle = Bun.listen({
       unix: path,
@@ -3976,6 +4005,51 @@ function listenInCluster(
 
   if (cluster === undefined) cluster = require("node:cluster");
 
+  if (
+    !cluster.isPrimary &&
+    !exclusive &&
+    typeof address === "string" &&
+    address.length > 0 &&
+    typeof port === "number" &&
+    port >= 0 &&
+    isIP(address) === 0
+  ) {
+    const lookupListeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
+    // Node's lookupAndListen also closes over listeningId/self/port/backlog/exclusive/flags
+    // in a dns.lookup arrow:
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2259-L2278
+    require("node:dns").lookup(address, (err, ip, family) => {
+      if (lookupListeningId !== server[kClusterListeningId]) return;
+      if (err) {
+        // Node emits synchronously inside the (already async) dns.lookup callback:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2268-L2269
+        server.emit("error", err);
+        return;
+      }
+      listenInCluster(
+        server,
+        ip,
+        port,
+        family === 6 ? 6 : 4,
+        backlog,
+        fd,
+        exclusive,
+        ipv6Only,
+        reusePort,
+        readableAll,
+        writableAll,
+        flags,
+        options,
+        path,
+        hostname,
+        tls,
+        contexts,
+        onListen,
+      );
+    });
+    return;
+  }
+
   if (cluster.isPrimary || exclusive) {
     server[kRealListen](
       path,
@@ -4001,28 +4075,143 @@ function listenInCluster(
     fd: fd,
     flags,
     backlog,
+    readableAll,
+    writableAll,
     ...options,
+    sharedOnly: tls ? true : undefined,
   };
-  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+  const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
+  // Node also defines listenOnPrimaryHandle as an inner function closing over
+  // listeningId/server/port/address/backlog/fd/flags:
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102
+  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle, _reply) {
+    if (listeningId !== server[kClusterListeningId]) {
+      handle?.close();
+      return;
+    }
     err = checkBindError(err, port, handle);
     if (err) {
-      throw new ExceptionWithHostPort(err, "bind", address, port);
+      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      if (typeof _reply?.bunHint === "string") ex.message += `\n  note: ${_reply.bunHint}`;
+      server.emit("error", ex);
+      return;
     }
-    server[kRealListen](
-      path,
-      port,
-      hostname,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      tls,
-      contexts,
-      onListen,
-      fd,
-    );
+    const sharedFd = handle?.sharedFd;
+    if (handle && typeof sharedFd === "number") {
+      server[kClusterHandle] = handle;
+      handle[kClusterOwner] = server;
+      server.once("close", closeClusterHandle.bind(null, handle));
+      try {
+        server[kRealListen](
+          undefined,
+          port,
+          hostname,
+          exclusive,
+          ipv6Only,
+          reusePort,
+          readableAll,
+          writableAll,
+          tls,
+          contexts,
+          onListen,
+          sharedFd,
+        );
+        handle.adopted = true;
+        // Node v26.3.0: SharedHandle ignores readableAll/writableAll and the
+        // worker's sync uv_pipe_chmod path in Server.prototype.listen returns
+        // early because _handle is null when listenInCluster returns async, so
+        // SCHED_NONE workers do not apply the mode. Matched here.
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2200-L2218
+      } catch (err) {
+        server[kClusterHandle] = null;
+        handle[kClusterOwner] = null;
+        handle.close();
+        setTimeout(emitErrorNextTick, 1, server, err);
+      }
+      return;
+    }
+    server[kClusterFauxListen](handle, backlog, path);
   });
+}
+
+const kClusterListeningId = Symbol("kClusterListeningId");
+const kClusterHandle = Symbol("kClusterHandle");
+const kClusterFauxListen = Symbol("kClusterFauxListen");
+const { kClusterOwner } = require("internal/shared");
+
+function closeClusterHandle(handle) {
+  handle.close();
+}
+
+Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
+  this[kClusterHandle] = handle;
+  this._handle = handle;
+  if (path) {
+    handle.unix = path;
+  }
+  handle.onconnection = onClusterConnection;
+  handle[kClusterOwner] = this;
+  handle.listen(backlog || 511);
+  if (this._unref) this.unref();
+  setTimeout(emitListeningNextTick, 1, this);
+};
+
+function onClusterConnection(err, clientHandle) {
+  const self = this[kClusterOwner];
+  if (!self || self[kClusterHandle] !== this) {
+    clientHandle?.close();
+    return;
+  }
+  if (err) {
+    self.emit("error", new ErrnoException(err, "accept"));
+    return;
+  }
+  if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    self.emit("drop");
+    clientHandle.close();
+    return;
+  }
+  const socket = new Socket({
+    allowHalfOpen: self.allowHalfOpen,
+    highWaterMark: self.highWaterMark,
+  });
+  socket.isServer = true;
+  if (self.noDelay) socket[kSetNoDelay] = true;
+  if (self.keepAlive) {
+    socket[kSetKeepAlive] = true;
+    socket[kSetKeepAliveInitialDelay] = self.keepAliveInitialDelay;
+  }
+  socket.connect({ fd: clientHandle.fd, fdIsRawSocket: true, pauseOnConnect: self.pauseOnConnect });
+  const blockList = self.blockList;
+  if (blockList) {
+    const remote = socket.remoteAddress;
+    const t = isIP(remote);
+    if (t && blockList.check(remote, `ipv${t}`)) {
+      const data = {
+        localAddress: socket.localAddress,
+        localPort: socket.localPort,
+        localFamily: socket.localFamily,
+        remoteAddress: remote,
+        remotePort: socket.remotePort,
+        remoteFamily: socket.remoteFamily,
+      };
+      socket.destroy();
+      self.emit("drop", data);
+      return;
+    }
+  }
+  socket.server = self;
+  socket._server = self;
+  self._connections++;
+  const connectionListener = self[bunSocketServerOptions]?.connectionListener;
+  if (typeof connectionListener === "function" && typeof self[bunTlsSymbol] !== "function") {
+    self.prependOnceListener("connection", connectionListener);
+  }
+  self.emit("connection", socket);
+  if (!self.pauseOnConnect) {
+    socket.resume();
+  }
 }
 
 function createServer(options, connectionListener) {

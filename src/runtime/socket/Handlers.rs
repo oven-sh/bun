@@ -507,7 +507,16 @@ impl SocketConfig {
             break 'blk SocketConfig {
                 hostname_or_unix: ZigStringSlice::empty(),
                 port: None,
-                fd: generated.fd.map(Fd::from_uv),
+                fd: generated.fd.map(|v| {
+                    #[cfg(windows)]
+                    {
+                        Fd::from_system(v as u32 as usize as *mut core::ffi::c_void)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        Fd::from_uv(v)
+                    }
+                }),
                 ssl,
                 handlers: Handlers::from_generated(global, &generated.handlers, mode)?,
                 default_data: if generated.data.is_undefined() {
@@ -523,6 +532,11 @@ impl SocketConfig {
         };
         // On any `?` below, `result` drops and releases what it owns — no
         // manual error-path cleanup needed.
+
+        result.exclusive = generated.exclusive;
+        result.allow_half_open = generated.allow_half_open;
+        result.reuse_port = generated.reuse_port;
+        result.ipv6_only = generated.ipv6_only;
 
         if result.fd.is_some() {
             // If a user passes a file descriptor then prefer it over hostname or unix
@@ -563,10 +577,6 @@ impl SocketConfig {
                     }
                 },
             });
-            result.exclusive = generated.exclusive;
-            result.allow_half_open = generated.allow_half_open;
-            result.reuse_port = generated.reuse_port;
-            result.ipv6_only = generated.ipv6_only;
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected either \"hostname\" or \"unix\""

@@ -10,7 +10,7 @@ use super::node_assert;
 ///     Equal  = 2,
 /// }
 /// type Diff = { operation: DiffType, text: string };
-/// declare function myersDiff(actual: string, expected: string): Diff[];
+/// declare function myersDiff(actual: string | string[], expected: string | string[]): Diff[];
 /// ```
 #[bun_jsc::host_fn]
 pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -27,6 +27,22 @@ pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         3 => (frame.argument(2).is_truthy(), false),
         _ => (frame.argument(2).is_truthy(), frame.argument(3).is_truthy()),
     };
+
+    // `util.diff()` also diffs arrays of strings, one element per line.
+    if actual_arg.is_array() || expected_arg.is_array() {
+        if !actual_arg.is_array() {
+            return Err(global.throw_invalid_argument_type_value("actual", "array", actual_arg));
+        }
+        if !expected_arg.is_array() {
+            return Err(global.throw_invalid_argument_type_value("expected", "array", expected_arg));
+        }
+        return node_assert::myers_diff_arrays(
+            global,
+            actual_arg,
+            expected_arg,
+            check_comma_disparity,
+        );
+    }
 
     if !actual_arg.is_string() {
         return Err(global.throw_invalid_argument_type_value("actual", "string", actual_arg));

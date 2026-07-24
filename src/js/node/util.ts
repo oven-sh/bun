@@ -245,6 +245,66 @@ function styleText(format, text) {
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
+// Port of node's `internal/util/diff` (v26.3.0), the implementation behind
+// `util.diff()`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/diff.js
+//
+// The native comparator reports `{ kind, value }` with kind Insert=0, Delete=1,
+// Equal=2; node's public shape is `[operation, value]` with INSERT=1,
+// DELETE=-1, NOP=0.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/assert/myers_diff.js#L18-L22
+const kOperationForDiffKind = [1, -1, 0];
+let myersDiff;
+
+function validateDiffInput(value, name) {
+  if (!$isJSArray(value)) {
+    validateString(value, name);
+    return;
+  }
+  for (let i = 0; i < value.length; ++i) {
+    if (typeof value[i] !== "string") {
+      throw $ERR_INVALID_ARG_TYPE(`${name}[${i}]`, "string", value[i]);
+    }
+  }
+}
+
+// node's myersDiff indexes both operands uniformly, so a string paired with an
+// array is compared code-unit-to-element. The native comparator takes two
+// strings or two arrays, so widen the odd one out.
+function toDiffLines(value) {
+  if ($isJSArray(value)) return value;
+  const length = value.length;
+  const lines = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    lines[i] = value[i];
+  }
+  return lines;
+}
+
+function diff(actual, expected) {
+  if (actual === expected) {
+    return [];
+  }
+
+  validateDiffInput(actual, "actual");
+  validateDiffInput(expected, "expected");
+
+  myersDiff ??= require("internal/assert/myers_diff").myersDiff;
+  const raw =
+    $isJSArray(actual) === $isJSArray(expected)
+      ? myersDiff(actual, expected)
+      : myersDiff(toDiffLines(actual), toDiffLines(expected));
+
+  // myersDiff walks the edit path backwards; node reverses it before returning.
+  const length = raw.length;
+  const result = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    const { kind, value } = raw[length - 1 - i];
+    result[i] = [kOperationForDiffKind[kind], typeof value === "number" ? String.fromCharCode(value) : value];
+  }
+  return result;
+}
+
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
   if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
@@ -481,6 +541,7 @@ cjs_exports = {
   TextEncoder,
   MIMEType,
   MIMEParams,
+  diff,
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

@@ -91,6 +91,13 @@ declare module "bun:test" {
     function restoreAllMocks(): void;
     function clearAllMocks(): void;
     function resetAllMocks(): void;
+    /**
+     * Resets the module registry - the cache of all required modules. This is
+     * useful to isolate modules where local state might conflict between tests.
+     *
+     * Returns the `jest` object for chaining.
+     */
+    function resetModules(): typeof jest;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     function setSystemTime(now?: number | Date): void;
     function setTimeout(milliseconds: number): void;
@@ -187,6 +194,12 @@ declare module "bun:test" {
      */
     clearAllMocks: typeof jest.clearAllMocks;
     resetAllMocks: typeof jest.resetAllMocks;
+    /**
+     * Resets the module registry - the cache of all required modules.
+     *
+     * Returns the `vi` object for chaining.
+     */
+    resetModules: () => typeof vi;
     useFakeTimers: typeof jest.useFakeTimers;
     useRealTimers: typeof jest.useRealTimers;
     advanceTimersByTime: typeof jest.advanceTimersByTime;

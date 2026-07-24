@@ -6,7 +6,10 @@
 //
 // Eventually we will implement this in native code, but this is just a quick hack to get WASI working.
 
+const { validateBoolean } = require("internal/validators");
+
 const nodeFsConstants = $processBindingConstants.fs;
+const kExitCode = Symbol("kExitCode");
 
 var __getOwnPropNames = Object.getOwnPropertyNames;
 
@@ -795,6 +798,9 @@ var require_wasi = __commonJS({
         this.env = wasiConfig.env ?? defaultConfig.env;
 
         const args = wasiConfig.args ?? defaultConfig.args;
+        const { returnOnExit = true } = wasiConfig;
+        validateBoolean(returnOnExit, "options.returnOnExit");
+        this.returnOnExit = returnOnExit;
         this.memory = void 0;
         this.view = void 0;
         this.bindings = wasiConfig.bindings || defaultConfig.bindings;
@@ -1835,6 +1841,10 @@ var require_wasi = __commonJS({
             return constants_1.WASI_ESUCCESS;
           },
           proc_exit: rval => {
+            if (this.returnOnExit) {
+              this[kExitCode] = rval;
+              throw kExitCode;
+            }
             bindings.exit(rval);
             return constants_1.WASI_ESUCCESS;
           },
@@ -1964,9 +1974,15 @@ var require_wasi = __commonJS({
           }
         }
         this.setMemory(memory);
+        this[kExitCode] = 0;
         if (exports2._start) {
-          exports2._start();
+          try {
+            exports2._start();
+          } catch (err) {
+            if (err !== kExitCode) throw err;
+          }
         }
+        return this[kExitCode];
       }
       getImports(module2) {
         let namespace: string | null = null;

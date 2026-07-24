@@ -1797,6 +1797,41 @@ test("ECDSA should work", async () => {
   }).toThrow(/The property 'options.dsaEncoding' is invalid. Received 'ieee-p136'/);
 });
 
+test("assert.deepStrictEqual compares key material, not own properties", async () => {
+  const assert = require("node:assert");
+  const a = createSecretKey(Buffer.alloc(16));
+  const b = createSecretKey(Buffer.alloc(16, 1));
+
+  assert.deepStrictEqual(a, createSecretKey(Buffer.alloc(16)));
+  assert.notDeepStrictEqual(a, b);
+  assert.notDeepStrictEqual(a, createSecretKey(Buffer.alloc(32)));
+
+  const first = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const second = generateKeyPairSync("ec", { namedCurve: "P-256" });
+  assert.deepStrictEqual(first.publicKey, createPublicKey(first.privateKey));
+  assert.notDeepStrictEqual(first.publicKey, second.publicKey);
+  assert.notDeepStrictEqual(first.publicKey, first.privateKey);
+  assert.notDeepStrictEqual(first.publicKey, a);
+
+  // A patched `equals` must not be able to make two different keys compare equal.
+  const original = Object.getOwnPropertyDescriptor(KeyObject.prototype, "equals")!;
+  Object.defineProperty(KeyObject.prototype, "equals", { configurable: true, value: () => true });
+  try {
+    assert.notDeepStrictEqual(a, b);
+  } finally {
+    Object.defineProperty(KeyObject.prototype, "equals", original);
+  }
+
+  const key1 = await crypto.subtle.generateKey({ name: "AES-CBC", length: 128 }, true, ["encrypt"]);
+  const key2 = await crypto.subtle.generateKey({ name: "AES-CBC", length: 128 }, true, ["encrypt"]);
+  assert.notDeepStrictEqual(key1, key2);
+  assert.deepStrictEqual(key1, key1);
+
+  const raw = await crypto.subtle.exportKey("raw", key1);
+  const sameMaterialDifferentUsages = await crypto.subtle.importKey("raw", raw, "AES-CBC", true, ["decrypt"]);
+  assert.notDeepStrictEqual(key1, sameMaterialDifferentUsages);
+});
+
 function randomProp() {
   return "prop" + crypto.randomUUID().replace(/-/g, "");
 }

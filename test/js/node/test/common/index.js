@@ -38,6 +38,7 @@ const tmpdir = require('./tmpdir');
 const bits = ['arm64', 'loong64', 'mips', 'mipsel', 'ppc64', 'riscv64', 's390x', 'x64']
   .includes(process.arch) ? 64 : 32;
 const hasIntl = !!process.config.variables.v8_enable_i18n_support;
+const hasTemporal = !!process.config.variables.v8_enable_temporal_support;
 
 const {
   atob,
@@ -58,6 +59,13 @@ const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
 
 const hasSQLite = Boolean(process.versions.sqlite);
+
+const hasLocalStorage = (() => {
+  // Check enumerable property to avoid triggering the getter which emits a warning.
+  // localStorage is enumerable only when --localstorage-file is provided.
+  const desc = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  return hasSQLite && desc?.enumerable === true;
+})();
 
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
@@ -1136,10 +1144,12 @@ const common = {
   getPrintedStackTrace,
   getTTYfd,
   hasIntl,
+  hasTemporal,
   hasCrypto,
   hasOpenSSL,
   hasQuic,
   hasSQLite,
+  hasLocalStorage,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,

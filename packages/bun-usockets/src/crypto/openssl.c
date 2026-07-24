@@ -508,7 +508,10 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * from inside SSL_do_handshake/SSL_read: user JS that writes to or destroys a
  * different TLS socket on the same loop re-points loop_ssl_data->ssl_socket
  * (and may consume the read-input window), and the interrupted handshake's
- * next BIO_write would otherwise land on that other socket's fd. */
+ * next BIO_write would otherwise land on that other socket's fd. The batching
+ * flag is saved-and-zeroed so a close_notify / write on a different socket
+ * reaches that socket's fd via the per-record BIO path instead of appending
+ * to the interrupted handshake's batch buffer. */
 void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   SSL *ssl = (SSL *)ssl_ptr;
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
@@ -517,6 +520,8 @@ void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   out[2] = d ? (void *)d->ssl_read_input : NULL;
   out[3] = d ? (void *)(uintptr_t)d->ssl_read_input_length : NULL;
   out[4] = d ? (void *)(uintptr_t)d->ssl_read_input_offset : NULL;
+  out[5] = d ? (void *)(uintptr_t)d->ssl_write_batching : NULL;
+  if (d) d->ssl_write_batching = 0;
 }
 
 void us_internal_ssl_loop_state_restore(void **saved) {
@@ -526,6 +531,7 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_read_input = (char *)saved[2];
   d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
   d->ssl_read_input_offset = (unsigned int)(uintptr_t)saved[4];
+  d->ssl_write_batching = (int)(uintptr_t)saved[5];
 }
 
 static int BIO_s_custom_write(BIO *bio, const char *data, int length) {
@@ -2675,7 +2681,7 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
   struct loop_ssl_data *cb_lsd = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   struct us_socket_t *cb_socket = cb_lsd ? cb_lsd->ssl_socket : NULL;
 
-  void *saved_loop_state[5];
+  void *saved_loop_state[6];
   us_internal_ssl_loop_state_save(ssl, saved_loop_state);
   int abort_handshake = 0;
   SSL_CTX *dyn = ls->on_server_name(ls, hostname, &abort_handshake, cb_socket);

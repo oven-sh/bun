@@ -594,6 +594,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Name from assignment context for anonymous decorated class expressions.
     /// Set before visitExpr, consumed by lowerStandardDecoratorsImpl.
     pub decorator_class_name: Option<&'a [u8]>,
+
+    pub class_static_init_depth: u32,
+    pub static_init_private_refs: HashMap<u32, ()>,
 }
 
 // `binding::ToExprWrapper` type-erases `*P` (which is generic over
@@ -8800,6 +8803,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             will_wrap_module_in_try_catch_for_using: false,
             nearest_stmt_list: None,
             decorator_class_name: None,
+            class_static_init_depth: 0,
+            static_init_private_refs: Default::default(),
 
             jsx_transform,
 

@@ -786,6 +786,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
+        let old_static_init_depth = self.class_static_init_depth;
+        let old_static_init_private_refs = core::mem::take(&mut self.static_init_private_refs);
+        self.class_static_init_depth = 0;
+
         self.visit_ts_decorators(&mut class.ts_decorators);
 
         if let Some(name) = class.class_name {
@@ -877,8 +881,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let csb_stmts = csb.stmts.slice();
                     let mut list = BumpVec::with_capacity_in(csb_stmts.len(), self.arena);
                     list.extend_from_slice(csb_stmts);
+                    self.class_static_init_depth += 1;
                     self.visit_stmts(&mut list, StmtsKind::FnBody)
                         .expect("unreachable");
+                    self.class_static_init_depth -= 1;
                     csb.stmts = Vec::from_bump_vec(list);
                     self.pop_scope();
 
@@ -986,6 +992,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 if let Some(val) = property.initializer {
                     // if (property.flags.is_static and )
+                    let is_static_accessor_init = property.kind == PropertyKind::AutoAccessor
+                        && property.flags.contains(flags::Property::IsStatic);
+                    if is_static_accessor_init {
+                        self.class_static_init_depth += 1;
+                    }
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1003,6 +1014,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         self.decorator_class_name = prev_dcn2;
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
+                    }
+                    if is_static_accessor_init {
+                        self.class_static_init_depth -= 1;
                     }
                 }
 
@@ -1173,6 +1187,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // class name scope
         self.pop_scope();
+
+        let class_static_init_private_refs = core::mem::take(&mut self.static_init_private_refs);
+        self.static_init_private_refs = old_static_init_private_refs;
+        self.class_static_init_depth = old_static_init_depth;
+        if !class_static_init_private_refs.is_empty() {
+            for property in class.properties.slice() {
+                if let Some(key) = property.key
+                    && let ExprData::EPrivateIdentifier(pi) = &key.data
+                    && class_static_init_private_refs.contains_key(&pi.ref_.inner_index())
+                {
+                    self.static_init_private_refs
+                        .insert(pi.ref_.inner_index(), ());
+                }
+            }
+        }
 
         shadow_ref.get()
     }

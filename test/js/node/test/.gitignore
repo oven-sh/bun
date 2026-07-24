@@ -30,3 +30,8 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/plan/**
 !fixtures/test-runner/error-reporter-fail-fast
 !fixtures/test-runner/error-reporter-fail-fast/**
+!fixtures/test-runner/global-setup-teardown
+!fixtures/test-runner/global-setup-teardown/**
+!fixtures/test-runner/test-runner-global-hooks.mjs
+!fixtures/test-runner/snapshots
+!fixtures/test-runner/snapshots/**

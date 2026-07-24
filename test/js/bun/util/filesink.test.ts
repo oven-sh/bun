@@ -318,42 +318,81 @@ it.skipIf(!isPosix)(
   },
 );
 
-// Sibling of the test above for sink.close() (js_close -> FileSink::end()).
-// close()'s flush() sees EPIPE synchronously; before the fix end()'s Err arm
-// set done=true, tore down the writer, and returned Err without touching the
-// pending write()'s promise, so that promise was left pending forever. close()
-// can't hand the promise back, but it latches the error into it and returns
-// normally so the failure is reported once, via the promise.
+// Sibling of the end() test above for sink.close() (js_close -> FileSink::end()).
+// end()'s Err/Done/Wrote arms set done=true / tore down the writer without
+// ever scheduling run_pending, so a backpressured write()'s promise was left
+// pending forever. close() can't hand the promise back, so the outcome goes to
+// it via run_pending and close() returns undefined.
+//
+// Runs in a subprocess because sink.close() on a Blob-created FileSink
+// currently leaks the native FileSink (doClose detaches m_sinkPtr so the
+// wrapper's +1 never reaches finalize); running it in-process would abort the
+// whole file under detect_leaks=1. That leak is pre-existing on main and
+// tracked separately.
 it.skipIf(!isPosix)(
-  "close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE",
+  "close() after a backpressured write() settles the write's promise (Err + drained-Done arms)",
   async () => {
-    const [readFd, writeFd] = createSocketPair();
-    let readFdOpen = true;
-    const sink = Bun.file(writeFd).writer();
-    try {
-      const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
-      expect(writePromise).toBeInstanceOf(Promise);
+    const src = `
+      const { createSocketPair } = require("bun:internal-for-testing");
+      const fs = require("node:fs");
 
-      fs.closeSync(readFd);
-      readFdOpen = false;
-
-      // close()'s flush hits EPIPE. The error is routed to writePromise; the
-      // close() call itself doesn't throw (no double reporting).
-      expect(sink.close()).toBeUndefined();
-
-      let caught: any;
-      try {
-        await writePromise;
-      } catch (e) {
-        caught = e;
+      async function errArm() {
+        const [readFd, writeFd] = createSocketPair();
+        const sink = Bun.file(writeFd).writer();
+        const p = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+        if (!(p instanceof Promise)) return "err-arm:not-backpressured";
+        fs.closeSync(readFd);
+        let threw = false;
+        try { sink.close(); } catch { threw = true; }
+        if (threw) return "err-arm:close-threw";
+        try { await p; return "err-arm:resolved"; }
+        catch (e) { return "err-arm:" + (e?.code ?? "unknown"); }
       }
-      expect(caught?.code).toBe("EPIPE");
-    } finally {
-      try {
-        fs.closeSync(writeFd);
-      } catch {}
-      if (readFdOpen) fs.closeSync(readFd);
-    }
+
+      async function drainedArm() {
+        const [readFd, writeFd] = createSocketPair();
+        const sink = Bun.file(writeFd).writer();
+        const size = 300 * 1024;
+        const p = sink.write(Buffer.alloc(size, 0x61));
+        if (!(p instanceof Promise)) return "drained-arm:not-backpressured";
+        const buf = Buffer.alloc(64 * 1024);
+        while (true) { try { if (!fs.readSync(readFd, buf)) break; } catch { break; } }
+        sink.close();
+        // Drain any remainder close()'s flush pushed to the socket.
+        while (true) { try { if (!fs.readSync(readFd, buf)) break; } catch { break; } }
+        let settled = "timeout";
+        await Promise.race([
+          p.then(v => { settled = String(v); }, e => { settled = "rejected:" + (e?.code ?? e); }),
+          // run_pending is an enqueued task, not a timing race; the fixed build
+          // settles within one tick. The bound only exists for the fail-before.
+          new Promise(r => setTimeout(r, 500)),
+        ]);
+        try { fs.closeSync(readFd); } catch {}
+        try { fs.closeSync(writeFd); } catch {}
+        return "drained-arm:" + settled + ":" + size;
+      }
+
+      console.log(await errArm());
+      console.log(await drainedArm());
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        // Pre-existing leak in sink.close() (see comment above); don't let the
+        // child's LSAN abort hide the actual assertion we're testing.
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("err-arm:EPIPE");
+    // The drained arm resolves with the bytes write() accepted.
+    const [, settled, size] = lines[1].split(":");
+    expect(settled).toBe(size);
+    expect(exitCode).toBe(0);
   },
 );
 

@@ -619,13 +619,19 @@ describe("execSync()", () => {
 describe.if(isPosix)("spawning an executable with no shebang", () => {
   const scriptBody = 'echo "arg0=$0"\necho "args=$*"\n';
 
-  it("execFileSync runs it through /bin/sh", () => {
-    using dir = tempDir("enoexec-execFileSync", { "script.sh": scriptBody });
+  it("execFileSync runs it through /bin/sh with args passed verbatim", () => {
+    // The retry is `sh <file> <args...>` with each arg as its own argv entry,
+    // so shell metachars reach the script un-expanded and embedded spaces stay
+    // intact. A `sh -c`-style retry would expand $HOME and glob `*`.
+    using dir = tempDir("enoexec-execFileSync", {
+      "script.sh": `printf '[%s]' "$0" "$#" "$@"; echo\n`,
+    });
     const scriptPath = path.join(String(dir), "script.sh");
     fs.chmodSync(scriptPath, 0o755);
 
-    const result = execFileSync(scriptPath, ["hello", "world"], { encoding: "utf8", env: bunEnv });
-    expect(result).toBe(`arg0=${scriptPath}\nargs=hello world\n`);
+    const args = ["$HOME", "a b", "*", "'quote'"];
+    const result = execFileSync(scriptPath, args, { encoding: "utf8", env: bunEnv });
+    expect(result).toBe(`[${scriptPath}][4][$HOME][a b][*]['quote']\n`);
   });
 
   it("spawnSync runs it through /bin/sh and succeeds", () => {
@@ -636,6 +642,18 @@ describe.if(isPosix)("spawning an executable with no shebang", () => {
     const result = spawnSync(scriptPath, ["a", "b"], { encoding: "utf8", env: bunEnv });
     expect(result.stderr).toBe("");
     expect(result.stdout).toBe(`arg0=${scriptPath}\nargs=a b\n`);
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
+  });
+
+  it("spawnSync with a relative path and cwd replays the chdir on retry", () => {
+    using dir = tempDir("enoexec-cwd", { "script.sh": scriptBody });
+    fs.chmodSync(path.join(String(dir), "script.sh"), 0o755);
+
+    const result = spawnSync("./script.sh", ["rel"], { cwd: String(dir), encoding: "utf8", env: bunEnv });
+    expect(result.stderr).toBe("");
+    // $0 is the caller-supplied relative path, matching Node/libuv.
+    expect(result.stdout).toBe("arg0=./script.sh\nargs=rel\n");
     expect(result.error).toBeUndefined();
     expect(result.status).toBe(0);
   });

@@ -533,6 +533,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.adopted = 0;
                         s->flags.last_write_failed = 0;
                         s->unclassified_send_failures = 0;
+                        s->pending_action = US_PENDING_ACTION_NONE;
+                        s->pending_code = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -597,6 +599,18 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
 
                 if (!s || us_socket_is_closed(s)) {
+                    return;
+                }
+
+                /* A send() from one of the us_socket_*write* helpers returned a
+                 * fatal errno (peer-gone, or the unclassified retry ceiling hit).
+                 * Without this, the TLS spill path re-armed the writable poll on
+                 * every failure and spun at 100% for as long as the kernel kept
+                 * the fd writable. Same close shape as the poll-error branch. */
+                if (UNLIKELY(s->pending_action == US_PENDING_ACTION_CLOSE_RAW)) {
+                    int send_errno = s->pending_code;
+                    s->pending_action = US_PENDING_ACTION_NONE;
+                    s = us_internal_socket_close_raw(s, send_errno > 2 ? send_errno : ECONNRESET, NULL);
                     return;
                 }
 

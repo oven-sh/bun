@@ -260,6 +260,23 @@ struct us_socket_flags {
 
 } __attribute__((packed));
 
+/* The one deferred action a socket carries, run at its trigger point. Higher
+ * values supersede lower (a close outranks a shutdown; a close that must wait
+ * for the SSL call on the stack to unwind outranks all). */
+enum us_socket_pending_action {
+    US_PENDING_ACTION_NONE = 0,
+    /* TLS shutdown once the ciphertext spill drains (writable event). */
+    US_PENDING_ACTION_SHUTDOWN = 1,
+    /* TLS close (FAST_SHUTDOWN) once the ciphertext spill drains (writable). */
+    US_PENDING_ACTION_CLOSE = 2,
+    /* send() failed with fatal errno `pending_code`: close_raw on the next
+     * writable dispatch (loop.c) instead of re-arming a retry that spins. */
+    US_PENDING_ACTION_CLOSE_RAW = 3,
+    /* Close with code `pending_code` once ssl_in_use unwinds; the BIO swallows
+     * writes meanwhile so BoringSSL's error path completes. */
+    US_PENDING_ACTION_DETACH = 4,
+};
+
 struct us_socket_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_poll_t p;
   unsigned char timeout;
@@ -267,41 +284,31 @@ struct us_socket_t {
   struct us_socket_flags flags;
   /* enum SocketKind. Selects the static dispatch arm in us_dispatch_*. */
   unsigned char kind;
-  /* SSL state. These 6 bits live in the pad-to-pointer gap before `group`, so
-   * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + 1 byte bits = 9, padded
+  /* SSL state. These bits live in the pad-to-pointer gap before `group`, so
+   * they cost nothing on epoll/kqueue (poll=4 + 4×u8 + the bytes below, padded
    * to 16 anyway for the pointer). Per-socket reneg counters and SNI userdata
    * hang off SSL ex_data, allocated on first use only. */
   unsigned char ssl_handshake_state : 2;
   unsigned char ssl_write_wants_read : 1;
   unsigned char ssl_read_wants_write : 1;
   unsigned char ssl_fatal_error : 1;
-  unsigned char ssl_is_server : 1;
   /* If set, us_internal_ssl_on_data() first dispatches the still-encrypted
    * bytes via us_dispatch_ssl_raw_tap() before feeding them to SSL_read.
    * Used by Bun's `socket.upgradeTLS()` so the returned [raw, tls] pair's
    * `raw` half can observe ciphertext (node:net Duplex.ondata semantics). */
   unsigned char ssl_raw_tap : 1;
-  /* A graceful TLS shutdown arrived while batched ciphertext was still
-   * spilled (see ssl_flush_write_batch); the shutdown re-runs once the
-   * spill drains so those records are not cut off by our FIN/close_notify. */
-  unsigned char ssl_shutdown_after_spill : 1;
-  /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
-   * close re-runs from the writable event once the spill drains. */
-  unsigned char ssl_close_after_spill : 1;
   /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
    * already dispatched to the user layer; both EOF paths can fire for one
    * connection, and the end handler must run once. */
   unsigned char ssl_end_delivered : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
-   * SSL must not be freed under BoringSSL's feet - the detach is deferred to
-   * the driver's epilogue via ssl_pending_detach. */
+   * SSL must not be freed under BoringSSL's feet - the close is parked as
+   * US_PENDING_ACTION_DETACH and performed by the driver's epilogue. */
   unsigned char ssl_in_use : 1;
-  unsigned char ssl_pending_detach : 1;
-  /* The close code passed to the deferred close (e.g. a reset requested from
-   * inside a handshake callback must still RST, not FIN, when it is finally
-   * performed). */
-  unsigned char ssl_pending_close_code;
+  /* enum us_socket_pending_action, and its payload (close code or errno). */
+  unsigned char pending_action : 3;
+  unsigned char pending_code;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.
@@ -324,6 +331,18 @@ struct us_socket_t {
 #if defined(LIBUS_USE_EPOLL) || defined(LIBUS_USE_KQUEUE)
 _Static_assert(sizeof(struct us_socket_flags) == 1, "us_socket_flags grew");
 #endif
+
+/* Latch a pending action. A higher action supersedes; an equal action keeps a
+ * nonzero code already parked (the SNI-abort path re-latches DETACH(0) after
+ * the JS callback may have parked DETACH(RESET)); a lower action is ignored. */
+static inline void us_internal_socket_set_pending(struct us_socket_t *s, unsigned char action, unsigned char code) {
+    if (action > s->pending_action) {
+        s->pending_action = action;
+        s->pending_code = code;
+    } else if (action == s->pending_action && (code || !s->pending_code)) {
+        s->pending_code = code;
+    }
+}
 
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;

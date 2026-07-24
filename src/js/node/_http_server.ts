@@ -3179,7 +3179,7 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
         // corks natively around both phases).
         this._contentLength = handle.writeHeadAndEnd(
           this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          this[kSnapshotStatusMessage] ?? (this.statusMessage || undefined),
           renderedHeaders,
           chunk,
           encoding,
@@ -3346,7 +3346,7 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
       try {
         handle.writeHead(
           this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          this[kSnapshotStatusMessage] ?? (this.statusMessage || undefined),
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
@@ -3530,7 +3530,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
       try {
         handle.writeHead(
           this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          this[kSnapshotStatusMessage] ?? (this.statusMessage || undefined),
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
@@ -3648,7 +3648,7 @@ ServerResponse.prototype.flushHeaders = function () {
       try {
         handle.writeHead(
           this[kSnapshotStatusCode] ?? this.statusCode,
-          this[kSnapshotStatusMessage] ?? this.statusMessage,
+          this[kSnapshotStatusMessage] ?? (this.statusMessage || undefined),
           renderedHeaders,
           renderedAutoHeaders,
           renderedKeepAliveSecs,
@@ -3708,7 +3708,10 @@ function callWriteHeadIfObservable(self, headerState) {
     headerState === NodeHTTPHeaderState.none &&
     !(self.writeHead === OriginalWriteHeadFn && self._implicitHeader === OriginalImplicitHeadFn)
   ) {
-    self.writeHead(self.statusCode, self.statusMessage);
+    // One arg, like Node's _implicitHeader: _writeHead's else branch then
+    // applies `if (!statusMessage) STATUS_CODES[code]` so a falsy
+    // res.statusMessage defaults instead of snapshotting "".
+    self.writeHead(self.statusCode);
   }
 }
 

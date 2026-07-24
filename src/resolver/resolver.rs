@@ -4027,6 +4027,16 @@ impl<'a> Resolver<'a> {
             return Ok(None);
         }
 
+        // `PathName::init` leaves `.dir` empty when the separator is the
+        // leading one (e.g. `/a.js`) or the path has no separator at all
+        // (virtual/plugin specifiers). Callers like `finalize_result` pass
+        // that `.dir` straight through and already treat `None` as "skip",
+        // so return it here instead of walking the cache with an empty key.
+        // https://github.com/oven-sh/bun/issues/30429
+        if input_path.is_empty() {
+            return Ok(None);
+        }
+
         #[cfg(windows)]
         {
             let win32_normalized_dir_info_cache_buf = bufs!(win32_normalized_dir_info_cache);
@@ -4059,11 +4069,12 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        assert!(
-            bun_paths::is_absolute(input_path),
-            "cannot resolve DirInfo for non-absolute path: {}",
-            bstr::BStr::new(input_path)
-        );
+        // A non-absolute path has no DirInfo. Every caller already routes
+        // `Ok(None)` into its fallback, so bail instead of panicking on a
+        // path shape the caller produced.
+        if !bun_paths::is_absolute(input_path) {
+            return Ok(None);
+        }
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);

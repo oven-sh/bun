@@ -177,9 +177,15 @@ function hasBufferEnvelopeMagic(view) {
 }
 
 function deserialize(value) {
-  const view = ArrayBuffer.isView(value)
-    ? new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
-    : new Uint8Array(value);
+  let view;
+  if (ArrayBuffer.isView(value)) {
+    view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  } else if (value instanceof ArrayBuffer || value instanceof SharedArrayBuffer) {
+    view = new Uint8Array(value);
+  } else {
+    // Let jsc.deserialize validate and reject non-buffer input itself.
+    return jsc.deserialize(value);
+  }
   if (hasBufferEnvelopeMagic(view)) {
     const envelope = jsc.deserialize(view.subarray(kBufferEnvelopeMagic.length));
     return require("internal/serialization_buffers").restoreBuffers(envelope);

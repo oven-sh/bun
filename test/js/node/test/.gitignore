@@ -5,7 +5,11 @@ fixtures/wpt/*
 !fixtures/wpt/README.md
 !fixtures/wpt/url/
 fixtures/tools
-fixtures/v8-coverage
+# Only the fixtures the vendored v8.takeCoverage()/stopCoverage() tests load.
+fixtures/v8-coverage/*
+!fixtures/v8-coverage/interval.js
+!fixtures/v8-coverage/stop-coverage.js
+!fixtures/v8-coverage/take-coverage.js
 fixtures/test-runner
 fixtures/source-map
 fixtures/snapshot/*

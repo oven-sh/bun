@@ -946,6 +946,25 @@ WTF::String generateHeapSnapshotV8(JSC::VM& vm)
     return builder.json();
 }
 
+// JSC has no allocation-site sampling heap profiler, so live bytes cannot be
+// attributed to the call frames that allocated them. Report the real live-heap
+// size on the (root) frame — the frame V8 uses for unattributable allocations
+// — with no samples, in V8's SamplingHeapProfile JSON shape.
+static WTF::String generateSamplingHeapProfileV8(JSC::VM& vm)
+{
+    WTF::StringBuilder output;
+    output.append("{\"head\":{\"callFrame\":{\"functionName\":\"(root)\",\"scriptId\":\"0\",\"url\":\"\",\"lineNumber\":-1,\"columnNumber\":-1},\"selfSize\":"_s);
+    output.append(WTF::String::number(vm.heap.size()));
+    output.append(",\"id\":1,\"children\":[]},\"samples\":[]}"_s);
+    return output.toString();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_takeSamplingHeapProfile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    return JSC::JSValue::encode(JSC::jsString(vm, generateSamplingHeapProfileV8(vm)));
+}
+
 } // namespace Bun
 
 extern "C" BunString Bun__generateHeapProfile(JSC::VM* vm)

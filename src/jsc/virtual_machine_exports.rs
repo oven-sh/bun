@@ -51,6 +51,17 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
+/// `performance.nodeTiming.<milestone>` in milliseconds since `timeOrigin`, or
+/// -1 when the milestone has not been reached (node's sentinel for
+/// `loopStart`/`loopExit` before the loop runs/exits).
+// HOST_EXPORT(Bun__getNodeTimingMilestone, c)
+pub fn get_node_timing_milestone(vm: &VirtualMachine, index: u32) -> f64 {
+    match vm.node_timing_milestones.get(index as usize) {
+        Some(&nanos) if nanos >= 0 => nanos as f64 / 1_000_000.0,
+        _ => -1.0,
+    }
+}
+
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
     // timespce to milliseconds

@@ -1,10 +1,10 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
-class JSGlobalObject;
 class VM;
 }
 
@@ -12,6 +12,10 @@ namespace Bun {
 
 void setSamplingInterval(int intervalMicroseconds);
 bool isCPUProfilerRunning();
+
+// node:v8 startCpuProfile/stopCpuProfile (v8.startCpuProfile()).
+JSC_DECLARE_HOST_FUNCTION(jsFunction_startCpuProfile);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCpuProfile);
 
 // Start the CPU profiler
 void startCPUProfiler(JSC::VM& vm);

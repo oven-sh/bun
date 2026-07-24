@@ -928,6 +928,31 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
     }
 }
 
+// node:v8's v8.startCpuProfile(). JSC has a single VM-wide sampling profiler,
+// so unlike V8 there is no profile id to hand back and no maxSamples cap;
+// node's `maxSamples` argument is accepted and ignored.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_startCpuProfile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    int32_t samplingIntervalMicros = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (samplingIntervalMicros > 0)
+        Bun::setSamplingInterval(samplingIntervalMicros);
+
+    Bun::startCPUProfiler(vm);
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::jsUndefined()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopCpuProfile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    JSC::VM& vm = JSC::getVM(globalObject);
+    WTF::String json;
+    Bun::stopCPUProfiler(vm, &json, nullptr);
+    return JSC::JSValue::encode(JSC::jsString(vm, json));
+}
+
 } // namespace Bun
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm)

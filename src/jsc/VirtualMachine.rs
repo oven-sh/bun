@@ -134,6 +134,31 @@ impl Default for InitOptions {
     }
 }
 
+/// `performance.nodeTiming` startup milestones. Node reports these relative to
+/// the process start; Bun's clock origin is `VirtualMachine::origin_timer`, so
+/// each one is stamped at the closest equivalent point of Bun's startup.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/nodetiming.js
+#[derive(Clone, Copy)]
+#[repr(u32)]
+pub enum NodeTimingMilestone {
+    /// The Bun runtime object finished initializing.
+    NodeStart = 0,
+    /// The JavaScriptCore VM and its global object exist.
+    V8Start = 1,
+    /// The JS environment (globals, `process`, module loader) is wired up.
+    Environment = 2,
+    /// Pre-execution bootstrap is done; the entry point is about to load.
+    BootstrapComplete = 3,
+    /// The event loop ran for the first time.
+    LoopStart = 4,
+    /// The event loop is done; `process.on("exit")` has not run yet.
+    LoopExit = 5,
+}
+
+impl NodeTimingMilestone {
+    pub const COUNT: usize = 6;
+}
+
 pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
@@ -268,6 +293,10 @@ pub struct VirtualMachine {
 
     pub origin_timer: std::time::Instant,
     pub origin_timestamp: u64,
+    /// `performance.nodeTiming` milestones, in nanoseconds since
+    /// `origin_timer`. `-1` means the milestone has not been reached yet;
+    /// indices are [`NodeTimingMilestone`].
+    pub node_timing_milestones: [i64; NodeTimingMilestone::COUNT],
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
     pub macro_event_loop: EventLoop,
@@ -1487,6 +1516,10 @@ impl VirtualMachine {
     }
 
     pub fn on_exit(&mut self) {
+        // Before `dispatch_on_exit` below: a `process.on("exit")` handler must
+        // observe a non-negative `performance.nodeTiming.loopExit`.
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopExit);
+
         // Write CPU profile if profiling was enabled - do this FIRST before any
         // shutdown begins. Grab the config and null it out to make this
         // idempotent.
@@ -2112,6 +2145,8 @@ impl VirtualMachine {
                 .write(VirtualMachine::default_on_unhandled_rejection);
             addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
             addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            addr_of_mut!((*vm).node_timing_milestones)
+                .write([-1; NodeTimingMilestone::COUNT]);
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid
@@ -2170,6 +2205,10 @@ impl VirtualMachine {
             (*addr_of_mut!((*vm).source_mappings)).map = addr_of_mut!((*vm).saved_source_map_table);
         }
 
+        // SAFETY: every non-zero-valid field is written by the block above, so
+        // `&mut *vm` is now a valid reference.
+        unsafe { &mut *vm }.record_node_timing_milestone(NodeTimingMilestone::NodeStart);
+
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
         // Note (init order): the transpiler and per-VM timer state must be
         // built BEFORE `JSGlobalObject` creation. The C++ body
@@ -2221,6 +2260,8 @@ impl VirtualMachine {
             jsc_vm
         };
         VMHolder::set_cached_global_object(Some(global));
+        // SAFETY: `vm` is fully initialised; the JSC VM and global now exist.
+        unsafe { &mut *vm }.record_node_timing_milestone(NodeTimingMilestone::V8Start);
 
         // `uws.Loop.get().internal_loop_data.jsc_vm
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
@@ -2246,6 +2287,9 @@ impl VirtualMachine {
             // SAFETY: written once during init.
             IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
         }
+
+        // SAFETY: `vm` is fully initialised; see the `NodeStart` stamp above.
+        unsafe { &mut *vm }.record_node_timing_milestone(NodeTimingMilestone::Environment);
 
         Ok(vm)
     }
@@ -2299,7 +2343,19 @@ impl VirtualMachine {
     /// then route through the same `auto_tick` hook so drain loops in
     /// `on_before_exit` / `bun_main` still make forward progress.
     #[inline]
+    /// Stamp a `performance.nodeTiming` milestone. First write wins, so a
+    /// milestone on a path that runs repeatedly (the event loop) keeps the
+    /// time it was first reached.
+    pub fn record_node_timing_milestone(&mut self, milestone: NodeTimingMilestone) {
+        if self.node_timing_milestones[milestone as usize] >= 0 {
+            return;
+        }
+        let elapsed = self.origin_timer.elapsed().as_nanos() as i64;
+        self.node_timing_milestones[milestone as usize] = elapsed;
+    }
+
     pub fn auto_tick_active(&mut self) {
+        self.record_node_timing_milestone(NodeTimingMilestone::LoopStart);
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `self` is the live per-thread VM (hook contract).
             unsafe { (hooks.auto_tick_active)(self) };
@@ -2340,7 +2396,9 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
+            arg.starts_with(b"--trace-")
+                || arg.starts_with(b"--stack-trace-limit")
+                || arg.starts_with(b"--heapsnapshot-signal")
         }
         let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
@@ -2361,6 +2419,7 @@ impl VirtualMachine {
             // evaluating `internal/process/pre_execution`.
             crate::cpp::Bun__preExecutionBootstrap(self.global());
         }
+        self.record_node_timing_milestone(NodeTimingMilestone::BootstrapComplete);
 
         if !self.main_is_html_entrypoint {
             if let Some(hooks) = hooks {

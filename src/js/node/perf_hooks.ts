@@ -59,61 +59,87 @@ var constants = {
   NODE_PERFORMANCE_MILESTONE_V8_START: 4,
 };
 
+// Milestone indices, matching `NodeTimingMilestone` in src/jsc/VirtualMachine.rs.
+const kMilestoneNodeStart = 0;
+const kMilestoneV8Start = 1;
+const kMilestoneEnvironment = 2;
+const kMilestoneBootstrapComplete = 3;
+const kMilestoneLoopStart = 4;
+const kMilestoneLoopExit = 5;
+
+const getMilestoneTimestamp = $newCppFunction(
+  "NodePerformanceTiming.cpp",
+  "jsFunction_getNodeTimingMilestone",
+  1,
+) as (index: number) => number;
+
 // PerformanceEntry is not a valid constructor, so we have to fake it.
+// Every property is an own enumerable slot like node's, so
+// `{ ...performance.nodeTiming }` copies them (lib/internal/perf/nodetiming.js).
 class PerformanceNodeTiming {
-  bootstrapComplete: number = 0;
-  environment: number = 0;
-  idleTime: number = 0;
-  loopExit: number = 0;
-  loopStart: number = 0;
-  nodeStart: number = 0;
-  v8Start: number = 0;
-
-  // we have to fake the properties since it's not real
-  get name() {
-    return "node";
-  }
-
-  get entryType() {
-    return "node";
-  }
-
-  get startTime() {
-    return this.nodeStart;
-  }
-
-  get duration() {
-    return performance.now();
+  constructor() {
+    Object.defineProperties(this, {
+      name: { __proto__: null, enumerable: true, configurable: true, value: "node" },
+      entryType: { __proto__: null, enumerable: true, configurable: true, value: "node" },
+      startTime: { __proto__: null, enumerable: true, configurable: true, value: 0 },
+      duration: {
+        __proto__: null,
+        enumerable: true,
+        configurable: true,
+        get: function duration() {
+          return performance.now();
+        },
+      },
+      nodeStart: milestoneDescriptor(kMilestoneNodeStart),
+      v8Start: milestoneDescriptor(kMilestoneV8Start),
+      environment: milestoneDescriptor(kMilestoneEnvironment),
+      bootstrapComplete: milestoneDescriptor(kMilestoneBootstrapComplete),
+      loopStart: milestoneDescriptor(kMilestoneLoopStart),
+      loopExit: milestoneDescriptor(kMilestoneLoopExit),
+      idleTime: {
+        __proto__: null,
+        enumerable: true,
+        configurable: true,
+        // Bun's event loop does not account for time spent parked in the
+        // poll, so no idle time is ever attributed.
+        get: function idleTime() {
+          return 0;
+        },
+      },
+    });
   }
 
   toJSON() {
     return {
-      name: this.name,
-      entryType: this.entryType,
+      name: "node",
+      entryType: "node",
       startTime: this.startTime,
       duration: this.duration,
-      bootstrapComplete: this.bootstrapComplete,
-      environment: this.environment,
-      idleTime: this.idleTime,
-      loopExit: this.loopExit,
-      loopStart: this.loopStart,
       nodeStart: this.nodeStart,
       v8Start: this.v8Start,
+      bootstrapComplete: this.bootstrapComplete,
+      environment: this.environment,
+      loopStart: this.loopStart,
+      loopExit: this.loopExit,
+      idleTime: this.idleTime,
     };
   }
 }
+
+function milestoneDescriptor(index) {
+  return {
+    __proto__: null,
+    enumerable: true,
+    configurable: true,
+    get: function milestone() {
+      return getMilestoneTimestamp(index);
+    },
+  };
+}
+
 if (PerformanceEntry) {
   Object.setPrototypeOf(PerformanceNodeTiming.prototype, PerformanceEntry.prototype);
   Object.setPrototypeOf(PerformanceNodeTiming, PerformanceEntry);
-}
-
-function createPerformanceNodeTiming() {
-  const object = Object.create(PerformanceNodeTiming.prototype);
-
-  object.bootstrapComplete = object.environment = object.nodeStart = object.v8Start = performance.timeOrigin;
-  object.loopStart = object.idleTime = 1;
-  object.loopExit = -1;
-  return object;
 }
 
 function eventLoopUtilization(_utilization1, _utilization2) {
@@ -320,7 +346,7 @@ function processTimerifyComplete(name, start, args, histogram) {
   }
 }
 
-const nodeTiming = createPerformanceNodeTiming();
+const nodeTiming = new PerformanceNodeTiming();
 
 // Node augments the real `performance` object (not a forwarding shim), so
 // timerify/eventLoopUtilization/nodeTiming go on Performance.prototype,

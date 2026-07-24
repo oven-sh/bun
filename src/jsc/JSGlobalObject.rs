@@ -1155,14 +1155,14 @@ impl JSGlobalObject {
         self.bun_vm_unsafe().cast::<VirtualMachine>()
     }
 
-    pub fn handle_rejected_promises(&self) {
+    /// Returns whether an `unhandledRejection` handler ran.
+    pub fn handle_rejected_promises(&self) -> bool {
         // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
         // own exceptions; the only thing that escapes is a TerminationException
         // (worker terminate() or process.exit()), and the request flag may
         // already be cleared by the time we observe it. Nothing actionable here.
-        let _ = crate::from_js_host_call_generic(self, || {
-            JSC__JSGlobalObject__handleRejectedPromises(self)
-        });
+        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
+            .unwrap_or(false)
     }
 
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {
@@ -1623,7 +1623,7 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn JSC__JSGlobalObject__generateHeapSnapshot(this: &JSGlobalObject) -> JSValue;
 
-    safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject);
+    safe fn JSC__JSGlobalObject__handleRejectedPromises(this: &JSGlobalObject) -> bool;
 
     safe fn ZigGlobalObject__readableStreamToArrayBuffer(
         this: &JSGlobalObject,

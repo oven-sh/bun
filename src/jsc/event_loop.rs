@@ -365,6 +365,48 @@ impl EventLoop {
         }
     }
 
+    /// Report what the timer or immediate callback that just finished left
+    /// unhandled, then drain whatever its `unhandledRejection` handler queued,
+    /// so both land before the next macrotask. Node does this from
+    /// `processTicksAndRejections`, a `do { drain } while (rejections)` loop its
+    /// timer and immediate queues run after every callback.
+    ///
+    /// Only the two batch-drain phases call this. `exit()` looks like the same
+    /// hook but is not: native code also uses it to re-enter JS from inside a JS
+    /// turn (`Interpreter::finish`), where reporting a rejection that the caller
+    /// is about to handle would be wrong.
+    ///
+    /// The caller must have drained the callback's microtasks first: a promise
+    /// whose `.catch()` is still queued is not unhandled yet.
+    ///
+    /// # Safety
+    /// `loop_` must be the live per-thread `EventLoop`, called right after the
+    /// `exit()` that ends one callback.
+    pub unsafe fn handle_rejected_promises_after_tick(loop_: *mut EventLoop) {
+        // The handler is user JS and re-enters this same `EventLoop`
+        // (`setImmediate` -> `enqueue_immediate_task`), so read the guard
+        // through the raw place and hold no borrow of `*loop_` across it.
+        // SAFETY: per fn contract — `loop_` is live.
+        if unsafe { (*loop_).entered_event_loop_count } != 0 {
+            return;
+        }
+        // SAFETY: per fn contract; both accessors hand back `'static` refs that
+        // detach from `*loop_`.
+        let (global, vm) = unsafe { ((*loop_).global_ref(), (*loop_).vm_ref()) };
+        // spawnSync's isolated loop shares this VM and global object; running JS
+        // on it is forbidden, which is also why `drain_microtasks` bails.
+        if vm.is_inside_deferred_task_queue.get() || vm.suppress_microtask_drain.get() {
+            return;
+        }
+        while global.handle_rejected_promises() {
+            // SAFETY: per fn contract. The handler returned before we get here,
+            // so this short-lived `&mut` spans no re-entrant JS of its own.
+            if unsafe { (*loop_).drain_microtasks() }.is_err() {
+                return;
+            }
+        }
+    }
+
     /// When you call a JavaScript function from outside the event loop task
     /// queue, it has to be wrapped in `runCallback` to ensure that microtasks
     /// are drained and errors are handled.
@@ -852,19 +894,27 @@ impl EventLoop {
 
         let mut exception_thrown = false;
         for task in to_run_now.iter() {
+            // `|=`, not `=`: a task that threw owes the batch tail a checkpoint,
+            // and a later task that returns early (cleared, unref'd, stale
+            // generation) must not erase that.
             // SAFETY: ImmediateObject pointers are kept alive by the JS heap
             // until `runImmediateTask` consumes them; `virtual_machine` is the
             // live owning VM per caller contract.
-            exception_thrown = unsafe { __bun_run_immediate_task(*task, virtual_machine) };
+            exception_thrown |= unsafe { __bun_run_immediate_task(*task, virtual_machine) };
         }
         // Re-escape `this` after the re-entrant loop so nothing about `*this`
         // is carried across it.
         let this: *mut Self = core::hint::black_box(this);
 
-        // make sure microtasks are drained if the last task had an exception
+        // make sure microtasks are drained if any task had an exception
         if exception_thrown {
             // SAFETY: as above.
             unsafe { (*this).maybe_drain_microtasks() };
+            // A throwing callback skips its own checkpoint, so its rejections are
+            // reported here instead — still ahead of the timer phase, which is
+            // where Node reports them too.
+            // SAFETY: as above.
+            unsafe { Self::handle_rejected_promises_after_tick(this) };
         }
 
         // SAFETY: as above; this read MUST observe pushes JS made during the

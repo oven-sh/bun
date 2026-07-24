@@ -3424,11 +3424,12 @@ void GlobalObject::queueTaskConcurrently(WebCore::EventLoopTask* task)
 
 extern "C" void Bun__handleRejectedPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
 
-void GlobalObject::handleRejectedPromises()
+bool GlobalObject::handleRejectedPromises()
 {
     if (m_aboutToBeNotifiedRejectedPromises.isEmpty()) [[likely]]
-        return;
+        return false;
 
+    bool notifiedAny = false;
     JSC::VM& virtual_machine = vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(virtual_machine);
     do {
@@ -3449,11 +3450,12 @@ void GlobalObject::handleRejectedPromises()
             if (promise->isHandled())
                 continue;
             inflight.index = i + 1;
+            notifiedAny = true;
 
             Bun__handleRejectedPromise(this, promise);
             if (auto ex = scope.exception()) {
                 if (virtual_machine.isTerminationException(ex)) [[unlikely]]
-                    return;
+                    return false;
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
@@ -3461,6 +3463,10 @@ void GlobalObject::handleRejectedPromises()
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.
     } while (!m_aboutToBeNotifiedRejectedPromises.isEmpty());
+
+    // Whether a handler ran, so the caller can re-drain the microtask queue the
+    // handler may have pushed onto (Node's `processTicksAndRejections` loop).
+    return notifiedAny;
 }
 
 DEFINE_VISIT_CHILDREN(GlobalObject);

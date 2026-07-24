@@ -1243,6 +1243,168 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  // Node reports unhandled rejections at the end of the timer/immediate callback
+  // that created them (processTicksAndRejections), so the event precedes
+  // anything that callback scheduled and anything already queued behind it, and
+  // work the handler itself queues runs before the next macrotask too.
+  it.each([
+    [
+      "the timer scheduled by the rejecting setImmediate",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => log("later timer"), 0);
+       });`,
+      ["unhandledRejection", "later timer"],
+    ],
+    [
+      "the setImmediate queued behind the rejecting setImmediate",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+       });
+       setImmediate(() => log("second immediate"));`,
+      ["unhandledRejection", "second immediate"],
+    ],
+    [
+      "the timer already scheduled when a setImmediate rejects",
+      `setTimeout(() => log("pending timer"), 5);
+       setImmediate(() => {
+         Promise.reject(new Error("x"));
+       });`,
+      ["unhandledRejection", "pending timer"],
+    ],
+    [
+      // Both timers are overdue by the time the loop first drains them, so they
+      // fire in a single batch and the rejection must split them.
+      "the timer due in the same batch as the rejecting timer",
+      `setTimeout(() => log("second timer"), 30);
+       setTimeout(() => {
+         Promise.reject(new Error("x"));
+       }, 10);
+       for (const until = Date.now() + 60; Date.now() < until; );`,
+      ["unhandledRejection", "second timer"],
+    ],
+  ])("unhandledRejection is emitted before %s", async (_name, body, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const log = line => console.log(line);
+         process.on("unhandledRejection", () => log("unhandledRejection"));
+         ${body}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("drains process.nextTick queued by the unhandledRejection handler before the next macrotask", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("unhandledRejection", () => {
+           console.log("unhandledRejection");
+           process.nextTick(() => console.log("nextTick from handler"));
+         });
+         setImmediate(() => Promise.reject(new Error("x")));
+         setImmediate(() => console.log("second immediate"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: ["unhandledRejection", "nextTick from handler", "second immediate"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A callback that throws skips its own checkpoint, so its microtasks and
+  // rejections are held until the immediate batch drains. Scanning at the throw
+  // site instead would report a promise whose .catch() is merely queued.
+  it.each([
+    [
+      "reports nothing when a queued microtask handles the rejection",
+      `setImmediate(() => {
+         const p = Promise.reject(new Error("x"));
+         queueMicrotask(() => p.catch(() => {}));
+         throw new Error("boom");
+       });
+       process.on("rejectionHandled", () => console.log("rejectionHandled"));`,
+      ["uncaughtException"],
+    ],
+    [
+      "reports the rejection before the timer the callback scheduled",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => console.log("later timer"), 0);
+         throw new Error("boom");
+       });`,
+      ["uncaughtException", "unhandledRejection", "later timer"],
+    ],
+    [
+      "defers the rejection past the immediate queued behind it",
+      `setImmediate(() => {
+         Promise.reject(new Error("x"));
+         throw new Error("boom");
+       });
+       setImmediate(() => console.log("second immediate"));`,
+      ["uncaughtException", "second immediate", "unhandledRejection"],
+    ],
+    [
+      // `tick_immediate_tasks` tracks whether *any* task threw, so pin both the
+      // throw-ends-the-batch case and a later task that returns without running.
+      "reports the rejection when the throw ends a batch that started clean",
+      `setImmediate(() => console.log("first immediate"));
+       setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => console.log("later timer"), 0);
+         throw new Error("boom");
+       });`,
+      ["first immediate", "uncaughtException", "unhandledRejection", "later timer"],
+    ],
+    [
+      "reports the rejection when it clears the immediate queued behind it",
+      `var cleared;
+       setImmediate(() => {
+         Promise.reject(new Error("x"));
+         setTimeout(() => console.log("later timer"), 0);
+         clearImmediate(cleared);
+         throw new Error("boom");
+       });
+       cleared = setImmediate(() => console.log("never runs"));`,
+      ["uncaughtException", "unhandledRejection", "later timer"],
+    ],
+  ])("a throwing setImmediate %s", async (_name, body, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("uncaughtException", () => console.log("uncaughtException"));
+         process.on("unhandledRejection", () => console.log("unhandledRejection"));
+         ${body}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+      stdout: expected,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

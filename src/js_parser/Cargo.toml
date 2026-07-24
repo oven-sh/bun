@@ -45,3 +45,7 @@ regex = "1"
 [[bench]]
 name = "string_map_vs_hashmap"
 harness = false
+
+[[bench]]
+name = "parse_alloc"
+harness = false

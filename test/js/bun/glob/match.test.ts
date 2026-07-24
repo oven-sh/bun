@@ -432,6 +432,36 @@ describe("Glob.match", () => {
     expect(glob.match("runtime.node.pre.out.js")).toBeTrue();
   });
 
+  test("backslash escapes the following character literally, not as a C escape", () => {
+    // `\X` in a glob pattern means the literal character X (POSIX 2.13.1),
+    // it is not a C-style escape sequence. `\n` is the letter 'n', not LF.
+    for (const letter of ["b", "n", "r", "t"]) {
+      const ctrl = { b: "\b", n: "\n", r: "\r", t: "\t" }[letter]!;
+      expect({ letter, match: new Glob(`x\\${letter}y`).match(`x${letter}y`) }).toEqual({ letter, match: true });
+      expect({ letter, match: new Glob(`x\\${letter}y`).match(`x${ctrl}y`) }).toEqual({ letter, match: false });
+      expect({ letter, match: new Glob(`x[\\${letter}]y`).match(`x${letter}y`) }).toEqual({ letter, match: true });
+      expect({ letter, match: new Glob(`x[\\${letter}]y`).match(`x${ctrl}y`) }).toEqual({ letter, match: false });
+    }
+
+    // `\a` was already the letter 'a' (the old table mapped it to 0x61 == 'a')
+    // and must stay that way.
+    expect(new Glob("x\\ay").match("xay")).toBeTrue();
+    expect(new Glob("x\\ay").match("x\x07y")).toBeFalse();
+    expect(new Glob("x[\\a]y").match("xay")).toBeTrue();
+
+    // Escaped letter as a character-class range endpoint.
+    expect(new Glob("x[\\n-\\r]y").match("xpy")).toBeTrue();
+    expect(new Glob("x[\\n-\\r]y").match("x\ny")).toBeFalse();
+
+    // Windows-style path used as a pattern: `\t` must not become TAB.
+    expect(new Glob("src\\test\\a.ts").match("srctesta.ts")).toBeTrue();
+    expect(new Glob("src\\test\\a.ts").match("src\testa.ts")).toBeFalse();
+
+    // Escaping a non-ASCII codepoint still matches that codepoint.
+    expect(new Glob("\\ñ").match("ñ")).toBeTrue();
+    expect(new Glob("[\\ñ]").match("ñ")).toBeTrue();
+  });
+
   /**
    * These tests are ported from micromatch, glob-match, globlin
    */
@@ -840,7 +870,7 @@ describe("Glob.match", () => {
       expect(new Glob("a[\\b]c").match("\\*")).toBeFalse();
       expect(new Glob("a[\\b]c").match("a")).toBeFalse();
       expect(new Glob("a[\\b]c").match("a/*")).toBeFalse();
-      expect(new Glob("a[\\b]c").match("abc")).toBeFalse();
+      expect(new Glob("a[\\b]c").match("abc")).toBeTrue();
       expect(new Glob("a[\\b]c").match("abd")).toBeFalse();
       expect(new Glob("a[\\b]c").match("abe")).toBeFalse();
       expect(new Glob("a[\\b]c").match("b")).toBeFalse();

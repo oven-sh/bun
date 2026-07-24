@@ -207,9 +207,12 @@ void MessagePort::close()
 
     m_isDetached = true;
 
-    // m_pipe is held for the port's whole lifetime (the GC thread reads
-    // it in hasPendingActivity()); marking our side Closed is sufficient.
-    m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
+    // Reject new sends and notify the peer, but leave the inbox intact: node's
+    // close() defers teardown to the uv close callback, so same-tick
+    // receiveMessageOnPort still drains the already-received queue. The
+    // destructive drop happens in the deferred task below (or immediately if
+    // the context is terminating and no task can be queued).
+    m_pipe->markClosed(m_side);
 
     // Release the self-reference taken by jsRef() (set when .onmessage is
     // assigned or .ref() is called from JS). The JS .close() binding calls
@@ -243,10 +246,15 @@ void MessagePort::close()
         context->postTask([protectedThis = Ref { *this }](ScriptExecutionContext&) {
             protectedThis->dispatchCloseEvent();
             protectedThis->removeAllEventListeners();
+            // Matches node's OnClose -> Detach: drop any still-queued messages
+            // (and cascade through transferred ports) now that same-tick
+            // receiveMessageOnPort has had its chance.
+            protectedThis->m_pipe->close(protectedThis->m_side, MessagePortPipe::CloseKind::Explicit);
             protectedThis->m_closeEventPending.store(false, std::memory_order_release);
         });
     } else {
         removeAllEventListeners();
+        m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
     }
 }
 
@@ -368,9 +376,10 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
 
 JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
 {
-    if (!isEntangled())
-        return jsUndefined();
-
+    // Deliberately not gated on isEntangled(): node's receiveMessageOnPort keeps
+    // draining the retained inbox after close() until the deferred teardown
+    // drops it. A transferred-away port has no context, so the check below
+    // still returns undefined for that case.
     auto* context = scriptExecutionContext();
     if (!context)
         return jsUndefined();

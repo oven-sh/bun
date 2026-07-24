@@ -75,6 +75,10 @@ public:
     // so reading Closed alone made .ref() GC-dependent). Both notify the peer.
     enum class CloseKind : uint8_t { Explicit,
         Collected };
+    // Set Closed|ClosedByRequest, clear Attached (so any scheduled drain bails),
+    // notify the peer, and KEEP the inbox so receiveMessageOnPort can still
+    // drain it; the terminal close() below drops it.
+    void markClosed(uint8_t side);
     void close(uint8_t side, CloseKind = CloseKind::Collected);
 
     // Lockless snapshot for the GC visitor / hasPendingActivity.

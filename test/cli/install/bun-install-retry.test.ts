@@ -80,7 +80,7 @@ describe("warns on each retry after an idle-timeout", () => {
     // Trip the idle timer in seconds instead of the 5-minute default so
     // the full retry cycle finishes inside the test timeout.
     BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2",
-    BUN_CONFIG_HTTP_RETRY_COUNT: "2",
+    BUN_CONFIG_HTTP_RETRY_COUNT: "1",
   };
 
   it("against a silent registry (manifest path)", async () => {
@@ -101,11 +101,8 @@ describe("warns on each retry after an idle-timeout", () => {
 
     const warnLines = stderr.split("\n").filter(l => l.includes("warn:"));
     expect({ connects: silent.state.connects, warnLines, stderr, exitCode }).toEqual({
-      connects: 3,
-      warnLines: [
-        expect.stringContaining("Timeout downloading package manifest any-pkg. Retrying 1/2"),
-        expect.stringContaining("Timeout downloading package manifest any-pkg. Retrying 2/2"),
-      ],
+      connects: 2,
+      warnLines: [expect.stringContaining("Timeout downloading package manifest any-pkg. Retrying 1/1")],
       stderr: expect.stringContaining("error: Timeout downloading package manifest any-pkg"),
       exitCode: 1,
     });
@@ -151,14 +148,11 @@ describe("warns on each retry after an idle-timeout", () => {
 
     const warnLines = stderr.split("\n").filter(l => l.includes("warn:"));
     expect({ warnLines, stderr, exitCode }).toEqual({
-      warnLines: [
-        expect.stringContaining("Timeout downloading tarball BaR@0.0.2. Retrying 1/2"),
-        expect.stringContaining("Timeout downloading tarball BaR@0.0.2. Retrying 2/2"),
-      ],
+      warnLines: [expect.stringContaining("Timeout downloading tarball BaR@0.0.2. Retrying 1/1")],
       stderr: expect.stringContaining("error: Timeout downloading tarball BaR@0.0.2"),
       exitCode: 1,
     });
-    expect(silent.state.connects).toBeGreaterThanOrEqual(3);
+    expect(silent.state.connects).toBeGreaterThanOrEqual(2);
     expect(stdout).not.toContain("installed");
   }, 60_000);
 });

@@ -3559,7 +3559,12 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
           // so declaration order holds; republishChildEvent numbers/counts it.
           const fileNode = new TestNode(file, callerRoot, kDefaultOptions, false, false);
           fileNode.filePath = file;
-          standaloneQueue.push({ node: fileNode, fn: kImportFailedFn, isSuite: false, importError: wrapTestError(err) });
+          standaloneQueue.push({
+            node: fileNode,
+            fn: kImportFailedFn,
+            isSuite: false,
+            importError: wrapTestError(err),
+          });
         }
       }
     } finally {

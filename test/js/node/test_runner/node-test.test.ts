@@ -1100,11 +1100,7 @@ test.concurrent("run({isolation:'none'}): opts.signal stops between queued entri
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ events: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-    events: [
-      ["pass", "first"],
-      ["interrupted"],
-      ["success", false],
-    ],
+    events: [["pass", "first"], ["interrupted"], ["success", false]],
     stderr: "",
     exitCode: 0,
   });

@@ -49,13 +49,12 @@ impl SocketAddress {
     }
 }
 
-#[derive(Copy, Clone)]
 pub struct Options {
     pub family: AF,
     /// When `None`, default is determined by address family.
     /// - `127.0.0.1` for IPv4
     /// - `::1` for IPv6
-    pub address: Option<BunString>,
+    pub address: Option<OwnedString>,
     pub port: u16,
     /// IPv6 flow label. JS getters for v4 addresses always return `0`.
     pub flowlabel: Option<u32>,
@@ -79,7 +78,8 @@ impl Options {
             return Err(global.throw_invalid_argument_type_value(b"options", b"object", obj));
         }
 
-        let address_str: Option<BunString> = if let Some(a) = obj.get(global, "address")? {
+        // OwnedString releases the +1 from BunString::from_js on every early return below.
+        let address_str: Option<OwnedString> = if let Some(a) = obj.get(global, "address")? {
             if !a.is_string() {
                 return Err(global.throw_invalid_argument_type_value(
                     b"options.address",
@@ -87,7 +87,7 @@ impl Options {
                     a,
                 ));
             }
-            Some(BunString::from_js(a, global)?)
+            Some(OwnedString::new(BunString::from_js(a, global)?))
         } else {
             None
         };
@@ -353,7 +353,8 @@ impl SocketAddress {
                 address_js,
             ));
         }
-        let address_: BunString = BunString::from_js(address_js, global)?;
+        // OwnedString releases the +1 from BunString::from_js if AF::from_js throws.
+        let address_ = OwnedString::new(BunString::from_js(address_js, global)?);
         let family_: AF = AF::from_js(global, family_js)?;
         Self::init_js(
             global,
@@ -367,16 +368,13 @@ impl SocketAddress {
 
     /// Semi-structured JS api for creating a `SocketAddress`. If you have raw
     /// socket address data, prefer `SocketAddress::new`.
-    ///
-    /// ## Safety
-    /// - `options.address` gets moved, much like `adoptRef`. Do not `deref` it
-    ///   after passing it in.
     pub fn create(global: &JSGlobalObject, options: Options) -> JsResult<Box<SocketAddress>> {
         Ok(Self::new(Self::init_js(global, options)?))
     }
 
     pub fn init_js(global: &JSGlobalObject, options: Options) -> JsResult<SocketAddress> {
-        let mut presentation: BunString = BunString::empty();
+        let had_address = options.address.is_some();
+        let presentation: OwnedString = options.address.unwrap_or_default();
 
         // We need a zero-terminated cstring for `ares_inet_pton`, which forces us to
         // copy the string.
@@ -390,8 +388,7 @@ impl SocketAddress {
                     addr: 0, // undefined → overwritten below
                     ..inet::sockaddr_in::ZEROED
                 };
-                if let Some(address_str) = options.address {
-                    presentation = address_str;
+                if had_address {
                     let slice = presentation.to_owned_slice_z();
                     // Box<ZStr> drops at scope exit
                     pton(
@@ -414,8 +411,7 @@ impl SocketAddress {
                     scope_id: 0,
                     ..inet::sockaddr_in6::ZEROED
                 };
-                if let Some(address_str) = options.address {
-                    presentation = address_str;
+                if had_address {
                     let slice = presentation.to_owned_slice_z();
                     pton(
                         global,
@@ -432,7 +428,7 @@ impl SocketAddress {
 
         Ok(SocketAddress {
             _addr: addr,
-            _presentation: Cell::new(presentation),
+            _presentation: Cell::new(presentation.into_inner()),
         })
     }
 }

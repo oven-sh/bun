@@ -6147,7 +6147,7 @@
     "musl": 69,
     "windows": 161
   },
-  "js/node/net/socketaddress.spec.ts": {
+  "js/node/net/socketaddress.test.ts": {
     "default": 74,
     "asan": 653,
     "musl": 85,

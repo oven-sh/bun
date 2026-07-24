@@ -2138,3 +2138,89 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(err).not.toContain("updated");
   expect(out).toContain("no changes");
 });
+
+test.concurrent("bun.lock and yarn.lock round-trip a large workspace set", async () => {
+  // Exercise the per-workspace bun.lock parse loops and the yarn printer's
+  // requested-versions map with a non-trivial number of workspace packages.
+  using ctx = await setupTest();
+  const { packageDir, env } = ctx;
+
+  const N = 60;
+  const pad = (i: number) => String(i).padStart(3, "0");
+
+  const writes: Promise<number>[] = [
+    write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "many-workspaces-root",
+        workspaces: ["packages/*"],
+      }),
+    ),
+  ];
+  for (let i = 0; i < N; i++) {
+    // Each package depends on the next three (wrapping) with a distinct
+    // request literal per edge, so every target's requested-version bucket
+    // holds literals that name that target.
+    const deps: Record<string, string> = {};
+    const t1 = (i + 1) % N;
+    const t2 = (i + 2) % N;
+    const t3 = (i + 3) % N;
+    deps[`pkg-${pad(t1)}`] = "workspace:*";
+    deps[`pkg-${pad(t2)}`] = `workspace:^1.0.${t2}`;
+    deps[`pkg-${pad(t3)}`] = `workspace:~1.0.${t3}`;
+    writes.push(
+      write(
+        join(packageDir, "packages", `pkg-${pad(i)}`, "package.json"),
+        JSON.stringify({
+          name: `pkg-${pad(i)}`,
+          version: `1.0.${i}`,
+          dependencies: deps,
+        }),
+      ),
+    );
+  }
+  await Promise.all(writes);
+
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--yarn"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  let [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(err).toContain("Saved yarn.lock");
+  expect(exitCode).toBe(0);
+
+  const bunLock = await file(join(packageDir, "bun.lock")).text();
+  const yarnLock = await file(join(packageDir, "yarn.lock")).text();
+
+  // Each package's key line lists exactly its own four requesters (root's
+  // workspace path plus the three literals that reference its index). A
+  // bucketing bug would surface as a literal carrying the wrong index here.
+  const keyLines = yarnLock.split("\n").filter(l => l.endsWith(":") && l.startsWith('"pkg-'));
+  expect(keyLines.length).toBe(N);
+  for (let i = 0; i < N; i++) {
+    const name = `pkg-${pad(i)}`;
+    expect(keyLines).toContain(
+      `"${name}@packages/${name}", "${name}@workspace:*", "${name}@workspace:^1.0.${i}", "${name}@workspace:~1.0.${i}":`,
+    );
+    expect(yarnLock).toContain(`  version "workspace:packages/${name}"\n`);
+  }
+
+  // Second install reparses bun.lock with N workspace rows and should see
+  // no diff.
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+  [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("Saved lockfile");
+  expect(exitCode).toBe(0);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(bunLock);
+});

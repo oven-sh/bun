@@ -1375,13 +1375,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(name) = self.named_exports.get(alias) {
             // Duplicate exports are an error
             let notes: Box<[bun_ast::Data]> = Box::new([bun_ast::Data {
-                text: std::borrow::Cow::Owned(
-                    format!(
-                        "\"{}\" was originally exported here",
-                        bstr::BStr::new(alias)
-                    )
-                    .into_bytes(),
-                ),
+                text: format!(
+                    "\"{}\" was originally exported here",
+                    bstr::BStr::new(alias)
+                )
+                .into_bytes()
+                .into_boxed_slice(),
                 location: bun_ast::Location::init_or_null(
                     Some(self.source),
                     js_lexer::range_of_identifier(self.source, name.alias_loc),

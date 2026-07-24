@@ -1830,13 +1830,13 @@ pub fn new_lazy_export_ast_impl<'bump>(
             if temp_log.errors == 0 {
                 log_to_copy_into.add_range_error(Some(source), range, err.name().as_bytes());
             }
-            let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+            let _ = temp_log.append_to(log_to_copy_into);
             return Ok(None);
         }
     };
     drop(parser);
 
-    let _ = temp_log.append_to_maybe_recycled(log_to_copy_into, source);
+    let _ = temp_log.append_to(log_to_copy_into);
     match result {
         crate::Result::Ast(mut ast) => {
             ast.has_lazy_export = true;

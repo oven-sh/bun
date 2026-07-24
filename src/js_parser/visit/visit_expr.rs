@@ -215,7 +215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             BStr::new(name)
                         )
                         .unwrap();
-                        std::borrow::Cow::Owned(v)
+                        v.into_boxed_slice()
                     },
                     location: bun_ast::Location::init_or_null(
                         Some(p.source),

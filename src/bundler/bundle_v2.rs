@@ -2280,7 +2280,7 @@ pub mod bv2_impl {
                         );
 
                         if err == _resolver::Error::ModuleNotFound {
-                            let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
+                            let add_error = bun_ast::Log::add_resolve_error_module_not_found;
                             let path_to_use = &import_record.specifier;
 
                             if !handles_import_errors
@@ -2762,7 +2762,6 @@ pub mod bv2_impl {
             // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
             // backref into the now-stable `this.graph.heap` slot.
             this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
-            this.transpiler.log_mut().clone_line_text = true;
 
             // Bake forbids tree-shaking since every export must always exist in
             // case a future module starts depending on it. The override is only
@@ -4400,7 +4399,6 @@ pub mod bv2_impl {
                         // A stack-allocated Log object containing the singular message
                         let kind = msg.kind;
                         let temp_log = bun_ast::Log {
-                            clone_line_text: false,
                             errors: (kind == bun_ast::Kind::Err) as u32,
                             warnings: (kind == bun_ast::Kind::Warn) as u32,
                             msgs: vec![msg],
@@ -4738,7 +4736,7 @@ pub mod bv2_impl {
                         resolve.import_record.original_target.bake_graph(),
                     );
                     let kind = err.kind;
-                    log.msgs.push(err.clone());
+                    log.msgs.push(err);
                     log.errors += (kind == bun_ast::Kind::Err) as u32;
                     log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                 }
@@ -6118,7 +6116,7 @@ pub mod bv2_impl {
                             import_record.path.is_disabled = true;
 
                             if err == _resolver::Error::ModuleNotFound {
-                                let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
+                                let add_error = bun_ast::Log::add_resolve_error_module_not_found;
 
                                 if !import_record
                                     .flags
@@ -6860,7 +6858,7 @@ pub mod bv2_impl {
                     // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                     result
                         .log
-                        .clone_to_with_recycled(this.transpiler.log_mut(), true);
+                        .clone_to(this.transpiler.log_mut());
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
@@ -7164,7 +7162,7 @@ pub mod bv2_impl {
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log
-                                .clone_to_with_recycled(this.transpiler.log_mut(), true);
+                                .clone_to(this.transpiler.log_mut());
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",

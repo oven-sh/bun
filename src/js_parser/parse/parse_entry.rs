@@ -19,6 +19,7 @@ use crate::parser::{
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
+use bun_ast::IntoText;
 use bun_ast::{B, E, Expr, G, S, Stmt};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
@@ -1547,43 +1548,37 @@ impl<'a> Parser<'a> {
                                     text: record.path.text
                                 }
                             );
-                            std::borrow::Cow::Owned(v)
+                            v.into_boxed_slice()
                         },
                         ..Default::default()
                     });
 
                     if uses_module_ref {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
+                            text: b"This file is CommonJS because 'module' was used".into_text(),
                             ..Default::default()
                         });
                     }
 
                     if uses_exports_ref {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
+                            text: b"This file is CommonJS because 'exports' was used".into_text(),
                             ..Default::default()
                         });
                     }
 
                     if p.has_top_level_return {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
+                            text: b"This file is CommonJS because top-level return was used"
+                                .into_text(),
                             ..Default::default()
                         });
                     }
 
                     if p.has_with_scope {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
+                            text: b"This file is CommonJS because a \"with\" statement is used"
+                                .into_text(),
                             ..Default::default()
                         });
                     }

@@ -1,5 +1,4 @@
 use crate::mal_prelude::*;
-use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_collections::AutoBitSet;
@@ -457,7 +456,7 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 c.log_mut().add_msg(bun_ast::Msg {
                     kind: bun_ast::Kind::Note,
                     data: bun_ast::Data {
-                        text: Cow::Owned(text),
+                        text: text.into_boxed_slice(),
                         ..Default::default()
                     },
                     ..Default::default()

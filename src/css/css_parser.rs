@@ -20,7 +20,7 @@ use bun_core::strings;
 /// `bun_options_types` to keep css below the parser tier.
 use bun_ast::Index as SrcIndex;
 type SymbolList = Vec<bun_ast::Symbol>;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::{ImportKind, ImportRecord, IntoText};
 
 pub use crate::compat::{self, Feature};
 pub use crate::css_modules::{
@@ -155,7 +155,7 @@ pub use crate::SourceLocation;
 impl SourceLocation {
     pub fn to_logger_location(self, file: &'static [u8]) -> bun_ast::Location {
         bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(file),
+            file: file.into_text(),
             line: i32::try_from(self.line).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             ..Default::default()

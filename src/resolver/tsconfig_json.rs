@@ -51,7 +51,7 @@ impl JsonCache {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        let _ = temp_log.append_to(log);
         Ok(result)
     }
 
@@ -67,7 +67,7 @@ impl JsonCache {
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         let result = func(source, &mut temp_log).ok();
-        let _ = temp_log.append_to_maybe_recycled(log, source);
+        let _ = temp_log.append_to(log);
         Ok(result)
     }
 

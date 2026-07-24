@@ -538,7 +538,7 @@ impl Route {
                     bun_output::scoped_log!(debug, "onComplete: err - {}", err);
                 }
                 let mut log = Log::init();
-                completion_task.log.clone_to_with_recycled(&mut log, true);
+                completion_task.log.clone_to(&mut log);
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
                         // `Output.errorWriterBuffered()` → process-global writer;

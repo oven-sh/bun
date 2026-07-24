@@ -1958,7 +1958,7 @@ impl PackageManifest {
             Ok(j) => j,
             Err(_) => {
                 let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
+                log.clone_to(&mut cloned_log);
                 *log = cloned_log;
                 return Ok(None);
             }

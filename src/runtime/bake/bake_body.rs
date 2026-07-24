@@ -626,22 +626,18 @@ impl Framework {
     }
 
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
-        let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
                 None,
                 bun_ast::Range::NONE,
-                // `range_data` takes `impl Into<Cow<'static, [u8]>>`;
-                // `concat!` yields `&'static str` — go via `.as_bytes()`.
                 concat!(
                     "Install the built in react integration with \"",
                     "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",
                     "\""
                 )
                 .as_bytes(),
-            )
-            .clone_line_text(clone_line_text),
+            ),
             ..Default::default()
         });
         Ok(())

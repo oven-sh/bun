@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
-use bun_ast::{Loc, Location, Log, Msg, Source};
+use bun_ast::{IntoText, Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
@@ -787,7 +787,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Yaml => {
@@ -808,7 +808,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Json5 => {
@@ -830,7 +830,7 @@ pub mod parse_worker {
                         .unwrap(),
                     ))
                 })();
-                let _ = temp_log.clone_to_with_recycled(log, true);
+                let _ = temp_log.clone_to(log);
                 return result;
             }
             Loader::Text => {
@@ -1194,7 +1194,7 @@ pub mod parse_worker {
                     Err(e) => {
                         // Surface the actual CSS parse diagnostic.
                         let _ = e.add_to_logger(&mut temp_log, source);
-                        let _ = temp_log.append_to_maybe_recycled(log, source);
+                        let _ = temp_log.append_to(log);
                         return Err(crate::Error::SyntaxError);
                     }
                 };
@@ -1215,7 +1215,7 @@ pub mod parse_worker {
                 ) {
                     // Surface the actual minify diagnostic.
                     let _ = e.add_to_logger(&mut temp_log, source);
-                    let _ = temp_log.append_to_maybe_recycled(log, source);
+                    let _ = temp_log.append_to(log);
                     return Err(crate::Error::MinifyError);
                 }
                 if css_ast.local_scope.count() > 0 {
@@ -1241,7 +1241,7 @@ pub mod parse_worker {
                     b"",
                     symbols,
                 );
-                let _ = temp_log.append_to_maybe_recycled(log, source);
+                let _ = temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.unwrap());
                 let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
                 ast.css = Some(css_ast_heap);
@@ -1719,21 +1719,14 @@ pub mod parse_worker {
         }
 
         pub(crate) fn append(&self, log: &mut Log, namespace: &'static [u8]) {
-            // `Location.{file,line_text}`
-            // are `&'static [u8]` here; `Log::dupe` copies into Log-owned storage
-            // (freed when the Log drops) and returns a lifetime-erased borrow —
-            // the "alloc-dupe into the log arena" pattern. We dupe `path` too:
-            // a raw slice into C-plugin memory may be
-            // freed after `log_fn` returns, so duping is required.
             let source_line_text = self.source_line_text();
-            let file = log.dupe(self.path());
             let line_text = if !source_line_text.is_empty() {
-                Some(log.dupe(source_line_text))
+                Some(Box::from(source_line_text))
             } else {
                 None
             };
             let location = Location::init(
-                file,
+                self.path(),
                 namespace,
                 self.line.max(-1),
                 self.column.max(-1),
@@ -1743,7 +1736,7 @@ pub mod parse_worker {
             let mut msg = Msg {
                 data: bun_ast::Data {
                     location: Some(location),
-                    text: std::borrow::Cow::Owned(self.message().to_vec()),
+                    text: self.message().into_text(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -2079,9 +2072,7 @@ pub mod parse_worker {
                     let mut msg = Msg {
                     data: bun_ast::Data {
                         location: None,
-                        text: std::borrow::Cow::Borrowed(
-                            &b"Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field."[..],
-                        ),
+                        text: b"Native plugin set the `free_plugin_source_code_context` field without setting the `plugin_source_code_context` field.".into_text(),
                         ..Default::default()
                     },
                     ..Default::default()

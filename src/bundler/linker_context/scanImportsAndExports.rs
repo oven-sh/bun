@@ -1544,8 +1544,7 @@ mod __css_validation {
                             bstr::BStr::new(property_name),
                             bstr::BStr::new(local_original_name),
                         )),
-                    )
-                    .clone_line_text(self.log.clone_line_text),
+                    ),
                     notes: Box::<[bun_ast::Data]>::from(
                         &[
                             bun_ast::range_data(
@@ -1573,7 +1572,7 @@ mod __css_validation {
                                         bun_core::fmt::quote(property_name),
                                         bun_core::fmt::quote(local_original_name),
                                     );
-                                    std::borrow::Cow::Owned(v)
+                                    v.into_boxed_slice()
                                 },
                                 ..Default::default()
                             },

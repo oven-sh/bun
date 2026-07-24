@@ -550,8 +550,7 @@ pub fn post_process_js_chunk(
     // Add the top-level directive if present (but omit "use strict" in ES
     // modules because all ES modules are automatically in strict mode)
     if chunk.is_entry_point() {
-        let directives =
-            c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
+        let directives = c.graph.ast.items_directives()[chunk.entry_point.source_index() as usize];
         let newline: &[u8] = if c.options.minify_whitespace {
             b""
         } else {

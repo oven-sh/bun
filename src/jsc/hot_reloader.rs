@@ -915,8 +915,12 @@ where
                     if event.op.contains(WatchOp::DELETE)
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
-                        self.get_context()
-                            .remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                        self.get_context().remove_at_index(
+                            bun_watcher::Kind::File,
+                            event.index,
+                            0,
+                            &[],
+                        );
                     }
 
                     if self.verbose {

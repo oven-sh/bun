@@ -52,6 +52,7 @@ use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
 use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
+use bun_http_types::ReferrerPolicy::ReferrerPolicy;
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 use bun_paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
@@ -64,6 +65,7 @@ use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type_opt;
+use crate::webcore::referrer;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
@@ -1406,6 +1408,91 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         return Ok(JSValue::ZERO);
     }
 
+    // referrer: string | undefined;
+    //
+    // `fetch(input, init)` constructs a `Request` from its arguments, so the
+    // `referrer` init member resolves exactly as in the `Request` constructor
+    // (https://fetch.spec.whatwg.org/#dom-request, step 14). Stored in the
+    // serialized form described in `crate::webcore::referrer`; the init
+    // object overrides a `Request` first argument, which overrides the
+    // default ("about:client").
+    let request_referrer: bun_core::OwnedString = bun_core::OwnedString::new('extract_referrer: {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get(global_this, "referrer")? {
+                    Some(referrer_value) if !referrer_value.is_undefined() => {
+                        let raw = bun_core::OwnedString::new(BunString::from_js(
+                            referrer_value,
+                            global_this,
+                        )?);
+                        match referrer::parse_init_referrer(&raw) {
+                            Some(stored) => break 'extract_referrer stored,
+                            None => {
+                                return Err(global_this.throw(format_args!(
+                                    "fetch() referrer is not a valid URL: \"{}\"",
+                                    raw.get()
+                                )));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                if global_this.has_exception() {
+                    return Ok(JSValue::ZERO);
+                }
+            }
+        }
+
+        if let Some(req) = request_mut!() {
+            break 'extract_referrer req.referrer.get().dupe_ref();
+        }
+
+        break 'extract_referrer referrer::client();
+    });
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    // referrerPolicy: ReferrerPolicy | undefined;
+    let referrer_policy: ReferrerPolicy = 'extract_referrer_policy: {
+        let mut referrer_policy = ReferrerPolicy::Empty;
+        if let Some(req) = request_mut!() {
+            referrer_policy = req.flags.referrer_policy;
+        }
+
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        for obj in objects_to_try {
+            if !obj.is_empty() {
+                match obj.get_optional_enum::<ReferrerPolicy>(global_this, "referrerPolicy") {
+                    Err(_) => {
+                        return Ok(JSValue::ZERO);
+                    }
+                    Ok(Some(policy_value)) => {
+                        break 'extract_referrer_policy policy_value;
+                    }
+                    Ok(None) => {}
+                }
+            }
+        }
+
+        break 'extract_referrer_policy referrer_policy;
+    };
+
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
     if proxy.is_some() && !unix_socket_path.slice().is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1644,6 +1731,26 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             None,
             any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
         ));
+    }
+
+    // Serialize the `Referer` request header from the resolved referrer and
+    // policy. Must come after the body Content-Type fallback above, which only
+    // fires while `headers` is still `None`.
+    //
+    // An explicit user-set `Referer` header wins: the spec appends
+    // unconditionally, but only because in browsers `Referer` is a forbidden
+    // header name that can never already be present, and RFC 9110 makes
+    // `Referer` a singleton field.
+    {
+        let referrer_utf8 = request_referrer.to_utf8();
+        if let Some(referer_value) =
+            referrer::determine_referer_header(referrer_utf8.slice(), referrer_policy, &url)
+        {
+            let request_headers = headers.get_or_insert_with(Headers::default);
+            if request_headers.get(b"referer").is_none() {
+                request_headers.append(b"Referer", &referer_value);
+            }
+        }
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then

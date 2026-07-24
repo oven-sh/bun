@@ -16,10 +16,11 @@ use crate::webcore::body::{self, BodyHiveHandle, BodyMixin, Value as BodyValue};
 use crate::webcore::jsc::{
     self as jsc, CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRef, JsResult,
 };
+use crate::webcore::referrer;
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
+use bun_core::{OwnedString, OwnedStringCell, String as BunString, ZigString, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -28,6 +29,7 @@ use bun_http_types::FetchCacheMode::FetchCacheMode;
 use bun_http_types::FetchRedirect::FetchRedirect;
 use bun_http_types::FetchRequestMode::FetchRequestMode;
 use bun_http_types::Method::Method;
+use bun_http_types::ReferrerPolicy::ReferrerPolicy;
 use bun_jsc::AbortSignalRef;
 use bun_jsc::StringJsc as _;
 use bun_jsc::generated::JSRequest as js_gen;
@@ -84,6 +86,10 @@ const _: () = {
 #[repr(C)]
 pub struct Request {
     pub url: bun_core::OwnedStringCell,
+    /// The request's referrer, stored serialized: `""` == "no-referrer",
+    /// `"about:client"` == "client" (the default), anything else is a
+    /// WHATWG-normalized referrer URL. See `crate::webcore::referrer`.
+    pub referrer: bun_core::OwnedStringCell,
 
     headers: JsCell<Option<HeadersRef>>,
     // AbortSignal is an opaque C++ handle with intrusive WebCore refcounting —
@@ -119,9 +125,10 @@ pub struct Flags {
     pub cache: FetchCacheMode,
     pub mode: FetchRequestMode,
     pub https: bool,
+    pub referrer_policy: ReferrerPolicy,
 }
 
-bun_core::assert_ffi_layout!(Flags, 4, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3);
+bun_core::assert_ffi_layout!(Flags, 5, 1; redirect @ 0, cache @ 1, mode @ 2, https @ 3, referrer_policy @ 4);
 
 impl Default for Flags {
     fn default() -> Self {
@@ -130,6 +137,7 @@ impl Default for Flags {
             cache: FetchCacheMode::Default,
             mode: FetchRequestMode::Cors,
             https: false,
+            referrer_policy: ReferrerPolicy::Empty,
         }
     }
 }
@@ -373,6 +381,7 @@ impl Request {
         core::mem::size_of::<Request>()
             + self.request_context.memory_cost()
             + self.url.get().byte_slice().len()
+            + self.size_of_referrer()
             + self.body_value().memory_cost()
     }
 
@@ -457,6 +466,7 @@ impl Request {
     ) -> Request {
         Request {
             url: OwnedStringCell::new(url),
+            referrer: OwnedStringCell::new(referrer::client()),
             headers: JsCell::new(headers),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -494,6 +504,7 @@ impl Request {
         self.reported_estimated_size.set(
             self.body_value().estimated_size()
                 + self.size_of_url()
+                + self.size_of_referrer()
                 + core::mem::size_of::<Request>(),
         );
     }
@@ -743,6 +754,7 @@ impl Request {
         self.headers.set(None);
 
         self.url.set(BunString::empty());
+        self.referrer.set(BunString::empty());
 
         // AbortSignalRef::Drop unrefs the C++ handle.
         self.signal.set(None);
@@ -763,8 +775,8 @@ impl Request {
         if this.weak_ptr_data.on_finalize() {
             // Hot path: no outstanding weak refs. Reclaim and drop the whole
             // allocation in one shot — `Box::from_raw`'s drop runs
-            // `drop_in_place` over every field (headers / url / signal /
-            // js_ref / internal_event_callback) once, without the 4× `Cell::set`
+            // `drop_in_place` over every field (headers / url / referrer /
+            // signal / js_ref / internal_event_callback) once, without the 4× `Cell::set`
             // read-write-drop round-trips the old `finalize_without_deinit()`
             // call performed here before re-dropping the (now-empty) fields.
             // SAFETY: `this` is the live Box-allocated payload.
@@ -782,23 +794,26 @@ impl Request {
         fetch_redirect_to_js(self.flags.redirect, global_this)
     }
 
-    pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JSValue {
-        if let Some(headers_ref) = self.headers_mut().as_mut() {
-            if let Some(referrer) = headers_ref.get(b"referrer", global_object) {
-                return referrer.to_js(global_object);
-            }
-        }
-
-        ZigString::init(b"").to_js(global_object)
+    /// https://fetch.spec.whatwg.org/#dom-request-referrer
+    /// The stored referrer is already the getter's serialization: `""` for
+    /// "no-referrer", `"about:client"` for "client", the URL otherwise.
+    pub fn get_referrer(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+        self.referrer.get().to_js(global_object)
     }
 
-    pub fn get_referrer_policy(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(b"").to_js(global_this)
+    pub fn get_referrer_policy(&self, global_this: &JSGlobalObject) -> JSValue {
+        ZigString::init(self.flags.referrer_policy.as_str().as_bytes()).to_js(global_this)
     }
 
     pub fn get_url(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         self.ensure_url()?;
         self.url.get().to_js(global_object)
+    }
+
+    /// The referrer is always set (to the `"about:client"` static by default),
+    /// so unlike the url there is nothing to lazily compute here.
+    pub fn size_of_referrer(&self) -> usize {
+        self.referrer.get().byte_slice().len()
     }
 
     pub fn size_of_url(&self) -> usize {
@@ -990,8 +1005,8 @@ enum Fields {
     Method,
     Headers,
     Body,
-    // Referrer,
-    // ReferrerPolicy,
+    Referrer,
+    ReferrerPolicy,
     Mode,
     // Credentials,
     Redirect,
@@ -1023,6 +1038,7 @@ impl Request {
         let body_seed_ptr = body.as_ptr();
         let mut req = Request {
             url: OwnedStringCell::new(BunString::empty()),
+            referrer: OwnedStringCell::new(referrer::client()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             body: ManuallyDrop::new(body),
@@ -1157,6 +1173,16 @@ impl Request {
                     if !fields.contains(Fields::Mode) {
                         req.flags.mode = request.flags.mode;
                         fields.insert(Fields::Mode);
+                    }
+
+                    if !fields.contains(Fields::Referrer) {
+                        req.referrer.set(request.referrer.get().dupe_ref());
+                        fields.insert(Fields::Referrer);
+                    }
+
+                    if !fields.contains(Fields::ReferrerPolicy) {
+                        req.flags.referrer_policy = request.flags.referrer_policy;
+                        fields.insert(Fields::ReferrerPolicy);
                     }
 
                     if !fields.contains(Fields::Headers) {
@@ -1445,6 +1471,45 @@ impl Request {
                     Err(e) => bail!(Err(e)),
                 }
             }
+
+            // Extract referrer option
+            // https://fetch.spec.whatwg.org/#dom-request (constructor step 14)
+            if !fields.contains(Fields::Referrer) {
+                match value.get(global_this, "referrer") {
+                    Ok(Some(referrer_value)) if !referrer_value.is_undefined() => {
+                        fields.insert(Fields::Referrer);
+                        // USVString conversion; `OwnedString` releases the +1
+                        // on every exit path.
+                        let raw = OwnedString::new(
+                            match BunString::from_js(referrer_value, global_this) {
+                                Ok(s) => s,
+                                Err(e) => bail!(Err(e)),
+                            },
+                        );
+                        match referrer::parse_init_referrer(&raw) {
+                            Some(stored) => req.referrer.set(stored),
+                            None => bail!(Err(global_this.throw(format_args!(
+                                "Failed to construct 'Request': Invalid referrer \"{}\"",
+                                raw.get()
+                            )))),
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
+
+            // Extract referrerPolicy option
+            if !fields.contains(Fields::ReferrerPolicy) {
+                match value.get_optional_enum::<ReferrerPolicy>(global_this, "referrerPolicy") {
+                    Ok(Some(policy_value)) => {
+                        req.flags.referrer_policy = policy_value;
+                        fields.insert(Fields::ReferrerPolicy);
+                    }
+                    Ok(None) => {}
+                    Err(e) => bail!(Err(e)),
+                }
+            }
         }
 
         if global_this.has_exception() {
@@ -1574,7 +1639,9 @@ impl Request {
         // `clone()` seeds it with a dangling sentinel, and `construct_into`
         // releases its seed via the ptr-equality arm of its `cleanup`.
         // `url` was bitwise-copied above (preserve_url) or is the empty
-        // sentinel; remaining incoming fields are None/weak/Copy by contract.
+        // sentinel; `referrer` is an empty or static (non-owning) sentinel in
+        // both callers; remaining incoming fields are None/weak/Copy by
+        // contract.
         // SAFETY: `req` is a valid &mut, fully initialized by the caller;
         // nothing between here and the write can panic.
         unsafe {
@@ -1582,6 +1649,7 @@ impl Request {
                 req,
                 Request {
                     url: OwnedStringCell::new(url),
+                    referrer: OwnedStringCell::new(self.referrer.get().dupe_ref()),
                     headers: JsCell::new(headers),
                     signal: JsCell::new(None),
                     body: ManuallyDrop::new(body),
@@ -1609,6 +1677,7 @@ impl Request {
         // without reading or dropping it.
         let mut req = Box::new(Request {
             url: OwnedStringCell::new(BunString::empty()),
+            referrer: OwnedStringCell::new(BunString::empty()),
             headers: JsCell::new(None),
             signal: JsCell::new(None),
             // `clone_into` `ptr::write`s the whole struct without dropping the
@@ -1684,6 +1753,7 @@ impl Request {
     ) -> Request {
         Request {
             url: OwnedStringCell::new(BunString::empty()),
+            referrer: OwnedStringCell::new(referrer::client()),
             headers: JsCell::new(None),
             signal: JsCell::new(signal),
             body: ManuallyDrop::new(body),

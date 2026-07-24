@@ -130,14 +130,15 @@ __attribute__((constructor)) static void no_core(void) {
 
 int inotify_init1(int flags) {
   if (!real_inotify_init1) real_inotify_init1 = dlsym(RTLD_NEXT, "inotify_init1");
-  armed = 1;
+  /* Watcher::start() retries once on EAGAIN; fail both attempts. */
+  armed = 2;
   return real_inotify_init1(flags);
 }
 
 int pthread_create(pthread_t *t, const pthread_attr_t *a, void *(*f)(void *), void *arg) {
   if (!real_pthread_create) real_pthread_create = dlsym(RTLD_NEXT, "pthread_create");
   if (armed) {
-    armed = 0;
+    armed--;
     return EAGAIN;
   }
   return real_pthread_create(t, a, f, arg);

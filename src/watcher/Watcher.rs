@@ -222,29 +222,37 @@ impl Watcher {
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
-        self.thread = Some(
+        let spawn = || {
             std::thread::Builder::new()
                 .name("FileWatcher".into())
                 .spawn(move || unsafe {
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
-                .map_err(|e| {
-                    // Windows: raw_os_error() is a Win32 GetLastError() code, so
-                    // route it through the u32 (Win32Error) mapper rather than
-                    // from_errno's i64 discriminant-cast path.
-                    #[cfg(windows)]
-                    let errno = e
-                        .raw_os_error()
-                        .and_then(|c| bun_errno::SystemErrno::init(c as u32))
-                        .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-                    #[cfg(not(windows))]
-                    let errno = e
-                        .raw_os_error()
-                        .map(bun_errno::from_errno)
-                        .unwrap_or(bun_errno::SystemErrno::EAGAIN);
-                    crate::Error::Sys(errno)
-                })?,
-        );
+        };
+        // A --watch reload execve's and immediately re-enters here; under CI
+        // load the new process's first pthread_create can see a transient
+        // EAGAIN before the old image's threads are fully reaped. One short
+        // retry covers that without masking a real resource exhaustion.
+        let handle = spawn().or_else(|first| {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            spawn().map_err(|_| first)
+        });
+        self.thread = Some(handle.map_err(|e| {
+            // Windows: raw_os_error() is a Win32 GetLastError() code, so
+            // route it through the u32 (Win32Error) mapper rather than
+            // from_errno's i64 discriminant-cast path.
+            #[cfg(windows)]
+            let errno = e
+                .raw_os_error()
+                .and_then(|c| bun_errno::SystemErrno::init(c as u32))
+                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+            #[cfg(not(windows))]
+            let errno = e
+                .raw_os_error()
+                .map(bun_errno::from_errno)
+                .unwrap_or(bun_errno::SystemErrno::EAGAIN);
+            crate::Error::Sys(errno)
+        })?);
         Ok(())
     }
 

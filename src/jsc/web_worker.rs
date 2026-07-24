@@ -516,16 +516,32 @@ impl WebWorker {
         // Inherit the parent VM's configured preloads (bunfig `preload` /
         // `--preload` / `--require` / `--import`). `initial_preload` is set
         // once at startup on the parent thread and never mutated, so reading
-        // it here (on that same thread) is race-free. These are prepended so
-        // plugin registrations are in place before any `{ preload: [...] }`
-        // option modules run; they are left unresolved because `load_preloads`
-        // on the worker thread resolves them against the same process-global
-        // `top_level_dir` the main thread used.
+        // it here (on that same thread) is race-free. They are left unresolved
+        // because `load_preloads` on the worker thread resolves them against
+        // the same process-global `top_level_dir` the main thread used.
         let inherited_preloads: Vec<Box<[u8]>> = parent_ref.initial_preload.clone();
         let mut preloads: Vec<Box<[u8]>> =
             Vec::with_capacity(inherited_preloads.len() + preload_modules_len);
+
+        // For a node:worker_threads Worker the JS wrapper injects
+        // "node:worker_threads" as the first option preload so its bootstrap
+        // (stdio rebinding, process.chdir/abort stubs) runs before user code.
+        // Keep that sentinel first and splice inherited preloads in after it,
+        // so an inherited preload's console.log reaches a captured
+        // `{stdout: true}` stream and process.chdir throws
+        // ERR_WORKER_UNSUPPORTED_OPERATION as Node.js does for --require.
+        let mut option_preloads = preload_modules;
+        if let Some(first) = option_preloads.first() {
+            let first_slice = first.to_utf8();
+            if first_slice.slice() == b"node:worker_threads" {
+                preloads.push(first_slice.slice().to_vec().into_boxed_slice());
+                option_preloads = &option_preloads[1..];
+            }
+        }
+        // Inherited preloads run before user `{ preload: [...] }` entries so
+        // plugin registrations are in place for them.
         preloads.extend(inherited_preloads.iter().cloned());
-        for module in preload_modules {
+        for module in option_preloads {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
             // module loader resolves them. Lets node:worker_threads run its

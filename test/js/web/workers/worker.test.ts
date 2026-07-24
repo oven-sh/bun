@@ -219,6 +219,55 @@ describe("web worker", () => {
         expect(exitCode).toBe(0);
       });
 
+      test.concurrent(
+        "inherited preload runs after node:worker_threads bootstrap (captured stdio, stubbed process)",
+        async () => {
+          using dir = tempDir("worker-preload-wt-order", {
+            "bunfig.toml": `preload = ["./setup.ts"]`,
+            "setup.ts": `
+              if (!require("node:worker_threads").isMainThread) {
+                console.log("from inherited preload");
+                let chdirErr = "no throw";
+                try { process.chdir("/"); } catch (e) { chdirErr = e.code; }
+                globalThis.__chdirErr = chdirErr;
+              }
+            `,
+            "worker.ts": `
+              const { parentPort } = require("node:worker_threads");
+              console.log("from worker entry");
+              parentPort.postMessage({ chdirErr: globalThis.__chdirErr });
+            `,
+            "main.ts": `
+              const { Worker } = require("node:worker_threads");
+              const { once } = require("node:events");
+              const worker = new Worker(new URL("./worker.ts", import.meta.url), { stdout: true });
+              let captured = "";
+              worker.stdout.setEncoding("utf8");
+              worker.stdout.on("data", d => { captured += d; });
+              const [[msg]] = await Promise.all([
+                once(worker, "message"),
+                once(worker.stdout, "end"),
+                once(worker, "exit"),
+              ]);
+              console.log(JSON.stringify({ captured: captured.trim().split("\\n"), chdirErr: msg.chdirErr }));
+            `,
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "run", "main.ts"],
+            env: bunEnv,
+            cwd: String(dir),
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          expect(JSON.parse(stdout.trim())).toEqual({
+            captured: ["from inherited preload", "from worker entry"],
+            chdirErr: "ERR_WORKER_UNSUPPORTED_OPERATION",
+          });
+          expect(exitCode).toBe(0);
+        },
+      );
+
       test.concurrent("inherited preload runs before option.preload", async () => {
         using dir = tempDir("worker-preload-order", {
           "bunfig.toml": `preload = ["./first.ts"]`,

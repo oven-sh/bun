@@ -131,6 +131,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         // preload/argv are `Vec<Box<[u8]>>`; clone because the VM owns its
         // fields. Startup-only, so the copies are not hot.
         vm.preload.clone_from(&ctx.preloads);
+        vm.initial_preload = vm.preload.clone();
         vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
         // vm.allocator = arena.arena() — dropped per §Allocators

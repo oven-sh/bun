@@ -1781,18 +1781,17 @@ impl Package<u64> {
                         resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                     // Keep the stored value path-shaped so `is_link_path`
                     // downstream still recognises it.
-                    dependency_version.value.symlink =
-                        if relative.is_empty() || relative == b"." {
-                            string_builder.append::<String>(b".")
-                        } else if dependency::is_link_path(relative) {
-                            string_builder.append::<String>(relative)
-                        } else {
-                            let mut prefixed = PathBuffer::uninit();
-                            prefixed[0] = b'.';
-                            prefixed[1] = b'/';
-                            prefixed[2..2 + relative.len()].copy_from_slice(relative);
-                            string_builder.append::<String>(&prefixed[..2 + relative.len()])
-                        };
+                    dependency_version.value.symlink = if relative.is_empty() || relative == b"." {
+                        string_builder.append::<String>(b".")
+                    } else if dependency::is_link_path(relative) {
+                        string_builder.append::<String>(relative)
+                    } else {
+                        let mut prefixed = PathBuffer::uninit();
+                        prefixed[0] = b'.';
+                        prefixed[1] = b'/';
+                        prefixed[2..2 + relative.len()].copy_from_slice(relative);
+                        string_builder.append::<String>(&prefixed[..2 + relative.len()])
+                    };
                 }
             }
             dependency::version::Tag::Npm => {

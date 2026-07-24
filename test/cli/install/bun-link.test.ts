@@ -565,10 +565,7 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
       join(package_dir, "packages", "foo", "package.json"),
       JSON.stringify({ name: "foo", dependencies: { localpkg: "link:./local" } }),
     );
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
-    );
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
     await writeFile(
       join(package_dir, "bunfig.toml"),
       `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,

@@ -285,6 +285,10 @@ export function getStdinStream(
 
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    // Once 'end' has emitted there is nothing left to read. A resume() here is
+    // a no-op, and _undestroy() would reset endEmitted, un-latching the
+    // readableEnded getter. Node keeps readableEnded a one-way latch.
+    if (stream._readableState.endEmitted) return;
     $debug('on("resume");');
     own();
     stream._undestroy();

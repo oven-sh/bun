@@ -1416,14 +1416,20 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     let { self, req } = socket.data;
     socket[owner_symbol] = self;
     socket.data.req = undefined;
+    // Both paths rebuild the error via ExceptionWithHostPort from this errno,
+    // and util.getSystemErrorName throws ERR_OUT_OF_RANGE for anything that
+    // isn't a negative safe integer; a throw here is swallowed by
+    // kConnectDispatch's catch and leaves the socket with no 'error'/'close'.
+    let errno = error.errno;
+    if (!Number.isSafeInteger(errno) || errno >= 0) errno = UV_ECANCELED;
     // doConnect dispatches this synchronously when connect()/bind() fails at
     // the syscall; surface it as kConnectTcp/Pipe's return value (callers'
     // Node-derived `if (err)` expects that) instead of re-entering oncomplete.
     if (req!.dispatching) {
-      req.errno = error.errno || UV_ECANCELED;
+      req.errno = errno;
       return;
     }
-    req!.oncomplete(error.errno, self._handle, req, true, true);
+    req!.oncomplete(errno, self._handle, req, true, true);
   },
 };
 

@@ -246,6 +246,10 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        // `module_type` changes the parse result for byte-identical sources
+        // (e.g. `export` in an explicit-CommonJS file is a hard error).
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -1509,6 +1513,57 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
+            // .cjs / "type":"commonjs" are authoritative: Node rejects `export`
+            // and top-level `await` in those files as a SyntaxError.
+            // Runtime-only; the bundler has its own format resolution.
+            // TypeScript excluded: `export` in a CommonJS-typed .ts/.cts is
+            // idiomatic (tsc compiles it to `exports.x = ...`), so rejecting it
+            // would break the normal way to author CJS in TS.
+            if p.options.module_type == options::ModuleType::Cjs
+                && !p.options.bundle
+                && !p.options.ts
+                && p.options.features.commonjs_at_runtime
+            {
+                let (range, what): (bun_ast::Range, &'static [u8]) = if p.esm_export_keyword.len > 0
+                {
+                    (
+                        p.esm_export_keyword,
+                        b"Cannot use 'export' in a CommonJS module",
+                    )
+                } else {
+                    (
+                        p.top_level_await_keyword,
+                        b"Cannot use top-level 'await' in a CommonJS module",
+                    )
+                };
+                let ext = p.source.path.name().ext;
+                let (why, how): (&'static [u8], &'static [u8]) = if ext == b".cjs" {
+                    (
+                        b"This file is CommonJS because of its \".cjs\" extension",
+                        b"To use ES module syntax, change the file extension to '.mjs'",
+                    )
+                } else {
+                    (
+                        b"This file is CommonJS because the nearest package.json sets \"type\": \"commonjs\"",
+                        b"To use ES module syntax, change the file extension to '.mjs' or set \"type\": \"module\" in package.json",
+                    )
+                };
+                p.log().add_range_error_with_notes(
+                    Some(p.source),
+                    range,
+                    what,
+                    Box::new([
+                        bun_ast::Data {
+                            text: std::borrow::Cow::Borrowed(why),
+                            ..Default::default()
+                        },
+                        bun_ast::Data {
+                            text: std::borrow::Cow::Borrowed(how),
+                            ..Default::default()
+                        },
+                    ]),
+                );
+            }
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
         {
             exports_kind = js_ast::ExportsKind::Cjs;
@@ -1607,7 +1662,12 @@ impl<'a> Parser<'a> {
                             && !p.has_top_level_return
                             && !p.has_with_scope
                     );
-                    // Use ESM if the file has ES module syntax (import)
+                    // Use ESM if the file has ES module syntax (import).
+                    // Node rejects `import` in a .cjs/"type":"commonjs" file
+                    // the same way it rejects `export`/TLA (handled above),
+                    // but import-only in explicit-CJS is deliberately still
+                    // allowed here: it is far more prevalent in the wild than
+                    // export/TLA, and rejecting it would be much more breaking.
                     exports_kind = if p.has_es_module_syntax {
                         js_ast::ExportsKind::Esm
                     } else {

@@ -935,10 +935,19 @@ impl<'a> Parser<'a> {
                     }
 
                     js_ast::StmtData::SClass(class) => {
-                        // Move class export statements to the top of the file if we can
-                        // This automatically resolves some cyclical import issues
-                        // https://github.com/kysely-org/kysely/issues/412
-                        let should_move = !p.options.bundle && class.class.can_be_moved();
+                        // Move class statements ahead of other code to help cyclical imports
+                        // (https://github.com/kysely-org/kysely/issues/412). Skip when any
+                        // already-visited statement mentions the name so its TDZ is kept.
+                        let used_before_decl = match class.class.class_name {
+                            Some(name) => {
+                                p.symbols.as_slice()[name.ref_.inner_index() as usize]
+                                    .use_count_estimate
+                                    > 0
+                            }
+                            None => false,
+                        };
+                        let should_move =
+                            !p.options.bundle && !used_before_decl && class.class.can_be_moved();
 
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
@@ -949,10 +958,28 @@ impl<'a> Parser<'a> {
                         }
                     }
                     js_ast::StmtData::SExportDefault(value) => {
-                        // We move export default statements when we can
-                        // This automatically resolves some cyclical import issues in packages like luxon
-                        // https://github.com/oven-sh/bun/issues/1961
-                        let should_move = !p.options.bundle && value.can_be_moved();
+                        // Move export default ahead of other code to help cyclical imports
+                        // (e.g. luxon, #1961). Like `SClass` above, keep a named default
+                        // class in place if an earlier statement already references it.
+                        let class_name_ref = match &value.value {
+                            js_ast::StmtOrExpr::Stmt(s) => match &s.data {
+                                js_ast::StmtData::SClass(c) => {
+                                    c.class.class_name.map(|name| name.ref_)
+                                }
+                                _ => None,
+                            },
+                            // Class-expression names are not visible at module scope.
+                            js_ast::StmtOrExpr::Expr(_) => None,
+                        };
+                        let used_before_decl = match class_name_ref {
+                            Some(ref_) => {
+                                p.symbols.as_slice()[ref_.inner_index() as usize].use_count_estimate
+                                    > 0
+                            }
+                            None => false,
+                        };
+                        let should_move =
+                            !p.options.bundle && !used_before_decl && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
 

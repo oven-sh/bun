@@ -177,7 +177,7 @@ public:
     ExceptionOr<void> pong(JSC::ArrayBufferView&);
     ExceptionOr<void> pong(JSBlob*);
 
-    ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason);
+    ExceptionOr<void> close(std::optional<unsigned short> code, const String& reason, bool allowEndpointCodes = false);
     ExceptionOr<void> terminate();
 
     void setProtocol(const String& protocol);

@@ -761,7 +761,11 @@ static inline JSC::EncodedJSValue jsWebSocketPrototypeFunction_closeBody(JSC::JS
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto reason = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(WTF::move(code), WTF::move(reason)); })));
+    // Non-standard third argument: when truthy, validate the code against the
+    // RFC 6455 endpoint set instead of the WHATWG API set. Only the `ws` shim
+    // passes it, so npm `ws` clients can still close with 1001-1014.
+    bool allowEndpointCodes = callFrame->argument(2).toBoolean(lexicalGlobalObject);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.close(WTF::move(code), WTF::move(reason), allowEndpointCodes); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWebSocketPrototypeFunction_close, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

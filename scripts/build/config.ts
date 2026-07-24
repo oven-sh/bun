@@ -937,7 +937,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   assert(!baseline || x64, "baseline=true requires arch=x64 (baseline disables AVX which is x64-only)");
   assert(!valgrind || linux, "valgrind=true requires os=linux");
   assert(!(asan && valgrind), "Cannot enable both asan and valgrind simultaneously");
-  assert(!(asan && windows && arm64), "asan=true on windows requires arch=x64 (LLVM ships no Windows ARM64 ASAN runtime; no -asan prebuilt exists)");
+  assert(
+    !(asan && windows && arm64),
+    "asan=true on windows requires arch=x64 (LLVM ships no Windows ARM64 ASAN runtime; no -asan prebuilt exists)",
+  );
   assert(os !== "linux" || abi !== undefined, "Linux builds require an abi (gnu, musl, or android)");
 
   // ─── Cross-compilation (Android) ───

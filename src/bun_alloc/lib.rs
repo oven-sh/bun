@@ -508,7 +508,11 @@ mod win_crt {
     unsafe extern "C" {
         pub(crate) fn _msize(ptr: *mut c_void) -> usize;
         pub(crate) fn _aligned_malloc(size: usize, alignment: usize) -> *mut c_void;
-        pub(crate) fn _aligned_realloc(ptr: *mut c_void, size: usize, alignment: usize) -> *mut c_void;
+        pub(crate) fn _aligned_realloc(
+            ptr: *mut c_void,
+            size: usize,
+            alignment: usize,
+        ) -> *mut c_void;
         pub(crate) fn _aligned_free(ptr: *mut c_void);
         pub(crate) fn _aligned_msize(ptr: *mut c_void, alignment: usize, offset: usize) -> usize;
     }

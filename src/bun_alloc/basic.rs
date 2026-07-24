@@ -26,7 +26,12 @@ pub(crate) unsafe fn mi_free_checked(ptr: *mut c_void, size: usize, align: usize
     }
 }
 
-pub(crate) fn default_allocator_free(_: *mut c_void, buf: &mut [u8], alignment: Alignment, _: usize) {
+pub(crate) fn default_allocator_free(
+    _: *mut c_void,
+    buf: &mut [u8],
+    alignment: Alignment,
+    _: usize,
+) {
     // SAFETY: Allocator vtable invariant — `buf` was allocated by the default
     // allocator with this alignment (see `MimallocAllocator::aligned_alloc`).
     unsafe { default_alloc::free_aligned(buf.as_mut_ptr().cast(), alignment.to_byte_units()) }
@@ -43,7 +48,8 @@ impl MimallocAllocator {
             if !ptr.is_null() {
                 // SAFETY: ptr is non-null and was just returned by the default
                 // allocator with this alignment.
-                let usable = unsafe { default_alloc::usable_size_aligned(ptr, alignment.to_byte_units()) };
+                let usable =
+                    unsafe { default_alloc::usable_size_aligned(ptr, alignment.to_byte_units()) };
                 if usable < len && !ptr.is_null() {
                     panic!(
                         "default allocator: allocated size is too small: {} < {}",
@@ -124,7 +130,8 @@ impl ZAllocator {
             if !ptr.is_null() {
                 // SAFETY: ptr is non-null and was just returned by the default
                 // allocator with this alignment.
-                let usable = unsafe { default_alloc::usable_size_aligned(ptr, alignment.to_byte_units()) };
+                let usable =
+                    unsafe { default_alloc::usable_size_aligned(ptr, alignment.to_byte_units()) };
                 if usable < len {
                     panic!(
                         "default allocator: allocated size is too small: {} < {}",

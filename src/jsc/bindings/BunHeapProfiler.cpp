@@ -1,6 +1,9 @@
 #include "root.h"
 #include "BunHeapProfiler.h"
 #include "headers-handwritten.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>

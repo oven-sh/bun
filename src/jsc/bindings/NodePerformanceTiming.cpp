@@ -1,6 +1,9 @@
 #include "root.h"
 #include "NodePerformanceTiming.h"
 #include "ZigGlobalObject.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ThrowScope.h>
 
 // Milliseconds since `performance.timeOrigin`, or -1 when the milestone has
 // not been reached. Defined in src/jsc/virtual_machine_exports.rs.

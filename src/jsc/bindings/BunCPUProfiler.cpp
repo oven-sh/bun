@@ -3,6 +3,9 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
+#include <JavaScriptCore/CallFrame.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>

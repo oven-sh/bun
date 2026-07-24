@@ -238,9 +238,8 @@ function getDefaultHeapSnapshotPath() {
 // node's getHeapSnapshotOptions (lib/internal/heap_utils.js). The two flags
 // only change what V8 puts in the snapshot; Bun's generator has no equivalent
 // switches, so they are validated and then ignored.
-function validateHeapSnapshotOptions(options) {
-  validateObject(options ?? kEmptyObject, "options");
-  if (options == null) return;
+function validateHeapSnapshotOptions(options = kEmptyObject) {
+  validateObject(options, "options");
   const { exposeInternals = false, exposeNumericValues = false } = options;
   validateBoolean(exposeInternals, "options.exposeInternals");
   validateBoolean(exposeNumericValues, "options.exposeNumericValues");

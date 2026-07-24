@@ -725,16 +725,26 @@ it("chrome: click(selector) waits for animation to stop", async () => {
     html(`
         <style>
           @keyframes slide { from { left: 0; } to { left: 100px; } }
-          #mover { position: fixed; top: 50px; width: 60px; height: 60px;
-                   animation: slide 80ms linear forwards; }
+          #mover { position: fixed; top: 50px; left: 0; width: 60px; height: 60px; }
         </style>
-        <button id=mover onclick="window.__hit=this.getBoundingClientRect().left">mv</button>
+        <body style="margin:0" onclick="(window.__x ||= []).push(event.clientX)">
+          <div id=mover></div>
+        </body>
       `),
   );
-  // Stable-for-2-frames check — the click lands after the animation stops.
-  await view.click("#mover");
-  const left = Number(await view.evaluate("String(__hit)"));
-  expect(left).toBe(100);
+  // Restart the animation immediately before each click(): the element reads
+  // left=0 both before the next render (no effect yet) and at t=0 of the
+  // animation, so a sync-then-rAF stability pair would match and click at
+  // the from-position. The loop covers frame-scheduling variance.
+  for (let i = 0; i < 5; i++) {
+    await view.evaluate(
+      `(m => { m.style.animation = 'none'; void m.offsetHeight; m.style.animation = 'slide 100ms linear forwards'; })(document.getElementById('mover'))`,
+    );
+    await view.click("#mover");
+  }
+  // The animation ends at left=100; the element is 60px wide, so every click
+  // lands at clientX=130 once the slide has settled.
+  expect(await view.evaluate("__x")).toEqual(Array(5).fill(130));
 });
 
 // --- scrollTo variants -----------------------------------------------------

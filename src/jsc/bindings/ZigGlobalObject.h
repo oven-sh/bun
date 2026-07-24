@@ -432,6 +432,11 @@ public:
     }
 
     bool asyncHooksNeedsCleanup = false;
+    // Number of enabled node:async_hooks hooks on this VM, published by
+    // src/js/internal/async_hooks.ts. Native resource constructors that can emit
+    // `init` (MessageChannel) read it as a gate, so the common case of no hooks
+    // costs a single load. Per-VM on purpose: workers have their own hooks.
+    unsigned asyncHooksActiveCount = 0;
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
 

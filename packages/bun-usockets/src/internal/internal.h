@@ -175,6 +175,13 @@ void us_internal_loop_data_free(us_loop_r loop);
 void us_internal_loop_pre(us_loop_r loop);
 void us_internal_loop_post(us_loop_r loop);
 
+/* node:quic loop driver (node_quic_shim.c): per-turn engine pass. */
+struct us_nq_driver_s;
+void us_nq_loop_flush_if_pending(struct us_loop_t *loop);
+void us_nq_loop_drain(struct us_loop_t *loop);
+void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d, void *owner);
+void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d);
+
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
                                                    int fallthrough,

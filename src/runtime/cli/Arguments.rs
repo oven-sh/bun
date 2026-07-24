@@ -1099,6 +1099,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // builds. Debug builds always allow them.
             bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                 .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_resolve_builtins::set_expose_internals_enabled(true);
         }
 
         if let Some(depth_str) = args.option(b"--console-depth") {

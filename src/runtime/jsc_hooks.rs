@@ -3671,6 +3671,20 @@ unsafe fn fetch_builtin_module(
         };
     }
 
+    if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
+        let resolved = ResolvedSource {
+            source_code: bun_core::String::empty(),
+            specifier: *specifier,
+            source_url: bun_core::String::clone_utf8(&name),
+            tag,
+            source_code_needs_deref: false,
+            ..ResolvedSource::default()
+        };
+        // SAFETY: per fn contract — `out` is a valid out-param.
+        unsafe { *out = ErrorableResolvedSource::ok(resolved) };
+        return FetchBuiltinResult::Found;
+    }
+
     // ── `macro:` namespace ──────────────────────────────────────────────
     // `vm.macro_entry_points` values are
     // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
@@ -4896,6 +4910,11 @@ unsafe fn _resolve<'a>(
         return Ok(());
     }
 
+    if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
+        *ret_path = specifier;
+        return Ok(());
+    }
+
     // `[eval]` / `[stdin]` virtual sources.
     // SAFETY: `vm` is the live per-thread VM.
     if unsafe { &*vm }.module_loader.eval_source.is_some()
@@ -5139,6 +5158,12 @@ unsafe fn resolve_hook(
         };
         // SAFETY: per fn contract.
         unsafe { *res = ErrorableString::ok(path) };
+        return true;
+    }
+
+    if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+        // SAFETY: per fn contract.
+        unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };
         return true;
     }
 

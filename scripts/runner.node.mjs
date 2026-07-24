@@ -79,6 +79,13 @@ const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bi
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
+const resolutionGatingFlags = new Set([
+  "--expose-internals",
+  "--experimental-quic",
+  "--experimental-stream-iter",
+  "--no-warnings",
+]);
+
 function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-dns")) return 60_000;
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
@@ -754,6 +761,10 @@ async function runTests() {
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
         const testContent = readFileSync(absoluteTestPath, "utf-8");
+        const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
+        const testFlags = flagsMatch
+          ? flagsMatch[1].split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]))
+          : [];
         let runWithBunTest = title.includes("needs-test") || testContent.includes("node:test");
         // don't wanna have a filter for includes("bun:test") but these need our mocks
         runWithBunTest ||= title === "test/js/node/test/parallel/test-fs-append-file-flush.js";
@@ -790,7 +801,12 @@ async function runTests() {
           async index => {
             const { ok, error, stdout, crashes } = await spawnBun(execPath, {
               cwd: cwd,
-              args: [subcommand, "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"), absoluteTestPath],
+              args: [
+                subcommand,
+                "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
+                ...(subcommand === "run" ? testFlags : []),
+                absoluteTestPath,
+              ],
               timeout: getNodeParallelTestTimeout(title),
               env: {
                 ...env,

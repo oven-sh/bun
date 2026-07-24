@@ -55,6 +55,8 @@ function internalBinding(name: string) {
           TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
         },
       };
+    case "quic":
+      return require("internal/quic/binding");
     // libuv error codes, the UDP handle wrap, and the minimal TCP wrap the
     // vendored dgram tests consume.
     case "uv":

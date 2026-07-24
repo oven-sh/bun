@@ -1284,6 +1284,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_lsquic_sys"
+version = "0.0.0"
+
+[[package]]
 name = "bun_md"
 version = "0.0.0"
 dependencies = [
@@ -1665,6 +1669,7 @@ dependencies = [
  "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
+ "bun_lsquic_sys",
  "bun_md",
  "bun_opaque",
  "bun_options_types",

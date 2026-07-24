@@ -1150,6 +1150,9 @@ impl<'a> Resolver<'a> {
                         rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
                     },
                 )
+                // Node's `--expose-internals`.
+                || (import_path.starts_with(b"internal/")
+                    && ::bun_resolve_builtins::expose_internals_enabled())
             {
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {

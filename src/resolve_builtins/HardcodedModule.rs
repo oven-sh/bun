@@ -143,6 +143,8 @@ pub enum HardcodedModule {
     NodeInspectorPromises,
     #[strum(serialize = "node:http2")]
     NodeHttp2,
+    #[strum(serialize = "node:quic")]
+    NodeQuic,
     #[strum(serialize = "node:diagnostics_channel")]
     NodeDiagnosticsChannel,
     #[strum(serialize = "node:dgram")]
@@ -220,6 +222,7 @@ bun_core::comptime_string_map! {
         b"node:fs/promises" => HardcodedModule::NodeFsPromises,
         b"node:http" => HardcodedModule::NodeHttp,
         b"node:http2" => HardcodedModule::NodeHttp2,
+        b"node:quic" => HardcodedModule::NodeQuic,
         b"node:https" => HardcodedModule::NodeHttps,
         b"node:inspector" => HardcodedModule::NodeInspector,
         b"node:inspector/promises" => HardcodedModule::NodeInspectorPromises,
@@ -447,6 +450,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     // New Node.js builtins only resolve from the prefixed one.
     node_entry_only_prefix!("node:sqlite"),
     node_entry_only_prefix!("node:test"),
+    node_entry_only_prefix!("node:quic"),
     //
     node_entry!("assert"),
     node_entry!("assert/strict"),
@@ -805,6 +809,17 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_EXTRA_ALIAS_KVS,
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
+
+static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Node's `--expose-internals`.
+pub fn expose_internals_enabled() -> bool {
+    EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_expose_internals_enabled(enabled: bool) {
+    EXPOSE_INTERNALS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
 
 static STREAM_ITER_ENABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);

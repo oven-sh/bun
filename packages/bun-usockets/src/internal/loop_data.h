@@ -34,6 +34,7 @@ typedef void* zig_mutex_t;
 
 // IMPORTANT: When changing this, don't forget to update the Rust mirror in src/uws_sys/InternalLoopData.rs as well!
 struct us_quic_socket_context_s;
+struct us_nq_driver_s;
 
 struct us_internal_loop_data_t {
 #ifdef LIBUS_USE_LIBUV
@@ -65,6 +66,11 @@ struct us_internal_loop_data_t {
      * the gap between loop_post and getTimeout is sub-µs so storing the
      * relative diff is precise enough. */
     long long quic_next_tick_us;
+    /* node:quic endpoints on this loop. us_nq_loop_flush_if_pending walks it
+     * from loop_pre/loop_post and the microtask drain, running each endpoint's
+     * full process pass only when it flagged pending work -- one engine pass
+     * per loop turn instead of one per native call. */
+    struct us_nq_driver_s *nq_head;
 #ifdef LIBUS_USE_LIBUV
     /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
      * for lsquic's time-driven state. POSIX folds the deadline into the

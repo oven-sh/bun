@@ -396,7 +396,7 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<i64>(addr) };
-        Ok(JSValue::from_int64_no_truncate(global_object, value))
+        JSValue::from_int64_no_truncate(global_object, value)
     }
     pub(crate) fn u64(
         global_object: &JSGlobalObject,
@@ -406,7 +406,7 @@ pub mod reader {
         let addr = addr_from_args(global_object, arguments)?;
         // SAFETY: see `read_unaligned_at`.
         let value = unsafe { read_unaligned_at::<u64>(addr) };
-        Ok(JSValue::from_uint64_no_truncate(global_object, value))
+        JSValue::from_uint64_no_truncate(global_object, value)
     }
 
     // The DOMJIT fast-path (no type checks) readers — called directly from

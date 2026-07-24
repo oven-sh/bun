@@ -38,8 +38,8 @@ pub(crate) trait HashAlgorithm {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hasher impls — one unit struct per algorithm.
-// Each must produce output **bit-identical** to previous Bun releases
-// (pinned by the vector suite in test/js/bun/util/hash.test.js).
+// Each must produce output **bit-identical** to its reference algorithm,
+// pinned by the vector suite in test/js/bun/util/hash.test.js.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct Wyhash;
@@ -110,13 +110,9 @@ pub(crate) struct XxHash3;
 impl HashAlgorithm for XxHash3 {
     type Output = u64;
     fn hash(seed: u64, input: &[u8]) -> u64 {
-        // Runtime-dispatched SIMD xxHash3 (Highway); see
-        // src/jsc/bindings/xxhash3.cpp. Output is bit-identical to the xxHash
-        // reference, pinned by the vector suite in test/js/bun/util/hash.test.js.
-        //
-        // The seed is truncated to u32 before widening back to XxHash3's
-        // native u64 — preserve that truncation for output stability.
-        bun_highway::xxhash3_64(seed as u32 as u64, input)
+        // XXH3_64bits_withSeed takes the full 64-bit seed; the kernel is the
+        // runtime-dispatched SIMD impl in src/jsc/bindings/xxhash3.cpp.
+        bun_hash::XxHash3::hash(seed, input)
     }
 }
 

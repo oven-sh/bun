@@ -1384,8 +1384,7 @@ impl VirtualMachine {
     /// The process keeps running — this is the pre-existing contract every
     /// Bun-native call site was written against (`Bun.serve`, `Bun.listen`,
     /// `Bun.spawn` ipc/onExit, `Bun.sql`/`Bun.redis` onclose, the shell,
-    /// `EventLoop::run_callback`, `reportError()`, `EventTarget` listener
-    /// dispatch, ...).
+    /// `EventLoop::run_callback`, `reportError()`, ...).
     pub fn uncaught_exception(
         &mut self,
         global_object: &JSGlobalObject,

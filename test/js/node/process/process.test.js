@@ -2119,16 +2119,17 @@ it("a Bun.listen error: handler that itself throws keeps the server alive", asyn
   expect(exitCode).toBe(1);
 });
 
-it("a throwing EventTarget listener does not hard-exit mid-dispatch", async () => {
-  // WebCore::reportException is called synchronously from inside
-  // innerInvokeEventListeners's per-listener loop; routing it to the fatal
-  // exit would process_exit before later listeners and code after
-  // dispatchEvent()/abort() run.
+it("a throwing EventTarget listener lets dispatch complete, then fatal-exits next tick", async () => {
+  // Node's EventTarget catches a listener throw and defers it via
+  // process.nextTick(() => { throw err }) so later listeners and code after
+  // dispatchEvent()/abort() run, then the process fatal-exits; a keep-alive
+  // report would leave the interval ticking forever.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
       "-e",
-      `const ac = new AbortController();
+      `setInterval(() => console.log("TICK"), 5000);
+       const ac = new AbortController();
        ac.signal.addEventListener("abort", () => { throw new Error("from-first"); });
        ac.signal.addEventListener("abort", () => console.log("SECOND-LISTENER"));
        ac.abort();
@@ -2140,7 +2141,33 @@ it("a throwing EventTarget listener does not hard-exit mid-dispatch", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim().split(/\r?\n/)).toEqual(["SECOND-LISTENER", "AFTER-ABORT"]);
+  expect(stdout).not.toContain("TICK");
   expect(stderr).toContain("from-first");
+  expect(exitCode).toBe(1);
+});
+
+it("a rejecting async EventTarget listener fatal-exits next tick", async () => {
+  // The async-listener rejection is already deferred to nextTick
+  // (jsFunctionEmitUncaughtExceptionNextTick); that nextTick takes the fatal
+  // path so pending work never runs.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `setInterval(() => console.log("TICK"), 5000);
+       const t = new EventTarget();
+       t.addEventListener("x", async () => { throw new Error("from-async"); });
+       t.dispatchEvent(new Event("x"));
+       console.log("AFTER-DISPATCH");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("AFTER-DISPATCH");
+  expect(stdout).not.toContain("TICK");
+  expect(stderr).toContain("from-async");
   expect(exitCode).toBe(1);
 });
 

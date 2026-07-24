@@ -2379,12 +2379,23 @@ impl<'a> PackageInstall<'a> {
         manager: &mut PackageManager,
         package_id: PackageID,
     ) -> bool {
-        let exists =
-            sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
-        if exists {
+        // The `_patch_hash=` folder existing is not enough: it must carry the
+        // `.bun-tag-<hash>` marker proving the patch was applied, else a warm
+        // cache that captured unpatched content would be installed as-is.
+        let applied = sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath)
+            .unwrap_or(false)
+            && match self.patch {
+                Some(patch) => crate::patched_cache_folder_has_tag(
+                    self.cache_dir,
+                    self.cache_dir_subpath,
+                    patch.contents_hash,
+                ),
+                None => true,
+            };
+        if applied {
             manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
         }
-        !exists
+        !applied
     }
 
     pub fn install(

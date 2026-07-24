@@ -1749,11 +1749,11 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
         break;
     }
     case Bun::WebSocketErrorCode::missing_client_protocol: {
-        didReceiveClose(CleanStatus::Clean, 1002, "Missing client protocol"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Server sent no subprotocol"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::mismatch_client_protocol: {
-        didReceiveClose(CleanStatus::Clean, 1002, "Mismatch client protocol"_s);
+        didReceiveClose(CleanStatus::NotClean, 1002, "Mismatch client protocol"_s, true);
         break;
     }
     case Bun::WebSocketErrorCode::timeout: {
@@ -1860,6 +1860,10 @@ void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
     }
     case Bun::WebSocketErrorCode::proxy_tunnel_failed: {
         didReceiveClose(CleanStatus::NotClean, 1006, "Proxy tunnel failed"_s, true);
+        break;
+    }
+    case Bun::WebSocketErrorCode::invalid_extensions_header: {
+        didReceiveClose(CleanStatus::NotClean, 1002, "Invalid Sec-WebSocket-Extensions header"_s, true);
         break;
     }
     }

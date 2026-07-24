@@ -1,5 +1,5 @@
 import { serve } from "bun";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import crypto from "node:crypto";
 import net from "node:net";
 import { deflateRawSync, constants as zc } from "node:zlib";
@@ -570,3 +570,153 @@ test.each([false, true])(
     }
   },
 );
+
+// RFC 6455 section 4.1 requires the client to fail the connection when the
+// server indicates an extension that was not offered, and RFC 7692 section
+// 8.1 requires the same for a permessage-deflate response with an unknown
+// parameter or an invalid parameter value. Use a raw TCP server so the
+// Sec-WebSocket-Extensions response header is byte-exact.
+describe("Sec-WebSocket-Extensions response validation", () => {
+  type Outcome = { opened: boolean; message: string | null; extensions: string; code: number; reason: string };
+
+  // Completes a correct handshake, optionally answering with the given
+  // Sec-WebSocket-Extensions value, then sends `frame`. Resolves once the
+  // client either receives the frame or observes the connection close.
+  async function negotiate(extensionsValue: string | null, frame: Buffer): Promise<Outcome> {
+    let request = Buffer.alloc(0);
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        error() {},
+        data(socket, data) {
+          request = Buffer.concat([request, data]);
+          const end = request.indexOf("\r\n\r\n");
+          if (end === -1) return;
+          const key = /Sec-WebSocket-Key: *([A-Za-z0-9+/=]+)/i.exec(request.subarray(0, end).toString())?.[1];
+          if (!key) {
+            socket.end();
+            return;
+          }
+          const hasher = new Bun.CryptoHasher("sha1");
+          hasher.update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+          let response =
+            "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${hasher.digest("base64")}\r\n`;
+          if (extensionsValue !== null) {
+            response += `Sec-WebSocket-Extensions: ${extensionsValue}\r\n`;
+          }
+          socket.write(response + "\r\n");
+          socket.write(frame);
+          socket.flush();
+        },
+      },
+    });
+
+    const client = new WebSocket(`ws://127.0.0.1:${server.port}/`);
+    const { promise, resolve } = Promise.withResolvers<Outcome>();
+    let opened = false;
+    client.onopen = () => {
+      opened = true;
+    };
+    client.onerror = () => {};
+    client.onmessage = event => {
+      resolve({ opened, message: event.data as string, extensions: client.extensions, code: 0, reason: "" });
+    };
+    client.onclose = event => {
+      resolve({ opened, message: null, extensions: client.extensions, code: event.code, reason: event.reason });
+    };
+    try {
+      return await promise;
+    } finally {
+      client.close();
+    }
+  }
+
+  // An unmasked, uncompressed text frame: FIN + text opcode, 5-byte payload.
+  const helloFrame = Buffer.from([0x81, 0x05, ...Buffer.from("hello")]);
+
+  const invalid = [
+    // The client only ever offers permessage-deflate.
+    "x-never-offered",
+    "permessage-deflate, x-never-offered",
+    "x-never-offered, permessage-deflate",
+    "permessage-deflate, permessage-deflate",
+    // Parameters that RFC 7692 does not define for use in a response.
+    "permessage-deflate; bogus_param=1",
+    "permessage-deflate; threshold=1024",
+    // window bits must be a decimal integer between 8 and 15, and a response
+    // (unlike an offer) must always carry the value.
+    "permessage-deflate; server_max_window_bits=20",
+    "permessage-deflate; server_max_window_bits=7",
+    "permessage-deflate; server_max_window_bits=potato",
+    "permessage-deflate; server_max_window_bits",
+    "permessage-deflate; server_max_window_bits=",
+    // The value's grammar is `1*DIGIT` without leading zeroes: no sign,
+    // no digit separators, no leading zero.
+    "permessage-deflate; server_max_window_bits=+10",
+    "permessage-deflate; server_max_window_bits=1_0",
+    "permessage-deflate; server_max_window_bits=08",
+    "permessage-deflate; client_max_window_bits=16",
+    "permessage-deflate; client_max_window_bits",
+    // The no_context_takeover parameters never carry a value.
+    "permessage-deflate; server_no_context_takeover=1",
+    "permessage-deflate; client_no_context_takeover=true",
+    // A parameter must not be repeated within an element.
+    "permessage-deflate; server_max_window_bits=10; server_max_window_bits=11",
+    "permessage-deflate; client_no_context_takeover; client_no_context_takeover",
+  ];
+
+  test.each(invalid)("fails the connection for %j", async value => {
+    expect(await negotiate(value, helloFrame)).toEqual({
+      opened: false,
+      message: null,
+      extensions: "",
+      code: 1002,
+      reason: "Invalid Sec-WebSocket-Extensions header",
+    });
+  });
+
+  const valid: [header: string | null, extensions: string][] = [
+    [null, ""],
+    ["permessage-deflate", "permessage-deflate"],
+    [
+      "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+      "permessage-deflate; server_no_context_takeover; client_no_context_takeover",
+    ],
+    [
+      "permessage-deflate; server_max_window_bits=10; client_max_window_bits=12",
+      "permessage-deflate; server_max_window_bits=10; client_max_window_bits=12",
+    ],
+    // A quoted parameter value is legal (RFC 6455 section 9.1) and 15 is the default.
+    [
+      'permessage-deflate; server_max_window_bits="9"; client_max_window_bits=15',
+      "permessage-deflate; server_max_window_bits=9",
+    ],
+  ];
+
+  test.each(valid)("accepts %j", async (value, extensions) => {
+    expect(await negotiate(value, helloFrame)).toEqual({
+      opened: true,
+      message: "hello",
+      extensions,
+      code: 0,
+      reason: "",
+    });
+  });
+
+  test("still inflates frames after a validated negotiation", async () => {
+    // RSV1 + FIN + text opcode, with a raw-deflate payload per RFC 7692.
+    const compressed = deflateRawSync("hello");
+    const frame = Buffer.concat([Buffer.from([0xc1, compressed.length]), compressed]);
+    expect(await negotiate("permessage-deflate; server_no_context_takeover", frame)).toEqual({
+      opened: true,
+      message: "hello",
+      extensions: "permessage-deflate; server_no_context_takeover",
+      code: 0,
+      reason: "",
+    });
+  });
+});

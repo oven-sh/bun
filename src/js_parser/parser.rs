@@ -190,6 +190,11 @@ pub mod Runtime {
         /// Standalone usage of this flag / usage of this flag
         /// without '--format' set is an unsupported use case.
         pub hot_module_reloading: bool,
+        /// Set by the runtime transpiler when running under `bun --hot`.
+        /// When true, `import.meta.hot` is left as a runtime property access
+        /// instead of being folded to `undefined`, so the runtime can expose
+        /// its own `import.meta.hot` object.
+        pub runtime_hot: bool,
         /// Control how the parser handles server components and server functions.
         pub server_components: ServerComponentsMode,
 
@@ -283,6 +288,7 @@ pub mod Runtime {
                 react_compiler: ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
                 hot_module_reloading: false,
+                runtime_hot: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,
                 top_level_await: false,
@@ -362,7 +368,7 @@ pub mod Runtime {
         pub fn hash_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
             debug_assert!(self.runtime_transpiler_cache.is_some());
 
-            let bools: [bool; 17] = [
+            let bools: [bool; 18] = [
                 self.top_level_await,
                 self.auto_import_jsx,
                 self.allow_runtime,
@@ -380,6 +386,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
+                self.runtime_hot,
                 // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 

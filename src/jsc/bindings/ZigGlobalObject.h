@@ -87,6 +87,7 @@ extern "C" void Bun__reportError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 extern "C" void Bun__reportUnhandledError(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
+extern "C" bool Bun__VirtualMachine__isHotReloadMode(void* /* BunVM */);
 
 #if OS(WINDOWS)
 #include <uv.h>
@@ -532,6 +533,10 @@ public:
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_processEnvObject)                                      \
                                                                                                              \
+    /* import.meta.hot for `bun --hot`: per-module data + dispose callbacks. */                              \
+    V(public, WriteBarrier<JSC::JSMap>, m_importMetaHotDataMap)                                              \
+    V(public, WriteBarrier<JSC::JSArray>, m_importMetaHotDisposeList)                                        \
+                                                                                                             \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSS3FileStructure)                                    \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_S3ErrorStructure)                                     \
                                                                                                              \
@@ -731,6 +736,9 @@ public:
     size_t reloadCount = 0;
 
     void reload();
+    JSC::JSMap* importMetaHotDataMap();
+    JSC::JSArray* importMetaHotDisposeList();
+    void runImportMetaHotDisposeCallbacks(JSC::VM&);
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }

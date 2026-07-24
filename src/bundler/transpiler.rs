@@ -953,6 +953,7 @@ pub struct ParseOptions<'a, 'b> {
 
     pub dont_bundle_twice: bool,
     pub allow_commonjs: bool,
+    pub runtime_hot: bool,
     /// `"type"` from `package.json`. Used to make sure the parser defaults
     /// to CommonJS or ESM based on what the package.json says, when it
     /// doesn't otherwise know from reading the source code.
@@ -1590,6 +1591,7 @@ impl<'a> Transpiler<'a> {
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
 
                 opts.features.commonjs_at_runtime = this_parse.allow_commonjs;
+                opts.features.runtime_hot = this_parse.runtime_hot;
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;
@@ -2954,6 +2956,7 @@ impl<'a> Transpiler<'a> {
                     remove_cjs_module_wrapper: false,
                     dont_bundle_twice: false,
                     allow_commonjs: false,
+                    runtime_hot: false,
                     module_type: options::ModuleType::Unknown,
                     runtime_transpiler_cache: None,
                     keep_json_and_toml_as_one_statement: false,

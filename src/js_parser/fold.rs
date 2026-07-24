@@ -497,16 +497,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if name == b"hot" {
-                        return Some(Expr {
-                            data: js_ast::ExprData::ESpecial(
-                                if p.options.features.hot_module_reloading {
-                                    E::Special::HotEnabled
-                                } else {
-                                    E::Special::HotDisabled
-                                },
-                            ),
-                            loc,
-                        });
+                        if p.options.features.hot_module_reloading {
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::HotEnabled),
+                                loc,
+                            });
+                        }
+                        // Under `bun --hot`, leave this as a runtime property
+                        // access; everywhere else (bun run/build/Transpiler)
+                        // fold to `undefined` so `.dispose(..)` etc. DCE away.
+                        if !p.options.features.runtime_hot {
+                            return Some(Expr {
+                                data: js_ast::ExprData::ESpecial(E::Special::HotDisabled),
+                                loc,
+                            });
+                        }
                     }
 
                     // Inline import.meta properties for Bake

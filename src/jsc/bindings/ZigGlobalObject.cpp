@@ -3524,9 +3524,96 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
+JSC::JSMap* GlobalObject::importMetaHotDataMap()
+{
+    auto* map = m_importMetaHotDataMap.get();
+    if (!map) [[unlikely]] {
+        map = JSC::JSMap::create(vm(), mapStructure());
+        m_importMetaHotDataMap.set(vm(), this, map);
+    }
+    return map;
+}
+
+JSC::JSArray* GlobalObject::importMetaHotDisposeList()
+{
+    auto* list = m_importMetaHotDisposeList.get();
+    if (!list) [[unlikely]] {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm());
+        list = JSC::constructEmptyArray(this, nullptr, 0);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            return nullptr;
+        }
+        m_importMetaHotDisposeList.set(vm(), this, list);
+    }
+    return list;
+}
+
+void GlobalObject::runImportMetaHotDisposeCallbacks(JSC::VM& vm)
+{
+    auto* list = m_importMetaHotDisposeList.get();
+    if (!list)
+        return;
+
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    // Snapshot the entries into a rooted buffer before invoking anything,
+    // then drop the global reference so callbacks registering new dispose
+    // handlers (for the next generation) don't run in this pass.
+    JSC::MarkedArgumentBuffer entries;
+    unsigned length = list->getArrayLength();
+    for (unsigned i = 0; i < length; i++) {
+        JSValue entryVal = list->getIndex(this, i);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            continue;
+        }
+        entries.append(entryVal);
+    }
+    if (entries.hasOverflowed()) [[unlikely]] {
+        m_importMetaHotDisposeList.clear();
+        return;
+    }
+    m_importMetaHotDisposeList.clear();
+
+    for (unsigned i = 0; i < entries.size(); i++) {
+        auto* entry = dynamicDowncast<JSC::JSArray>(entries.at(i));
+        if (!entry)
+            continue;
+        JSValue callback = entry->getIndex(this, 0);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            continue;
+        }
+        JSValue data = entry->getIndex(this, 1);
+        if (scope.exception()) [[unlikely]] {
+            scope.clearException();
+            data = jsUndefined();
+        }
+        auto callData = JSC::getCallData(callback);
+        if (callData.type == JSC::CallData::Type::None)
+            continue;
+        JSC::MarkedArgumentBuffer args;
+        args.append(data);
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        JSC::profiledCall(this, ProfilingReason::API, callback, callData, jsUndefined(), args, returnedException);
+        if (auto* ex = returnedException.get()) {
+            if (vm.isTerminationException(ex)) [[unlikely]]
+                return;
+            Bun__reportUnhandledError(this, JSValue::encode(JSValue(ex)));
+        }
+        if (auto* ex = scope.exception()) [[unlikely]] {
+            if (vm.isTerminationException(ex)) [[unlikely]]
+                return;
+            (void)scope.tryClearException();
+        }
+    }
+}
+
 void GlobalObject::reload()
 {
     auto& vm = this->vm();
+    runImportMetaHotDisposeCallbacks(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         auto* moduleLoader = this->moduleLoader();

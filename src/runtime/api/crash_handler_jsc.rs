@@ -32,6 +32,8 @@ pub mod js_bindings {
                 "raiseIgnoringPanicHandler",
                 __jsc_host_js_raise_ignoring_panic_handler,
             ),
+            ("jitPoolRange", __jsc_host_js_jit_pool_range),
+            ("stackLineObject", __jsc_host_js_stack_line_object),
         ];
         let obj = JSValue::create_empty_object(global, ENTRIES.len());
         for &(name, func) in ENTRIES {
@@ -205,6 +207,35 @@ pub mod js_bindings {
     ) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         Global::raise_ignoring_panic_handler(bun_core::SignalCode::SIGSEGV);
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_jit_pool_range(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let (start, end) = crash_handler::cli_state::jit_pool_range();
+        let arr = JSValue::create_empty_array(global, 2)?;
+        arr.put_index(global, 0, JSValue::from_uint64_no_truncate(global, start as u64))?;
+        arr.put_index(global, 1, JSValue::from_uint64_no_truncate(global, end as u64))?;
+        Ok(arr)
+    }
+
+    /// Returns what the crash-report encoder would record for an address:
+    /// `undefined` → unknown (encoded as `_`), `null` → bun's own image,
+    /// `"<name>"` → named object (system DLL, `"JIT"`, …).
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_stack_line_object(
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let [addr] = frame.arguments_as_array::<1>();
+        let addr = addr.to_uint64_no_truncate() as usize;
+        Ok(match crash_handler::stack_line_object_for_testing(addr) {
+            None => JSValue::UNDEFINED,
+            Some(None) => JSValue::NULL,
+            Some(Some(name)) => BunString::clone_utf8(&name).transfer_to_js(global)?,
+        })
     }
 
     #[bun_jsc::host_fn]

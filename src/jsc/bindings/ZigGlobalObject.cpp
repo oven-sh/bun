@@ -278,8 +278,9 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
-#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 #include <JavaScriptCore/ExecutableAllocator.h>
+extern "C" void Bun__setJITPoolRange(uintptr_t start, uintptr_t end);
+#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
 extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
 #endif
 
@@ -363,6 +364,14 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
 
+#if ENABLE(JIT)
+        // Mirror g_jscConfig.{start,end}ExecutableMemory so the crash handler
+        // can tag JIT frames (the pool is a bare VirtualAlloc/mmap, not a
+        // loaded image, so module lookup cannot classify it).
+        Bun__setJITPoolRange(
+            JSC::startOfFixedExecutableMemoryPool<uintptr_t>(),
+            JSC::endOfFixedExecutableMemoryPool<uintptr_t>());
+#endif
 #if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
         // JSC::initialize() registered unwind info + a language-specific SEH
         // handler for the JIT pool. Route that handler to the crash reporter

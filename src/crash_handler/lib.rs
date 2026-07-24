@@ -526,11 +526,16 @@ mod draft {
     // that `bun_runtime` populates at startup (the full `Cli` stays in
     // `bun_runtime::cli`, a higher-tier crate).
     pub mod cli_state {
-        use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+        use core::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
         static MAIN_THREAD_ID: AtomicU64 = AtomicU64::new(0);
         /// 0 = unset → encoded as `_` in the trace string.
         static CMD_CHAR: AtomicU8 = AtomicU8::new(0);
+        /// JSC's fixed executable-memory pool `[start, end)`. Written once from
+        /// C++ (`JSCInitialize`) after `JSC::initialize()`; zero = unset (JIT
+        /// disabled or not yet initialized).
+        static JIT_POOL_START: AtomicUsize = AtomicUsize::new(0);
+        static JIT_POOL_END: AtomicUsize = AtomicUsize::new(0);
 
         pub fn set_main_thread_id(id: u64) {
             MAIN_THREAD_ID.store(id, Ordering::Relaxed);
@@ -552,6 +557,30 @@ mod draft {
                 0 => None,
                 c => Some(c),
             }
+        }
+
+        pub(crate) fn set_jit_pool_range(start: usize, end: usize) {
+            JIT_POOL_START.store(start, Ordering::Relaxed);
+            JIT_POOL_END.store(end, Ordering::Relaxed);
+        }
+
+        pub fn jit_pool_range() -> (usize, usize) {
+            (
+                JIT_POOL_START.load(Ordering::Relaxed),
+                JIT_POOL_END.load(Ordering::Relaxed),
+            )
+        }
+
+        /// JSC's `isJITPC`: `g_jscConfig.startExecutableMemory <= pc <
+        /// g_jscConfig.endExecutableMemory`. Returns the offset into the pool
+        /// so the trace-string encoder has a stable (ASLR-independent) value.
+        pub(crate) fn jit_pool_offset(addr: usize) -> Option<usize> {
+            let start = JIT_POOL_START.load(Ordering::Relaxed);
+            if start == 0 {
+                return None;
+            }
+            let end = JIT_POOL_END.load(Ordering::Relaxed);
+            (start <= addr && addr < end).then(|| addr - start)
         }
     }
 
@@ -2210,6 +2239,15 @@ mod draft {
     #[unsafe(no_mangle)]
     pub(crate) static Bun__reported_memory_size: AtomicUsize = AtomicUsize::new(0);
 
+    /// Called from C++ `JSCInitialize` once `JSC::initialize()` has reserved
+    /// the fixed executable-memory pool; mirrors
+    /// `g_jscConfig.{start,end}ExecutableMemory` so `StackLine::from_address`
+    /// can tag JIT frames without linking against JSC.
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__setJITPoolRange(start: usize, end: usize) {
+        cli_state::set_jit_pool_range(start, end);
+    }
+
     pub fn print_metadata(writer: &mut impl Write) -> crate::Result<()> {
         #[cfg(debug_assertions)]
         {
@@ -2524,6 +2562,18 @@ mod draft {
     impl StackLine {
         /// `None` implies the trace is not known.
         pub(crate) fn from_address(addr: usize, name_bytes: &mut [u8]) -> Option<StackLine> {
+            // JSC's JIT pool (Baseline/DFG/FTL/Wasm/Yarr) is a single
+            // VirtualAlloc/mmap reservation, not a loaded image, so the
+            // per-platform module lookup below can never find it. Classify it
+            // here so the trace string records the frame (as a pool offset)
+            // instead of discarding the captured PC as `_`.
+            if let Some(offset) = cli_state::jit_pool_offset(addr) {
+                let _ = name_bytes;
+                return Some(StackLine {
+                    address: offset as i32,
+                    object: Some(Box::<[u8]>::from(&b"JIT"[..])),
+                });
+            }
             #[cfg(windows)]
             {
                 let module = bun_sys::windows::get_module_handle_from_address(addr)?;
@@ -2823,6 +2873,14 @@ mod draft {
             writer.write_all(b"/view")?;
         }
         Ok(())
+    }
+
+    /// `bun:internal-for-testing` hook: what module label would the
+    /// trace-string encoder give this address. `None` → encoded as `_`;
+    /// `Some(None)` → bun's own image; `Some(Some(name))` → named object.
+    pub fn stack_line_object_for_testing(addr: usize) -> Option<Option<Box<[u8]>>> {
+        let mut name_bytes: [u8; 1024] = [0; 1024];
+        StackLine::from_address(addr, &mut name_bytes).map(|l| l.object)
     }
 
     pub fn write_u64_as_two_vlqs(writer: &mut impl Write, addr: usize) -> crate::Result<()> {

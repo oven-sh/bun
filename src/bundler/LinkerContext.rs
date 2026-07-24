@@ -2504,10 +2504,9 @@ impl<'a> LinkerContext<'a> {
 
                         let source_index = p.query.index();
                         let parse_graph = self.parse_graph();
-                        let additional_files: &[AdditionalFile] = parse_graph
-                            .input_files
-                            .items_additional_files()[source_index as usize]
-                            .slice();
+                        let additional_files: &[AdditionalFile] =
+                            parse_graph.input_files.items_additional_files()[source_index as usize]
+                                .slice();
                         debug_assert!(!additional_files.is_empty());
                         match &additional_files[0] {
                             AdditionalFile::OutputFile(output_file_id) => {
@@ -2517,9 +2516,7 @@ impl<'a> LinkerContext<'a> {
                                 hash.write(bun_paths::resolve_path::relative_platform::<
                                     bun_paths::resolve_path::platform::Posix,
                                     false,
-                                >(
-                                    from_chunk_dir, path
-                                ));
+                                >(from_chunk_dir, path));
                             }
                             AdditionalFile::SourceIndex(_) => {}
                         }

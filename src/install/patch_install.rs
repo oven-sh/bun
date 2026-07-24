@@ -354,7 +354,7 @@ impl PatchTask {
                             manager,
                             // TODO: not just npm package
                             task_id,
-                            url,
+                            crate::network_task::intern_in_filename_store(url),
                             is_required,
                             dep_id,
                             &pkg_again,

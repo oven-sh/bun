@@ -39,6 +39,18 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
     FilenameStoreAppender(FileSystem::instance().filename_store())
 }
 
+/// Intern `bytes` into the global filename store (inline when it fits) and
+/// return the `StringOrTinyString` handle. Convenience for callers that need
+/// to release a lockfile/manifest borrow before a `&mut PackageManager` call.
+#[inline]
+pub(crate) fn intern_in_filename_store(bytes: &[u8]) -> bun_core::strings::StringOrTinyString {
+    bun_core::strings::StringOrTinyString::init_append_if_needed(
+        bytes,
+        &mut filename_store_appender(),
+    )
+    .expect("unreachable")
+}
+
 pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / leaked header content owned by
     // sibling fields, so the lifetime is erased to `'static`.

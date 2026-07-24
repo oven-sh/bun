@@ -205,7 +205,7 @@ pub fn enqueue_tarball_for_download(
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        url,
+        crate::network_task::intern_in_filename_store(url),
         is_required,
         dependency_id,
         &package,
@@ -406,7 +406,7 @@ pub fn enqueue_package_for_download(
     if let Some(task) = run_tasks::generate_network_task_for_tarball(
         this,
         task_id,
-        url,
+        crate::network_task::intern_in_filename_store(url),
         is_required,
         dependency_id,
         &package,
@@ -1327,7 +1327,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
                 this,
                 task_id,
-                &url,
+                crate::network_task::intern_in_filename_store(&url),
                 dependency.behavior.is_required(),
                 id,
                 &Package {
@@ -1528,20 +1528,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     this.task_batch.push(ThreadPool::Batch::from(task));
                 }
                 dependency::tarball::Uri::Remote(_) => {
-                    // Stage the URL in a stack buffer so the `this.lockfile`
-                    // borrow ends before the `&mut this` call;
-                    // `generate_network_task_for_tarball` interns it into the
-                    // filename store once.
-                    let mut url_buf = bun_paths::path_buffer_pool::get();
-                    let url_len = {
-                        let url = this.lockfile.str(&url_str);
-                        url_buf[..url.len()].copy_from_slice(url);
-                        url.len()
-                    };
+                    let url_tiny =
+                        crate::network_task::intern_in_filename_store(this.lockfile.str(&url_str));
                     if let Some(network_task) = run_tasks::generate_network_task_for_tarball(
                         this,
                         task_id,
-                        &url_buf[..url_len],
+                        url_tiny,
                         dependency.behavior.is_required(),
                         id,
                         &Package {
@@ -2099,20 +2091,12 @@ fn get_or_put_resolved_package_with_find_result(
                     );
                     debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
-                    // Stage the URL in a pooled stack buffer so the
-                    // `&this.manifests` borrow ends before the `&mut this`
-                    // call; `generate_network_task_for_tarball` interns it
-                    // into the filename store.
-                    let mut url_buf = bun_paths::path_buffer_pool::get();
-                    let url_len = {
-                        let url = this
-                            .manifests
+                    let url_tiny = crate::network_task::intern_in_filename_store(
+                        this.manifests
                             .loaded_by_name_hash(name_hash)
                             .expect("manifest was just loaded by caller")
-                            .str(&find_result_package.tarball_url);
-                        url_buf[..url.len()].copy_from_slice(url);
-                        url.len()
-                    };
+                            .str(&find_result_package.tarball_url),
+                    );
                     break 'extract Some(ResolvedPackageResult {
                         package,
                         is_first_time: true,
@@ -2120,7 +2104,7 @@ fn get_or_put_resolved_package_with_find_result(
                             run_tasks::generate_network_task_for_tarball(
                                 this,
                                 task_id,
-                                &url_buf[..url_len],
+                                url_tiny,
                                 behavior.is_required(),
                                 dependency_id,
                                 &package,

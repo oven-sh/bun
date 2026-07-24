@@ -1751,7 +1751,7 @@ pub fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool
 pub fn generate_network_task_for_tarball(
     this: &mut PackageManager,
     task_id: Task::Id,
-    url: &[u8],
+    url: strings::StringOrTinyString,
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
@@ -1842,11 +1842,7 @@ pub fn generate_network_task_for_tarball(
         skip_verify: false,
         in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
-        url: strings::StringOrTinyString::init_append_if_needed(
-            url,
-            &mut crate::network_task::filename_store_appender(),
-        )
-        .expect("unreachable"),
+        url,
     };
 
     network_task.for_tarball(extract_tarball, scope, authorization)?;

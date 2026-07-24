@@ -648,6 +648,27 @@ describe("execArgv option", async () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
   });
+
+  it("inheriting workers take --expose-gc behind a chained short whose value is the next token", async () => {
+    // `-br <path>` is a bun_clap short chain with the value in the next argv
+    // token; the inherit-path scanner sees the same normalized stream as
+    // process.execArgv, so the following --expose-gc is still reached.
+    using dir = tempDir("worker-inherit-chained-short", { "noop.js": "" });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-br",
+        join(String(dir), "noop.js"),
+        "--expose-gc",
+        "-e",
+        "new (require('worker_threads').Worker)(\"require('worker_threads').parentPort.postMessage(typeof globalThis.gc)\", { eval: true }).on('message', t => { console.log(t); process.exit(0); })",
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "function", stderr: "", exitCode: 0 });
+  });
 });
 
 test("eval does not leak source code", async () => {

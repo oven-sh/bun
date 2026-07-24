@@ -235,6 +235,143 @@ fn table_map() -> &'static bun_collections::StringArrayHashMap<FlagSpec> {
     &MAP
 }
 
+/// Re-parse the raw process argv into the canonical `process.execArgv` token
+/// stream: skip argv[0] and a leading `run`, normalize bun_clap's
+/// glued/chained short-flag forms (which node's CLI rejects) into the
+/// separate-token shape the worker validator accepts, pair a trailing
+/// value-taking short with the next argv token, and stop at the script name.
+/// Shared by `process.execArgv` construction and the inherit-path honoring
+/// scan so both see identical tokens.
+pub fn collect_process_exec_argv_tokens() -> Vec<Vec<u8>> {
+    fn short_takes_value(c: u8) -> Option<bun_clap::Values> {
+        crate::cli::arguments::AUTO_PARAMS
+            .iter()
+            .find(|p| p.names.short == Some(c))
+            .map(|p| p.takes_value)
+    }
+    /// Normalize a chained/glued short-flag token against `AUTO_PARAMS`.
+    /// `None` → not a valid short chain (caller pushes verbatim);
+    /// `Some(needs_next)` → normalized tokens pushed, and `needs_next` is
+    /// true iff the trailing short's required value is the next argv token.
+    fn push_normalized_short_token(arg: &[u8], out: &mut Vec<Vec<u8>>) -> Option<bool> {
+        let mut flags: Vec<u8> = Vec::new();
+        let mut value: Option<&[u8]> = None;
+        let mut needs_next_value = false;
+        let mut j = 1usize;
+        while j < arg.len() {
+            let takes = short_takes_value(arg[j])?;
+            let next = j + 1;
+            match takes {
+                bun_clap::Values::None => {
+                    if next < arg.len() && arg[next] == b'=' {
+                        // bun_clap errors on `-b=x` at launch; unreachable in a
+                        // running process, keep the token verbatim.
+                        return None;
+                    }
+                    flags.push(arg[j]);
+                    j = next;
+                }
+                // A glued remainder after an optional-value short is dropped
+                // by bun_clap; the canonical form is the bare flag.
+                bun_clap::Values::OneOptional => {
+                    flags.push(arg[j]);
+                    break;
+                }
+                bun_clap::Values::One | bun_clap::Values::Many => {
+                    flags.push(arg[j]);
+                    if next >= arg.len() {
+                        needs_next_value = true;
+                        break;
+                    }
+                    let v = if arg[next] == b'=' {
+                        &arg[next + 1..]
+                    } else {
+                        &arg[next..]
+                    };
+                    value = Some(v);
+                    break;
+                }
+            }
+        }
+        for &f in &flags {
+            out.push(vec![b'-', f]);
+        }
+        if let Some(v) = value {
+            out.push(v.to_vec());
+        }
+        Some(needs_next_value)
+    }
+
+    // `--long`/`-s` for every AUTO_PARAMS flag that takes a value; used to
+    // decide whether a non-flag token is a value or the script name.
+    static TAKES_VALUE: LazyLock<bun_collections::StringSet> = LazyLock::new(|| {
+        let mut set = bun_collections::StringSet::new();
+        for param in crate::cli::arguments::AUTO_PARAMS.iter() {
+            if param.takes_value != bun_clap::Values::None {
+                if let Some(name) = param.names.long {
+                    let mut k = Vec::with_capacity(2 + name.len());
+                    k.extend_from_slice(b"--");
+                    k.extend_from_slice(name);
+                    bun_core::handle_oom(set.insert(&k));
+                }
+                if let Some(name) = param.names.short {
+                    bun_core::handle_oom(set.insert(&[b'-', name]));
+                }
+            }
+        }
+        set
+    });
+
+    let argv = bun_core::argv();
+    let mut out = Vec::with_capacity(argv.len().saturating_sub(1));
+    let mut seen_run = false;
+    let mut prev_takes_value = false;
+    let mut iter = argv.iter();
+    let _ = iter.next(); // argv[0]
+    for arg in iter {
+        let arg: &[u8] = arg;
+        if arg.len() >= 1 && arg[0] == b'-' {
+            // Node's whole-token aliases (`-pe`) are substituted before clap
+            // parsing on the bun/node entry points, so they are not short
+            // chains; keep them verbatim and resolve takes-value via the
+            // alias target. Normalization covers both the bun/node entry and
+            // `bun run`: every short in RUN_PARAMS is also in AUTO_PARAMS.
+            let node_alias_to = crate::cli::arguments::NODE_SHORT_ALIASES
+                .iter()
+                .find_map(|(from, to)| (*from == arg).then_some(*to));
+            let normalized = if node_alias_to.is_none() && arg.len() > 2 && arg[1] != b'-' {
+                push_normalized_short_token(arg, &mut out)
+            } else {
+                None
+            };
+            prev_takes_value = match normalized {
+                Some(needs_next) => needs_next,
+                None => {
+                    out.push(arg.to_vec());
+                    // The aliases only apply on the bun/node entry points
+                    // (Arguments::parse scopes them the same way).
+                    TAKES_VALUE.contains(arg)
+                        || (!seen_run && node_alias_to.is_some_and(|to| TAKES_VALUE.contains(to)))
+                }
+            };
+            continue;
+        }
+        if !seen_run && arg == b"run" {
+            seen_run = true;
+            prev_takes_value = false;
+            continue;
+        }
+        if prev_takes_value {
+            out.push(arg.to_vec());
+            prev_takes_value = false;
+            continue;
+        }
+        // we hit the script name
+        break;
+    }
+    out
+}
+
 /// Node normalizes `_` to `-` in long option names.
 fn normalized(name: &[u8]) -> Vec<u8> {
     name.iter()
@@ -384,19 +521,7 @@ pub fn scan_process_exec_argv() -> WorkerExecArgv {
                 tokens.push(token.to_vec());
             }
         } else {
-            let mut seen_run = false;
-            let mut iter = bun_core::argv().iter();
-            let _ = iter.next(); // argv[0]
-            for arg in iter {
-                let arg: &[u8] = arg;
-                if !seen_run && arg == b"run" {
-                    seen_run = true;
-                    continue;
-                }
-                // Collect everything; `scan_exec_argv` consumes flag values
-                // itself and stops at the first true positional (the script).
-                tokens.push(arg.to_vec());
-            }
+            tokens = collect_process_exec_argv_tokens();
         }
         let mut outcome = scan_exec_argv(&tokens);
         outcome.honored.preloads.clear();

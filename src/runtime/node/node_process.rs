@@ -192,77 +192,6 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
-    /// `bun_clap` accepts glued short-flag values (`-r./s.js`, `-r=./s.js`)
-    /// and chained boolean shorts (`-br./s.js`); node's CLI rejects those
-    /// shapes, so the worker execArgv validator (which mirrors node) never
-    /// sees them from node. Normalize to the canonical separate-token form
-    /// when building `process.execArgv` so
-    /// `new Worker(url, { execArgv: process.execArgv })` round-trips.
-    /// Returns `None` when the token does not fully parse as `bun_clap` short
-    /// chaining against `AUTO_PARAMS` (caller pushes it verbatim); otherwise
-    /// `Some(needs_next_value)` where `needs_next_value` is true iff the
-    /// trailing short takes a required value supplied by the next argv token.
-    fn push_normalized_short_token(arg: &[u8], args: &mut Vec<BunString>) -> Option<bool> {
-        fn short_takes_value(c: u8) -> Option<bun_clap::Values> {
-            crate::cli::arguments::AUTO_PARAMS
-                .iter()
-                .find(|p| p.names.short == Some(c))
-                .map(|p| p.takes_value)
-        }
-        // First pass: the whole token must parse (mirrors
-        // `bun_clap::streaming::chainging`); collect the normalized pieces.
-        let mut flags: Vec<u8> = Vec::new();
-        let mut value: Option<&[u8]> = None;
-        let mut needs_next_value = false;
-        let mut j = 1usize;
-        while j < arg.len() {
-            let takes = short_takes_value(arg[j])?;
-            let next = j + 1;
-            match takes {
-                bun_clap::Values::None => {
-                    if next < arg.len() && arg[next] == b'=' {
-                        // bun_clap errors on `-b=x` at launch; unreachable in a
-                        // running process, keep the token verbatim.
-                        return None;
-                    }
-                    flags.push(arg[j]);
-                    j = next;
-                }
-                // A glued remainder after an optional-value short is dropped
-                // by bun_clap; the canonical form is the bare flag.
-                bun_clap::Values::OneOptional => {
-                    flags.push(arg[j]);
-                    break;
-                }
-                bun_clap::Values::One | bun_clap::Values::Many => {
-                    flags.push(arg[j]);
-                    if next >= arg.len() {
-                        // The value is the next argv token; emit the chained
-                        // shorts separately so the trailing one is a 2-byte
-                        // token the worker validator accepts, and tell the
-                        // caller to pair the following argv token with it.
-                        needs_next_value = true;
-                        break;
-                    }
-                    let v = if arg[next] == b'=' {
-                        &arg[next + 1..]
-                    } else {
-                        &arg[next..]
-                    };
-                    value = Some(v);
-                    break;
-                }
-            }
-        }
-        for &f in &flags {
-            args.push(BunString::clone_utf8(&[b'-', f]));
-        }
-        if let Some(v) = value {
-            args.push(BunString::clone_utf8(v));
-        }
-        Some(needs_next_value)
-    }
-
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
@@ -316,95 +245,23 @@ mod _impl {
             return JSValue::create_empty_array(global_object, 0);
         }
 
-        let argv = bun_core::argv();
+        // Re-parsing the process argv is rare, so it isn't done as part of
+        // the CLI. The token builder lives alongside the worker execArgv
+        // policy so `process.execArgv` and the inherit-path honoring scan see
+        // identical tokens.
+        let tokens = crate::cli::worker_exec_argv::collect_process_exec_argv_tokens();
         // `defer args.deinit()` + `defer for args |*a| a.deref()`
-        let mut args = scopeguard::guard(
-            Vec::<BunString>::with_capacity(argv.len().saturating_sub(1)),
+        let args = scopeguard::guard(
+            tokens
+                .iter()
+                .map(|t| BunString::clone_utf8(t))
+                .collect::<Vec<_>>(),
             |v| {
                 for a in &v {
                     a.deref();
                 }
             },
         );
-
-        // A set of execArgv args consume an extra argument, so we do not want to
-        // confuse these with script names.
-        // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-        // `--long` / `-s` for every param with a value.
-        static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-            std::sync::LazyLock::new(|| {
-                let mut set = bun_collections::StringSet::new();
-                for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                    if param.takes_value != bun_clap::Values::None {
-                        if let Some(name) = param.names.long {
-                            let mut k = Vec::with_capacity(2 + name.len());
-                            k.extend_from_slice(b"--");
-                            k.extend_from_slice(name);
-                            bun_core::handle_oom(set.insert(&k));
-                        }
-                        if let Some(name) = param.names.short {
-                            bun_core::handle_oom(set.insert(&[b'-', name]));
-                        }
-                    }
-                }
-                set
-            });
-
-        let mut seen_run = false;
-        let mut prev_takes_value = false;
-
-        // we re-parse the process argv to extract execArgv, since this is a very uncommon operation
-        // it isn't worth doing this as a part of the CLI
-        let mut iter = argv.iter();
-        let _ = iter.next(); // skip argv[0]
-        for arg in iter {
-            let arg: &[u8] = arg;
-
-            if arg.len() >= 1 && arg[0] == b'-' {
-                // Node's whole-token aliases (`-pe`) are substituted before
-                // clap parsing on the bun/node entry points, so they are not
-                // short chains; keep them verbatim and resolve takes-value
-                // via the alias target.
-                let node_alias_to = crate::cli::arguments::NODE_SHORT_ALIASES
-                    .iter()
-                    .find_map(|(from, to)| (*from == arg).then_some(*to));
-                // Normalization covers both the bun/node entry and `bun run`:
-                // every short in RUN_PARAMS is also in AUTO_PARAMS, so the
-                // AUTO_PARAMS-based classifier is correct after `run` too.
-                let normalized = if node_alias_to.is_none() && arg.len() > 2 && arg[1] != b'-' {
-                    push_normalized_short_token(arg, &mut args)
-                } else {
-                    None
-                };
-                prev_takes_value = match normalized {
-                    Some(needs_next) => needs_next,
-                    None => {
-                        args.push(BunString::clone_utf8(arg));
-                        // Node's whole-token aliases only apply on the
-                        // bun/node entry points (Arguments::parse scopes them
-                        // the same way).
-                        MAP.contains(arg)
-                            || (!seen_run && node_alias_to.is_some_and(|to| MAP.contains(to)))
-                    }
-                };
-                continue;
-            }
-
-            if !seen_run && arg == b"run" {
-                seen_run = true;
-                prev_takes_value = false;
-                continue;
-            }
-
-            if prev_takes_value {
-                args.push(BunString::clone_utf8(arg));
-                prev_takes_value = false;
-                continue;
-            }
-
-            // we hit the script name
-            break;
-        }
 
         bun_string_jsc::to_js_array(global_object, &args)
     }

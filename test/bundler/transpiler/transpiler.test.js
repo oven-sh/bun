@@ -2032,33 +2032,28 @@ export default <>hi</>
 
   // https://github.com/oven-sh/bun/issues/3528
   describe("tsconfig jsxImportSource uses the automatic runtime for any package", () => {
+    const cases = [];
     for (const pkg of ["solid-js", "preact", "@emotion/react"]) {
-      it(`"${pkg}"`, async () => {
-        for (const tsconfig of [
-          { compilerOptions: { jsx: "react-jsx", jsxImportSource: pkg } },
-          JSON.stringify({ compilerOptions: { jsx: "react-jsx", jsxImportSource: pkg } }),
-        ]) {
-          const bun = new Bun.Transpiler({ loader: "tsx", autoImportJSX: true, tsconfig });
-          for (const out of [
-            bun.transformSync(`export default <div>hi</div>`),
-            await bun.transform(`export default <div>hi</div>`),
-          ]) {
-            expect(out).not.toContain("React.createElement");
-            expect(out).toContain(`"${pkg}/jsx-`);
-          }
+      for (const jsx of ["react-jsx", "unset"]) {
+        for (const form of ["object", "string"]) {
+          cases.push([pkg, jsx, form]);
         }
-      });
+      }
     }
 
-    it("does not require jsx to be set alongside jsxImportSource", () => {
-      const bun = new Bun.Transpiler({
-        loader: "tsx",
-        autoImportJSX: true,
-        tsconfig: { compilerOptions: { jsxImportSource: "solid-js" } },
-      });
-      const out = bun.transformSync(`export default <div>hi</div>`);
-      expect(out).not.toContain("React.createElement");
-      expect(out).toContain(`"solid-js/jsx-`);
+    it.each(cases)('"%s" (jsx: %s, tsconfig as %s)', async (pkg, jsx, form) => {
+      const compilerOptions = jsx === "unset" ? { jsxImportSource: pkg } : { jsx, jsxImportSource: pkg };
+      const tsconfig = form === "string" ? JSON.stringify({ compilerOptions }) : { compilerOptions };
+      const bun = new Bun.Transpiler({ loader: "tsx", autoImportJSX: true, tsconfig });
+      const input = `export default <div>hi</div>`;
+
+      for (const out of [bun.transformSync(input), await bun.transform(input)]) {
+        expect(out).not.toContain("React.createElement");
+        const runtime = out.match(/^import \{ (jsx|jsxDEV) as (\w+) \} from "(.+?)";/m);
+        expect(runtime).not.toBeNull();
+        expect(runtime[3]).toMatch(new RegExp(`^${pkg}/jsx-(dev-)?runtime$`));
+        expect(out).toContain(`${runtime[2]}("div"`);
+      }
     });
   });
 

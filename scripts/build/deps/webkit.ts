@@ -368,11 +368,10 @@ export const webkit: Dependency = {
       // link statically. Matches what the old cmake's SetupWebKit did.
       args.CMAKE_C_FLAGS = `/DU_STATIC_IMPLEMENTATION ${optFlagStr}`.trim();
       args.CMAKE_CXX_FLAGS = `/DU_STATIC_IMPLEMENTATION /clang:-fno-c++-static-destructors ${optFlagStr}`.trim();
-      // CRT to match bun + all other deps: static (/MTd or /MT) normally,
-      // dynamic (/MD) under ASAN so the runtime hooks one shared heap.
-      // Without this, cmake defaults to /MDd → RuntimeLibrary mismatch at
-      // link. The debug CRT is never usable under ASAN.
-      args.CMAKE_MSVC_RUNTIME_LIBRARY = cfg.asan ? "MultiThreadedDLL" : cfg.debug ? "MultiThreadedDebug" : "MultiThreaded";
+      // Static CRT to match bun + all other deps (we build everything
+      // with /MTd or /MT). Without this, cmake defaults to /MDd →
+      // RuntimeLibrary mismatch at link. ASAN can't link the debug CRT.
+      args.CMAKE_MSVC_RUNTIME_LIBRARY = cfg.debug && !cfg.asan ? "MultiThreadedDebug" : "MultiThreaded";
       spec.preBuild = {
         command: [
           "powershell",
@@ -394,9 +393,6 @@ export const webkit: Dependency = {
           // startup. cfg.cc is <llvm>/bin/clang-cl.exe; pass its install dir.
           "-LLVMInstallDir",
           dirname(dirname(cfg.cc)),
-          // CRT to match the graph (see flags.ts): dynamic under ASAN.
-          "-CRT",
-          cfg.asan ? "Dynamic" : "Static",
           // ICU gets the same AddressSanitizer setting as everything else:
           // the MSVC STL fails the link (/failifmismatch annotate_string)
           // when instrumented and uninstrumented objects disagree on

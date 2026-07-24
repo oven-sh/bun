@@ -215,15 +215,9 @@ export const globalFlags: Flag[] = [
   },
 
   // ─── MSVC runtime (Windows) ───
-  // ASAN builds use the DYNAMIC CRT (/MD): the Windows ASAN runtime is a DLL
-  // that must own the process heap from the first allocation. With the
-  // static CRT (/MT) every module carries its own CRT whose static
-  // initializers can allocate before the runtime has redirected that
-  // module's heap functions, and the CRT's own init (the onexit table's
-  // _recalloc) then faults inside the interceptor. One shared ucrtbase heap
-  // (/MD) is hooked once and completely — the configuration LLVM tests and
-  // Microsoft supports for ASAN. Debug CRTs (/MTd, /MDd) are rejected by
-  // clang-cl under -fsanitize=address entirely.
+  // ASAN on Windows cannot link against the debug CRT (clang-cl rejects /MTd
+  // together with -fsanitize=address), so an asan build uses /MT even when
+  // it is otherwise a debug build.
   {
     flag: "/MTd",
     when: c => c.windows && c.debug && !c.asan,
@@ -231,17 +225,12 @@ export const globalFlags: Flag[] = [
   },
   {
     flag: "/MT",
-    when: c => c.windows && c.release && !c.asan,
+    when: c => c.windows && (c.release || c.asan),
     desc: "Static MSVC runtime",
   },
   {
-    flag: "/MD",
-    when: c => c.windows && c.asan,
-    desc: "Dynamic MSVC runtime (ASAN)",
-  },
-  {
     flag: "/U_DLL",
-    when: c => c.windows && !c.asan,
+    when: c => c.windows,
     desc: "Undefine _DLL (we link statically)",
   },
 

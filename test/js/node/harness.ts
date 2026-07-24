@@ -116,7 +116,7 @@ export function createTest(path: string) {
         closeTimers();
         if (optionalCb) optionalCb.apply(undefined, reason ? [reason] : []);
 
-        done(new Error(reason));
+        localDone(new Error(reason));
       };
     }
 
@@ -198,9 +198,15 @@ export function createTest(path: string) {
     };
   };
 
-  function createDoneDotAll(done: DoneCb, globalTimeout?: number, timers: Timer[] = []) {
+  function createDoneDotAll(rawDone: DoneCb, globalTimeout?: number, timers: Timer[] = []) {
     let toComplete = 0;
     let completed = 0;
+    let settled = false;
+    const done: DoneCb = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      rawDone(err);
+    };
     const globalTimer = globalTimeout
       ? (timers.push(
           setTimeout(() => {

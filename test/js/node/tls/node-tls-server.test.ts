@@ -338,10 +338,12 @@ describe("tls.createServer", () => {
           expect(cert.serialNumber).toBe("71A46AE89FD817EF81A34D5973E1DE42F09B9D63");
 
           expect(cert.raw).toBeInstanceOf(Buffer);
+          clearTimeout(timeout);
           client?.end();
           server.close();
           done();
         } catch (err) {
+          clearTimeout(timeout);
           client?.end();
           server.close();
           done(err);

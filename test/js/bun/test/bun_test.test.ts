@@ -99,7 +99,17 @@ test("describe/test", async () => {
     error: promise error
     promise error
     (fail) done parameter > done combined with promise error conditions > promise errors only
-    (pass) done parameter > second call of done callback ignores triggers error
+    259 |       throw "promise error";
+    260 |     });
+    261 |   });
+    262 |   test("second call of done callback triggers error", done => {
+    263 |     done();
+    264 |     done("uh oh!");
+              ^
+    error: Expected done to be called once, but it was called multiple times.
+     cause: "uh oh!",
+        at <anonymous> (file:NN:NN)
+    (fail) done parameter > second call of done callback triggers error
     (pass) microtasks and rejections are drained after the test callback is executed
     (pass) after inside test > the test 1
     (pass) after inside test > the test 2
@@ -115,7 +125,7 @@ test("describe/test", async () => {
     (todo) failing todo passes
 
 
-    10 tests failed:
+    11 tests failed:
     (fail) actual tests > more functions called after delayed done
     (fail) LINE 68
       ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
@@ -130,11 +140,12 @@ test("describe/test", async () => {
     (fail) done parameter > done combined with promise error conditions > both error and done resolves first
     (fail) done parameter > done combined with promise error conditions > done errors only
     (fail) done parameter > done combined with promise error conditions > promise errors only
+    (fail) done parameter > second call of done callback triggers error
 
-     32 pass
+     31 pass
      2 skip
      2 todo
-     10 fail
+     11 fail
      1 error
      2 snapshots, 10 expect() calls
     Ran 46 tests across 1 file."

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isMusl, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1635,4 +1635,55 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/sentry-BUN-3JDD
+  // On Windows, MAX_PATH_BYTES is ~98 KB (32767 * 3 + 1), which is impractical
+  // to exercise here; the POSIX path (1024 macOS / 4096 Linux) is what users hit.
+  test.skipIf(isWindows)(
+    "skips directories whose absolute path exceeds MAX_PATH_BYTES instead of panicking",
+    async () => {
+      using dir = tempDir("scanner-deep-tree", {
+        "shallow.test.ts": `import { test } from "bun:test"; test("shallow", () => { console.log("RAN shallow"); });`,
+      });
+
+      // Build a directory chain whose absolute path exceeds the platform's
+      // MAX_PATH_BYTES. We cannot pass the full path to mkdir (ENAMETOOLONG),
+      // so create it one segment at a time via cd in a child shell.
+      const seg = Buffer.alloc(200, "a").toString();
+      const maxPathBytes = process.platform === "darwin" ? 1024 : 4096;
+      const depth = Math.ceil((maxPathBytes + 200 - String(dir).length) / (seg.length + 1));
+      let script = `set -e; cd ${JSON.stringify(String(dir))}\n`;
+      for (let i = 0; i < depth; i++) {
+        script += `mkdir -p ${seg} && cd ${seg}\n`;
+      }
+      await using setup = Bun.spawn({
+        cmd: ["bash", "-c", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, setupErr, setupExit] = await Promise.all([setup.stdout.text(), setup.stderr.text(), setup.exited]);
+      // On musl, getcwd(3) fails once the cumulative path exceeds PATH_MAX. bash
+      // prints a cd warning for each subsequent level but mkdir/cd still succeed,
+      // so filter that one known warning out before asserting stderr is clean.
+      const filteredSetupErr = setupErr
+        .split("\n")
+        .filter(line => !(isMusl && line.startsWith("cd: error retrieving current directory: getcwd:")))
+        .join("\n");
+      expect({ setupErr: filteredSetupErr, setupExit }).toEqual({ setupErr: "", setupExit: 0 });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toContain(" 1 pass");
+      expect(stdout).toContain("RAN shallow");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

@@ -3794,11 +3794,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
 
     auto moduleKeyJS = key.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    // Copy into an owned String instead of holding the GCOwnedDataScope that value() returns.
-    // fetchESMSourceCode* below may transpile a module that invokes a promise-returning macro,
-    // which spins the event loop via wait_for_promise; IncrementalSweeper can then fire with
-    // vm().entryScope unset and trip ASSERT(!m_topGCOwnedDataScope). The String copy is a
-    // refcount bump on the impl, so moduleKeyBun below borrows safely for the function's scope.
+    // Owned String, not GCOwnedDataScope: fetchESMSourceCode* may spin the event loop (promise-returning macros) and trip IncrementalSweeper's !m_topGCOwnedDataScope assert.
     String moduleKey = moduleKeyJS->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectedInternalPromise(globalObject, scope.exception()->value());

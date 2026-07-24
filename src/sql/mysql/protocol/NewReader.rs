@@ -11,8 +11,12 @@ pub trait ReaderContext: Copy {
     fn skip(self, count: isize);
     fn ensure_capacity(self, count: usize) -> bool;
     fn read(self, count: usize) -> Result<Data, AnyMySQLError>;
-    fn read_z(self) -> Result<Data, AnyMySQLError>;
     fn set_offset_from_start(self, offset: usize);
+    /// Bytes from the current offset to the end of the framed packet body, or
+    /// `usize::MAX` when no packet is framed (header decoding).
+    fn packet_remaining(&self) -> usize;
+    fn set_packet_limit_from_start(self, packet_length: usize);
+    fn clear_packet_limit(self);
 }
 
 #[derive(Clone, Copy)]
@@ -29,7 +33,23 @@ impl<C: ReaderContext> NewReader<C> {
         self.wrapped.set_offset_from_start(offset);
     }
 
+    pub fn set_packet_limit_from_start(self, packet_length: usize) {
+        self.wrapped.set_packet_limit_from_start(packet_length);
+    }
+
+    pub fn clear_packet_limit(self) {
+        self.wrapped.clear_packet_limit();
+    }
+
+    /// Every MySQL packet's body is bounded by the Int<3> payload_length in its
+    /// header. The dispatch loop buffers the whole packet before decoding it,
+    /// so a body read that still comes up short has overrun the packet, and the
+    /// bytes it would return belong to the next packet's framing: that is a
+    /// malformed packet, never "wait for more socket data".
     pub fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
+        if count > self.wrapped.packet_remaining() {
+            return Err(AnyMySQLError::MalformedPacket);
+        }
         self.wrapped.read(count)
     }
 
@@ -39,11 +59,21 @@ impl<C: ReaderContext> NewReader<C> {
     }
 
     pub fn peek(&self) -> &[u8] {
-        self.wrapped.peek()
+        let limit = self.wrapped.packet_remaining();
+        let full = self.wrapped.peek();
+        &full[..full.len().min(limit)]
     }
 
     pub fn read_z(self) -> Result<Data, AnyMySQLError> {
-        self.wrapped.read_z()
+        match bun_core::strings::index_of_char(self.peek(), 0) {
+            Some(zero) => {
+                let data = self.wrapped.read(zero as usize)?;
+                self.wrapped.skip(1);
+                Ok(data)
+            }
+            None if self.wrapped.packet_remaining() == usize::MAX => Err(AnyMySQLError::ShortRead),
+            None => Err(AnyMySQLError::MalformedPacket),
+        }
     }
 
     pub fn byte(self) -> Result<u8, AnyMySQLError> {

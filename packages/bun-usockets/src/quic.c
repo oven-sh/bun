@@ -56,6 +56,9 @@ struct us_quic_socket_context_s {
     unsigned int sni_count, sni_cap;
     int processing;
     int closing;
+    /* shutdown() was called from inside an on_stream_* callback; complete
+     * it right after the driving process_conns returns. */
+    int cooldown_pending;
     int is_client;
     unsigned int conn_count;
     unsigned int conn_ext_size;
@@ -148,6 +151,8 @@ static void us_quic_on_timer(struct us_timer_t *t) {
 }
 #endif
 
+static void us_quic_finish_deferred_shutdown(us_quic_socket_context_t *ctx);
+
 void us_quic_loop_process(struct us_loop_t *loop) {
     int min_diff = 0, have_tick = 0;
     for (us_quic_socket_context_t *ctx = loop->data.quic_head; ctx; ctx = ctx->next) {
@@ -156,6 +161,7 @@ void us_quic_loop_process(struct us_loop_t *loop) {
         ctx->pending_write_bytes = 0;
         lsquic_engine_process_conns(ctx->engine);
         ctx->processing = 0;
+        us_quic_finish_deferred_shutdown(ctx);
         int diff;
         if (lsquic_engine_earliest_adv_tick(ctx->engine, &diff)) {
             if (!have_tick || diff < min_diff) min_diff = diff;
@@ -194,6 +200,7 @@ static void us_quic_process(us_quic_socket_context_t *ctx) {
     ctx->processing = 1;
     lsquic_engine_process_conns(ctx->engine);
     ctx->processing = 0;
+    us_quic_finish_deferred_shutdown(ctx);
 }
 
 /* ───── packets out ───── */
@@ -777,10 +784,36 @@ void us_quic_socket_context_shutdown(us_quic_socket_context_t *ctx) {
     ctx->closing = 1;
     /* GOAWAY every conn and flush; loop_post keeps ticking so in-flight
      * streams drain. New conns are rejected in on_new_conn while closing. */
+    if (ctx->processing) {
+        /* server.stop() from inside an on_stream_* callback: process_conns
+         * is on the stack with ENPUB_PROC set, so cooldown/send_unsent
+         * re-enter the engine. Latch; the driver finishes the shutdown
+         * right after process_conns returns. */
+        ctx->cooldown_pending = 1;
+        return;
+    }
     lsquic_engine_cooldown(ctx->engine);
     lsquic_engine_send_unsent_packets(ctx->engine);
     us_quic_process(ctx);
     /* Nothing to drain — release the UDP fd now so the loop can exit. */
+    if (ctx->conn_count == 0) {
+        while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
+    }
+}
+
+/* Finish a graceful shutdown that was latched while process_conns was on the
+ * stack. Called right after the driving process_conns returns with ENPUB_PROC
+ * clear. ctx->closing is already set, so a nested shutdown() is a no-op. */
+static void us_quic_finish_deferred_shutdown(us_quic_socket_context_t *ctx) {
+    if (!ctx->cooldown_pending || !ctx->engine) return;
+    ctx->cooldown_pending = 0;
+    lsquic_engine_cooldown(ctx->engine);
+    /* cooldown wrote GOAWAY into each conn's control stream and added them
+     * to tickable; tick once so the frame is packetized, then flush. */
+    ctx->processing = 1;
+    lsquic_engine_process_conns(ctx->engine);
+    ctx->processing = 0;
+    lsquic_engine_send_unsent_packets(ctx->engine);
     if (ctx->conn_count == 0) {
         while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
     }
@@ -894,9 +927,14 @@ void us_quic_listen_socket_close(us_quic_listen_socket_t *ls) {
         for (us_quic_socket_t *qs = ls->ctx->conns; qs; qs = qs->next) {
             if (qs->conn) lsquic_conn_abort(qs->conn);
         }
-        lsquic_engine_cooldown(ls->ctx->engine);
-        us_quic_process(ls->ctx);
-        lsquic_engine_send_unsent_packets(ls->ctx->engine);
+        /* Abrupt stop from inside a request handler: process_conns is on the
+         * stack and will see IFC_ABORTED when it resumes. cooldown /
+         * send_unsent_packets must not run with ENPUB_PROC set. */
+        if (!ls->ctx->processing) {
+            lsquic_engine_cooldown(ls->ctx->engine);
+            us_quic_process(ls->ctx);
+            lsquic_engine_send_unsent_packets(ls->ctx->engine);
+        }
     }
     us_udp_socket_close(ls->udp);
 }

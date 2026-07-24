@@ -1,7 +1,8 @@
 import { file, spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { existsSync } from "fs";
 import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
+import { bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync, toBeValidBin, toBeWorkspaceLink, toHaveBins } from "harness";
 import { join, relative, resolve } from "path";
 import {
   check_npm_auth_type,
@@ -2609,4 +2610,72 @@ it("should install tarball with tarball dependencies", async () => {
   // Verify both packages were installed
   await access(join(add_dir, "node_modules", "test-parent"));
   await access(join(add_dir, "node_modules", "test-child"));
+});
+
+// https://github.com/oven-sh/bun/issues/4553
+describe("bun add -g honors [install] globalDir from bunfig", () => {
+  function makeEnv(home: string) {
+    const e: Record<string, string> = {
+      ...(env as Record<string, string>),
+      HOME: home,
+      USERPROFILE: home,
+    };
+    for (const k of ["BUN_INSTALL", "BUN_INSTALL_GLOBAL_DIR", "BUN_INSTALL_BIN", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"]) {
+      delete e[k];
+    }
+    return e;
+  }
+
+  for (const via of ["--config", "home", "cwd"] as const) {
+    it(`via ${via === "--config" ? "--config=<path>" : via === "home" ? "~/.bunfig.toml" : "./bunfig.toml"}`, async () => {
+      using dir = tempDir("add-g-globaldir", {
+        "home/.keep": "",
+        "cwd/.keep": "",
+        "custom-global/.keep": "",
+        "custom-bin/.keep": "",
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      });
+      const root = String(dir);
+      const home = join(root, "home");
+      const cwd = join(root, "cwd");
+      const customGlobal = join(root, "custom-global");
+      const customBin = join(root, "custom-bin");
+      const bunfig =
+        `[install]\n` +
+        `globalDir = ${JSON.stringify(customGlobal)}\n` +
+        `globalBinDir = ${JSON.stringify(customBin)}\n`;
+
+      const cmd = [bunExe(), "add", "-g", `file:${join(root, "dep")}`];
+      if (via === "--config") {
+        await writeFile(join(root, "config.toml"), bunfig);
+        cmd.push(`--config=${join(root, "config.toml")}`);
+      } else if (via === "home") {
+        await writeFile(join(home, ".bunfig.toml"), bunfig);
+      } else {
+        await writeFile(join(cwd, "bunfig.toml"), bunfig);
+      }
+
+      await using proc = spawn({
+        cmd,
+        cwd,
+        env: makeEnv(home),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("installed dep@");
+      expect({
+        customGlobalPackageJson: existsSync(join(customGlobal, "package.json")),
+        customGlobalNodeModulesDep: existsSync(join(customGlobal, "node_modules", "dep")),
+        defaultGlobalDir: existsSync(join(home, ".bun", "install", "global")),
+      }).toEqual({
+        customGlobalPackageJson: true,
+        customGlobalNodeModulesDep: true,
+        defaultGlobalDir: false,
+      });
+      expect(exitCode).toBe(0);
+    });
+  }
 });

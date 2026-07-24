@@ -686,6 +686,7 @@ impl AsyncModule {
                     Self::on_done(p.cast());
                     Ok(())
                 },
+                dispose: None,
             };
             jsc_vm.enqueue_task(Task::init(&raw mut (*clone).any_task));
         }

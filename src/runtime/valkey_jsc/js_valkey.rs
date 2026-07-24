@@ -1469,6 +1469,7 @@ impl JSValkeyClient {
                     Holder::run(p.cast::<Holder>());
                     Ok(())
                 },
+                dispose: None,
             };
         }
 

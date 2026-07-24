@@ -330,6 +330,7 @@ impl StatWatcherScheduler {
             (*holder_ptr).task = AnyTask {
                 ctx: core::ptr::NonNull::new(holder_ptr.cast()),
                 callback: update_timer,
+                dispose: None,
             };
             (*this)
                 .vm

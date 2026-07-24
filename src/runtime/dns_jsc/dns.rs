@@ -403,6 +403,7 @@ pub(super) mod lib_uv_backend {
             (*holder).task = jsc::AnyTask::AnyTask {
                 ctx: NonNull::new(holder.cast()),
                 callback: Holder::run,
+                dispose: None,
             };
             (*this)
                 .head

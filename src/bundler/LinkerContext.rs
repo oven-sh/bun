@@ -2863,6 +2863,17 @@ impl<'a> LinkerContext<'a> {
                     let se = ctx.side_effects[other_source_index as usize];
 
                     if se != SideEffects::HasSideEffects && !self.options.ignore_dce_annotations {
+                        if record
+                            .flags
+                            .contains(bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
+                        {
+                            self.warn_ignored_bare_import(
+                                source_index,
+                                other_source_index,
+                                record.range,
+                                se,
+                            );
+                        }
                         continue;
                     }
 
@@ -2897,6 +2908,58 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
+    }
+
+    #[cold]
+    fn warn_ignored_bare_import(
+        &self,
+        source_index: crate::IndexInt,
+        other_source_index: crate::IndexInt,
+        range: Range,
+        se: SideEffects,
+    ) {
+        let source = self.get_source(source_index);
+        // Don't warn about bare imports inside "node_modules"; the package
+        // author presumably knows what they're doing (esbuild issue 999).
+        if source.path.is_node_module() {
+            return;
+        }
+        // A "file" / "napi" / "wasm" loader copies the asset into the output
+        // even though its JS wrapper has no side effects, so the import is not
+        // actually ignored. esbuild drops the asset and warns; we keep it.
+        let other_loader =
+            self.parse_graph().input_files.items_loader()[other_source_index as usize];
+        if other_loader.should_copy_for_bundling() {
+            return;
+        }
+        let other_source = self.get_source(other_source_index);
+
+        let note_text: std::borrow::Cow<'static, [u8]> = match se {
+            SideEffects::NoSideEffectsPackageJson => std::borrow::Cow::Borrowed(
+                b"This is because of \"sideEffects\" in the enclosing \"package.json\" file",
+            ),
+            SideEffects::NoSideEffectsPureData => std::borrow::Cow::Borrowed(
+                b"This file is considered to have no side effects because of the loader used",
+            ),
+            // Don't warn for type-only / .d.ts files; the import is a no-op by
+            // design and there's nothing actionable.
+            SideEffects::NoSideEffectsEmptyAst => return,
+            SideEffects::HasSideEffects => return,
+        };
+        let notes: Box<[Data]> = Box::new([Data {
+            text: note_text,
+            location: None,
+        }]);
+
+        self.log_disjoint().add_range_warning_fmt_with_notes(
+            Some(source),
+            range,
+            notes,
+            format_args!(
+                "Ignoring this import because \"{}\" was marked as having no side effects",
+                bstr::BStr::new(&other_source.path.pretty),
+            ),
+        );
     }
 
     fn mark_part_live_step(

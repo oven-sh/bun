@@ -210,6 +210,11 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    bundleWarnings: {
+      "/Users/user/project/src/entry.js": [
+        `Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects`,
+      ],
+    },
     run: {
       stdout: "unused import",
     },
@@ -231,6 +236,11 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    bundleWarnings: {
+      "/Users/user/project/src/entry.js": [
+        `Ignoring this import because "Users/user/project/node_modules/demo-pkg/index.js" was marked as having no side effects`,
+      ],
+    },
     run: {
       stdout: "unused import",
     },
@@ -613,6 +623,11 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    bundleWarnings: {
+      "/Users/user/project/src/entry.js": [
+        `Ignoring this import because "Users/user/project/node_modules/demo-pkg/remove/this/file.js" was marked as having no side effects`,
+      ],
+    },
     run: {
       stdout: "this should be kept",
     },
@@ -923,6 +938,7 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    bundleWarnings: {},
     run: {
       stdout: "unused import\nused import",
     },

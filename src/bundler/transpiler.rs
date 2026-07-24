@@ -986,7 +986,10 @@ pub(crate) fn to_parser_jsx_pragma(
     mut p: crate::options_impl::jsx::Pragma,
 ) -> js_ast::parser::options::JSX::Pragma {
     use crate::options_impl::jsx::Runtime;
-    if p.runtime == Runtime::_None {
+    // `Solid` is a leftover from the removed Solid.js transform (88538b7c2c);
+    // the parser only distinguishes Automatic vs Classic, and any other value
+    // would fall through to `React.createElement`.
+    if matches!(p.runtime, Runtime::_None | Runtime::Solid) {
         p.runtime = Runtime::Automatic;
     }
     p

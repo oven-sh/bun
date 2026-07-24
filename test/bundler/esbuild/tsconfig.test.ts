@@ -627,6 +627,49 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`from "notreact/jsx-dev-runtime`);
     },
   });
+  // https://github.com/oven-sh/bun/issues/5429 - jsxImportSource: "solid-js" must use the
+  // automatic runtime with the configured package, same as any other import source.
+  itBundled("tsconfig/ReactJSXSolid", {
+    files: {
+      "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react-jsx",
+            "jsxImportSource": "solid-js"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    env: {
+      NODE_ENV: "production",
+    },
+    external: ["solid-js"],
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`from "solid-js/jsx-runtime`);
+      api.expectFile("/Users/user/project/out.js").not.toContain("React.createElement");
+    },
+  });
+  itBundled("tsconfig/PreserveImportSourceSolid", {
+    files: {
+      "/Users/user/project/entry.tsx": `export const Button = () => <button>test</button>;`,
+      "/Users/user/project/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "preserve",
+            "jsxImportSource": "solid-js"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    external: ["solid-js"],
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").not.toContain("React.createElement");
+      api.expectFile("/Users/user/project/out.js").toContain("solid-js/jsx-");
+    },
+  });
   itBundled("tsconfig/ReactJSXDev", {
     files: {
       "/Users/user/project/entry.tsx": `console.log(<><div/><div/></>)`,

@@ -677,6 +677,11 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 
+    // The old global's ShadowRealms and node:vm modules are discarded with it,
+    // and nothing can be mid-InnerModuleEvaluation between test files, so the
+    // per-VM out-of-loader-records bit starts clean for the next file.
+    WebCore::clientData(vm)->hasModuleRecordsOutsideLoaderMap = false;
+
     return globalObject;
 }
 
@@ -838,6 +843,35 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
                     break;
             }
         }
+        // Never run a checkpoint while an outer InnerModuleEvaluation is on the
+        // stack: an Evaluating record has no [[CycleRoot]] yet, and an unrelated
+        // async sibling's drained resume walks gatherAvailableAncestors into it.
+        bool outerModuleIsEvaluating = false;
+        for (auto& [mapKey, mapEntry] : loader->moduleMap()) {
+            if (!mapEntry)
+                continue;
+            auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(mapEntry->record());
+            if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::Evaluating) {
+                outerModuleIsEvaluating = true;
+                break;
+            }
+        }
+        // A ShadowRealm's loader and node:vm SourceTextModules hold records the
+        // scan above cannot see, while the checkpoint below would still run
+        // their async siblings' resumes. Do not drain if any could exist.
+        if (!outerModuleIsEvaluating && !WebCore::clientData(vm)->hasModuleRecordsOutsideLoaderMap) {
+            // Top-level await kept the load pending. Its remaining continuations
+            // (await of a non-promise, thenables, Promise.all, nested async fns)
+            // are plain microtasks: a checkpoint settles them without the event loop.
+            vm.drainMicrotasks();
+            RETURN_IF_EXCEPTION(scope, {});
+            if (promise->status() == JSPromise::Status::Fulfilled)
+                break;
+            if (promise->status() == JSPromise::Status::Rejected) {
+                scope.throwException(globalObject, promise->result());
+                return {};
+            }
+        }
         // Only drop the entry we created. If the entry already existed (an
         // outer import() is mid-load, or the module is EvaluatingAsync from a
         // prior import), removing it would force a second evaluation and a
@@ -931,6 +965,7 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
         Zig::GlobalObject::createStructure(vm),
         ScriptExecutionContext::generateIdentifier());
     shadow->setConsole(shadow);
+    WebCore::clientData(vm)->hasModuleRecordsOutsideLoaderMap = true;
 
     return shadow;
 }

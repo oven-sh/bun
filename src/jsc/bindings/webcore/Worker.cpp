@@ -27,6 +27,7 @@
 #include "config.h"
 #include "Worker.h"
 
+#include "AsyncContextFrame.h"
 #include "BunClientData.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
@@ -106,6 +107,11 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     , m_parentContextId(context.identifier())
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
+    // Parent-side events are dispatched from posted tasks, not from a JS
+    // caller, so snapshot the creator's async context now (Node's AsyncWrap
+    // does the same for its Worker/MessagePort handles).
+    if (auto* globalObject = context.jsGlobalObject())
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
 }
 
 ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const String& urlInit, WorkerOptions&& options)
@@ -357,6 +363,10 @@ void Worker::drainToParent(ScriptExecutionContext& context)
         return;
     }
     bool reschedule = drainInbox(m_toParent, globalObject, context, [&](Event& event) {
+        // Listeners observe the async context that was active at new Worker().
+        // drainInbox's entanglePorts() stays outside: Node deserializes a
+        // message's transferred ports before restoring the receiver's context.
+        AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
         dispatchEvent(event);
     });
     if (reschedule) {
@@ -464,9 +474,10 @@ void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
         m_state.store(State::Running);
     }
 
-    postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext& context) {
         if (protectedThis->hasEventListeners(eventNames().openEvent)) {
             auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
+            AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.getValue());
             protectedThis->dispatchEvent(event);
         }
     });
@@ -519,11 +530,12 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 
 void Worker::dispatchErrorWithMessage(WTF::String message)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext& context) {
         ErrorEvent::Init init;
         init.message = message;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+        AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.getValue());
         protectedThis->dispatchEvent(event);
     });
 }
@@ -570,6 +582,7 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
         init.error = deserialized;
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+        AsyncContextFrameScope asyncContextScope(globalObject, protectedThis->m_creationAsyncContext.getValue());
         protectedThis->dispatchEvent(event);
     });
 }
@@ -602,7 +615,7 @@ bool Worker::dispatchExit(int32_t exitCode)
     return ScriptExecutionContext::postTaskTo(
         m_parentContextId,
         [this] { this->deref(); },
-        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
             // handlers observe threadId == -1 and isOnline() == false while
             // postMessage() (gated only on Closed) still accepts and drops the
@@ -625,10 +638,13 @@ bool Worker::dispatchExit(int32_t exitCode)
 
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
+                AsyncContextFrameScope asyncContextScope(context.jsGlobalObject(), protectedThis->m_creationAsyncContext.getValue());
                 protectedThis->EventTargetWithInlineData::dispatchEvent(event);
             }
 
             protectedThis->m_state.store(State::Closed);
+            // A Closed worker never dispatches again; release the creation snapshot.
+            protectedThis->m_creationAsyncContext.clear();
             WebWorker__releaseParentPollRef(protectedThis->impl_);
             // protectedThis (and the JSWorker GC cell, if still rooted) keep us
             // alive across the close-event dispatch; both deref on the parent

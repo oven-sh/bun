@@ -5715,6 +5715,11 @@ extern "C" WebCore::AbortSignalTimeout WebCore__AbortSignal__getTimeout(WebCore:
     return abortSignal->getTimeout();
 }
 
+extern "C" void WebCore__AbortSignal__clearTimeoutAsyncContext(WebCore::AbortSignal* abortSignal)
+{
+    abortSignal->clearTimeoutAsyncContext();
+}
+
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* abortSignal)
 {
     abortSignal->ref();

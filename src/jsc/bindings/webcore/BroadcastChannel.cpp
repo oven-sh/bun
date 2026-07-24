@@ -26,6 +26,7 @@
 #include "config.h"
 #include "BroadcastChannel.h"
 
+#include "AsyncContextFrame.h"
 #include "BunBroadcastChannelRegistry.h"
 #include "BunClientData.h"
 #include "EventNames.h"
@@ -45,6 +46,10 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
     , m_contextId(context.identifier())
 {
     initializeWeakPtrFactory();
+    // dispatchMessage() runs from a posted task, not from a JS caller, so
+    // snapshot the creator's async context now (Node's AsyncWrap does the same).
+    if (auto* globalObject = context.jsGlobalObject())
+        AsyncContextFrame::captureCurrentContext(globalObject, m_creationAsyncContext);
     BunBroadcastChannelRegistry::singleton().subscribe(m_name, m_contextId, *this);
     jsRef(context.jsGlobalObject());
 }
@@ -89,6 +94,9 @@ void BroadcastChannel::dispatchMessage(Ref<SerializedScriptValue>&& message)
         RELEASE_ASSERT(vm.hasPendingTerminationException());
         return;
     }
+    // Listeners observe the async context that was active when this channel
+    // was created.
+    AsyncContextFrameScope asyncContextScope(globalObject, m_creationAsyncContext.getValue());
     dispatchEvent(event.event);
 }
 
@@ -97,6 +105,8 @@ void BroadcastChannel::close()
     uint64_t prev = m_state.fetch_or(Closed, std::memory_order_acq_rel);
     if (prev & Closed)
         return;
+    // A closed channel can never dispatch again; release the creation snapshot.
+    m_creationAsyncContext.clear();
     BunBroadcastChannelRegistry::singleton().unsubscribe(m_name, *this);
 }
 

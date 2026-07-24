@@ -128,6 +128,68 @@ describe("MessagePortChannel closed port", () => {
     }, 60_000);
   }
 
+  // The async context a MessagePort captures at creation (for AsyncLocalStorage
+  // propagation) must not GC-root the port's own JS wrapper: a store that
+  // references the port, a realistic tracing shape, would otherwise form an
+  // uncollectable cycle (impl -> captured context -> store -> wrapper -> Ref<impl>).
+  test("an AsyncLocalStorage store referencing its own MessagePorts does not leak them", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { AsyncLocalStorage } = require("async_hooks");
+          const { heapStats } = require("bun:jsc");
+          const als = new AsyncLocalStorage();
+          const COUNT = 128;
+
+          function portCount() {
+            Bun.gc(true);
+            Bun.gc(true);
+            Bun.gc(true);
+            return heapStats().objectTypeCounts.MessagePort ?? 0;
+          }
+
+          const held = [];
+          for (let i = 0; i < COUNT; i++) {
+            als.run({ port1: null, port2: null }, () => {
+              const { port1, port2 } = new MessageChannel();
+              const store = als.getStore();
+              store.port1 = port1;
+              store.port2 = port2;
+              held.push(port1, port2);
+            });
+          }
+
+          const live = portCount();
+          if (live < 2 * COUNT) {
+            console.error("FAIL: heapStats did not count the live MessagePorts, saw", live);
+            process.exit(1);
+          }
+
+          held.length = 0;
+          const survived = portCount();
+          if (survived > COUNT) {
+            console.error("FAIL:", survived, "of", live, "MessagePorts survived GC");
+            process.exit(1);
+          }
+          console.log("PASS:", survived, "of", live, "survived");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: expect.stringContaining("PASS"),
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 60_000);
+
   // Closing a port whose inbox holds a transferred port whose inbox holds a transferred
   // port whose... must not overflow the native stack. ~TransferredMessagePort calls
   // pipe->close(), which drops the inbox, whose destruction calls ~TransferredMessagePort

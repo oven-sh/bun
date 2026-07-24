@@ -45,7 +45,7 @@ pub(crate) fn on_internal_message_child(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
-    let arguments = frame.arguments_old::<2>().ptr;
+    let arguments = frame.arguments_as_array::<2>();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
     singleton.worker = StrongOptional::create(arguments[0], global);
@@ -68,7 +68,12 @@ pub(crate) fn handle_internal_message_child(
 pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
-    let arguments = frame.arguments_old::<4>().ptr;
+    let arguments = frame.arguments_as_array::<4>();
+    // `as_class_ref` is the safe shared-borrow downcast (centralised deref
+    // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
+    // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
+    // is `undefined` unless `cluster.fork()` created the process; Node's
+    // `sendHelper` returns false for a worker with no IPC channel.
     let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
         return Ok(JSValue::NULL);
     };
@@ -177,7 +182,7 @@ pub(crate) fn on_internal_message_primary(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<3>().ptr;
+    let arguments = frame.arguments_as_array::<3>();
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
@@ -254,7 +259,7 @@ pub(crate) fn handle_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>().ptr;
+    let arguments = frame.arguments_as_array::<1>();
 
     if arguments.len() == 0 {
         return Err(global.throw_missing_arguments_value(&["enabled"]));
@@ -310,7 +315,7 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
 pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
     {
-        let arguments = frame.arguments_old::<4>().ptr;
+        let arguments = frame.arguments_as_array::<4>();
         let address_type = arguments[0];
         let address = arguments[1];
         let port = arguments[2].to_int32();
@@ -401,7 +406,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     {
         use core::ffi::c_int;
 
-        let arguments = frame.arguments_old::<4>().ptr;
+        let arguments = frame.arguments_as_array::<4>();
         let address_type = arguments[0];
         let address = arguments[1];
         let port = arguments[2].to_int32();
@@ -709,7 +714,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
 #[bun_jsc::host_fn]
 pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _ = global;
-    let value = frame.arguments_old::<1>().ptr[0];
+    let value = frame.arguments_as_array::<1>()[0];
     if !value.is_number() {
         return Ok(JSValue::js_number_from_int32(-bun_sys::UV_E::INVAL));
     }
@@ -752,7 +757,7 @@ pub(crate) fn cluster_close_handle(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     let _ = global;
-    let value = frame.arguments_old::<1>().ptr[0];
+    let value = frame.arguments_as_array::<1>()[0];
     if value.is_number() {
         #[cfg(windows)]
         {

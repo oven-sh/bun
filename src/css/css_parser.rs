@@ -207,12 +207,6 @@ pub type CssResult<T> = Maybe<T, ParseError<ParserError>>;
 
 pub type PrintResult<T> = Maybe<T, PrinterError>;
 
-#[cold]
-pub fn todo(msg: &str) -> ! {
-    bun_core::Global::features::TODO_PANIC.store(1, core::sync::atomic::Ordering::Relaxed);
-    panic!("TODO: {msg}");
-}
-
 // ───────────────────────── Derive*-style helpers ─────────────────────────
 //
 // PORTING.md §Comptime reflection: each protocol is a trait
@@ -417,17 +411,18 @@ fn parse_custom_at_rule_body<T: CustomAtRuleParser>(
     at_rule_parser: &mut T,
     is_nested: bool,
 ) -> CssResult<T::AtRule> {
-    let result = match T::parse_block(at_rule_parser, prelude, start, input, options, is_nested) {
-        Ok(vv) => vv,
-        Err(_e) => {
-            // match &err.kind {
-            //   ParseErrorKind::Basic(kind) => ParseError { ... },
-            //   _ => input.new_error(BasicParseErrorKind::at_rule_body_invalid),
-            // }
-            todo("This part here");
-        }
-    };
-    Ok(result)
+    match T::parse_block(at_rule_parser, prelude, start, input, options, is_nested) {
+        Ok(vv) => Ok(vv),
+        Err(e) => Err(match e.kind {
+            errors_::ParserErrorKind::basic(kind) => ParseError {
+                kind: errors_::ParserErrorKind::basic(kind),
+                location: e.location,
+            },
+            errors_::ParserErrorKind::custom(_) => {
+                input.new_error(BasicParseErrorKind::at_rule_body_invalid)
+            }
+        }),
+    }
 }
 
 fn parse_qualified_rule<P: QualifiedRuleParser>(

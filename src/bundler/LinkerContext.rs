@@ -983,7 +983,7 @@ impl<'a> LinkerContext<'a> {
                 import_records,
                 file_entry_bits,
                 css_reprs,
-                stack: Vec::new(),
+                queue: std::collections::VecDeque::new(),
             };
 
             // Code splitting: Determine which entry points can reach which files. This
@@ -2660,7 +2660,7 @@ pub struct CodeSplitCtx<'a, 'r> {
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub file_entry_bits: &'r mut [AutoBitSet],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
-    pub stack: Vec<(crate::IndexInt, u32)>,
+    pub queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
 }
 
 impl<'a> LinkerContext<'a> {
@@ -2671,32 +2671,36 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distance: u32,
     ) {
-        // Explicit-stack DFS (was per-edge recursive). Only bit/distance
-        // state is produced, so traversal order within an entry point does
-        // not affect the result; successors are pushed without reordering.
-        debug_assert!(ctx.stack.is_empty());
-        ctx.stack.push((source_index, distance));
+        // BFS over the import graph from one entry point. Every edge has unit
+        // weight, so FIFO order makes the first dequeue of a file carry its
+        // shortest distance from this entry point, and re-enqueued already-
+        // visited files can be skipped on their entry bit alone. That keeps
+        // the work at O(V+E). esbuild (and the earlier recursive port here)
+        // runs the same fixpoint as LIFO DFS with a `traverseAgain`
+        // relaxation, which reaches the same `distances` / entry bits but
+        // does O(V*E) work when shorter paths are discovered late on
+        // diamond-shaped DAGs.
+        debug_assert!(ctx.queue.is_empty());
+        ctx.queue.push_back((source_index, distance));
 
-        while let Some((source_index, distance)) = ctx.stack.pop() {
+        while let Some((source_index, distance)) = ctx.queue.pop_front() {
             if !self.graph.files_live.is_set(source_index as usize) {
                 continue;
             }
 
-            let cur_dist = ctx.distances[source_index as usize];
-            let traverse_again = distance < cur_dist;
-            if traverse_again {
-                ctx.distances[source_index as usize] = distance;
-            }
-            let out_dist = distance + 1;
-
             let bits = &mut ctx.file_entry_bits[source_index as usize];
 
             // Don't mark this file more than once
-            if bits.is_set(entry_points_count) && !traverse_again {
+            if bits.is_set(entry_points_count) {
                 continue;
             }
-
             bits.set(entry_points_count);
+
+            // Track the minimum distance to an entry point
+            if distance < ctx.distances[source_index as usize] {
+                ctx.distances[source_index as usize] = distance;
+            }
+            let out_dist = distance + 1;
 
             #[cfg(feature = "debug_logs")]
             {
@@ -2719,8 +2723,10 @@ impl<'a> LinkerContext<'a> {
             for record in ctx.import_records[source_index as usize].iter() {
                 if record.source_index.is_valid()
                     && !self.is_external_dynamic_import(record, source_index)
+                    && !ctx.file_entry_bits[record.source_index.get() as usize]
+                        .is_set(entry_points_count)
                 {
-                    ctx.stack.push((record.source_index.get(), out_dist));
+                    ctx.queue.push_back((record.source_index.get(), out_dist));
                 }
             }
 
@@ -2731,8 +2737,11 @@ impl<'a> LinkerContext<'a> {
 
             for part in ctx.parts[source_index as usize].as_slice() {
                 for dependency in part.dependencies.iter() {
-                    if dependency.source_index.get() != source_index {
-                        ctx.stack.push((dependency.source_index.get(), out_dist));
+                    let dep = dependency.source_index.get();
+                    if dep != source_index
+                        && !ctx.file_entry_bits[dep as usize].is_set(entry_points_count)
+                    {
+                        ctx.queue.push_back((dep, out_dist));
                     }
                 }
             }

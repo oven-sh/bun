@@ -598,22 +598,21 @@ mod _async_tasks {
             pub task: WorkPoolTask,
         }
 
-        bun_threading::intrusive_work_task!(AsyncMkdirp, task);
+        bun_threading::owned_task!(AsyncMkdirp, task);
 
         impl AsyncMkdirp {
-            pub fn new(init: AsyncMkdirp) -> Box<Self> {
-                Box::new(init)
+            /// Heap-allocate and hand the task to the work pool, which owns the
+            /// allocation and frees it after `run_owned` returns.
+            pub fn schedule(init: AsyncMkdirp) {
+                WorkPool::schedule_new(init);
             }
 
-            /// # Safety
-            /// `task` must point to the `task` field of a live `AsyncMkdirp`.
-            fn work_pool_callback(task: *mut WorkPoolTask) {
-                // SAFETY: task points to AsyncMkdirp.task
-                let this = unsafe { &mut *AsyncMkdirp::from_task_ptr(task) };
-
+            #[allow(clippy::boxed_local)]
+            fn run_owned(self: Box<Self>) {
                 let mut node_fs = NodeFS::default();
-                // SAFETY: caller keeps `path` alive until completion
-                let path = unsafe { &*this.path };
+                // SAFETY: the scheduling caller keeps `path` alive until `completion`
+                // runs (it points into caller-owned state, not this box).
+                let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
                     path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                         path, false,
@@ -623,21 +622,17 @@ mod _async_tasks {
                 });
                 match result {
                     Err(err) => {
-                        (this.completion)(
-                            this.completion_ctx,
+                        (self.completion)(
+                            self.completion_ctx,
                             // `with_path` already clones into a fresh `Box<[u8]>`; pass the
                             // existing path slice.
                             Err(err.with_path(&err.path)),
                         );
                     }
                     Ok(_) => {
-                        (this.completion)(this.completion_ctx, Ok(()));
+                        (self.completion)(self.completion_ctx, Ok(()));
                     }
                 }
-            }
-
-            pub fn schedule(&mut self) {
-                WorkPool::schedule(&raw mut self.task);
             }
         }
 
@@ -647,7 +642,7 @@ mod _async_tasks {
                     completion_ctx: core::ptr::null_mut(),
                     completion: |_, _| {},
                     path: core::ptr::slice_from_raw_parts(core::ptr::null(), 0),
-                    task: work_pool_task(Self::work_pool_callback),
+                    task: WorkPoolTask::default(),
                 }
             }
         }

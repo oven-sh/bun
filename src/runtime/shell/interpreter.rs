@@ -333,6 +333,12 @@ impl InterpreterFlags {
     pub fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
+    pub const fn rejected(self) -> bool {
+        self.0 & 0b100 != 0
+    }
+    pub fn set_rejected(&mut self, v: bool) {
+        if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
 }
 
 #[repr(u8)]
@@ -1167,6 +1173,44 @@ impl Interpreter {
         Ok(())
     }
 
+    /// `Yield::Failed`: reject the ShellPromise with the pending exception and
+    /// release the keepalive. `has_pending_activity` is left pinned because a
+    /// sibling subprocess / glob / builtin task may still hold a raw backref.
+    pub fn reject_pending_exception(&self) {
+        use crate::jsc::JSValue;
+        use crate::jsc::generated::JSShellInterpreter;
+
+        let Some(global) = self.global_this_ref() else {
+            return;
+        };
+        if self.flags.get().rejected() {
+            let _ = global.try_take_exception();
+            return;
+        }
+        let Some(exc) = global.try_take_exception() else {
+            return;
+        };
+        self.update_flags(|f| f.set_rejected(true));
+        let err = exc.to_error().unwrap_or(exc);
+        self.keep_alive.with_mut(|k| k.disable());
+        let this_jsvalue = self.this_jsvalue.get();
+        let reject = (this_jsvalue != JSValue::ZERO)
+            .then(|| JSShellInterpreter::reject_get_cached(this_jsvalue))
+            .flatten()
+            .filter(|r| r.is_callable());
+        let Some(reject) = reject else {
+            global.report_active_exception_as_unhandled(global.throw_value(err));
+            return;
+        };
+        JSShellInterpreter::resolve_set_cached(this_jsvalue, global, JSValue::UNDEFINED);
+        JSShellInterpreter::reject_set_cached(this_jsvalue, global, JSValue::UNDEFINED);
+        let loop_ = self.event_loop;
+        let _entered = loop_.entered();
+        if let Err(e) = reject.call(global, JSValue::UNDEFINED, &[err]) {
+            global.report_active_exception_as_unhandled(e);
+        }
+    }
+
     pub fn finish(&self, exit_code: ExitCode) -> Yield {
         use crate::jsc::JSValue;
         use crate::jsc::generated::JSShellInterpreter;
@@ -1249,6 +1293,7 @@ impl Interpreter {
         );
 
         if let Err(e) = self.setup_io_before_run() {
+            self.keep_alive.with_mut(|k| k.disable());
             self.deref_root_shell_and_io_if_needed(true);
             let shellerr = ShellErr::new_sys(&e);
             return Err(throw_shell_err(
@@ -1265,9 +1310,6 @@ impl Interpreter {
         let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
         self.started.store(true, Ordering::SeqCst);
         Script::start(self, root).run(self);
-        if global_this.has_exception() {
-            return Err(crate::jsc::JsError::Thrown);
-        }
 
         Ok(crate::jsc::JSValue::UNDEFINED)
     }

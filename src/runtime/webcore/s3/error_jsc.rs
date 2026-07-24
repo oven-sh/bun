@@ -1,7 +1,7 @@
 //! JSC bridges for S3 signing errors. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
-use bun_core::String as BunString;
+use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::Error as SignError;
 use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
@@ -116,42 +116,36 @@ pub fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError
     }
 }
 
+// `OwnedString` is `#[repr(transparent)]` over `bun_core::String`, so the
+// `#[repr(C)]` layout matches the three-`BunString` struct the C++ side reads
+// (`S3Error` in S3Error.cpp). Unlike raw `bun_core::String` (which is `Copy`
+// with no `Drop`), `OwnedString` derefs its +1 on drop, so the refs taken by
+// `create_atom_if_possible` are released when `to_error_instance` returns.
 #[repr(C)]
+#[derive(Default)]
 struct JSS3Error {
-    code: BunString,
-    message: BunString,
-    path: BunString,
-}
-
-impl Default for JSS3Error {
-    fn default() -> Self {
-        Self {
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-        }
-    }
+    code: OwnedString,
+    message: OwnedString,
+    path: OwnedString,
 }
 
 impl JSS3Error {
     pub(crate) fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
-            code: BunString::create_atom_if_possible(code),
-            message: BunString::create_atom_if_possible(message),
-            path: if let Some(p) = path {
+            code: OwnedString::new(BunString::create_atom_if_possible(code)),
+            message: OwnedString::new(BunString::create_atom_if_possible(message)),
+            path: OwnedString::new(if let Some(p) = path {
                 BunString::init(p)
             } else {
                 BunString::empty()
-            },
+            }),
         }
     }
 
-    // The three `bun_core::String` fields deref themselves via `Drop`, so no
-    // explicit `Drop` impl is needed here.
-
     pub(crate) fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
-        // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
+        // `self` is consumed; `OwnedString` fields deref after the FFI call
+        // returns (C++ only reads the fields, it does not consume the refs).
         S3Error__toErrorInstance(&self, global)
     }
 }

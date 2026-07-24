@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import fs from "fs";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -125,6 +126,40 @@ describe.concurrent("process-stdio", () => {
     expect(stdout?.toString()).toBe(`hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`);
   });
 
+  test("process.stdout - write after end()", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.stdout.on("error", e => process.stderr.write("error-event:" + e.code + "\\n"));
+          process.stdout.write("kept\\n");
+          process.stdout.end();
+          const ret = process.stdout.write("dropped\\n", err => {
+            process.stderr.write("cb:" + (err && err.code) + "\\n");
+          });
+          process.stderr.write("ret:" + ret + "\\n");
+        `,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: null,
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // The chunk written after end() is dropped, and the failure is reported
+    // through the write callback and an 'error' event, like node.
+    expect(stdout).toBe("kept\n");
+    expect(stderr.split("\n").filter(Boolean)).toEqual([
+      "ret:false",
+      "cb:ERR_STREAM_WRITE_AFTER_END",
+      "error-event:ERR_STREAM_WRITE_AFTER_END",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
   test("process.stdout - write a lot (string)", () => {
     const { stdout } = spawnSync({
       cmd: [bunExe(), path.join(import.meta.dir, "stdio-test-instance-a-lot.js")],
@@ -157,5 +192,279 @@ describe.concurrent("process-stdio", () => {
     expect(stdout?.toString()).toBe(
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
+  });
+
+  // `process.stdout` used to write straight to its native sink, leaving
+  // `_writableState` untouched: writableLength/writableNeedDrain always read
+  // as "nothing buffered" and cork() never held anything back.
+  describe("backpressure accounting", () => {
+    const N = 4 * 1024 * 1024;
+
+    /** Reads `stream` incrementally, resolving each time `marker` matches. */
+    function markerReader(stream: ReadableStream<Uint8Array>) {
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      return async function until(marker: RegExp): Promise<RegExpMatchArray> {
+        while (true) {
+          const matched = buffered.match(marker);
+          if (matched) return matched;
+          const { done, value } = await reader.read();
+          if (value) buffered += decoder.decode(value, { stream: true });
+          else if (done) throw new Error(`stream ended before ${marker} matched: ${JSON.stringify(buffered)}`);
+        }
+      };
+    }
+
+    // Windows hands the chunk to uv_write and reports it complete the moment
+    // libuv accepts it, so the sink never tells the stream it had to buffer and
+    // writableLength can't see libuv's queue. That's native-side and predates
+    // this change (`write()` returns true on main there too); cork() accounting
+    // does work on Windows, it's only the backpressure signal that doesn't.
+    test.skipIf(isWindows)("writableLength, writableNeedDrain and cork() track the buffered bytes", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const so = process.stdout;
+            const facts = { hwm: so.writableHighWaterMark };
+            facts.writeRet = so.write(Buffer.alloc(${N}, 0x41), () => {});
+            facts.length = so.writableLength;
+            facts.needDrain = so.writableNeedDrain;
+            so.cork();
+            so.write(Buffer.alloc(1000, 0x42), () => {});
+            facts.corkedLength = so.writableLength;
+            facts.corked = so.writableCorked;
+            so.uncork();
+            process.stderr.write("@@" + JSON.stringify(facts) + "@@");
+          `,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      // stdout is deliberately left unread until the facts land on stderr, so the
+      // 4 MB write has nowhere to drain to and the sink has to buffer all of it.
+      const [, json] = await markerReader(proc.stderr)(/@@(.*)@@/);
+
+      expect(JSON.parse(json)).toEqual({
+        hwm: 65536,
+        writeRet: false,
+        length: N,
+        needDrain: true,
+        corkedLength: N + 1000,
+        corked: 1,
+      });
+
+      // Unblock the child so it can flush and exit.
+      expect((await proc.stdout.text()).length).toBe(N + 1000);
+      expect(await proc.exited).toBe(0);
+    });
+
+    // Skipped on Windows for the same reason: nothing backpressures, so the
+    // write never sets needDrain and 'drain' never fires.
+    test.skipIf(isWindows)("'drain' resets writableLength and writableNeedDrain", async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const so = process.stdout;
+            const writeRet = so.write(Buffer.alloc(${N}, 0x41));
+            const before = { length: so.writableLength, needDrain: so.writableNeedDrain };
+            so.once("drain", () => {
+              const after = { length: so.writableLength, needDrain: so.writableNeedDrain };
+              process.stderr.write("@@" + JSON.stringify({ writeRet, before, after }) + "@@");
+            });
+            process.stderr.write("##buffered##");
+          `,
+        ],
+        stdout: "pipe",
+        stderr: "pipe",
+        env: bunEnv,
+      });
+
+      const until = markerReader(proc.stderr);
+      // Only start draining stdout once the child reports the write is buffered,
+      // otherwise it might never backpressure and 'drain' would never fire.
+      await until(/##buffered##/);
+      const [stdout, [, json]] = await Promise.all([proc.stdout.text(), until(/@@(.*)@@/)]);
+
+      expect(JSON.parse(json)).toEqual({
+        writeRet: false,
+        before: { length: N, needDrain: true },
+        after: { length: 0, needDrain: false },
+      });
+      expect(stdout.length).toBe(N);
+      expect(await proc.exited).toBe(0);
+    });
+
+    // The point of cork(): the burst reaches the fd as one write(2), the way
+    // node's stdio coalesces it into a single writev(2). /proc/self/io's syscw
+    // counter is the only way to observe it, so this one is Linux-only.
+    //
+    // stdout is a regular file rather than a pipe on purpose. A pipe that fills
+    // up makes the sink buffer and coalesce writes on its own, which would sink
+    // both numbers below and leave the test asserting nothing; a file never
+    // applies backpressure, so every sink write is exactly one write(2).
+    test.skipIf(!isLinux)("uncork() flushes a corked burst in a single write syscall", async () => {
+      const chunks = 1000;
+      using dir = tempDir("stdout-cork-syscalls", {});
+      const outPath = path.join(String(dir), "stdout.bin");
+      const outFd = fs.openSync(outPath, "w");
+
+      try {
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `
+              const fs = require("fs");
+              const syscw = () => Number(/syscw:\\s*(\\d+)/.exec(fs.readFileSync("/proc/self/io", "utf8"))[1]);
+              const chunk = Buffer.alloc(64, 0x41);
+              process.stdout.write(chunk); // settle any startup writes
+
+              const before = syscw();
+              process.stdout.cork();
+              for (let i = 0; i < ${chunks}; i++) process.stdout.write(chunk);
+              const corkedLength = process.stdout.writableLength;
+              process.stdout.uncork();
+              const corked = syscw() - before;
+
+              const uncorkedBefore = syscw();
+              for (let i = 0; i < ${chunks}; i++) process.stdout.write(chunk);
+              const uncorked = syscw() - uncorkedBefore;
+
+              process.stderr.write("@@" + JSON.stringify({ corkedLength, corked, uncorked }) + "@@");
+            `,
+          ],
+          stdout: outFd,
+          stderr: "pipe",
+          env: bunEnv,
+        });
+
+        const [, json] = await markerReader(proc.stderr)(/@@(.*)@@/);
+        const { corkedLength, corked, uncorked } = JSON.parse(json);
+
+        expect(corkedLength).toBe(chunks * 64);
+        // One write(2) for the whole burst; a per-chunk flush would be `chunks`.
+        expect(corked).toBeLessThan(10);
+        // The control: uncorked writes have to hit the fd one at a time.
+        expect(uncorked).toBe(chunks);
+        expect(await proc.exited).toBe(0);
+        expect(fs.statSync(outPath).size).toBe(64 * (1 + chunks * 2));
+      } finally {
+        fs.closeSync(outFd);
+      }
+    });
+  });
+
+  // Behavior change: the old fast path fed anything the native sink accepted
+  // straight through, so an ArrayBuffer written to stdio "worked" while the very
+  // same write on an fs.WriteStream already threw. Both now reject it, as node does.
+  test("process.stdout - write() rejects an ArrayBuffer like node", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const codes = [];
+         for (const chunk of [new ArrayBuffer(4), new SharedArrayBuffer(4)]) {
+           try {
+             process.stdout.write(chunk);
+             codes.push("accepted");
+           } catch (e) {
+             codes.push(e.code);
+           }
+         }
+         // A view over the same buffer is the supported spelling, and still works.
+         process.stdout.write(new Uint8Array([0x41, 0x42]));
+         process.stderr.write(codes.join(","));`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, stdout, exitCode }).toEqual({
+      stderr: "ERR_INVALID_ARG_TYPE,ERR_INVALID_ARG_TYPE",
+      stdout: "AB",
+      exitCode: 0,
+    });
+  });
+
+  test("process.stdout - write() decodes the encoding argument", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write("414243", "hex");
+         process.stdout.write("ZGVm", "base64");
+         process.stdout.write("\\u00e9", "latin1");
+         process.stdout.setDefaultEncoding("hex");
+         process.stdout.write("21");`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: Buffer.from(stdout).toString("latin1"), exitCode }).toEqual({
+      stdout: "ABCdef\xe9!",
+      exitCode: 0,
+    });
+  });
+
+  // sonic-boom (pino) treats an own `write` as a tampered stream and drops off
+  // its batched fast path, so stdio must inherit write() from the prototype.
+  test("process.stdout - write() is inherited, not an own property", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(JSON.stringify({
+           untampered: process.stdout.write === process.stdout.constructor.prototype.write,
+           ownWrite: Object.hasOwn(process.stdout, "write"),
+         }));`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ ...JSON.parse(stdout), exitCode }).toEqual({ untampered: true, ownWrite: false, exitCode: 0 });
+  });
+
+  // Write callbacks are deferred, so they interleave with readline's cursor
+  // callbacks (which report from process.nextTick) in call order.
+  test("process.stdout - write callbacks run in call order with readline cursor callbacks", async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const readline = require("node:readline");
+         const order = [];
+         let pending = 5;
+         const done = n => {
+           order.push(n);
+           if (--pending === 0) require("fs").writeSync(2, order.join(","));
+         };
+         process.stdout.write("A", () => done("w1"));
+         readline.moveCursor(process.stdout, 0, 0, () => done("m0"));
+         process.stdout.write("B", () => done("w2"));
+         readline.cursorTo(process.stdout, 3, undefined, () => done("c"));
+         readline.moveCursor(process.stdout, 1, 0, () => done("m1"));`,
+      ],
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "w1,m0,w2,c,m1", exitCode: 0 });
   });
 });

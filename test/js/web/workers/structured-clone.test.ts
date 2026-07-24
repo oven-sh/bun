@@ -47,7 +47,8 @@ function jscSerializeRoundtripCrossProcessCold(original: any) {
     import {deserialize, serialize} from "bun:jsc";
     const serialized = deserialize(await Bun.stdin.bytes());
     const cloned = serialize(serialized);
-    process.stdout.write(cloned);
+    // serialize() hands back a SharedArrayBuffer, which Writable rejects (as node does).
+    process.stdout.write(new Uint8Array(cloned));
     `,
     ],
     env: bunEnv,
@@ -75,7 +76,8 @@ const crossProcessChildScript = `
         chunks = [buf];
         break;
       }
-      const cloned = serialize(deserialize(buf.subarray(4, 4 + len)));
+      // serialize() hands back a SharedArrayBuffer, which Writable rejects (as node does).
+      const cloned = new Uint8Array(serialize(deserialize(buf.subarray(4, 4 + len))));
       const header = Buffer.alloc(4);
       header.writeUInt32LE(cloned.byteLength, 0);
       process.stdout.write(header);

@@ -2430,6 +2430,7 @@ impl<'a> Transpiler<'a> {
                 minify_syntax: self.options.minify_syntax,
                 minify_identifiers: self.options.minify_identifiers,
                 transform_only: self.options.transform_only,
+                inline_runtime_helpers: !self.options.allow_runtime,
                 print_dce_annotations: self.options.emit_dce_annotations,
                 runtime_transpiler_cache,
                 hmr_ref: ast.wrapper_ref,
@@ -2466,6 +2467,7 @@ impl<'a> Transpiler<'a> {
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
             transform_only: self.options.transform_only,
+            inline_runtime_helpers: !self.options.allow_runtime,
             import_meta_ref: ast.import_meta_ref,
             print_dce_annotations: self.options.emit_dce_annotations,
             runtime_transpiler_cache,
@@ -2547,6 +2549,7 @@ impl<'a> Transpiler<'a> {
             minify_syntax: self.options.minify_syntax,
             minify_identifiers: self.options.minify_identifiers,
             transform_only: self.options.transform_only,
+            inline_runtime_helpers: !self.options.allow_runtime,
             module_type: if IS_BUN && self.options.transform_only {
                 // this is for when using `bun build --no-bundle`
                 // it should copy what was passed for the cli

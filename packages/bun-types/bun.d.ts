@@ -2463,6 +2463,16 @@ declare module "bun" {
     macro?: MacroMap;
 
     autoImportJSX?: boolean;
+
+    /**
+     * Let the transpiler import its lowering helpers (decorators, `using`) from
+     * `"bun:wrap"` instead of inlining them into the output.
+     *
+     * `"bun:wrap"` only resolves inside Bun, so leave this off (the default)
+     * when the output runs somewhere else.
+     *
+     * @default false
+     */
     allowBunRuntime?: boolean;
     exports?: {
       eliminate?: string[];

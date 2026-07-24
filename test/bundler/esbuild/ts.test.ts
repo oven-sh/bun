@@ -1005,24 +1005,27 @@ describe("bundler", () => {
     },
     keepNames: true,
   });
+  // `captureFile` matches its marker as a plain substring, so the decorator is
+  // named `capture` rather than esbuild's `dec`: the latter also matches the
+  // `decorators` / `Reflect.decorate` inside the inlined lowering helpers.
   itBundled("ts/TypeScriptDecoratorScopeESBuildIssue2147", {
     files: {
       "/entry.ts": /* ts */ `
         class Foo {
-          method1(@dec(foo) foo = 2) {}
-          method2(@dec(() => foo) foo = 3) {}
+          method1(@capture(foo) foo = 2) {}
+          method2(@capture(() => foo) foo = 3) {}
         }
 
         class Bar {
           static x = class {
             static y = () => {
-              @dec(bar)
-              @dec(() => bar)
+              @capture(bar)
+              @capture(() => bar)
               class Baz {
-                @dec(bar) method1() {}
-                @dec(() => bar) method2() {}
-                method3(@dec(() => bar) bar) {}
-                method4(@dec(() => bar) bar) {}
+                @capture(bar) method1() {}
+                @capture(() => bar) method2() {}
+                method3(@capture(() => bar) bar) {}
+                method4(@capture(() => bar) bar) {}
               }
               return Baz
             }
@@ -1034,7 +1037,7 @@ describe("bundler", () => {
     },
     bundling: false,
     onAfterBundle(api) {
-      const capturedCalls = api.captureFile("/out.js", "dec");
+      const capturedCalls = api.captureFile("/out.js");
       expect(capturedCalls).toEqual([
         "foo",
         "() => foo",

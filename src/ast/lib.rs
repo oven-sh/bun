@@ -2973,6 +2973,7 @@ pub use lexer_log::LexerLog;
 pub mod lexer_tables;
 pub mod nodes;
 pub mod runtime;
+pub mod runtime_inline;
 
 pub mod ast_result;
 pub mod import_record;

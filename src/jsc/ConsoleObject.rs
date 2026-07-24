@@ -5878,6 +5878,48 @@ thread_local! {
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Write `label: <duration>` to `w` using Node.js's `console.timeEnd` /
+/// `console.timeLog` formatting rules (see Node's `internal/util/debuglog.js`
+/// `formatTime`): `<n>ms` below one second, `<n.nnn>s` below one minute, then
+/// `m:ss.mmm` / `h:mm:ss.mmm` above that.
+fn write_timer_label_and_duration(w: &mut bun_core::io::Writer, label: &[u8], ms: f64) {
+    const SECOND: f64 = 1_000.0;
+    const MINUTE: f64 = 60.0 * SECOND;
+    const HOUR: f64 = 60.0 * MINUTE;
+
+    let _ = w.write_all(label);
+    let _ = w.write_all(b": ");
+
+    if ms >= MINUTE {
+        let mut rem = ms;
+        let hours = if rem >= HOUR {
+            let h = (rem / HOUR).floor();
+            rem -= h * HOUR;
+            h as u64
+        } else {
+            0
+        };
+        let minutes = {
+            let m = (rem / MINUTE).floor();
+            rem -= m * MINUTE;
+            m as u64
+        };
+        let seconds = rem / SECOND;
+        if hours != 0 {
+            let _ = write!(w, "{hours}:{minutes:02}:{seconds:06.3} (h:mm:ss.mmm)");
+        } else {
+            let _ = write!(w, "{minutes}:{seconds:06.3} (m:ss.mmm)");
+        }
+    } else if ms >= SECOND {
+        let _ = write!(w, "{:.3}s", ms / SECOND);
+    } else {
+        // Node: `Number(ms.toFixed(3))` — round to three decimals, then print
+        // with JS number formatting (trailing zeros stripped).
+        let rounded = (ms * 1000.0).round() / 1000.0;
+        let _ = write!(w, "{}ms", bun_core::fmt::double(rounded));
+    }
+}
+
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__time(
@@ -5905,7 +5947,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
 #[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     chars: *const u8,
     len: usize,
 ) {
@@ -5923,15 +5965,15 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     };
     let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match len {
-        0 => Output::print_errorln(format_args!("")),
-        _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
-    }
+    let elapsed_ms =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
 
-    Output::flush();
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let writer = unsafe { vm_console_mut(global) }.writer();
+    write_timer_label_and_duration(writer, slice, elapsed_ms);
+    let _ = writer.write_all(b"\n");
+    let _ = writer.flush();
 }
 
 #[unsafe(no_mangle)]
@@ -5955,14 +5997,16 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match len {
-        0 => {}
-        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
-    }
-    Output::flush();
+    let elapsed_ms =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
+
+    let console = vm_console(global);
+    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
+    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
+    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
+    // across the `fmt.format(...)` calls below, which can re-enter JS.
+    let mut writer = unsafe { (*console).writer() };
+    write_timer_label_and_duration(writer, slice, elapsed_ms);
 
     // print the arguments
     // `Formatter` has a `Drop` impl, so struct-update from a
@@ -5973,19 +6017,14 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
-    let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let mut writer = unsafe { (*console).error_writer() };
+    let enable_colors = Output::enable_ansi_colors_stdout();
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
         let _ = bun_io::Write::write_all(&mut writer, b" ");
-        if Output::enable_ansi_colors_stderr() {
+        if enable_colors {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);

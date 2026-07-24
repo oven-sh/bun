@@ -47,7 +47,10 @@ export function parseLog(text: string): Map<string, number> {
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(body);
     if (hdr) {
       close(ts);
-      const title = hdr[2].replace(/ \[attempt #\d+\]$/, "").replace(/\\/g, "/").trim();
+      const title = hdr[2]
+        .replace(/ \[attempt #\d+\]$/, "")
+        .replace(/\\/g, "/")
+        .trim();
       // Retry/error labels (`<path> - code 1`) are not file paths; treat them
       // as a delimiter so the preceding span closes without the retry backoff
       // landing on either attempt.
@@ -110,7 +113,9 @@ if (import.meta.main) {
   const jobs: Job[] = buildJson.jobs.filter(
     (j: any) => j.name && j.raw_log_url && j.name.includes("test-bun") && !j.retried,
   );
-  console.error(`build #${BUILD}: ${jobs.length} test-bun jobs across ${new Set(jobs.map(j => j.name)).size} platforms`);
+  console.error(
+    `build #${BUILD}: ${jobs.length} test-bun jobs across ${new Set(jobs.map(j => j.name)).size} platforms`,
+  );
 
   const platOf = (name: string) =>
     name

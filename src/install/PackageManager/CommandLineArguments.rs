@@ -24,15 +24,13 @@ use std::sync::OnceLock;
 use super::package_manager_options as Options;
 
 /// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. The help strings are runtime `&str`s so we
-/// use the runtime expander.
+/// literal then write to stdout. Single pass: `Output::pretty(&str)` already
+/// runs `pretty_fmt_runtime`, so wrapping in `format_args!` would rewrite the
+/// already-unescaped `\<name\>` placeholders a second time.
 #[inline]
 #[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {
-    Output::pretty(format_args!(
-        "{}",
-        Output::pretty_fmt_rt(text, Output::enable_ansi_colors_stdout())
-    ));
+    Output::pretty(text);
 }
 
 type ParamType = clap::Param<clap::Help>;

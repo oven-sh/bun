@@ -86,7 +86,8 @@ use bun_output_tags::{RESET, color_for};
 /// vs `bun_core::output::pretty_fmt_runtime` because the two intentionally
 /// diverge in the `{` arm (this side rewrites legacy specs `{s}`→`{}` for the
 /// emitted `format_args!` template; runtime copies braces verbatim) and on
-/// unknown tags (this side `Err`→`compile_error!`; runtime emits `""`).
+/// unknown tags (this side `Err`→`compile_error!`; runtime emits the tag
+/// verbatim so prose placeholders survive).
 fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
     let bytes = fmt.as_bytes();
     let mut out = String::with_capacity(bytes.len() * 2);

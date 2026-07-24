@@ -124,6 +124,11 @@ pub struct Watcher {
     pub evict_list: [WatchItemIndex; MAX_EVICTION_COUNT],
     pub evict_list_i: WatchItemIndex,
 
+    /// Scratch snapshot of `watchlist.eventlist_index` used by
+    /// `watch_loop_cycle`; owned by the watcher thread.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub eventlist_index_scratch: Vec<platform::EventListIndex>,
+
     pub ctx: *mut (),
     pub on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub on_error: fn(*mut (), sys::Error),
@@ -198,6 +203,8 @@ impl Watcher {
             close_descriptors: bun_core::AtomicCell::new(false),
             evict_list: [0; MAX_EVICTION_COUNT],
             evict_list_i: 0,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            eventlist_index_scratch: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
         });
 

@@ -161,10 +161,13 @@ test.skipIf(!isASAN)("seq piped to an fd does not clone its output buffer before
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const deltaBytes = parseInt(stdout.trim(), 10);
+  const rawDelta = stdout.trim();
+  expect(rawDelta).toMatch(/^\d+$/);
+  const deltaBytes = Number(rawDelta);
   // Output is 31_688_895 bytes. With the fix the child's RSS grows by
   // ~128-134 MB (rendered Vec capacity + IOWriter's copy + ASAN shadow);
   // without it the extra clone pushes it to ~170 MB.
+  expect(deltaBytes).toBeGreaterThan(0);
   expect(deltaBytes).toBeLessThan(152 * 1024 * 1024);
   expect(exitCode).toBe(0);
 });

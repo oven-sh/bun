@@ -2290,6 +2290,140 @@ it("should support promise returned from error", async () => {
   subprocess.kill();
 });
 
+// A deferred error() that returns a pending Promise<undefined> used to respond
+// 204 and swallow the error, unlike its sync and already-settled twins which
+// respond 500. Runs in a subprocess so the server's error reports don't trip
+// the test runner's unhandled-error check.
+it("error() producing no Response always responds 500 (#33137)", async () => {
+  using dir = tempDir("serve-deferred-error-33137", {
+    "server.js": `
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch(request) {
+          const { pathname } = new URL(request.url);
+          // A rejected fetch promise routes through handle_reject into error().
+          if (pathname === "/fetch-rejects") {
+            return new Promise((_, reject) => setImmediate(() => reject(new Error(pathname))));
+          }
+          throw new Error(pathname);
+        },
+        error(cause) {
+          const { message } = cause;
+          if (message === "/sync") return undefined;
+          if (message === "/already-settled") return Promise.resolve(undefined);
+          if (message === "/already-settled-null") return Promise.resolve(null);
+          if (message === "/deferred-null") return new Promise(r => setImmediate(() => r(null)));
+          if (message === "/deferred-response") {
+            return new Promise(r => setImmediate(() => r(new Response("handled", { status: 503 }))));
+          }
+          // /deferred and /fetch-rejects resolve to undefined after the drain.
+          return new Promise(r => setImmediate(() => r(undefined)));
+        },
+      });
+      process.send(server.url.href);
+    `,
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    ipc(message) {
+      resolve(message);
+    },
+  });
+  // Drain stderr concurrently, and fail fast if the server dies before the URL
+  // handshake instead of hanging until the test timeout.
+  const stderrPromise = proc.stderr.text();
+  proc.exited.then(async code => {
+    reject(new Error(`server exited (${code}) before sending its URL\n${await stderrPromise.catch(() => "")}`));
+  });
+
+  const url = await promise;
+
+  // Sync, already-settled, and deferred resolutions to a non-Response, plus a
+  // rejected fetch() promise routed through error(), all respond 500.
+  for (const pathname of [
+    "/sync",
+    "/already-settled",
+    "/already-settled-null",
+    "/deferred",
+    "/deferred-null",
+    "/fetch-rejects",
+  ]) {
+    const res = await fetch(new URL(pathname, url));
+    const body = await res.text();
+    expect({ pathname, status: res.status, body }).toEqual({
+      pathname,
+      status: 500,
+      body: "Something went wrong!",
+    });
+  }
+
+  // A deferred error() that does return a Response still renders it.
+  {
+    const res = await fetch(new URL("/deferred-response", url));
+    const body = await res.text();
+    expect({ status: res.status, body }).toEqual({ status: 503, body: "handled" });
+  }
+
+  proc.kill();
+  const stderr = await stderrPromise;
+  // The deferred 500s come with the invalid-return diagnostic, not a silent body.
+  expect(stderr).toContain("Expected a Response object");
+});
+
+// The fix keys on is_error_promise_pending, so fetch()'s OWN deferred
+// non-Response must keep the documented 204 and must not be hijacked onto the
+// error() 500 path.
+it("a deferred fetch() resolving to a non-Response still responds 204 (#33137)", async () => {
+  using dir = tempDir("serve-fetch-deferred-204", {
+    "server.js": `
+      const server = Bun.serve({
+        port: 0,
+        development: false,
+        fetch(request) {
+          const { pathname } = new URL(request.url);
+          const value = pathname === "/null" ? null : undefined;
+          return new Promise(r => setImmediate(() => r(value)));
+        },
+      });
+      process.send(server.url.href);
+    `,
+  });
+
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    ipc(message) {
+      resolve(message);
+    },
+  });
+  const stderrPromise = proc.stderr.text();
+  proc.exited.then(async code => {
+    reject(new Error(`server exited (${code}) before sending its URL\n${await stderrPromise.catch(() => "")}`));
+  });
+
+  const url = await promise;
+
+  for (const pathname of ["/undefined", "/null"]) {
+    const res = await fetch(new URL(pathname, url));
+    const body = await res.text();
+    expect({ pathname, status: res.status, body }).toEqual({ pathname, status: 204, body: "" });
+  }
+
+  proc.kill();
+  await stderrPromise;
+});
+
 if (process.platform === "linux")
   it("should use correct error when using a root range port(#7187)", () => {
     expect(() => {

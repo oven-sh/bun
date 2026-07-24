@@ -696,6 +696,12 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
+        // A deferred `error()` handler that produced no Response responds 500,
+        // like its sync and already-settled twins, instead of the fetch path's 204.
+        if self.flags.is_error_promise_pending() {
+            self.flags.set_is_error_promise_pending(false);
+            return self.render_production_error(500);
+        }
         self.render_missing();
     }
 

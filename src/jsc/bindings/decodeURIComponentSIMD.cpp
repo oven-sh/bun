@@ -294,7 +294,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDecodeURIComponentSIMD, (JSC::JSGlobalObject 
         auto string = input.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // decodeURIComponentSIMD consumes UTF-8 bytes, like the ServerRouteList and CookieMap callers.
+        // decodeURIComponentSIMD consumes UTF-8 bytes, like the ServerRouteList caller.
         UTF8View utf8View(string);
         auto&& output = decodeURIComponentSIMD(utf8View.bytes());
         return JSC::JSValue::encode(JSC::jsString(vm, output));

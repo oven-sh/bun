@@ -117,6 +117,8 @@ public:
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 
+    static String decodeCookieValue(StringView value);
+
 private:
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,

@@ -6,8 +6,6 @@
 #include <wtf/text/ParsingUtilities.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "HTTPParsers.h"
-#include "decodeURIComponentSIMD.h"
-#include "BunString.h"
 #include <wtf/HashSet.h>
 namespace WebCore {
 
@@ -95,11 +93,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
             auto pairs = forCookieHeader.split(';');
             Vector<KeyValuePair<String, String>> cookies;
 
-            bool hasAnyPercentEncoded = forCookieHeader.find('%') != notFound;
             for (auto pair : pairs) {
-                String name = ""_s;
-                String value = ""_s;
-
                 auto equalsPos = pair.find('=');
                 if (equalsPos == notFound) {
                     continue;
@@ -112,16 +106,7 @@ ExceptionOr<Ref<CookieMap>> CookieMap::create(std::variant<Vector<Vector<String>
                     continue;
                 }
 
-                name = nameView.toString();
-
-                if (hasAnyPercentEncoded) {
-                    Bun::UTF8View utf8View(valueView);
-                    value = Bun::decodeURIComponentSIMD(utf8View.bytes());
-                } else {
-                    value = valueView.toString();
-                }
-
-                cookies.append(KeyValuePair<String, String>(name, value));
+                cookies.append(KeyValuePair<String, String>(nameView.toString(), Cookie::decodeCookieValue(valueView)));
             }
 
             return adoptRef(*new CookieMap(WTF::move(cookies)));

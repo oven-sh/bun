@@ -50,6 +50,7 @@ public:
     ~Process();
 
     bool m_isExitCodeObservable = false;
+    bool m_isExiting = false;
     bool m_sourceMapsEnabled = false;
     // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
     // function-local static would be shared across worker threads, so a

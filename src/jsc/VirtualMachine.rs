@@ -2441,7 +2441,19 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Not `wait_for_promise`: a never-settling TLA would busy-spin.
+            // Tick while work could settle it; on idle-with-pending, return
+            // so the caller fires beforeExit/exit and maps to exit code 13.
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending {
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending {
+                    break;
+                }
+                if !self.is_event_loop_alive() {
+                    break;
+                }
+                self.auto_tick();
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

@@ -14,6 +14,7 @@ use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
+use bun_jsc::JSPromise;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
@@ -1564,9 +1565,26 @@ impl Run {
                 vm.event_loop_ref().tick_possibly_forever();
             }
         } else {
-            while vm.is_event_loop_alive() {
-                vm.tick();
-                vm.auto_tick_active();
+            loop {
+                while vm.is_event_loop_alive() {
+                    vm.tick();
+                    vm.auto_tick_active();
+                }
+
+                vm.on_before_exit();
+
+                // load_entry_point() may have left the entry promise pending.
+                // A beforeExit listener may have just scheduled work that
+                // settles it — drain once and re-enter if so.
+                if let Some(p) = vm.pending_internal_promise {
+                    if JSPromise::status_ptr(p) == PromiseStatus::Pending {
+                        vm.tick();
+                        if vm.is_event_loop_alive() {
+                            continue;
+                        }
+                    }
+                }
+                break;
             }
 
             if ctx.runtime_options.eval.eval_and_print {
@@ -1616,7 +1634,40 @@ impl Run {
                 }
             }
 
-            vm.on_before_exit();
+            // Node: still-pending entry TLA → warn + exit 13 (unless an exit
+            // code was set); late-rejected → surface via uncaughtException.
+            if let Some(p) = vm.pending_internal_promise {
+                match JSPromise::status_ptr(p) {
+                    PromiseStatus::Pending => {
+                        if vm.exit_handler.exit_code == 0 {
+                            pretty_errorln!(
+                                "<r><yellow>warn<r><d>:<r> Detected unsettled top-level await in <b>{}<r>",
+                                bstr::BStr::new(vm.main()),
+                            );
+                            Output::flush();
+                            vm.exit_handler.exit_code = 13;
+                        }
+                    }
+                    PromiseStatus::Rejected => {
+                        if vm.pending_internal_promise_reported_at != vm.hot_reload_counter {
+                            // SAFETY: `p` is a live GC cell tracked by the VM.
+                            let promise = unsafe { &mut *p };
+                            // SAFETY: `vm.jsc_vm` set in `init`.
+                            let result = promise.result(unsafe { &mut *vm.jsc_vm });
+                            let global = vm.global;
+                            // on_before_exit() set this; clear so a user
+                            // uncaughtException listener is consulted instead
+                            // of uncaught_exception() hard-exiting.
+                            vm.exit_on_uncaught_exception = false;
+                            // SAFETY: `global` valid for VM lifetime.
+                            let _ = vm.uncaught_exception(unsafe { &*global }, result, true);
+                            promise.set_handled();
+                            vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                        }
+                    }
+                    PromiseStatus::Fulfilled => {}
+                }
+            }
         }
 
         if log_has_msgs(vm) {

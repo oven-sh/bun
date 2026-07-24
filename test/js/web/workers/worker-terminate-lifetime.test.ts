@@ -176,3 +176,62 @@ test.skipIf(!isASAN)(
   },
   timeout,
 );
+
+// Regression: AnyTaskJob::run_task (work-pool thread) read vm.global and
+// vm.event_loop_shared() to enqueue the completion; when the owning VM was a
+// worker freed by terminate() while a long KDF (scrypt/pbkdf2) was running,
+// both reads were a heap-use-after-free in VirtualMachine (freed by
+// WebWorker::shutdown). Release builds segfaulted; ASAN reported the UAF on a
+// "Bun Pool" thread.
+test(
+  "terminate() while async crypto.scrypt()/pbkdf2() are running on the work pool does not UAF the worker VM",
+  async () => {
+    // Long KDF iterations make the terminate window huge, so one round per
+    // worker is enough for ASAN to catch the UAF; release builds segfaulted
+    // within a few rounds on the unfixed path.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          'const { parentPort } = require("node:worker_threads");' +
+          'const crypto = require("node:crypto");' +
+          'const { promisify } = require("node:util");' +
+          'const scrypt = promisify(crypto.scrypt), pbkdf2 = promisify(crypto.pbkdf2);' +
+          'const lanes = (n, f) => { for (let i = 0; i < n; i++) (async () => { for (;;) { try { await f(); } catch {} } })(); };' +
+          'lanes(3, () => scrypt("pw", "salt", 64, { N: 1 << 14, r: 8, p: 1, maxmem: 128 << 20 }));' +
+          'lanes(3, () => pbkdf2("pw", "salt", 200000, 64, "sha512"));' +
+          'parentPort.postMessage("up");';
+        for (let r = 0; r < ${rounds}; r++) {
+          const w = new Worker(src, { eval: true });
+          // Wait until the KDF lanes are scheduled on the work pool.
+          await new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+          });
+          // Terminate with the KDFs in flight; their pool-thread completion
+          // must not touch the freed VM.
+          await w.terminate();
+        }
+        console.log("ok");
+      `,
+      ],
+      // A job still on the pool at close() is leaked by design (its ctx holds
+      // Strong handles into the dead VM's JSC heap), and any job that raced
+      // into concurrent_tasks before close() ends up requeued into
+      // EventLoop.tasks, whose buffer becomes unreachable when the worker VM
+      // is raw-dealloc'd. Both are bounded per terminated worker; opt this
+      // subprocess out of LSan so that stranded-task accounting isn't asserted
+      // as a regression.
+      env: { ...bunEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  },
+  timeout,
+);

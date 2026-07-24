@@ -852,15 +852,20 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
+// JSON.stringify emits `null` for NaN/Infinity (no throw), so only finite
+// numbers round-trip; anything else crosses as its inspect() string.
+function isJsonRoundTripPrimitive(value: unknown) {
+  const t = typeof value;
+  return value === null || t === "string" || t === "boolean" || (t === "number" && Number.isFinite(value));
+}
+
 // A non-Error cause crosses the pipe by value; the envelope tags it so the
 // parent does not rebuild it as an Error. The pipe is JSON, so only JSON-safe
-// primitives survive as-is; anything else (BigInt, circular object, Symbol)
-// would throw in JSON.stringify and the catch in emitRunChildEvent would drop
-// the whole event, so carry its inspect() string instead.
+// primitives survive as-is; anything else (BigInt, NaN/Infinity, circular
+// object, Symbol) is carried as its inspect() string instead.
 function serializeRunCause(cause: unknown, depth: number) {
   if (Error.isError(cause)) return serializeRunError(cause, depth);
-  const t = typeof cause;
-  if (cause === null || t === "string" || t === "number" || t === "boolean") {
+  if (isJsonRoundTripPrimitive(cause)) {
     return { __proto__: null, nonError: true, value: cause };
   }
   return { __proto__: null, nonError: true, value: require("node:util").inspect(cause) };
@@ -883,8 +888,8 @@ function serializeRunError(error: unknown, depth = 0) {
     // Only JSON-safe primitives survive the pipe (node uses the v8 serializer).
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
-      const t = typeof value;
-      if (value === null || t === "string" || t === "number" || t === "boolean") out[key] = value;
+      if (isJsonRoundTripPrimitive(value)) out[key] = value;
+      else if (typeof value === "number") out[key] = String(value);
     }
     return out;
   }
@@ -975,10 +980,13 @@ function reportCancelledNode(node: TestNode) {
   noteRunChildDone(node.parent, true);
 }
 
-// node wraps a failure thrown by a before/after hook in a fresh
-// ERR_TEST_FAILURE with the fixed message `failed running <kind> hook`
-// (failureType hookFailed); the thrown error is kept on cause.
-function wrapHookError(error: unknown, kind: "before" | "after"): Error {
+type HookKind = "before" | "after" | "beforeEach" | "afterEach";
+
+// node's Test.runHook() wraps every hook failure in a fresh ERR_TEST_FAILURE
+// with the fixed message `failed running <kind> hook` (failureType hookFailed);
+// the thrown error is kept on cause. Wrapped at source so every hook path
+// reports hookFailed instead of testCodeFailure.
+function wrapHookError(error: unknown, kind: HookKind): Error {
   const wrapper = new Error(`failed running ${kind} hook`);
   (wrapper as { code?: string }).code = "ERR_TEST_FAILURE";
   (wrapper as { failureType?: string }).failureType = "hookFailed";
@@ -2738,7 +2746,7 @@ async function raceWithTimeoutAndSignal(
   }
 }
 
-async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
+async function runHook(hook: Hook, owner: TestNode, arg: unknown, kind: HookKind) {
   const { timeout, signal } = hook;
   function invokeHookFn() {
     return invokeTestFn(hook.fn as Function, arg);
@@ -2754,14 +2762,14 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
     }
   } catch (err) {
     // A hook that throws a nullish value must still fail the owning test.
-    throw err ?? makeTestFailure("hook failed");
+    throw wrapHookError(err, kind);
   }
 }
 
 // Node runs each before hook at most once (runOnce) and memoizes the outcome:
 // after a failure, every later subtest observes the same rejection.
 function runBeforeHookOnce(hook: Hook, owner: TestNode, arg: unknown): Promise<void> {
-  return (hook.result ??= runHook(hook, owner, arg));
+  return (hook.result ??= runHook(hook, owner, arg, "before"));
 }
 
 // Failures fail the owning test (Node: hook.error -> test.fail) instead of
@@ -2935,7 +2943,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     for (const ancestor of ancestors) {
       for (const hook of ancestor.hooks.beforeEach) {
-        await runHook(hook, ancestor, ctx);
+        await runHook(hook, ancestor, ctx, "beforeEach");
       }
     }
   } catch (err) {
@@ -3049,7 +3057,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     const ancestor = ancestors[i];
     for (const hook of ancestor.hooks.afterEach) {
       try {
-        await runHook(hook, ancestor, ctx);
+        await runHook(hook, ancestor, ctx, "afterEach");
       } catch (err) {
         failure ??= err;
       }
@@ -3058,7 +3066,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   for (const hook of node.hooks.after) {
     try {
-      await runHook(hook, node, ctx);
+      await runHook(hook, node, ctx, "after");
     } catch (err) {
       failure ??= err;
     }
@@ -3149,7 +3157,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
     await drainSubtestChain(suite);
     for (const hook of suite.hooks.after) {
       try {
-        await runHook(hook, suite, suite.getSuiteCtx());
+        await runHook(hook, suite, suite.getSuiteCtx(), "after");
       } catch (err) {
         recordSuiteFailure(suite, err);
       }
@@ -3267,7 +3275,7 @@ async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
   standaloneQueue.length = 0;
   for (const hook of root.hooks.after) {
     try {
-      await runHook(hook, root, rootArg);
+      await runHook(hook, root, rootArg, "after");
     } catch (err) {
       hookError ??= err;
     }
@@ -3628,12 +3636,12 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   if (!setupFailed) {
     for (const hook of node.hooks.before) {
       try {
-        await runHook(hook, node, node.getSuiteCtx());
+        await runHook(hook, node, node.getSuiteCtx(), "before");
       } catch (err) {
         // A todo suite's hook failure is advisory, like in the run() child.
         if (!isTodoSuite) {
           node.childrenFailed++;
-          node.error = wrapHookError(err, "before");
+          node.error = err;
           setupFailed = true;
           break;
         }
@@ -3651,11 +3659,11 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
   }
   for (const hook of node.hooks.after) {
     try {
-      await runHook(hook, node, node.getSuiteCtx());
+      await runHook(hook, node, node.getSuiteCtx(), "after");
     } catch (err) {
       if (!isTodoSuite) {
         node.childrenFailed++;
-        node.error = wrapHookError(err, "after");
+        node.error = err;
       }
     }
   }
@@ -4279,14 +4287,14 @@ function before(arg0: unknown, arg1: unknown) {
         // its children; swallow it from bun:test so the verdict comes from
         // the suite's own test:fail, like the standalone twin.
         owner.childrenFailed++;
-        owner.error ??= wrapHookError(err, "before");
+        owner.error ??= err;
         owner.hookSetupFailed = true;
         done();
         return;
       }
-      done(err ?? new Error("before hook failed"));
+      done(err);
     }
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(onHookDone, onHookFailed);
+    Promise.resolve(runHook(hook, owner, hookArgFor(owner), "before")).then(onHookDone, onHookFailed);
   }
   beforeAll(runBeforeAllHook);
 }
@@ -4327,13 +4335,13 @@ function after(arg0: unknown, arg1: unknown) {
         // Attribute to the suite; its deferred settle emits the hookFailed
         // verdict after this hook returns.
         owner.childrenFailed++;
-        owner.error ??= wrapHookError(err, "after");
+        owner.error ??= err;
         done();
         return;
       }
-      done(err ?? new Error("after hook failed"));
+      done(err);
     }
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(onHookDone, onHookFailed);
+    Promise.resolve(runHook(hook, owner, hookArgFor(owner), "after")).then(onHookDone, onHookFailed);
   }
   afterAll(runAfterAllHook);
 }

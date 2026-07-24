@@ -550,7 +550,6 @@ test.concurrent(
     const fails = JSON.parse(stdout.trim() || "[]");
     expect(fails).toContainEqual({ name: "pending body uncaught", failureType: "uncaughtException" });
   },
-  30_000,
 );
 
 test.concurrent(
@@ -591,7 +590,6 @@ test.concurrent(
       exitCode: 0,
     });
   },
-  30_000,
 );
 
 test.concurrent(
@@ -638,7 +636,6 @@ test.concurrent(
     expect({ counts, stderr, exitCode }).toMatchObject({ counts: { failed: 0 }, exitCode: 0 });
     expect(counts.passed).toBeGreaterThanOrEqual(1);
   },
-  30_000,
 );
 
 test.concurrent.each([
@@ -696,7 +693,6 @@ test.concurrent.each([
       ["fail", "s", "hookFailed"],
     ]);
   },
-  30_000,
 );
 
 test.concurrent.each([
@@ -755,7 +751,6 @@ test.concurrent.each([
       outerAfter: existsSync(join(String(dir), "outer-after.txt")),
     }).toEqual({ innerBefore: false, innerAfter: false, outerAfter: true });
   },
-  30_000,
 );
 
 test.concurrent(
@@ -831,7 +826,6 @@ test.concurrent(
       summaryKeys: ["tests", "failed", "passed", "cancelled", "skipped", "todo", "topLevel", "suites"],
     });
   },
-  30_000,
 );
 
 test.concurrent.each([
@@ -890,7 +884,6 @@ test.concurrent.each([
       ["fail", "s", "testCodeFailure"],
     ]);
   },
-  30_000,
 );
 
 test.concurrent.each([
@@ -934,7 +927,6 @@ test.concurrent.each([
       { name: "s", msg: "failed running after hook", causeMsg: "after boom" },
     ]);
   },
-  30_000,
 );
 
 test.concurrent(
@@ -958,7 +950,6 @@ test.concurrent(
     // double-escapes to &amp;quot; while \n's &#10; survives the lookahead.
     expect(stdout).toContain('name="line1&#10;line2 &amp;quot;q&amp;quot; &amp; &lt;angle>"');
   },
-  30_000,
 );
 
 test.concurrent.each([
@@ -1012,7 +1003,6 @@ test.concurrent.each([
       ownAfter: true,
     });
   },
-  30_000,
 );
 
 test.concurrent(
@@ -1052,7 +1042,6 @@ test.concurrent(
       ["pass", "good-a", 2],
     ]);
   },
-  30_000,
 );
 
 test.concurrent(
@@ -1092,7 +1081,6 @@ test.concurrent(
       runCounts: { tests: 1, failed: 0, passed: 1, cancelled: 0, skipped: 0, todo: 0, topLevel: 1, suites: 0 },
     });
   },
-  30_000,
 );
 
 test.concurrent(
@@ -1130,7 +1118,6 @@ test.concurrent(
     expect(suiteDuration).toBeGreaterThan(180);
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 test.concurrent(
@@ -1172,7 +1159,6 @@ test.concurrent(
     expect(JSON.parse(stdout.trim() || "null")).toEqual({ passed: ["b", "s"], failed: [] });
     expect(exitCode).toBe(0);
   },
-  30_000,
 );
 
 test.concurrent.skipIf(isWindows)("--test runs the named file when bun is invoked as node", async () => {

@@ -442,6 +442,36 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   expect(await Bun.file(path).text()).toBe("hello");
 });
 
+it("start() with arbitrary objects does not crash", async () => {
+  // Fuzzilli hit the with_fd(Fd::INVALID) debug assertion via FileSink.start() under
+  // REPRL state that doesn't reproduce standalone; the #30953 guard now short-circuits
+  // these args before setup(). Keep as smoke coverage for start() with arbitrary
+  // objects; the direct with_fd regression guard is the unit test in src/sys/Error.rs.
+  const path = join(tmpdirSync(), "filesink-start-args.txt");
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const writer = Bun.file(${JSON.stringify(path)}).writer();
+        for (const arg of [Bun, globalThis, Set, class extends Buffer {}, { fd: undefined }, { path: undefined }, []]) {
+          try { writer.start(arg); } catch {}
+        }
+        Bun.gc(true);
+        writer.write("ok");
+        await writer.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(await Bun.file(path).text()).toBe("ok");
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
   const dir = tmpdirSync();
   const target = join(dir, "ro.txt");

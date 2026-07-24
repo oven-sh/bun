@@ -107,10 +107,36 @@ async function checkAzureGalleryVersion(image: Image, name: string, secrets: Sec
   }
   const body = await response.json();
   const state = body?.properties?.provisioningState;
-  // Only a finished bake counts as existing; anything else gets re-baked
-  // (machine.mjs handles the Failed/Creating states).
-  if (state === "Succeeded") return { image, name, exists: true, detail: `version ${gallery.imageVersion} Succeeded` };
+  // A launchable version (Succeeded, or Updating = live version mid tag
+  // write) counts as existing so no bake is emitted for it; Creating and
+  // dead states are handled by the bake in machine.ts.
+  if (classifyGalleryVersionState(state) === "reuse") {
+    return { image, name, exists: true, detail: `version ${gallery.imageVersion} ${state}` };
+  }
   return { image, name, exists: false, detail: `version present but ${state}; will re-bake` };
+}
+
+/**
+ * What a gallery image version's provisioningState means for reuse. One
+ * classification shared by the pipeline existence check (below) and the
+ * bake-time probe in machine.ts, so they can never disagree.
+ *
+ *   - "Succeeded": a finished, launchable bake            → reuse
+ *   - "Updating":  an EXISTING launchable version whose metadata is being
+ *                  written (e.g. robobun stamping a `last-used` demand tag
+ *                  holds a 27-region version here for ~2 minutes while it
+ *                  stays fully usable). NOT a bake in flight.  → reuse
+ *   - "Creating":  a genuine bake in flight, no replicas yet → not reusable,
+ *                  and machine.ts refuses to race it
+ *   - "Failed" / "Canceled" / anything else: a dead version → re-bake
+ */
+export type GalleryVersionReuse = "reuse" | "creating" | "rebake";
+
+/** Classify a gallery image version's provisioningState for reuse. */
+export function classifyGalleryVersionState(state: string | undefined): GalleryVersionReuse {
+  if (state === "Succeeded" || state === "Updating") return "reuse";
+  if (state === "Creating") return "creating";
+  return "rebake";
 }
 
 /** Azure client-credentials OAuth token for the management API. The single

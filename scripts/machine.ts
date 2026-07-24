@@ -15,7 +15,7 @@ import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { inspect, parseArgs } from "node:util";
 import { azure } from "./azure.mjs";
-import { azureToken } from "./build/ci/existence.ts";
+import { azureToken, classifyGalleryVersionState } from "./build/ci/existence.ts";
 import { nodejsDownload, nodejsFolderName, packerDownload } from "./build/ci/machine/artifacts.ts";
 import { agentEntry } from "./build/ci/machine/components/paths.ts";
 import { imageName as computeImageName, imageEntry } from "./build/ci/naming.ts";
@@ -1160,11 +1160,16 @@ async function buildWindowsImageWithPacker({ image, ci, repoRef, agentPath, boot
   if (existing.ok) {
     const body = await existing.json();
     const state = body?.properties?.provisioningState;
-    if (state === "Succeeded") {
-      console.log(`[packer] ${imageName} already exists and Succeeded; reusing (nothing to bake)`);
+    const reuse = classifyGalleryVersionState(state);
+    if (reuse === "reuse") {
+      // Succeeded, or Updating: an EXISTING launchable version whose
+      // metadata is being written (robobun stamping a `last-used` demand
+      // tag holds a 27-region version in "Updating" ~2 minutes while it
+      // stays fully usable). Same recipe already baked; nothing to redo.
+      console.log(`[packer] ${imageName} already exists (state ${state}); reusing (nothing to bake)`);
       return;
     }
-    if (state === "Creating" || state === "Updating") {
+    if (reuse === "creating") {
       // Another bake of this exact recipe is in flight (same hash from a
       // sibling run). Racing it would collide on the version PUT; the other
       // run will produce the identical image, so stop cleanly.

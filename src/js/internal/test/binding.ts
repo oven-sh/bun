@@ -92,6 +92,15 @@ function internalBinding(name: string) {
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     case "util":
       return { isInsideNodeModules };
+    // Vendored tls engine tests construct binding.SecureContext (or replace it)
+    // before requiring node:tls; Bun's SecureContext class is the equivalent
+    // native surface.
+    case "crypto":
+      return { SecureContext: require("node:tls").SecureContext };
+    // BoringSSL does not compile in OpenSSL's SSL_trace(), so a Node built
+    // against it reports HAVE_SSL_TRACE = false; --trace-tls tests skip.
+    case "tls_wrap":
+      return { HAVE_SSL_TRACE: false };
     // The icu-era binding node exposed until nodejs/node#55156; vendored
     // tests like test-icu-punycode still consume it.
     case "icu": {

@@ -665,7 +665,7 @@ describe("structuredClone with ArrayBuffer larger than serialization buffer capa
       expect(["OK", "SKIP"]).toContain(stdout.trim());
       expect(proc.signalCode).toBe(null);
       expect(exitCode).toBe(0);
-    });
+    }, 30_000); // Allocating 1.6GB and copying it twice takes 3.8-5.0s under ASAN.
   }
 });
 
@@ -1016,5 +1016,232 @@ describe("truncated Set/Map payloads are rejected without hanging", () => {
   test("valid Set and Map payloads still round-trip", () => {
     expect(deserialize(serialize(new Set([1, 0])))).toEqual(new Set([1, 0]));
     expect(deserialize(serialize(new Map([[1, 1]])))).toEqual(new Map([[1, 1]]));
+  });
+});
+
+describe("sparse arrays", () => {
+  // Dictionary-mode arrays keep their elements in a sparse map, so the serializer has to
+  // visit their own index keys. Walking 0..length instead is work proportional to nothing.
+  test("a sparse array round-trips its elements, named properties and length", () => {
+    const input: any = [];
+    input[0] = "first";
+    input[200_000] = "far";
+    input.tag = "named";
+
+    for (const cloned of [structuredClone(input), deserialize(serialize(input))]) {
+      expect(Object.getOwnPropertyNames(cloned)).toEqual(["0", "200000", "length", "tag"]);
+      expect(cloned[0]).toBe("first");
+      expect(cloned[200_000]).toBe("far");
+      expect(cloned.tag).toBe("named");
+      expect(cloned.length).toBe(200_001);
+    }
+  });
+
+  // StructuredSerializeInternal walks EnumerableOwnPropertyNames, so a non-enumerable index
+  // is dropped the same way a non-enumerable named property already was. Matches node.
+  test("a non-enumerable index is not cloned", () => {
+    const input: any = [];
+    Object.defineProperty(input, 0, { value: 42, enumerable: false, writable: true, configurable: true });
+    Object.defineProperty(input, "named", { value: 43, enumerable: false, writable: true, configurable: true });
+    input[1] = "kept";
+
+    for (const cloned of [structuredClone(input), deserialize(serialize(input))]) {
+      expect(Object.getOwnPropertyNames(cloned)).toEqual(["1", "length"]);
+      expect(cloned[1]).toBe("kept");
+      expect(cloned.length).toBe(2);
+    }
+  });
+
+  // Deserializing a non-terminal value under a numeric property name puts it with
+  // putDirectMayBeIndex, which reaches a throwing path once the index is past the object's
+  // vector. BUN_JSC_validateExceptionChecks=1 aborts the child if the check is missing.
+  test("a nested value at a numeric property name checks for an exception", async () => {
+    const fixture = /* js */ `
+      // A plain object whose key is above JSC's MIN_SPARSE_ARRAY_INDEX.
+      const sparseKey = structuredClone({ "200000": { nested: "a" } });
+      // And an array index the serializer writes as a name for the same reason.
+      const reserved = [];
+      reserved[4294967293] = { nested: "b" };
+      const clonedReserved = structuredClone(reserved);
+      console.log(sparseKey[200000].nested + clonedReserved[4294967293].nested);
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Combined so stderr, where JSC prints the exception check failure, lands in the diff.
+    expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+      stdout: expect.stringMatching(/ab\n$/),
+      exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // The serializer writes each element as <index:uint32_t>, and 0xFFFFFFFD..0xFFFFFFFF are
+  // reserved there for control tags. 4294967293 and 4294967294 are the last two valid array
+  // indices, so they have to be written as named properties instead.
+  //
+  // An O(length) walk cannot finish any of these arrays. The child is where that shows up:
+  // without the own-index-keys path it never prints a result and the test times out.
+  test("the last valid array indices round-trip, and length never drives the walk", async () => {
+    const fixture = /* js */ `
+      import { deserialize, serialize } from "bun:jsc";
+
+      const results = {};
+
+      const hugeLength = [];
+      hugeLength[0] = "only";
+      hugeLength.length = 1e9;
+      const clonedHugeLength = structuredClone(hugeLength);
+      results.hugeLength = {
+        keys: Object.keys(clonedHugeLength),
+        at0: clonedHugeLength[0],
+        length: clonedHugeLength.length,
+      };
+
+      // 4294967292 sits one below the reserved range and is the control.
+      for (const index of [4294967292, 4294967293, 4294967294]) {
+        const input = [];
+        input[0] = "first";
+        input[index] = { nested: index };
+        input.tag = "named";
+        const cloned = deserialize(serialize(structuredClone(input)));
+        results[index] = {
+          keys: Object.keys(cloned),
+          at0: cloned[0],
+          atIndex: cloned[index],
+          tag: cloned.tag,
+          length: cloned.length,
+        };
+      }
+
+      // Both reserved indices, and nothing the index slot can carry: every key the walk
+      // produces is escaped, so it writes no element at all before the named properties.
+      const onlyReserved = [];
+      onlyReserved[4294967293] = "low";
+      onlyReserved[4294967294] = "high";
+      const clonedOnlyReserved = deserialize(serialize(structuredClone(onlyReserved)));
+      results.onlyReserved = {
+        keys: Object.keys(clonedOnlyReserved),
+        low: clonedOnlyReserved[4294967293],
+        high: clonedOnlyReserved[4294967294],
+        length: clonedOnlyReserved.length,
+      };
+
+      // A sparse array at a reserved index of another sparse array: the outer walk holds a
+      // pending escaped key while the inner one pushes and pops a whole frame of its own.
+      const inner = [];
+      inner[0] = "inner-first";
+      inner[4294967294] = "inner-high";
+      const outer = [];
+      outer[0] = "outer-first";
+      outer[4294967293] = inner;
+      const clonedNested = deserialize(serialize(structuredClone(outer)));
+      results.nested = {
+        keys: Object.keys(clonedNested),
+        at0: clonedNested[0],
+        length: clonedNested.length,
+        innerKeys: Object.keys(clonedNested[4294967293]),
+        innerAt0: clonedNested[4294967293][0],
+        innerHigh: clonedNested[4294967293][4294967294],
+        innerLength: clonedNested[4294967293].length,
+      };
+
+      // The escaped index goes out as its decimal name, not as a raw <index:uint32_t>. The
+      // control index stays in-band, so its digits never appear in the payload.
+      const nameInPayload = index => {
+        const a = [];
+        a[index] = 1;
+        return Buffer.from(serialize(a)).includes(String(index));
+      };
+      results.wireFormat = {
+        control: nameInPayload(4294967292),
+        reservedLow: nameInPayload(4294967293),
+        reservedHigh: nameInPayload(4294967294),
+      };
+
+      // StructuredSerializeInternal walks [[OwnPropertyKeys]]: every array index ascending, then
+      // string keys. Indices 4294967293/4294967294 go out as named properties, but their getters
+      // still fire before any string key's. Only observable through accessors on the input.
+      {
+        const input = [];
+        const order = [];
+        const read = (name, value) => ({ get: () => (order.push(name), value), enumerable: true, configurable: true });
+        Object.defineProperty(input, 0, read("i0", "first"));
+        Object.defineProperty(input, 4294967293, read("iReserved", "reserved"));
+        Object.defineProperty(input, "tag", read("tag", "named"));
+        const cloned = structuredClone(input);
+        results.readOrder = {
+          order,
+          keys: Object.keys(cloned),
+          values: [cloned[0], cloned[4294967293], cloned.tag],
+        };
+      }
+
+      console.log(JSON.stringify(results));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // stderr lands in the failure diff without being pinned to "".
+    expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toMatchObject({
+      stdout: {
+        hugeLength: { keys: ["0"], at0: "only", length: 1e9 },
+        4294967292: {
+          keys: ["0", "4294967292", "tag"],
+          at0: "first",
+          atIndex: { nested: 4294967292 },
+          tag: "named",
+          length: 4294967293,
+        },
+        4294967293: {
+          keys: ["0", "4294967293", "tag"],
+          at0: "first",
+          atIndex: { nested: 4294967293 },
+          tag: "named",
+          length: 4294967294,
+        },
+        4294967294: {
+          keys: ["0", "4294967294", "tag"],
+          at0: "first",
+          atIndex: { nested: 4294967294 },
+          tag: "named",
+          length: 4294967295,
+        },
+        onlyReserved: {
+          keys: ["4294967293", "4294967294"],
+          low: "low",
+          high: "high",
+          length: 4294967295,
+        },
+        nested: {
+          keys: ["0", "4294967293"],
+          at0: "outer-first",
+          length: 4294967294,
+          innerKeys: ["0", "4294967294"],
+          innerAt0: "inner-first",
+          innerHigh: "inner-high",
+          innerLength: 4294967295,
+        },
+        wireFormat: { control: false, reservedLow: true, reservedHigh: true },
+        readOrder: {
+          order: ["i0", "iReserved", "tag"],
+          keys: ["0", "4294967293", "tag"],
+          values: ["first", "reserved", "named"],
+        },
+      },
+      exitCode: 0,
+    });
   });
 });

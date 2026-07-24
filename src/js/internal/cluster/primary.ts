@@ -181,7 +181,7 @@ cluster.fork = function (env) {
   // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L31-L51
   worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
     if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
-      if (message.ack !== undefined && settleClusterAck(worker.process[kHandle], message)) {
+      if (typeof message.ack === "number" && settleClusterAck(worker.process[kHandle], message)) {
         return;
       }
       onmessage.$call(worker, message, handle);

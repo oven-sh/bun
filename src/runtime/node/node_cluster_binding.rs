@@ -195,12 +195,9 @@ pub(crate) fn on_internal_message_primary(
 
 #[bun_jsc::host_fn]
 pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // Externally-framed cluster replies ({cmd:'NODE_CLUSTER', ack: N} arriving
-    // as ordinary JSON-framed messages) reach the JS internalMessage fallback
-    // in internal/cluster/primary.ts instead of the Internal-framed path
-    // below. This settles the same per-seq callback the Internal path would
-    // have: returns true when a parked callback was found and invoked, false
-    // when the ack matched nothing (already settled, or not ours).
+    // Externally-framed {cmd:'NODE_CLUSTER', ack: N} replies reach the JS
+    // internalMessage fallback in primary.ts instead of the Internal-framed
+    // path below; settle the same per-seq callback it would have.
     let arguments = frame.arguments_old::<2>().ptr;
     let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
         return Ok(JSValue::FALSE);
@@ -215,7 +212,7 @@ pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> 
     let Some(p) = message.get(global, "ack")? else {
         return Ok(JSValue::FALSE);
     };
-    if p.is_undefined() {
+    if !p.is_number() {
         return Ok(JSValue::FALSE);
     }
     let ack = p.to_int32();
@@ -259,7 +256,7 @@ pub(crate) fn handle_internal_message_primary(
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
-        if !p.is_undefined() {
+        if p.is_number() {
             let ack = p.to_int32();
             // Peek the JSValue first (ending the immutable borrow), then
             // swap_remove (which drops the Strong).

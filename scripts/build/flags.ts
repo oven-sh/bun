@@ -946,27 +946,9 @@ export const linkerFlags: Flag[] = [
     desc: "Windows cross-compile: MSVC CRT + Windows SDK library search root (xwin splat)",
   },
   {
-    flag: "/STACK:0x1200000,0x200000",
-    when: c => c.windows && !c.asan,
-    desc: "18MB stack reserve (JSC uses deep recursion), 2MB committed",
-  },
-  {
-    // AddressSanitizer commits shadow pages lazily by taking the first-touch
-    // access violation and resuming from its vectored handler — a handler
-    // that runs on the faulting thread's stack. During startup that fault
-    // occurs deep on the main thread; if handling it then touches the stack
-    // guard page, the resulting nested fault inside exception dispatch is not
-    // grown but silently terminates the process (raw 0xC0000005, no report).
-    // Committing the whole reserve up front removes the guard-page growth so
-    // the shadow committer can never nest a fault.
-    flag: "/STACK:0x1200000,0x1200000",
-    when: c => c.windows && c.asan,
-    desc: "18MB stack fully committed (ASAN shadow committer must not nest a guard-page fault)",
-  },
-  {
-    flag: "/errorlimit:0",
+    flag: ["/STACK:0x1200000,0x200000", "/errorlimit:0"],
     when: c => c.windows,
-    desc: "No linker error limit",
+    desc: "18MB stack reserve (JSC uses deep recursion), no error limit",
   },
   {
     flag: "/DEBUG:FULL",

@@ -53,10 +53,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
   test("closes the last serial test at the parallel-phase group header when no parallel headers follow", () => {
     // Shard with zero parallel-safe tests: the group header never prints, but
     // `--- End` still terminates the open span.
-    const noParallel = [
-      bk(100, `--- ${gray("[1/1]")} test/only.test.ts`),
-      bk(900, `--- End`),
-    ].join("\n");
+    const noParallel = [bk(100, `--- ${gray("[1/1]")} test/only.test.ts`), bk(900, `--- End`)].join("\n");
     expect(parseLog(noParallel).get("test/only.test.ts")).toBe(800);
 
     // Shard where the parallel phase prints its group header but (e.g. via a

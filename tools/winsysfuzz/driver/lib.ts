@@ -72,6 +72,20 @@ export const statusName = (h: string) => STATUS[h.toLowerCase()] ?? h;
 // parent's failed test. So a crash is detected by what the process WROTE.
 // Ordered most- to least-specific; the first match names the crash.
 const CRASH_SIGNATURES: { re: RegExp; kind: string }[] = [
+  // AddressSanitizer: the report is its own anchor (no bun crash banner is
+  // printed - ASAN reports instead of crashing). Capture the error type
+  // PLUS the top instrumented frame so distinct bug classes/sites key
+  // separately: "heap-use-after-free ... in Foo" != "heap-buffer-overflow
+  // ... in Bar". The frame text is folded of addresses later like any
+  // other signature. Listed first so it wins over the generic patterns.
+  {
+    re: /ERROR: (AddressSanitizer: [a-z-]+[^\n]{0,80}\n(?:[^\n]*\n){0,3}?\s*#0 0x[0-9a-fA-F]+ (?:in )?[^\n]{0,140})/,
+    kind: "asan",
+  },
+  // Fallback when the report has no readable #0 frame (early runtime CHECK,
+  // frame describer bail): still recognise it as an ASAN-class finding.
+  { re: /ERROR: (AddressSanitizer: [a-z-]+[^\n]{0,120})/, kind: "asan" },
+  { re: /(AddressSanitizer: CHECK failed: [^\n]{0,140})/, kind: "asan-check" },
   { re: /panic\([^)]*\): (Segmentation fault at address 0x[0-9a-fA-F]+)/, kind: "segfault" },
   { re: /panic\([^)]*\): (Illegal instruction at address 0x[0-9a-fA-F]+)/, kind: "illegal-instruction" },
   { re: /panic\([^)]*\): ([^\n]{0,120})/, kind: "panic" },
@@ -549,7 +563,7 @@ export function newestLog(dir: string): string | null {
 
 // Locate cdb.exe (Debugging Tools for Windows): WSF_CDB override, the usual
 // SDK install dirs, then PATH. null => hang/crash CAPTURE is unavailable;
-// tracing, sweeping and classification all still work — findings simply
+// tracing, sweeping and classification all still work Ã¢â‚¬â€ findings simply
 // carry no stacks until setup.ps1 -InstallDebuggers is run.
 function findCdb(): string | null {
   const candidates = [
@@ -606,7 +620,7 @@ export function pidOf(image: string): number | null {
 // Attach to a hung process and dump every thread's stack. Non-invasive
 // (-pv) so it works even if the process is deadlocked in the loader.
 export async function captureHangStacks(pid: number, outFile: string): Promise<string> {
-  if (!cdb) return "(cdb.exe not installed: no thread stacks captured — run setup.ps1 -InstallDebuggers)";
+  if (!cdb) return "(cdb.exe not installed: no thread stacks captured Ã¢â‚¬â€ run setup.ps1 -InstallDebuggers)";
   const cmdFile = outFile + ".cmd.txt";
   await Bun.write(cmdFile, ".lines -e\n~*kv 16\nq\n");
   const r = Bun.spawnSync([cdb, "-pv", "-p", String(pid), "-cf", cmdFile], {
@@ -765,7 +779,7 @@ export function lastStage(stdout: string): string | null {
 
 // Re-run a target under the debugger, break on access violation, dump state.
 export async function captureCrash(cmdline: string[], env: Record<string, string>, outFile: string): Promise<string> {
-  if (!cdb) return "(cdb.exe not installed: no crash stack captured — run setup.ps1 -InstallDebuggers)";
+  if (!cdb) return "(cdb.exe not installed: no crash stack captured Ã¢â‚¬â€ run setup.ps1 -InstallDebuggers)";
   const cmdFile = outFile + ".cmd.txt";
   await Bun.write(
     cmdFile,
@@ -800,7 +814,7 @@ export async function runOnce(o: RunOpts): Promise<RunResult> {
   // stdio to FILES, never pipes: the target's grandchildren (spawned cmd,
   // servers) can inherit a pipe's write end and hold it open past exit,
   // wedging a pipe read forever. Files can't do that, and the runner must
-  // always return — it is the fuzzer's clock.
+  // always return Ã¢â‚¬â€ it is the fuzzer's clock.
   const outFile = join(o.workDir, "stdout.txt");
   const errFile = join(o.workDir, "stderr.txt");
   const t0 = performance.now();

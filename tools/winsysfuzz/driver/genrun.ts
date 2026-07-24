@@ -42,7 +42,10 @@ ensureDir(queueDir);
 const workBase = flag("--work", "C:\\wsfgenrun") as string;
 const corpusDir = workBase + "-corpus";
 const corpus = new Corpus(corpusDir);
-const useCoverage = !!process.env.WSF_COVERAGE;
+// Truthy-string env parsing: WSF_COVERAGE=0/false/off disables it (a bare
+// presence check made "0" mean on, so a slot could not opt out).
+const envOn = (v: string | undefined) => !!v && !/^(0|false|off|no)$/i.test(v);
+const useCoverage = envOn(process.env.WSF_COVERAGE);
 const novelty = new Novelty(useCoverage);
 let corpusAdds = 0;
 let mutRuns = 0;
@@ -80,7 +83,7 @@ async function generate(seed: number, outFile: string): Promise<boolean> {
 // Fuzzilli collector: uint32 num_edges, then the edge bitmap.
 const COV_SIZE = 0x200000;
 let covLib: any = null;
-if (process.env.WSF_COVERAGE && process.platform === "win32") {
+if (envOn(process.env.WSF_COVERAGE) && process.platform === "win32") {
   const { dlopen, FFIType, ptr } = await import("bun:ffi");
   const k32 = dlopen("kernel32.dll", {
     CreateFileMappingA: { args: [FFIType.ptr, FFIType.ptr, FFIType.u32, FFIType.u32, FFIType.u32, FFIType.cstring], returns: FFIType.ptr },

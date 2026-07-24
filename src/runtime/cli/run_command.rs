@@ -1536,6 +1536,11 @@ impl Run {
             // per-heap collect, so this is a no-op unless the arena type
             // changes. Semantically a memory-usage hint, not correctness.
             let _ = vm.global().vm().run_gc(false);
+            // One non-blocking loop turn (check, poll, timers) between the GC and
+            // the drain below: immediates the entry point queued must run before
+            // async work that completed during the collection gets delivered.
+            // SAFETY: `vm` is the live per-thread VM.
+            unsafe { crate::jsc_hooks::auto_tick_startup(vm) };
             vm.tick();
         }
 

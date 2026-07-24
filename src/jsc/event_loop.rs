@@ -455,6 +455,17 @@ impl EventLoop {
         let _ = self.tick_concurrent_with_count();
     }
 
+    /// Re-drain the concurrent queue mid-tick only when no immediates are
+    /// pending: a completion arriving after `setImmediate` was called must not
+    /// run before it (Node only delivers it at the next poll, after the check
+    /// phase). The unconditional drain at the start of `tick()` is the batch
+    /// boundary, like one libuv poll.
+    fn tick_concurrent_unless_immediates_pending(&mut self) {
+        if self.immediate_tasks.is_empty() {
+            self.tick_concurrent();
+        }
+    }
+
     /// Check whether refConcurrently has been called but the change has not yet been applied to the
     /// underlying event loop's `active` counter
     pub fn has_pending_refs(&self) -> bool {
@@ -635,7 +646,7 @@ impl EventLoop {
 
         loop {
             while self.tick_with_count(ctx) > 0 {
-                self.tick_concurrent();
+                self.tick_concurrent_unless_immediates_pending();
                 self.global_ref().handle_rejected_promises();
             }
             if self
@@ -646,7 +657,7 @@ impl EventLoop {
                 self.entered_event_loop_count -= 1;
                 return;
             }
-            self.tick_concurrent();
+            self.tick_concurrent_unless_immediates_pending();
             if self.tasks.readable_length() > 0 {
                 continue;
             }
@@ -654,7 +665,7 @@ impl EventLoop {
         }
 
         while self.tick_with_count(ctx) > 0 {
-            self.tick_concurrent();
+            self.tick_concurrent_unless_immediates_pending();
         }
 
         self.global_ref().handle_rejected_promises();

@@ -281,11 +281,7 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub(super) fn build_with_vm(
-    ctx: Context,
-    cwd: &[u8],
-    pt: &mut PerThread,
-) -> crate::Result<()> {
+pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.
     let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();

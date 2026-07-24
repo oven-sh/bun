@@ -1061,11 +1061,7 @@ fn add_bundled_dep(
                             }
                         };
 
-                        let json = match JSON::parse_package_json_utf8(
-                            &source,
-                            log,
-                            pack_bump(),
-                        ) {
+                        let json = match JSON::parse_package_json_utf8(&source, log, pack_bump()) {
                             Ok(j) => j,
                             Err(_) => break 'root_depth,
                         };

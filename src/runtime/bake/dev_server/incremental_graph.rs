@@ -747,9 +747,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         // SAFETY: cross-graph access via `owner()`. We hold
                         // `&mut self` (server_graph); `client_graph` and
                         // `directory_watchers` are disjoint sibling fields.
-                        let (client_graph, directory_watchers) = unsafe {
-                            (&mut (*dev).client_graph, &mut (*dev).directory_watchers)
-                        };
+                        let (client_graph, directory_watchers) =
+                            unsafe { (&mut (*dev).client_graph, &mut (*dev).directory_watchers) };
                         let key = bun_ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
@@ -759,8 +758,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     "Client graph's SCB was already deleted",
                                 ))
                             });
-                        client_graph
-                            .disconnect_and_delete_file(directory_watchers, client_index);
+                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()

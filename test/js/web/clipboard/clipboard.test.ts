@@ -298,6 +298,15 @@ describe("read / write", () => {
 
     // Writing an empty sequence is a no-op that must not reject.
     await navigator.clipboard.write([]);
+
+    // A ClipboardItemData that rejects propagates as the write's rejection,
+    // and an uncoercible settled value rejects there too.
+    await expect(
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": Promise.reject(new Error("boom")) })]),
+    ).rejects.toThrow("boom");
+    await expect(
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": Promise.resolve(Symbol("x")) as never })]),
+    ).rejects.toThrow(TypeError);
   });
 
   test("round-trips representations, or rejects with NotAllowedError where there is no clipboard", async () => {

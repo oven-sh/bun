@@ -2324,14 +2324,14 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, Bun::jsClipboardHandler_onGetTypeSettled, ImplementationVisibility::Private));
         });
 
-    m_clipboardOnWriteBlobMaterialized.initLater(
+    m_clipboardOnWriteMaterialized.initLater(
         [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteBlobMaterialized, ImplementationVisibility::Private));
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteMaterialized, ImplementationVisibility::Private));
         });
 
-    m_clipboardOnWriteBlobFailed.initLater(
+    m_clipboardOnWriteFailed.initLater(
         [](const Initializer<JSFunction>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteBlobFailed, ImplementationVisibility::Private));
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteFailed, ImplementationVisibility::Private));
         });
 
     m_navigatorObject.initLater(

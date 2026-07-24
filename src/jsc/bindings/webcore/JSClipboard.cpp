@@ -35,10 +35,12 @@
 #include "WebCoreJSClientData.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JSPromiseConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -234,165 +236,67 @@ static JSC::EncodedJSValue rejectedWithNotAllowed(JSC::JSGlobalObject* globalObj
     return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, createDOMException(globalObject, WebCore::ExceptionCode::NotAllowedError, message)));
 }
 
-// The write loop's state is a plain JSArray (no bespoke cell). Blobs occupy the leading N
-// slots so the same array is handed to the Rust job as its blobs array; the Rust iterator
-// is driven by the N-element mimes array and never reads the trailing bookkeeping slots.
-//   [0 .. N)  materialized Blob per representation, index-aligned with item->types()
-//   [N]       JSClipboardItem
-//   [N+1]     JSPromise — the promise write() returned
-//   [N+2]     jsNumber(index) — how many representations are materialized
-static constexpr unsigned kClipboardWriteTrailing = 3;
-
-static ALWAYS_INLINE unsigned clipboardWriteBlobCount(JSC::JSArray* state)
-{
-    return state->length() - kClipboardWriteTrailing;
-}
-
-static ALWAYS_INLINE Bun::JSClipboardItem* clipboardWriteItem(JSC::JSGlobalObject* globalObject, JSC::JSArray* state)
-{
-    return uncheckedDowncast<Bun::JSClipboardItem>(state->getDirectIndex(globalObject, clipboardWriteBlobCount(state)));
-}
-
-static ALWAYS_INLINE JSC::JSPromise* clipboardWritePromise(JSC::JSGlobalObject* globalObject, JSC::JSArray* state)
-{
-    return uncheckedDowncast<JSC::JSPromise>(state->getDirectIndex(globalObject, clipboardWriteBlobCount(state) + 1));
-}
-
-static ALWAYS_INLINE unsigned clipboardWriteIndex(JSC::JSGlobalObject* globalObject, JSC::JSArray* state)
-{
-    return state->getDirectIndex(globalObject, clipboardWriteBlobCount(state) + 2).asUInt32();
-}
-
-// The last step of a write: every representation is a Blob now, so hand the whole item to
-// the Rust job, which snapshots the bytes, performs one platform clipboard transaction and
-// settles the promise.
-static void clipboardWriteFinish(JSC::JSGlobalObject* globalObject, JSC::JSArray* state)
+// Promise.all has settled with every ClipboardItemData. Convert each settled value to a
+// Blob of the item's matching type (in place, so the same array is the Rust job's blobs
+// array), reject loudly on a file-backed Blob the job cannot snapshot, then hand the item
+// to the Rust job which snapshots the bytes and performs one platform transaction.
+JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteMaterialized, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* promise = clipboardWritePromise(globalObject, state);
-    unsigned count = clipboardWriteBlobCount(state);
+    auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
+    auto* item = uncheckedDowncast<Bun::JSClipboardItem>(context->getInternalField(0));
+    auto* promise = uncheckedDowncast<JSC::JSPromise>(context->getInternalField(1));
+    const auto& types = item->types();
 
-    // The Rust job can only snapshot in-memory Blob bytes; writing a file-backed Blob's
-    // "empty" view would be silent data loss.
-    for (unsigned i = 0; i < count; i++) {
-        JSValue blob = state->getDirectIndex(globalObject, i);
+    auto* settled = dynamicDowncast<JSC::JSArray>(callFrame->argument(0));
+    if (!settled || settled->length() < types.size()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Promise.all returned an unexpected value"_s);
+        promise->rejectWithCaughtException(vm, scope);
+        return JSValue::encode(jsUndefined());
+    }
+    for (unsigned i = 0; i < types.size(); i++) {
+        JSValue value = settled->getIndex(globalObject, i);
         if (scope.exception()) [[unlikely]] {
             promise->rejectWithCaughtException(vm, scope);
-            return;
+            return JSValue::encode(jsUndefined());
+        }
+        JSValue blob = Bun::clipboardDataToBlob(globalObject, value, types[i]);
+        if (scope.exception()) [[unlikely]] {
+            promise->rejectWithCaughtException(vm, scope);
+            return JSValue::encode(jsUndefined());
         }
         if (Bun__Clipboard__blobNeedsToReadFile(JSValue::encode(blob))) [[unlikely]] {
             throwTypeError(globalObject, scope, "Cannot write a file-backed Blob to the clipboard. Read it into memory first (`await blob.bytes()`)."_s);
             promise->rejectWithCaughtException(vm, scope);
-            return;
+            return JSValue::encode(jsUndefined());
+        }
+        settled->putDirectIndex(globalObject, i, blob);
+        if (scope.exception()) [[unlikely]] {
+            promise->rejectWithCaughtException(vm, scope);
+            return JSValue::encode(jsUndefined());
         }
     }
 
-    // `types` is the item's own frozen FrozenArray, index-aligned with the leading Blob
-    // slots; the job only reads it, so there is no second copy to keep in sync.
-    JSC::JSObject* mimesArray = clipboardWriteItem(globalObject, state)->frozenTypes(globalObject);
+    JSC::JSObject* mimesArray = item->frozenTypes(globalObject);
     if (scope.exception()) [[unlikely]] {
         promise->rejectWithCaughtException(vm, scope);
-        return;
+        return JSValue::encode(jsUndefined());
     }
     // The job owns the promise from here: it rejects rather than throws, so the only
     // exception this can leave pending is a termination, which has to keep unwinding.
-    scope.release();
-    Bun__Clipboard__writeBlobs(globalObject, JSValue::encode(promise), JSValue::encode(mimesArray), JSValue::encode(state));
-}
-
-// Materializes the item's representations to Blobs, left to right, and finishes the write
-// once they all are. Values that cannot be thenables are normalized inline; the first one
-// that can be suspends the loop on a reaction that resumes here. Re-entered once per
-// awaited value, picking up at the stored index.
-static void clipboardWriteStep(JSC::JSGlobalObject* globalObject, JSC::JSArray* state)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* item = clipboardWriteItem(globalObject, state);
-    auto* promise = clipboardWritePromise(globalObject, state);
-    unsigned count = clipboardWriteBlobCount(state);
-    unsigned index = clipboardWriteIndex(globalObject, state);
-    const auto& types = item->types();
-
-    while (index < count) {
-        JSValue stored = item->valueAt(index);
-        if (stored.isObject()) {
-            // A Blob, a promise, or a thenable `Promise.resolve` would adopt: let the
-            // engine settle it, then resume in jsClipboardHandler_onWriteBlobMaterialized.
-            state->putDirectIndex(globalObject, count + 2, jsNumber(index));
-            if (scope.exception()) [[unlikely]] {
-                promise->rejectWithCaughtException(vm, scope);
-                return;
-            }
-            auto* settled = JSC::JSPromise::resolvedPromise(globalObject, stored);
-            if (scope.exception()) [[unlikely]] {
-                promise->rejectWithCaughtException(vm, scope);
-                return;
-            }
-            auto* zigGlobal = defaultGlobalObject(globalObject);
-            settled->performPromiseThenWithContext(vm, globalObject,
-                zigGlobal->m_clipboardOnWriteBlobMaterialized.get(globalObject),
-                zigGlobal->m_clipboardOnWriteBlobFailed.get(globalObject),
-                jsUndefined(), state);
-            scope.assertNoException();
-            return;
-        }
-        JSValue blob = Bun::clipboardDataToBlob(globalObject, stored, types[index]);
-        if (scope.exception()) [[unlikely]] {
-            promise->rejectWithCaughtException(vm, scope);
-            return;
-        }
-        state->putDirectIndex(globalObject, index, blob);
-        if (scope.exception()) [[unlikely]] {
-            promise->rejectWithCaughtException(vm, scope);
-            return;
-        }
-        index++;
-    }
-    scope.release();
-    clipboardWriteFinish(globalObject, state);
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteBlobMaterialized, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* state = uncheckedDowncast<JSC::JSArray>(callFrame->argument(1));
-    auto* item = clipboardWriteItem(globalObject, state);
-    auto* promise = clipboardWritePromise(globalObject, state);
-    unsigned count = clipboardWriteBlobCount(state);
-    unsigned index = clipboardWriteIndex(globalObject, state);
-
-    JSValue blob = Bun::clipboardDataToBlob(globalObject, callFrame->argument(0), item->types()[index]);
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-        return JSValue::encode(jsUndefined());
-    }
-    state->putDirectIndex(globalObject, index, blob);
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-        return JSValue::encode(jsUndefined());
-    }
-    state->putDirectIndex(globalObject, count + 2, jsNumber(index + 1));
-    if (scope.exception()) [[unlikely]] {
-        promise->rejectWithCaughtException(vm, scope);
-        return JSValue::encode(jsUndefined());
-    }
-    clipboardWriteStep(globalObject, state);
-    // Everything below rejects rather than throws, so only a termination reaches here;
-    // it has to keep unwinding rather than be reported as a normal return.
+    Bun__Clipboard__writeBlobs(globalObject, JSValue::encode(promise), JSValue::encode(mimesArray), JSValue::encode(settled));
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteBlobFailed, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteFailed, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* state = uncheckedDowncast<JSC::JSArray>(callFrame->argument(1));
+    auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
     // A representation that never arrived rejects the write with the same reason.
-    clipboardWritePromise(globalObject, state)->reject(vm, callFrame->argument(0));
+    uncheckedDowncast<JSC::JSPromise>(context->getInternalField(1))->reject(vm, callFrame->argument(0));
     scope.assertNoException();
     return JSValue::encode(jsUndefined());
 }
@@ -439,17 +343,48 @@ static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeBody(JSC::JS
     if (Bun__Clipboard__writesSingleRepresentation() && types.size() > 1)
         RELEASE_AND_RETURN(throwScope, rejectedWithNotAllowed(lexicalGlobalObject, "Writing more than one representation per item is not supported on this platform."_s));
 
+    // Await every ClipboardItemData at once: Promise.all([value0, ..., valueN-1]). The
+    // single reaction receives the settled Array<Blob | string> and finishes the write; no
+    // intermediate state is carried across microtasks beyond {item, promise}.
+    JSC::MarkedArgumentBuffer values;
+    for (size_t i = 0; i < types.size(); i++)
+        values.append(item->valueAt(static_cast<unsigned>(i)));
+    if (values.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, throwScope);
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
+    }
+    JSC::JSArray* valuesArray = JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), values);
+    if (throwScope.exception()) [[unlikely]]
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
+
+    JSC::JSObject* promiseConstructor = lexicalGlobalObject->promiseConstructor();
+    JSC::JSValue allFn = promiseConstructor->get(lexicalGlobalObject, JSC::Identifier::fromString(vm, "all"_s));
+    if (throwScope.exception()) [[unlikely]]
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
+    auto callData = JSC::getCallData(allFn);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, throwScope, "Promise.all is not callable"_s);
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
+    }
+    JSC::MarkedArgumentBuffer allArgs;
+    allArgs.append(valuesArray);
+    ASSERT(!allArgs.hasOverflowed());
+    JSC::JSValue allResult = JSC::call(lexicalGlobalObject, allFn, callData, promiseConstructor, allArgs);
+    if (throwScope.exception()) [[unlikely]]
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
+    auto* allPromise = dynamicDowncast<JSC::JSPromise>(allResult);
+    if (!allPromise) [[unlikely]] {
+        throwTypeError(lexicalGlobalObject, throwScope, "Promise.all did not return a Promise"_s);
+        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
+    }
+
     auto* promise = JSC::JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
-    unsigned count = static_cast<unsigned>(types.size());
-    JSC::JSArray* state = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, count + kClipboardWriteTrailing);
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    state->putDirectIndex(lexicalGlobalObject, count, item);
-    state->putDirectIndex(lexicalGlobalObject, count + 1, promise);
-    state->putDirectIndex(lexicalGlobalObject, count + 2, jsNumber(0u));
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    clipboardWriteStep(lexicalGlobalObject, state);
+    auto* zigGlobal = defaultGlobalObject(lexicalGlobalObject);
+    auto* context = JSC::InternalFieldTuple::create(vm, lexicalGlobalObject->internalFieldTupleStructure(), item, promise);
+    allPromise->performPromiseThenWithContext(vm, lexicalGlobalObject,
+        zigGlobal->m_clipboardOnWriteMaterialized.get(lexicalGlobalObject),
+        zigGlobal->m_clipboardOnWriteFailed.get(lexicalGlobalObject),
+        jsUndefined(), context);
     RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
 }
 

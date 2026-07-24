@@ -148,7 +148,7 @@ test("multipart formdata not base64", async () => {
   expect(text).toBe("example\ntext file");
 });
 
-test.todo("multipart formdata base64", async () => {
+test("multipart formdata base64", async () => {
   // Example form data with base64 encoding
   const data = randomFillSync(Buffer.alloc(256));
   const formRaw =

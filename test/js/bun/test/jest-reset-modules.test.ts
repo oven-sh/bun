@@ -26,7 +26,6 @@ describe.concurrent("jest.resetModules", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("is not a function");
     expect(stdout + stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
@@ -84,11 +83,13 @@ describe.concurrent("jest.resetModules", () => {
           const m1 = await import("./state.ts");
           m1.value.n = 5;
           const m1b = await import("./state.ts");
+          expect(m1b).toBe(m1);
           expect(m1b.value.n).toBe(5);
 
           jest.resetModules();
 
           const m2 = await import("./state.ts");
+          expect(m2).not.toBe(m1);
           expect(m2.value.n).toBe(0);
         });
       `,

@@ -3524,16 +3524,27 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
-void GlobalObject::reload()
+void GlobalObject::clearModuleRegistryAndRequireCache()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         auto* moduleLoader = this->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+        // under cellLock(); take the same lock so clearing them can't race a
+        // concurrent marker.
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
     this->requireMap()->clear(this);
+    RETURN_IF_EXCEPTION(scope, );
+}
+
+void GlobalObject::reload()
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    this->clearModuleRegistryAndRequireCache();
     RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
@@ -4173,14 +4184,9 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         // `tmpdirs[]` array in test/harness.ts that keeps mkdtempSync paths)
         // is rooted through the registry and survives collectNow(), so the
         // ExternalStringImpl deallocators never run and LSan reports the
-        // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
+        // backing buffers as leaked.
         auto scope = DECLARE_THROW_SCOPE(vm);
-        {
-            auto* moduleLoader = globalObject->moduleLoader();
-            WTF::Locker locker { moduleLoader->cellLock() };
-            moduleLoader->clearAll();
-        }
-        globalObject->requireMap()->clear(globalObject);
+        globalObject->clearModuleRegistryAndRequireCache();
         scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
     }
     gcUnprotect(globalObject);

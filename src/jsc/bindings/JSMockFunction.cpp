@@ -23,10 +23,8 @@
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/DateInstance.h>
-#include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleEnvironment.h>
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
-#include <JavaScriptCore/JSModuleLoader.h>
 #include "BunPlugin.h"
 #include "AsyncContextFrame.h"
 #include "ErrorCode.h"
@@ -1484,19 +1482,11 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetAllMocks, (JSC::JSGlobalObject * globalO
 BUN_DEFINE_HOST_FUNCTION(JSMock__jsResetModules, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // Drop the ESM module-loader registry and the CommonJS require() cache so
-    // the next import/require re-evaluates user modules. Module mocks live in
-    // onLoadPlugins (not these caches) so they survive the reset. Mirrors the
-    // cache-clearing half of Zig::GlobalObject::reload().
-    {
-        auto* moduleLoader = globalObject->moduleLoader();
-        WTF::Locker locker { moduleLoader->cellLock() };
-        moduleLoader->clearAll();
-    }
-    globalObject->requireMap()->clear(globalObject);
+    // Module mocks live in onLoadPlugins (not in the registry/require cache)
+    // so they survive this reset and keep intercepting subsequent loads.
+    defaultGlobalObject(lexicalGlobalObject)->clearModuleRegistryAndRequireCache();
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(callframe->thisValue());

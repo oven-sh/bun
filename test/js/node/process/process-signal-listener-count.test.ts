@@ -1,5 +1,18 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { Worker } from "node:worker_threads";
+
+async function runScript(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
 
 // When multiple listeners are registered for the same signal, removing one
 // listener must NOT uninstall the underlying OS signal handler while other
@@ -40,14 +53,7 @@ test.skipIf(isWindows)("removing one of multiple signal listeners keeps the hand
     console.log("done");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runScript(script);
 
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
@@ -81,21 +87,14 @@ test.skipIf(isWindows)("removing all signal listeners uninstalls the handler (de
     process.kill(process.pid, "SIGUSR2");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, exitCode, signalCode } = await runScript(script);
 
   expect(stdout).toBe("");
   // Default SIGUSR2 behavior is to terminate the process with a signal.
   // If the handler was correctly uninstalled, the process dies via signal (not exit code 42).
   expect(exitCode).not.toBe(42);
   expect(exitCode).not.toBe(0);
-  expect(proc.signalCode).not.toBeNull();
+  expect(signalCode).not.toBeNull();
 });
 
 // Re-adding a listener after all were removed should reinstall the handler.
@@ -118,14 +117,7 @@ test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the h
     console.log("done");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { stdout, stderr, exitCode } = await runScript(script);
 
   expect(stderr).toBe("");
   expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
@@ -133,4 +125,123 @@ test.skipIf(isWindows)("re-adding a listener after removing all reinstalls the h
 done"
 `);
   expect(exitCode).toBe(0);
+});
+
+// SIGKILL and SIGSTOP cannot be caught, so Node rejects them at registration
+// time with the EINVAL that uv_signal_start() returns, and adds no listener.
+test.skipIf(isWindows)("listening for SIGKILL or SIGSTOP throws EINVAL and registers nothing", async () => {
+  const script = /*js*/ `
+    const probe = (sig, method) => {
+      try {
+        process[method](sig, () => {});
+        return { registered: true, listenerCount: process.listenerCount(sig) };
+      } catch (e) {
+        return {
+          name: e.name,
+          message: e.message,
+          code: e.code,
+          errno: e.errno,
+          syscall: e.syscall,
+          listenerCount: process.listenerCount(sig),
+        };
+      } finally {
+        process.removeAllListeners(sig);
+      }
+    };
+
+    const result = {};
+    for (const sig of ["SIGKILL", "SIGSTOP"]) {
+      for (const method of ["on", "addListener", "once", "prependListener", "prependOnceListener"]) {
+        result[sig + "." + method] = probe(sig, method);
+      }
+    }
+    result["SIGUSR2.on"] = probe("SIGUSR2", "on");
+
+    // A Symbol is never a signal name, even when its description reads like one.
+    result["Symbol(SIGKILL).on"] = probe(Symbol("SIGKILL"), "on");
+    result["Symbol(SIGSTOP).on"] = probe(Symbol("SIGSTOP"), "on");
+
+    console.log(JSON.stringify(result));
+  `;
+
+  const { stdout, stderr, exitCode } = await runScript(script);
+
+  // EINVAL is 22 on every platform Bun builds for; libuv reports it negated.
+  const einval = {
+    name: "Error",
+    message: "uv_signal_start EINVAL",
+    code: "EINVAL",
+    errno: -22,
+    syscall: "uv_signal_start",
+    listenerCount: 0,
+  };
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    "SIGKILL.on": einval,
+    "SIGKILL.addListener": einval,
+    "SIGKILL.once": einval,
+    "SIGKILL.prependListener": einval,
+    "SIGKILL.prependOnceListener": einval,
+    "SIGSTOP.on": einval,
+    "SIGSTOP.addListener": einval,
+    "SIGSTOP.once": einval,
+    "SIGSTOP.prependListener": einval,
+    "SIGSTOP.prependOnceListener": einval,
+    "SIGUSR2.on": { registered: true, listenerCount: 1 },
+    "Symbol(SIGKILL).on": { registered: true, listenerCount: 1 },
+    "Symbol(SIGSTOP).on": { registered: true, listenerCount: 1 },
+  });
+  expect(exitCode).toBe(0);
+});
+
+// An Identifier for a Symbol hashes and compares by its description, so
+// Symbol("SIGUSR2") used to match the signal-name map and install a real OS
+// handler. Node treats it as an ordinary event and lets SIGUSR2 kill us.
+test.skipIf(isWindows)("a Symbol whose description is a signal name installs no handler", async () => {
+  const script = /*js*/ `
+    process.on(Symbol("SIGUSR2"), () => {});
+
+    // Never reached: the default SIGUSR2 action terminates the process. Exists
+    // only so a missing handler-install shows up as 42 rather than a clean exit.
+    setTimeout(() => process.exit(42), 1000);
+
+    process.kill(process.pid, "SIGUSR2");
+  `;
+
+  const { stdout, stderr, exitCode, signalCode } = await runScript(script);
+
+  expect({ stdout, stderr }).toEqual({ stdout: "", stderr: "" });
+  // The process is killed by the signal (no handler), so it never reaches the
+  // exit(42) fallback. The specific signal name is not asserted: Bun.spawn maps
+  // the death signal number through a fixed table, and 31 is SIGUSR2 on macOS
+  // but SIGSYS on Linux, so the reported name differs by platform.
+  expect(signalCode).not.toBeNull();
+  expect(exitCode).not.toBe(42);
+  expect(exitCode).not.toBe(0);
+});
+
+// Node only starts signal watchers on the main thread, so inside a worker
+// process.on("SIGKILL") is an ordinary event listener and does not throw.
+test.skipIf(isWindows)("listening for SIGKILL inside a worker does not throw", async () => {
+  const source = /*js*/ `
+    const { parentPort } = require("node:worker_threads");
+    try {
+      process.on("SIGKILL", () => {});
+      parentPort.postMessage({ registered: true, listenerCount: process.listenerCount("SIGKILL") });
+    } catch (e) {
+      parentPort.postMessage({ threw: e.message });
+    }
+  `;
+
+  const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+  const worker = new Worker(source, { eval: true });
+  worker.on("message", resolve);
+  worker.on("error", reject);
+  worker.on("exit", code => reject(new Error(`worker exited with code ${code} before posting a message`)));
+
+  try {
+    expect(await promise).toEqual({ registered: true, listenerCount: 1 });
+  } finally {
+    await worker.terminate();
+  }
 });

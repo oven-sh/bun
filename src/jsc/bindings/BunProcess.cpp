@@ -1406,8 +1406,77 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 extern "C" void Bun__MemoryPressure__install(JSC::JSGlobalObject* global);
 extern "C" void Bun__MemoryPressure__uninstall(JSC::JSGlobalObject* global);
 
+#if !OS(WINDOWS)
+// sigaction(2) rejects these two with EINVAL, which is the error Node surfaces
+// from uv_signal_start(). libuv on Windows has no equivalent check, so Node
+// accepts the names there and so do we.
+static bool isUncatchableSignal(int signalNumber)
+{
+    return signalNumber == SIGKILL || signalNumber == SIGSTOP;
+}
+#endif
+
+static bool signalCanBeHandled(int signalNumber)
+{
+#if OS(LINUX)
+    // JSC needs its own handler for the signal it suspends and resumes the JS
+    // thread with, which we must not override.
+    return !isUncatchableSignal(signalNumber) && signalNumber != g_wtfConfig.sigThreadSuspendResume;
+#elif OS(DARWIN) || OS(FREEBSD)
+    return !isUncatchableSignal(signalNumber);
+#elif OS(WINDOWS)
+    // Windows has no SIGSTOP, and nothing ever delivers SIGKILL.
+    return signalNumber != SIGKILL;
+#else
+#error unknown OS
+#endif
+}
+
+// A Symbol's Identifier hashes and compares by its description, so a plain
+// lookup would match Symbol("SIGKILL"). Only string event names name a signal.
+static int signalNumberForEventName(const Identifier& eventName)
+{
+    if (eventName.isSymbol())
+        return 0;
+
+    loadSignalNumberMap();
+    return signalNameToNumberMap->get(eventName.string());
+}
+
+#if !OS(WINDOWS)
+// Node starts signal watchers from a `newListener` hook on the main thread, so
+// uv_signal_start()'s EINVAL surfaces before the listener is ever added.
+static bool onWillAddListenerImpl(EventEmitter& eventEmitter, const Identifier& eventName)
+{
+    if (!Bun__isMainThreadVM())
+        return true;
+
+    if (!isUncatchableSignal(signalNumberForEventName(eventName)))
+        return true;
+
+    auto* globalObject = eventEmitter.scriptExecutionContext()->jsGlobalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = WebCore::builtinNames(vm);
+
+    // Match Node's ErrnoException: a plain Error with errno/code/syscall.
+    auto* error = JSC::createError(globalObject, "uv_signal_start EINVAL"_s);
+    error->putDirect(vm, names.errnoPublicName(), jsNumber(-EINVAL), 0);
+    error->putDirect(vm, names.codePublicName(), jsString(vm, String("EINVAL"_s)), 0);
+    error->putDirect(vm, names.syscallPublicName(), jsString(vm, String("uv_signal_start"_s)), 0);
+    throwException(globalObject, scope, error);
+    return false;
+}
+#endif
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
+    // Comparing an Identifier against a string literal compares characters, so
+    // Symbol("memoryPressure") would match below. None of these events, which
+    // are all keyed by their own Identifier, can ever be named by a Symbol.
+    if (eventName.isSymbol())
+        return;
+
     if (Bun__isMainThreadVM()) {
         if (eventName == "memoryPressure") {
             auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
@@ -1447,7 +1516,6 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
         }
 
         // Signal Handlers
-        loadSignalNumberMap();
         static std::once_flag signalNumberToNameMapOnceFlag;
         std::call_once(signalNumberToNameMapOnceFlag, [] {
             auto signalNames = getSignalNames();
@@ -1535,21 +1603,8 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
             signalToContextIdsMap = new HashMap<int, SignalHandleValue>();
         }
 
-        if (auto signalNumber = signalNameToNumberMap->get(eventName.string())) {
-#if OS(LINUX)
-            // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
-            // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
-#elif OS(DARWIN) || OS(FREEBSD)
-            // these signals cannot be handled
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
-#elif OS(WINDOWS)
-            // windows has no SIGSTOP
-            if (signalNumber != SIGKILL) {
-#else
-#error unknown OS
-#endif
-
+        if (auto signalNumber = signalNumberForEventName(eventName)) {
+            if (signalCanBeHandled(signalNumber)) {
                 if (isAdded) {
                     if (!signalToContextIdsMap->contains(signalNumber)) {
                         SignalHandleValue signal_handle = {
@@ -4543,6 +4598,9 @@ void Process::finishCreation(JSC::VM& vm)
     Base::finishCreation(vm);
 
     wrapped().onDidChangeListener = &onDidChangeListeners;
+#if !OS(WINDOWS)
+    wrapped().onWillAddListener = &onWillAddListenerImpl;
+#endif
 
     m_cpuUsageStructure.initLater([](const JSC::LazyProperty<Process, JSC::Structure>::Initializer& init) {
         init.set(constructCPUUsageStructure(init.vm, init.owner->globalObject()));

@@ -1363,8 +1363,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.stmt_expr_value = data.value.data;
 
         let is_top_level = p.current_scope == p.module_scope;
+        // `if`/`else`/`while`/`do` single-statement bodies share the module
+        // scope, but a `var $x; export { $x }` rewrite there would sit inside
+        // the control-flow statement (invalid) and would unconditionally
+        // export a conditionally-assigned value. Treat them as non-top-level.
+        let is_top_level_cjs_to_esm = is_top_level && !p.is_inside_single_stmt_body;
         if p.should_unwrap_common_js_to_esm() {
-            p.commonjs_named_exports_needs_conversion = if is_top_level {
+            p.commonjs_named_exports_needs_conversion = if is_top_level_cjs_to_esm {
                 u32::MAX
             } else {
                 p.commonjs_named_exports_needs_conversion
@@ -1402,7 +1407,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data.value = simplified;
 
         if p.should_unwrap_common_js_to_esm() {
-            if is_top_level {
+            if is_top_level_cjs_to_esm {
                 if matches!(data.value.data, js_ast::ExprData::EBinary(_)) {
                     let to_convert = p.commonjs_named_exports_needs_conversion;
                     if to_convert != u32::MAX {

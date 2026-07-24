@@ -233,6 +233,94 @@ describe("bundler", () => {
       stdout: "development",
     },
   });
+  // https://github.com/oven-sh/bun/issues/7024
+  // `exports.foo = ...` as the single-statement body of an if/else/while/do-while
+  // shares the module scope, so the CJS→ESM rewrite used to emit
+  // `export { $foo as foo }` inside the control-flow statement, which is a
+  // SyntaxError. These must stay wrapped.
+  itBundled("cjs2esm/ExportsAssignedInIfBodyIssue7024", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('lib');
+        console.log(typeof lib.minify);
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        if (+process.env["UGLIFY_BUG_REPORT"]) exports.minify = function(files, options) {
+          return { code: "bug report" };
+        };
+      `,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toContain("export { $minify as minify }");
+      expect(out).toContain("exports.minify = function");
+    },
+    run: [
+      { env: { UGLIFY_BUG_REPORT: "1" }, stdout: "function" },
+      { env: { UGLIFY_BUG_REPORT: "0" }, stdout: "undefined" },
+    ],
+  });
+  itBundled("cjs2esm/ExportsAssignedInControlFlowBody", {
+    files: {
+      "/entry.js": /* js */ `
+        globalThis.YES = true;
+        const s_if = require('./s_if.js');
+        const s_else = require('./s_else.js');
+        const s_while = require('./s_while.js');
+        const s_dowhile = require('./s_dowhile.js');
+        const s_nested = require('./s_nested.js');
+        const s_module = require('./s_module.js');
+        console.log(JSON.stringify({ s_if, s_else, s_while, s_dowhile, s_nested, s_module }));
+      `,
+      "/s_if.js": /* js */ `
+        if (globalThis.YES) exports.foo = "if";
+      `,
+      "/s_else.js": /* js */ `
+        if (!globalThis.YES) throw 1;
+        else exports.foo = "else";
+      `,
+      "/s_while.js": /* js */ `
+        var i = 0;
+        while (i++ < 1) exports.foo = "while";
+      `,
+      "/s_dowhile.js": /* js */ `
+        do exports.foo = "do-while"; while (0);
+      `,
+      "/s_nested.js": /* js */ `
+        if (globalThis.YES) if (globalThis.YES) exports.foo = "nested";
+      `,
+      "/s_module.js": /* js */ `
+        if (globalThis.YES) module.exports.foo = "module";
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toContain("export { $foo as foo }");
+    },
+    run: {
+      stdout:
+        '{"s_if":{"foo":"if"},"s_else":{"foo":"else"},"s_while":{"foo":"while"},"s_dowhile":{"foo":"do-while"},"s_nested":{"foo":"nested"},"s_module":{"foo":"module"}}',
+    },
+  });
+  itBundled("cjs2esm/ExportsAssignedInIfBodyDeoptsSiblings", {
+    files: {
+      "/entry.js": /* js */ `
+        globalThis.YES = true;
+        const lib = require('lib');
+        console.log(JSON.stringify(lib));
+      `,
+      "/node_modules/lib/index.js": /* js */ `
+        exports.a = 1;
+        if (globalThis.YES) exports.b = 2;
+        exports.c = 3;
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("out.js")).not.toContain("export { $b as b }");
+    },
+    run: {
+      stdout: '{"a":1,"b":2,"c":3}',
+    },
+  });
   itBundled("cjs2esm/UnwrappedModuleRequireAssigned", {
     files: {
       "/entry.js": /* js */ `

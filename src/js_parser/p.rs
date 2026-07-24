@@ -287,6 +287,12 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub commonjs_named_exports_needs_conversion: u32,
     pub had_commonjs_named_exports_this_visit: bool,
     pub commonjs_replacement_stmts: StmtNodeList,
+    /// True while visiting the single-statement body of an `if`/`else`/loop
+    /// via `visit_single_stmt`. Those bodies share the enclosing scope, so
+    /// `current_scope == module_scope` is not a sufficient "top level" check
+    /// for the CommonJS→ESM rewrite; an `export` clause emitted there would
+    /// land inside the control-flow statement.
+    pub is_inside_single_stmt_body: bool,
 
     pub parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -8750,6 +8756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
+            is_inside_single_stmt_body: false,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,

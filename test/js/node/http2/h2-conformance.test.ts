@@ -46,12 +46,17 @@ const ErrorCode = {
 type Frame = { length: number; type: number; flags: number; streamId: number; payload: Buffer };
 
 function encodeFrame(type: number, flags: number, streamId: number, payload: Buffer = Buffer.alloc(0)): Buffer {
+  return Buffer.concat([frameHeader(type, flags, streamId, payload.length), payload]);
+}
+
+/** A bare 9-byte frame header: `length` is what the header declares, not what follows it. */
+function frameHeader(type: number, flags: number, streamId: number, length: number): Buffer {
   const header = Buffer.alloc(9);
-  header.writeUIntBE(payload.length, 0, 3); // 24-bit length
+  header.writeUIntBE(length, 0, 3); // 24-bit length
   header.writeUInt8(type, 3);
   header.writeUInt8(flags, 4);
   header.writeUInt32BE(streamId & 0x7fffffff, 5); // reserved bit clear
-  return Buffer.concat([header, payload]);
+  return header;
 }
 
 /** A minimal raw HTTP/2 client: send arbitrary frames, collect parsed inbound frames. */
@@ -416,6 +421,102 @@ describe("frame size limit (checklist §4.2)", () => {
     // Claim a HEADERS frame larger than the default 16384 max frame size.
     const oversized = Buffer.alloc(16385, 0);
     c.sendFrame(FrameType.HEADERS, 0x4, 1, oversized);
+    const goaway = await c.waitForGoaway();
+    expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+    c.destroy();
+  });
+
+  // §4.2 applies to every frame type and is enforced by the inbound engine
+  // (`Connection::receive`) from the 9-byte header alone, before any payload
+  // is buffered: a header declaring a ~16 MiB payload is answered with
+  // GOAWAY(FRAME_SIZE_ERROR) without waiting for the bytes it promises.
+  test.each([
+    // Use a multiple of 6 for SETTINGS so the §6.5 length rule cannot mask the §4.2 check.
+    ["SETTINGS", FrameType.SETTINGS, 0, 0xfffffc],
+    ["GOAWAY", FrameType.GOAWAY, 0, 0xffffff],
+    ["PUSH_PROMISE", FrameType.PUSH_PROMISE, 1, 0xffffff],
+    ["ALTSVC", 0x0a, 0, 0xffffff],
+    ["ORIGIN", 0x0c, 0, 0xffffff],
+    ["unknown (0xff)", 0xff, 0, 0xffffff],
+  ])(
+    "an oversized %s frame is rejected from the header alone (no buffering)",
+    async (_name, type, streamId, length) => {
+      const c = await RawH2.connect(port);
+      c.sendPreface();
+      c.sendEmptySettings();
+      // Header declaring a multi-MiB payload, followed by only a handful of payload bytes.
+      c.send(frameHeader(type, 0, streamId, length));
+      c.send(Buffer.alloc(16, 0));
+      // The GOAWAY must arrive even though the declared payload was never sent.
+      const goaway = await c.waitForGoaway();
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
+      c.destroy();
+    },
+  );
+});
+
+describe("frame size limit with a non-default SETTINGS_MAX_FRAME_SIZE (checklist §4.2)", () => {
+  // §4.2/§6.5.2: the limit is the endpoint's own *advertised*
+  // SETTINGS_MAX_FRAME_SIZE, not the protocol default of 16384.
+  const MAX_FRAME_SIZE = 32768;
+  let bigServer: http2.Http2Server;
+  let bigPort: number;
+
+  beforeAll(async () => {
+    bigServer = http2.createServer({ settings: { maxFrameSize: MAX_FRAME_SIZE } });
+    bigServer.on("stream", (stream: any) => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    bigServer.listen(0);
+    await once(bigServer, "listening");
+    bigPort = (bigServer.address() as net.AddressInfo).port;
+  });
+
+  afterAll(() => {
+    bigServer?.close();
+  });
+
+  /** Decode the first occurrence of `id` in a SETTINGS payload. */
+  function settingValue(f: Frame, id: number): number | undefined {
+    for (let off = 0; off + 6 <= f.payload.length; off += 6) {
+      if (f.payload.readUInt16BE(off) === id) return f.payload.readUInt32BE(off + 2);
+    }
+    return undefined;
+  }
+
+  test("the server advertises the configured SETTINGS_MAX_FRAME_SIZE", async () => {
+    const c = await RawH2.connect(bigPort);
+    c.sendPreface();
+    c.sendEmptySettings();
+    const settings = await c.waitFor(f => f.type === FrameType.SETTINGS && (f.flags & 0x1) === 0);
+    expect(settingValue(settings, 0x5)).toBe(MAX_FRAME_SIZE);
+    c.destroy();
+  });
+
+  test("a frame over the default but within the advertised limit is accepted", async () => {
+    const c = await RawH2.connect(bigPort);
+    c.sendPreface();
+    c.sendEmptySettings();
+    // 20000 > 16384 (the default) but <= 32768 (advertised): the connection
+    // must stay usable. Unknown frame types are ignored (§4.1, §5.5).
+    c.sendFrame(0xff, 0, 0, Buffer.alloc(20000, 0));
+    const ping = Buffer.from("pingpong", "latin1");
+    c.sendFrame(FrameType.PING, 0, 0, ping);
+    const ack = await c.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) === 1);
+    expect(ack.payload).toEqual(ping);
+    expect(c.frames.filter(f => f.type === FrameType.GOAWAY)).toEqual([]);
+    c.destroy();
+  });
+
+  test("a frame one byte over the advertised limit is a FRAME_SIZE_ERROR", async () => {
+    const c = await RawH2.connect(bigPort);
+    c.sendPreface();
+    c.sendEmptySettings();
+    // Only the header and a sliver of payload: the rejection must come from
+    // the declared length (32769), not from buffering the payload.
+    c.send(frameHeader(0xff, 0, 0, MAX_FRAME_SIZE + 1));
+    c.send(Buffer.alloc(16, 0));
     const goaway = await c.waitForGoaway();
     expect(goawayErrorCode(goaway)).toBe(ErrorCode.FRAME_SIZE_ERROR);
     c.destroy();

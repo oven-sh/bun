@@ -2416,7 +2416,9 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // accessed here (no overlapping `&mut EventLoop`).
+            // Watch mode survives errors (the outer loop in `Run::start` keeps
+            // ticking via `tick_possibly_forever` regardless of
+            // `unhandled_error_counter`), so no bail-out on it here.
             self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
@@ -2441,7 +2443,22 @@ impl VirtualMachine {
                 return Ok(promise);
             }
             self.event_loop_mut().perform_gc();
-            self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            // Bail on `unhandled_error_counter` so a default-fatal uncaught
+            // exception while the entry module is suspended in top-level await
+            // stops evaluation, matching the main drain loop in `Run::start`.
+            while crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending
+                && self.unhandled_error_counter == 0
+            {
+                if self.jsc_vm().execution_forbidden() {
+                    break;
+                }
+                self.event_loop_mut().tick();
+                if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Pending
+                    && self.unhandled_error_counter == 0
+                {
+                    self.auto_tick();
+                }
+            }
         }
 
         Ok(self.pending_internal_promise.unwrap_or(promise))

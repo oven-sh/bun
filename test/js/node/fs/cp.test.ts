@@ -716,3 +716,52 @@ test.skipIf(!isLinux)("fs.cp and fs.copyFile create the destination with the sou
   expect(stdout).toBe("");
   expect(exitCode).toBe(0);
 });
+
+test.skipIf(isWindows || process.getuid?.() !== 0)(
+  "fs.copyFile and fs.cp preserve the source file's ownership",
+  async () => {
+    using dir = tempDir("cp-ownership", {});
+    const script = `
+      const fs = require("node:fs");
+      const own = p => { const s = fs.statSync(p); return s.uid + ":" + s.gid; };
+      fs.writeFileSync("src", "data");
+      fs.chmodSync("src", 0o751);
+      fs.chownSync("src", 7, 8);
+      fs.writeFileSync("existing", "old");
+      fs.chownSync("existing", 9, 9);
+      fs.copyFileSync("src", "d-copyFileSync");
+      await fs.promises.copyFile("src", "d-promisesCopyFile");
+      fs.cpSync("src", "d-cpSync");
+      await fs.promises.cp("src", "d-promisesCp");
+      fs.copyFileSync("src", "existing");
+      console.log(JSON.stringify({
+        src: own("src"),
+        copyFileSync: own("d-copyFileSync"),
+        promisesCopyFile: own("d-promisesCopyFile"),
+        cpSync: own("d-cpSync"),
+        promisesCp: own("d-promisesCp"),
+        ontoExisting: own("existing"),
+        mode: (fs.statSync("d-copyFileSync").mode & 0o777).toString(8),
+      }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      src: "7:8",
+      copyFileSync: "7:8",
+      promisesCopyFile: "7:8",
+      cpSync: "7:8",
+      promisesCp: "7:8",
+      ontoExisting: "7:8",
+      mode: "751",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

@@ -624,16 +624,13 @@ test("instance 2 calls only fnB", async () => {
 `,
   });
 
-  const result = Bun.spawnSync(
-    [bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./qs-repro.test.ts"],
-    {
-      cwd: dir,
-      env: {
-        ...bunEnv,
-      },
-      stdio: ["inherit", "inherit", "inherit"],
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./qs-repro.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
     },
-  );
+    stdio: ["inherit", "inherit", "inherit"],
+  });
   expect(result.exitCode).toBe(0);
 
   const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");

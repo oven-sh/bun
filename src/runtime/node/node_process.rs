@@ -234,6 +234,29 @@ mod _impl {
         bun_jsc::to_js_host_fn_result(global_object, create_exec_argv(global_object))
     }
 
+    /// execArgv args that consume an extra argument, so `--` as their pending
+    /// value is not treated as the option-parsing terminator. Built lazily
+    /// from the `AUTO_PARAMS` table: `--long` / `-s` for every param with a
+    /// value.
+    static EXEC_ARGV_VALUE_PARAMS: std::sync::LazyLock<bun_collections::StringSet> =
+        std::sync::LazyLock::new(|| {
+            let mut set = bun_collections::StringSet::new();
+            for param in crate::cli::arguments::AUTO_PARAMS.iter() {
+                if param.takes_value != bun_clap::Values::None {
+                    if let Some(name) = param.names.long {
+                        let mut k = Vec::with_capacity(2 + name.len());
+                        k.extend_from_slice(b"--");
+                        k.extend_from_slice(name);
+                        bun_core::handle_oom(set.insert(&k));
+                    }
+                    if let Some(name) = param.names.short {
+                        bun_core::handle_oom(set.insert(&[b'-', name]));
+                    }
+                }
+            }
+            set
+        });
+
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
         // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
@@ -241,9 +264,38 @@ mod _impl {
         if let Some(worker) = vm.worker_ref() {
             // was explicitly overridden for the worker?
             if let Some(exec_argv) = worker.exec_argv() {
-                return JSValue::create_array_from_iter(global_object, exec_argv.iter(), |&wtf| {
-                    BunString::init(wtf).to_js(global_object)
-                });
+                use bun_core::WTFStringImplExt as _;
+
+                // `--` terminates option parsing here too: Node truncates a
+                // worker's execArgv at the first `--` instead of reporting it.
+                // Same carve-out as the main-thread branch below: `--` that is
+                // the pending value of a value-taking option stays, so execArgv
+                // round-trips through fork().
+                let mut end = exec_argv.len();
+                let mut prev: Option<Vec<u8>> = None;
+                for (i, &wtf) in exec_argv.iter().enumerate() {
+                    if wtf.is_null() {
+                        prev = None;
+                        continue;
+                    }
+                    // SAFETY: each entry is a live `WTFStringImpl*` owned by
+                    // the worker's options for the worker's lifetime.
+                    let bytes = unsafe { &*wtf }.to_owned_slice_z().as_bytes().to_vec();
+                    if bytes == b"--"
+                        && !prev
+                            .as_deref()
+                            .is_some_and(|p| EXEC_ARGV_VALUE_PARAMS.contains(p))
+                    {
+                        end = i;
+                        break;
+                    }
+                    prev = Some(bytes);
+                }
+                return JSValue::create_array_from_iter(
+                    global_object,
+                    exec_argv[..end].iter(),
+                    |&wtf| BunString::init(wtf).to_js(global_object),
+                );
             }
         }
 
@@ -309,6 +361,16 @@ mod _impl {
             // emulate `defer prev = arg` by setting at end of each iteration body
             let arg: &[u8] = arg;
 
+            // `--` terminates option parsing: Node drops it and treats the
+            // next token as the script, so it must not land in execArgv.
+            // Unless it is the value of a pending value-taking option -- Node
+            // rejects that command line outright ("--conditions requires an
+            // argument"), but Bun's CLI accepts it, and dropping the value
+            // here would stop execArgv from round-tripping through fork().
+            if arg == b"--" && !prev.is_some_and(|p| EXEC_ARGV_VALUE_PARAMS.contains(p)) {
+                break;
+            }
+
             if arg.len() >= 1 && arg[0] == b'-' {
                 args.push(BunString::clone_utf8(arg));
                 prev = Some(arg);
@@ -321,31 +383,8 @@ mod _impl {
                 continue;
             }
 
-            // A set of execArgv args consume an extra argument, so we do not want to
-            // confuse these with script names.
-            // Build the set lazily at runtime from the `AUTO_PARAMS` table:
-            // `--long` / `-s` for every param with a value.
-            static MAP: std::sync::LazyLock<bun_collections::StringSet> =
-                std::sync::LazyLock::new(|| {
-                    let mut set = bun_collections::StringSet::new();
-                    for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        if param.takes_value != bun_clap::Values::None {
-                            if let Some(name) = param.names.long {
-                                let mut k = Vec::with_capacity(2 + name.len());
-                                k.extend_from_slice(b"--");
-                                k.extend_from_slice(name);
-                                bun_core::handle_oom(set.insert(&k));
-                            }
-                            if let Some(name) = param.names.short {
-                                bun_core::handle_oom(set.insert(&[b'-', name]));
-                            }
-                        }
-                    }
-                    set
-                });
-
             if let Some(p) = prev {
-                if MAP.contains(p) {
+                if EXEC_ARGV_VALUE_PARAMS.contains(p) {
                     args.push(BunString::clone_utf8(arg));
                     prev = Some(arg);
                     continue;

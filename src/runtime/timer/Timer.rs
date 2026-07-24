@@ -39,6 +39,32 @@ impl All {
         }
     }
 
+    /// Number of `setTimeout`/`setInterval` objects currently keeping the
+    /// event loop alive (alive and not `unref()`ed). Backs the `'Timeout'`
+    /// entries of `process.getActiveResourcesInfo()`.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__Timer__getActiveTimeoutCount() -> u32 {
+        let all = timer_all();
+        if all.is_null() {
+            return 0;
+        }
+        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
+        unsafe { (*all).js_timeout_ref_count.max(0) as u32 }
+    }
+
+    /// Number of pending `setImmediate` objects currently keeping the event
+    /// loop alive. Backs the `'Immediate'` entries of
+    /// `process.getActiveResourcesInfo()`.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn Bun__Timer__getActiveImmediateCount() -> u32 {
+        let all = timer_all();
+        if all.is_null() {
+            return 0;
+        }
+        // SAFETY: `all` is the live per-thread `All`; single-threaded JS heap.
+        unsafe { (*all).immediate_ref_count.max(0) as u32 }
+    }
+
     /// # Safety
     /// `vm` must point to the live per-thread `VirtualMachine`.
     // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
@@ -595,5 +621,31 @@ pub mod internal_bindings {
         // bun_jsc::JSValue has no `js_number_from_int64`; route via
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
+    }
+
+    /// Ref'd `setTimeout`/`setInterval` count for `process.getActiveResourcesInfo()`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn get_active_timeout_count(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = global_this;
+        let _ = call_frame;
+        Ok(JSValue::js_number(f64::from(
+            All::Bun__Timer__getActiveTimeoutCount(),
+        )))
+    }
+
+    /// Pending `setImmediate` count for `process.getActiveResourcesInfo()`.
+    #[bun_jsc::host_fn]
+    pub(crate) fn get_active_immediate_count(
+        global_this: &JSGlobalObject,
+        call_frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let _ = global_this;
+        let _ = call_frame;
+        Ok(JSValue::js_number(f64::from(
+            All::Bun__Timer__getActiveImmediateCount(),
+        )))
     }
 }

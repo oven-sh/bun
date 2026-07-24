@@ -2256,6 +2256,76 @@ it("process.throwDeprecation is per-Worker, not process-global", async () => {
   expect(exitCode).toBe(0);
 });
 
+it("getActiveResourcesInfo reports a listening http.Server like node", async () => {
+  // node v26.3.0 transcript for the same script:
+  //   {"listening":1,"handleWhileListening":true,"unrefed":0,"refed":1,"closed":0,"handleAfterClose":true}
+  // (listening server = one "TCPServerWrap"; unref() removes it, ref()
+  // restores it; _handle nulls in the close callback and the entry drops
+  // once the close settles — node keeps the closing wrap listed until uv's
+  // OnClose, so "closed" is sampled after a short settle, where both
+  // runtimes report 0.)
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("http");
+       const server = http.createServer((req, res) => res.end("ok"));
+       server.listen(0, "127.0.0.1", () => {
+         const tcp = () => process.getActiveResourcesInfo().filter(x => x === "TCPServerWrap").length;
+         const out = { listening: tcp() };
+         out.handleWhileListening = server._handle != null && process._getActiveHandles().includes(server);
+         server.unref();
+         out.unrefed = tcp();
+         server.ref();
+         out.refed = tcp();
+         server.close(() => {
+           setTimeout(() => {
+             out.closed = tcp();
+             out.handleAfterClose = server._handle === null && !process._getActiveHandles().includes(server);
+             console.log(JSON.stringify(out));
+           }, 50);
+         });
+       });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe(
+    '{"listening":1,"handleWhileListening":true,"unrefed":0,"refed":1,"closed":0,"handleAfterClose":true}',
+  );
+  expect(exitCode).toBe(0);
+});
+
+it("getActiveResourcesInfo reports a unix-socket http.Server as PipeWrap like node", async () => {
+  // node v26.3.0: http server on a unix path reports ["PipeWrap"].
+  using dir = tempDir("http-pipewrap", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const http = require("http");
+       const server = http.createServer(() => {});
+       server.listen(process.argv[1], () => {
+         const info = process.getActiveResourcesInfo();
+         console.log(JSON.stringify({
+           pipe: info.filter(x => x === "PipeWrap").length,
+           tcp: info.filter(x => x === "TCPServerWrap").length,
+         }));
+         server.close();
+       });`,
+      `${dir}/s.sock`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"pipe":1,"tcp":0}');
+  expect(exitCode).toBe(0);
+});
+
 describe("NODE_NO_WARNINGS", () => {
   // Node suppresses only on the exact string "1" (test-env-var-no-warnings.js).
   // Bun's generic boolean env parse used to accept "true", "01", etc.
@@ -2285,4 +2355,103 @@ describe("NODE_NO_WARNINGS", () => {
   it.concurrent('suppresses warnings for NODE_NO_WARNINGS="1"', async () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
+});
+
+it("getActiveResourcesInfo reports connecting sockets and pending dns lookups like node", async () => {
+  // node v26.3.0:
+  //   - a socket with a connect still in flight reports "TCPSocketWrap"
+  //     immediately after connect() dispatch (sampled synchronously, before
+  //     any routing outcome can arrive, so a closed local port works);
+  //   - an in-flight dns.lookup reports "GetAddrInfoReqWrap" in
+  //     getActiveResourcesInfo() and a wrap with that constructor name in
+  //     _getActiveRequests(), and both disappear once the lookup settles.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const dns = require("dns");
+       const out = {};
+       const socket = net.connect(1, "127.0.0.1");
+       socket.on("error", () => {});
+       out.connecting = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
+       socket.destroy();
+       out.afterDestroy = process.getActiveResourcesInfo().filter(x => x === "TCPSocketWrap").length;
+       dns.lookup("localhost", () => {
+         out.dnsSettled = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+         out.reqsSettled = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;
+         console.log(JSON.stringify(out));
+       });
+       out.dnsPending = process.getActiveResourcesInfo().filter(x => x === "GetAddrInfoReqWrap").length;
+       out.reqsPending = process._getActiveRequests().filter(r => r.constructor.name === "GetAddrInfoReqWrap").length;`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    connecting: 1,
+    afterDestroy: 0,
+    dnsPending: 1,
+    reqsPending: 1,
+    dnsSettled: 0,
+    reqsSettled: 0,
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("_getActiveRequests entries carry node's request-wrap constructor names", async () => {
+  // node v26.3.0 names pending fs requests FSReqCallback/FSReqPromise; Bun's
+  // fs callback API wraps the promise API natively, so both report
+  // FSReqCallback (documented divergence) - but the entries must be named
+  // wraps, not plain objects, so constructor-name filtering works.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const fs = require("fs");
+       fs.readFile("/dev/null", () => {});
+       const names = process._getActiveRequests().map(r => r.constructor.name);
+       console.log(JSON.stringify({ named: names.length > 0 && names.every(n => n === "FSReqCallback") }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"named":true}');
+  expect(exitCode).toBe(0);
+});
+
+it("synchronous connect/lookup validation throws do not leak registry entries", async () => {
+  // Acquire-before-fallible-call regression: a sync throw from option
+  // validation (net) or the native call (dns) must not leave a phantom
+  // handle/request pinned in the registry.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net");
+       const dns = require("dns");
+       for (let i = 0; i < 3; i++) {
+         try { net.connect({ port: 80, localAddress: "not-an-ip" }); } catch {}
+         try { net.connect({ path: 123 }); } catch {}
+         try { dns.lookupService("not-an-ip", 80, () => {}); } catch {}
+       }
+       const info = process.getActiveResourcesInfo();
+       console.log(JSON.stringify({
+         tcp: info.filter(x => x === "TCPSocketWrap").length,
+         pipe: info.filter(x => x === "PipeWrap").length,
+         nameinfo: info.filter(x => x === "GetNameInfoReqWrap").length,
+         handles: process._getActiveHandles().length,
+       }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe('{"tcp":0,"pipe":0,"nameinfo":0,"handles":0}');
+  expect(exitCode).toBe(0);
 });

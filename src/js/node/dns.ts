@@ -1,5 +1,6 @@
 // Hardcoded module "node:dns"
 const dns = Bun.dns;
+let activeHandles;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
 const {
@@ -314,9 +315,16 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  dns
-    .lookup(hostname, options)
+  // node parks a GetAddrInfoReqWrap for every in-flight lookup, visible via
+  // process.getActiveResourcesInfo()/_getActiveRequests() until it settles.
+  // The native call can throw synchronously, so the wrap registers only once
+  // the promise exists - never before the fallible step.
+  const promise = dns.lookup(hostname, options);
+  activeHandles ??= require("internal/active_handles");
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetAddrInfoReqWrap());
+  promise
     .then(res => {
+      activeHandles.noteRequestEnd(reqWrap);
       throwIfEmpty(res);
 
       if (options.order == "ipv4first") {
@@ -333,6 +341,7 @@ function lookup(hostname, options, callback) {
       }
     })
     .catch(err => {
+      activeHandles.noteRequestEnd(reqWrap);
       if (err.code?.startsWith("DNS_")) err.code = err.code.slice(4);
       // Node.js getaddrinfo errors (DNSException) carry the looked-up
       // hostname both as a property and at the end of the message.
@@ -357,11 +366,18 @@ function lookupService(address, port, callback) {
   validateString(address);
   validatePort(port, "port");
 
-  dns.lookupService(address, +port).then(
+  // Same shape as lookup(): Bun.dns.lookupService throws synchronously for a
+  // non-IP address, so the promise is captured before the wrap registers.
+  const promise = dns.lookupService(address, +port);
+  activeHandles ??= require("internal/active_handles");
+  const reqWrap = activeHandles.noteRequestStart(new activeHandles.GetNameInfoReqWrap());
+  promise.then(
     results => {
+      activeHandles.noteRequestEnd(reqWrap);
       callback(null, ...results);
     },
     error => {
+      activeHandles.noteRequestEnd(reqWrap);
       callback(withTranslatedError(error));
     },
   );

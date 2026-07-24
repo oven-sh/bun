@@ -142,9 +142,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtException, (JSC::JSGlobalObject *
 static void queueUncaughtExceptionNextTick(JSC::JSGlobalObject* lexicalGlobalObject, JSValue exception)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Bun::Process* process = globalObject->processObject();
-    auto func = JSFunction::create(globalObject->vm(), globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
+    auto func = JSFunction::create(vm, globalObject, 1, String(), jsFunctionEmitUncaughtException, JSC::ImplementationVisibility::Private);
     process->queueNextTick(lexicalGlobalObject, func, exception);
+    // queueNextTick calls process.nextTick as JS; if that throws (e.g.
+    // termination) while reporting the original error, drop it so the caller's
+    // scope does not see an unchecked exception.
+    (void)scope.tryClearException();
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

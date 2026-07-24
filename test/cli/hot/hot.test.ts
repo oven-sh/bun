@@ -448,6 +448,100 @@ it(
   timeout,
 );
 
+// `rm` of an *imported* file kills its per-file watch and evicts its watchlist
+// entry, so only the parent-directory watch can notice the recreated path.
+// Unlike the entrypoint (covered above), it had no recovery path.
+it(
+  "should hot reload an imported file after it is deleted and recreated",
+  async () => {
+    const depName = "hot-recreated-import-dep.ts";
+    const dep = join(cwd, depName);
+    const entry = join(cwd, "hot-recreated-import-entry.ts");
+    writeFileSync(dep, `export default "A";\n`);
+    writeFileSync(
+      entry,
+      `import dep from "./${depName}";\n` +
+        `const server = Bun.serve({ port: 0, fetch: () => new Response(String(dep)) });\n` +
+        `console.log("PORT=" + server.port);\n`,
+    );
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", entry],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+
+    let stdoutText = "";
+    let stderrText = "";
+    let intentionallyKilled = false;
+    // Rejects if the child dies before we kill it, so every await below fails
+    // fast with the child's output instead of spinning against a dead server.
+    const childDied: Promise<never> = runner.exited.then(code => {
+      if (intentionallyKilled) return new Promise<never>(() => {});
+      throw new Error(`--hot child exited early (code ${code}).\nstdout:\n${stdoutText}\nstderr:\n${stderrText}`);
+    });
+    childDied.catch(() => {}); // observed through the races below
+
+    // The readers only accumulate diagnostic output and resolve the two
+    // signal promises; every signal they could carry is already covered by
+    // those, so a stream torn down by `runner.kill()` must not fail the test.
+    const moduleNotFound = Promise.withResolvers<void>();
+    const stderrDone = (async () => {
+      for await (const chunk of runner.stderr) {
+        stderrText += new TextDecoder().decode(chunk);
+        if (stderrText.includes("Cannot find module")) moduleNotFound.resolve();
+      }
+    })().catch(() => {});
+    const port = Promise.withResolvers<number>();
+    const stdoutDone = (async () => {
+      for await (const chunk of runner.stdout) {
+        stdoutText += new TextDecoder().decode(chunk);
+        const match = stdoutText.match(/PORT=(\d+)/);
+        if (match) port.resolve(Number(match[1]));
+      }
+    })().catch(() => {});
+
+    const url = `http://localhost:${await Promise.race([port.promise, childDied])}/`;
+    const body = async () => await (await fetch(url)).text();
+    // On a correct build each poll converges in well under a second; the
+    // window is only burned when the recreate goes unnoticed, turning a hang
+    // into `expected "B", received "A"`.
+    const pollWindow = isDebug ? 60_000 : 10_000;
+    async function pollBody(expected: string): Promise<string> {
+      const deadline = Date.now() + pollWindow;
+      let got: string;
+      do {
+        got = await body();
+        if (got === expected) return got;
+        await Promise.race([Bun.sleep(50), childDied]);
+      } while (Date.now() < deadline);
+      return got;
+    }
+
+    expect(await body()).toBe("A");
+
+    // Deleting the import triggers one reload that fails to resolve it. Wait
+    // for it so the delete and the recreate reach the watcher separately.
+    rmSync(dep);
+    await Promise.race([moduleNotFound.promise, childDied]);
+
+    writeFileSync(dep, `export default "B";\n`);
+    expect(await pollBody("B")).toBe("B");
+
+    // The recreated file (a new inode) must be re-watched, not reloaded once.
+    writeFileSync(dep, `export default "C";\n`);
+    expect(await pollBody("C")).toBe("C");
+
+    intentionallyKilled = true;
+    runner.kill();
+    await Promise.all([stdoutDone, stderrDone]);
+  },
+  longTimeout,
+);
+
 it(
   "should hot reload when a file is renamed() into place",
   async () => {

@@ -334,7 +334,11 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
 // they do not fire on the interrupting signal and cannot be removed by the
 // script. Bun's process keeps the once flag in C++ (rawListeners() cannot
 // surface it), so snapshot { callback, isOnce } directly from the listener map
-// instead of round-tripping through JS.
+// instead of round-tripping through JS. Neither side emits 'removeListener'
+// nor 'newListener' (node's wrapper does): the destructor runs while the
+// script's exception or termination is still pending, so re-entering user JS
+// there is not safe, and the native JSEventEmitter has no removeListener emit
+// on any path anyway.
 class SigintHandlersScope {
     WTF_MAKE_NONCOPYABLE(SigintHandlersScope);
 

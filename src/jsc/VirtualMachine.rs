@@ -182,7 +182,7 @@ pub struct VirtualMachine {
     /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
-    pub preload: Vec<Box<[u8]>>,
+    pub preload: Vec<bun_options_types::context::Preload>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the

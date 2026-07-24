@@ -19,7 +19,7 @@ use bun_parsers::toml::TOML;
 use bun_install_types::NodeLinker::FromExprError;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
-use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions};
+use bun_options_types::context::{MacroImportReplacementMap, MacroMap, MacroOptions, Preload};
 use bun_options_types::global_cache::GlobalCache;
 use bun_options_types::offline_mode::PREFER as OFFLINE_PREFER;
 use bun_options_types::schema::api;
@@ -249,12 +249,12 @@ impl<'a> Parser<'a> {
         match &expr.data {
             ExprData::EArray(array) => {
                 let items = array.items.slice();
-                let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(items.len());
+                let mut preloads: Vec<Preload> = Vec::with_capacity(items.len());
                 for item in items {
                     self.expect_string(item)?;
                     if let ExprData::EString(s) = &item.data {
                         if s.len() > 0 {
-                            preloads.push(estring_to_owned(s, self.bump));
+                            preloads.push(Preload::import(estring_to_owned(s, self.bump)));
                         }
                     }
                 }
@@ -262,7 +262,7 @@ impl<'a> Parser<'a> {
             }
             ExprData::EString(s) => {
                 if s.len() > 0 {
-                    self.ctx.preloads = vec![estring_to_owned(s, self.bump)];
+                    self.ctx.preloads = vec![Preload::import(estring_to_owned(s, self.bump))];
                 }
             }
             ExprData::ENull(_) => {}

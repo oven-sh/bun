@@ -952,6 +952,11 @@ class Worker extends EventEmitter {
 
     this.#name = normalizeWorkerName(options.name);
 
+    // Capture resourceLimits from options (silently accepted; enforcement is a no-op)
+    if (options.resourceLimits) {
+      resourceLimits = options.resourceLimits;
+    }
+
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options[builtinsGeneratorHatesEval]) {
       // node requires the source to be a string when eval is set, rather than

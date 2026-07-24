@@ -906,3 +906,441 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm ls --json outputs JSON format", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-ls-json",
+      version: "1.2.3",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  const parsed = JSON.parse(stdoutText);
+  expect(parsed.name).toBe("test-ls-json");
+  expect(parsed.version).toBe("1.2.3");
+  expect(parsed.path).toBe(package_dir);
+  expect(parsed.dependencies.bar).toEqual({
+    from: "bar",
+    version: "0.0.2",
+    path: join(package_dir, "node_modules", "bar"),
+  });
+  // Direct-dependency buckets are always present for a stable schema, even when empty.
+  expect(parsed.devDependencies).toEqual({});
+  expect(parsed.optionalDependencies).toEqual({});
+  expect(parsed.peerDependencies).toEqual({});
+  // transitiveDependencies is only emitted with --all.
+  expect(parsed.transitiveDependencies).toBeUndefined();
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm ls --all --json shows transitive dependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-ls-json-all",
+      version: "1.0.0",
+      dependencies: {
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  const parsed = JSON.parse(stdoutText);
+  expect(parsed.name).toBe("test-ls-json-all");
+  expect(parsed.dependencies.moo).toBeDefined();
+  expect(parsed.transitiveDependencies).toBeDefined();
+  expect(parsed.transitiveDependencies.bar).toEqual({
+    from: "bar",
+    version: "0.0.2",
+    path: join(package_dir, "node_modules", "bar"),
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("bun list --json works as alias", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-list-json-alias",
+      version: "1.0.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "list", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  const parsed = JSON.parse(stdoutText);
+  expect(parsed.name).toBe("test-list-json-alias");
+  expect(parsed.dependencies.bar.version).toBe("0.0.2");
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm ls --json separates dependencies and devDependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-ls-json-dev",
+      version: "1.0.0",
+      dependencies: {
+        bar: "latest",
+      },
+      devDependencies: {
+        boba: "latest",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  const parsed = JSON.parse(stdoutText);
+  expect(parsed.dependencies.bar).toBeDefined();
+  expect(parsed.dependencies.boba).toBeUndefined();
+  expect(parsed.devDependencies.boba).toBeDefined();
+  expect(parsed.devDependencies.bar).toBeUndefined();
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm ls --json classifies optionalDependencies and peerDependencies", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-ls-json-optional-peer",
+      version: "1.0.0",
+      dependencies: {
+        bar: "latest",
+      },
+      optionalDependencies: {
+        qux: "latest",
+      },
+      peerDependencies: {
+        peer: "latest",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  const parsed = JSON.parse(stdoutText);
+  expect(parsed.dependencies.bar).toBeDefined();
+  // Each declared dependency lands in exactly its own bucket.
+  expect(parsed.dependencies.qux).toBeUndefined();
+  expect(parsed.dependencies.peer).toBeUndefined();
+  expect(parsed.optionalDependencies.qux).toEqual({
+    from: "qux",
+    version: "0.0.2",
+    path: join(package_dir, "node_modules", "qux"),
+  });
+  expect(parsed.peerDependencies.peer).toEqual({
+    from: "peer",
+    version: "0.0.2",
+    path: join(package_dir, "node_modules", "peer"),
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm ls --trusted --json warns that --trusted is ignored", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-ls-json-trusted-warn",
+      version: "1.0.0",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--trusted", "--json"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  // The warning goes to stderr; stdout stays valid JSON (the full tree).
+  expect(stderrText).toContain("--trusted is not supported with --json");
+  const parsed = JSON.parse(stdoutText);
+  expect(parsed.dependencies.bar).toBeDefined();
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm ls --json --all reports the real nested install path", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": {}, "0.0.5": {}, latest: "0.0.5" }));
+  // Root pins baz@0.0.3 at the top level; nested-parent pulls in a conflicting
+  // baz@0.0.5, which must be installed nested under nested-parent/node_modules.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "test-ls-json-nested",
+      version: "1.0.0",
+      dependencies: {
+        baz: "0.0.3",
+        "nested-parent": "./nested-parent",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "nested-parent"));
+  await writeFile(
+    join(package_dir, "nested-parent", "package.json"),
+    JSON.stringify({
+      name: "nested-parent",
+      version: "1.0.0",
+      dependencies: {
+        baz: "0.0.5",
+      },
+    }),
+  );
+
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls", "--json", "--all"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  const [stderrText, stdoutText, exitCode] = await Promise.all([
+    new Response(stderr).text(),
+    new Response(stdout).text(),
+    exited,
+  ]);
+
+  expect(stderrText).toBe("");
+  const parsed = JSON.parse(stdoutText);
+
+  // The root-hoisted copy (a direct dep) sits at the top-level node_modules.
+  expect(parsed.dependencies.baz).toEqual({
+    from: "baz",
+    version: "0.0.3",
+    path: join(package_dir, "node_modules", "baz"),
+  });
+
+  // The conflicting copy is installed nested, and its reported path must
+  // reflect that real location (the tree-walk fix) rather than a flat
+  // `<cwd>/node_modules/baz`.
+  expect(parsed.transitiveDependencies.baz).toEqual({
+    from: "baz",
+    version: "0.0.5",
+    path: join(package_dir, "node_modules", "nested-parent", "node_modules", "baz"),
+  });
+
+  expect(exitCode).toBe(0);
+});

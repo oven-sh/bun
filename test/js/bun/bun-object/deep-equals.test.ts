@@ -191,6 +191,23 @@ describe("Bun.deepEquals fast-path coverage", () => {
       expect(eq(a, d)).toBe(false);
     });
 
+    it("strict mode still distinguishes class names when prototypes match", () => {
+      class Foo {}
+      class Bar {}
+      // Foo.prototype and Bar.prototype share a Structure and a [[Prototype]].
+      expect(Bun.deepEquals(Foo.prototype, Bar.prototype, true)).toBe(false);
+
+      const a = new Foo();
+      const b = new Foo();
+      Object.defineProperty(b, "constructor", { value: class Baz {}, enumerable: false });
+      expect(Bun.deepEquals(a, b, true)).toBe(false);
+
+      const x = {};
+      const y = {};
+      Object.defineProperty(y, Symbol.toStringTag, { value: "Tagged", enumerable: false });
+      expect(Bun.deepEquals(x, y, true)).toBe(false);
+    });
+
     it("different structures, same keys, skips reverse scan", () => {
       const a = { x: 1, y: 2, z: 3, w: 4 };
       const b = { w: 4, z: 3, y: 2, x: 1 };

@@ -989,9 +989,14 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     JSC::Structure* o2Structure = o2->structure();
 
     if constexpr (isStrict && !skipPrototype) {
-        // Same structure implies same prototype and therefore same class name; same
-        // prototype alone is enough for calculatedClassName() to agree.
-        if (o1Structure != o2Structure && o1->getPrototypeDirect() != o2->getPrototypeDirect()) {
+        // calculatedClassName() reads the own `constructor` and own/inherited
+        // Symbol.toStringTag before falling back to the prototype. When neither
+        // structure has DontEnum properties, any own constructor/toStringTag is
+        // enumerable and therefore compared by the property walk below, so a matching
+        // prototype (or identical Structure) is sufficient to prove agreement.
+        bool canSkipClassName = !o1Structure->hasNonEnumerableProperties() && !o2Structure->hasNonEnumerableProperties()
+            && (o1Structure == o2Structure || o1->getPrototypeDirect() == o2->getPrototypeDirect());
+        if (!canSkipClassName) {
             if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
                 return false;
             }

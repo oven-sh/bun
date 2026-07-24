@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
 import { chmodSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import os from "node:os";
 import { join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -461,6 +462,116 @@ describe("bunshell", () => {
     const thisFile = Bun.file(import.meta.path);
 
     expect(new TextDecoder().decode(buffer.slice(0, sentinel))).toEqual(await thisFile.text());
+  });
+
+  describe("redirect into a too-small Buffer fails the command", () => {
+    // A `> ${buf}` target that cannot hold the full output must surface as a
+    // nonzero exit code (like `> /dev/full`), not exit 0 with the data
+    // silently cut short.
+    test("builtin", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf}`.quiet();
+      expect({
+        written: buf.toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({
+        written: "hell",
+        stderr: "echo: No space left on device\n",
+        exitCode: 1,
+      });
+    });
+
+    test("builtin: `|| rhs` runs", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf} || echo write_failed`.quiet();
+      expect({ stdout: r.stdout.toString(), exitCode: r.exitCode }).toEqual({
+        stdout: "write_failed\n",
+        exitCode: 0,
+      });
+    });
+
+    test("builtin: without .quiet() the diagnostic still reaches r.stderr", async () => {
+      // Default stderr is an fd teeing to the terminal + `r.stderr`; `done()`
+      // tees the message into the capture buffer synchronously.
+      const buf = Buffer.alloc(4);
+      const r = await $`echo hello world > ${buf}`;
+      expect({ stderr: r.stderr.toString(), exitCode: r.exitCode }).toEqual({
+        stderr: "echo: No space left on device\n",
+        exitCode: 1,
+      });
+    });
+
+    test("builtin: exact fit succeeds", async () => {
+      const buf = Buffer.alloc(12);
+      const r = await $`echo hello world > ${buf}`.quiet();
+      expect({
+        written: buf.toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({ written: "hello world\n", stderr: "", exitCode: 0 });
+    });
+
+    test("builtin: Uint8Array view with nonzero offset", async () => {
+      const backing = new Uint8Array(24).fill(0x2e);
+      const view = new Uint8Array(backing.buffer, 8, 4);
+      const r = await $`echo hello world > ${view}`.quiet();
+      expect({
+        backing: Buffer.from(backing).toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({
+        // Only the 4-byte view window is written; bytes on either side are
+        // untouched.
+        backing: "........hell............",
+        stderr: "echo: No space left on device\n",
+        exitCode: 1,
+      });
+    });
+
+    test("builtin: Uint8Array view with nonzero offset, exact fit", async () => {
+      const backing = new Uint8Array(24).fill(0x2e);
+      const view = new Uint8Array(backing.buffer, 8, 12);
+      const r = await $`echo hello world > ${view}`.quiet();
+      expect({
+        backing: Buffer.from(backing).toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({ backing: "........hello world\n....", stderr: "", exitCode: 0 });
+    });
+
+    test("subprocess", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf}`.quiet();
+      expect({
+        written: buf.toString("latin1"),
+        stderr: r.stderr.toString(),
+        exitCode: r.exitCode,
+      }).toEqual({
+        written: "hell",
+        stderr: "",
+        exitCode: os.constants.errno.ENOSPC,
+      });
+    });
+
+    test("subprocess: `|| rhs` runs", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world")'} > ${buf} || echo write_failed`.quiet();
+      expect({ written: buf.toString("latin1"), stdout: r.stdout.toString(), exitCode: r.exitCode }).toEqual({
+        written: "hell",
+        stdout: "write_failed\n",
+        exitCode: 0,
+      });
+    });
+
+    test("subprocess: own nonzero exit wins over overflow", async () => {
+      const buf = Buffer.alloc(4);
+      const r = await $`${BUN} -e ${'process.stdout.write("hello world"); process.exitCode = 5'} > ${buf}`.quiet();
+      expect({ written: buf.toString("latin1"), exitCode: r.exitCode }).toEqual({
+        written: "hell",
+        exitCode: 5,
+      });
+    });
   });
 
   test("redirect Buffer", async () => {

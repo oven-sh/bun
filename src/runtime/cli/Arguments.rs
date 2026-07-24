@@ -1114,13 +1114,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             ctx.runtime_options.eval.eval_and_print = true;
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
-        } else if matches!(
-            cmd,
-            CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
-        ) && args.flag(b"--test")
+        } else if matches!(cmd, CommandTag::AutoCommand | CommandTag::RunAsNodeCommand)
+            && args.flag(b"--test")
         {
             // Cmd gate first: `args.flag` asserts the name exists in the
             // table, and only AUTO/RUN declare the node `--test` family.
+            // RunCommand shares RUN_TABLE (so --test parses there too) but
+            // exec_auto_or_run's eval gate is AutoCommand-only, the same as
+            // for --eval above; `bun run --test` is not a supported spelling.
             // Boots the embedded driver through the eval path.
             ctx.runtime_options.eval.script =
                 bun_core::runtime_embed_file!(Codegen, "eval/node_test.ts")

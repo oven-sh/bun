@@ -188,13 +188,17 @@ console.log(utils());`,
 
       // `--compile` bundles for Bun's runtime, so `__dirname`/`__filename`
       // resolve to the compiled executable's virtual `$bunfs` path at runtime
-      // instead of the build machine's source path (#4216).
+      // instead of the build machine's source path (#4216). `--bytecode`
+      // additionally covers the module-record import.meta flag: the injected
+      // `import.meta.dir` is the only import.meta reference here, and cached
+      // bytecode only links it when the parser marks the module accordingly.
       const { exited } = Bun.spawn({
         cmd: [
           bunExe(),
           "build",
           path.join(baseDir, "我/我.ts"),
           "--compile",
+          "--bytecode",
           "--outfile",
           path.join(baseDir, "exe.exe"),
         ],

@@ -377,6 +377,11 @@ export const webkit: Dependency = {
           cfg.debug ? "Debug" : "Release",
           "-OutputDir",
           icu,
+          // ICU must be built with the same AddressSanitizer setting as the
+          // rest of the graph: the MSVC STL fails the link (/failifmismatch
+          // annotate_string) when instrumented and uninstrumented objects
+          // disagree on std::string container annotations.
+          ...(cfg.asan ? ["-Sanitizer", "address"] : []),
         ],
         cwd: srcDir,
         outputs: localIcuLibs(cfg),

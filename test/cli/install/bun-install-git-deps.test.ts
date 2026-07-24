@@ -71,10 +71,15 @@ function serveStatic(root: string) {
 }
 
 async function runInstall(cwd: string, cacheDir: string, ...args: string[]) {
+  const env = { ...gitEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+  // Set on ASAN CI lanes; it arms a subreaper around internal git spawns that
+  // SIGKILLs concurrent clone tasks (see #33982). This test exercises install
+  // task bookkeeping, not orphan reaping.
+  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "install", ...args],
     cwd,
-    env: { ...gitEnv, BUN_INSTALL_CACHE_DIR: cacheDir },
+    env,
     stdout: "pipe",
     stderr: "pipe",
   });

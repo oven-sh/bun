@@ -252,11 +252,11 @@ pub struct WipBlock {
     pub kind: BlockKind,
 }
 
-fn new_block(id: BlockId, kind: BlockKind) -> WipBlock {
+fn new_block(alloc: AstAlloc, id: BlockId, kind: BlockKind) -> WipBlock {
     WipBlock {
         id,
         kind,
-        instructions: AstAlloc::vec(),
+        instructions: alloc.vec(),
     }
 }
 
@@ -328,27 +328,33 @@ impl<'h> HirBuilder<'h> {
         entry_block_kind: Option<BlockKind>,
         used_refs: Option<IndexSet<Ref>>,
     ) -> Self {
+        let alloc = env.alloc;
         let entry = env.next_block_id();
         let kind = entry_block_kind.unwrap_or(BlockKind::Block);
         HirBuilder {
-            completed: IndexMap::new(),
-            current: new_block(entry, kind),
+            completed: IndexMap::new_in(alloc),
+            current: new_block(alloc, entry, kind),
             entry,
             scopes: Vec::new(),
-            context: context.unwrap_or_default(),
-            bindings: bindings.unwrap_or_default(),
-            used_refs: used_refs.unwrap_or_default(),
+            context: context.unwrap_or_else(|| IndexMap::new_in(alloc)),
+            bindings: bindings.unwrap_or_else(|| IndexMap::new_in(alloc)),
+            used_refs: used_refs.unwrap_or_else(|| IndexSet::new_in(alloc)),
             env,
             host,
             exception_handler_stack: Vec::new(),
-            instruction_table: AstAlloc::vec(),
+            instruction_table: alloc.vec(),
             fbt_depth: 0,
             function_scope,
             component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
-            import_bindings: IndexMap::new(),
+            import_bindings: IndexMap::new_in(alloc),
         }
+    }
+
+    #[inline]
+    pub fn alloc(&self) -> AstAlloc {
+        self.env.alloc
     }
 
     pub fn environment(&self) -> &Environment {
@@ -482,9 +488,10 @@ impl<'h> HirBuilder<'h> {
     }
 
     pub fn terminate(&mut self, terminal: Terminal, next_block_kind: Option<BlockKind>) -> BlockId {
+        let alloc = self.alloc();
         let wip = std::mem::replace(
             &mut self.current,
-            new_block(BlockId(u32::MAX), BlockKind::Block),
+            new_block(alloc, BlockId(u32::MAX), BlockKind::Block),
         );
         let block_id = wip.id;
 
@@ -495,19 +502,20 @@ impl<'h> HirBuilder<'h> {
                 id: block_id,
                 instructions: wip.instructions,
                 terminal,
-                preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                preds: IndexSet::new_in(alloc),
+                phis: alloc.vec(),
             },
         );
 
         if let Some(kind) = next_block_kind {
             let next_id = self.env.next_block_id();
-            self.current = new_block(next_id, kind);
+            self.current = new_block(alloc, next_id, kind);
         }
         block_id
     }
 
     pub fn terminate_with_continuation(&mut self, terminal: Terminal, continuation: WipBlock) {
+        let alloc = self.alloc();
         let wip = std::mem::replace(&mut self.current, continuation);
         let block_id = wip.id;
         self.completed.insert(
@@ -517,15 +525,15 @@ impl<'h> HirBuilder<'h> {
                 id: block_id,
                 instructions: wip.instructions,
                 terminal,
-                preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                preds: IndexSet::new_in(alloc),
+                phis: alloc.vec(),
             },
         );
     }
 
     pub fn reserve(&mut self, kind: BlockKind) -> WipBlock {
         let id = self.env.next_block_id();
-        new_block(id, kind)
+        new_block(self.alloc(), id, kind)
     }
 
     pub fn try_enter_reserved(
@@ -535,6 +543,7 @@ impl<'h> HirBuilder<'h> {
     ) -> Result<(), CompilerDiagnostic> {
         let prev = std::mem::replace(&mut self.current, wip);
         let terminal = f(self)?;
+        let alloc = self.alloc();
         let completed_wip = std::mem::replace(&mut self.current, prev);
         self.completed.insert(
             completed_wip.id,
@@ -543,8 +552,8 @@ impl<'h> HirBuilder<'h> {
                 id: completed_wip.id,
                 instructions: completed_wip.instructions,
                 terminal,
-                preds: IndexSet::new(),
-                phis: AstAlloc::vec(),
+                preds: IndexSet::new_in(alloc),
+                phis: alloc.vec(),
             },
         );
         Ok(())
@@ -762,14 +771,15 @@ impl<'h> HirBuilder<'h> {
         ),
         CompilerError,
     > {
+        let alloc = self.alloc();
         let mut hir = HIR {
-            blocks: std::mem::take(&mut self.completed),
+            blocks: std::mem::replace(&mut self.completed, IndexMap::new_in(alloc)),
             entry: self.entry,
         };
 
-        let mut instructions = AstAlloc::take(&mut self.instruction_table);
+        let mut instructions = alloc.take(&mut self.instruction_table);
 
-        let rpo_blocks = get_reverse_postordered_blocks(&hir, &instructions);
+        let rpo_blocks = get_reverse_postordered_blocks(alloc, &hir, &instructions);
 
         for (id, block) in &hir.blocks {
             if !rpo_blocks.contains_key(id) {
@@ -907,7 +917,10 @@ impl<'h> HirBuilder<'h> {
         let stored_candidate = if candidate == name {
             stored_name
         } else {
-            StoreStr::new(bun_ast::data_store_dupe_str(candidate.as_bytes()))
+            StoreStr::new(bun_ast::data_store_dupe_str(
+                self.alloc(),
+                candidate.as_bytes(),
+            ))
         };
         if candidate != name {
             if let Some(start) = loc.as_ref().and_then(|l| l.start.index) {
@@ -1058,12 +1071,13 @@ impl<'h> HirBuilder<'h> {
 // ---------------------------------------------------------------------------
 
 pub(crate) fn get_reverse_postordered_blocks(
+    alloc: AstAlloc,
     hir: &HIR,
     _instructions: &[Instruction],
 ) -> IndexMap<BlockId, BasicBlock> {
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
-    let mut used: IndexSet<BlockId> = IndexSet::new();
-    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new();
+    let mut visited: IndexSet<BlockId> = IndexSet::new_in(alloc);
+    let mut used: IndexSet<BlockId> = IndexSet::new_in(alloc);
+    let mut used_fallthroughs: IndexSet<BlockId> = IndexSet::new_in(alloc);
     let mut postorder: Vec<BlockId> = Vec::new();
 
     fn visit(
@@ -1128,7 +1142,7 @@ pub(crate) fn get_reverse_postordered_blocks(
         &mut postorder,
     );
 
-    let mut blocks = IndexMap::new();
+    let mut blocks = IndexMap::new_in(alloc);
     for block_id in postorder.into_iter().rev() {
         let block = hir.blocks.get(&block_id).unwrap();
         if used.contains(&block_id) {
@@ -1139,13 +1153,13 @@ pub(crate) fn get_reverse_postordered_blocks(
                 BasicBlock {
                     kind: block.kind,
                     id: block_id,
-                    instructions: AstAlloc::vec(),
+                    instructions: alloc.vec(),
                     terminal: Terminal::Unreachable {
                         id: block.terminal.evaluation_order(),
                         loc: block.terminal.loc().copied(),
                     },
                     preds: block.preds.clone(),
-                    phis: AstAlloc::vec(),
+                    phis: alloc.vec(),
                 },
             );
         }
@@ -1155,7 +1169,8 @@ pub(crate) fn get_reverse_postordered_blocks(
 }
 
 pub(crate) fn remove_unreachable_for_updates(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
+    let block_ids: IndexSet<BlockId> =
+        IndexSet::from_iter_in(hir.blocks.allocator(), hir.blocks.keys().copied());
     for block in hir.blocks.values_mut() {
         if let Terminal::For { update, .. } = &mut block.terminal {
             if let Some(update_id) = *update {
@@ -1168,7 +1183,8 @@ pub(crate) fn remove_unreachable_for_updates(hir: &mut HIR) {
 }
 
 pub(crate) fn remove_dead_do_while_statements(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
+    let block_ids: IndexSet<BlockId> =
+        IndexSet::from_iter_in(hir.blocks.allocator(), hir.blocks.keys().copied());
     for block in hir.blocks.values_mut() {
         let should_replace = if let Terminal::DoWhile { test, .. } = &block.terminal {
             !block_ids.contains(test)
@@ -1200,7 +1216,8 @@ pub(crate) fn remove_dead_do_while_statements(hir: &mut HIR) {
 }
 
 pub(crate) fn remove_unnecessary_try_catch(hir: &mut HIR) {
-    let block_ids: IndexSet<BlockId> = hir.blocks.keys().copied().collect();
+    let block_ids: IndexSet<BlockId> =
+        IndexSet::from_iter_in(hir.blocks.allocator(), hir.blocks.keys().copied());
 
     let replacements: Vec<(BlockId, BlockId, BlockId, BlockId, Option<SourceLocation>)> = hir
         .blocks
@@ -1259,7 +1276,7 @@ pub(crate) fn mark_predecessors(hir: &mut HIR) {
         block.preds.clear();
     }
 
-    let mut visited: IndexSet<BlockId> = IndexSet::new();
+    let mut visited: IndexSet<BlockId> = IndexSet::new_in(hir.blocks.allocator());
 
     fn visit(
         hir: &mut HIR,

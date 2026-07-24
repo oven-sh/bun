@@ -13,11 +13,11 @@ use std::collections::{HashMap, HashSet};
 use crate::collections::IndexMap;
 use crate::hir::environment::Environment;
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction,
-    IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
-    JsxAttribute, JsxTag, LValuePattern, NonLocalBinding, NonLocalKind, ObjectPattern,
-    ObjectProperty, ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern,
-    Pattern, Place, ReactFunctionType, ReturnVariant, StoreStr, Terminal,
+    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, HIR, HirFunction, IdentifierId,
+    IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue, JsxAttribute,
+    JsxTag, LValuePattern, NonLocalBinding, NonLocalKind, ObjectPattern, ObjectProperty,
+    ObjectPropertyKey, ObjectPropertyOrSpread, ObjectPropertyType, ParamPattern, Pattern, Place,
+    ReactFunctionType, ReturnVariant, StoreStr, Terminal,
 };
 use crate::hir_vec;
 
@@ -46,7 +46,7 @@ struct OutlinedJsxAttribute {
     place: Place,
 }
 
-fn promoted_name(kind: u8, n: u32) -> IdentifierName {
+fn promoted_name(alloc: bun_alloc::AstAlloc, kind: u8, n: u32) -> IdentifierName {
     let mut itoa = bun_core::fmt::ItoaBuf::new();
     let digits = itoa.format(n).as_bytes();
     let mut buf = [0u8; 16];
@@ -54,6 +54,7 @@ fn promoted_name(kind: u8, n: u32) -> IdentifierName {
     buf[1] = kind;
     buf[2..2 + digits.len()].copy_from_slice(digits);
     IdentifierName::Promoted(StoreStr::new(bun_ast::data_store_dupe_str(
+        alloc,
         &buf[..2 + digits.len()],
     )))
 }
@@ -147,7 +148,7 @@ fn outline_jsx_impl(
                 InstrAction::FunctionExpr { func_id } => {
                     let mut inner_func = std::mem::replace(
                         &mut env.functions[func_id.0 as usize],
-                        crate::ssa::enter_ssa::placeholder_function(),
+                        crate::ssa::enter_ssa::placeholder_function(env.alloc),
                     );
                     outline_jsx_impl(&mut inner_func, env, outlined_fns);
                     env.functions[func_id.0 as usize] = inner_func;
@@ -194,7 +195,7 @@ fn outline_jsx_impl(
         if !rewrite_instr.is_empty() {
             let block = func.body.blocks.get_mut(block_id).unwrap();
             let old_instr_ids = block.instructions.clone();
-            let mut new_instr_ids = AstAlloc::vec();
+            let mut new_instr_ids = env.alloc.vec();
             for &iid in &old_instr_ids {
                 let eval_order = func.instructions[iid.0 as usize].id;
                 if let Some(replacement_instrs) = rewrite_instr.get(&eval_order) {
@@ -275,6 +276,7 @@ fn collect_props(
     env: &mut Environment,
     jsx_group: &[JsxInstrInfo],
 ) -> Option<Vec<OutlinedJsxAttribute>> {
+    let alloc = env.alloc;
     let mut id_counter = 1u32;
     let mut seen: HashSet<StoreStr> = HashSet::new();
     let mut attributes = Vec::new();
@@ -291,7 +293,7 @@ fn collect_props(
         }
         // TS: env.programContext.addNewReference(newName)
         // We don't have programContext in Rust, but this is needed for unique name tracking
-        let stored = StoreStr::new(bun_ast::data_store_dupe_str(&buf));
+        let stored = StoreStr::new(bun_ast::data_store_dupe_str(alloc, &buf));
         seen.insert(stored);
         stored
     };
@@ -326,12 +328,12 @@ fn collect_props(
                     let decl_id = env.identifiers[child_id.0 as usize].declaration_id;
                     if env.identifiers[child_id.0 as usize].name.is_none() {
                         env.identifiers[child_id.0 as usize].name =
-                            Some(promoted_name(b't', decl_id.0));
+                            Some(promoted_name(env.alloc, b't', decl_id.0));
                     }
 
                     let child_name = match &env.identifiers[child_id.0 as usize].name {
                         Some(IdentifierName::Named(n)) | Some(IdentifierName::Promoted(n)) => *n,
-                        None => match promoted_name(b't', decl_id.0) {
+                        None => match promoted_name(env.alloc, b't', decl_id.0) {
                             IdentifierName::Promoted(s) => s,
                             _ => unreachable!(),
                         },
@@ -357,16 +359,18 @@ fn emit_outlined_jsx(
     outlined_props: &[OutlinedJsxAttribute],
     outlined_tag: StoreStr,
 ) -> Option<Vec<Instruction>> {
-    let props = AstAlloc::vec_from_iter(outlined_props.iter().map(|p| JsxAttribute::Attribute {
-        name: p.new_name,
-        place: p.place.clone(),
-    }));
+    let props = env
+        .alloc
+        .vec_from_iter(outlined_props.iter().map(|p| JsxAttribute::Attribute {
+            name: p.new_name,
+            place: p.place.clone(),
+        }));
 
     // Create LoadGlobal for the outlined component
     let load_id = env.next_identifier_id();
     // Promote it as a JSX tag temporary
     let decl_id = env.identifiers[load_id.0 as usize].declaration_id;
-    env.identifiers[load_id.0 as usize].name = Some(promoted_name(b'T', decl_id.0));
+    env.identifiers[load_id.0 as usize].name = Some(promoted_name(env.alloc, b'T', decl_id.0));
 
     let load_place = Place {
         identifier: load_id,
@@ -422,7 +426,7 @@ fn emit_outlined_fn(
     // Create props parameter
     let props_obj_id = env.next_identifier_id();
     let decl_id = env.identifiers[props_obj_id.0 as usize].declaration_id;
-    env.identifiers[props_obj_id.0 as usize].name = Some(promoted_name(b't', decl_id.0));
+    env.identifiers[props_obj_id.0 as usize].name = Some(promoted_name(env.alloc, b't', decl_id.0));
     let props_obj = Place {
         identifier: props_obj_id,
         effect: crate::hir::Effect::Unknown,
@@ -446,8 +450,8 @@ fn emit_outlined_fn(
     instructions.extend(updated_jsx_instrs);
 
     // Build instruction table and instruction IDs
-    let mut instr_table = AstAlloc::vec();
-    let mut instr_ids = AstAlloc::vec();
+    let mut instr_table = env.alloc.vec();
+    let mut instr_ids = env.alloc.vec();
     for instr in instructions {
         let idx = instr_table.len();
         instr_table.push(instr);
@@ -470,7 +474,7 @@ fn emit_outlined_fn(
         kind: BlockKind::Block,
         id: BlockId(0),
         instructions: instr_ids,
-        preds: crate::collections::IndexSet::new(),
+        preds: crate::collections::IndexSet::new_in(env.alloc),
         terminal: Terminal::Return {
             value: last_lvalue,
             return_variant: ReturnVariant::Explicit,
@@ -478,20 +482,20 @@ fn emit_outlined_fn(
             loc: None,
             effects: None,
         },
-        phis: AstAlloc::vec(),
+        phis: env.alloc.vec(),
     };
 
-    let mut blocks = IndexMap::new();
+    let mut blocks = IndexMap::new_in(env.alloc);
     blocks.insert(BlockId(0), block);
 
     let outlined_fn = HirFunction {
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: hir_vec![ParamPattern::Place(props_obj)],
+        params: hir_vec![env.alloc; ParamPattern::Place(props_obj)],
         return_type_annotation: None,
         returns: returns_place,
-        context: AstAlloc::vec(),
+        context: env.alloc.vec(),
         body: HIR {
             entry: BlockId(0),
             blocks,
@@ -499,8 +503,8 @@ fn emit_outlined_fn(
         instructions: instr_table,
         generator: false,
         is_async: false,
-        directives: AstAlloc::vec(),
-        aliasing_effects: Some(AstAlloc::vec()),
+        directives: env.alloc.vec(),
+        aliasing_effects: Some(env.alloc.vec()),
         loc: None,
     };
 
@@ -530,6 +534,7 @@ fn emit_updated_jsx(
     jsx_group: &[JsxInstrInfo],
     old_to_new_props: &IndexMap<IdentifierId, OutlinedJsxAttribute>,
 ) -> Vec<Instruction> {
+    let alloc = *func.instructions.allocator();
     let jsx_ids: HashSet<IdentifierId> = jsx_group.iter().map(|j| j.lvalue_id).collect();
     let mut new_instrs = Vec::new();
 
@@ -544,7 +549,7 @@ fn emit_updated_jsx(
             closing_loc,
         } = &instr.value
         {
-            let mut new_props = AstAlloc::vec();
+            let mut new_props = alloc.vec();
             for prop in props {
                 // TS: invariant(prop.kind === 'JsxAttribute', ...)
                 // Spread attributes would have caused collectProps to return null earlier
@@ -568,7 +573,7 @@ fn emit_updated_jsx(
             }
 
             let new_children = children.as_ref().map(|kids| {
-                AstAlloc::vec_from_iter(kids.iter().map(|child| {
+                alloc.vec_from_iter(kids.iter().map(|child| {
                     if jsx_ids.contains(&child.identifier) {
                         child.clone()
                     } else {
@@ -605,7 +610,7 @@ fn create_old_to_new_props_mapping(
     env: &mut Environment,
     old_props: &[OutlinedJsxAttribute],
 ) -> IndexMap<IdentifierId, OutlinedJsxAttribute> {
-    let mut old_to_new = IndexMap::new();
+    let mut old_to_new = IndexMap::new_in(env.alloc);
 
     for old_prop in old_props {
         if old_prop.original_name == b"key" {
@@ -640,7 +645,7 @@ fn emit_destructure_props(
     props_obj: &Place,
     old_to_new_props: &IndexMap<IdentifierId, OutlinedJsxAttribute>,
 ) -> Instruction {
-    let mut properties = AstAlloc::vec();
+    let mut properties = env.alloc.vec();
     for prop in old_to_new_props.values() {
         properties.push(ObjectPropertyOrSpread::Property(ObjectProperty {
             key: ObjectPropertyKey::String {

@@ -8,7 +8,7 @@ use crate::api::bun::process::sync::{
 };
 use crate::cli::command;
 use crate::cli::run_command::RunCommand;
-use bun_alloc::{AllocError, Arena};
+use bun_alloc::AllocError;
 use bun_ast::ExprData;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
@@ -104,8 +104,10 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        // Hand the parser a local bump arena for its scratch allocations.
-        let json_bump = Arena::new();
+        // Hand the parser a local AST arena for its scratch allocations.
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let json_bump = alloc.arena();
         let json_result = match JSON::parse_package_json_utf8_with_opts(
             JSON::JSONOptions {
                 json_warn_duplicate_keys: false,
@@ -117,7 +119,7 @@ impl PmVersionCommand {
             // passed straight into this parse call and no other borrow of the
             // process-static `Log` (via `ctx` or `pm`) is live for its duration.
             unsafe { ctx.log_mut() },
-            &json_bump,
+            alloc,
         ) {
             Ok(r) => r,
             Err(err) => {
@@ -134,7 +136,7 @@ impl PmVersionCommand {
         }
 
         let scripts = if pm.options.do_.run_scripts() {
-            json.as_property(b"scripts")
+            json.as_property(alloc, b"scripts")
         } else {
             None
         };
@@ -152,8 +154,8 @@ impl PmVersionCommand {
         let use_system_shell = ctx.debug.use_system_shell;
 
         if let Some(s) = &scripts_obj {
-            if let Some(script) = s.get(b"preversion") {
-                if let Some(script_command) = script.as_string(&json_bump) {
+            if let Some(script) = s.get(alloc, b"preversion") {
+                if let Some(script_command) = script.as_string(json_bump) {
                     RunCommand::run_package_script_foreground(
                         ctx,
                         script_command,
@@ -169,7 +171,7 @@ impl PmVersionCommand {
         }
 
         let current_version: Option<&[u8]> = 'brk_version: {
-            if let Some(v) = json.as_property(b"version") {
+            if let Some(v) = json.as_property(alloc, b"version") {
                 if let ExprData::EString(s) = &v.expr.data {
                     break 'brk_version Some(s.data.slice());
                 }
@@ -197,7 +199,7 @@ impl PmVersionCommand {
             json.data
                 .e_object_mut()
                 .expect("checked e_object above")
-                .put_string(&json_bump, b"version", &new_version_str)?;
+                .put_string(alloc, b"version", &new_version_str)?;
 
             let mut buffer_writer = JSPrinter::BufferWriter::init();
             buffer_writer.append_newline = !package_json_contents.is_empty()
@@ -209,6 +211,7 @@ impl PmVersionCommand {
 
             if let Err(err) = JSPrinter::print_json(
                 &mut package_json_writer,
+                alloc,
                 json,
                 &package_json_source,
                 JSPrinter::PrintJsonOptions {
@@ -232,8 +235,8 @@ impl PmVersionCommand {
         }
 
         if let Some(s) = &scripts_obj {
-            if let Some(script) = s.get(b"version") {
-                if let Some(script_command) = script.as_string(&json_bump) {
+            if let Some(script) = s.get(alloc, b"version") {
+                if let Some(script_command) = script.as_string(json_bump) {
                     RunCommand::run_package_script_foreground(
                         ctx,
                         script_command,
@@ -253,8 +256,8 @@ impl PmVersionCommand {
         }
 
         if let Some(s) = &scripts_obj {
-            if let Some(script) = s.get(b"postversion") {
-                if let Some(script_command) = script.as_string(&json_bump) {
+            if let Some(script) = s.get(alloc, b"postversion") {
+                if let Some(script_command) = script.as_string(json_bump) {
                     RunCommand::run_package_script_foreground(
                         ctx,
                         script_command,
@@ -356,19 +359,20 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        let json_bump = Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
         let Ok(json) = JSON::parse_package_json_utf8(
             &package_json_source,
             // SAFETY: single-threaded CLI dispatch; the returned `&mut Log` is
             // passed straight into this parse call and no other borrow of the
             // process-static `Log` is live for its duration.
             unsafe { ctx.log_mut() },
-            &json_bump,
+            alloc,
         ) else {
             return None;
         };
 
-        if let Some(v) = json.as_property(b"version") {
+        if let Some(v) = json.as_property(alloc, b"version") {
             if let ExprData::EString(s) = &v.expr.data {
                 return Some(s.data.to_vec());
             }

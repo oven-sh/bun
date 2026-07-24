@@ -276,7 +276,7 @@ pub fn optimize_for_ssr(func: &mut HirFunction, env: &Environment) {
                                         loc,
                                     } => InstructionValue::CallExpression {
                                         callee: callee.clone(),
-                                        args: hir_vec![PlaceOrSpread::Place(arg.clone())],
+                                        args: hir_vec![env.alloc; PlaceOrSpread::Place(arg.clone())],
                                         loc: *loc,
                                     },
                                 };

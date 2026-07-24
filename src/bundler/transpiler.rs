@@ -174,12 +174,12 @@ impl<'a> Transpiler<'a> {
     ///
     /// # Safety
     /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
-    /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field, a `MaybeUninit` stack slot, or an arena-backed
-    /// `&'static mut`. Owned `Transpiler`s from [`Self::for_worker`] must use
-    /// normal `Drop` instead.
+    /// `resolver.caches` / `resolve_results`, leaving them logically
+    /// uninitialized. After this returns, `self` must never be dropped (or
+    /// `deinit`'d again) — every caller holds a `Transpiler` that bypasses
+    /// `Drop`: a raw-`dealloc`'d `VirtualMachine` field, a `MaybeUninit` stack
+    /// slot, or an arena-backed `&'static mut`. Owned `Transpiler`s from
+    /// [`Self::for_worker`] must use normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
         // The lazily-created `Box<bun_js_parser_jsc::Macro::MacroContext>` is
         // process-lifetime by default, but
@@ -190,13 +190,19 @@ impl<'a> Transpiler<'a> {
         if let Some(ctx) = self.macro_context.take() {
             ctx.deinit();
         }
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()` / the `--changed` scan teardown. Caller upholds
-        // the no-auto-drop contract above.
+        // SAFETY: `options`, `result`, `resolver.opts`, `resolver.caches`, and
+        // `resolve_results` are init'd and never read past `destroy()` / the
+        // `--changed` scan teardown. Caller upholds the no-auto-drop contract
+        // above.
         unsafe {
             core::ptr::drop_in_place(&raw mut self.options);
             core::ptr::drop_in_place(&raw mut self.result);
             core::ptr::drop_in_place(&raw mut self.resolver.opts);
+            // `caches.json.bump` is a lazily-populated `AstArena` whose
+            // `Pin<Box<AstArenaInner>>` is system-heap (16 KB); without this,
+            // `bun pm pack`'s stack-local `MaybeUninit<Transpiler>` strands it
+            // and LSAN flags the box.
+            core::ptr::drop_in_place(&raw mut self.resolver.caches);
             core::ptr::drop_in_place(&raw mut self.resolve_results);
         }
     }
@@ -394,32 +400,10 @@ impl<'a> Transpiler<'a> {
         self.resolver.get_package_manager().map_err(Into::into)
     }
 
-    /// Reset the thread-local AST block stores (`Expr`/`Stmt`) and the side
-    /// `AstAlloc` arena.
-    pub fn reset_store(&self) {
-        bun_ast::Expr::data_store_reset();
-        bun_ast::Stmt::data_store_reset();
-        // Side-arena for `AstAlloc` (e.g. `Vec<Property>` inside arena
-        // `E::Object`) — same lifetime as the block-store. Only the bundler
-        // resets it; install/`--define` (which also use the block-store) hold
-        // `StoreRef`s across reset, see `store_ast_alloc_heap` doc. Must mirror
-        // the block-store's FULL early-return gate (`DISABLE_RESET ||
-        // memory_allocator() != null`, Stmt.rs `Store::reset`): macro
-        // evaluation pins the store via `DisableStoreReset`, and
-        // `ParseTask`/`RuntimeTranspilerStore` call this from inside an
-        // `ASTMemoryAllocator::Scope` (where the block-store reset is a no-op
-        // and the active `AstAlloc` state belongs to that scope, NOT the
-        // side module). If we ran `store_ast_alloc_heap::reset()` there it
-        // would bulk-free whatever side-state buffers earlier main-thread
-        // transpiles left while `--define`/install still hold `StoreRef`s
-        // into them (and the side module's debug assert that *its* state is
-        // the installed one would fire).
-        if !bun_ast::stmt::data::Store::disable_reset()
-            && bun_ast::stmt::data::Store::memory_allocator().is_null()
-        {
-            bun_ast::store_ast_alloc_heap::reset();
-        }
-    }
+    /// No-op: the AST allocator is now a passed-by-value [`bun_alloc::AstArena`]
+    /// owned by the caller (worker / parse task), which `reset()`s it between
+    /// parses. Kept for out-of-crate call-site compatibility.
+    pub fn reset_store(&self) {}
 
     fn _resolve_entry_point(&mut self, entry_point: &[u8]) -> crate::Result<resolver::Result> {
         let top_level_dir = self.fs().top_level_dir;
@@ -570,7 +554,7 @@ impl<'a> Transpiler<'a> {
         // Spec passed `&this.options.env` as a separate arg; `load_defines` now
         // reads `&self.env` internally so the disjoint borrow is resolved
         // inside the `&mut self` scope without `unsafe`.
-        self.options.load_defines(self.arena, Some(env_loader))?;
+        self.options.load_defines(Some(env_loader))?;
 
         let mut is_development = false;
         if had_explicit_node_env {
@@ -877,7 +861,7 @@ impl<'a> ParseResult<'a> {
     /// `AsyncModule.resumeLoadingModule` reads/writes `this.parse_result` by
     /// value). `Default` lets the Rust port `mem::take` it across that
     /// boundary; see `AsyncModule::resume_loading_module`.
-    pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         ParseResult {
             source: Default::default(),
             // `options::Loader` has no `Default`.
@@ -885,7 +869,7 @@ impl<'a> ParseResult<'a> {
             // (BundleEnums.rs:353), and `Default` here exists only for
             // `mem::take` in `AsyncModule::resume_loading_module`.
             loader: options::Loader::File,
-            ast: bun_ast::Ast::empty_in(arena),
+            ast: bun_ast::Ast::empty_in(alloc),
             already_bundled: Default::default(),
             input_fd: None,
             empty: true,
@@ -899,7 +883,7 @@ impl<'a> ParseResult<'a> {
 impl<'a> ParseResult<'a> {
     #[inline]
     fn empty_with(
-        arena: &'a bun_alloc::Arena,
+        alloc: bun_alloc::AstAlloc,
         source: bun_ast::Source,
         loader: options::Loader,
         input_fd: Option<FD>,
@@ -908,7 +892,7 @@ impl<'a> ParseResult<'a> {
         ParseResult {
             source,
             loader,
-            ast: bun_ast::Ast::empty_in(arena),
+            ast: bun_ast::Ast::empty_in(alloc),
             already_bundled: AlreadyBundled::None,
             input_fd,
             empty: true,
@@ -930,6 +914,7 @@ impl<'a> ParseResult<'a> {
 /// Per-file inputs to the transpiler's parse step.
 pub struct ParseOptions<'a, 'b> {
     pub arena: &'a Arena,
+    pub alloc: bun_alloc::AstAlloc,
     pub dirname_fd: FD,
     pub file_descriptor: Option<FD>,
 
@@ -1178,27 +1163,6 @@ impl<'a> Transpiler<'a> {
         // deref sites below go through `NonNull` rather than the raw argument.
         let log_nn =
             core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
-        bun_ast::expr::data::Store::create();
-        bun_ast::stmt::data::Store::create();
-        // These two `create()`s are eager (not deferred to the first `parse()`)
-        // because option setup below needs the AST stores *unconditionally*:
-        // `from_api` → `defines_from_transform_options` always materialises at
-        // least `process.env.NODE_ENV` via `parse_env_json`, whose `E::String`
-        // payload lands in the thread-local Expr store (then a `StoreResetGuard`
-        // resets it — which `expect()`s the store exists). So there is no
-        // "transpile nothing" spawn that skips them. They are *cheap*, though:
-        // `Store::init()` only allocates the small `Store` header — the first
-        // `~BLOCK_SIZE` `Block` buffer is malloc'd lazily on the first
-        // `append()` (`ast/new_store.rs`), so a store that is `create()`d but
-        // never written to here (the `Stmt` store — `load_defines` only emits
-        // `E::String` expression nodes) costs nothing beyond that header.
-        // `store_ast_alloc_heap::enter()` is NOT called here: `--define`
-        // object-literal JSON is parsed below (during option setup) and the
-        // bundler holds its `StoreRef<E::Object>` across every `reset_store()`,
-        // so its embedded `Vec<Property>` must stay on the global heap.
-        // `reset_store()`'s first call lazily `enter()`s (the side arena's
-        // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
-        // *do* get the side arena from the first parsed file onward.
 
         // `FileSystem::init` wants `&'static [u8]`. Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the
@@ -1339,6 +1303,7 @@ impl<'a> Transpiler<'a> {
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         let arena = this_parse.arena;
+        let alloc = this_parse.alloc;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
         let path = this_parse.path;
@@ -1480,7 +1445,7 @@ impl<'a> Transpiler<'a> {
 
         if RETURN_FILE_ONLY {
             return Some(ParseResult::empty_with(
-                arena,
+                alloc,
                 source.clone(),
                 loader,
                 input_fd,
@@ -1493,7 +1458,7 @@ impl<'a> Transpiler<'a> {
         {
             if !loader.handles_empty_file() {
                 return Some(ParseResult::empty_with(
-                    arena,
+                    alloc,
                     source.clone(),
                     loader,
                     input_fd,
@@ -1510,7 +1475,7 @@ impl<'a> Transpiler<'a> {
                 // wasm magic number
                 if source.is_web_assembly() {
                     return Some(ParseResult::empty_with(
-                        arena,
+                        alloc,
                         source.clone(),
                         options::Loader::Wasm,
                         input_fd,
@@ -1666,7 +1631,7 @@ impl<'a> Transpiler<'a> {
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
                 let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
+                    .parse(arena, alloc, opts, define, log, source)
                 {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
@@ -1684,7 +1649,7 @@ impl<'a> Transpiler<'a> {
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
-                        ast: bun_ast::Ast::empty_in(arena),
+                        ast: bun_ast::Ast::empty_in(alloc),
                         runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
                         loader,
@@ -1695,7 +1660,7 @@ impl<'a> Transpiler<'a> {
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
-                        ast: bun_ast::Ast::empty_in(arena),
+                        ast: bun_ast::Ast::empty_in(alloc),
                         already_bundled: match already_bundled {
                             js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
                             js_ast::AlreadyBundled::BunCjs => AlreadyBundled::SourceCodeCjs,
@@ -1779,15 +1744,24 @@ impl<'a> Transpiler<'a> {
                     input_fd,
                     source_backing,
                     arena,
+                    alloc,
                     log,
                     this_parse.keep_json_and_toml_as_one_statement,
                 );
             }
             options::Loader::Text => {
-                return parse_text_loader(source, loader, input_fd, source_backing, arena);
+                return parse_text_loader(source, loader, input_fd, source_backing, arena, alloc);
             }
             options::Loader::Md => {
-                return parse_md_loader(source, loader, input_fd, source_backing, arena, log);
+                return parse_md_loader(
+                    source,
+                    loader,
+                    input_fd,
+                    source_backing,
+                    arena,
+                    alloc,
+                    log,
+                );
             }
             options::Loader::Wasm => {
                 return parse_wasm_loader(
@@ -1795,7 +1769,7 @@ impl<'a> Transpiler<'a> {
                     loader,
                     input_fd,
                     source_backing,
-                    arena,
+                    alloc,
                     &path,
                     self.options.target,
                     log,
@@ -1831,6 +1805,7 @@ fn parse_data_loader<'a>(
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
+    alloc: bun_alloc::AstAlloc,
     log: &mut bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
 ) -> Option<ParseResult<'a>> {
@@ -1842,27 +1817,27 @@ fn parse_data_loader<'a>(
         options::Loader::Jsonc => {
             // We allow importing tsconfig.*.json or jsconfig.*.json with comments
             // These files implicitly become JSONC files, which aligns with the behavior of text editors.
-            match bun_parsers::json::parse_jsonc_into_arena(source, log, arena) {
+            match bun_parsers::json::parse_jsonc_into_arena(source, log, alloc) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
         options::Loader::Json => {
-            match bun_parsers::json::parse_json_into_arena(source, log, arena) {
+            match bun_parsers::json::parse_json_into_arena(source, log, alloc) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
         }
-        options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, arena, false) {
+        options::Loader::Toml => match bun_parsers::toml::TOML::parse(source, log, alloc, false) {
             Ok(e) => e,
             Err(_) => return None,
         },
-        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(source, log, arena) {
+        options::Loader::Yaml => match bun_parsers::yaml::YAML::parse(source, log, alloc) {
             Ok(e) => e,
             Err(_) => return None,
         },
         options::Loader::Json5 => {
-            match bun_parsers::json5::JSON5Parser::parse(source, log, arena) {
+            match bun_parsers::json5::JSON5Parser::parse(source, log, alloc) {
                 Ok(e) => e,
                 Err(_) => return None,
             }
@@ -1878,7 +1853,7 @@ fn parse_data_loader<'a>(
             bun_ast::ExprData::EObjectJSON(_) | bun_ast::ExprData::EArrayJSON(_)
         )
     {
-        expr = match bun_parsers::json::materialize(&expr, source, log, arena) {
+        expr = match bun_parsers::json::materialize(&expr, source, log, alloc) {
             Ok(e) => e,
             Err(_) => return None,
         };
@@ -1902,7 +1877,7 @@ fn parse_data_loader<'a>(
             let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
             break 'parts Box::new([bun_ast::Part {
                 stmts,
-                ..Default::default()
+                ..bun_ast::Part::empty(alloc)
             }]);
         }
 
@@ -2001,14 +1976,16 @@ fn parse_data_loader<'a>(
 
                 decls.truncate(count);
                 let stmt0 = bun_ast::Stmt::alloc(
+                    alloc,
                     bun_ast::S::Local {
-                        decls: bun_ast::G::DeclList::move_from_list(decls),
+                        decls: alloc.vec_from_iter(decls),
                         kind: bun_ast::S::Kind::KVar,
-                        ..Default::default()
+                        ..bun_ast::S::Local::empty(alloc)
                     },
                     bun_ast::Loc { start: 0 },
                 );
                 let stmt1 = bun_ast::Stmt::alloc(
+                    alloc,
                     bun_ast::S::ExportClause {
                         items: bun_ast::StoreSlice::new_mut(&mut export_clauses[..count]),
                         is_single_line: false,
@@ -2016,6 +1993,7 @@ fn parse_data_loader<'a>(
                     bun_ast::Loc { start: 0 },
                 );
                 let stmt2 = bun_ast::Stmt::alloc(
+                    alloc,
                     bun_ast::S::ExportDefault {
                         value: bun_ast::StmtOrExpr::Expr(expr),
                         default_name: bun_ast::LocRef {
@@ -2030,13 +2008,14 @@ fn parse_data_loader<'a>(
                     bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt0, stmt1, stmt2]));
                 break 'parts Box::new([bun_ast::Part {
                     stmts,
-                    ..Default::default()
+                    ..bun_ast::Part::empty(alloc)
                 }]);
             }
         }
 
         {
             let stmt = bun_ast::Stmt::alloc(
+                alloc,
                 bun_ast::S::ExportDefault {
                     value: bun_ast::StmtOrExpr::Expr(expr),
                     default_name: bun_ast::LocRef {
@@ -2050,11 +2029,11 @@ fn parse_data_loader<'a>(
             let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
             break 'parts Box::new([bun_ast::Part {
                 stmts,
-                ..Default::default()
+                ..bun_ast::Part::empty(alloc)
             }]);
         }
     };
-    let mut ast = bun_ast::Ast::from_parts(parts, arena);
+    let mut ast = bun_ast::Ast::from_parts(alloc, parts);
     ast.symbols = bun_alloc::vec_from_iter_in(symbols, arena);
 
     return Some(ParseResult {
@@ -2078,12 +2057,15 @@ fn parse_text_loader<'a>(
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
+    alloc: bun_alloc::AstAlloc,
 ) -> Option<ParseResult<'a>> {
     let expr = bun_ast::Expr::init(
+        alloc,
         bun_ast::E::EString::init(&source.contents),
         bun_ast::Loc::EMPTY,
     );
     let stmt = bun_ast::Stmt::alloc(
+        alloc,
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
@@ -2096,11 +2078,11 @@ fn parse_text_loader<'a>(
     let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
     let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
         stmts,
-        ..Default::default()
+        ..bun_ast::Part::empty(alloc)
     }]);
 
     return Some(ParseResult {
-        ast: bun_ast::Ast::from_parts(parts, arena),
+        ast: bun_ast::Ast::from_parts(alloc, parts),
         source: source.clone(),
         loader,
         input_fd,
@@ -2120,6 +2102,7 @@ fn parse_md_loader<'a>(
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
+    alloc: bun_alloc::AstAlloc,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
     let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
@@ -2140,8 +2123,9 @@ fn parse_md_loader<'a>(
             return None;
         }
     };
-    let expr = bun_ast::Expr::init(bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
+    let expr = bun_ast::Expr::init(alloc, bun_ast::E::EString::init(html), bun_ast::Loc::EMPTY);
     let stmt = bun_ast::Stmt::alloc(
+        alloc,
         bun_ast::S::ExportDefault {
             value: bun_ast::StmtOrExpr::Expr(expr),
             default_name: bun_ast::LocRef {
@@ -2154,11 +2138,11 @@ fn parse_md_loader<'a>(
     let stmts = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[stmt]));
     let parts: Box<[bun_ast::Part]> = Box::new([bun_ast::Part {
         stmts,
-        ..Default::default()
+        ..bun_ast::Part::empty(alloc)
     }]);
 
     return Some(ParseResult {
-        ast: bun_ast::Ast::from_parts(parts, arena),
+        ast: bun_ast::Ast::from_parts(alloc, parts),
         source: source.clone(),
         loader,
         input_fd,
@@ -2177,7 +2161,7 @@ fn parse_wasm_loader<'a>(
     loader: options::Loader,
     input_fd: Option<FD>,
     source_backing: resolver::cache::Contents,
-    arena: &'a Arena,
+    alloc: bun_alloc::AstAlloc,
     path: &bun_paths::fs::Path<'static>,
     target: options::Target,
     log: &mut bun_ast::Log,
@@ -2196,7 +2180,7 @@ fn parse_wasm_loader<'a>(
         }
 
         return Some(ParseResult {
-            ast: bun_ast::Ast::empty_in(arena),
+            ast: bun_ast::Ast::empty_in(alloc),
             source: source.clone(),
             loader,
             input_fd,
@@ -2279,6 +2263,7 @@ impl<'a> Transpiler<'a> {
     fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         mut ast: bun_ast::Ast,
         source: &bun_ast::Source,
         writer: &mut js_printer::BufferPrinter,
@@ -2341,6 +2326,7 @@ impl<'a> Transpiler<'a> {
         match format {
             js_printer::Format::Cjs => self.print_cjs_cold::<ENABLE_SOURCE_MAP>(
                 print_arena,
+                alloc,
                 writer,
                 &ast,
                 symbols,
@@ -2351,6 +2337,7 @@ impl<'a> Transpiler<'a> {
 
             js_printer::Format::Esm => self.print_esm_cold::<ENABLE_SOURCE_MAP>(
                 print_arena,
+                alloc,
                 writer,
                 &ast,
                 symbols,
@@ -2366,6 +2353,7 @@ impl<'a> Transpiler<'a> {
                 if self.options.target.is_bun() {
                     self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, true>(
                         print_arena,
+                        alloc,
                         writer,
                         &ast,
                         symbols,
@@ -2378,6 +2366,7 @@ impl<'a> Transpiler<'a> {
                 } else {
                     self.print_ast_esm_ascii_not_bun_cold::<ENABLE_SOURCE_MAP>(
                         print_arena,
+                        alloc,
                         writer,
                         &ast,
                         symbols,
@@ -2403,6 +2392,7 @@ impl<'a> Transpiler<'a> {
     fn print_cjs_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2417,6 +2407,7 @@ impl<'a> Transpiler<'a> {
             // Same arena that `ParseOptions.arena` used to build this AST —
             // see `print_with_source_map_maybe`.
             print_arena,
+            alloc,
             ast,
             symbols,
             source,
@@ -2449,6 +2440,7 @@ impl<'a> Transpiler<'a> {
     fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2477,6 +2469,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
+            alloc,
             ast,
             symbols,
             source,
@@ -2495,6 +2488,7 @@ impl<'a> Transpiler<'a> {
     fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2506,6 +2500,7 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
+            alloc,
             writer,
             ast,
             symbols,
@@ -2523,6 +2518,7 @@ impl<'a> Transpiler<'a> {
     fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         writer: &mut js_printer::BufferPrinter,
         ast: &bun_ast::Ast,
         symbols: bun_ast::symbol::Map,
@@ -2574,6 +2570,7 @@ impl<'a> Transpiler<'a> {
             writer,
             // Per-call scratch arena (rope flattening) — same as the Cjs arm.
             print_arena,
+            alloc,
             ast,
             symbols,
             source,
@@ -2595,12 +2592,14 @@ impl<'a> Transpiler<'a> {
     pub fn print(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
     ) -> crate::Result<usize> {
         self.print_with_source_map_maybe::<false>(
             print_arena,
+            alloc,
             result.ast,
             &result.source,
             writer,
@@ -2621,6 +2620,7 @@ impl<'a> Transpiler<'a> {
     pub fn print_with_source_map(
         &mut self,
         print_arena: &Arena,
+        alloc: bun_alloc::AstAlloc,
         result: ParseResult,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
@@ -2635,6 +2635,7 @@ impl<'a> Transpiler<'a> {
         {
             return self.print_with_source_map_maybe::<false>(
                 print_arena,
+                alloc,
                 result.ast,
                 &result.source,
                 writer,
@@ -2646,6 +2647,7 @@ impl<'a> Transpiler<'a> {
         }
         self.print_with_source_map_maybe::<true>(
             print_arena,
+            alloc,
             result.ast,
             &result.source,
             writer,
@@ -2705,8 +2707,6 @@ impl<'a> Transpiler<'a> {
             } else {
                 _entry
             };
-
-            let _reset = bun_ast::StoreResetGuard::new();
 
             let result = match self.resolver.resolve(
                 top_level_dir,
@@ -2830,12 +2830,13 @@ impl<'a> Transpiler<'a> {
         import_path_format: options::ImportPathFormat,
         outstream: TransformOutstream,
     ) -> crate::Result<()> {
+        let mut ast_arena = bun_alloc::AstArena::new();
         while let Some(item) = self.resolve_queue.pop_front() {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-            bun_ast::store_ast_alloc_heap::reset();
+            ast_arena.reset();
+            let alloc = ast_arena.alloc();
 
             let output_file = match self.build_with_resolve_result_eager(
+                alloc,
                 &item,
                 import_path_format,
                 outstream,
@@ -2851,6 +2852,7 @@ impl<'a> Transpiler<'a> {
 
     fn build_with_resolve_result_eager(
         &mut self,
+        alloc: bun_alloc::AstAlloc,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
@@ -2937,6 +2939,7 @@ impl<'a> Transpiler<'a> {
 
                 let parse_opts = ParseOptions {
                     arena: self.arena,
+                    alloc,
                     path: bun_paths::fs::Path::init(file_path_text),
                     loader,
                     dirname_fd,
@@ -2991,13 +2994,18 @@ impl<'a> Transpiler<'a> {
                 // here is `cli_arena()` and lives for the process.)
                 let print_arena: &Arena = self.arena;
                 output_file.size = match self.options.target {
-                    options::Target::Browser | options::Target::Node => {
-                        self.print(print_arena, result, &mut writer, js_printer::Format::Esm)?
-                    }
+                    options::Target::Browser | options::Target::Node => self.print(
+                        print_arena,
+                        alloc,
+                        result,
+                        &mut writer,
+                        js_printer::Format::Esm,
+                    )?,
                     options::Target::Bun
                     | options::Target::BunMacro
                     | options::Target::ServerComponentsSsr => self.print(
                         print_arena,
+                        alloc,
                         result,
                         &mut writer,
                         js_printer::Format::EsmAscii,

@@ -44,6 +44,7 @@ static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
 
 impl PostinstallOptimizer {
     fn from_string_array_group(
+        alloc: bun_alloc::AstAlloc,
         list: &mut List,
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
@@ -52,7 +53,7 @@ impl PostinstallOptimizer {
             return Ok(false);
         };
 
-        while let Some(entry) = array.next() {
+        while let Some(entry) = array.next(alloc) {
             let js_ast::ExprData::EString(s) = &entry.data else {
                 continue;
             };
@@ -70,18 +71,21 @@ impl PostinstallOptimizer {
     }
 
     pub fn from_package_json(
+        alloc: bun_alloc::AstAlloc,
         list: &mut List,
         expr: &js_ast::Expr,
     ) -> Result<(), bun_alloc::AllocError> {
-        if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
+        if let Some(native_deps_expr) = expr.get(alloc, b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(
+                alloc,
                 list,
                 &native_deps_expr,
                 PostinstallOptimizer::NativeBinlink,
             )?;
         }
-        if let Some(ignored_scripts_expr) = expr.get(b"ignoreScripts") {
+        if let Some(ignored_scripts_expr) = expr.get(alloc, b"ignoreScripts") {
             list.disable_default_ignore = Self::from_string_array_group(
+                alloc,
                 list,
                 &ignored_scripts_expr,
                 PostinstallOptimizer::Ignore,

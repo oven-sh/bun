@@ -230,7 +230,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            let mut ts_decorators = bun_alloc::AstAlloc::vec();
+            let mut ts_decorators = p.alloc.vec();
             if opts.allow_ts_decorators {
                 ts_decorators = p.parse_type_script_decorators()?;
                 if ts_decorators.len_u32() > 0 {

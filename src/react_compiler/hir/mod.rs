@@ -78,14 +78,15 @@ pub use bun_alloc::AstAlloc;
 pub use bun_ast::StoreStr;
 
 /// `vec![..]` for [`HirVec`]. `Vec<T, A>` has no `Default`/`From<[T; N]>` for
-/// non-`Global` `A`, so the std macro doesn't apply.
+/// non-`Global` `A`, so the std macro doesn't apply. First argument is the
+/// [`AstAlloc`] handle: `hir_vec![alloc]` / `hir_vec![alloc; a, b, c]`.
 #[macro_export]
 macro_rules! hir_vec {
-    () => {
-        ::bun_alloc::AstAlloc::vec()
+    ($alloc:expr) => {
+        ::bun_alloc::AstAlloc::vec($alloc)
     };
-    ($($x:expr),+ $(,)?) => {{
-        let mut v = ::bun_alloc::AstAlloc::vec();
+    ($alloc:expr; $($x:expr),+ $(,)?) => {{
+        let mut v = ::bun_alloc::AstAlloc::vec($alloc);
         $(v.push($x);)+
         v
     }};

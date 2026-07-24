@@ -974,7 +974,9 @@ impl<'a> PackageInstall<'a> {
 
         initialize_store();
 
-        let mut package_json_checker = bun_json::PackageJSONVersionChecker::init(source, &mut log);
+        let ast_arena = bun_alloc::AstArena::new();
+        let mut package_json_checker =
+            bun_json::PackageJSONVersionChecker::init(source, &mut log, ast_arena.alloc());
         if package_json_checker.parse().is_err() {
             return false;
         }

@@ -1,36 +1,16 @@
 #![feature(allocator_api)]
-// `#[thread_local]` for the per-node-allocation hot-path TLS
-// (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
-// MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
-// `__thread` slot, vs the `thread_local!`
-// macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
-// destructor, const init).
-#![feature(thread_local)]
-//! TODO: OWNERSHIP — almost every byte-slice field in this module has
-//! mixed/ambiguous ownership. Strings are sometimes literals, sometimes heap
-//! copies, sometimes slices into `Source.contents` or a `StringBuilder` arena.
-//! They are kept as `&'static [u8]` to avoid lifetime params; a real ownership
-//! story (likely `bun_core::String` or a `'source` lifetime threaded through
-//! `Location`/`Data`/`Msg`) is still needed.
+//! Diagnostics (`Location`/`Data`/`Msg`/`Log`) own their byte-slice fields
+//! (`Box<[u8]>`), so a `Msg` is self-contained: it may be moved across threads
+//! or outlive the `Source.contents` / parse arena it was built from without a
+//! deep-copy pass. AST-interior strings (`StoreStr`, `Source.contents`, …)
+//! still use the arena-lifetime-erased `Str` alias below; that erasure goes
+//! away once the AST arena becomes an explicitly passed value with an `'arena`
+//! lifetime.
 
 use core::fmt;
 use std::borrow::Cow;
 
-// `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
-// infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
-
-// TODO: swap to `bun_core::StringBuilder` once `clone_with_builder` is
-// reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
-// breaks the `'static` slice pass-through this stub fakes).
-#[derive(Default)]
-pub struct StringBuilder;
-impl StringBuilder {
-    pub fn count(&mut self, s: &[u8]) {
-        let _ = s;
-    }
-    pub fn allocate(&mut self) {}
-}
 
 // Discriminants are wire-stable for serialization.
 #[repr(u8)]
@@ -406,8 +386,9 @@ pub struct PathContentsPair {
 }
 
 type Str = &'static [u8];
-// `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
-// note for the real ownership story.
+// `Str` is a lifetime-erased byte-slice alias used by AST-interior types
+// (`Source`, `StoreStr`, …); diagnostics types below use owned `Box<[u8]>`
+// instead and do not depend on it.
 
 // ───────────────────────────────────────────────────────────────────────────
 // api — hand-written slice of `bun.schema.api` consumed by
@@ -495,52 +476,57 @@ impl<const N: usize> IntoStr for &[u8; N] {
     }
 }
 
-/// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
-/// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
-/// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
+/// Conversion into the owned `Box<[u8]>` that [`Data::text`] / [`Location`]
+/// fields store. Admits `&[u8]` / `&[u8; N]` / `&str` (copied), and
+/// `Vec<u8>` / `String` / `Box<[u8]>` / `Cow<[u8]>` (moved, no copy for the
+/// owned arm). `Into<Box<[u8]>>` alone would reject `b"literal"` (`&[u8; N]`)
+/// in generic position since trait resolution doesn't apply unsizing coercion.
 pub trait IntoText {
-    fn into_text(self) -> Cow<'static, [u8]>;
+    fn into_text(self) -> Box<[u8]>;
 }
-impl IntoText for Cow<'static, [u8]> {
+impl IntoText for Box<[u8]> {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
+    fn into_text(self) -> Box<[u8]> {
         self
     }
 }
-impl IntoText for &'static [u8] {
+impl IntoText for &[u8] {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Borrowed(self)
+    fn into_text(self) -> Box<[u8]> {
+        Box::from(self)
     }
 }
-impl<const N: usize> IntoText for &'static [u8; N] {
+impl<const N: usize> IntoText for &[u8; N] {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Borrowed(self)
+    fn into_text(self) -> Box<[u8]> {
+        Box::<[u8]>::from(self.as_slice())
     }
 }
-impl IntoText for &'static str {
+impl IntoText for &str {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Borrowed(self.as_bytes())
+    fn into_text(self) -> Box<[u8]> {
+        Box::from(self.as_bytes())
     }
 }
 impl IntoText for Vec<u8> {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Owned(self)
+    fn into_text(self) -> Box<[u8]> {
+        self.into_boxed_slice()
     }
 }
 impl IntoText for String {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Owned(self.into_bytes())
+    fn into_text(self) -> Box<[u8]> {
+        self.into_bytes().into_boxed_slice()
     }
 }
-impl IntoText for Box<[u8]> {
+impl IntoText for Cow<'_, [u8]> {
     #[inline]
-    fn into_text(self) -> Cow<'static, [u8]> {
-        Cow::Owned(self.into_vec())
+    fn into_text(self) -> Box<[u8]> {
+        match self {
+            Cow::Borrowed(s) => Box::from(s),
+            Cow::Owned(v) => v.into_boxed_slice(),
+        }
     }
 }
 
@@ -677,23 +663,17 @@ impl Loc {
 // Location
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Location {
     // Field ordering optimized to reduce padding:
     // - 16-byte fields first: string (ptr+len), ?string (ptr+len+null flag)
     // - 8-byte fields next: usize
     // - 4-byte fields last: i32
     // This eliminates padding between differently-sized fields.
-    //
-    // `file` / `line_text` are `Cow` (not `Str`) because
-    // `Location::clone()` must deep-dupe them so a
-    // `BuildMessage`/`ResolveMessage` that outlives the
-    // `Source.contents` it borrowed from doesn't read poisoned memory. The
-    // borrowed arm covers the common case where the slice points into
-    // arena-owned source text.
-    pub file: Cow<'static, [u8]>,
-    pub namespace: Str,
+    pub file: Box<[u8]>,
+    pub namespace: Box<[u8]>,
     /// Text on the line, avoiding the need to refetch the source code
-    pub line_text: Option<Cow<'static, [u8]>>,
+    pub line_text: Option<Box<[u8]>>,
     /// Number of bytes this location should highlight.
     /// 0 to just point at a single character
     pub length: usize,
@@ -710,32 +690,11 @@ pub struct Location {
     pub column: i32,
 }
 
-// NOT `#[derive(Clone)]`. `file` / `line_text` are
-// `Cow<'static, [u8]>` whose `Borrowed` arm may carry a lifetime-erased view
-// into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
-// `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
-// `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
-// could outlive the source buffer and read poisoned memory. Instead,
-// every `Clone` of a `Location` deep-dupes its borrowed bytes.
-impl Clone for Location {
-    fn clone(&self) -> Self {
-        Location {
-            file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
-            line: self.line,
-            column: self.column,
-            length: self.length,
-            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
-            offset: self.offset,
-        }
-    }
-}
-
 impl Default for Location {
     fn default() -> Self {
         Location {
-            file: Cow::Borrowed(b""),
-            namespace: b"file",
+            file: Box::default(),
+            namespace: Box::from(b"file".as_slice()),
             line_text: None,
             length: 0,
             offset: 0,
@@ -756,39 +715,6 @@ impl Location {
         cost
     }
 
-    pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(self.file.as_ref().into_str());
-        builder.count(self.namespace);
-        if let Some(text) = &self.line_text {
-            builder.count(text.as_ref().into_str());
-        }
-    }
-
-    pub fn clone(&self) -> Location {
-        // The trait `Clone` impl above does the deep-dupe (so the duped bytes
-        // outlive the original `Source.contents`); this inherent shim forwards
-        // to it.
-        <Self as Clone>::clone(self)
-    }
-
-    pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
-        // The local
-        // `StringBuilder` stub above is a no-op that returns its input, so a
-        // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
-        // after `self.msgs.clear()` in `append_to_with_recycled`. Deep-copy
-        // here instead — same end-state as the real builder, just without the
-        // single-buffer packing.
-        Location {
-            file: Cow::Owned(self.file.to_vec()),
-            namespace: self.namespace,
-            line: self.line,
-            column: self.column,
-            length: self.length,
-            line_text: self.line_text.as_deref().map(|t| Cow::Owned(t.to_vec())),
-            offset: self.offset,
-        }
-    }
-
     pub fn to_api(&self) -> api::Location {
         api::Location {
             file: self.file.to_vec(),
@@ -800,23 +726,21 @@ impl Location {
         }
     }
 
-    // No Drop impl needed.
-
     pub fn init(
-        file: Str,
-        namespace: Str,
+        file: impl IntoText,
+        namespace: impl IntoText,
         line: i32,
         column: i32,
         length: u32,
-        line_text: Option<Str>,
+        line_text: Option<Box<[u8]>>,
     ) -> Location {
         Location {
-            file: Cow::Borrowed(file),
-            namespace,
+            file: file.into_text(),
+            namespace: namespace.into_text(),
             line,
             column,
             length: length as usize,
-            line_text: line_text.map(Cow::Borrowed),
+            line_text,
             offset: length as usize,
         }
     }
@@ -844,12 +768,12 @@ impl Location {
         if let Some(source) = _source {
             if r.is_empty() {
                 return Some(Location {
-                    file: Cow::Borrowed(source.path.text),
-                    namespace: source.path.namespace,
+                    file: Box::from(source.path.text),
+                    namespace: Box::from(source.path.namespace),
                     line: -1,
                     column: -1,
                     length: 0,
-                    line_text: Some(Cow::Borrowed(b"")),
+                    line_text: Some(Box::default()),
                     offset: 0,
                 });
             }
@@ -879,8 +803,8 @@ impl Location {
             }
 
             return Some(Location {
-                file: Cow::Borrowed(source.path.text),
-                namespace: source.path.namespace,
+                file: Box::from(source.path.text),
+                namespace: Box::from(source.path.namespace),
                 line: usize2loc(data.line_count).start,
                 column: usize2loc(data.column_count).start,
                 length: if r.len > -1 {
@@ -888,13 +812,9 @@ impl Location {
                 } else {
                     1
                 },
-                // `source_backing` in `Transpiler::parse_*` is RAII and
-                // drops on the parse-error path *before* `process_fetch_log`
-                // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead of borrowing `source.contents`. `full_line` is
-                // bounded (≤ ~120 bytes) and only materialized on diagnostic
-                // paths.
-                line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
+                // `full_line` is windowed to ≤ ~120 bytes and only materialised
+                // on diagnostic paths.
+                line_text: Some(Box::from(bun_core::trim_left(full_line, b"\n\r"))),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
         }
@@ -906,19 +826,10 @@ impl Location {
 // Data
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Data {
-    pub text: Cow<'static, [u8]>,
+    pub text: Box<[u8]>,
     pub location: Option<Location>,
-}
-
-impl Default for Data {
-    fn default() -> Self {
-        Data {
-            text: Cow::Borrowed(b""),
-            location: None,
-        }
-    }
 }
 
 impl Data {
@@ -929,72 +840,6 @@ impl Data {
             cost += loc.memory_cost();
         }
         cost
-    }
-
-    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop`, `Borrowed` is a
-    // `&'static` literal — nothing to free. No explicit `Drop` body needed.
-
-    pub fn clone_line_text(&self, should: bool) -> Data {
-        if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
-        {
-            return self.clone();
-        }
-
-        let new_line_text = self
-            .location
-            .as_ref()
-            .unwrap()
-            .line_text
-            .as_deref()
-            .unwrap()
-            .to_vec();
-        let mut new_location = self.location.clone().unwrap();
-        new_location.line_text = Some(Cow::Owned(new_line_text));
-        Data {
-            text: self.text.clone(),
-            location: Some(new_location),
-        }
-    }
-
-    pub fn clone(&self) -> Data {
-        Data {
-            text: if !self.text.is_empty() {
-                // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
-                // so a `Borrowed` `text` (rare today, but the type permits it)
-                // can't alias recycled storage in the cloned `Msg`.
-                Cow::Owned(self.text.to_vec())
-            } else {
-                Cow::Borrowed(b"")
-            },
-            location: self.location.as_ref().map(Location::clone),
-        }
-    }
-
-    pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
-        Data {
-            text: if !self.text.is_empty() {
-                // The local `StringBuilder`
-                // is a no-op stub (returns its input), so a bare `Cow::clone`
-                // would leave a `Borrowed` arm aliasing `self`'s storage and
-                // dangle after `self.msgs.clear()` in
-                // `append_to_with_recycled`. Deep-copy — same end-state as the
-                // real builder, just without the single-buffer packing.
-                Cow::Owned(self.text.to_vec())
-            } else {
-                Cow::Borrowed(b"")
-            },
-            location: self
-                .location
-                .as_ref()
-                .map(|l| l.clone_with_builder(builder)),
-        }
-    }
-
-    pub fn count(&self, builder: &mut StringBuilder) {
-        builder.count(&self.text);
-        if let Some(loc) = &self.location {
-            loc.count(builder);
-        }
     }
 
     pub fn to_api(&self) -> api::MessageData {
@@ -1183,6 +1028,7 @@ impl BabyString {
 // Msg
 // ───────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone)]
 pub struct Msg {
     pub kind: Kind,
     pub data: Data,
@@ -1214,46 +1060,6 @@ impl Msg {
     }
 
     // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
-
-    pub fn count(&self, builder: &mut StringBuilder) {
-        self.data.count(builder);
-        for note in self.notes.iter() {
-            note.count(builder);
-        }
-    }
-
-    pub fn clone(&self) -> Msg {
-        let mut notes = Vec::with_capacity(self.notes.len());
-        for n in self.notes.iter() {
-            notes.push(n.clone());
-        }
-        Msg {
-            kind: self.kind,
-            data: self.data.clone(),
-            metadata: self.metadata,
-            notes: notes.into_boxed_slice(),
-            redact_sensitive_information: self.redact_sensitive_information,
-        }
-    }
-
-    pub fn clone_with_builder(&self, notes: &mut [Data], builder: &mut StringBuilder) -> Msg {
-        Msg {
-            kind: self.kind,
-            data: self.data.clone_with_builder(builder),
-            metadata: self.metadata,
-            notes: if !self.notes.is_empty() {
-                'brk: {
-                    for (i, note) in self.notes.iter().enumerate() {
-                        notes[i] = note.clone_with_builder(builder);
-                    }
-                    break 'brk notes[0..self.notes.len()].to_vec().into_boxed_slice();
-                }
-            } else {
-                Box::default()
-            },
-            redact_sensitive_information: self.redact_sensitive_information,
-        }
-    }
 
     pub fn to_api(&self) -> api::Message {
         let mut notes = vec![api::MessageData::default(); self.notes.len()].into_boxed_slice();
@@ -1470,16 +1276,6 @@ pub struct Log {
     pub msgs: Vec<Msg>,
     pub level: Level,
 
-    pub clone_line_text: bool,
-
-    /// Owned backing storage for `Location.{file,line_text}` (and similar)
-    /// that came from transient buffers (e.g. native-plugin C strings): a
-    /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
-    /// lifetime-erased borrow into the just-pushed box. The borrow is valid
-    /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
-    /// growth. See PORTING.md §Allocators (arena pattern).
-    pub owned_strings: Vec<Box<[u8]>>,
-
     /// Incremental line/column scanner for the messages this log creates, so
     /// a flood of diagnostics against one source doesn't rescan it from byte
     /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
@@ -1500,31 +1296,8 @@ impl Default for Log {
             } else {
                 Level::Warn
             },
-            clone_line_text: false,
-            owned_strings: Vec::new(),
             line_column_tracker: None,
         }
-    }
-}
-
-impl Log {
-    /// Copy `s` into
-    /// storage owned by this `Log` and return a `&'static [u8]` view. The
-    /// returned slice is valid for as long as `self` lives (the box is never
-    /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
-    /// the `Str` alias used by `Location`/`Msg`. NOT a leak — the bytes free
-    /// when the `Log` drops.
-    pub fn dupe(&mut self, s: &[u8]) -> &'static [u8] {
-        if s.is_empty() {
-            return b"";
-        }
-        let boxed: Box<[u8]> = Box::from(s);
-        // SAFETY: ARENA — `boxed` is about to be pushed into `self.owned_strings`
-        // and never removed; its heap allocation is stable across the `Vec`'s
-        // growth, so the returned slice is valid for the life of `self`.
-        let view: &'static [u8] = unsafe { bun_collections::detach_lifetime(&boxed[..]) };
-        self.owned_strings.push(boxed);
-        view
     }
 }
 
@@ -1672,54 +1445,29 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
 
     // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
-    pub fn clone_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
-        let dest_start = other.msgs.len();
-        other.msgs.extend(self.msgs.iter().map(Msg::clone));
+    /// Append clones of this log's messages to `other`.
+    pub fn clone_to(&self, other: &mut Log) {
+        other.msgs.extend(self.msgs.iter().cloned());
         other.warnings += self.warnings;
         other.errors += self.errors;
-
-        if recycled {
-            let mut string_builder = StringBuilder;
-            let mut notes_count: usize = 0;
-            for msg in &self.msgs {
-                msg.count(&mut string_builder);
-                notes_count += msg.notes.len();
-            }
-
-            string_builder.allocate();
-            let mut notes_buf = vec![Data::default(); notes_count];
-            let mut note_i: usize = 0;
-
-            // Index instead of zipping `self.msgs` with the tail of
-            // `other.msgs` to satisfy borrowck.
-            for (k, msg) in self.msgs.iter().enumerate() {
-                let j = dest_start + k;
-                other.msgs[j] =
-                    msg.clone_with_builder(&mut notes_buf[note_i..], &mut string_builder);
-                note_i += msg.notes.len();
-            }
-        }
     }
 
-    pub fn append_to_with_recycled(&mut self, other: &mut Log, recycled: bool) {
-        self.clone_to_with_recycled(other, recycled);
-        self.msgs.clear();
+    /// Move this log's messages into `other`, leaving `self.msgs` empty.
+    /// `self.warnings`/`self.errors` are left as-is (callers that reuse the
+    /// log call [`Log::reset`] themselves).
+    pub fn append_to(&mut self, other: &mut Log) {
+        other.warnings += self.warnings;
+        other.errors += self.errors;
+        other.msgs.append(&mut self.msgs);
         self.msgs.shrink_to_fit();
-        // See `append_to` — keep `owned_strings` backing alive for the moved msgs.
-        other.owned_strings.append(&mut self.owned_strings);
         // See `reset` — the scan cache goes with the messages.
         self.line_column_tracker = None;
-    }
-
-    pub fn append_to_maybe_recycled(&mut self, other: &mut Log, source: &Source) {
-        self.append_to_with_recycled(other, source.contents_is_recycled)
     }
 
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
@@ -1749,9 +1497,8 @@ impl Log {
         kind: Kind,
         source: Option<&Source>,
         r: Range,
-        text: Cow<'static, [u8]>,
+        text: Box<[u8]>,
         notes: Box<[Data]>,
-        clone: bool,
         redact: bool,
     ) {
         match kind {
@@ -1759,10 +1506,7 @@ impl Log {
             Kind::Warn => self.warnings += 1,
             _ => {}
         }
-        let mut data = self.tracked_range_data(source, r, text);
-        if clone {
-            data = data.clone_line_text(self.clone_line_text);
-        }
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind,
             data,
@@ -1770,55 +1514,6 @@ impl Log {
             redact_sensitive_information: redact,
             ..Default::default()
         })
-    }
-
-    #[inline]
-    fn add_resolve_error_with_level<const DUPE_TEXT: bool, const IS_ERR: bool>(
-        &mut self,
-        source: Option<&Source>,
-        r: Range,
-        args: fmt::Arguments<'_>,
-        specifier_arg: &[u8],
-        import_kind: ImportKind,
-        err: crate::Error,
-    ) {
-        let text = alloc_print(args);
-        // TODO: fix this. this is stupid, the specifier should be returned by
-        // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
-        // `specifier_arg` explicitly.
-        let specifier = BabyString::r#in(&text, specifier_arg);
-        if IS_ERR {
-            self.errors += 1;
-        } else {
-            self.warnings += 1;
-        }
-
-        let data = if DUPE_TEXT {
-            'brk: {
-                let mut _data = self.tracked_range_data(source, r, text);
-                if let Some(loc) = &mut _data.location {
-                    if let Some(_line) = loc.line_text.as_deref() {
-                        loc.line_text = Some(Cow::Owned(_line.to_vec()));
-                    }
-                }
-                break 'brk _data;
-            }
-        } else {
-            self.tracked_range_data(source, r, text)
-        };
-
-        let msg = Msg {
-            kind: if IS_ERR { Kind::Err } else { Kind::Warn },
-            data,
-            metadata: Metadata::Resolve(MetadataResolve {
-                specifier,
-                import_kind,
-                err,
-            }),
-            ..Default::default()
-        };
-
-        self.add_msg(msg)
     }
 
     #[cold]
@@ -1831,20 +1526,31 @@ impl Log {
         import_kind: ImportKind,
         err: crate::Error,
     ) {
-        // Always dupe the line_text from the source to ensure the Location data
-        // outlives the source's backing memory (which may be arena-allocated).
-        self.add_resolve_error_with_level::<true, true>(
-            source,
-            r,
-            args,
-            specifier_arg,
-            import_kind,
-            err,
-        )
+        let text = alloc_print(args);
+        // `fmt::Arguments` is opaque, so callers must pass `specifier_arg`
+        // explicitly and we locate it in the rendered bytes.
+        let specifier = BabyString::r#in(&text, specifier_arg);
+        self.errors += 1;
+
+        let data = self.tracked_range_data(source, r, text);
+
+        self.add_msg(Msg {
+            kind: Kind::Err,
+            data,
+            metadata: Metadata::Resolve(MetadataResolve {
+                specifier,
+                import_kind,
+                err,
+            }),
+            ..Default::default()
+        })
     }
 
+    /// [`Log::add_resolve_error`] with `err = ModuleNotFound`. Kept as a
+    /// distinct fn so callers that select a reporter by fn pointer
+    /// (`bundle_v2`'s native-plugin path) have a 5-arg signature to name.
     #[cold]
-    pub fn add_resolve_error_with_text_dupe(
+    pub fn add_resolve_error_module_not_found(
         &mut self,
         source: Option<&Source>,
         r: Range,
@@ -1852,7 +1558,7 @@ impl Log {
         specifier_arg: &[u8],
         import_kind: ImportKind,
     ) {
-        self.add_resolve_error_with_level::<true, true>(
+        self.add_resolve_error(
             source,
             r,
             args,
@@ -1863,7 +1569,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_error(&mut self, source: Option<&Source>, r: Range, text: impl IntoText) {
         self.errors += 1;
         let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
@@ -1881,7 +1587,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, Box::default(), false)
     }
 
     #[inline]
@@ -1893,7 +1599,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Err, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Err, source, r, text, notes, false)
     }
 
     #[inline]
@@ -1913,7 +1619,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -1931,7 +1636,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             opts.redact_sensitive_information,
         )
     }
@@ -1965,14 +1669,12 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_warning(&mut self, source: Option<&Source>, r: Range, text: impl IntoText) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
         self.warnings += 1;
-        let data = self
-            .tracked_range_data(source, r, text)
-            .clone_line_text(self.clone_line_text);
+        let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
             kind: Kind::Warn,
             data,
@@ -1995,7 +1697,6 @@ impl Log {
             },
             text,
             Box::default(),
-            true,
             false,
         )
     }
@@ -2003,7 +1704,7 @@ impl Log {
     #[cold]
     pub fn add_warning_fmt_line_col(
         &mut self,
-        filepath: Str,
+        filepath: &[u8],
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
@@ -2014,7 +1715,7 @@ impl Log {
     #[cold]
     pub fn add_warning_fmt_line_col_with_notes(
         &mut self,
-        filepath: Str,
+        filepath: &[u8],
         line: u32,
         col: u32,
         args: fmt::Arguments<'_>,
@@ -2025,20 +1726,15 @@ impl Log {
         }
         self.warnings += 1;
 
-        // TODO: do this properly
-
         let data = Data {
             text: alloc_print(args),
             location: Some(Location {
-                // `Location.file` borrows the lifetime-erased `Str`; see the
-                // module-level OWNERSHIP note.
-                file: Cow::Borrowed(filepath),
+                file: Box::from(filepath),
                 line: i32::try_from(line).expect("int cast"),
                 column: i32::try_from(col).expect("int cast"),
                 ..Default::default()
             }),
-        }
-        .clone_line_text(self.clone_line_text);
+        };
 
         self.add_msg(Msg {
             kind: Kind::Warn,
@@ -2059,7 +1755,7 @@ impl Log {
             return;
         }
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, Box::default(), false)
     }
 
     #[cold]
@@ -2097,7 +1793,7 @@ impl Log {
         args: fmt::Arguments<'_>,
     ) {
         let text = alloc_print(args);
-        self.add_formatted_msg(Kind::Warn, source, r, text, notes, true, false)
+        self.add_formatted_msg(Kind::Warn, source, r, text, notes, false)
     }
 
     #[cold]
@@ -2127,7 +1823,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: Str) {
+    pub fn add_warning(&mut self, source: Option<&Source>, l: Loc, text: impl IntoText) {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
@@ -2152,7 +1848,7 @@ impl Log {
         &mut self,
         source: Option<&Source>,
         l: Loc,
-        warn: Str,
+        warn: impl IntoText,
         note_args: fmt::Arguments<'_>,
     ) {
         if !Kind::Warn.should_print(self.level) {
@@ -2179,7 +1875,7 @@ impl Log {
     }
 
     #[cold]
-    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: Str) {
+    pub fn add_range_debug(&mut self, source: Option<&Source>, r: Range, text: impl IntoText) {
         if !Kind::Debug.should_print(self.level) {
             return;
         }
@@ -2233,7 +1929,7 @@ impl Log {
 
     // TODO(dylan-conway): rename and replace `addError`
     #[cold]
-    pub fn add_error_opts(&mut self, text: Str, opts: AddErrorOptions<'_>) {
+    pub fn add_error_opts(&mut self, text: impl IntoText, opts: AddErrorOptions<'_>) {
         self.errors += 1;
         let data = self.tracked_range_data(
             opts.source,
@@ -2431,7 +2127,7 @@ macro_rules! add_warning_pretty {
 }
 
 #[inline]
-pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
+pub fn alloc_print(args: fmt::Arguments<'_>) -> Box<[u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
@@ -2443,9 +2139,7 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     use std::io::Write;
     let mut v = Vec::new();
     let _ = write!(&mut v, "{}", args);
-    // `Cow::Owned`: the `Log` takes ownership via `Data.text` and `Data`'s
-    // `Drop` frees it.
-    Cow::Owned(v)
+    v.into_boxed_slice()
 }
 
 #[inline]
@@ -3167,210 +2861,14 @@ impl<T: 'static> Drop for DebugOnlyDisablerScope<T> {
     }
 }
 
-/// Per-thread side [`bun_alloc::ast_alloc::AstAllocState`] that backs
-/// `AstAlloc` while the bundler's `Stmt.Data.Store` / `Expr.Data.Store`
-/// block-store is active and **no** `ASTMemoryAllocator` scope is in effect.
-/// See `NewStore::reset` for the leak this closes.
-pub mod store_ast_alloc_heap {
-    use core::cell::Cell;
-    use core::ptr;
-
-    use bun_alloc::ast_alloc::{self, AstAllocState};
-
-    /// Address of this thread's installed side state (the "entered" flag and
-    /// the identity check for `reset()`/`exit()`). Never dereferenced.
-    #[thread_local]
-    static STATE_ID: Cell<*const AstAllocState> = Cell::new(ptr::null());
-    /// The `AST_ALLOC` occupant displaced by `enter()`, restored by `exit()`.
-    #[thread_local]
-    static PREVIOUS: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
-
-    /// `true` iff the state this module installed is the one currently active
-    /// (i.e. no other scope is stacked on top of it).
-    fn owns_active_state() -> bool {
-        core::ptr::eq(ast_alloc::active_state_id(), STATE_ID.get())
-    }
-
-    pub(crate) fn enter() {
-        if bun_core::getenv_z(bun_core::zstr!("BUN_DISABLE_STORE_AST_HEAP")).is_some() {
-            return;
-        }
-        if !STATE_ID.get().is_null() {
-            return;
-        }
-        let state = ast_alloc::acquire_state();
-        STATE_ID.set(&raw const *state);
-        PREVIOUS.set(ast_alloc::swap_state(Some(state)));
-    }
-
-    pub fn reset() {
-        if STATE_ID.get().is_null() {
-            enter();
-            return;
-        }
-        // Skip if another scope's state is stacked on top — resetting it
-        // would free that scope's live data.
-        if !owns_active_state() {
-            debug_assert!(
-                false,
-                "store_ast_alloc_heap::reset while another AstAllocState is installed"
-            );
-            return;
-        }
-        ast_alloc::reset_active_state();
-    }
-
-    pub(crate) fn exit() {
-        if STATE_ID.get().is_null() {
-            return;
-        }
-        // Skip if another scope's state is stacked on top.
-        if !owns_active_state() {
-            debug_assert!(
-                false,
-                "store_ast_alloc_heap::exit while another AstAllocState is installed"
-            );
-            return;
-        }
-        STATE_ID.set(ptr::null());
-        if let Some(state) = ast_alloc::swap_state(PREVIOUS.take()) {
-            ast_alloc::release_state(state);
-        }
-    }
-}
-
-// ── DATA_STORE_OVERRIDE ────────────────────────────────────────────────────
-// Thread-local override arena for `Expr`/`Stmt` boxed payloads.
-//
-// When non-null, `Expr::init`
-// allocates boxed payloads into this arena instead of the long-lived block
-// store, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free the whole
-// tree by dropping the arena. Set/restored by `ASTMemoryAllocator::Scope`.
-#[thread_local]
-static DATA_STORE_OVERRIDE: core::cell::Cell<*const bun_alloc::Arena> =
-    core::cell::Cell::new(core::ptr::null());
-
+/// Copy `bytes` into `alloc`'s arena so the slice shares the same lifetime as
+/// the `StoreRef`-backed `Expr` nodes that reference it (bulk-freed on arena
+/// reset). Callers building an `EString` from a scratch buffer must intern the
+/// bytes here, not into a function-local bump, or `EString.data` dangles when
+/// that bump drops. The lifetime is erased per the `StoreStr` convention.
 #[inline]
-pub(crate) fn data_store_override() -> *const bun_alloc::Arena {
-    DATA_STORE_OVERRIDE.get()
-}
-#[inline]
-pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
-    DATA_STORE_OVERRIDE.set(p);
-}
-
-/// Copy `bytes` into the active AST arena so the slice shares the same
-/// lifetime as the `StoreRef`-backed `Expr` nodes that reference it
-/// (bulk-freed on Store reset). Callers
-/// building an `EString` from a scratch buffer must intern the bytes here, not
-/// into a function-local bump, or `EString.data` dangles when that bump drops.
-/// The lifetime is erased per the `StoreStr` convention — arena ownership, not
-/// a leak.
-pub fn data_store_dupe_str(bytes: &[u8]) -> &'static [u8] {
-    let ov = DATA_STORE_OVERRIDE.get();
-    if !ov.is_null() {
-        // SAFETY: override is installed by an RAII `ASTMemoryAllocator::Scope`
-        // that outlives this call, so `*ov` is a live `Arena`. The returned
-        // slice is borrowed from that arena; its lifetime is widened to
-        // `'static` per the `StoreStr` convention (arena ownership, bulk-freed
-        // on scope drop — callers must not hold it past that boundary). This is
-        // lifetime erasure, not a value cast, so no safe `bytemuck`/`as`
-        // equivalent exists.
-        return unsafe {
-            let dup: *const [u8] = (*ov).alloc_slice_copy(bytes);
-            &*dup
-        };
-    }
-    // No override arena: allocate in the thread-local AST heap (`AstAlloc`),
-    // which is reset alongside the Expr/Stmt stores. `AstAlloc` is a `'static`
-    // ZST, so `Vec::leak` already yields `&'static mut [u8]` — no `transmute`
-    // needed. Storage lives until `store_ast_alloc_heap::reset()`; callers must
-    // not hold the slice across that boundary (same contract as every
-    // `StoreRef`/`StoreStr`).
-    let mut v: Vec<u8, bun_alloc::AstAlloc> = bun_alloc::AstAlloc::vec();
-    v.extend_from_slice(bytes);
-    v.leak()
-}
-
-/// RAII scope for [`store_ast_alloc_heap`]: `enter()` on construction,
-/// `reset()` via [`Self::reset`], `exit()` on drop.
-#[must_use = "side-arena heap lives until this guard drops"]
-pub struct StoreAstAllocHeap(());
-impl StoreAstAllocHeap {
-    #[inline]
-    pub fn new() -> Self {
-        store_ast_alloc_heap::enter();
-        Self(())
-    }
-    #[inline]
-    pub fn reset(&self) {
-        store_ast_alloc_heap::reset();
-    }
-}
-impl Drop for StoreAstAllocHeap {
-    #[inline]
-    fn drop(&mut self) {
-        store_ast_alloc_heap::exit();
-    }
-}
-
-/// RAII guard that resets the thread-local `Stmt.Data.Store` and
-/// `Expr.Data.Store` slabs on scope exit.
-#[must_use = "store reset runs on drop; bind to a named local"]
-pub struct StoreResetGuard(());
-impl StoreResetGuard {
-    #[inline]
-    pub fn new() -> Self {
-        Self(())
-    }
-}
-impl Drop for StoreResetGuard {
-    #[inline]
-    fn drop(&mut self) {
-        stmt::data::Store::reset();
-        expr::data::Store::reset();
-    }
-}
-
-/// Idempotently create both thread-local AST node stores (`Expr.Data.Store`
-/// + `Stmt.Data.Store`). Safe to call repeatedly — `Store::create()` is a
-/// no-op once the slab (or an `ASTMemoryAllocator` override) is installed,
-/// so no `Once` guard is needed (and a process-global `Once` would be wrong
-/// anyway: the backing `INSTANCE` is `#[thread_local]`).
-#[inline]
-pub fn initialize_store() {
-    expr::data::Store::create();
-    stmt::data::Store::create();
-}
-
-/// Create both AST node stores on first call, **reset** them on every
-/// subsequent call. Maps to `Store::begin()` (create-or-reset) on each
-/// slab, so callers that re-enter — e.g. the install pipeline parsing many
-/// `package.json`s — get a fresh arena each time without re-allocating.
-#[inline]
-pub fn initialize_store_or_reset() {
-    expr::data::Store::begin();
-    stmt::data::Store::begin();
-}
-
-/// RAII guard that pins the thread-local `disable_reset` flag on both AST
-/// `Store`s for its scope.
-#[must_use = "disable_reset is cleared on drop; bind to a named local"]
-pub struct DisableStoreReset(());
-impl DisableStoreReset {
-    #[inline]
-    pub fn new() -> Self {
-        expr::data::Store::set_disable_reset(true);
-        stmt::data::Store::set_disable_reset(true);
-        Self(())
-    }
-}
-impl Drop for DisableStoreReset {
-    #[inline]
-    fn drop(&mut self) {
-        expr::data::Store::set_disable_reset(false);
-        stmt::data::Store::set_disable_reset(false);
-    }
+pub fn data_store_dupe_str(alloc: bun_alloc::AstAlloc, bytes: &[u8]) -> &'static [u8] {
+    alloc.dupe_str(bytes)
 }
 
 #[cfg(test)]

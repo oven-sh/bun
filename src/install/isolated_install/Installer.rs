@@ -317,7 +317,7 @@ impl<'a> Installer<'a> {
 
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
             if apply.logger.has_errors() {
-                apply.logger.clone_to_with_recycled(log, true);
+                apply.logger.clone_to(log);
             }
         }
     }

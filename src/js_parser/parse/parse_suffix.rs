@@ -177,7 +177,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         args: list_loc.list,
                         close_paren_loc: list_loc.loc,
                         optional_chain: optional_start,
-                        ..Default::default()
+                        ..E::Call::empty(p.alloc)
                     },
                     loc,
                 );
@@ -207,7 +207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         args: list_loc.list,
                         close_paren_loc: list_loc.loc,
                         optional_chain: optional_start,
-                        ..Default::default()
+                        ..E::Call::empty(p.alloc)
                     },
                     loc,
                 );
@@ -389,7 +389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 args: list_loc.list,
                 close_paren_loc: list_loc.loc,
                 optional_chain: old_optional_chain,
-                ..Default::default()
+                ..E::Call::empty(p.alloc)
             },
             loc,
         );

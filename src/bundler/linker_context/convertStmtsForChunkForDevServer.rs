@@ -6,9 +6,8 @@ use bun_ast as js_ast;
 use bun_ast::ArrayBinding;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
-use bun_ast::{Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
+use bun_ast::{Binding, E, Expr, G, S, Stmt, StmtData, b};
 use bun_ast::{ImportRecordTag, Loader};
-use bun_collections::VecExt;
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
@@ -48,6 +47,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump Bump,
     ast: &mut JSAst<'_>,
+    ast_alloc: bun_alloc::AstAlloc,
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
@@ -92,9 +92,10 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
+                                ast_alloc,
                                 S::Local {
                                     kind: js_ast::LocalKind::KVar,
-                                    decls: G::DeclList::from_slice(&[G::Decl {
+                                    decls: ast_alloc.vec_from_slice(&[G::Decl {
                                         binding: Binding::alloc(
                                             bump,
                                             b::Identifier {
@@ -102,9 +103,13 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                             },
                                             stmt.loc,
                                         ),
-                                        value: Some(Expr::init(E::Object::default(), stmt.loc)),
+                                        value: Some(Expr::init(
+                                            ast_alloc,
+                                            E::Object::empty(ast_alloc),
+                                            stmt.loc,
+                                        )),
                                     }]),
-                                    ..Default::default()
+                                    ..S::Local::empty(ast_alloc)
                                 },
                                 stmt.loc,
                             ))?;
@@ -122,8 +127,10 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     if !is_bare_import {
                         // hmr.importBuiltin('...') or hmr.require('bun:wrap')
                         let call = Expr::init(
+                            ast_alloc,
                             E::Call {
                                 target: Expr::init(
+                                    ast_alloc,
                                     E::Dot {
                                         target: hmr_api_id,
                                         name: if record.tag == ImportRecordTag::Runtime {
@@ -136,7 +143,8 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     },
                                     stmt.loc,
                                 ),
-                                args: ExprNodeList::from_slice(&[Expr::init(
+                                args: ast_alloc.vec_from_slice(&[Expr::init(
+                                    ast_alloc,
                                     E::String {
                                         data: if record.tag == ImportRecordTag::Runtime {
                                             b"bun:wrap".into()
@@ -147,7 +155,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     },
                                     record.range.loc,
                                 )]),
-                                ..Default::default()
+                                ..E::Call::empty(ast_alloc)
                             },
                             stmt.loc,
                         );
@@ -156,9 +164,10 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                         stmts
                             .inside_wrapper_prefix
                             .append_non_dependency(Stmt::alloc(
+                                ast_alloc,
                                 S::Local {
                                     kind: js_ast::LocalKind::KVar, // remove a tdz
-                                    decls: G::DeclList::from_slice(&[G::Decl {
+                                    decls: ast_alloc.vec_from_slice(&[G::Decl {
                                         binding: Binding::alloc(
                                             bump,
                                             b::Identifier {
@@ -168,7 +177,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                         ),
                                         value: Some(call),
                                     }]),
-                                    ..Default::default()
+                                    ..S::Local::empty(ast_alloc)
                                 },
                                 stmt.loc,
                             ))?;
@@ -183,7 +192,11 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             },
                             default_value: None,
                         });
-                        esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
+                        esm_callbacks.push(Expr::init(
+                            ast_alloc,
+                            E::Arrow::NOOP_RETURN_UNDEFINED,
+                            Loc::EMPTY,
+                        ));
                     } else {
                         let binding = Binding::alloc(
                             bump,
@@ -205,15 +218,17 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                     },
                                     Loc::EMPTY,
                                 ),
-                                ..Default::default()
+                                ..G::Arg::empty(ast_alloc)
                             })));
                         esm_callbacks.push(Expr::init(
+                            ast_alloc,
                             E::Arrow {
                                 args: arrow_args,
                                 prefer_expr: true,
                                 body: G::FnBody::init_return_expr(
-                                    bump,
+                                    ast_alloc,
                                     Expr::init(
+                                        ast_alloc,
                                         E::Binary {
                                             op: js_ast::OpCode::BinAssign,
                                             left: Expr::init_identifier(
@@ -246,9 +261,10 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         stmts
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
+                ast_alloc,
                 S::Local {
                     kind: js_ast::LocalKind::KVar, // remove a tdz
-                    decls: G::DeclList::from_slice(&[G::Decl {
+                    decls: ast_alloc.vec_from_slice(&[G::Decl {
                         binding: Binding::alloc(
                             bump,
                             b::Array {
@@ -261,6 +277,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             Loc::EMPTY,
                         ),
                         value: Some(Expr::init(
+                            ast_alloc,
                             E::Dot {
                                 target: hmr_api_id,
                                 name: b"imports".into(),
@@ -270,7 +287,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             Loc::EMPTY,
                         )),
                     }]),
-                    ..Default::default()
+                    ..S::Local::empty(ast_alloc)
                 },
                 Loc::EMPTY,
             ))?;
@@ -280,11 +297,14 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
         stmts
             .inside_wrapper_prefix
             .append_non_dependency(Stmt::alloc(
+                ast_alloc,
                 S::SExpr {
                     value: Expr::init(
+                        ast_alloc,
                         E::Binary {
                             op: js_ast::OpCode::BinAssign,
                             left: Expr::init(
+                                ast_alloc,
                                 E::Dot {
                                     target: hmr_api_id,
                                     name: b"updateImport".into(),
@@ -294,10 +314,11 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                                 Loc::EMPTY,
                             ),
                             right: Expr::init(
+                                ast_alloc,
                                 E::Array {
-                                    items: ExprNodeList::move_from_list(esm_callbacks),
+                                    items: ast_alloc.vec_from_iter(esm_callbacks),
                                     is_single_line: callbacks_len <= 2,
-                                    ..Default::default()
+                                    ..E::Array::empty(ast_alloc)
                                 },
                                 Loc::EMPTY,
                             ),

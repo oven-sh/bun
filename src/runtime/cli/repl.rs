@@ -1793,6 +1793,8 @@ impl<'a> Repl<'a> {
 
         // Create arena for parsing
         let arena = bun_alloc::Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
@@ -1831,6 +1833,7 @@ impl<'a> Repl<'a> {
             &source,
             &vm.transpiler.options.define,
             &arena,
+            alloc,
         ) {
             Ok(p) => p,
             Err(_) => return None,
@@ -1856,9 +1859,8 @@ impl<'a> Repl<'a> {
         // Create symbol map from ast.symbols
         // Note: `Map::init_with_one_list` takes ownership of `ast.symbols`
         // — see Symbol.rs note on the dangling-slice hazard.
-        let arena = *ast.symbols.allocator();
         let symbols_map = bun_ast::symbol::Map::init_with_one_list(
-            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(&arena))
                 .into_iter()
                 .collect(),
         );
@@ -1869,7 +1871,8 @@ impl<'a> Repl<'a> {
             /* GENERATE_SOURCE_MAP */ false,
         >(
             &mut buffer_printer,
-            arena,
+            &arena,
+            alloc,
             &ast,
             symbols_map,
             &source,

@@ -36,7 +36,7 @@ pub fn validate_exhaustive_dependencies(
     let validate_memo = env.config.validate_exhaustive_memoization_dependencies;
     let validate_effect = env.config.validate_exhaustive_effect_dependencies.clone();
 
-    let mut temporaries: IdMap<IdentifierId, Temporary> = IdMap::new();
+    let mut temporaries: IdMap<IdentifierId, Temporary> = IdMap::new_in(env.alloc);
     for param in &func.params {
         let place = match param {
             ParamPattern::Place(p) => p,
@@ -66,6 +66,7 @@ pub fn validate_exhaustive_dependencies(
     };
 
     collect_dependencies(
+        env.alloc,
         func,
         &env.identifiers,
         &env.types,
@@ -287,7 +288,7 @@ fn collect_reactive_identifiers(
 // =============================================================================
 
 fn find_optional_places(func: &HirFunction) -> IdMap<IdentifierId, bool> {
-    let mut optionals: IdMap<IdentifierId, bool> = IdMap::new();
+    let mut optionals: IdMap<IdentifierId, bool> = IdMap::new_in(*func.instructions.allocator());
     let mut visited: HashSet<BlockId> = HashSet::new();
 
     for (_block_id, block) in &func.body.blocks {
@@ -456,6 +457,7 @@ fn visit_candidate_dependency(
 }
 
 fn collect_dependencies(
+    alloc: AstAlloc,
     func: &HirFunction,
     identifiers: &[Identifier],
     types: &[Type],
@@ -742,6 +744,7 @@ fn collect_dependencies(
                 | InstructionValue::ObjectMethod { lowered_func, .. } => {
                     let inner_func = &functions[lowered_func.func.0 as usize];
                     let function_deps = collect_dependencies(
+                        alloc,
                         inner_func,
                         identifiers,
                         types,
@@ -802,7 +805,7 @@ fn collect_dependencies(
 
                                 let diagnostic = validate_dependencies(
                                     inferred,
-                                    &sm.deps.unwrap_or_else(|| hir_vec![]),
+                                    &sm.deps.unwrap_or_else(|| hir_vec![alloc]),
                                     cb.reactive,
                                     sm.deps_loc.unwrap_or(None),
                                     ErrorCategory::MemoDependencies,
@@ -927,9 +930,8 @@ fn collect_dependencies(
                                                                 },
                                                                 constant: false,
                                                             },
-                                                        path: AstAlloc::vec_from_iter(
-                                                            path.iter().cloned(),
-                                                        ),
+                                                        path: alloc
+                                                            .vec_from_iter(path.iter().cloned()),
                                                         loc: *loc,
                                                     },
                                                     InferredDependency::Global { binding } => {
@@ -940,7 +942,7 @@ fn collect_dependencies(
                                                                         binding.name(),
                                                                     ),
                                                                 },
-                                                            path: hir_vec![],
+                                                            path: hir_vec![alloc],
                                                             loc: None,
                                                         }
                                                     }
@@ -1043,9 +1045,8 @@ fn collect_dependencies(
                                                                 },
                                                                 constant: false,
                                                             },
-                                                        path: AstAlloc::vec_from_iter(
-                                                            path.iter().cloned(),
-                                                        ),
+                                                        path: alloc
+                                                            .vec_from_iter(path.iter().cloned()),
                                                         loc: *loc,
                                                     },
                                                     InferredDependency::Global { binding } => {
@@ -1056,7 +1057,7 @@ fn collect_dependencies(
                                                                         binding.name(),
                                                                     ),
                                                                 },
-                                                            path: hir_vec![],
+                                                            path: hir_vec![alloc],
                                                             loc: None,
                                                         }
                                                     }

@@ -23,7 +23,7 @@ use crate::hir::environment_config::EnvironmentConfig;
 use crate::hir::environment_config::{
     ExhaustiveEffectDepsMode, ExternalFunctionConfig, InstrumentationConfig,
 };
-use bun_alloc::{AstAlloc, AstVec};
+use bun_alloc::AstVec;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{
@@ -154,11 +154,12 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
 pub fn collect_import_bindings(
+    alloc: bun_alloc::AstAlloc,
     stmts: &[Stmt],
     records: &[ImportRecord],
     symbols: &[Symbol],
 ) -> IndexMap<Ref, VariableBinding> {
-    let mut out = IndexMap::new();
+    let mut out = IndexMap::new_in(alloc);
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
             continue;
@@ -1070,16 +1071,16 @@ fn handle_error(
 // AST application helpers
 // -----------------------------------------------------------------------
 
-fn leak_args(params: Vec<G::Arg>) -> StoreSlice<G::Arg> {
-    let mut v: AstVec<G::Arg> = AstAlloc::vec_with_capacity(params.len());
+fn leak_args(alloc: bun_alloc::AstAlloc, params: Vec<G::Arg>) -> StoreSlice<G::Arg> {
+    let mut v: AstVec<G::Arg> = alloc.vec_with_capacity(params.len());
     for p in params {
         v.push(p);
     }
     StoreSlice::new_mut(v.leak())
 }
 
-fn leak_stmts(body: Vec<Stmt>) -> StoreSlice<Stmt> {
-    let mut v: AstVec<Stmt> = AstAlloc::vec_with_capacity(body.len());
+fn leak_stmts(alloc: bun_alloc::AstAlloc, body: Vec<Stmt>) -> StoreSlice<Stmt> {
+    let mut v: AstVec<Stmt> = alloc.vec_with_capacity(body.len());
     for s in body {
         v.push(s);
     }
@@ -1094,7 +1095,7 @@ fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
     }
 }
 
-fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
+fn build_outlined_decl(alloc: bun_alloc::AstAlloc, outlined: CodegenFunction) -> Stmt {
     let mut fn_flags = flags::FUNCTION_NONE;
     if outlined.is_async {
         fn_flags |= flags::Function::IsAsync;
@@ -1106,13 +1107,14 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
         fn_flags |= flags::Function::HasRestArg;
     }
     Stmt::alloc(
+        alloc,
         S::Function {
             func: G::Fn {
                 name: outlined.id,
-                args: leak_args(outlined.params),
+                args: leak_args(alloc, outlined.params),
                 body: G::FnBody {
                     loc: Loc::EMPTY,
-                    stmts: leak_stmts(outlined.body),
+                    stmts: leak_stmts(alloc, outlined.body),
                 },
                 flags: fn_flags,
                 ..G::Fn::default()
@@ -1128,6 +1130,7 @@ fn build_outlined_decl(outlined: CodegenFunction) -> Stmt {
 // -----------------------------------------------------------------------
 
 pub struct ReactCompilerState {
+    alloc: bun_alloc::AstAlloc,
     options: ReactCompilerOptions,
     env_config: EnvironmentConfig,
     context: ProgramContext,
@@ -1148,6 +1151,7 @@ impl ReactCompilerState {
     /// deferred to the first `maybe_compile_*` call so the parser can set
     /// `p.react_compiler = Some(..)` without a `&mut p` borrow conflict.
     pub fn new(
+        alloc: bun_alloc::AstAlloc,
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
         import_bindings: IndexMap<Ref, VariableBinding>,
@@ -1158,12 +1162,14 @@ impl ReactCompilerState {
             has_module_scope_opt_out
         );
         let context = ProgramContext::new(
+            alloc,
             options.clone(),
             options.filename.clone(),
             None,
             has_module_scope_opt_out,
         );
         Self {
+            alloc,
             env_config: options.environment.clone(),
             options,
             context,
@@ -1277,7 +1283,7 @@ pub fn maybe_compile_pending(
     Some((
         cf.body,
         CompileResult {
-            args: leak_args(cf.params),
+            args: leak_args(state.alloc, cf.params),
             flags,
         },
     ))
@@ -1371,6 +1377,7 @@ fn maybe_compile_node(
         fn_name.as_deref(),
         host,
         arena,
+        state.alloc,
         fn_type,
         &state.env_config,
         &mut state.context,
@@ -1400,7 +1407,9 @@ fn maybe_compile_node(
                 return None;
             }
             for o in core::mem::take(&mut codegen_fn.outlined) {
-                state.outlined_decls.push(build_outlined_decl(o.func));
+                state
+                    .outlined_decls
+                    .push(build_outlined_decl(state.alloc, o.func));
             }
             state.any_compiled = true;
             Some(codegen_fn)

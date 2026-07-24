@@ -358,14 +358,14 @@ pub struct NewBuilder<T: SourceMapFormatCtx> {
     pub prepend_count: bool,
 }
 
-impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
+impl<T: SourceMapFormatCtx + Default> NewBuilder<T> {
     /// `get_source_map_builder` returns this when source maps are disabled, so
     /// it only needs to be inert (never read) — but we zero everything for sanity.
-    fn default() -> Self {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
             source_map: SourceMapFormat { ctx: T::default() },
             line_offset_tables: core::mem::ManuallyDrop::new(line_offset_table::List::new_in(
-                bun_alloc::AstAlloc,
+                alloc,
             )),
             lazy_line_offset_tables: None,
             deferred_source: None,
@@ -395,7 +395,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<T> {
 /// so they no longer need a guard. The lazily-built table here is `List<Global>`
 /// and still needs the per-row drain, so wrap it in a type that does it
 /// automatically. (A `Drop` impl on `NewBuilder` itself would forbid the
-/// `..Default::default()` struct-update used to build it in
+/// `..NewBuilder::empty(alloc)` struct-update used to build it in
 /// `get_source_map_builder`, hence the newtype.)
 pub struct OwnedLineOffsetTables(pub line_offset_table::List);
 

@@ -209,11 +209,11 @@ pub use crate::webview::host_process as WebViewHostProcess;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML}.parse ───────────────────
 //
-// All four host fns repeat: Arena + ASTMemoryAllocator scope + Log +
+// All four host fns repeat: AstArena + Log +
 // frame.argument(0) → bytes → Source::init_path_string. They diverge on
 // (a) whether nullish input throws, (b) whether Blob/Buffer is accepted, and
 // (c) parse-error class + Expr→JS tail — so this helper owns ONLY the scaffold
-// and hands `(&arena, &mut log, &source)` to a per-format closure that does the
+// and hands `(alloc, &mut log, &source)` to a per-format closure that does the
 // format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
 pub(crate) fn with_text_format_source<R>(
@@ -222,13 +222,12 @@ pub(crate) fn with_text_format_source<R>(
     path: &'static [u8],
     accept_blob_or_buffer: bool,
     reject_nullish: bool,
-    f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
+    f: impl FnOnce(bun_alloc::AstAlloc, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    let arena = bun_alloc::Arena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-    let _ast_scope = ast_memory_allocator.enter();
+    let ast_arena = bun_alloc::AstArena::new();
+    let alloc = ast_arena.alloc();
 
     let input_value = frame.argument(0);
     if reject_nullish && input_value.is_empty_or_undefined_or_null() {
@@ -273,7 +272,7 @@ pub(crate) fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(&arena, &mut log, &source)
+    f(alloc, &mut log, &source)
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

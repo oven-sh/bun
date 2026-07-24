@@ -203,8 +203,9 @@ pub fn validate_hooks_usage(
     env: &mut Environment,
 ) -> Result<(), crate::diagnostics::CompilerDiagnostic> {
     let unconditional_blocks = compute_unconditional_blocks(func, env.next_block_id().0)?;
-    let mut errors_by_loc: IndexMap<SourceLocation, CompilerErrorDetail> = IndexMap::new();
-    let mut value_kinds: IdMap<IdentifierId, Kind> = IdMap::new();
+    let mut errors_by_loc: IndexMap<SourceLocation, CompilerErrorDetail> =
+        IndexMap::new_in(env.alloc);
+    let mut value_kinds: IdMap<IdentifierId, Kind> = IdMap::new_in(env.alloc);
 
     // Process params
     for param in &func.params {

@@ -249,11 +249,9 @@ pub struct CurrentBundle {
     /// already encodes that contract.
     pub bv2: Box<BundleV2<'static>>,
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
-    /// boxed allocation's stable address; same erasure as `bv2` above).
-    pub heap: Box<bun_alloc::MimallocArena>,
-    /// Backs the small `AstVec`s built during bundle setup
-    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
+    /// pinned interior's stable address; same erasure as `bv2` above). Also
+    /// backs the small `AstVec`s built during bundle setup.
+    pub ast_arena: bun_alloc::AstArena,
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -3256,46 +3254,27 @@ impl DevServer {
             server.on_pending_request();
         }
 
-        // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
+        // Pinned interior so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
-        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // Borrows `heap`, so AST nodes built during bundle setup
-        // live exactly as long as the bundle. The arena-allocated allocator
-        // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
-        // on success and recycled by the guard below on error paths.
-        let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
-            heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
-        struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
-        impl Drop for ReleaseAstState {
-            fn drop(&mut self) {
-                // SAFETY: points at the arena-allocated allocator in `heap`,
-                // which outlives this guard; the `Scope` has already exited.
-                unsafe { (*self.0).release_ast_state() };
-            }
-        }
-        let _release_ast_state = ReleaseAstState(ast_memory_store);
-        // SAFETY: the `ASTMemoryAllocator` lives in a bumpalo chunk owned by
-        // `heap` → `bv2.graph.heap`; address is stable for the bv2 lifetime,
-        // and `ast_scope` is dropped before `bv2` is moved into
-        // `current_bundle` below.
-        let ast_scope = unsafe { &mut *ast_memory_store }.enter();
+        let ast_arena = bun_alloc::AstArena::new();
+        let heap: &'static bun_alloc::MimallocArena = ast_arena.alloc().arena();
 
         // The bundler stores
         // `Option<NonNull<AnyEventLoop>>`. Park the value in `heap`
         // — bumpalo chunks are heap-allocated, so the address is stable across
-        // the move of `heap` into `bv2.graph.heap` and lives exactly as long
-        // as `bv2`.
+        // the move of `ast_arena` into `bv2.graph.heap` and lives exactly as
+        // long as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             // SAFETY: `self.vm().event_loop()` is the live per-thread `jsc::EventLoop`.
             Some(::core::ptr::NonNull::from(heap.alloc(
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
-        // SAFETY: `heap` is `Box`-allocated above and moved into
-        // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
-        // is stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
+        // SAFETY: `ast_arena`'s interior is pinned on the heap and moved into
+        // `CurrentBundle` (which also owns `bv2`); the arena's address is
+        // stable for the lifetime of `bv2.graph.heap`'s borrow.
+        let heap_ptr: *const bun_alloc::Arena = heap;
         // Note: split `&mut self` into disjoint field reborrows so
         // `server_transpiler` (`&'a mut`) and `client/ssr_transpiler`
         // (NonNull) don't trip the single-`&mut self` rule.
@@ -3355,16 +3334,9 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
-        // End the AST scope and move its state into the bundle so the small
-        // `AstVec`s built during setup stay alive until the bundle completes.
-        drop(ast_scope);
-        // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
-        // exited, so no `&mut` to the allocator is live.
-        let ast_alloc_state = unsafe { (*ast_memory_store).take_ast_state() };
         self.current_bundle = Some(CurrentBundle {
             bv2,
-            heap,
-            ast_alloc_state,
+            ast_arena,
             timer,
             start_data,
             had_reload_event,

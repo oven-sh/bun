@@ -313,6 +313,7 @@ impl FileSystemPackageJsonExt for crate::fs::FileSystem {
 
 impl PackageJSON {
     pub fn parse_macros_json(
+        alloc: bun_alloc::AstAlloc,
         macros: js_ast::Expr,
         log: &mut bun_ast::Log,
         json_source: &bun_ast::Source,
@@ -322,7 +323,7 @@ impl PackageJSON {
             return macro_map;
         }
 
-        macros.for_each_property(|key, key_loc, value| {
+        macros.for_each_property(alloc, |key, key_loc, value| {
             if !resolver::is_package_path(key) {
                 log.add_range_warning_fmt(
                     Some(json_source),
@@ -354,7 +355,7 @@ impl PackageJSON {
 
             let mut map = MacroImportReplacementMap::default();
             map.reserve(remap_count);
-            value.for_each_property(|import_name, remap_key_loc, remap_value| {
+            value.for_each_property(alloc, |import_name, remap_key_loc, remap_value| {
                 let valid =
                     matches!(&remap_value.data, js_ast::ExprData::EString(s) if !s.data.is_empty());
                 if !valid {
@@ -483,6 +484,7 @@ impl PackageJSON {
         let contents_static: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&entry_contents) };
         let json_source = bun_ast::Source::init_path_string(package_json_path, contents_static);
 
+        let alloc = r.caches.json.alloc();
         let parsed_json = match r.caches.json.parse_package_json(r_log, &json_source) {
             Ok(Some(v)) => v,
             Ok(None) => return None,
@@ -537,7 +539,7 @@ impl PackageJSON {
         // It's hard to say why.
         // Feels like a codegen issue.
         // or that looping over every property doesn't really matter because most package.jsons are < 20 properties
-        if let Some(version_json) = json.as_property(b"version") {
+        if let Some(version_json) = json.as_property(alloc, b"version") {
             if let Some(version_str) = version_json.expr.as_utf8_string_literal() {
                 if !version_str.is_empty() {
                     package_json.version = Box::from(version_str);
@@ -545,7 +547,7 @@ impl PackageJSON {
             }
         }
 
-        if let Some(name_json) = json.as_property(b"name") {
+        if let Some(name_json) = json.as_property(alloc, b"name") {
             if let Some(name_str) = name_json.expr.as_utf8_string_literal() {
                 if !name_str.is_empty() {
                     package_json.name = Box::from(name_str);
@@ -553,7 +555,7 @@ impl PackageJSON {
             }
         }
 
-        if let Some(type_json) = json.as_property(b"type") {
+        if let Some(type_json) = json.as_property(alloc, b"type") {
             if let Some(type_str) = type_json.expr.as_utf8_string_literal() {
                 match ModuleType::LIST
                     .get(type_str)
@@ -589,7 +591,7 @@ impl PackageJSON {
 
         // Read the "main" fields
         for main in r.opts.main_fields.iter() {
-            if let Some(main_json) = json.as_property(main) {
+            if let Some(main_json) = json.as_property(alloc, main) {
                 let expr: &js_ast::Expr = &main_json.expr;
 
                 if let Some(str) = expr.as_utf8_string_literal() {
@@ -619,7 +621,7 @@ impl PackageJSON {
             //     "./dist/index.node.esm.js": "./dist/index.browser.esm.js"
             //   },
             //
-            if let Some(browser_prop) = json.as_property(b"browser") {
+            if let Some(browser_prop) = json.as_property(alloc, b"browser") {
                 if let js_ast::ExprData::EObjectJSON(obj) = &browser_prop.expr.data {
                     // The value is an object
 
@@ -678,19 +680,19 @@ impl PackageJSON {
             }
         }
 
-        if let Some(exports_prop) = json.as_property(b"exports") {
+        if let Some(exports_prop) = json.as_property(alloc, b"exports") {
             if let Some(exports_map) = ExportsMap::parse(json_source, r_log, exports_prop.expr) {
                 package_json.exports = Some(exports_map);
             }
         }
 
-        if let Some(imports_prop) = json.as_property(b"imports") {
+        if let Some(imports_prop) = json.as_property(alloc, b"imports") {
             if let Some(imports_map) = ExportsMap::parse(json_source, r_log, imports_prop.expr) {
                 package_json.imports = Some(imports_map);
             }
         }
 
-        if let Some(side_effects_field) = json.get(b"sideEffects") {
+        if let Some(side_effects_field) = json.get(alloc, b"sideEffects") {
             if let Some(boolean) = side_effects_field.as_bool() {
                 if !boolean {
                     package_json.side_effects = SideEffects::False;
@@ -837,11 +839,11 @@ impl PackageJSON {
                         }
                     }
                 }
-                if let Some(os_field) = json.get(b"cpu") {
+                if let Some(os_field) = json.get(alloc, b"cpu") {
                     if let Some(array_const) = os_field.as_array() {
                         let mut array = array_const;
                         let mut arch = Architecture::none().negatable();
-                        while let Some(item) = array.next() {
+                        while let Some(item) = array.next(alloc) {
                             if let Some(str) = item.as_utf8_string_literal() {
                                 arch.apply(str);
                             }
@@ -851,11 +853,11 @@ impl PackageJSON {
                     }
                 }
 
-                if let Some(os_field) = json.get(b"os") {
+                if let Some(os_field) = json.get(alloc, b"os") {
                     let tmp = os_field.as_array();
                     if let Some(mut array) = tmp {
                         let mut os = OperatingSystem::none().negatable();
-                        while let Some(item) = array.next() {
+                        while let Some(item) = array.next(alloc) {
                             if let Some(str) = item.as_utf8_string_literal() {
                                 os.apply(str);
                             }
@@ -878,7 +880,7 @@ impl PackageJSON {
 
                 let mut total_dependency_count: usize = 0;
                 for group in dependency_groups {
-                    if let Some(group_json) = json.get(group.field) {
+                    if let Some(group_json) = json.get(alloc, group.field) {
                         total_dependency_count += group_json.property_count();
                     }
                 }
@@ -898,7 +900,7 @@ impl PackageJSON {
                         .expect("unreachable");
 
                     for group in dependency_groups {
-                        if let Some(group_json) = json.get(group.field) {
+                        if let Some(group_json) = json.get(alloc, group.field) {
                             if let js_ast::ExprData::EObjectJSON(group_obj) = &group_json.data {
                                 for prop in group_obj.get().properties() {
                                     let name_str = prop.key.slice();
@@ -968,7 +970,7 @@ impl PackageJSON {
             // top-level object property.
             let property_string_map =
                 |name: &[u8]| -> Option<Box<StringArrayHashMap<&'static [u8]>>> {
-                    let prop = json.as_property(name)?;
+                    let prop = json.as_property(alloc, name)?;
                     let js_ast::ExprData::EObjectJSON(obj) = &prop.expr.data else {
                         return None;
                     };

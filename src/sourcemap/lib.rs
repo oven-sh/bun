@@ -889,32 +889,29 @@ pub fn parse_url(
 /// The mappings are owned by the global allocator.
 pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<ParseUrl> {
     use crate::mapping::SourceMap as SourceMapLog;
-    use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
 
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
     let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store on entry
-    // and on every exit path.
-    let _store_scope = DataStoreScope::new();
+    let ast_arena = bun_alloc::AstArena::new();
+    let alloc = ast_arena.alloc();
     bun_core::scoped_log!(SourceMapLog, "parse (JSON, {} bytes)", source.len());
-    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log) {
+    let parsed = match bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log, alloc) {
         Ok(p) => p,
         Err(_) => return Err(crate::Error::InvalidJSON),
     };
     let json = parsed.root;
 
-    if let Some(version) = json.get(b"version") {
+    if let Some(version) = json.get(alloc, b"version") {
         match version.data.as_e_number() {
             Some(n) if n.value() == 3.0 => {}
             _ => return Err(crate::Error::UnsupportedVersion),
         }
     }
 
-    let Some(mappings_str) = json.get(b"mappings") else {
+    let Some(mappings_str) = json.get(alloc, b"mappings") else {
         return Err(crate::Error::UnsupportedVersion);
     };
 
@@ -923,7 +920,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
     };
 
     let sources_content = match json
-        .get(b"sourcesContent")
+        .get(alloc, b"sourcesContent")
         .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
@@ -933,7 +930,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
     let sources_content = sources_content.get();
 
     let sources_paths = match json
-        .get(b"sources")
+        .get(alloc, b"sources")
         .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
@@ -989,7 +986,7 @@ pub fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Result<Pars
         } = hint
         {
             if matches!(map_data.mappings.r#impl, mapping::ListValue::WithNames(_)) {
-                if let Some(names) = json.get(b"names") {
+                if let Some(names) = json.get(alloc, b"names") {
                     if let bun_ast::ExprData::EArrayJSON(arr) = names.data {
                         let arr = arr.get();
                         let mut names_list: Vec<bun_semver::String> =

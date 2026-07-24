@@ -511,6 +511,7 @@ impl BuildCommand {
                 use bun_bundler::DefineExt as _;
                 // Feed `--define` entries into
                 // the client transpiler's Define table.
+                let ast_arena = bun_alloc::AstArena::new();
                 let user_defines = match &ctx.args.define {
                     Some(input) => {
                         let mut raw = bun_bundler::defines::RawDefines::default();
@@ -520,7 +521,10 @@ impl BuildCommand {
                         }
                         let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
                         Some(bun_bundler::defines::DefineData::from_input(
-                            &raw, &drop, log_ref, arena,
+                            &raw,
+                            &drop,
+                            log_ref,
+                            ast_arena.alloc(),
                         )?)
                     }
                     None => None,
@@ -531,6 +535,7 @@ impl BuildCommand {
                     this_transpiler.options.define.drop_debugger,
                     this_transpiler.options.dead_code_elimination
                         && this_transpiler.options.minify_syntax,
+                    ast_arena,
                 )?;
             }
 

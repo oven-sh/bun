@@ -47,9 +47,8 @@ pub(crate) fn get_candidate_package_patterns<'a>(
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], crate::Error> {
-    bun_ast::expr::data::Store::create();
-    bun_ast::stmt::data::Store::create();
-    let _store_guard = bun_ast::StoreResetGuard::new();
+    let ast_arena = bun_alloc::AstArena::new();
+    let alloc = ast_arena.alloc();
 
     let mut workdir = workdir_;
 
@@ -82,10 +81,10 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             // `defer allocator.free(json_source.contents)` — deleted; `json_source` owns its
             // contents and drops at end of scope.
 
-            let parsed = json::ParsedJson::parse_package_json(&json_source, log)?;
+            let parsed = json::ParsedJson::parse_package_json(&json_source, log, alloc)?;
             let json = parsed.root;
 
-            let Some(prop) = json.as_property(b"workspaces") else {
+            let Some(prop) = json.as_property(alloc, b"workspaces") else {
                 break 'body;
             };
 

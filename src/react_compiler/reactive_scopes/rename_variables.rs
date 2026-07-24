@@ -42,9 +42,9 @@ struct Scopes {
 }
 
 impl Scopes {
-    fn new(globals: HashSet<StoreStr>) -> Self {
+    fn new(alloc: bun_alloc::AstAlloc, globals: HashSet<StoreStr>) -> Self {
         Self {
-            seen: IdMap::new(),
+            seen: IdMap::new_in(alloc),
             stack: vec![HashMap::new()],
             globals,
             names: HashSet::new(),
@@ -95,7 +95,7 @@ impl Scopes {
             id += 1;
         }
 
-        let stored = StoreStr::new(bun_ast::data_store_dupe_str(&name));
+        let stored = StoreStr::new(bun_ast::data_store_dupe_str(env.alloc, &name));
         self.seen
             .insert(declaration_id, IdentifierName::Named(stored));
         self.stack
@@ -216,7 +216,7 @@ fn rename_variables_with_parent(
 
     // Phase 1: Use ReactiveFunctionVisitor to compute the rename mapping.
     // This collects DeclarationId -> IdentifierName without mutating env.
-    let mut scopes = Scopes::new(globals.clone());
+    let mut scopes = Scopes::new(env.alloc, globals.clone());
     // If parent names are provided (for outlined functions), pre-populate
     // the scope stack so that parameter names don't collide with parent
     // variables. In the TS compiler, outlined functions are placed in the

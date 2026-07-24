@@ -17,8 +17,8 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         b"input.jsonc",
         false,
         true,
-        |_arena, log, source| {
-            let parsed = match json::ParsedJson::parse_jsonc(source, log) {
+        |alloc, log, source| {
+            let parsed = match json::ParsedJson::parse_jsonc(source, log, alloc) {
                 Ok(v) => v,
                 Err(e) => {
                     if e == bun_parsers::Error::StackOverflow {

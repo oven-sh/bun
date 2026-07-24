@@ -140,7 +140,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
                     buf[2..2 + digits.len()].copy_from_slice(digits);
                     env.identifiers[temp_id.0 as usize].name =
                         Some(IdentifierName::Promoted(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(&buf[..2 + digits.len()]),
+                            bun_ast::data_store_dupe_str(env.alloc, &buf[..2 + digits.len()]),
                         )));
                     let temporary = Place {
                         identifier: temp_id,

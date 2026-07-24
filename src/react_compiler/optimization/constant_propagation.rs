@@ -76,7 +76,7 @@ type Constants = IdMap<IdentifierId, Constant>;
 // =============================================================================
 
 pub fn constant_propagation(func: &mut HirFunction, env: &mut Environment) {
-    let mut constants: Constants = IdMap::new();
+    let mut constants: Constants = IdMap::new_in(env.alloc);
     constant_propagation_impl(func, env, &mut constants);
 }
 
@@ -94,7 +94,8 @@ fn constant_propagation_impl(
          * If terminals have changed then blocks may have become newly unreachable.
          * Re-run minification of the graph (incl reordering instruction ids)
          */
-        func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
+        func.body.blocks =
+            get_reverse_postordered_blocks(env.alloc, &func.body, &func.instructions);
         remove_unreachable_for_updates(&mut func.body);
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
@@ -307,7 +308,7 @@ fn evaluate_instruction(
                         let object = object.clone();
                         let loc = *loc;
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
+                            bun_ast::data_store_dupe_str(env.alloc, s.as_bytes().expect("guarded")),
                         ));
                         func.instructions[instr_id.0 as usize].value =
                             InstructionValue::PropertyLoad {
@@ -352,7 +353,7 @@ fn evaluate_instruction(
                         let store_value = value.clone();
                         let loc = *loc;
                         let new_property = PropertyLiteral::String(crate::hir::StoreStr::new(
-                            bun_ast::data_store_dupe_str(s.as_bytes().expect("guarded")),
+                            bun_ast::data_store_dupe_str(env.alloc, s.as_bytes().expect("guarded")),
                         ));
                         func.instructions[instr_id.0 as usize].value =
                             InstructionValue::PropertyStore {
@@ -509,7 +510,7 @@ fn evaluate_instruction(
                 Some(Constant::Primitive { value: rhs, .. }),
             ) = (&lhs_value, &rhs_value)
             {
-                let result = evaluate_binary_op(*operator, lhs, rhs);
+                let result = evaluate_binary_op(env.alloc, *operator, lhs, rhs);
                 if let Some(ref prim) = result {
                     let loc = *loc;
                     func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
@@ -570,7 +571,7 @@ fn evaluate_instruction(
                     }
                 }
                 let loc = *loc;
-                let value = PrimitiveValue::String(JsString::from_wtf8_bytes(&result));
+                let value = PrimitiveValue::String(JsString::from_wtf8_bytes(env.alloc, &result));
                 func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
                     value: value.clone(),
                     loc,
@@ -618,7 +619,7 @@ fn evaluate_instruction(
             }
 
             let loc = *loc;
-            let value = PrimitiveValue::String(JsString::from_wtf8_bytes(&result));
+            let value = PrimitiveValue::String(JsString::from_wtf8_bytes(env.alloc, &result));
             func.instructions[instr_id.0 as usize].value = InstructionValue::Primitive {
                 value: value.clone(),
                 loc,
@@ -726,7 +727,7 @@ fn evaluate_instruction(
 fn process_inner_function(func_id: FunctionId, env: &mut Environment, constants: &mut Constants) {
     let mut inner = std::mem::replace(
         &mut env.functions[func_id.0 as usize],
-        placeholder_function(),
+        placeholder_function(env.alloc),
     );
     constant_propagation_impl(&mut inner, env, constants);
     env.functions[func_id.0 as usize] = inner;
@@ -861,6 +862,7 @@ fn is_truthy(value: &PrimitiveValue) -> bool {
 // =============================================================================
 
 fn evaluate_binary_op(
+    alloc: bun_alloc::AstAlloc,
     operator: BinaryOperator,
     lhs: &PrimitiveValue,
     rhs: &PrimitiveValue,
@@ -876,7 +878,9 @@ fn evaluate_binary_op(
                         let mut joined = Vec::with_capacity(lb.len() + rb.len());
                         joined.extend_from_slice(lb);
                         joined.extend_from_slice(rb);
-                        Some(PrimitiveValue::String(JsString::from_wtf8_bytes(&joined)))
+                        Some(PrimitiveValue::String(JsString::from_wtf8_bytes(
+                            alloc, &joined,
+                        )))
                     }
                     _ => {
                         // Concatenate as code units: JS `+` can pair up
@@ -885,7 +889,9 @@ fn evaluate_binary_op(
                         let mut units = Vec::with_capacity(le.len() + re.len());
                         push_units(&mut units, le);
                         push_units(&mut units, re);
-                        Some(PrimitiveValue::String(JsString::from_code_units(&units)))
+                        Some(PrimitiveValue::String(JsString::from_code_units(
+                            alloc, &units,
+                        )))
                     }
                 }
             }

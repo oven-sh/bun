@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 
-use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
@@ -16,9 +15,9 @@ use bun_ast::op::Level;
 use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
-    E, Expr, ExprNodeList,
+    E, Expr,
     G::{self, PropertyKind},
-    Stmt, symbol,
+    symbol,
 };
 use js_lexer::T;
 
@@ -229,13 +228,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         Ok(Some(G::Property {
-            ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
+            ts_decorators: p.alloc.vec_from_slice(&opts.ts_decorators),
             kind,
             flags: prop_flags,
             key: Some(*key),
             value: Some(value),
             ts_metadata: TsMetadata::MFunction,
-            ..Default::default()
+            ..G::Property::empty(p.alloc)
         }))
     }
 
@@ -518,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
                             // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.
-                            let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
+                            let stmt_list = p.alloc.vec_from_slice(stmts.as_slice());
                             let block = p.arena.alloc(G::ClassStaticBlock {
                                 stmts: stmt_list,
                                 loc,
@@ -527,7 +526,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             return Ok(Some(G::Property {
                                 kind: PropertyKind::ClassStaticBlock,
                                 class_static_block: Some(js_ast::StoreRef::from_bump(block)),
-                                ..Default::default()
+                                ..G::Property::empty(p.alloc)
                             }));
                         }
                     }
@@ -595,7 +594,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(value),
                             initializer,
                             flags: flags::Property::WasShorthand.into(),
-                            ..Default::default()
+                            ..G::Property::empty(p.alloc)
                         }));
                     }
                 }
@@ -738,13 +737,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 return Ok(Some(G::Property {
-                    ts_decorators: ExprNodeList::from_slice(&opts.ts_decorators),
+                    ts_decorators: p.alloc.vec_from_slice(&opts.ts_decorators),
                     kind,
                     flags: prop_flags,
                     key: Some(key),
                     initializer,
                     ts_metadata,
-                    ..Default::default()
+                    ..G::Property::empty(p.alloc)
                 }));
             }
 
@@ -789,7 +788,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data: js_ast::ExprData::EMissing(E::Missing {}),
                     loc: bun_ast::Loc::default(),
                 }),
-                ..Default::default()
+                ..G::Property::empty(p.alloc)
             };
 
             // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable

@@ -626,22 +626,18 @@ impl Framework {
     }
 
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) -> crate::Result<()> {
-        let clone_line_text = log.clone_line_text;
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
             data: bun_ast::range_data(
                 None,
                 bun_ast::Range::NONE,
-                // `range_data` takes `impl Into<Cow<'static, [u8]>>`;
-                // `concat!` yields `&'static str` — go via `.as_bytes()`.
                 concat!(
                     "Install the built in react integration with \"",
                     "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental",
                     "\""
                 )
                 .as_bytes(),
-            )
-            .clone_line_text(clone_line_text),
+            ),
             ..Default::default()
         });
         Ok(())
@@ -1151,11 +1147,6 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> crate::Result<()> {
-        // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
-        // runs `exit()` at end-of-fn.
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         // The caller (`DevServer::init`) hands us an uninitialized slot, so
         // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
         // `&mut Transpiler` for the field assignments below.
@@ -1262,6 +1253,7 @@ impl Framework {
                 bundler_options.define.values.len()
             );
             use bun_bundler::DefineDataExt;
+            let alloc = out.options.define.alloc();
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -1269,14 +1261,14 @@ impl Framework {
                 .zip(bundler_options.define.values.iter())
             {
                 let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
+                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, alloc)?;
                 out.options.define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
                 if !drop_item.is_empty() {
                     let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
+                        drop_item, b"", true, true, log, alloc,
                     )?;
                     out.options.define.insert(drop_item, parsed)?;
                 }

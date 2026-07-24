@@ -295,14 +295,15 @@ impl BunxCommand {
         let package_json_contents = package_json_bytes.as_slice();
         let source = bun_ast::Source::init_path_string(subpath_z.as_bytes(), package_json_contents);
 
-        bun_ast::initialize_store();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
 
         let log = transpiler.log_mut();
-        let parsed = json::ParsedJson::parse_package_json(&source, log)?;
+        let parsed = json::ParsedJson::parse_package_json(&source, log, alloc)?;
         let expr = parsed.root;
 
         // choose the first package that fits
-        if let Some(bin_expr) = expr.get(b"bin") {
+        if let Some(bin_expr) = expr.get(alloc, b"bin") {
             match &bin_expr.data {
                 ExprData::EObjectJSON(object) => {
                     for prop in object.get().properties() {
@@ -314,7 +315,7 @@ impl BunxCommand {
                     }
                 }
                 ExprData::EString(_) => {
-                    if let Some(name_expr) = expr.get(b"name") {
+                    if let Some(name_expr) = expr.get(alloc, b"name") {
                         if let Some(name) = name_expr.as_utf8_string_literal() {
                             // A scoped `name` (`@scope/pkg`) is legitimate here;
                             // the command name is its unscoped portion.
@@ -333,8 +334,8 @@ impl BunxCommand {
             }
         }
 
-        if let Some(dirs) = expr.as_property(b"directories") {
-            if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
+        if let Some(dirs) = expr.as_property(alloc, b"directories") {
+            if let Some(bin_prop) = dirs.expr.as_property(alloc, b"bin") {
                 if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal() {
                     let bin_dir = bun_sys::openat_a(dir_fd, dir_name, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.

@@ -208,9 +208,6 @@ impl Framework {
     ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         use bun_options_types::schema as bun_schema;
 
-        let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-        let _ast_scope = ast_memory_allocator.enter();
-
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
@@ -315,6 +312,7 @@ impl Framework {
                 bundler_options.define.values.len()
             );
             use bun_bundler::DefineDataExt;
+            let alloc = out.options.define.alloc();
             for (k, v) in bundler_options
                 .define
                 .keys
@@ -322,14 +320,14 @@ impl Framework {
                 .zip(bundler_options.define.values.iter())
             {
                 let parsed =
-                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, arena)?;
+                    bun_bundler::defines::DefineData::parse(k, v, false, false, log, alloc)?;
                 out.options.define.insert(k, parsed)?;
             }
 
             for drop_item in bundler_options.drop.keys() {
                 if !drop_item.is_empty() {
                     let parsed = bun_bundler::defines::DefineData::parse(
-                        drop_item, b"", true, true, log, arena,
+                        drop_item, b"", true, true, log, alloc,
                     )?;
                     out.options.define.insert(drop_item, parsed)?;
                 }

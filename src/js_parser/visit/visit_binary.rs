@@ -377,6 +377,7 @@ impl BinaryExpressionVisitor {
                                     data: ExprData::ENumber(E::Number::new(0.0)),
                                     loc: e_.left.loc,
                                 },
+                                p.alloc,
                                 e_.right,
                             );
                         }
@@ -400,6 +401,7 @@ impl BinaryExpressionVisitor {
                                 data: prefill::data::ZERO,
                                 loc: e_.left.loc,
                             },
+                            p.alloc,
                             e_.right,
                         );
                     }
@@ -422,6 +424,7 @@ impl BinaryExpressionVisitor {
                                     data: prefill::data::ZERO,
                                     loc: e_.left.loc,
                                 },
+                                p.alloc,
                                 e_.right,
                             );
                         }
@@ -439,6 +442,7 @@ impl BinaryExpressionVisitor {
 
                     // "'abc' + 'xyz'" => "'abcxyz'"
                     if let Some(res) = fold_string_addition(
+                        p.alloc,
                         e_.left,
                         e_.right,
                         p.arena,
@@ -451,6 +455,7 @@ impl BinaryExpressionVisitor {
                     if let Some(left) = e_.left.data.e_binary() {
                         if left.op == Op::Code::BinAdd {
                             if let Some(result) = fold_string_addition(
+                                p.alloc,
                                 left.right,
                                 e_.right,
                                 p.arena,

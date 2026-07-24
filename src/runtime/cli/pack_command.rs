@@ -44,19 +44,28 @@ fn dir_open_dir_z(dir: &Dir, path: &ZStr, opts: bun_sys::OpenDirOptions) -> crat
     Ok(dir.open_dir(path.as_bytes(), opts)?)
 }
 
-/// Process-lifetime bump arena for `Expr::as_string*` / `E::EString` data
-/// (freed at process exit). `bun_alloc::Arena`
-/// (= `bumpalo::Bump`) is `!Sync`, so a `static LazyLock` is out; store the
-/// arena directly in a `thread_local!` and hand out a `'static` borrow — the
-/// CLI is single-threaded and the slot lives for the thread's lifetime.
-fn pack_bump() -> &'static bun_alloc::Arena {
+/// Process-lifetime AST arena for `Expr::as_string*` / `E::EString` data
+/// (freed at process exit). `AstArena` is `!Sync`, so a `static LazyLock` is
+/// out; store the arena directly in a `thread_local!` and hand out handles —
+/// the CLI is single-threaded and the slot lives for the thread's lifetime.
+fn pack_ast_arena() -> &'static bun_alloc::AstArena {
     thread_local! {
-        static BUMP: bun_alloc::Arena = bun_alloc::Arena::new();
+        static ARENA: bun_alloc::AstArena = bun_alloc::AstArena::new();
     }
-    // SAFETY: `BUMP` is never dropped (thread = process lifetime in `bun pm
-    // pack`), and `Arena` is `!Sync` so no cross-thread aliasing, so the
+    // SAFETY: `ARENA` is never dropped (thread = process lifetime in `bun pm
+    // pack`), and `AstArena` is `!Sync` so no cross-thread aliasing, so the
     // borrow can be erased to `'static`.
-    BUMP.with(|b| unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(b) })
+    ARENA.with(|a| unsafe { &*std::ptr::from_ref::<bun_alloc::AstArena>(a) })
+}
+
+#[inline]
+fn pack_alloc() -> bun_alloc::AstAlloc {
+    pack_ast_arena().alloc()
+}
+
+#[inline]
+fn pack_bump() -> &'static bun_alloc::Arena {
+    pack_ast_arena().arena()
 }
 
 /// `bun.sys.File.toSourceAt` re-homed here (T1→T2 layering split: `bun_sys`
@@ -1061,7 +1070,8 @@ fn add_bundled_dep(
                             }
                         };
 
-                        let json = match JSON::parse_package_json_utf8(&source, log, pack_bump()) {
+                        let alloc = pack_alloc();
+                        let json = match JSON::parse_package_json_utf8(&source, log, alloc) {
                             Ok(j) => j,
                             Err(_) => break 'root_depth,
                         };
@@ -1074,7 +1084,7 @@ fn add_bundled_dep(
                             b"dependencies".as_slice(),
                             b"optionalDependencies".as_slice(),
                         ] {
-                            let Some(dependencies_expr) = json.get(dependency_group) else {
+                            let Some(dependencies_expr) = json.get(alloc, dependency_group) else {
                                 continue;
                             };
                             let bun_ast::ExprData::EObject(dependencies) = dependencies_expr.data
@@ -1379,8 +1389,9 @@ fn get_bundled_deps(
     json: &Expr,
     field: &'static str,
 ) -> Result<Option<Vec<BundledDep>>, AllocError> {
+    let alloc = pack_alloc();
     let mut deps: Vec<BundledDep> = Vec::new();
-    let Some(bundled_deps) = json.get(field.as_bytes()) else {
+    let Some(bundled_deps) = json.get(alloc, field.as_bytes()) else {
         return Ok(None);
     };
 
@@ -1391,7 +1402,7 @@ fn get_bundled_deps(
                     return Ok(Some(Vec::new()));
                 };
 
-                while let Some(bundled_dep_item) = iter.next() {
+                while let Some(bundled_dep_item) = iter.next(alloc) {
                     let Some(bundled_dep) = bundled_dep_item.as_string_cloned(pack_bump())? else {
                         break 'invalid_field;
                     };
@@ -1410,7 +1421,7 @@ fn get_bundled_deps(
                     return Ok(Some(Vec::new()));
                 }
 
-                if let Some(dependencies_expr) = json.get(b"dependencies") {
+                if let Some(dependencies_expr) = json.get(alloc, b"dependencies") {
                     if let ExprData::EObject(dependencies) = &dependencies_expr.data {
                         for dependency in dependencies.properties.slice() {
                             if dependency.key.is_none() {
@@ -1466,11 +1477,12 @@ struct BinInfo {
 }
 
 fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
+    let alloc = pack_alloc();
     let mut bins: Vec<BinInfo> = Vec::new();
 
     let mut path_buf = PathBuffer::uninit();
 
-    if let Some(bin) = json.as_property(b"bin") {
+    if let Some(bin) = json.as_property(alloc, b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
             let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
                 bin_str,
@@ -1511,7 +1523,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         return Ok(bins);
     }
 
-    if let Some(directories) = json.as_property(b"directories") {
+    if let Some(directories) = json.as_property(alloc, b"directories") {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
@@ -1908,6 +1920,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
     let bump = pack_bump();
+    let alloc = pack_alloc();
     // Note: `workspace_package_json_cache` and `log` are disjoint fields on
     // `PackageManager`; route through raw-pointer field projections so the
     // two `&mut` borrows don't conflict.
@@ -1940,14 +1953,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     };
 
     if FOR_PUBLISH {
-        if let Some(config) = json.root.get(b"publishConfig") {
+        if let Some(config) = json.root.get(alloc, b"publishConfig") {
             if ctx.manager.options.publish_config.tag.is_empty() {
-                if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
+                if let Some(tag) = config.get_string_cloned(alloc, bump, b"tag")? {
                     ctx.manager.options.publish_config.tag = tag;
                 }
             }
             if ctx.manager.options.publish_config.access.is_none() {
-                if let Some((access, _)) = config.get_string(bump, b"access")? {
+                if let Some((access, _)) = config.get_string(alloc, bump, b"access")? {
                     ctx.manager.options.publish_config.access =
                         match bun_install::Access::from_str(access) {
                             Some(a) => Some(a),
@@ -1968,7 +1981,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     let mut package_name_expr: Expr = json
         .root
-        .get(b"name")
+        .get(alloc, b"name")
         .ok_or(PackError::MissingPackageName)?;
     let mut package_name = package_name_expr
         .as_string_cloned(bump)?
@@ -1988,7 +2001,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     let mut package_version_expr: Expr = json
         .root
-        .get(b"version")
+        .get(alloc, b"version")
         .ok_or(PackError::MissingPackageVersion)?;
     let mut package_version = package_version_expr
         .as_string_cloned(bump)?
@@ -1998,7 +2011,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     if FOR_PUBLISH {
-        if let Some(private) = json.root.get(b"private") {
+        if let Some(private) = json.root.get(alloc, b"private") {
             if let Some(is_private) = private.as_bool() {
                 if is_private {
                     return Err(PackError::PrivatePackage);
@@ -2063,7 +2076,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             break 'post_scripts (None, None, None, false);
         }
 
-        let Some(scripts) = json.root.as_property(b"scripts") else {
+        let Some(scripts) = json.root.as_property(alloc, b"scripts") else {
             break 'post_scripts (None, None, None, false);
         };
         if !matches!(scripts.expr.data, ExprData::EObject(_)) {
@@ -2074,7 +2087,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let mut did_run_scripts = false;
 
         if FOR_PUBLISH {
-            if let Some(prepublish_only_script_str) = scripts.expr.get(b"prepublishOnly") {
+            if let Some(prepublish_only_script_str) = scripts.expr.get(alloc, b"prepublishOnly") {
                 if let Some(prepublish_only) = prepublish_only_script_str.as_string(bump) {
                     did_run_scripts = true;
                     run_lifecycle_script(
@@ -2089,7 +2102,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             }
         }
 
-        if let Some(prepack_script) = scripts.expr.get(b"prepack") {
+        if let Some(prepack_script) = scripts.expr.get(alloc, b"prepack") {
             if let Some(prepack_script_str) = prepack_script.as_string(bump) {
                 did_run_scripts = true;
                 run_lifecycle_script(
@@ -2103,7 +2116,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             }
         }
 
-        if let Some(prepare_script) = scripts.expr.get(b"prepare") {
+        if let Some(prepare_script) = scripts.expr.get(alloc, b"prepare") {
             if let Some(prepare_script_str) = prepare_script.as_string(bump) {
                 did_run_scripts = true;
                 run_lifecycle_script(
@@ -2118,17 +2131,17 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         let mut postpack_script: Option<Box<[u8]>> = None;
-        if let Some(postpack) = scripts.expr.get(b"postpack") {
+        if let Some(postpack) = scripts.expr.get(alloc, b"postpack") {
             postpack_script = postpack.as_string(bump).map(Box::from);
         }
 
         if FOR_PUBLISH {
             let mut publish_script: Option<Box<[u8]>> = None;
             let mut postpublish_script: Option<Box<[u8]>> = None;
-            if let Some(publish) = scripts.expr.get(b"publish") {
+            if let Some(publish) = scripts.expr.get(alloc, b"publish") {
                 publish_script = publish.as_string_cloned(bump)?.map(Box::from);
             }
-            if let Some(postpublish) = scripts.expr.get(b"postpublish") {
+            if let Some(postpublish) = scripts.expr.get(alloc, b"postpublish") {
                 postpublish_script = postpublish.as_string_cloned(bump)?.map(Box::from);
             }
 
@@ -2193,7 +2206,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {
-            if let Some(private) = json.root.get(b"private") {
+            if let Some(private) = json.root.get(alloc, b"private") {
                 if let Some(is_private) = private.as_bool() {
                     if is_private {
                         return Err(PackError::PrivatePackage);
@@ -2206,7 +2219,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // scripts (e.g. prepublishOnly, prepack) may have modified them.
         package_name_expr = json
             .root
-            .get(b"name")
+            .get(alloc, b"name")
             .ok_or(PackError::MissingPackageName)?;
         package_name = package_name_expr
             .as_string_cloned(bump)?
@@ -2217,7 +2230,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
         package_version_expr = json
             .root
-            .get(b"version")
+            .get(alloc, b"version")
             .ok_or(PackError::MissingPackageVersion)?;
         package_version = package_version_expr
             .as_string_cloned(bump)?
@@ -2311,14 +2324,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     'iterate_project_tree: {
-        if let Some(files) = json.root.get(b"files") {
+        if let Some(files) = json.root.get(alloc, b"files") {
             'files_error: {
                 if let Some(mut files_array) = files.as_array() {
                     let mut includes: Vec<Pattern> = Vec::new();
                     let mut excludes: Vec<Pattern> = Vec::new();
 
                     let mut path_buf = PathBuffer::uninit();
-                    while let Some(files_entry) = files_array.next() {
+                    while let Some(files_entry) = files_array.next(alloc) {
                         if let Some(file_entry_str) = files_entry.as_string(bump) {
                             let normalized = resolve_path::normalize_buf::<
                                 resolve_path::platform::Posix,
@@ -3303,6 +3316,7 @@ fn edit_root_package_json(
     json: &mut WorkspacePackageJSONCache::MapEntry,
 ) -> Result<Box<[u8]>, AllocError> {
     use bun_install_types::DependencyGroup;
+    let alloc = pack_alloc();
     // preserve deps→dev→peer→optional order (error-message ordering)
     for dependency_group in [
         DependencyGroup::DEPENDENCIES,
@@ -3312,7 +3326,7 @@ fn edit_root_package_json(
     ]
     .map(|g| g.prop)
     {
-        if let Some(dependencies_expr) = json.root.get(dependency_group) {
+        if let Some(dependencies_expr) = json.root.get(alloc, dependency_group) {
             if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
                     if dependency.key.is_none() {
@@ -3382,6 +3396,7 @@ fn edit_root_package_json(
                                     );
                                     let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
                                     dependency.value = Some(Expr::init(
+                                        alloc,
                                         E::EString::init(data),
                                         Default::default(),
                                     ));
@@ -3405,7 +3420,7 @@ fn edit_root_package_json(
 
                         let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
                         dependency.value =
-                            Some(Expr::init(E::EString::init(dup), Default::default()));
+                            Some(Expr::init(alloc, E::EString::init(dup), Default::default()));
                     } else if let Some(catalog_name_str) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
                     {
@@ -3483,8 +3498,11 @@ fn edit_root_package_json(
 
                         let literal =
                             pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(literal), Default::default()));
+                        dependency.value = Some(Expr::init(
+                            alloc,
+                            E::EString::init(literal),
+                            Default::default(),
+                        ));
                     }
                 }
             }
@@ -3503,6 +3521,7 @@ fn edit_root_package_json(
 
     let written = match js_printer::print_json(
         &mut package_json_writer,
+        alloc,
         json.root,
         // shouldn't be used
         &json.source,

@@ -19,6 +19,7 @@ use crate::parser::{
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
+use bun_ast::IntoText;
 use bun_ast::{B, E, Expr, G, S, Stmt};
 
 // Named instantiations of `P<'_, TS, SCAN>`.
@@ -61,6 +62,7 @@ pub struct Parser<'a> {
     pub source: &'a bun_ast::Source,
     pub define: &'a Define,
     pub bump: &'a Arena,
+    pub alloc: bun_alloc::AstAlloc,
 }
 
 pub struct Options<'a> {
@@ -301,6 +303,7 @@ impl<'a> Parser<'a> {
         source: &'a bun_ast::Source,
         define: &'a Define,
         bump: &'a Arena,
+        alloc: bun_alloc::AstAlloc,
     ) -> Result<Parser<'a>, Error> {
         let mut lexer = js_lexer::Lexer::init_without_reading(log, source, bump);
         // Must be set before the priming `next()` so leading comments are seen.
@@ -314,6 +317,7 @@ impl<'a> Parser<'a> {
         Ok(Parser {
             options,
             bump,
+            alloc,
             lexer,
             define,
             source,
@@ -392,7 +396,7 @@ impl<'a> Parser<'a> {
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
         let mut __p = init_p!(Pi<'_, TS>;
-            self.bump, self.log, self.source, self.define, lexer, options);
+            self.bump, self.alloc, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut Pi<'_, TS> = unsafe { __p.assume_init_mut() };
         p.import_records = crate::p::ImportRecordList::Borrowed(&mut scan_pass.import_records);
@@ -534,7 +538,7 @@ impl<'a> Parser<'a> {
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
         let mut __p = init_p!(JavaScriptParser<'_>;
-            self.bump, self.log, self.source, self.define, lexer, options);
+            self.bump, self.alloc, self.log, self.source, self.define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut JavaScriptParser<'_> = unsafe { __p.assume_init_mut() };
 
@@ -557,13 +561,13 @@ impl<'a> Parser<'a> {
         // Optionally call a runtime API function to transform the expression
         if !runtime_api_call.is_empty() {
             let args_slice: &mut [Expr] = p.arena.alloc_slice_fill_with(1, |_| expr);
-            let args = Vec::from_arena_slice(args_slice);
+            let args = p.alloc.vec_from_slice(args_slice);
             final_expr = p.call_runtime(expr.loc, runtime_api_call, args);
         }
 
         let ns_export_part = js_ast::Part {
             can_be_removed_if_unused: true,
-            ..Default::default()
+            ..js_ast::Part::empty(p.alloc)
         };
 
         let lazy_data = js_ast::StoreRef::from_bump(p.arena.alloc(final_expr.data));
@@ -573,8 +577,11 @@ impl<'a> Parser<'a> {
         });
         let part = js_ast::Part {
             stmts: stmts.into(),
-            symbol_uses: core::mem::take(&mut p.symbol_uses),
-            ..Default::default()
+            symbol_uses: core::mem::replace(
+                &mut p.symbol_uses,
+                js_ast::part::SymbolUseMap::new_in(p.alloc),
+            ),
+            ..js_ast::Part::empty(p.alloc)
         };
         let mut parts = BumpVec::with_capacity_in(2, p.arena);
         parts.push(ns_export_part);
@@ -618,6 +625,7 @@ impl<'a> Parser<'a> {
             source,
             define,
             bump,
+            alloc,
         } = self;
 
         // `lexer.log` aliases `log`; route through the centralised
@@ -627,7 +635,7 @@ impl<'a> Parser<'a> {
         // field docs), so handing the same raw pointer to both is defined —
         // no `&mut` is materialized.
         let mut __p = init_p!(P<'_, TS, false>;
-            bump, log, source, define, lexer, options);
+            bump, alloc, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
         let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
 
@@ -757,11 +765,13 @@ impl<'a> Parser<'a> {
             };
             let opt_out = bun_react_compiler::has_module_scope_opt_out(stmts);
             let import_bindings = bun_react_compiler::collect_import_bindings(
+                p.alloc,
                 stmts,
                 p.import_records.items(),
                 p.symbols.as_slice(),
             );
             p.react_compiler = Some(Box::new(bun_react_compiler::ReactCompilerState::new(
+                p.alloc,
                 rc_options,
                 opt_out,
                 import_bindings,
@@ -776,7 +786,7 @@ impl<'a> Parser<'a> {
         if p.options.bundle {
             // The bundler requires a part for generated module wrappers. This
             // part must be at the start as it is referred to by index.
-            before.push(js_ast::Part::default());
+            before.push(js_ast::Part::empty(p.alloc));
         }
 
         // --inspect-brk
@@ -787,7 +797,7 @@ impl<'a> Parser<'a> {
             });
             before.push(js_ast::Part {
                 stmts: debugger_stmts.into(),
-                ..Default::default()
+                ..js_ast::Part::empty(p.alloc)
             });
         }
 
@@ -896,10 +906,10 @@ impl<'a> Parser<'a> {
                                     is_export: local.is_export,
                                     was_ts_import_equals: local.was_ts_import_equals,
                                     was_commonjs_export: local.was_commonjs_export,
-                                    decls: G::DeclList::init_one(G::Decl {
+                                    decls: p.alloc.vec_from_iter([G::Decl {
                                         binding: decl.binding,
                                         value: decl.value,
-                                    }),
+                                    }]),
                                 };
                                 let new_stmt = p.s(_local, stmt.loc);
                                 let sliced = arena.alloc_slice_copy(&[new_stmt]);
@@ -1017,7 +1027,8 @@ impl<'a> Parser<'a> {
             if uses_dirname || uses_filename {
                 let count = (uses_dirname as usize) + (uses_filename as usize);
                 let mut declared_symbols =
-                    bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+                    bun_ast::DeclaredSymbolList::init_capacity(p.alloc, count)
+                        .expect("unreachable");
                 let decls = p
                     .arena
                     .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
@@ -1069,13 +1080,13 @@ impl<'a> Parser<'a> {
                         S::Local {
                             kind: js_ast::LocalKind::KVar,
                             decls: {
-                                let mut dl = G::DeclList::init_capacity(decls.len());
+                                let mut dl = p.alloc.vec_with_capacity(decls.len());
                                 for d in decls.iter_mut() {
                                     dl.append_assume_capacity(core::mem::take(d));
                                 }
                                 dl
                             },
-                            ..Default::default()
+                            ..S::Local::empty(p.alloc)
                         },
                         bun_ast::Loc::EMPTY,
                     )
@@ -1084,7 +1095,7 @@ impl<'a> Parser<'a> {
                     stmts: part_stmts.into(),
                     declared_symbols,
                     tag: bun_ast::PartTag::DirnameFilename,
-                    ..Default::default()
+                    ..js_ast::Part::empty(p.alloc)
                 });
                 uses_dirname = false;
                 uses_filename = false;
@@ -1126,6 +1137,7 @@ impl<'a> Parser<'a> {
                     VecExt::append(&mut p.module_scope_mut().generated, ns_ref);
 
                     import_part_stmts[0] = Stmt::alloc(
+                        p.alloc,
                         S::Import {
                             star_name_loc: ns_loc,
                             import_record_index: import_record_id,
@@ -1138,7 +1150,8 @@ impl<'a> Parser<'a> {
                         ns_loc,
                     );
                     let mut declared_symbols =
-                        bun_ast::DeclaredSymbolList::init_capacity(1).expect("unreachable");
+                        bun_ast::DeclaredSymbolList::init_capacity(p.alloc, 1)
+                            .expect("unreachable");
                     declared_symbols.append_assume_capacity(DeclaredSymbol {
                         ref_: ns_ref,
                         is_top_level: true,
@@ -1149,7 +1162,7 @@ impl<'a> Parser<'a> {
                         tag: bun_ast::PartTag::ImportToConvertFromRequire,
                         // This part has a single symbol, so it may be removed if unused.
                         can_be_removed_if_unused: true,
-                        ..Default::default()
+                        ..js_ast::Part::empty(p.alloc)
                     });
                 }
                 debug_assert!(remaining_stmts.is_empty());
@@ -1299,13 +1312,19 @@ impl<'a> Parser<'a> {
                                     None
                                 };
                                 if let Some(id) = redirect_import_record_index {
-                                    part.symbol_uses = Default::default();
+                                    part.symbol_uses = js_ast::part::SymbolUseMap::new_in(p.alloc);
                                     return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                                         import_records: p.import_records.move_to_baby_list(p.arena),
                                         redirect_import_record_index: Some(id),
-                                        named_imports: core::mem::take(&mut *p.named_imports),
-                                        named_exports: core::mem::take(&mut p.named_exports),
-                                        ..js_ast::Ast::empty_in(p.arena)
+                                        named_imports: core::mem::replace(
+                                            &mut *p.named_imports,
+                                            js_ast::ast_result::NamedImports::new_in(p.alloc),
+                                        ),
+                                        named_exports: core::mem::replace(
+                                            &mut p.named_exports,
+                                            js_ast::ast_result::NamedExports::new_in(p.alloc),
+                                        ),
+                                        ..js_ast::Ast::empty_in(p.alloc)
                                     })));
                                 }
                             }
@@ -1375,6 +1394,7 @@ impl<'a> Parser<'a> {
                                             new_stmts.extend_from_slice(&part_stmts[0..j]);
 
                                             new_stmts.push(Stmt::alloc(
+                                                p.alloc,
                                                 S::ExportStar {
                                                     import_record_index: req.import_record_index,
                                                     namespace_ref,
@@ -1480,9 +1500,15 @@ impl<'a> Parser<'a> {
                         return Ok(crate::Result::Ast(Box::new(js_ast::Ast {
                             import_records: p.import_records.move_to_baby_list(p.arena),
                             redirect_import_record_index: Some(star.import_record_index),
-                            named_imports: core::mem::take(&mut *p.named_imports),
-                            named_exports: core::mem::take(&mut p.named_exports),
-                            ..js_ast::Ast::empty_in(p.arena)
+                            named_imports: core::mem::replace(
+                                &mut *p.named_imports,
+                                js_ast::ast_result::NamedImports::new_in(p.alloc),
+                            ),
+                            named_exports: core::mem::replace(
+                                &mut p.named_exports,
+                                js_ast::ast_result::NamedExports::new_in(p.alloc),
+                            ),
+                            ..js_ast::Ast::empty_in(p.alloc)
                         })));
                     }
                 }
@@ -1547,43 +1573,37 @@ impl<'a> Parser<'a> {
                                     text: record.path.text
                                 }
                             );
-                            std::borrow::Cow::Owned(v)
+                            v.into_boxed_slice()
                         },
                         ..Default::default()
                     });
 
                     if uses_module_ref {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
+                            text: b"This file is CommonJS because 'module' was used".into_text(),
                             ..Default::default()
                         });
                     }
 
                     if uses_exports_ref {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
+                            text: b"This file is CommonJS because 'exports' was used".into_text(),
                             ..Default::default()
                         });
                     }
 
                     if p.has_top_level_return {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
+                            text: b"This file is CommonJS because top-level return was used"
+                                .into_text(),
                             ..Default::default()
                         });
                     }
 
                     if p.has_with_scope {
                         notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
+                            text: b"This file is CommonJS because a \"with\" statement is used"
+                                .into_text(),
                             ..Default::default()
                         });
                     }
@@ -1682,7 +1702,7 @@ impl<'a> Parser<'a> {
             debug_assert!(!p.options.bundle);
             let count = (uses_dirname as usize) + (uses_filename as usize);
             let mut declared_symbols =
-                bun_ast::DeclaredSymbolList::init_capacity(count).expect("unreachable");
+                bun_ast::DeclaredSymbolList::init_capacity(p.alloc, count).expect("unreachable");
             let decls = p
                 .arena
                 .alloc_slice_fill_with::<G::Decl, _>(count, |_| G::Decl::default());
@@ -1742,13 +1762,13 @@ impl<'a> Parser<'a> {
                     S::Local {
                         kind: js_ast::LocalKind::KVar,
                         decls: {
-                            let mut dl = G::DeclList::init_capacity(decls.len());
+                            let mut dl = p.alloc.vec_with_capacity(decls.len());
                             for d in decls.iter_mut() {
                                 dl.append_assume_capacity(core::mem::take(d));
                             }
                             dl
                         },
-                        ..Default::default()
+                        ..S::Local::empty(p.alloc)
                     },
                     bun_ast::Loc::EMPTY,
                 )
@@ -1757,7 +1777,7 @@ impl<'a> Parser<'a> {
                 stmts: part_stmts.into(),
                 declared_symbols,
                 tag: bun_ast::PartTag::DirnameFilename,
-                ..Default::default()
+                ..js_ast::Part::empty(p.alloc)
             });
         }
 
@@ -1809,7 +1829,7 @@ impl<'a> Parser<'a> {
                 break 'outer;
             }
 
-            let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+            let mut declared_symbols = bun_ast::DeclaredSymbolList::empty(p.alloc);
             declared_symbols.ensure_total_capacity(items_count)?;
 
             // For CommonJS modules, use require instead of import
@@ -1862,7 +1882,7 @@ impl<'a> Parser<'a> {
                     },
                     bun_ast::Loc::EMPTY,
                 );
-                let mut decls = G::DeclList::init_capacity(1);
+                let mut decls = p.alloc.vec_with_capacity(1);
                 decls.append_assume_capacity(G::Decl {
                     binding,
                     value: Some(value),
@@ -1872,7 +1892,7 @@ impl<'a> Parser<'a> {
                     S::Local {
                         kind: js_ast::LocalKind::KConst,
                         decls,
-                        ..Default::default()
+                        ..S::Local::empty(p.alloc)
                     },
                     bun_ast::Loc::EMPTY,
                 );
@@ -1881,11 +1901,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
+                    import_record_indices: p.alloc.vec_from_iter([import_record_id]),
                     tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
+                    ..js_ast::Part::empty(p.alloc)
                 });
             } else {
                 let import_record_id = p.add_import_record(
@@ -1941,11 +1959,9 @@ impl<'a> Parser<'a> {
                 before.push(js_ast::Part {
                     stmts: part_stmts.into(),
                     declared_symbols,
-                    import_record_indices: js_ast::PartImportRecordIndices::init_one(
-                        import_record_id,
-                    ),
+                    import_record_indices: p.alloc.vec_from_iter([import_record_id]),
                     tag: bun_ast::PartTag::BunTest,
-                    ..Default::default()
+                    ..js_ast::Part::empty(p.alloc)
                 });
             }
 
@@ -2068,9 +2084,8 @@ impl<'a> Parser<'a> {
                 );
             }
             if !rc_stmts.is_empty() {
-                let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
-                let mut import_record_indices: js_ast::PartImportRecordIndices =
-                    bun_alloc::AstAlloc::vec();
+                let mut declared_symbols = bun_ast::DeclaredSymbolList::empty(p.alloc);
+                let mut import_record_indices: js_ast::PartImportRecordIndices = p.alloc.vec();
                 for stmt in &rc_stmts {
                     match &stmt.data {
                         js_ast::StmtData::SImport(import) => {
@@ -2092,7 +2107,7 @@ impl<'a> Parser<'a> {
                                         alias_loc: item.alias_loc,
                                         namespace_ref: import.namespace_ref,
                                         import_record_index: import.import_record_index,
-                                        local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                                        local_parts_with_uses: p.alloc.vec(),
                                         alias_is_star: false,
                                         is_exported: false,
                                     },
@@ -2116,7 +2131,7 @@ impl<'a> Parser<'a> {
                     declared_symbols,
                     import_record_indices,
                     can_be_removed_if_unused: true,
-                    ..Default::default()
+                    ..js_ast::Part::empty(p.alloc)
                 });
             }
         }

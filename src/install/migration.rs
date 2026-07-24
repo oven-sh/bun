@@ -241,7 +241,8 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     Install::initialize_store();
 
     let json_src = bun_ast::Source::init_path_string(abs_path, data);
-    let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log)
+    let ast_arena = bun_alloc::AstArena::new();
+    let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log, ast_arena.alloc())
         .map_err(|_| crate::Error::InvalidNPMLockfile)?;
     let json = &parsed_json.root;
 

@@ -209,7 +209,7 @@ mod draft {
     use core::fmt;
     use core::ptr;
 
-    use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
+    use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _, AstAlloc, AstArena};
     use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData, StoreRef};
@@ -244,6 +244,8 @@ mod draft {
         pub src: &'a [u8],
         pub out: Expr,
         pub logger: Log,
+        pub arena: AstArena,
+        pub alloc: AstAlloc,
         pub env: &'a DotEnvLoader,
     }
 
@@ -276,19 +278,25 @@ mod draft {
 
     impl<'a> Parser<'a> {
         pub fn init(source: &'a Source, env: &'a DotEnvLoader) -> Parser<'a> {
+            let arena = AstArena::new();
+            let alloc = arena.alloc();
             Parser {
                 opts: Options::default(),
                 logger: Log::init(),
                 src: source.contents.as_ref(),
-                out: Expr::init(E::Object::default(), Loc::EMPTY),
+                out: Expr::init(alloc, E::Object::empty(alloc), Loc::EMPTY),
                 source,
+                arena,
+                alloc,
                 env,
             }
         }
 
-        // deinit -> Drop: `logger` is owned and drops automatically.
+        // deinit -> Drop: `logger` and `arena` are owned and drop automatically.
 
-        pub fn parse(&mut self, bump: &'a Arena) -> OOM<()> {
+        pub fn parse(&mut self) -> OOM<()> {
+            let alloc = self.alloc;
+            let bump: &'a Arena = alloc.arena();
             let src = self.src;
             let env = self.env;
             let source_path = self.source.path.text;
@@ -340,6 +348,7 @@ mod draft {
                         let section: &mut Rope = Self::prepare_str(
                             env,
                             source_path,
+                            alloc,
                             Usage::Section,
                             bump,
                             ropealloc,
@@ -348,7 +357,7 @@ mod draft {
                         )?
                         .into_section();
                         let mut r = root;
-                        let parent_object = match r.get_or_put_object(section, bump) {
+                        let parent_object = match r.get_or_put_object(alloc, section) {
                             Ok(v) => v,
                             Err(E::SetError::OutOfMemory) => return Err(AllocError),
                             Err(E::SetError::Clobber) => {
@@ -411,6 +420,7 @@ mod draft {
                 let key_raw: &[u8] = Self::prepare_str(
                     env,
                     source_path,
+                    alloc,
                     Usage::Key,
                     bump,
                     ropealloc,
@@ -450,6 +460,7 @@ mod draft {
                             break 'brk Self::prepare_str(
                                 env,
                                 source_path,
+                                alloc,
                                 Usage::Value,
                                 bump,
                                 ropealloc,
@@ -458,19 +469,19 @@ mod draft {
                             )?
                             .into_value();
                         }
-                        break 'brk Expr::init(E::EString::init(b""), Loc::EMPTY);
+                        break 'brk Expr::init(alloc, E::EString::init(b""), Loc::EMPTY);
                     }
-                    Expr::init(E::Boolean { value: true }, Loc::EMPTY)
+                    Expr::init(alloc, E::Boolean { value: true }, Loc::EMPTY)
                 };
 
                 let value: Expr = match &value_raw.data {
                     ExprData::EString(s) => {
                         if s.data == b"true" {
-                            Expr::init(E::Boolean { value: true }, Loc::EMPTY)
+                            Expr::init(alloc, E::Boolean { value: true }, Loc::EMPTY)
                         } else if s.data == b"false" {
-                            Expr::init(E::Boolean { value: false }, Loc::EMPTY)
+                            Expr::init(alloc, E::Boolean { value: false }, Loc::EMPTY)
                         } else if s.data == b"null" {
-                            Expr::init(E::Null, Loc::EMPTY)
+                            Expr::init(alloc, E::Null, Loc::EMPTY)
                         } else {
                             value_raw
                         }
@@ -481,12 +492,16 @@ mod draft {
                 if is_array {
                     if let Some(val) = E::Object::get(&head, key) {
                         if !matches!(val.data, ExprData::EArray(_)) {
-                            let mut arr = E::Array::default();
+                            let mut arr = E::Array::empty(alloc);
                             arr.push(bump, val)?;
-                            head.put(bump, key, Expr::init(arr, Loc::EMPTY))?;
+                            head.put(alloc, key, Expr::init(alloc, arr, Loc::EMPTY))?;
                         }
                     } else {
-                        head.put(bump, key, Expr::init(E::Array::default(), Loc::EMPTY))?;
+                        head.put(
+                            alloc,
+                            key,
+                            Expr::init(alloc, E::Array::empty(alloc), Loc::EMPTY),
+                        )?;
                     }
                 }
 
@@ -500,11 +515,11 @@ mod draft {
                             .e_array_mut()
                             .expect("infallible: variant checked")
                             .push(bump, value)?;
-                        head.put(bump, key, val)?;
+                        head.put(alloc, key, val)?;
                     }
                 }
                 if !was_already_array {
-                    head.put(bump, key, value)?;
+                    head.put(alloc, key, value)?;
                 }
             }
             Ok(())
@@ -513,6 +528,7 @@ mod draft {
         fn prepare_str(
             env: &DotEnvLoader,
             source_path: &[u8],
+            alloc: AstAlloc,
             usage: Usage,
             bump: &'a Arena,
             ropealloc: &'a Arena,
@@ -548,7 +564,7 @@ mod draft {
                     let mut log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
-                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
+                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, alloc) {
                             Ok(v) => v,
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
@@ -556,6 +572,7 @@ mod draft {
                                 if usage == Usage::Value {
                                     let expanded = Self::expand_env_vars(env, bump, val)?;
                                     return Ok(PrepareResult::Value(Expr::init(
+                                        alloc,
                                         E::EString::init(expanded),
                                         Loc { start: offset },
                                     )));
@@ -575,13 +592,14 @@ mod draft {
                         };
                         if usage == Usage::Value {
                             return Ok(PrepareResult::Value(Expr::init(
+                                alloc,
                                 E::EString::init(expanded),
                                 Loc { start: offset },
                             )));
                         }
                         if usage == Usage::Section {
                             return Ok(PrepareResult::Section(Self::str_to_rope(
-                                ropealloc, expanded,
+                                alloc, ropealloc, expanded,
                             )?));
                         }
                         return Ok(PrepareResult::Key(expanded));
@@ -611,6 +629,7 @@ mod draft {
                         ExprData::EObject(_) => {
                             if usage == Usage::Section {
                                 return Ok(PrepareResult::Section(Self::single_str_rope(
+                                    alloc,
                                     ropealloc,
                                     b"[Object object]",
                                 )?));
@@ -626,7 +645,7 @@ mod draft {
                             let str_ = bump.alloc_slice_copy(s.as_bytes());
                             if usage == Usage::Section {
                                 return Ok(PrepareResult::Section(Self::single_str_rope(
-                                    ropealloc, str_,
+                                    alloc, ropealloc, str_,
                                 )?));
                             }
                             return Ok(PrepareResult::Key(str_));
@@ -733,7 +752,9 @@ mod draft {
                             b'.' => {
                                 if usage == Usage::Section && rope_parts < MAX_SECTION_ROPE_SEGMENTS
                                 {
-                                    Self::commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                                    Self::commit_rope_part(
+                                        alloc, bump, ropealloc, &mut unesc, &mut rope,
+                                    )?;
                                     rope_parts += 1;
                                 } else {
                                     unesc.push(b'.');
@@ -785,23 +806,26 @@ mod draft {
 
                 match usage {
                     Usage::Section => {
-                        Self::commit_rope_part(bump, ropealloc, &mut unesc, &mut rope)?;
+                        Self::commit_rope_part(alloc, bump, ropealloc, &mut unesc, &mut rope)?;
                         return Ok(PrepareResult::Section(rope.unwrap()));
                     }
                     Usage::Value => {
                         if !did_any_escape {
                             return Ok(PrepareResult::Value(Expr::init(
+                                alloc,
                                 E::EString::init(val),
                                 Loc { start: offset },
                             )));
                         }
                         if unesc.len() <= STACK_BUF_SIZE {
                             return Ok(PrepareResult::Value(Expr::init(
+                                alloc,
                                 E::EString::init(bump.alloc_slice_copy(&unesc)),
                                 Loc { start: offset },
                             )));
                         }
                         return Ok(PrepareResult::Value(Expr::init(
+                            alloc,
                             E::EString::init(unesc.into_bump_slice()),
                             Loc { start: offset },
                         )));
@@ -823,6 +847,7 @@ mod draft {
             // fallthrough from `break 'out` above
             if usage == Usage::Value {
                 return Ok(PrepareResult::Value(Expr::init(
+                    alloc,
                     E::EString::init(val),
                     Loc { start: offset },
                 )));
@@ -832,7 +857,9 @@ mod draft {
                 // directly.
                 return Ok(PrepareResult::Key(val));
             }
-            Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
+            Ok(PrepareResult::Section(Self::str_to_rope(
+                alloc, ropealloc, val,
+            )?))
         }
 
         /// Expands ${VAR} and ${VAR?} environment variable substitutions in a string.
@@ -981,22 +1008,27 @@ mod draft {
             Ok(None)
         }
 
-        fn single_str_rope(ropealloc: &'a Arena, str_: &[u8]) -> OOM<&'a mut Rope> {
+        fn single_str_rope(
+            alloc: AstAlloc,
+            ropealloc: &'a Arena,
+            str_: &[u8],
+        ) -> OOM<&'a mut Rope> {
             let rope = ropealloc.alloc(Rope {
-                head: Expr::init(E::EString::init(str_), Loc::EMPTY),
+                head: Expr::init(alloc, E::EString::init(str_), Loc::EMPTY),
                 next: ptr::null_mut(),
             });
             Ok(rope)
         }
 
         fn commit_rope_part(
+            alloc: AstAlloc,
             bump: &'a Arena,
             ropealloc: &'a Arena,
             unesc: &mut ArenaVec<'a, u8>,
             existing_rope: &mut Option<&'a mut Rope>,
         ) -> OOM<()> {
             let slice = bump.alloc_slice_copy(&unesc[..]);
-            let expr = Expr::init(E::EString::init(slice), Loc::EMPTY);
+            let expr = Expr::init(alloc, E::EString::init(slice), Loc::EMPTY);
             if let Some(r) = existing_rope.as_deref_mut() {
                 let _ = r.append(expr, ropealloc)?;
             } else {
@@ -1009,16 +1041,16 @@ mod draft {
             Ok(())
         }
 
-        fn str_to_rope(ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
+        fn str_to_rope(alloc: AstAlloc, ropealloc: &'a Arena, key: &[u8]) -> OOM<&'a mut Rope> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {
-                    head: Expr::init(E::EString::init(key), Loc::EMPTY),
+                    head: Expr::init(alloc, E::EString::init(key), Loc::EMPTY),
                     next: ptr::null_mut(),
                 });
                 return Ok(rope);
             };
             let rope_head: &'a mut Rope = ropealloc.alloc(Rope {
-                head: Expr::init(E::EString::init(&key[..dot_idx]), Loc::EMPTY),
+                head: Expr::init(alloc, E::EString::init(&key[..dot_idx]), Loc::EMPTY),
                 next: ptr::null_mut(),
             });
 
@@ -1028,14 +1060,18 @@ mod draft {
                     Some(n) if segments < MAX_SECTION_ROPE_SEGMENTS => dot_idx + 1 + n,
                     _ => {
                         let rest = &key[dot_idx + 1..];
-                        let _ = rope_head
-                            .append(Expr::init(E::EString::init(rest), Loc::EMPTY), ropealloc)?;
+                        let _ = rope_head.append(
+                            Expr::init(alloc, E::EString::init(rest), Loc::EMPTY),
+                            ropealloc,
+                        )?;
                         break;
                     }
                 };
                 let part = &key[dot_idx + 1..next_dot_idx];
-                let _ =
-                    rope_head.append(Expr::init(E::EString::init(part), Loc::EMPTY), ropealloc)?;
+                let _ = rope_head.append(
+                    Expr::init(alloc, E::EString::init(part), Loc::EMPTY),
+                    ropealloc,
+                )?;
                 segments += 1;
                 dot_idx = next_dot_idx;
             }
@@ -1287,17 +1323,17 @@ mod draft {
         source: &Source,
         configs: &mut Vec<ConfigItem>,
     ) -> OOM<()> {
-        let arena = Arena::new();
-        let bump = &arena;
         let mut parser = Parser::init(source, env);
-        parser.parse(bump)?;
+        let alloc = parser.alloc;
+        let bump: &Arena = alloc.arena();
+        parser.parse()?;
         // Need to be very, very careful here with strings.
         // They are allocated in the Parser's arena, which of course gets
         // deinitialized at the end of the scope.
         // We need to dupe all strings
         let out = &parser.out;
 
-        if let Some(query) = out.as_property(b"registry") {
+        if let Some(query) = out.as_property(alloc, b"registry") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
                 let mut p = bun_api::npm_registry::Parser {
                     log: &mut *log,
@@ -1308,7 +1344,7 @@ mod draft {
             }
         }
 
-        if let Some(query) = out.as_property(b"cache") {
+        if let Some(query) = out.as_property(alloc, b"cache") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
                 install.cache_directory = Some(Box::<[u8]>::from(str_));
             } else if let Some(b) = query.expr.as_bool() {
@@ -1316,7 +1352,7 @@ mod draft {
             }
         }
 
-        if let Some(query) = out.as_property(b"dry-run") {
+        if let Some(query) = out.as_property(alloc, b"dry-run") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
                 install.dry_run = Some(str_ == b"true");
             } else if let Some(b) = query.expr.as_bool() {
@@ -1324,7 +1360,7 @@ mod draft {
             }
         }
 
-        if let Some(query) = out.as_property(b"ca") {
+        if let Some(query) = out.as_property(alloc, b"ca") {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
                 install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
             } else if let ExprData::EArray(arr) = &query.expr.data {
@@ -1338,13 +1374,13 @@ mod draft {
             }
         }
 
-        if let Some(query) = out.as_property(b"cafile") {
+        if let Some(query) = out.as_property(alloc, b"cafile") {
             if let Some(cafile) = query.expr.as_string_cloned(bump)? {
                 install.cafile = Some(Box::<[u8]>::from(cafile));
             }
         }
 
-        if let Some(omit) = out.as_property(b"omit") {
+        if let Some(omit) = out.as_property(alloc, b"omit") {
             match &omit.expr.data {
                 ExprData::EString(str_) => {
                     if str_.eql_comptime(b"dev") {
@@ -1372,7 +1408,7 @@ mod draft {
             }
         }
 
-        if let Some(omit) = out.as_property(b"include") {
+        if let Some(omit) = out.as_property(alloc, b"include") {
             match &omit.expr.data {
                 ExprData::EString(str_) => {
                     if str_.eql_comptime(b"dev") {
@@ -1400,25 +1436,25 @@ mod draft {
             }
         }
 
-        if let Some(ignore_scripts) = out.get(b"ignore-scripts") {
+        if let Some(ignore_scripts) = out.get(alloc, b"ignore-scripts") {
             if let Some(ignore) = ignore_scripts.as_bool() {
                 install.ignore_scripts = Some(ignore);
             }
         }
 
-        if let Some(link_workspace_packages) = out.get(b"link-workspace-packages") {
+        if let Some(link_workspace_packages) = out.get(alloc, b"link-workspace-packages") {
             if let Some(link) = link_workspace_packages.as_bool() {
                 install.link_workspace_packages = Some(link);
             }
         }
 
-        if let Some(save_exact) = out.get(b"save-exact") {
+        if let Some(save_exact) = out.get(alloc, b"save-exact") {
             if let Some(exact) = save_exact.as_bool() {
                 install.exact = Some(exact);
             }
         }
 
-        if let Some(install_strategy_expr) = out.get(b"install-strategy") {
+        if let Some(install_strategy_expr) = out.get(alloc, b"install-strategy") {
             if let Some(install_strategy_str) = install_strategy_expr.as_string(bump) {
                 if install_strategy_str == b"hoisted" {
                     install.node_linker = Some(NodeLinker::Hoisted);
@@ -1431,7 +1467,7 @@ mod draft {
         }
 
         // yarn & pnpm option
-        if let Some(node_linker_expr) = out.get(b"node-linker") {
+        if let Some(node_linker_expr) = out.get(alloc, b"node-linker") {
             if let Some(node_linker_str) = node_linker_expr.as_string(bump) {
                 if let Some(node_linker) = NODE_LINKER_MAP.get(node_linker_str) {
                     install.node_linker = Some(*node_linker);
@@ -1439,7 +1475,7 @@ mod draft {
             }
         }
 
-        if let Some(public_hoist_pattern_expr) = out.get(b"public-hoist-pattern") {
+        if let Some(public_hoist_pattern_expr) = out.get(alloc, b"public-hoist-pattern") {
             install.public_hoist_pattern =
                 match pnpm_matcher_from_expr(&public_hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),
@@ -1452,7 +1488,7 @@ mod draft {
                 };
         }
 
-        if let Some(hoist_pattern_expr) = out.get(b"hoist-pattern") {
+        if let Some(hoist_pattern_expr) = out.get(alloc, b"hoist-pattern") {
             install.hoist_pattern =
                 match pnpm_matcher_from_expr(&hoist_pattern_expr, log, source, bump) {
                     Ok(v) => Some(v),

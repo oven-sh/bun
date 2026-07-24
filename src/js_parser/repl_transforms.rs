@@ -12,7 +12,7 @@ use bun_collections::VecExt;
 use bun_ast as js_ast;
 use bun_ast::flags;
 use bun_ast::stmt::Data as StmtData;
-use bun_ast::{B, Binding, E, Expr, ExprNodeList, G, S, Stmt};
+use bun_ast::{B, Binding, E, Expr, G, S, Stmt};
 
 use crate::p::P;
 
@@ -101,12 +101,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     }
 
                     if !hoisted_decl_list.is_empty() {
-                        let decls = G::DeclList::from_bump_vec(hoisted_decl_list);
+                        let decls = self.alloc.vec_from_iter(hoisted_decl_list);
                         hoisted_stmts.push(self.s(
                             S::Local {
                                 kind,
                                 decls,
-                                ..Default::default()
+                                ..S::Local::empty(self.alloc)
                             },
                             stmt.loc,
                         ));
@@ -138,14 +138,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             S::Local {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
-                                    bump,
+                                    self.alloc,
                                     Binding::alloc(
                                         bump,
                                         B::Identifier { r#ref: name_ref },
                                         name_loc.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::empty(self.alloc)
                             },
                             stmt.loc,
                         ));
@@ -203,14 +203,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             S::Local {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
-                                    bump,
+                                    self.alloc,
                                     Binding::alloc(
                                         bump,
                                         B::Identifier { r#ref: name_ref },
                                         name_loc.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::empty(self.alloc)
                             },
                             stmt.loc,
                         ));
@@ -218,7 +218,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         // Convert class declaration to assignment: ClassName = class ClassName {}
                         // G::Class is non-Copy (owns a Vec); the original
                         // S::Class store entry is dead after this rewrite, so move it out.
-                        let class_value = core::mem::take(&mut class.class);
+                        let class_value =
+                            core::mem::replace(&mut class.class, G::Class::empty(self.alloc));
                         let class_expr = self.new_expr(class_value, stmt.loc);
                         let class_id = self.new_expr(
                             E::Identifier {
@@ -282,7 +283,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             S::Local {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
-                                    bump,
+                                    self.alloc,
                                     Binding::alloc(
                                         bump,
                                         B::Identifier {
@@ -291,7 +292,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                                         stmt.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::empty(self.alloc)
                             },
                             stmt.loc,
                         ));
@@ -325,14 +326,14 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                             S::Local {
                                 kind: S::Kind::KVar,
                                 decls: repl_one_decl(
-                                    bump,
+                                    self.alloc,
                                     Binding::alloc(
                                         bump,
                                         B::Identifier { r#ref: default_ref },
                                         default_name.loc,
                                     ),
                                 ),
-                                ..Default::default()
+                                ..S::Local::empty(self.alloc)
                             },
                             stmt.loc,
                         ));
@@ -486,8 +487,8 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
         let iife = self.new_expr(
             E::Call {
                 target: arrow,
-                args: bun_alloc::AstAlloc::vec(),
-                ..Default::default()
+                args: self.alloc.vec(),
+                ..E::Call::empty(self.alloc)
             },
             bun_ast::Loc::EMPTY,
         );
@@ -536,7 +537,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
             S::Local {
                 kind: S::Kind::KVar,
                 decls: repl_one_decl(
-                    bump,
+                    self.alloc,
                     Binding::alloc(
                         bump,
                         B::Identifier {
@@ -545,7 +546,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         loc,
                     ),
                 ),
-                ..Default::default()
+                ..S::Local::empty(self.alloc)
             },
             loc,
         ));
@@ -579,10 +580,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 S::Local {
                     kind: S::Kind::KVar,
                     decls: repl_one_decl(
-                        bump,
+                        self.alloc,
                         Binding::alloc(bump, B::Identifier { r#ref: item_ref }, item.name.loc),
                     ),
-                    ..Default::default()
+                    ..S::Local::empty(self.alloc)
                 },
                 loc,
             ));
@@ -704,7 +705,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 expr.loc,
             )),
             value: Some(self.new_expr(E::Null {}, expr.loc)),
-            ..Default::default()
+            ..G::Property::empty(self.alloc)
         });
         // value: expr - the actual result value
         properties.push(G::Property {
@@ -716,13 +717,13 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                 expr.loc,
             )),
             value: Some(expr),
-            ..Default::default()
+            ..G::Property::empty(self.alloc)
         });
-        let prop_list = G::PropertyList::from_bump_vec(properties);
+        let prop_list = self.alloc.vec_from_iter(properties);
         self.new_expr(
             E::Object {
                 properties: prop_list,
-                ..Default::default()
+                ..E::Object::empty(self.alloc)
             },
             expr.loc,
         )
@@ -817,12 +818,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         items.push(expr);
                     }
                 }
-                let item_list = ExprNodeList::from_bump_vec(items);
+                let item_list = self.alloc.vec_from_iter(items);
                 self.new_expr(
                     E::Array {
                         items: item_list,
                         is_single_line: arr.is_single_line,
-                        ..Default::default()
+                        ..E::Array::empty(self.alloc)
                     },
                     binding.loc,
                 )
@@ -843,15 +844,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         },
                         value: Some(self.repl_convert_binding_to_expr(prop.value, bump)),
                         initializer: prop.default_value,
-                        ..Default::default()
+                        ..G::Property::empty(self.alloc)
                     });
                 }
-                let prop_list = G::PropertyList::from_bump_vec(properties);
+                let prop_list = self.alloc.vec_from_iter(properties);
                 self.new_expr(
                     E::Object {
                         properties: prop_list,
                         is_single_line: obj.is_single_line,
-                        ..Default::default()
+                        ..E::Object::empty(self.alloc)
                     },
                     binding.loc,
                 )
@@ -863,10 +864,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
 /// Bump-allocate a single-element `G::DeclList`.
 #[inline]
-fn repl_one_decl(bump: &Bump, binding: Binding) -> G::DeclList {
-    let slice: &mut [G::Decl] = bump.alloc_slice_fill_with(1, |_| G::Decl {
+fn repl_one_decl(alloc: bun_alloc::AstAlloc, binding: Binding) -> G::DeclList {
+    alloc.vec_from_iter([G::Decl {
         binding,
         value: None,
-    });
-    G::DeclList::from_arena_slice(slice)
+    }])
 }

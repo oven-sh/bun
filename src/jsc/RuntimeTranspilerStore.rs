@@ -6,9 +6,8 @@ use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use bun_alloc::Arena;
+use bun_ast::ExportsKind;
 use bun_ast::Loader;
-use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
@@ -582,11 +581,12 @@ impl TranspilerJob {
         // on `server/elysia`. The hoist existed only to manufacture a
         // `&'static Arena` for `Transpiler::set_arena`; the lifetime-erased
         // `Transpiler<'_>` cast below accepts `&arena` directly, so the hoist
-        // bought nothing and cost RSS. `MimallocArena::Drop` =
-        // `mi_heap_destroy`, so the per-call heap-churn is identical to a
-        // start-of-call `reset()` but the worker holds **zero** retained pages
+        // bought nothing and cost RSS. `AstArena::Drop` resets and parks the
+        // inner heap per-thread, so the worker holds no live parse pages
         // between calls.
-        let arena = Arena::new();
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let arena = alloc.arena();
 
         // `defer this.dispatchToMainThread()` — fires on every return path.
         let this_ptr: *mut TranspilerJob = self;
@@ -620,12 +620,6 @@ impl TranspilerJob {
             return;
         }
 
-        // `borrowing()`: the AST node store and the
-        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
-        // drops at the end of `run()`.
-        let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_store.enter();
-
         let path = self.path;
         let specifier = self.path.text;
         let loader = self.loader;
@@ -649,7 +643,7 @@ impl TranspilerJob {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
                     *dst = bun_ast::Log::init();
-                    (*src).clone_to_with_recycled(&mut *dst, true);
+                    (*src).clone_to(&mut *dst);
                 }
             },
         );
@@ -672,7 +666,7 @@ impl TranspilerJob {
         // borrow tied to the shortened `'a` outlives the arena.
         let transpiler: &mut Transpiler<'_> =
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
-        transpiler.set_arena(&arena);
+        transpiler.set_arena(arena);
         transpiler.set_log(&raw mut log);
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
@@ -794,7 +788,8 @@ impl TranspilerJob {
         };
 
         let mut parse_options = ParseOptions {
-            arena: &arena,
+            arena,
+            alloc,
             path,
             loader,
             dirname_fd: Fd::INVALID,
@@ -1120,9 +1115,10 @@ impl TranspilerJob {
                 },
             );
             transpiler.print_with_source_map(
-                // Same per-call `arena` that `transpiler.set_arena(&arena)`
+                // Same per-call `arena` that `transpiler.set_arena(arena)`
                 // and `parse_options.arena` used to build `parse_result.ast`.
-                &arena,
+                arena,
+                alloc,
                 parse_result,
                 &mut printer,
                 js_printer::Format::EsmAscii,
@@ -1185,9 +1181,8 @@ impl TranspilerJob {
             ..Default::default()
         });
 
-        // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores
-        // the thread-local AST heap pointer), `mi_heap_destroy`ing every parse
-        // / AST allocation made by this call. Nothing references them past
-        // this point — `source_code` above is a fresh WTF::String copy.
+        // `ast_arena` drops here, bulk-freeing every parse / AST allocation
+        // made by this call. Nothing references it past this point —
+        // `source_code` above is a fresh WTF::String copy.
     }
 }

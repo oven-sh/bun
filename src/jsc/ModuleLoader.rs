@@ -8,7 +8,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_alloc::Arena as ArenaAllocator;
+use bun_alloc::AstArena;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -26,7 +26,7 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]
 pub struct ModuleLoader {
-    pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
+    pub transpile_source_code_arena: Option<AstArena>,
     pub eval_source: Option<Box<bun_ast::Source>>,
 }
 

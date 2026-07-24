@@ -2232,22 +2232,21 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", json_source);
     let mut log = bun_ast::Log::init();
 
-    // the allocator given to the JS parser is not respected for all parts
-    // of the parse, so we need to remember to reset the ast store
-    let _reset_guard = bun_ast::StoreResetGuard::new();
+    let ast_arena = bun_alloc::AstArena::new();
+    let alloc = ast_arena.alloc();
 
-    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log)
+    let parsed = bun_parsers::json::ParsedJson::parse_json(&json_src, &mut log, alloc)
         .map_err(|_| crate::Error::InvalidSourceMap)?;
     let json = parsed.root;
 
     let mappings_str = json
-        .get(b"mappings")
+        .get(alloc, b"mappings")
         .ok_or(crate::Error::InvalidSourceMap)?;
     let map_vlq: &[u8] = mappings_str
         .as_utf8_string_literal()
         .ok_or(crate::Error::InvalidSourceMap)?;
     let sources_content = match json
-        .get(b"sourcesContent")
+        .get(alloc, b"sourcesContent")
         .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {
@@ -2256,7 +2255,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     };
     let sources_content = sources_content.get();
     let sources_paths = match json
-        .get(b"sources")
+        .get(alloc, b"sources")
         .ok_or(crate::Error::InvalidSourceMap)?
         .data
     {

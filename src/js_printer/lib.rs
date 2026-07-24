@@ -1410,6 +1410,8 @@ pub mod __gated_printer {
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
         pub bump: &'a bun_alloc::Arena,
+
+        pub alloc: bun_alloc::AstAlloc,
     }
 
     /// The handling of binary expressions is convoluted because we're using
@@ -2028,6 +2030,7 @@ pub mod __gated_printer {
                         temp_bindings.push(B::Property {
                             flags: Default::default(),
                             key: Expr::init(
+                                self.alloc,
                                 E::String::init(&target_e_dot.name),
                                 target_e_dot.name_loc,
                             ),
@@ -2037,6 +2040,7 @@ pub mod __gated_printer {
                         temp_bindings.push(B::Property {
                             flags: Default::default(),
                             key: Expr::init(
+                                self.alloc,
                                 E::String::init(&second_e_dot.name),
                                 second_e_dot.name_loc,
                             ),
@@ -2066,7 +2070,11 @@ pub mod __gated_printer {
 
                             temp_bindings.push(B::Property {
                                 flags: Default::default(),
-                                key: Expr::init(E::String::init(&e_dot.name), e_dot.name_loc),
+                                key: Expr::init(
+                                    self.alloc,
+                                    E::String::init(&e_dot.name),
+                                    e_dot.name_loc,
+                                ),
                                 value: decl.binding,
                                 default_value: None,
                             });
@@ -3760,6 +3768,7 @@ pub mod __gated_printer {
                             let mut part = part_clone(_part);
                             let inlined_value: Option<Expr> = match &part.value.data {
                                 ExprData::ENameOfSymbol(e2) => Some(Expr::init(
+                                    self.alloc,
                                     E::String::init(self.mangled_prop_name(e2.ref_)),
                                     part.value.loc,
                                 )),
@@ -3798,7 +3807,7 @@ pub mod __gated_printer {
                                     E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                                 },
                             };
-                            let e2 = copy.fold(self.bump, expr.loc);
+                            let e2 = copy.fold(self.alloc, expr.loc);
                             match &e2.data {
                                 ExprData::EString(s) => {
                                     self.print(b'"');
@@ -4437,7 +4446,7 @@ pub mod __gated_printer {
                 value: item_in.value,
                 initializer: item_in.initializer,
                 // Vec is not Copy — re-slice instead of move.
-                ts_decorators: bun_alloc::AstAlloc::vec(),
+                ts_decorators: self.alloc.vec(),
                 ts_metadata: Default::default(),
             };
             if !IS_JSON {
@@ -6696,6 +6705,7 @@ pub mod __gated_printer {
         pub fn init(
             writer: W,
             bump: &'a bun_alloc::Arena,
+            alloc: bun_alloc::AstAlloc,
             import_records: &'a [ImportRecord],
             opts: Options<'a>,
             renamer: rename::Renamer<'a, 'a>,
@@ -6703,6 +6713,7 @@ pub mod __gated_printer {
         ) -> Self {
             let printer = Self {
                 bump,
+                alloc,
                 import_records,
                 needs_semicolon: false,
                 stmt_start: -1,
@@ -7456,13 +7467,14 @@ use js_ast::Ast;
 // `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
 // constant in the monomorphized callers.
 pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
+    alloc: bun_alloc::AstAlloc,
     generate_source_map: GenerateSourceMap,
     opts: &mut Options,
     source: &bun_ast::Source,
     tree: &Ast,
 ) -> SourceMap::chunk::Builder {
     if generate_source_map == GenerateSourceMap::Disable {
-        return SourceMap::chunk::Builder::default();
+        return SourceMap::chunk::Builder::empty(alloc);
     }
 
     let precomputed = opts.line_offset_tables.take();
@@ -7486,9 +7498,9 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
             // copy aliases that storage; it is wrapped in `ManuallyDrop` and
             // never dropped, so ownership stays with the caller.
             Some(borrowed) => unsafe { core::ptr::read(borrowed) },
-            None => SourceMap::line_offset_table::List::new_in(bun_alloc::AstAlloc),
+            None => SourceMap::line_offset_table::List::new_in(alloc),
         }),
-        ..Default::default()
+        ..SourceMap::chunk::Builder::empty(alloc)
     };
     if precomputed.is_none() && generate_source_map == GenerateSourceMap::Lazy {
         // Defer table construction to the first `add_source_mapping` call:
@@ -7522,6 +7534,7 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     tree: &'a Ast,
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
@@ -7642,6 +7655,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
+        alloc,
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
@@ -7650,6 +7664,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
+        alloc,
         tree.import_records.as_slice(),
         opts,
         renamer,
@@ -7765,6 +7780,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
 pub fn print_json<W: WriterTrait>(
     _writer: W,
+    alloc: bun_alloc::AstAlloc,
     expr: js_ast::Expr,
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
@@ -7787,10 +7803,11 @@ pub fn print_json<W: WriterTrait>(
     let mut printer = PrinterType::<W>::init(
         writer,
         &bump,
+        alloc,
         &[], // ast.import_records.slice()
         full_opts,
         no_op.to_renamer(),
-        SourceMap::chunk::Builder::default(), // undefined
+        SourceMap::chunk::Builder::empty(alloc), // undefined
     );
     printer.binary_expression_stack = Vec::new();
 
@@ -7804,6 +7821,7 @@ pub fn print_json<W: WriterTrait>(
 
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     target: bun_ast::Target,
     ast: &Ast,
     source: &bun_ast::Source,
@@ -7822,6 +7840,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     print_with_writer::<&mut BufferPrinter, GENERATE_SOURCE_MAPS>(
         &mut buffer_printer,
         bump,
+        alloc,
         target,
         ast,
         source,
@@ -7835,6 +7854,7 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
 pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     target: bun_ast::Target,
     ast: &Ast,
     source: &bun_ast::Source,
@@ -7847,6 +7867,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
         print_with_writer_and_platform::<W, true, GENERATE_SOURCE_MAPS>(
             writer,
             bump,
+            alloc,
             ast,
             source,
             opts,
@@ -7858,6 +7879,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
         print_with_writer_and_platform::<W, false, GENERATE_SOURCE_MAPS>(
             writer,
             bump,
+            alloc,
             ast,
             source,
             opts,
@@ -7877,6 +7899,7 @@ pub fn print_with_writer_and_platform<
 >(
     mut writer: W,
     bump: &'a bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     ast: &Ast,
     source: &bun_ast::Source,
     opts: Options<'a>,
@@ -7895,6 +7918,7 @@ pub fn print_with_writer_and_platform<
     let module_type = opts.module_type;
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(
+        alloc,
         GenerateSourceMap::eager_if(GENERATE_SOURCE_MAPS),
         &mut opts,
         source,
@@ -7903,6 +7927,7 @@ pub fn print_with_writer_and_platform<
     let mut printer = PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAPS>::init(
         writer,
         bump,
+        alloc,
         import_records,
         opts,
         renamer,
@@ -7983,6 +8008,7 @@ pub fn print_common_js<
 >(
     _writer: W,
     bump: &'a bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     tree: &'a Ast,
     symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source,
@@ -7999,6 +8025,7 @@ pub fn print_common_js<
     let mut opts = opts;
     let mut renamer = rename::NoOpRenamer::init(symbols, source);
     let source_map_builder = get_source_map_builder::<false>(
+        alloc,
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
@@ -8007,6 +8034,7 @@ pub fn print_common_js<
     let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
+        alloc,
         tree.import_records.as_slice(),
         opts,
         renamer.to_renamer(),

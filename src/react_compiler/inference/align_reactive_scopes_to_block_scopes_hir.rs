@@ -101,7 +101,7 @@ pub fn align_reactive_scopes_to_block_scopes_hir(func: &mut HirFunction, env: &m
     let mut active_block_fallthrough_ranges: Vec<BlockFallthroughRange> = Vec::new();
     let mut active_scopes: HashSet<ScopeId> = HashSet::new();
     let mut seen: HashSet<ScopeId> = HashSet::new();
-    let mut value_block_nodes: IdMap<BlockId, ValueBlockNode> = IdMap::new();
+    let mut value_block_nodes: IdMap<BlockId, ValueBlockNode> = IdMap::new_in(env.alloc);
 
     let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
 

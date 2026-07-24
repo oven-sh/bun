@@ -20,15 +20,27 @@ use core::mem::ManuallyDrop;
 use bun_alloc::AllocError;
 use bun_core::strings;
 
-pub trait VecExt<T>: Sized {
+pub trait VecExt<T, A: Allocator = std::alloc::Global>: Sized {
     // ── constructors ──────────────────────────────────────────────────────
-    fn init_capacity(n: usize) -> Self;
-    fn init_one(value: T) -> Self;
+    // Bounded on `A: Default` so `Vec<T, AstAlloc>` (whose allocator must be
+    // passed explicitly) does NOT get these; callers with an `AstAlloc` handle
+    // use `alloc.vec_with_capacity()` / `alloc.vec_from_slice()` instead.
+    fn init_capacity(n: usize) -> Self
+    where
+        A: Default;
+    fn init_one(value: T) -> Self
+    where
+        A: Default;
     fn from_slice(items: &[T]) -> Self
     where
-        T: Clone;
-    fn move_from_list(list: Vec<T>) -> Self;
-    fn from_owned_slice(items: Box<[T]>) -> Self;
+        T: Clone,
+        A: Default;
+    fn move_from_list(list: Vec<T>) -> Self
+    where
+        A: Default;
+    fn from_owned_slice(items: Box<[T]>) -> Self
+    where
+        A: Default;
     /// Arena-builder → owned `Vec<T>`. The linker always calls
     /// `transfer_ownership` afterwards (full copy), so doing the copy up-front
     /// here is no worse and lets the arena round-trip disappear.
@@ -41,7 +53,9 @@ pub trait VecExt<T>: Sized {
     /// a slice borrowed from a container that runs element destructors yields
     /// a double-drop (PTR_AUDIT.md class #1: bitwise-copy of Drop-carrying
     /// type while source is still live).
-    unsafe fn from_bump_slice(items: &mut [T]) -> Self;
+    unsafe fn from_bump_slice(items: &mut [T]) -> Self
+    where
+        A: Default;
     /// Safe sibling of [`from_bump_slice`] for `T: Copy` — the
     /// "source must never be element-dropped again" precondition holds
     /// vacuously (`Copy` ⇒ no `Drop`), so the bitwise move degenerates to a
@@ -55,7 +69,8 @@ pub trait VecExt<T>: Sized {
     /// the stack array — both compile to one memcpy into the global heap.
     fn from_arena_slice(items: &[T]) -> Self
     where
-        T: Copy;
+        T: Copy,
+        A: Default;
     /// Safe sibling of [`from_bump_slice`]: consumes an `ArenaVec` (sole owner
     /// of its elements + arena buffer), bitwise-moves every element into a
     /// fresh global-allocator `Vec<T>`, and leaks the now-logically-empty
@@ -67,12 +82,16 @@ pub trait VecExt<T>: Sized {
     /// Prefer this over `unsafe { from_bump_slice(v.into_bump_slice_mut()) }`
     /// — it encodes the "source is leaked, never dropped again" contract in
     /// the type system instead of a `// SAFETY:` comment.
-    fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
+    fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self
+    where
+        A: Default;
     /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
     /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
     /// Kept only for the `StreamResult::Temporary*` pattern; new code should
     /// take `&[T]` instead.
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>;
+    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>
+    where
+        A: Default;
 
     // ── accessors ─────────────────────────────────────────────────────────
     fn slice(&self) -> &[T];
@@ -166,17 +185,24 @@ pub trait VecExt<T>: Sized {
 }
 
 // Generic over `A` so the impl serves both `Vec<T>` (Global) and
-// `Vec<T, AstAlloc>` (AST-arena lists — `ExprNodeList`/`DeclList`/
-// `PropertyList`). `A: Default` lets every constructor produce the right
-// allocator without a value in hand; both `Global` and `AstAlloc` are ZSTs
-// with `Default`, so `A::default()` is free.
-impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
+// `Vec<T, AstAlloc>` (AST-arena lists: `ExprNodeList`/`DeclList`/
+// `PropertyList`). `A: Clone` lets methods with `&self` build a sibling `Vec`
+// in the same allocator via `self.allocator().clone()`; the free-standing
+// constructors are bounded `A: Default` in the trait so a `Vec<T, AstAlloc>`
+// (which must be given an explicit handle) does not get them.
+impl<T, A: Allocator + Clone + 'static> VecExt<T, A> for Vec<T, A> {
     #[inline]
-    fn init_capacity(n: usize) -> Self {
+    fn init_capacity(n: usize) -> Self
+    where
+        A: Default,
+    {
         Vec::with_capacity_in(n, A::default())
     }
     #[inline]
-    fn init_one(value: T) -> Self {
+    fn init_one(value: T) -> Self
+    where
+        A: Default,
+    {
         let mut v = Vec::with_capacity_in(1, A::default());
         v.push(value);
         v
@@ -185,13 +211,17 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn from_slice(items: &[T]) -> Self
     where
         T: Clone,
+        A: Default,
     {
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         v.extend_from_slice(items);
         v
     }
     #[inline]
-    fn move_from_list(list: Vec<T>) -> Self {
+    fn move_from_list(list: Vec<T>) -> Self
+    where
+        A: Default,
+    {
         // Mirror of the `move_to_list` fast-path: when `A == Global` this is a
         // pointer adopt, not a realloc.
         // Hot Global callers: `FileReader`, `ByteStream`, `shell::Cmd`.
@@ -208,11 +238,17 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         v
     }
     #[inline]
-    fn from_owned_slice(items: Box<[T]>) -> Self {
+    fn from_owned_slice(items: Box<[T]>) -> Self
+    where
+        A: Default,
+    {
         Self::move_from_list(items.into_vec())
     }
     #[inline]
-    unsafe fn from_bump_slice(items: &mut [T]) -> Self {
+    unsafe fn from_bump_slice(items: &mut [T]) -> Self
+    where
+        A: Default,
+    {
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         // SAFETY: caller contract — `items` is a leaked bump-arena slice
         // (`into_bump_slice_mut`); bitwise-move elements into a fresh `A`
@@ -228,6 +264,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     fn from_arena_slice(items: &[T]) -> Self
     where
         T: Copy,
+        A: Default,
     {
         // For `T: Copy` the `from_bump_slice` bitwise-move is just a memcpy and
         // the source carries no destructor.
@@ -236,7 +273,10 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         v
     }
     #[inline]
-    fn from_bump_vec(mut src: bun_alloc::ArenaVec<'_, T>) -> Self {
+    fn from_bump_vec(mut src: bun_alloc::ArenaVec<'_, T>) -> Self
+    where
+        A: Default,
+    {
         let len = src.len();
         let mut out = Vec::with_capacity_in(len, A::default());
         // SAFETY:
@@ -265,7 +305,10 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         out
     }
     #[inline]
-    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self> {
+    unsafe fn from_borrowed_slice_dangerous(items: &[T]) -> ManuallyDrop<Self>
+    where
+        A: Default,
+    {
         // SAFETY: caller must never drop or grow the returned `Vec` — its
         // buffer is borrowed.  Same contract as the original.
         ManuallyDrop::new(unsafe {
@@ -350,7 +393,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     }
     #[inline]
     fn clear_and_free(&mut self) {
-        *self = Vec::new_in(A::default());
+        *self = Vec::new_in(self.allocator().clone());
     }
     #[inline]
     fn drain_front(&mut self, n: usize)
@@ -411,7 +454,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
 
     #[inline]
     fn move_to_list(&mut self) -> Vec<T> {
-        let taken = core::mem::replace(self, Vec::new_in(A::default()));
+        let taken = core::mem::replace(self, Vec::new_in(self.allocator().clone()));
         // Fast path: `Vec<T, Global>` → `Vec<T>` is a pointer move, not a
         // realloc+memcpy. Restores zero-copy behavior on the HTTP streaming
         // paths (`RequestContext::response_buf`, `ByteStream`); the copying
@@ -445,7 +488,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
                 self.as_ptr().cast_mut(),
                 self.len(),
                 self.capacity(),
-                A::default(),
+                self.allocator().clone(),
             )
         })
     }
@@ -476,7 +519,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
     where
         F: FnMut(&T) -> T,
     {
-        let mut v = Vec::with_capacity_in(self.len(), A::default());
+        let mut v = Vec::with_capacity_in(self.len(), self.allocator().clone());
         for item in self.iter() {
             v.push(clone_one(item));
         }
@@ -487,7 +530,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         F: FnMut(&T) -> Result<T, E>,
         E: From<AllocError>,
     {
-        let mut v = Vec::with_capacity_in(self.len(), A::default());
+        let mut v = Vec::with_capacity_in(self.len(), self.allocator().clone());
         for item in self.iter() {
             v.push(clone_one(item)?);
         }

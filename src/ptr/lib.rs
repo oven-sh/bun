@@ -295,48 +295,17 @@ pub unsafe trait LaunderedSelf: Sized {
 /// slightly different names; both are kept so callers from either land cleanly.
 pub use detach_lifetime_ref as detach_ref;
 
-/// Reinterpret `&[Box<[T]>]` as `&[&[T]]` for read-only fan-out.
+/// Collect a column of owned boxed slices into a `Vec` of borrows.
 ///
-/// `Box<[T]>` and `&[T]` are both `(NonNull<T>, len: usize)` fat pointers with
-/// identical layout (guaranteed by the unsized-pointer ABI), so a column of
-/// owned boxed slices can be viewed as a column of borrows without copying.
 /// Used by the bundler's SoA columns (`items_unique_key_for_additional_file`)
-/// where the printer API wants `&[&[u8]]`.
-///
-/// The returned borrows are valid for the input borrow `'a` only — the boxes
-/// are not moved or dropped while the view is live.
-///
-/// # Safety
-/// Relies on `Box<[T]>` and `&[T]` having identical fat-pointer **field
-/// order** (data-ptr then len). This is de-facto stable on every supported
-/// rustc but is not a language guarantee — the const block below proves only
-/// size/align. `unsafe` + `#[doc(hidden)]` so the layout assumption stays
-/// visible at each call site rather than inviting new callers; do not use
-/// outside the bundler SoA-column read-only fan-out it was written for.
+/// where the printer API wants `&[&[u8]]`. `Box<[T], A>` with a non-ZST
+/// allocator (e.g. `AstAlloc`) is wider than `&[T]`, so the zero-copy
+/// reinterpret this used to do is not possible in the general case; return an
+/// owning `Vec` of borrows instead.
 #[doc(hidden)]
-#[inline(always)]
-pub unsafe fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> &[&[T]] {
-    const {
-        assert!(core::mem::size_of::<Box<[T], A>>() == core::mem::size_of::<&[T]>());
-        assert!(core::mem::align_of::<Box<[T], A>>() == core::mem::align_of::<&[T]>());
-    }
-    // SAFETY: layout-identical per the const asserts above; every `Box<[T]>`
-    // element is a valid non-null `(ptr, len)` pair, which is exactly the
-    // validity invariant of `&[T]`. Read-only, lifetime tied to `s`.
-    let view: &[&[T]] = unsafe { core::slice::from_raw_parts(s.as_ptr().cast::<&[T]>(), s.len()) };
-    // Fat-pointer field order (ptr-then-len) is de-facto stable but not
-    // language-guaranteed; spot-check first+last in debug so an ABI flip
-    // would trip here rather than silently misbehaving downstream. (Checking
-    // every element is O(n) per call and the bundler passes thousands of
-    // entries inside per-chunk loops; first/last is sufficient to detect a
-    // field-order swap since it would affect every element uniformly.)
-    #[cfg(debug_assertions)]
-    if let (Some(bf), Some(bl)) = (s.first(), s.last()) {
-        let (vf, vl) = (view[0], view[view.len() - 1]);
-        debug_assert!(bf.as_ptr() == vf.as_ptr() && bf.len() == vf.len());
-        debug_assert!(bl.as_ptr() == vl.as_ptr() && bl.len() == vl.len());
-    }
-    view
+#[inline]
+pub fn boxed_slices_as_borrowed<T, A: core::alloc::Allocator>(s: &[Box<[T], A>]) -> Vec<&[T]> {
+    s.iter().map(|b| &**b).collect()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

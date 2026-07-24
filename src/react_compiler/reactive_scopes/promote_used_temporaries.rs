@@ -55,7 +55,7 @@ pub fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut Environme
     let mut state = State {
         tags: HashSet::new(),
         promoted: HashSet::new(),
-        pruned: IdMap::new(),
+        pruned: IdMap::new_in(env.alloc),
     };
 
     // Phase 1: collect promotable temporaries (jsx tags, pruned scope usage)
@@ -90,7 +90,7 @@ pub fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut Environme
             }
         }
     }
-    let mut inter_state: IdMap<IdentifierId, (IdentifierId, bool)> = IdMap::new();
+    let mut inter_state: IdMap<IdentifierId, (IdentifierId, bool)> = IdMap::new_in(env.alloc);
     promote_interposed_block(
         &func.body,
         &mut state,
@@ -1197,8 +1197,9 @@ fn promote_identifier(identifier_id: IdentifierId, state: &mut State, env: &mut 
     buf[0] = b'#';
     buf[1] = kind;
     buf[2..2 + digits.len()].copy_from_slice(digits);
-    env.identifiers[identifier_id.0 as usize].name = Some(IdentifierName::Promoted(
-        crate::hir::StoreStr::new(bun_ast::data_store_dupe_str(&buf[..2 + digits.len()])),
-    ));
+    env.identifiers[identifier_id.0 as usize].name =
+        Some(IdentifierName::Promoted(crate::hir::StoreStr::new(
+            bun_ast::data_store_dupe_str(env.alloc, &buf[..2 + digits.len()]),
+        )));
     state.promoted.insert(decl_id);
 }

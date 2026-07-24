@@ -1,6 +1,7 @@
 //! Stage 2 of the JSON parser: recursive descent over the structural index built by
 //! [`crate::json_index`] (stage 1) into the immutable JSON AST (`E::JsonTape` rows).
 use bun_alloc::Arena as Bump;
+use bun_alloc::AstAlloc;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
 use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
@@ -20,6 +21,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
     source: &'s Source,
     log: &'a mut Log,
     idx: &'i mut StructuralIndex<'s>,
+    alloc: AstAlloc,
     pub cursor: usize,
     opts: JSONOptions,
     token_start: usize,
@@ -90,6 +92,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         source: &'s Source,
         log: &'a mut Log,
         idx: &'i mut StructuralIndex<'s>,
+        alloc: AstAlloc,
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
     ) -> Self {
@@ -112,6 +115,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             source,
             log,
             idx,
+            alloc,
             cursor: 0,
             opts,
             token_start: 0,
@@ -383,7 +387,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             b'[' => self.parse_array(loc),
             b'"' | b'\'' => {
                 let s = self.parse_string()?;
-                Ok(Expr::init(s, loc))
+                Ok(Expr::init(self.alloc, s, loc))
             }
             _ => self.parse_scalar(loc),
         }
@@ -567,15 +571,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         match run[0] {
             b't' if run.len() >= 4 && &run[..4] == b"true" && self.run_rest_is_ws(cursor, 4) => {
                 self.cursor += 1;
-                Ok(Expr::init(E::Boolean { value: true }, loc))
+                Ok(Expr::init(self.alloc, E::Boolean { value: true }, loc))
             }
             b'f' if run.len() >= 5 && &run[..5] == b"false" && self.run_rest_is_ws(cursor, 5) => {
                 self.cursor += 1;
-                Ok(Expr::init(E::Boolean { value: false }, loc))
+                Ok(Expr::init(self.alloc, E::Boolean { value: false }, loc))
             }
             b'n' if run.len() >= 4 && &run[..4] == b"null" && self.run_rest_is_ws(cursor, 4) => {
                 self.cursor += 1;
-                Ok(Expr::init(E::Null {}, loc))
+                Ok(Expr::init(self.alloc, E::Null {}, loc))
             }
             b'0'..=b'9' | b'.' | b'-' => self.parse_number(loc),
             _ => self.parse_scalar_cold(loc),
@@ -707,6 +711,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
         let (first, count) = self.push_items_block(mark);
         Ok(Expr::init(
+            self.alloc,
             // SAFETY: `tape_ptr` is the tape allocation's own pointer, and the
             // tape outlives the AST (`take_tape` hands it to the caller).
             unsafe { E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
@@ -837,6 +842,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
 
         let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
+            self.alloc,
             // SAFETY: see `parse_array`.
             unsafe { E::ObjectJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
             loc,
@@ -908,7 +914,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(self.number_trailing_junk(start + used));
         }
         self.cursor += 1;
-        Ok(Expr::init(E::Number::new(value), loc))
+        Ok(Expr::init(self.alloc, E::Number::new(value), loc))
     }
 
     #[cold]
@@ -936,7 +942,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(self.number_trailing_junk(q + used));
         }
         self.cursor += 1;
-        Ok(Expr::init(E::Number::new(-value), loc))
+        Ok(Expr::init(self.alloc, E::Number::new(-value), loc))
     }
 
     #[cold]
@@ -1199,15 +1205,19 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         match tail[0] {
             b't' if tail.starts_with(b"true") && self.rest_is_ws_cold(&tail[4..]) => {
                 self.cursor += 1;
-                Ok(Expr::init(E::Boolean { value: true }, loc_tail))
+                Ok(Expr::init(self.alloc, E::Boolean { value: true }, loc_tail))
             }
             b'f' if tail.starts_with(b"false") && self.rest_is_ws_cold(&tail[5..]) => {
                 self.cursor += 1;
-                Ok(Expr::init(E::Boolean { value: false }, loc_tail))
+                Ok(Expr::init(
+                    self.alloc,
+                    E::Boolean { value: false },
+                    loc_tail,
+                ))
             }
             b'n' if tail.starts_with(b"null") && self.rest_is_ws_cold(&tail[4..]) => {
                 self.cursor += 1;
-                Ok(Expr::init(E::Null {}, loc_tail))
+                Ok(Expr::init(self.alloc, E::Null {}, loc_tail))
             }
             b'-' => self.parse_negative_number_at(pos, loc_tail),
             b'0'..=b'9' | b'.' => {
@@ -1216,7 +1226,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
                     return Err(self.number_trailing_junk(pos + used));
                 }
                 self.cursor += 1;
-                Ok(Expr::init(E::Number::new(value), loc_tail))
+                Ok(Expr::init(self.alloc, E::Number::new(value), loc_tail))
             }
             c if is_identifier_start(c) => {
                 let r = Range {
@@ -1268,9 +1278,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         self.decode_escapes(text, &mut buf)?;
         self.cursor += 1;
         match buf.as_slice() {
-            b"true" => Ok(Expr::init(E::Boolean { value: true }, loc)),
-            b"false" => Ok(Expr::init(E::Boolean { value: false }, loc)),
-            b"null" => Ok(Expr::init(E::Null {}, loc)),
+            b"true" => Ok(Expr::init(self.alloc, E::Boolean { value: true }, loc)),
+            b"false" => Ok(Expr::init(self.alloc, E::Boolean { value: false }, loc)),
+            b"null" => Ok(Expr::init(self.alloc, E::Null {}, loc)),
             _ => {
                 self.cursor -= 1;
                 Err(self.unexpected(self.cursor))
@@ -1421,10 +1431,11 @@ impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
 pub(crate) fn decode_auto_quoted(
     source: &Source,
     log: &mut Log,
-    bump: &Bump,
+    alloc: AstAlloc,
     body: &[u8],
     opts: JSONOptions,
 ) -> crate::Result<E::String> {
+    let bump: &Bump = alloc.arena();
     let mut l = MiniLog {
         log,
         source,

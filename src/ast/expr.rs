@@ -90,32 +90,10 @@ impl Expr {
         }
     }
 
-    /// Associated wrapper so downstream crates
-    /// can call `crate::Expr::data_store_reset()` without naming the
-    /// thread-local Store module path.
-    #[inline]
-    pub fn data_store_reset() {
-        data::Store::reset();
-    }
-
-    /// Initializes the thread-local expression-data `Store` for the current
-    /// thread; counterpart of `data_store_reset()`.
-    #[inline]
-    pub fn data_store_create() {
-        data::Store::create();
-    }
-}
-
-impl Expr {
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, AllocError> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
-        self.deep_clone_no_detach(bump)
-    }
-    #[inline]
-    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Expr, AllocError> {
+    pub fn deep_clone(&self, into: bun_alloc::AstAlloc) -> Result<Expr, AllocError> {
         Ok(Expr {
             loc: self.loc,
-            data: self.data.deep_clone_no_detach(bump)?,
+            data: self.data.deep_clone(into)?,
         })
     }
 
@@ -161,12 +139,13 @@ impl Expr {
     }
 
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
-    pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
+    pub fn from_json_value(alloc: bun_alloc::AstAlloc, value: &E::JsonValue, loc: Loc) -> Expr {
         match value {
-            E::JsonValue::Null => Expr::init(E::Null, loc),
-            E::JsonValue::Boolean(value) => Expr::init(E::Boolean { value: *value }, loc),
-            E::JsonValue::Number(n) => Expr::init(*n, loc),
+            E::JsonValue::Null => Expr::init(alloc, E::Null, loc),
+            E::JsonValue::Boolean(value) => Expr::init(alloc, E::Boolean { value: *value }, loc),
+            E::JsonValue::Number(n) => Expr::init(alloc, *n, loc),
             E::JsonValue::String(s) => Expr::init(
+                alloc,
                 E::String {
                     data: *s,
                     ..Default::default()
@@ -185,9 +164,13 @@ impl Expr {
     }
 
     /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
-    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+    pub fn for_each_property(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        mut f: impl FnMut(&[u8], Loc, Expr),
+    ) {
         let _: Result<(), core::convert::Infallible> =
-            self.try_for_each_property(|key, loc, value| {
+            self.try_for_each_property(alloc, |key, loc, value| {
                 f(key, loc, value);
                 Ok(())
             });
@@ -196,6 +179,7 @@ impl Expr {
     /// [`Expr::for_each_property`] with a fallible callback; stops at the first `Err`.
     pub fn try_for_each_property<Error>(
         &self,
+        alloc: bun_alloc::AstAlloc,
         mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
     ) -> Result<(), Error> {
         match &self.data {
@@ -217,7 +201,7 @@ impl Expr {
                     f(
                         property.key.slice(),
                         property.key_loc,
-                        Expr::from_json_value(&property.value, property.key_loc),
+                        Expr::from_json_value(alloc, &property.value, property.key_loc),
                     )?;
                 }
             }
@@ -236,7 +220,7 @@ impl Expr {
     }
 
     /// Look up `name` among the properties of an object-literal expression.
-    pub fn as_property(&self, name: &[u8]) -> Option<Query> {
+    pub fn as_property(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<Query> {
         match &self.data {
             Data::EObject(obj) => {
                 if obj.properties.len_u32() == 0 {
@@ -252,7 +236,7 @@ impl Expr {
                     .enumerate()
                     .find(|(_, p)| p.key.slice() == name)?;
                 Some(Query {
-                    expr: Expr::from_json_value(&prop.value, prop.key_loc),
+                    expr: Expr::from_json_value(alloc, &prop.value, prop.key_loc),
                     loc: prop.key_loc,
                     i: i as u32,
                 })
@@ -261,12 +245,12 @@ impl Expr {
         }
     }
 
-    pub fn get(&self, name: &[u8]) -> Option<Expr> {
-        self.as_property(name).map(|q| q.expr)
+    pub fn get(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<Expr> {
+        self.as_property(alloc, name).map(|q| q.expr)
     }
 
-    pub fn get_object(&self, name: &[u8]) -> Option<Expr> {
-        self.as_property(name)
+    pub fn get_object(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<Expr> {
+        self.as_property(alloc, name)
             .and_then(|q| q.expr.is_object().then_some(q.expr))
     }
 
@@ -374,7 +358,13 @@ impl Expr {
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
+    pub fn get_by_index(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        index: u32,
+        index_str: &[u8],
+        bump: &Bump,
+    ) -> Option<Expr> {
         match &self.data {
             Data::EArray(array) => {
                 if index >= array.items.len_u32() {
@@ -385,14 +375,14 @@ impl Expr {
             Data::EArrayJSON(array) => {
                 let items = array.get().items();
                 let item = items.get(index as usize)?;
-                Some(Expr::from_json_value(item, self.loc))
+                Some(Expr::from_json_value(alloc, item, self.loc))
             }
             Data::EObjectJSON(object) => object
                 .get()
                 .properties()
                 .iter()
                 .find(|p| p.key.slice() == index_str)
-                .map(|p| Expr::from_json_value(&p.value, p.key_loc)),
+                .map(|p| Expr::from_json_value(alloc, &p.value, p.key_loc)),
             Data::EObject(object) => {
                 for prop in object.properties.slice_const() {
                     let Some(key) = &prop.key else { continue };
@@ -420,6 +410,7 @@ impl Expr {
                     // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
                     if slice.len() > index as usize {
                         return Some(Expr::init(
+                            alloc,
                             E::String {
                                 data: Str::new(&slice[index as usize..][..1]),
                                 ..Default::default()
@@ -446,7 +437,12 @@ impl Expr {
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
     // The arena is threaded explicitly because get_by_index allocates an
     // E.String slice into &Bump.
-    pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
+    pub fn get_path_may_be_index(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        bump: &Bump,
+        name: &[u8],
+    ) -> Option<Expr> {
         if name.is_empty() {
             return None;
         }
@@ -458,7 +454,7 @@ impl Expr {
                     let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
-                        base_expr = base_expr.get(key)?;
+                        base_expr = base_expr.get(alloc, key)?;
                     }
 
                     let index_str: &[u8] = &name[idx + 1..end_idx];
@@ -469,22 +465,22 @@ impl Expr {
                     } else {
                         b""
                     };
-                    let result = base_expr.get_by_index(index, index_str, bump)?;
+                    let result = base_expr.get_by_index(alloc, index, index_str, bump)?;
                     if !rest.is_empty() {
-                        return result.get_path_may_be_index(bump, rest);
+                        return result.get_path_may_be_index(alloc, bump, rest);
                     }
                     return Some(result);
                 }
                 b'.' => {
                     let key = &name[..idx];
-                    let sub_expr = self.get(key)?;
+                    let sub_expr = self.get(alloc, key)?;
                     let subpath: &[u8] = if name.len() > idx {
                         &name[idx + 1..]
                     } else {
                         b""
                     };
                     if !subpath.is_empty() {
-                        return sub_expr.get_path_may_be_index(bump, subpath);
+                        return sub_expr.get_path_may_be_index(alloc, bump, subpath);
                     }
                     return Some(sub_expr);
                 }
@@ -492,13 +488,18 @@ impl Expr {
             }
         }
 
-        self.get(name)
+        self.get(alloc, name)
     }
 
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
+    pub fn set(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        name: &[u8],
+        value: Expr,
+    ) -> Result<(), AllocError> {
         debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
             unreachable!()
@@ -519,6 +520,7 @@ impl Expr {
             &mut obj.properties,
             G::Property {
                 key: Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(name),
                         ..Default::default()
@@ -526,7 +528,7 @@ impl Expr {
                     Loc::EMPTY,
                 )),
                 value: Some(value),
-                ..Default::default()
+                ..G::Property::empty(alloc)
             },
         );
         Ok(())
@@ -537,7 +539,7 @@ impl Expr {
     /// Sets the value of a property to a string, creating it if it doesn't exist.
     pub fn set_string(
         expr: &mut Expr,
-        _bump: &Bump,
+        alloc: bun_alloc::AstAlloc,
         name: &[u8],
         value: &[u8],
     ) -> Result<(), AllocError> {
@@ -553,6 +555,7 @@ impl Expr {
             };
             if key_str.eql_bytes(name) {
                 prop.value = Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
@@ -567,6 +570,7 @@ impl Expr {
             &mut obj.properties,
             G::Property {
                 key: Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(name),
                         ..Default::default()
@@ -574,13 +578,14 @@ impl Expr {
                     Loc::EMPTY,
                 )),
                 value: Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
                     },
                     Loc::EMPTY,
                 )),
-                ..Default::default()
+                ..G::Property::empty(alloc)
             },
         );
         Ok(())
@@ -588,11 +593,12 @@ impl Expr {
 
     pub fn get_string<'b>(
         &self,
+        alloc: bun_alloc::AstAlloc,
         bump: &'b Bump,
         name: &[u8],
     ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
         let expr = self;
-        if let Some(q) = expr.as_property(name) {
+        if let Some(q) = expr.as_property(alloc, name) {
             if let Some(str) = q.expr.as_string(bump) {
                 return Ok(Some((str, q.expr.loc)));
             }
@@ -600,8 +606,8 @@ impl Expr {
         Ok(None)
     }
 
-    pub fn get_number(&self, name: &[u8]) -> Option<(f64, Loc)> {
-        if let Some(q) = self.as_property(name) {
+    pub fn get_number(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<(f64, Loc)> {
+        if let Some(q) = self.as_property(alloc, name) {
             if let Some(num) = q.expr.as_number() {
                 return Some((num, q.expr.loc));
             }
@@ -611,10 +617,11 @@ impl Expr {
 
     pub fn get_string_cloned<'b>(
         &self,
+        alloc: bun_alloc::AstAlloc,
         bump: &'b Bump,
         name: &[u8],
     ) -> Result<Option<&'b [u8]>, AllocError> {
-        match self.as_property(name) {
+        match self.as_property(alloc, name) {
             Some(q) => q.expr.as_string_cloned(bump),
             None => Ok(None),
         }
@@ -623,8 +630,8 @@ impl Expr {
     // `Query` holds `expr` by value (Copy). The iterator stores the
     // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
-    pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
-        let q = self.as_property(name)?;
+    pub fn get_array(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<ArrayIterator> {
+        let q = self.as_property(alloc, name)?;
         q.expr.as_array()
     }
 }
@@ -648,7 +655,7 @@ pub enum ArrayIterator {
 }
 
 impl ArrayIterator {
-    pub fn next(&mut self) -> Option<Expr> {
+    pub fn next(&mut self, alloc: bun_alloc::AstAlloc) -> Option<Expr> {
         match self {
             ArrayIterator::Full { array, index } => {
                 if *index >= array.items.len_u32() {
@@ -661,7 +668,7 @@ impl ArrayIterator {
             ArrayIterator::Json { array, index, loc } => {
                 let item = array.get().items().get(*index as usize)?;
                 *index += 1;
-                Some(Expr::from_json_value(item, *loc))
+                Some(Expr::from_json_value(alloc, item, *loc))
             }
         }
     }
@@ -741,11 +748,23 @@ impl Expr {
     // PERF: `Op::Code` does not derive `ConstParamTy` (Op.rs owns the enum);
     // pass at runtime here. Revisit once `Code` gains `ConstParamTy` — call
     // sites are a handful of literal ops.
-    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
-        Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
+    pub fn join_with_left_associative_op(
+        alloc: bun_alloc::AstAlloc,
+        op: Op::Code,
+        a: Expr,
+        b: Expr,
+    ) -> Expr {
+        Self::join_with_left_associative_op_with_check(
+            alloc,
+            op,
+            a,
+            b,
+            bun_core::StackCheck::init(),
+        )
     }
 
     fn join_with_left_associative_op_with_check(
+        alloc: bun_alloc::AstAlloc,
         op: Op::Code,
         a: Expr,
         b: Expr,
@@ -756,6 +775,7 @@ impl Expr {
             if let Data::EBinary(mut comma) = a.data {
                 if comma.op == crate::OpCode::BinComma {
                     comma.right = Self::join_with_left_associative_op_with_check(
+                        alloc,
                         op,
                         comma.right,
                         b,
@@ -770,8 +790,10 @@ impl Expr {
             if let Data::EBinary(binary) = b.data {
                 if binary.op == op {
                     return Self::join_with_left_associative_op_with_check(
+                        alloc,
                         op,
                         Self::join_with_left_associative_op_with_check(
+                            alloc,
                             op,
                             a,
                             binary.left,
@@ -787,6 +809,7 @@ impl Expr {
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
         Expr::init(
+            alloc,
             E::Binary {
                 op,
                 left: a,
@@ -796,8 +819,7 @@ impl Expr {
         )
     }
 
-    // Uses the thread-local `data::Store`, so no allocator parameter is needed.
-    pub fn join_with_comma(self, b: Expr) -> Expr {
+    pub fn join_with_comma(self, alloc: bun_alloc::AstAlloc, b: Expr) -> Expr {
         if self.is_missing() {
             return b;
         }
@@ -805,6 +827,7 @@ impl Expr {
             return self;
         }
         Expr::init(
+            alloc,
             E::Binary {
                 op: crate::OpCode::BinComma,
                 left: self,
@@ -814,15 +837,15 @@ impl Expr {
         )
     }
 
-    pub fn join_all_with_comma(all: &[Expr]) -> Expr {
+    pub fn join_all_with_comma(alloc: bun_alloc::AstAlloc, all: &[Expr]) -> Expr {
         debug_assert!(!all.is_empty());
         match all.len() {
             1 => all[0],
-            2 => Expr::join_with_comma(all[0], all[1]),
+            2 => Expr::join_with_comma(all[0], alloc, all[1]),
             _ => {
                 let mut expr = all[0];
                 for it in &all[1..] {
-                    expr = Expr::join_with_comma(expr, *it);
+                    expr = Expr::join_with_comma(expr, alloc, *it);
                 }
                 expr
             }
@@ -887,8 +910,8 @@ impl Expr {
 
 /// Trait implemented by every `E::*` payload type to construct an `Expr`.
 pub trait IntoExprData: Sized {
-    /// Construct `Data` using the thread-local `Data::Store` arena.
-    fn into_data_store(self) -> Data;
+    /// Construct `Data` allocating the payload in `alloc`'s arena.
+    fn into_data_store(self, alloc: bun_alloc::AstAlloc) -> Data;
     /// Construct `Data` using a caller-supplied arena.
     /// Be careful to free the memory (or use an arena that does it for you).
     fn into_data_alloc(self, bump: &Bump) -> Data;
@@ -899,8 +922,8 @@ macro_rules! impl_into_expr_data_boxed {
         $(
             impl IntoExprData for E::$ty {
                 #[inline]
-                fn into_data_store(self) -> Data {
-                    Data::$variant(data::Store::append(self))
+                fn into_data_store(self, alloc: ::bun_alloc::AstAlloc) -> Data {
+                    Data::$variant(data::Store::append(alloc, self))
                 }
                 #[inline]
                 fn into_data_alloc(self, bump: &Bump) -> Data {
@@ -916,7 +939,7 @@ macro_rules! impl_into_expr_data_inline {
         $(
             impl IntoExprData for E::$ty {
                 #[inline]
-                fn into_data_store(self) -> Data { Data::$variant(self) }
+                fn into_data_store(self, _alloc: ::bun_alloc::AstAlloc) -> Data { Data::$variant(self) }
                 #[inline]
                 fn into_data_alloc(self, _bump: &Bump) -> Data { Data::$variant(self) }
             }
@@ -970,7 +993,7 @@ impl_into_expr_data_inline! {
 // so the copy is trivial.
 impl IntoExprData for E::Identifier {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self, _alloc: bun_alloc::AstAlloc) -> Data {
         Data::EIdentifier(self)
     }
     #[inline]
@@ -981,7 +1004,7 @@ impl IntoExprData for E::Identifier {
 
 impl IntoExprData for E::ImportIdentifier {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self, _alloc: bun_alloc::AstAlloc) -> Data {
         Data::EImportIdentifier(self)
     }
     #[inline]
@@ -992,7 +1015,7 @@ impl IntoExprData for E::ImportIdentifier {
 
 impl IntoExprData for E::CommonJSExportIdentifier {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self, _alloc: bun_alloc::AstAlloc) -> Data {
         Data::ECommonjsExportIdentifier(self)
     }
     #[inline]
@@ -1005,7 +1028,7 @@ impl IntoExprData for E::CommonJSExportIdentifier {
 // E::EString — special debug assert + boxed
 impl IntoExprData for E::EString {
     #[inline]
-    fn into_data_store(self) -> Data {
+    fn into_data_store(self, alloc: bun_alloc::AstAlloc) -> Data {
         #[cfg(debug_assertions)]
         {
             // Sanity check: assert string is not a null ptr
@@ -1013,7 +1036,7 @@ impl IntoExprData for E::EString {
                 debug_assert!(self.data.as_ptr() as usize > 0);
             }
         }
-        Data::EString(data::Store::append(self))
+        Data::EString(data::Store::append(alloc, self))
     }
     fn into_data_alloc(self, bump: &Bump) -> Data {
         #[cfg(debug_assertions)]
@@ -1030,8 +1053,8 @@ impl IntoExprData for E::EString {
 // `Clone` (rope `next` ptr), so this is a shallow field-copy.
 impl IntoExprData for &E::EString {
     #[inline]
-    fn into_data_store(self) -> Data {
-        Data::EString(data::Store::append(self.shallow_clone()))
+    fn into_data_store(self, alloc: bun_alloc::AstAlloc) -> Data {
+        Data::EString(data::Store::append(alloc, self.shallow_clone()))
     }
     #[inline]
     fn into_data_alloc(self, bump: &Bump) -> Data {
@@ -1045,7 +1068,6 @@ impl Expr {
     /// Also, prefer Expr.init or Expr.alloc when possible. This will be slower.
     #[inline]
     pub fn allocate<T: IntoExprData>(bump: &Bump, st: T, loc: Loc) -> Expr {
-        data::Store::assert();
         Expr {
             loc,
             data: st.into_data_alloc(bump),
@@ -1053,11 +1075,10 @@ impl Expr {
     }
 
     #[inline]
-    pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
-        data::Store::assert();
+    pub fn init<T: IntoExprData>(alloc: bun_alloc::AstAlloc, st: T, loc: Loc) -> Expr {
         Expr {
             loc,
-            data: st.into_data_store(),
+            data: st.into_data_store(alloc),
         }
     }
 
@@ -1071,8 +1092,9 @@ impl Expr {
         matches!(self.data, Data::EMissing(_))
     }
     #[inline]
-    pub fn assign(a: Expr, b: Expr) -> Expr {
+    pub fn assign(alloc: bun_alloc::AstAlloc, a: Expr, b: Expr) -> Expr {
         Expr::init(
+            alloc,
             E::Binary {
                 op: crate::OpCode::BinAssign,
                 left: a,
@@ -1266,17 +1288,18 @@ impl Expr {
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
-        Expr::init(t, self.loc)
+    pub fn at<T: IntoExprData>(&self, alloc: bun_alloc::AstAlloc, t: T) -> Expr {
+        Expr::init(alloc, t, self.loc)
     }
 
     // Wraps the provided expression in the "!" prefix operator. The expression
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
-        self.maybe_simplify_not(bump).unwrap_or_else(|| {
+    pub fn not(&self, alloc: bun_alloc::AstAlloc) -> Expr {
+        self.maybe_simplify_not(alloc).unwrap_or_else(|| {
             Expr::init(
+                alloc,
                 E::Unary {
                     op: crate::OpCode::UnNot,
                     value: *self,
@@ -1297,27 +1320,30 @@ impl Expr {
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
     /// It's separate from "Not()" above to avoid allocation on failure in case
     /// that is undesired.
-    pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr> {
+    pub fn maybe_simplify_not(&self, alloc: bun_alloc::AstAlloc) -> Option<Expr> {
         let expr = self;
         match expr.data {
             Data::ENull(_) | Data::EUndefined(_) => {
-                return Some(expr.at(E::Boolean { value: true }));
+                return Some(expr.at(alloc, E::Boolean { value: true }));
             }
             Data::EBoolean(b) | Data::EBranchBoolean(b) => {
-                return Some(expr.at(E::Boolean { value: !b.value }));
+                return Some(expr.at(alloc, E::Boolean { value: !b.value }));
             }
             Data::ENumber(n) => {
-                return Some(expr.at(E::Boolean {
-                    value: n.value() == 0.0 || n.value().is_nan(),
-                }));
+                return Some(expr.at(
+                    alloc,
+                    E::Boolean {
+                        value: n.value() == 0.0 || n.value().is_nan(),
+                    },
+                ));
             }
             Data::EBigInt(b) => {
                 if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
-                    return Some(expr.at(E::Boolean { value: equal }));
+                    return Some(expr.at(alloc, E::Boolean { value: equal }));
                 }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
-                return Some(expr.at(E::Boolean { value: false }));
+                return Some(expr.at(alloc, E::Boolean { value: false }));
             }
             // "!!!a" => "!a"
             Data::EUnary(un) => {
@@ -1359,14 +1385,14 @@ impl Expr {
                     }
                     crate::OpCode::BinComma => {
                         // "!(a, b)" => "a, !b"
-                        ex.right = ex.right.not(bump);
+                        ex.right = ex.right.not(alloc);
                         return Some(*expr);
                     }
                     _ => {}
                 }
             }
             Data::EInlinedEnum(inlined) => {
-                return inlined.value.maybe_simplify_not(bump);
+                return inlined.value.maybe_simplify_not(alloc);
             }
             _ => {}
         }
@@ -1374,7 +1400,11 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub fn to_string_expr_without_side_effects(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        bump: &Bump,
+    ) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1408,6 +1438,7 @@ impl Expr {
         };
         slice.map(|s| {
             Expr::init(
+                alloc,
                 E::String {
                     data: s.into(),
                     ..Default::default()
@@ -1843,8 +1874,9 @@ impl Data {
 fn json_value_deep_clone(
     value: &E::JsonValue,
     loc: Loc,
-    bump: &Bump,
+    into: bun_alloc::AstAlloc,
 ) -> Result<Expr, bun_alloc::AllocError> {
+    let bump = into.arena();
     Ok(match value {
         E::JsonValue::String(s) => {
             let bytes: &[u8] = bump.alloc_slice_copy(s.slice());
@@ -1852,13 +1884,13 @@ fn json_value_deep_clone(
         }
         E::JsonValue::Object(o) => Expr {
             loc,
-            data: Data::EObjectJSON(*o).deep_clone_no_detach(bump)?,
+            data: Data::EObjectJSON(*o).deep_clone(into)?,
         },
         E::JsonValue::Array(a) => Expr {
             loc,
-            data: Data::EArrayJSON(*a).deep_clone_no_detach(bump)?,
+            data: Data::EArrayJSON(*a).deep_clone(into)?,
         },
-        _ => Expr::from_json_value(value, loc),
+        _ => Expr::from_json_value(into, value, loc),
     })
 }
 
@@ -1884,29 +1916,15 @@ impl Data {
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
 
 impl Data {
-    /// Deep-clone this subtree into `bump`.
-    ///
-    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
-    /// allocate via `AstAlloc`, which reads the thread's active allocation
-    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
-    /// is bulk-freed while the cloned tree (e.g. `WorkspacePackageJSONCache`)
-    /// still references the buffers — UAF. This entry point installs a
-    /// [`DetachAstHeap`] guard so
-    /// those vecs land on global mimalloc. The guard is installed once here
-    /// and at [`Expr::deep_clone`]; the recursive body goes through
-    /// `*_no_detach` so we don't pay 3 TLS ops per node.
-    pub fn deep_clone(&self, bump: &Bump) -> Result<Data, AllocError> {
-        let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
-        self.deep_clone_no_detach(bump)
-    }
-
-    fn deep_clone_no_detach(&self, bump: &Bump) -> Result<Data, AllocError> {
+    /// Deep-clone this subtree into `into`'s arena. Node payloads and embedded
+    /// `AstVec`s (`items`/`properties`/…) are both allocated there, so the
+    /// clone's lifetime is tied to that arena alone.
+    pub fn deep_clone(&self, into: bun_alloc::AstAlloc) -> Result<Data, AllocError> {
+        let bump = into.arena();
         let this = *self;
         match &this {
             Data::EArray(el) => {
-                let items = el
-                    .items
-                    .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?;
+                let items = el.items.try_deep_clone_with(|e| e.deep_clone(into))?;
                 let item = bump.alloc(E::Array {
                     items,
                     comma_after_spread: el.comma_after_spread,
@@ -1921,8 +1939,7 @@ impl Data {
                 let el = el.get();
                 let rows = el.properties();
                 let value_locs = el.value_locs();
-                let mut properties: G::PropertyList =
-                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                let mut properties: G::PropertyList = into.vec_with_capacity(rows.len());
                 for (i, row) in rows.iter().enumerate() {
                     let key_bytes: &[u8] = bump.alloc_slice_copy(row.key.slice());
                     let value_loc = value_locs.map_or(row.key_loc, |l| l[i]);
@@ -1932,17 +1949,17 @@ impl Data {
                             E::EString::init(key_bytes),
                             row.key_loc,
                         )),
-                        value: Some(json_value_deep_clone(&row.value, value_loc, bump)?),
+                        value: Some(json_value_deep_clone(&row.value, value_loc, into)?),
                         kind: G::PropertyKind::Normal,
                         initializer: None,
-                        ..Default::default()
+                        ..G::Property::empty(into)
                     });
                 }
                 let item = bump.alloc(E::Object {
                     properties,
                     is_single_line: el.is_single_line,
                     close_brace_loc: el.close_brace_loc,
-                    ..Default::default()
+                    ..E::Object::empty(into)
                 });
                 Ok(Data::EObject(StoreRef::from_bump(item)))
             }
@@ -1950,24 +1967,23 @@ impl Data {
                 let el = el.get();
                 let rows = el.items();
                 let item_locs = el.item_locs();
-                let mut items: crate::ExprNodeList =
-                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                let mut items: crate::ExprNodeList = into.vec_with_capacity(rows.len());
                 for (i, value) in rows.iter().enumerate() {
                     let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
-                    items.push(json_value_deep_clone(value, loc, bump)?);
+                    items.push(json_value_deep_clone(value, loc, into)?);
                 }
                 let item = bump.alloc(E::Array {
                     items,
                     is_single_line: el.is_single_line,
                     close_bracket_loc: el.close_bracket_loc,
-                    ..Default::default()
+                    ..E::Array::empty(into)
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }
             Data::EUnary(el) => {
                 let item = bump.alloc(E::Unary {
                     op: el.op,
-                    value: el.value.deep_clone_no_detach(bump)?,
+                    value: el.value.deep_clone(into)?,
                     flags: el.flags,
                 });
                 Ok(Data::EUnary(StoreRef::from_bump(item)))
@@ -1975,8 +1991,8 @@ impl Data {
             Data::EBinary(el) => {
                 let item = bump.alloc(E::Binary {
                     op: el.op,
-                    left: el.left.deep_clone_no_detach(bump)?,
-                    right: el.right.deep_clone_no_detach(bump)?,
+                    left: el.left.deep_clone(into)?,
+                    right: el.right.deep_clone(into)?,
                 });
                 Ok(Data::EBinary(StoreRef::from_bump(item)))
             }
@@ -1985,7 +2001,7 @@ impl Data {
                 let src_props: &[G::Property] = el.properties.slice();
                 let mut properties = bun_alloc::ArenaVec::with_capacity_in(src_props.len(), bump);
                 for prop in src_props.iter() {
-                    properties.push(prop.deep_clone(bump)?);
+                    properties.push(prop.deep_clone(into)?);
                 }
                 let properties = crate::StoreSlice::new_mut(properties.into_bump_slice_mut());
 
@@ -1993,10 +2009,10 @@ impl Data {
                     class_keyword: el.class_keyword,
                     ts_decorators: el
                         .ts_decorators
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                        .try_deep_clone_with(|e| e.deep_clone(into))?,
                     class_name: el.class_name,
                     extends: match &el.extends {
-                        Some(e) => Some(e.deep_clone_no_detach(bump)?),
+                        Some(e) => Some(e.deep_clone(into)?),
                         None => None,
                     },
                     body_loc: el.body_loc,
@@ -2009,10 +2025,8 @@ impl Data {
             }
             Data::ENew(el) => {
                 let item = bump.alloc(E::New {
-                    target: el.target.deep_clone_no_detach(bump)?,
-                    args: el
-                        .args
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                    target: el.target.deep_clone(into)?,
+                    args: el.args.try_deep_clone_with(|e| e.deep_clone(into))?,
                     can_be_unwrapped_if_unused: el.can_be_unwrapped_if_unused,
                     close_parens_loc: el.close_parens_loc,
                 });
@@ -2020,16 +2034,14 @@ impl Data {
             }
             Data::EFunction(el) => {
                 let item = bump.alloc(E::Function {
-                    func: el.func.deep_clone(bump)?,
+                    func: el.func.deep_clone(into)?,
                 });
                 Ok(Data::EFunction(StoreRef::from_bump(item)))
             }
             Data::ECall(el) => {
                 let item = bump.alloc(E::Call {
-                    target: el.target.deep_clone_no_detach(bump)?,
-                    args: el
-                        .args
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                    target: el.target.deep_clone(into)?,
+                    args: el.args.try_deep_clone_with(|e| e.deep_clone(into))?,
                     optional_chain: el.optional_chain,
                     is_direct_eval: el.is_direct_eval,
                     close_paren_loc: el.close_paren_loc,
@@ -2040,7 +2052,7 @@ impl Data {
             }
             Data::EDot(el) => {
                 let item = bump.alloc(E::Dot {
-                    target: el.target.deep_clone_no_detach(bump)?,
+                    target: el.target.deep_clone(into)?,
                     name: el.name,
                     name_loc: el.name_loc,
                     optional_chain: el.optional_chain,
@@ -2051,8 +2063,8 @@ impl Data {
             }
             Data::EIndex(el) => {
                 let item = bump.alloc(E::Index {
-                    target: el.target.deep_clone_no_detach(bump)?,
-                    index: el.index.deep_clone_no_detach(bump)?,
+                    target: el.target.deep_clone(into)?,
+                    index: el.index.deep_clone(into)?,
                     optional_chain: el.optional_chain,
                 });
                 Ok(Data::EIndex(StoreRef::from_bump(item)))
@@ -2060,7 +2072,7 @@ impl Data {
             Data::EArrow(el) => {
                 let mut args = bun_alloc::ArenaVec::with_capacity_in(el.args.len(), bump);
                 for i in 0..el.args.len() {
-                    args.push(el.args[i].deep_clone(bump)?);
+                    args.push(el.args[i].deep_clone(into)?);
                 }
                 let item = bump.alloc(E::Arrow {
                     args: crate::StoreSlice::new(args.into_bump_slice()),
@@ -2078,13 +2090,11 @@ impl Data {
             Data::EJsxElement(el) => {
                 let item = bump.alloc(E::JSXElement {
                     tag: match &el.tag {
-                        Some(tag) => Some(tag.deep_clone_no_detach(bump)?),
+                        Some(tag) => Some(tag.deep_clone(into)?),
                         None => None,
                     },
-                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump))?,
-                    children: el
-                        .children
-                        .try_deep_clone_with(|e| e.deep_clone_no_detach(bump))?,
+                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(into))?,
+                    children: el.children.try_deep_clone_with(|e| e.deep_clone(into))?,
                     key_prop_index: el.key_prop_index,
                     flags: el.flags,
                     close_tag_loc: el.close_tag_loc,
@@ -2093,7 +2103,7 @@ impl Data {
             }
             Data::EObject(el) => {
                 let item = bump.alloc(E::Object {
-                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(bump))?,
+                    properties: el.properties.try_deep_clone_with(|p| p.deep_clone(into))?,
                     comma_after_spread: el.comma_after_spread,
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
@@ -2104,14 +2114,14 @@ impl Data {
             }
             Data::ESpread(el) => {
                 let item = bump.alloc(E::Spread {
-                    value: el.value.deep_clone_no_detach(bump)?,
+                    value: el.value.deep_clone(into)?,
                 });
                 Ok(Data::ESpread(StoreRef::from_bump(item)))
             }
             Data::ETemplate(el) => {
                 let item = bump.alloc(E::Template {
                     tag: match &el.tag {
-                        Some(tag) => Some(tag.deep_clone_no_detach(bump)?),
+                        Some(tag) => Some(tag.deep_clone(into)?),
                         None => None,
                     },
                     parts: el.parts,
@@ -2130,14 +2140,14 @@ impl Data {
             }
             Data::EAwait(el) => {
                 let item = bump.alloc(E::Await {
-                    value: el.value.deep_clone_no_detach(bump)?,
+                    value: el.value.deep_clone(into)?,
                 });
                 Ok(Data::EAwait(StoreRef::from_bump(item)))
             }
             Data::EYield(el) => {
                 let item = bump.alloc(E::Yield {
                     value: match &el.value {
-                        Some(value) => Some(value.deep_clone_no_detach(bump)?),
+                        Some(value) => Some(value.deep_clone(into)?),
                         None => None,
                     },
                     is_star: el.is_star,
@@ -2146,16 +2156,16 @@ impl Data {
             }
             Data::EIf(el) => {
                 let item = bump.alloc(E::If {
-                    test_: el.test_.deep_clone_no_detach(bump)?,
-                    yes: el.yes.deep_clone_no_detach(bump)?,
-                    no: el.no.deep_clone_no_detach(bump)?,
+                    test_: el.test_.deep_clone(into)?,
+                    yes: el.yes.deep_clone(into)?,
+                    no: el.no.deep_clone(into)?,
                 });
                 Ok(Data::EIf(StoreRef::from_bump(item)))
             }
             Data::EImport(el) => {
                 let item = bump.alloc(E::Import {
-                    expr: el.expr.deep_clone_no_detach(bump)?,
-                    options: el.options.deep_clone_no_detach(bump)?,
+                    expr: el.expr.deep_clone(into)?,
+                    options: el.options.deep_clone(into)?,
                     import_record_index: el.import_record_index,
                 });
                 Ok(Data::EImport(StoreRef::from_bump(item)))

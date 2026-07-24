@@ -55,35 +55,25 @@ pub struct Scope {
 }
 
 impl Scope {
-    /// All-empty `Scope` as a `const`. Used with struct-update syntax in the
-    /// parser's per-scope allocation hot path (`push_scope_for_parse_pass`
-    /// runs once per `{}` / function / class body) so the unspecified fields
-    /// are filled by a compile-time bit pattern instead of the runtime
-    /// `Default::default()` chain — i.e. no temporary `Scope` is constructed
-    /// and partially dropped, and `members`/`children`/`generated` come from a
-    /// const-folded zero header rather than three out-of-line `default()`
-    /// calls. `AstAlloc::vec` and `StringHashMap::new_in` are both `const fn`.
-    pub const EMPTY: Self = Self {
-        id: 0,
-        kind: Kind::Block,
-        parent: None,
-        children: AstAlloc::vec(),
-        members: MemberHashMap::new_in(AstAlloc),
-        generated: AstAlloc::vec(),
-        label_ref: Ref::NONE,
-        label_stmt_is_loop: false,
-        contains_direct_eval: false,
-        forbid_arguments: false,
-        strict_mode: StrictModeKind::SloppyMode,
-        is_after_const_local_prefix: false,
-        ts_namespace: None,
-    };
-}
-
-impl Default for Scope {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
+    /// All-empty `Scope`. Used with struct-update syntax in the parser's
+    /// per-scope allocation hot path (`push_scope_for_parse_pass` runs once
+    /// per `{}` / function / class body).
+    pub fn empty(alloc: AstAlloc) -> Self {
+        Self {
+            id: 0,
+            kind: Kind::Block,
+            parent: None,
+            children: alloc.vec(),
+            members: MemberHashMap::new_in(alloc),
+            generated: alloc.vec(),
+            label_ref: Ref::NONE,
+            label_stmt_is_loop: false,
+            contains_direct_eval: false,
+            forbid_arguments: false,
+            strict_mode: StrictModeKind::SloppyMode,
+            is_after_const_local_prefix: false,
+            ts_namespace: None,
+        }
     }
 }
 

@@ -85,11 +85,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `&mut *ctx` reborrows under the active Unique tag (see Binding.rs).
             let wrapper = p.to_expr_wrapper_hoisted;
             let ctx = core::ptr::addr_of_mut!(*p).cast::<core::ffi::c_void>();
-            let binding = Binding::to_expr(&decl.binding, ctx, wrapper);
+            let binding = Binding::to_expr(p.alloc, &decl.binding, ctx, wrapper);
             if let Some(decl_value) = decl.value {
-                value = Expr::join_with_comma(value, Expr::assign(binding, decl_value));
+                value = value.join_with_comma(p.alloc, Expr::assign(p.alloc, binding, decl_value));
             } else if mode == RelocateVarsMode::ForInOrForOf {
-                value = Expr::join_with_comma(value, binding);
+                value = value.join_with_comma(p.alloc, binding);
             }
         }
 
@@ -567,12 +567,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead
-                        let gop = p
+                        let alloc = p.alloc;
+                        let inner = p
                             .import_symbol_property_uses
-                            .get_or_put_value(id.ref_, Default::default())
-                            .expect("unreachable");
-                        let inner_use = gop
-                            .value_ptr
+                            .entry(id.ref_)
+                            .or_insert_with(|| bun_collections::StringHashMap::new_in(alloc));
+                        let inner_use = inner
                             .get_or_put_value(name, Default::default())
                             .expect("unreachable");
                         inner_use.count_estimate += 1;
@@ -672,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     loc,
                                 }
                             } else {
-                                Expr::init(E::Object::default(), loc)
+                                Expr::init(p.alloc, E::Object::empty(p.alloc), loc)
                             });
                         }
                         if name == b"accept" {
@@ -702,6 +702,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if in_lookup_table {
                             if enabled {
                                 return Some(Expr::init(
+                                    p.alloc,
                                     E::Dot {
                                         target: Expr::init_identifier(p.hmr_api_ref, target.loc),
                                         name: name_static,

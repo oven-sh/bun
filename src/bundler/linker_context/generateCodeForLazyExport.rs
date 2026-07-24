@@ -22,6 +22,7 @@ pub fn generate_code_for_lazy_export(
     this: &mut LinkerContext,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
+    let ast_alloc = this.alloc();
     let mut exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
     // The dev server's module format represents lazy-export modules (JSON,
     // TOML, CSS modules, ...) as CommonJS modules evaluated by the HMR
@@ -73,7 +74,7 @@ pub fn generate_code_for_lazy_export(
             if css_ast.local_scope.count() == 0 {
                 break 'out;
             }
-            let mut exports = E::Object::default();
+            let mut exports = E::Object::empty(ast_alloc);
 
             let symbols: &SymbolList<'_> = &this.graph.ast.items_symbols()[source_index as usize];
             let all_import_records = this.graph.ast.items_import_records();
@@ -108,6 +109,7 @@ pub fn generate_code_for_lazy_export(
                 log: &'a mut Log,
                 loc: Loc,
                 arena: &'a Arena,
+                ast_alloc: bun_alloc::AstAlloc,
             }
 
             impl<'a> Visitor<'a> {
@@ -129,6 +131,7 @@ pub fn generate_code_for_lazy_export(
                     self.visit_composes(ast, ref_, idx);
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
+                            self.ast_alloc,
                             E::NameOfSymbol {
                                 ref_: real_ref,
                                 ..Default::default()
@@ -248,7 +251,11 @@ pub fn generate_code_for_lazy_export(
                                     for name in compose.names.slice() {
                                         let name_v = name.v();
                                         self.parts.push(E::TemplatePart {
-                                            value: Expr::init(E::String::init(name_v), self.loc),
+                                            value: Expr::init(
+                                                self.ast_alloc,
+                                                E::String::init(name_v),
+                                                self.loc,
+                                            ),
                                             tail: E::TemplateContents::Cooked(E::String::init(
                                                 b" ",
                                             )),
@@ -305,6 +312,7 @@ pub fn generate_code_for_lazy_export(
 
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();
                 let mut value = Expr::init(
+                    ast_alloc,
                     E::NameOfSymbol {
                         ref_: ref_.to_real_ref(source_index),
                         ..Default::default()
@@ -325,6 +333,7 @@ pub fn generate_code_for_lazy_export(
                     all_sources,
                     arena,
                     all_symbols,
+                    ast_alloc,
                 };
                 visitor.clear_all();
                 visitor.inner_visited.set(ref_.inner_index() as usize);
@@ -343,6 +352,7 @@ pub fn generate_code_for_lazy_export(
                     let parts_slice =
                         bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(template_parts));
                     value = Expr::init(
+                        ast_alloc,
                         E::Template {
                             tag: None,
                             parts: parts_slice,
@@ -354,12 +364,12 @@ pub fn generate_code_for_lazy_export(
 
                 // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                 let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
-                exports.put(arena, key, value)?;
+                exports.put(ast_alloc, key, value)?;
             }
 
             if let StmtData::SLazyExport(mut slot) = part.stmts[0].data {
                 // `StoreRef<ExprData>` is a Copy `NonNull` — write through the pointer.
-                *slot = Expr::init(exports, stmt.loc).data;
+                *slot = Expr::init(ast_alloc, exports, stmt.loc).data;
             }
         }
     }
@@ -376,7 +386,9 @@ pub fn generate_code_for_lazy_export(
     match exports_kind {
         bun_ast::ExportsKind::Cjs => {
             part.stmts.slice_mut()[0] = Stmt::assign(
+                ast_alloc,
                 Expr::init(
+                    ast_alloc,
                     E::Dot {
                         target: Expr::init_identifier(module_ref, stmt.loc),
                         name: b"exports".as_slice().into(),
@@ -458,9 +470,10 @@ pub fn generate_code_for_lazy_export(
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                            ast_alloc,
                             S::Local {
                                 is_export: true,
-                                decls: G::DeclList::from_slice(&[G::Decl {
+                                decls: ast_alloc.vec_from_slice(&[G::Decl {
                                     binding: Binding::alloc(
                                         alloc,
                                         B::Identifier { r#ref: generated.0 },
@@ -468,7 +481,7 @@ pub fn generate_code_for_lazy_export(
                                     ),
                                     value: Some(value),
                                 }]),
-                                ..Default::default()
+                                ..S::Local::empty(ast_alloc)
                             },
                             key.loc,
                         )));
@@ -499,6 +512,7 @@ pub fn generate_code_for_lazy_export(
                     this.generate_named_export_in_file(source_index, module_ref, name, b"default")?;
                 let new_stmts: &mut [Stmt] =
                     alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
+                        ast_alloc,
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 ref_: generated.0,

@@ -39,8 +39,10 @@ fn validate_use_memo_impl(
     let mut void_memo_errors = CompilerError::new();
     let mut use_memos: HashSet<IdentifierId> = HashSet::new();
     let mut react: HashSet<IdentifierId> = HashSet::new();
-    let mut func_exprs: IdMap<IdentifierId, FuncExprInfo> = IdMap::new();
-    let mut unused_use_memos: IdMap<IdentifierId, (SourceLocation, Option<String>)> = IdMap::new();
+    let alloc = *func.instructions.allocator();
+    let mut func_exprs: IdMap<IdentifierId, FuncExprInfo> = IdMap::new_in(alloc);
+    let mut unused_use_memos: IdMap<IdentifierId, (SourceLocation, Option<String>)> =
+        IdMap::new_in(alloc);
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {

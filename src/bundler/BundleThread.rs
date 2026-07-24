@@ -260,9 +260,7 @@ impl<C: CompletionStruct> BundleThread<C> {
 
         let bump = &heap;
         let ast_memory_store: &mut bun_ast::ASTMemoryAllocator =
-            bump.alloc(bun_ast::ASTMemoryAllocator::new(bump));
-        ast_memory_store.reset();
-        ast_memory_store.push();
+            bump.alloc(bun_ast::ASTMemoryAllocator::new());
 
         // Allocate + configure folded — see `create_and_configure_transpiler` doc.
         let transpiler = completion.create_and_configure_transpiler(bump)?;
@@ -291,14 +289,12 @@ impl<C: CompletionStruct> BundleThread<C> {
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
         // `&'a mut Transpiler` consumed by `init_and_run` above is not reborrowed.
-        let _ = unsafe { (*(*transpiler_ptr).log).append_to_with_recycled(&mut out_log, true) }; // logger OOM-only
+        let _ = unsafe { (*(*transpiler_ptr).log).append_to(&mut out_log) }; // logger OOM-only
         completion.set_log(out_log);
 
         if run.is_ok() {
             completion.complete_on_bundle_thread();
         }
-
-        ast_memory_store.pop();
 
         // `transpiler` / `ast_memory_store` are arena-allocated, but their
         // containers (`Resolver` caches, `BundleOptions` strings, the AST

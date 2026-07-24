@@ -28,7 +28,7 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::environment_config::EnvironmentConfig;
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
-use crate::collections::IndexMap;
+use crate::collections::{IndexMap, IndexSet};
 use crate::hir::{StoreStr, VariableBinding};
 use crate::imports::ProgramContext;
 use crate::lowering::{self, FunctionNode};
@@ -124,12 +124,13 @@ pub fn compile_fn(
     fn_name: Option<&str>,
     host: &mut dyn Host,
     arena: &bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
 ) -> Result<CodegenFunction, CompilerError> {
-    let mut env = Environment::with_config(env_config.clone());
+    let mut env = Environment::with_config(alloc, env_config.clone());
     env.fn_type = fn_type;
     env.output_mode = context.output_mode;
     // ProgramContext owns these `String`s for the whole compile; `StoreStr`
@@ -182,7 +183,7 @@ pub fn compile_fn(
         let memo_cache = context.add_memo_cache_import(host);
         memo_cache.name_ref
     });
-    let mut cg = Codegen::new(host, arena, memo_seed);
+    let mut cg = Codegen::new(host, arena, alloc, memo_seed);
     let codegen_result = timed!(
         "Codegen",
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)
@@ -206,12 +207,12 @@ pub fn compile_fn(
         // "leak" _temp names that subsequent successful compilations wouldn't see,
         // causing numbering mismatches vs TS.
         if let Some(uid_names) = env.take_uid_known_names() {
-            context.merge_uid_known_names(
-                &uid_names
+            context.merge_uid_known_names(&IndexSet::from_iter_in(
+                alloc,
+                uid_names
                     .into_iter()
-                    .map(|s| bun_core::BStr::new(s.slice()).to_string())
-                    .collect(),
-            );
+                    .map(|s| bun_core::BStr::new(s.slice()).to_string()),
+            ));
         }
         return Err(env.take_errors());
     }
@@ -231,6 +232,7 @@ pub fn compile_fn(
                 outlined_name.as_deref(),
                 host,
                 arena,
+                alloc,
                 fn_type,
                 env_config,
                 context,
@@ -247,12 +249,12 @@ pub fn compile_fn(
     }
 
     if let Some(uid_names) = env.take_uid_known_names() {
-        context.merge_uid_known_names(
-            &uid_names
+        context.merge_uid_known_names(&IndexSet::from_iter_in(
+            alloc,
+            uid_names
                 .into_iter()
-                .map(|s| bun_core::BStr::new(s.slice()).to_string())
-                .collect(),
-        );
+                .map(|s| bun_core::BStr::new(s.slice()).to_string()),
+        ));
     }
 
     Ok(CodegenFunction {
@@ -274,26 +276,24 @@ pub fn compile_outlined_fn(
     fn_name: Option<&str>,
     host: &mut dyn Host,
     arena: &bun_alloc::Arena,
+    alloc: bun_alloc::AstAlloc,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
 ) -> Result<CodegenFunction, CompilerError> {
-    use bun_alloc::AstAlloc;
     use bun_ast::{G, Loc, StoreSlice, flags};
 
-    let mut env = Environment::with_config(env_config.clone());
+    let mut env = Environment::with_config(alloc, env_config.clone());
     env.fn_type = fn_type;
     env.output_mode = context.output_mode;
 
     // Build a FunctionDeclaration from the codegen output
-    let mut params: bun_alloc::AstVec<G::Arg> =
-        AstAlloc::vec_with_capacity(codegen_fn.params.len());
+    let mut params: bun_alloc::AstVec<G::Arg> = alloc.vec_with_capacity(codegen_fn.params.len());
     for p in codegen_fn.params {
         params.push(p);
     }
-    let mut body: bun_alloc::AstVec<bun_ast::Stmt> =
-        AstAlloc::vec_with_capacity(codegen_fn.body.len());
+    let mut body: bun_alloc::AstVec<bun_ast::Stmt> = alloc.vec_with_capacity(codegen_fn.body.len());
     for s in codegen_fn.body {
         body.push(s);
     }
@@ -331,7 +331,7 @@ pub fn compile_outlined_fn(
         let memo_cache = context.add_memo_cache_import(host);
         memo_cache.name_ref
     });
-    let mut cg = Codegen::new(host, arena, memo_seed);
+    let mut cg = Codegen::new(host, arena, alloc, memo_seed);
     let codegen_result =
         codegen::codegen_function(&reactive_fn, &mut env, &mut cg, unique_identifiers)?;
 

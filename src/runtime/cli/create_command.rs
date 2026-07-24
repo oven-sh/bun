@@ -731,8 +731,6 @@ impl CreateCommand {
                         pkg.seek_to(prev_file_pos)?;
                         // The printer doesn't truncate, so we must do so manually
                         let _ = bun_sys::ftruncate(pkg.handle(), 0);
-
-                        bun_ast::initialize_store();
                     }
                 }
             }
@@ -783,8 +781,6 @@ impl CreateCommand {
             }
 
             if let Some(package_json_file) = &package_json_file {
-                bun_ast::initialize_store();
-
                 let source = bun_ast::Source::init_path_string(
                     b"package.json",
                     package_json_contents.list.as_slice(),
@@ -793,8 +789,8 @@ impl CreateCommand {
                 // SAFETY: single-threaded CLI dispatch; no other borrow of the
                 // process-static `Cli::LOG_` is live across this scope.
                 let log: &mut bun_ast::Log = unsafe { ctx.log_mut() };
-                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-                let mut package_json_expr = match JSON::parse_utf8(&source, log, bump) {
+                let alloc = crate::cli::cli_ast_alloc();
+                let mut package_json_expr = match JSON::parse_utf8(&source, log, alloc) {
                     Ok(e) => e,
                     Err(_) => {
                         if log.errors > 0 {
@@ -821,7 +817,7 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                if let Some(name_expr) = package_json_expr.as_property(b"name") {
+                if let Some(name_expr) = package_json_expr.as_property(alloc, b"name") {
                     if let Some(mut s) = name_expr.expr.data.e_string() {
                         let basename = bun_paths::basename(destination);
                         // SAFETY: `destination` is interned in the process-global DirnameStore
@@ -833,7 +829,7 @@ impl CreateCommand {
                     }
                 }
 
-                if let Some(q) = package_json_expr.as_property(b"devDependencies") {
+                if let Some(q) = package_json_expr.as_property(alloc, b"devDependencies") {
                     let property = q.expr;
                     if property.data.is_e_object()
                         && property
@@ -848,7 +844,7 @@ impl CreateCommand {
                     }
                 }
 
-                if let Some(q) = package_json_expr.as_property(b"dependencies") {
+                if let Some(q) = package_json_expr.as_property(alloc, b"dependencies") {
                     let property = q.expr;
                     if property.data.is_e_object()
                         && property
@@ -864,8 +860,11 @@ impl CreateCommand {
                 }
 
                 mod injection_prefill {
-                    pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
+                    pub(crate) fn npx_react_scripts_build(
+                        alloc: bun_alloc::AstAlloc,
+                    ) -> bun_ast::Expr {
                         bun_ast::Expr::init(
+                            alloc,
                             bun_ast::E::EString::init(b"npx react-scripts build"),
                             bun_ast::Loc::EMPTY,
                         )
@@ -945,8 +944,9 @@ impl CreateCommand {
                                         }
 
                                         if strings::contains(script, b"react-scripts build") {
-                                            scripts_properties[script_property_i].value =
-                                                Some(injection_prefill::npx_react_scripts_build());
+                                            scripts_properties[script_property_i].value = Some(
+                                                injection_prefill::npx_react_scripts_build(alloc),
+                                            );
                                         }
 
                                         scripts_properties
@@ -983,7 +983,7 @@ impl CreateCommand {
                             // lives for the rest of `exec`.
                             unsafe { &*std::ptr::from_ref::<[u8]>(s) }
                         };
-                        if let Some(postinstall) = value.as_property(b"postinstall") {
+                        if let Some(postinstall) = value.as_property(alloc, b"postinstall") {
                             match postinstall.expr.data {
                                 LExprData::EString(single_task) => {
                                     postinstall_tasks.push(arena_str(single_task.data.slice()));
@@ -1000,7 +1000,7 @@ impl CreateCommand {
                             }
                         }
 
-                        if let Some(preinstall) = value.as_property(b"preinstall") {
+                        if let Some(preinstall) = value.as_property(alloc, b"preinstall") {
                             match preinstall.expr.data {
                                 LExprData::EString(single_task) => {
                                     preinstall_tasks.push(arena_str(single_task.data.slice()));
@@ -1016,7 +1016,7 @@ impl CreateCommand {
                             }
                         }
 
-                        if let Some(start) = value.as_property(b"start") {
+                        if let Some(start) = value.as_property(alloc, b"start") {
                             if let Some(start_str) = start.expr.as_utf8_string_literal() {
                                 if !start_str.is_empty() {
                                     start_command = arena_str(start_str);
@@ -1037,6 +1037,7 @@ impl CreateCommand {
 
                 if let Err(err) = JSPrinter::print_json(
                     &mut package_json_writer,
+                    alloc,
                     package_json_expr,
                     &source,
                     JSPrinter::PrintJsonOptions {
@@ -2085,13 +2086,12 @@ impl Example {
 
         progress.name = b"Parsing package.json";
         refresher.refresh();
-        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
         // SAFETY: single-threaded CLI dispatch; no other borrow of the
         // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        let expr = match JSON::parse_utf8(&source, log, bump) {
+        let alloc = crate::cli::cli_ast_alloc();
+        let expr = match JSON::parse_utf8(&source, log, alloc) {
             Ok(e) => e,
             Err(err) => {
                 progress.end();
@@ -2115,8 +2115,8 @@ impl Example {
             Global::exit(1);
         }
         let tarball_url: &[u8] = 'brk: {
-            if let Some(q) = expr.as_property(b"dist") {
-                if let Some(p) = q.expr.as_property(b"tarball") {
+            if let Some(q) = expr.as_property(alloc, b"dist") {
+                if let Some(p) = q.expr.as_property(alloc, b"tarball") {
                     if let Some(s) = p.expr.as_utf8_string_literal() {
                         if !s.is_empty()
                             && (strings::starts_with(s, b"https://")
@@ -2242,15 +2242,14 @@ impl Example {
             Global::exit(1);
         }
 
-        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // Use the process-lifetime CLI arena (examples slices borrow from it
         // and the CLI exits shortly after).
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let alloc = crate::cli::cli_ast_alloc();
         // SAFETY: single-threaded CLI dispatch; no other borrow of the
         // process-static `Cli::LOG_` is live across this scope.
         let log = unsafe { ctx.log_mut() };
-        let examples_object = match JSON::parse_utf8(&source, log, bump) {
+        let examples_object = match JSON::parse_utf8(&source, log, alloc) {
             Ok(e) => e,
             Err(err) => {
                 if log.errors > 0 {
@@ -2268,7 +2267,7 @@ impl Example {
             Global::exit(1);
         }
 
-        if let Some(q) = examples_object.as_property(b"examples") {
+        if let Some(q) = examples_object.as_property(alloc, b"examples") {
             if q.expr.data.is_e_object() {
                 let count = q
                     .expr
@@ -2300,7 +2299,7 @@ impl Example {
                     let string_prop = |key: &[u8]| -> &'static [u8] {
                         property
                             .value
-                            .and_then(|v| v.as_property(key))
+                            .and_then(|v| v.as_property(alloc, key))
                             .and_then(|q| q.expr.data.e_string())
                             .map(|s| s.data.slice())
                             .unwrap_or(b"")

@@ -1563,18 +1563,20 @@ impl Package<u64> {
         features: Features,
     ) -> crate::Result<()> {
         initialize_store();
-        let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
-            Ok(p) => p,
-            Err(err) => {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                bun_core::pretty_errorln!(
-                    "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
-                    err.name(),
-                    bstr::BStr::new(source.path.pretty_dir()),
-                );
-                Global::crash();
-            }
-        };
+        let ast_arena = bun_alloc::AstArena::new();
+        let parsed =
+            match crate::bun_json::ParsedJson::parse_package_json(source, log, ast_arena.alloc()) {
+                Ok(p) => p,
+                Err(err) => {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+                    bun_core::pretty_errorln!(
+                        "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
+                        err.name(),
+                        bstr::BStr::new(source.path.pretty_dir()),
+                    );
+                    Global::crash();
+                }
+            };
 
         self.parse_with_json::<R>(lockfile, pm, log, source, parsed.root, resolver, features)
     }
@@ -2047,6 +2049,7 @@ impl Package<u64> {
         // Function-local arena for `asString` transcoding (transcoded strings
         // are only borrowed until `string_builder.append` copies them).
         let bump = bun_alloc::Arena::new();
+        let alloc = pm.ast_arena.alloc();
         // split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
@@ -2064,7 +2067,7 @@ impl Package<u64> {
 
         // -- Count the sizes
         'name: {
-            if let Some(name_q) = json.as_property(b"name") {
+            if let Some(name_q) = json.as_property(alloc, b"name") {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
                         string_builder.count(name);
@@ -2092,7 +2095,7 @@ impl Package<u64> {
             }
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+        if let Some(patched_deps) = json.as_property(alloc, b"patchedDependencies") {
             if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                 for (_, value, _) in rows {
                     if let Some(value) = value {
@@ -2103,14 +2106,14 @@ impl Package<u64> {
         }
 
         if !FEATURES.is_main {
-            if let Some(version_q) = json.as_property(b"version") {
+            if let Some(version_q) = json.as_property(alloc, b"version") {
                 if let Some(version_str) = version_q.expr.as_utf8(&bump) {
                     string_builder.count(version_str);
                 }
             }
         }
         'bin: {
-            if let Some(bin) = json.as_property(b"bin") {
+            if let Some(bin) = json.as_property(alloc, b"bin") {
                 if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
                     for (k, v, _) in rows {
                         string_builder.count(k);
@@ -2129,8 +2132,8 @@ impl Package<u64> {
                 }
             }
 
-            if let Some(dirs) = json.as_property(b"directories") {
-                if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
+            if let Some(dirs) = json.as_property(alloc, b"directories") {
+                if let Some(bin_prop) = dirs.expr.as_property(alloc, b"bin") {
                     if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
                         string_builder.count(str_);
                         break 'bin;
@@ -2139,7 +2142,7 @@ impl Package<u64> {
             }
         }
 
-        Scripts::parse_count(&mut string_builder, json);
+        Scripts::parse_count(alloc, &mut string_builder, json);
 
         if !resolver.is_void() {
             resolver.count(&mut string_builder, &json);
@@ -2181,13 +2184,13 @@ impl Package<u64> {
         // defer optional_peer_dependencies.deinit(); — Drop handles it
 
         if FEATURES.peer_dependencies {
-            if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
+            if let Some(peer_dependencies_meta) = json.as_property(alloc, b"peerDependenciesMeta") {
                 optional_peer_dependencies
                     .ensure_unused_capacity(peer_dependencies_meta.expr.property_count())?;
                 peer_dependencies_meta
                     .expr
-                    .for_each_property(|key, _key_loc, meta| {
-                        let Some(optional) = meta.as_property(b"optional") else {
+                    .for_each_property(alloc, |key, _key_loc, meta| {
+                        let Some(optional) = meta.as_property(alloc, b"optional") else {
                             return;
                         };
                         if !matches!(
@@ -2208,7 +2211,7 @@ impl Package<u64> {
         }
 
         for group in &dependency_groups {
-            if let Some(dependencies_q) = json.as_property(group.prop) {
+            if let Some(dependencies_q) = json.as_property(alloc, group.prop) {
                 'brk: {
                     if dependencies_q.expr.is_array() {
                         if !group.behavior.is_workspace() {
@@ -2248,7 +2251,7 @@ impl Package<u64> {
                             //    }
                             //
                             if let Some(packages_query) =
-                                dependencies_q.expr.as_property(b"packages")
+                                dependencies_q.expr.as_property(alloc, b"packages")
                             {
                                 let packages_expr = packages_query.expr;
                                 let packages_loc =
@@ -2335,7 +2338,7 @@ impl Package<u64> {
         }
 
         if FEATURES.trusted_dependencies {
-            if let Some(q) = json.as_property(b"trustedDependencies") {
+            if let Some(q) = json.as_property(alloc, b"trustedDependencies") {
                 let count = match &q.expr.data {
                     ExprData::EArray(arr) => arr.items.len_u32() as usize,
                     ExprData::EArrayJSON(arr) => arr.get().items().len(),
@@ -2347,7 +2350,7 @@ impl Package<u64> {
                 let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
                 trusted.ensure_unused_capacity(count)?;
                 if let Some(mut items) = q.expr.as_array() {
-                    while let Some(item) = items.next() {
+                    while let Some(item) = items.next(alloc) {
                         let Some(name) = item.as_string(&bump) else {
                             return Err(invalid_trusted_dependencies(log, source, q.loc));
                         };
@@ -2361,19 +2364,24 @@ impl Package<u64> {
         }
 
         if FEATURES.is_main {
-            lockfile.overrides.parse_count(json, &mut string_builder);
+            lockfile
+                .overrides
+                .parse_count(alloc, json, &mut string_builder);
 
-            if let Some(workspaces_expr) = json.get(b"workspaces") {
+            if let Some(workspaces_expr) = json.get(alloc, b"workspaces") {
                 lockfile
                     .catalogs
-                    .parse_count(workspaces_expr, &mut string_builder);
+                    .parse_count(alloc, workspaces_expr, &mut string_builder);
             }
 
             // Count catalog strings in top-level package.json as well, since parseAppend
             // might process them later if no catalogs were found in workspaces
-            lockfile.catalogs.parse_count(json, &mut string_builder);
+            lockfile
+                .catalogs
+                .parse_count(alloc, json, &mut string_builder);
 
             install::postinstall_optimizer::PostinstallOptimizer::from_package_json(
+                alloc,
                 &mut pm.postinstall_optimizer,
                 &json,
             )?;
@@ -2419,7 +2427,7 @@ impl Package<u64> {
                 }
             }
 
-            if let Some(name_q) = json.as_property(b"name") {
+            if let Some(name_q) = json.as_property(alloc, b"name") {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
                         let external_string = string_builder.append::<ExternalString>(name);
@@ -2440,7 +2448,7 @@ impl Package<u64> {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
         }
 
-        if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
+        if let Some(patched_deps) = json.as_property(alloc, b"patchedDependencies") {
             if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
                 lockfile
                     .patched_dependencies
@@ -2467,7 +2475,7 @@ impl Package<u64> {
         }
 
         'bin: {
-            if let Some(bin) = json.as_property(b"bin") {
+            if let Some(bin) = json.as_property(alloc, b"bin") {
                 if let Some(mut rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
                     match rows.len() {
                         0 => {}
@@ -2535,7 +2543,7 @@ impl Package<u64> {
                 }
             }
 
-            if let Some(dirs) = json.as_property(b"directories") {
+            if let Some(dirs) = json.as_property(alloc, b"directories") {
                 // https://docs.npmjs.com/cli/v8/configuring-npm/package-json#directoriesbin
                 // Because of the way the bin directive works,
                 // specifying both a bin path and setting
@@ -2543,7 +2551,7 @@ impl Package<u64> {
                 // specify individual files, use bin, and for all
                 // the files in an existing bin directory, use
                 // directories.bin.
-                if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
+                if let Some(bin_prop) = dirs.expr.as_property(alloc, b"bin") {
                     if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
                         if !str_.is_empty() {
                             self.bin = Bin {
@@ -2560,7 +2568,7 @@ impl Package<u64> {
             }
         }
 
-        self.scripts.parse_alloc(&mut string_builder, json);
+        self.scripts.parse_alloc(alloc, &mut string_builder, json);
         self.scripts.filled = true;
 
         // It is allowed for duplicate dependencies to exist in optionalDependencies and regular dependencies
@@ -2577,8 +2585,8 @@ impl Package<u64> {
         let mut bundle_all_deps = false;
         if !resolver.is_void() && resolver.check_bundled_dependencies() {
             if let Some(bundled_deps_expr) = json
-                .get(b"bundleDependencies")
-                .or_else(|| json.get(b"bundledDependencies"))
+                .get(alloc, b"bundleDependencies")
+                .or_else(|| json.get(alloc, b"bundledDependencies"))
             {
                 match &bundled_deps_expr.data {
                     ExprData::EBoolean(boolean) => {
@@ -2586,7 +2594,7 @@ impl Package<u64> {
                     }
                     _ => {
                         if let Some(mut items) = bundled_deps_expr.as_array() {
-                            while let Some(item) = items.next() {
+                            while let Some(item) = items.next(alloc) {
                                 let Some(s) = item.as_string(&bump) else {
                                     continue;
                                 };
@@ -2772,7 +2780,7 @@ impl Package<u64> {
                     }
                 }
             } else {
-                if let Some(dependencies_q) = json.as_property(group.prop) {
+                if let Some(dependencies_q) = json.as_property(alloc, group.prop) {
                     let rows = JsonObjectStringRows::new(&dependencies_q.expr, &bump)
                         .expect("validated above: a dependency group is an object");
                     for (key, version, key_loc) in rows {
@@ -2894,6 +2902,7 @@ impl Package<u64> {
         // This function depends on package.dependencies being set, so it is done at the very end.
         if FEATURES.is_main {
             lockfile.overrides.parse_append(
+                alloc,
                 pm,
                 lockfile.buffers.dependencies.as_slice(),
                 self,
@@ -2905,8 +2914,9 @@ impl Package<u64> {
 
             let mut found_any_catalog_or_catalog_object = false;
             let mut has_workspaces = false;
-            if let Some(workspaces_expr) = json.get(b"workspaces") {
+            if let Some(workspaces_expr) = json.get(alloc, b"workspaces") {
                 found_any_catalog_or_catalog_object = lockfile.catalogs.parse_append(
+                    alloc,
                     pm,
                     log,
                     source,
@@ -2921,10 +2931,14 @@ impl Package<u64> {
             // allow "catalog" and "catalogs" in top-level "package.json"
             // so it's easier to guess.
             if !found_any_catalog_or_catalog_object && has_workspaces {
-                let _ =
-                    lockfile
-                        .catalogs
-                        .parse_append(pm, log, source, json, &mut string_builder)?;
+                let _ = lockfile.catalogs.parse_append(
+                    alloc,
+                    pm,
+                    log,
+                    source,
+                    json,
+                    &mut string_builder,
+                )?;
             }
         }
 

@@ -14,7 +14,7 @@ fn rewrite_place(place: &mut Place, rewrites: &IdMap<IdentifierId, IdentifierId>
 }
 
 pub fn eliminate_redundant_phi(func: &mut HirFunction, env: &mut Environment) {
-    let mut rewrites: IdMap<IdentifierId, IdentifierId> = IdMap::new();
+    let mut rewrites: IdMap<IdentifierId, IdentifierId> = IdMap::new_in(env.alloc);
     eliminate_redundant_phi_impl(func, env, &mut rewrites);
 }
 
@@ -122,7 +122,7 @@ fn eliminate_redundant_phi_impl(
                     // Take inner function out, process it, put it back
                     let mut inner_func = std::mem::replace(
                         &mut env.functions[fid.0 as usize],
-                        placeholder_function(),
+                        placeholder_function(env.alloc),
                     );
 
                     eliminate_redundant_phi_impl(&mut inner_func, env, rewrites);

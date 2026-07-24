@@ -938,7 +938,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `main.rs` before `Cli::start`, so `VirtualMachine::init` already sees
         // a populated `RuntimeHooks` table.
         bun_jsc::initialize(ctx.runtime_options.eval.eval_and_print);
-        bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
@@ -1130,7 +1129,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         bun_jsc::initialize(false);
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
-        bun_ast::initialize_store();
 
         // Load bunfig.toml unless disabled by compile flags. Config loading
         // with execArgv is handled earlier in `Command::start` via `init()`.

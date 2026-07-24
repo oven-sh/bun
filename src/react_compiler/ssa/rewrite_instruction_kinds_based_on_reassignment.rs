@@ -118,7 +118,7 @@ pub fn rewrite_instruction_kinds_based_on_reassignment(
     //
     // Track: for each DeclarationId, the location of its first declaration,
     // and whether it needs to be changed to Let (because of reassignment).
-    let mut declarations: IdMap<DeclarationId, DeclarationLoc> = IdMap::new();
+    let mut declarations: IdMap<DeclarationId, DeclarationLoc> = IdMap::new_in(env.alloc);
     // Track which (block_index, instr_local_index) should have their lvalue.kind set to Reassign
     let mut reassign_locs: Vec<(usize, usize)> = Vec::new();
     // Track which declaration locations need to be set to Let

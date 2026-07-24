@@ -175,18 +175,15 @@ impl ErrorLocation {
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
-        // (`Str` placeholder per src/logger/lib.rs); the slice borrows
-        // `source.contents` which outlives the diagnostic. Re-thread once
-        // `bun_ast::Location` grows a real lifetime.
+        use bun_ast::IntoText;
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+            .map(|lines| lines.as_slice()[0].into_text());
         Ok(bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(source.path.text),
-            namespace: source.path.namespace,
+            file: source.path.text.into_text(),
+            namespace: source.path.namespace.into_text(),
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
-            line_text: line_text.map(std::borrow::Cow::Borrowed),
+            line_text,
             ..Default::default()
         })
     }

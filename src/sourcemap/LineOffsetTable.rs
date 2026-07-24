@@ -151,18 +151,18 @@ impl LineOffsetTable {
 
     /// `Global`-allocator convenience wrapper around [`generate_in`].
     pub fn generate(contents: &[u8], approximate_line_count: i32) -> Result<List, AllocError> {
-        Self::generate_in::<Global>(contents, approximate_line_count)
+        Self::generate_in::<Global>(Global, contents, approximate_line_count)
     }
 
     // Callers pass mixed allocators (printer/bundler arenas vs VM default
     // allocator in code coverage): the bundler routes `A = AstAlloc` so the
     // table bulk-frees with the per-worker AST heap, everyone else uses
     // [`generate`] (`A = Global`).
-    pub fn generate_in<A: Allocator + Copy + Default + 'static>(
+    pub fn generate_in<A: Allocator + Copy + 'static>(
+        alloc: A,
         contents: &[u8],
         approximate_line_count: i32,
     ) -> Result<List<A>, AllocError> {
-        let alloc = A::default();
         let empty_box = || Vec::new_in(alloc).into_boxed_slice();
         let mut list = List::<A>::new_in(alloc);
         // Preallocate the top-level table using the approximate line count from the lexer

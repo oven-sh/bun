@@ -192,7 +192,9 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string("???", response_buf.list.as_slice());
-    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
+    let ast_arena = bun_alloc::AstArena::new();
+    let alloc = ast_arena.alloc();
+    let parsed = match JSON::ParsedJson::parse_json(&source, &mut log, alloc) {
         Ok(j) => j,
         Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -208,7 +210,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     };
     let json = parsed.root;
 
-    let username_expr = json.get(b"username");
+    let username_expr = json.get(alloc, b"username");
     let Some(username) = username_expr
         .as_ref()
         .and_then(|e| e.as_utf8_string_literal())
@@ -229,7 +231,9 @@ pub fn response_error<const OTP_RESPONSE: bool>(
     let message: Option<Vec<u8>> = 'message: {
         let mut log = bun_ast::Log::init();
         let source = bun_ast::Source::init_path_string("???", response_body.list.as_slice());
-        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log) {
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let parsed = match JSON::ParsedJson::parse_json(&source, &mut log, alloc) {
             Ok(j) => j,
             Err(bun_parsers::Error::Alloc(bun_alloc::AllocError)) => {
                 return Err(AllocError);
@@ -237,7 +241,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             Err(_) => break 'message None,
         };
 
-        let error_expr = parsed.root.get(b"error");
+        let error_expr = parsed.root.get(alloc, b"error");
         let Some(error) = error_expr.as_ref().and_then(|e| e.as_utf8_string_literal()) else {
             break 'message None;
         };
@@ -1950,22 +1954,20 @@ impl PackageManifest {
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // `initialize_mini_store` deliberately keeps the allocator pushed
-        // across calls (the AstAlloc state stays installed for the re-arm) and
-        // bulk-frees via `reset_retain_with_limit` on the next call — see
-        // `initialize_mini_store` in lib.rs for why.
-        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
+        let ast_arena = bun_alloc::AstArena::new();
+        let alloc = ast_arena.alloc();
+        let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log, alloc) {
             Ok(j) => j,
             Err(_) => {
                 let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
+                log.clone_to(&mut cloned_log);
                 *log = cloned_log;
                 return Ok(None);
             }
         };
         let json = parsed.root;
 
-        if let Some(error_q) = json.as_property(b"error") {
+        if let Some(error_q) = json.as_property(alloc, b"error") {
             if let Some(err) = error_q.expr.as_utf8_string_literal() {
                 log.add_error_fmt(
                     Some(&source),
@@ -1996,7 +1998,7 @@ impl PackageManifest {
         };
 
         if PackageManager::verbose_install() {
-            if let Some(name_q) = json.as_property(b"name") {
+            if let Some(name_q) = json.as_property(alloc, b"name") {
                 let Some(received_name) = name_q.expr.as_utf8_string_literal() else {
                     return Ok(None);
                 };
@@ -2017,7 +2019,7 @@ impl PackageManifest {
 
         string_builder.count(expected_name);
 
-        if let Some(name_q) = json.as_property(b"modified") {
+        if let Some(name_q) = json.as_property(alloc, b"modified") {
             let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };
@@ -2031,7 +2033,7 @@ impl PackageManifest {
         let mut extern_string_count_bin: usize = 0;
         let mut tarball_urls_count: usize = 0;
         'get_versions: {
-            let Some(versions_expr) = json.get(b"versions") else {
+            let Some(versions_expr) = json.get(alloc, b"versions") else {
                 break 'get_versions;
             };
             let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
@@ -2192,7 +2194,7 @@ impl PackageManifest {
         extern_string_count += dependency_sum;
 
         let mut dist_tags_count: usize = 0;
-        if let Some(dist) = json.get(b"dist-tags") {
+        if let Some(dist) = json.get(alloc, b"dist-tags") {
             if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
                 for tag in obj.get().properties() {
                     string_builder.count(tag.key.slice());
@@ -2281,7 +2283,7 @@ impl PackageManifest {
         let all_dependency_names_and_values_len = dependency_sum;
 
         'get_versions2: {
-            let Some(versions_expr) = json.get(b"versions") else {
+            let Some(versions_expr) = json.get(alloc, b"versions") else {
                 break 'get_versions2;
             };
             let JSON::ExprData::EObjectJSON(versions_obj) = &versions_expr.data else {
@@ -2302,7 +2304,7 @@ impl PackageManifest {
 
             // Index the root `time` object once so the per-version publish-time
             // lookup below is O(1) instead of a linear scan of ~V entries.
-            let time_obj = json.get(b"time").and_then(|e| match e.data {
+            let time_obj = json.get(alloc, b"time").and_then(|e| match e.data {
                 JSON::ExprData::EObjectJSON(obj) => Some(obj),
                 _ => None,
             });
@@ -2955,7 +2957,7 @@ impl PackageManifest {
         let mut extern_strings_cursor = extern_strings_consumed;
         let _ = all_dependency_names_and_values_len;
 
-        if let Some(dist) = json.get(b"dist-tags") {
+        if let Some(dist) = json.get(alloc, b"dist-tags") {
             if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
                 let tags = obj.get().properties();
                 let extern_strings_slice_start = extern_strings_cursor;
@@ -3025,7 +3027,7 @@ impl PackageManifest {
             result.pkg.etag = string_builder.append::<SemverString>(etag);
         }
 
-        if let Some(name_q) = json.as_property(b"modified") {
+        if let Some(name_q) = json.as_property(alloc, b"modified") {
             let Some(field) = name_q.expr.as_utf8_string_literal() else {
                 return Ok(None);
             };

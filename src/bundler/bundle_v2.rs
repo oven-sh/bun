@@ -173,7 +173,7 @@ impl<'a> BundleV2<'a> {
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
-    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop<'static> {
+    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
         // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
         self.linker
             .any_loop_mut()

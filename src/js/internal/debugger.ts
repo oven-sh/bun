@@ -318,8 +318,9 @@ export default function (
   // node:inspector answers url() with it, refuses inspector.open() with
   // ERR_INSPECTOR_ALREADY_ACTIVATED and can stop the server through
   // inspector.close(), the way Node behaves for a CLI-started inspector.
-  if (enableNodeCDP && debug.cdpUrl) {
-    reportNodeInspectorServerStarted(debug.cdpUrl, createNodeInspectorControl(debug), undefined);
+  const { cdpUrl } = debug;
+  if (enableNodeCDP && cdpUrl) {
+    reportNodeInspectorServerStarted(cdpUrl, createNodeInspectorControl(debug), undefined);
   }
 
   // If the user types --inspect, we print the URL to the console.

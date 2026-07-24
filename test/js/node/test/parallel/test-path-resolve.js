@@ -24,6 +24,8 @@ const resolveTests = [
      [['c:/ignore', 'd:\\a/b\\c/d', '\\e.exe'], 'd:\\e.exe'],
      [['c:/ignore', 'c:/some/file'], 'c:\\some\\file'],
      [['d:/ignore', 'd:some/dir//'], 'd:\\ignore\\some\\dir'],
+     [[], process.cwd()],
+     [[''], process.cwd()],
      [['.'], process.cwd()],
      [['//server/share', '..', 'relative\\'], '\\\\server\\share\\relative'],
      [['c:/', '//'], 'c:\\'],
@@ -33,16 +35,8 @@ const resolveTests = [
      [['c:/', '///some//dir'], 'c:\\some\\dir'],
      [['C:\\foo\\tmp.3\\', '..\\tmp.3\\cycles\\root.js'],
       'C:\\foo\\tmp.3\\cycles\\root.js'],
-      // IMPORTANT NOTE: 
-      // - PR originally landed in #54224 and #55623 to fix issue #54025
-      // - It caused a regression (issue #56002) and was reverted in #56088
-      // - This behavior did _not_ land in even-numbered versions
-      // If node decides to adopt this, we need to revisit these tests
-      // 
-      //  [['\\\\.\\PHYSICALDRIVE0'], '\\\\.\\PHYSICALDRIVE0'],
-      //  [['\\\\?\\PHYSICALDRIVE0'], '\\\\?\\PHYSICALDRIVE0'],
-     [['\\\\.\\PHYSICALDRIVE0'], '\\\\.\\PHYSICALDRIVE0\\'],
-     [['\\\\?\\PHYSICALDRIVE0'], '\\\\?\\PHYSICALDRIVE0\\'],
+     [['\\\\.\\PHYSICALDRIVE0'], '\\\\.\\PHYSICALDRIVE0'],
+     [['\\\\?\\PHYSICALDRIVE0'], '\\\\?\\PHYSICALDRIVE0'],
     ],
   ],
   [ path.posix.resolve,
@@ -50,6 +44,8 @@ const resolveTests = [
     [[['/var/lib', '../', 'file/'], '/var/file'],
      [['/var/lib', '/../', 'file/'], '/file'],
      [['a/b/c/', '../../..'], posixyCwd],
+     [[], posixyCwd],
+     [[''], posixyCwd],
      [['.'], posixyCwd],
      [['/some/dir', '.', '/absolute/'], '/absolute'],
      [['/foo/tmp.3/', '../tmp.3/cycles/root.js'], '/foo/tmp.3/cycles/root.js'],
@@ -85,7 +81,6 @@ if (common.isWindows) {
   const resolvedPath = spawnResult.stdout.toString().trim();
   assert.strictEqual(resolvedPath.toLowerCase(), process.cwd().toLowerCase());
 }
-
 
 // Test originally was this:
 //

@@ -3534,7 +3534,9 @@ pub mod args {
             if let Some(val) = arguments.next() {
                 arguments.eat();
                 if val.is_object() {
-                    if let Some(b) = val.get_boolean_strict(ctx, "recursive")? {
+                    if let Some(b) =
+                        val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                    {
                         recursive = b;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {
@@ -3627,7 +3629,9 @@ pub mod args {
                     _ => {
                         if val.is_object() {
                             encoding = get_encoding(val, ctx, encoding)?;
-                            if let Some(r) = val.get_boolean_strict(ctx, "recursive")? {
+                            if let Some(r) =
+                                val.get_boolean_strict_named(ctx, "recursive", "options.recursive")?
+                            {
                                 recursive = r;
                             }
                             if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {

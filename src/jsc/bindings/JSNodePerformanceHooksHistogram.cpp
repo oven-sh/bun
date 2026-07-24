@@ -46,23 +46,16 @@ JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm,
         throwTypeError(globalObject, scope, "Failed to initialize histogram"_s);
         return nullptr;
     }
-    auto histogramData = HistogramData(raw_histogram);
 
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(histogramData));
-    ptr->finishCreation(vm);
-    if (ptr->m_histogramData.histogram) {
-        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
-        vm.heap.reportExtraMemoryAllocated(ptr, ptr->m_extraMemorySizeForGC);
-    }
-    return ptr;
+    return create(vm, structure, globalObject, HistogramData::create(raw_histogram));
 }
 
-JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, HistogramData&& existingHistogramData)
+JSNodePerformanceHooksHistogram* JSNodePerformanceHooksHistogram::create(VM& vm, Structure* structure, JSGlobalObject* globalObject, Ref<HistogramData>&& existingHistogramData)
 {
-    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, std::move(existingHistogramData));
+    JSNodePerformanceHooksHistogram* ptr = new (NotNull, allocateCell<JSNodePerformanceHooksHistogram>(vm)) JSNodePerformanceHooksHistogram(vm, structure, WTF::move(existingHistogramData));
     ptr->finishCreation(vm);
-    if (ptr->m_histogramData.histogram) {
-        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData.histogram);
+    if (ptr->m_histogramData->histogram) {
+        ptr->m_extraMemorySizeForGC = hdr_get_memory_size(ptr->m_histogramData->histogram);
         vm.heap.reportExtraMemoryAllocated(ptr, ptr->m_extraMemorySizeForGC);
     }
     return ptr;
@@ -75,8 +68,6 @@ void JSNodePerformanceHooksHistogram::destroy(JSCell* cell)
 
 JSNodePerformanceHooksHistogram::~JSNodePerformanceHooksHistogram()
 {
-    // The shared_ptr will handle the destruction of HistogramData,
-    // which in turn calls hdr_close via HDRHistogramPointer.
 }
 
 template<typename Visitor>
@@ -86,9 +77,7 @@ void JSNodePerformanceHooksHistogram::visitChildrenImpl(JSCell* cell, Visitor& v
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    if (!thisObject->m_histogramData.histogram) {
-        visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
-    }
+    visitor.reportExtraMemoryVisited(thisObject->m_extraMemorySizeForGC);
 }
 
 DEFINE_VISIT_CHILDREN(JSNodePerformanceHooksHistogram);
@@ -110,29 +99,34 @@ JSC::Structure* JSNodePerformanceHooksHistogram::createStructure(JSC::VM& vm, JS
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-bool JSNodePerformanceHooksHistogram::record(int64_t value)
+static ALWAYS_INLINE void recordLocked(HistogramData& data, int64_t value)
 {
-    if (!m_histogramData.histogram) return false;
-
     // Try to record in the HDR histogram first
-    bool recorded = hdr_record_value(m_histogramData.histogram, value);
+    bool recorded = hdr_record_value(data.histogram, value);
 
     if (recorded) {
         // Value was within range - count it and update min/max
-        m_histogramData.totalCount++;
+        data.totalCount++;
 
         // Update manual min/max tracking for in-range values only
-        if (value < m_histogramData.manualMin) {
-            m_histogramData.manualMin = value;
+        if (value < data.manualMin) {
+            data.manualMin = value;
         }
-        if (value > m_histogramData.manualMax) {
-            m_histogramData.manualMax = value;
+        if (value > data.manualMax) {
+            data.manualMax = value;
         }
     } else {
         // Value was out of range
-        m_histogramData.exceedsCount++;
+        data.exceedsCount++;
     }
+}
 
+bool JSNodePerformanceHooksHistogram::record(int64_t value)
+{
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (!data.histogram) return false;
+    recordLocked(data, value);
     return true;
 }
 
@@ -141,145 +135,176 @@ uint64_t JSNodePerformanceHooksHistogram::recordDelta(JSGlobalObject* globalObje
     auto now = WTF::MonotonicTime::now();
     uint64_t nowNs = static_cast<uint64_t>(now.secondsSinceEpoch().milliseconds() * 1000000.0);
 
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
     uint64_t delta = 0;
-    if (m_histogramData.prevDeltaTime != 0) {
-        delta = nowNs - m_histogramData.prevDeltaTime;
-        record(delta);
+    if (data.prevDeltaTime != 0) {
+        delta = nowNs - data.prevDeltaTime;
+        if (data.histogram)
+            recordLocked(data, delta);
     }
-    m_histogramData.prevDeltaTime = nowNs;
+    data.prevDeltaTime = nowNs;
     return delta;
 }
 
 void JSNodePerformanceHooksHistogram::reset()
 {
-    if (!m_histogramData.histogram) return;
-    hdr_reset(m_histogramData.histogram);
-    m_histogramData.prevDeltaTime = 0;
-    m_histogramData.totalCount = 0;
-    m_histogramData.manualMin = std::numeric_limits<int64_t>::max();
-    m_histogramData.manualMax = 0;
-    m_histogramData.exceedsCount = 0;
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (!data.histogram) return;
+    hdr_reset(data.histogram);
+    data.prevDeltaTime = 0;
+    data.totalCount = 0;
+    data.manualMin = std::numeric_limits<int64_t>::max();
+    data.manualMax = 0;
+    data.exceedsCount = 0;
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMin() const
 {
-    if (m_histogramData.totalCount == 0) {
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (data.totalCount == 0) {
         // Return the same initial value as Node.js when no values recorded
         // Node.js returns 9223372036854776000 which is 0x8000000000000000
         // This is exactly INT64_MIN when interpreted as signed
         return INT64_MIN;
     }
-    return m_histogramData.manualMin;
+    return data.manualMin;
 }
 
 int64_t JSNodePerformanceHooksHistogram::getMax() const
 {
-    if (m_histogramData.totalCount == 0) {
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (data.totalCount == 0) {
         // Return 0 when no values recorded (Node.js behavior)
         return 0;
     }
-    return m_histogramData.manualMax;
+    return data.manualMax;
 }
 
 double JSNodePerformanceHooksHistogram::getMean() const
 {
-    if (!m_histogramData.histogram) return NAN;
-    return hdr_mean(m_histogramData.histogram);
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (!data.histogram) return NAN;
+    return hdr_mean(data.histogram);
 }
 
 double JSNodePerformanceHooksHistogram::getStddev() const
 {
-    if (!m_histogramData.histogram) return NAN;
-    return hdr_stddev(m_histogramData.histogram);
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (!data.histogram) return NAN;
+    return hdr_stddev(data.histogram);
 }
 
 int64_t JSNodePerformanceHooksHistogram::getPercentile(double percentile) const
 {
-    if (!m_histogramData.histogram) return 0;
-    return hdr_value_at_percentile(m_histogramData.histogram, percentile);
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    if (!data.histogram) return 0;
+    return hdr_value_at_percentile(data.histogram, percentile);
 }
 
 size_t JSNodePerformanceHooksHistogram::getExceeds() const
 {
-    return m_histogramData.exceedsCount;
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
+    return data.exceedsCount;
 }
 
 uint64_t JSNodePerformanceHooksHistogram::getCount() const
 {
+    auto& data = *m_histogramData;
+    WTF::Locker locker { data.m_lock };
     // Return our manual count of in-range values only
     // This matches Node.js behavior
-    return m_histogramData.totalCount;
+    return data.totalCount;
 }
 
-double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* other)
+static ALWAYS_INLINE double addLocked(HistogramData& self, HistogramData& other)
 {
-    if (!m_histogramData.histogram || !other || !other->m_histogramData.histogram) return 0;
-
     // Add the manual counts and exceeds
-    m_histogramData.totalCount += other->m_histogramData.totalCount;
-    m_histogramData.exceedsCount += other->m_histogramData.exceedsCount;
+    self.totalCount += other.totalCount;
+    self.exceedsCount += other.exceedsCount;
 
     // Update manual min/max from the other histogram
-    if (other->m_histogramData.totalCount > 0) {
-        if (m_histogramData.totalCount == other->m_histogramData.totalCount) {
+    if (other.totalCount > 0) {
+        if (self.totalCount == other.totalCount) {
             // This was empty, so take the other's values
-            m_histogramData.manualMin = other->m_histogramData.manualMin;
-            m_histogramData.manualMax = other->m_histogramData.manualMax;
+            self.manualMin = other.manualMin;
+            self.manualMax = other.manualMax;
         } else {
             // Merge min/max values
-            if (other->m_histogramData.manualMin < m_histogramData.manualMin) {
-                m_histogramData.manualMin = other->m_histogramData.manualMin;
+            if (other.manualMin < self.manualMin) {
+                self.manualMin = other.manualMin;
             }
-            if (other->m_histogramData.manualMax > m_histogramData.manualMax) {
-                m_histogramData.manualMax = other->m_histogramData.manualMax;
+            if (other.manualMax > self.manualMax) {
+                self.manualMax = other.manualMax;
             }
         }
     }
 
     // hdr_add returns number of dropped values
-    return hdr_add(m_histogramData.histogram, other->m_histogramData.histogram);
+    return hdr_add(self.histogram, other.histogram);
+}
+
+double JSNodePerformanceHooksHistogram::add(JSNodePerformanceHooksHistogram* other)
+{
+    if (!other) return 0;
+    auto& self = *m_histogramData;
+    auto& otherData = *other->m_histogramData;
+
+    if (&self == &otherData) {
+        WTF::Locker locker { self.m_lock };
+        if (!self.histogram) return 0;
+        return addLocked(self, otherData);
+    }
+
+    auto& first = &self < &otherData ? self : otherData;
+    auto& second = &self < &otherData ? otherData : self;
+    WTF::Locker firstLocker { first.m_lock };
+    WTF::Locker secondLocker { second.m_lock };
+    if (!self.histogram || !otherData.histogram) return 0;
+    return addLocked(self, otherData);
+}
+
+static void fillPercentileMap(JSGlobalObject* globalObject, JSC::JSMap* map, HistogramData& data)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Vector<std::pair<double, int64_t>, 32> entries;
+    {
+        WTF::Locker locker { data.m_lock };
+        if (!data.histogram) return;
+
+        struct hdr_iter iter;
+        hdr_iter_percentile_init(&iter, data.histogram, 1.0);
+        while (hdr_iter_next(&iter)) {
+            entries.append({ iter.specifics.percentiles.percentile, iter.highest_equivalent_value });
+        }
+    }
+
+    for (auto& [percentile, value] : entries) {
+        JSValue jsKey = jsNumber(percentile);
+        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, );
+        map->set(globalObject, jsKey, jsValue);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 void JSNodePerformanceHooksHistogram::getPercentiles(JSGlobalObject* globalObject, JSC::JSMap* map)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!m_histogramData.histogram) return;
-
-    struct hdr_iter iter;
-    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
-
-    while (hdr_iter_next(&iter)) {
-        double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
-        JSValue jsKey = jsNumber(percentile);
-        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, );
-        map->set(globalObject, jsKey, jsValue);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    fillPercentileMap(globalObject, map, *m_histogramData);
 }
 
 void JSNodePerformanceHooksHistogram::getPercentilesBigInt(JSGlobalObject* globalObject, JSC::JSMap* map)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (!m_histogramData.histogram) return;
-
-    struct hdr_iter iter;
-    hdr_iter_percentile_init(&iter, m_histogramData.histogram, 1.0);
-
-    while (hdr_iter_next(&iter)) {
-        double percentile = iter.specifics.percentiles.percentile;
-        int64_t value = iter.highest_equivalent_value;
-        JSValue jsKey = jsNumber(percentile);
-        JSValue jsValue = JSBigInt::createFrom(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, );
-        map->set(globalObject, jsKey, jsValue);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    fillPercentileMap(globalObject, map, *m_histogramData);
 }
 
 } // namespace Bun

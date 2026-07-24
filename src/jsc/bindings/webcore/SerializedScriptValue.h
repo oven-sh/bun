@@ -49,6 +49,10 @@
 typedef const struct OpaqueJSContext* JSContextRef;
 typedef const struct OpaqueJSValue* JSValueRef;
 
+namespace Bun {
+class HistogramData;
+}
+
 #if ENABLE(WEBASSEMBLY)
 namespace JSC {
 namespace Wasm {
@@ -264,6 +268,9 @@ private:
     // Raw `*mut BlockList` pointers whose refcount was bumped at serialize
     // time so they outlive the wire buffer; released in the destructor.
     Vector<void*> m_serializedBlockListRefs;
+    // Shared histogram state carried alongside the wire buffer so a cloned
+    // perf_hooks Histogram observes the same underlying data as the original.
+    Vector<RefPtr<Bun::HistogramData>> m_serializedHistograms;
     // Vector<std::optional<ImageBitmapBacking>> m_backingStores;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> m_detachedOffscreenCanvases;

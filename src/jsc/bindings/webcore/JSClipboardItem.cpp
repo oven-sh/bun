@@ -128,25 +128,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardItemDOMConstr
     auto record = convert<IDLRecord<IDLDOMString, IDLPromise<IDLAny>>>(*lexicalGlobalObject, itemsArg);
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    Vector<KeyValuePair<String, Ref<DOMPromise>>> items;
-    items.reserveInitialCapacity(record.size());
-    for (auto& entry : record) {
-        // Spec: `types` holds the serialization of the parsed MIME type
-        // (mimesniff §4.4), and two keys parsing to the same essence are one
-        // representation twice.
-        String normalized = ClipboardItem::parseMIMETypeEssence(entry.key);
-        if (normalized.isEmpty()) [[unlikely]]
-            return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("\""_s, entry.key, "\" is not a valid MIME type"_s)));
-        bool duplicate = items.containsIf([&](auto& item) { return item.key == normalized; });
-        if (duplicate) [[unlikely]]
-            return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("Duplicate MIME type \""_s, normalized, "\""_s)));
-
-        if (!entry.value) [[unlikely]]
-            return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, "ClipboardItem representations must be values or promises"_s));
-        items.append({ WTF::move(normalized), entry.value.releaseNonNull() });
-    }
-
-    // WebIDL: a dictionary argument must be undefined, null, or an object.
+    // WebIDL: every argument is converted before any body step runs, so the
+    // options dictionary (which may invoke a user getter) is read before the
+    // record's keys are validated.
     ClipboardItem::Options options;
     JSValue optionsArg = callFrame->argument(1);
     if (!optionsArg.isUndefinedOrNull()) {
@@ -166,6 +150,24 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSClipboardItemDOMConstr
             else [[unlikely]]
                 return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("\""_s, style, "\" is not a valid value for presentationStyle"_s)));
         }
+    }
+
+    Vector<KeyValuePair<String, Ref<DOMPromise>>> items;
+    items.reserveInitialCapacity(record.size());
+    for (auto& entry : record) {
+        // Spec: `types` holds the serialization of the parsed MIME type
+        // (mimesniff §4.4), and two keys parsing to the same essence are one
+        // representation twice.
+        String normalized = ClipboardItem::parseMIMETypeEssence(entry.key);
+        if (normalized.isEmpty()) [[unlikely]]
+            return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("\""_s, entry.key, "\" is not a valid MIME type"_s)));
+        bool duplicate = items.containsIf([&](auto& item) { return item.key == normalized; });
+        if (duplicate) [[unlikely]]
+            return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, makeString("Duplicate MIME type \""_s, normalized, "\""_s)));
+
+        if (!entry.value) [[unlikely]]
+            return JSValue::encode(throwTypeError(lexicalGlobalObject, throwScope, "ClipboardItem representations must be values or promises"_s));
+        items.append({ WTF::move(normalized), entry.value.releaseNonNull() });
     }
 
     auto object = ClipboardItem::create(WTF::move(items), options);

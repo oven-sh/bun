@@ -213,9 +213,13 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
         return;
     }
 
+    // A WeakPtr back-edge: a strong Ref here would close a native<->GC cycle
+    // (guardedObjects roots the aggregate, whose reaction would own the item)
+    // that never-settling user data would make uncollectable.
     m_allTypesSettled = DOMPromise::create(*globalObject, *allPromise);
-    m_allTypesSettled->whenSettled([this, protectedItem = Ref { m_item.get() }, generation = m_collectGeneration] {
-        if (generation != m_collectGeneration)
+    m_allTypesSettled->whenSettled([this, weakItem = WeakPtr { m_item.get() }, generation = m_collectGeneration] {
+        RefPtr protectedItem = weakItem.get();
+        if (!protectedItem || generation != m_collectGeneration)
             return;
         didSettleAllTypes();
     });

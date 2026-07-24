@@ -2,6 +2,7 @@
 // The OS round-trip tests are environment-adaptive: a machine with no
 // reachable system clipboard must reject with a "NotAllowedError"
 // DOMException instead, and that shape is asserted.
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { chmodSync } from "node:fs";
@@ -270,7 +271,6 @@ describe("ClipboardItem", () => {
   // without it GC swept the wrapper but never ran ~JSClipboardItem, so the
   // impl's DOMPromise stayed in guardedObjects and pinned its JSPromise.
   test("collected wrappers release their impl", () => {
-    const { heapStats } = require("bun:jsc");
     Bun.gc(true);
     const before = heapStats().objectTypeCounts.Promise || 0;
     for (let i = 0; i < 2000; i++) new ClipboardItem({ "text/plain": "x" });

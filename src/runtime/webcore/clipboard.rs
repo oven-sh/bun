@@ -590,7 +590,7 @@ mod platform {
     /// Copies a locked HGLOBAL: `text` trims at the first NUL and converts
     /// from UTF-16; binary payloads keep `GlobalSize`'s length, which can
     /// over-report by allocation slack (Win32 has no exact-length channel).
-    fn copy_global(h: *mut c_void, text: bool) -> Result<Option<Vec<u8>>, Unavailable> {
+    fn copy_global(h: *mut c_void, text: bool) -> Result<Vec<u8>, Unavailable> {
         // SAFETY: `h` is owned by the clipboard for as long as it stays open;
         // we only read it before `CloseClipboard`.
         let p = unsafe { GlobalLock(h) };
@@ -615,12 +615,10 @@ mod platform {
             }
             // SAFETY: `n <= cap`, and the allocation stays locked.
             let wide = unsafe { core::slice::from_raw_parts(wide_ptr, n) };
-            return Ok(Some(String::from_utf16_lossy(wide).into_bytes()));
+            return Ok(String::from_utf16_lossy(wide).into_bytes());
         }
         // SAFETY: `total` bytes of the locked allocation are readable.
-        Ok(Some(
-            unsafe { core::slice::from_raw_parts(p.cast::<u8>(), total) }.to_vec(),
-        ))
+        Ok(unsafe { core::slice::from_raw_parts(p.cast::<u8>(), total) }.to_vec())
     }
 
     pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
@@ -641,9 +639,7 @@ mod platform {
             if h.is_null() {
                 continue;
             }
-            let Some(bytes) = copy_global(h, mime == Mime::TextPlain)? else {
-                return Ok(None);
-            };
+            let bytes = copy_global(h, mime == Mime::TextPlain)?;
             if mime != Mime::TextHtml {
                 return Ok(Some(bytes));
             }

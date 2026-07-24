@@ -72,12 +72,31 @@ impl SignalCode {
             Self::SIGIO => Some("I/O on asynchronous file descriptor is possible"),
             Self::SIGSYS => Some("Bad system call"),
             // Platform-only signals (the X-macro in `bun_core` defines a
-            // different name set per platform — see for_each_signal!).
-            #[cfg(not(target_vendor = "apple"))]
+            // different name set per platform — see for_each_signal!; these
+            // cfgs must mirror its BSD-family predicate exactly).
+            #[cfg(not(any(
+                target_vendor = "apple",
+                target_os = "freebsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            )))]
             Self::SIGPWR => Some("Power failure"),
-            #[cfg(target_vendor = "apple")]
+            #[cfg(any(
+                target_vendor = "apple",
+                target_os = "freebsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            ))]
             Self::SIGEMT => Some("Emulator trap"),
-            #[cfg(target_vendor = "apple")]
+            #[cfg(any(
+                target_vendor = "apple",
+                target_os = "freebsd",
+                target_os = "dragonfly",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            ))]
             Self::SIGINFO => Some("Information request"),
             _ => None,
         }

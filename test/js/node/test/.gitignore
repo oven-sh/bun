@@ -32,3 +32,8 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/error-reporter-fail-fast/**
 !fixtures/test-runner/worker-id
 !fixtures/test-runner/worker-id/**
+!fixtures/test-runner/global-setup-teardown
+!fixtures/test-runner/global-setup-teardown/**
+!fixtures/test-runner/test-runner-global-hooks.mjs
+!fixtures/test-runner/snapshots
+!fixtures/test-runner/snapshots/**

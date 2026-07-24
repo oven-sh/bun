@@ -197,7 +197,11 @@ class SnapshotManager {
   createAssert() {
     const manager = this;
 
-    return function snapshotAssertion(this: any, actual: unknown, options: { serializers?: Function[] } = kEmptyObject) {
+    return function snapshotAssertion(
+      this: any,
+      actual: unknown,
+      options: { serializers?: Function[] } = kEmptyObject,
+    ) {
       validateObject(options, "options");
       const { serializers = serializerFns } = options;
       validateFunctionArray(serializers, "options.serializers");

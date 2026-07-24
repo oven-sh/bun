@@ -30,7 +30,7 @@ async function run(withWaiterThread: boolean) {
 
   // Assert we didn't use 100% of CPU time
   console.log(resourceUsage.cpuTime);
-  expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000n * (isWindows ? 5n : 1n));
+  expect(resourceUsage?.cpuTime.total).toBeLessThan(750_000 * (isWindows ? 5 : 1));
 }
 
 test(

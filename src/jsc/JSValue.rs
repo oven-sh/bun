@@ -666,22 +666,6 @@ impl JSValue {
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JSValue {
         JSC__JSValue__fromUInt64NoTruncate(global, i)
     }
-    /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
-    /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
-    /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
-    pub fn from_timeval_no_truncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || {
-            JSC__JSValue__fromTimevalNoTruncate(global, nsec, sec)
-        })
-    }
-    /// `JSValue.bigIntSum` — `a + b` where both are BigInt.
-    pub fn big_int_sum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue {
-        JSC__JSValue__bigIntSum(global, a, b)
-    }
     /// `JSValue.fromEntries` — build a plain object from
     /// parallel `keys`/`values` `ZigString` arrays. When `clone` is true the
     /// C++ side copies the string bytes (caller may free `keys`/`values`).
@@ -1963,12 +1947,6 @@ unsafe extern "C" {
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
-    safe fn JSC__JSValue__fromTimevalNoTruncate(
-        global: &JSGlobalObject,
-        nsec: i64,
-        sec: i64,
-    ) -> JSValue;
-    safe fn JSC__JSValue__bigIntSum(global: &JSGlobalObject, a: JSValue, b: JSValue) -> JSValue;
     fn JSC__JSValue__fromEntries(
         global: *const JSGlobalObject,
         keys: *mut bun_core::ZigString,

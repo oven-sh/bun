@@ -401,7 +401,7 @@ it("setTimeout CPU usage #7790", async () => {
   const code = await process.exited;
   expect(code).toBe(0);
   const stats = process.resourceUsage();
-  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
+  expect(stats.cpuTime.total / 1e6).toBeLessThan(1);
 });
 
 // The epoll_pwait(2) fallback (kernels <5.11, gVisor, seccomp-blocked

@@ -2044,6 +2044,22 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
+
+    if !find_result.package.deprecated.is_empty()
+        && this.options.log_level != crate::package_manager_real::options::LogLevel::Silent
+    {
+        this.log_mut().add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "{}@{}: {}",
+                bstr::BStr::new(this.lockfile.str(&name)),
+                find_result.version.fmt(&manifest.string_buf),
+                bstr::BStr::new(manifest.str(&find_result.package.deprecated)),
+            ),
+        );
+    }
+
     // Record exact-version pins so `Lockfile::get_package_id`'s
     // order-independence guard can tell them apart from range-resolved
     // entries (which it treats as network-order artefacts).

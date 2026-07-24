@@ -203,7 +203,7 @@ pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> 
     // Externally-framed {cmd:'NODE_CLUSTER', ack: N} replies reach the JS
     // internalMessage fallback in primary.ts instead of the Internal-framed
     // path below; settle the same per-seq callback it would have.
-    let arguments = frame.arguments_old::<2>().ptr;
+    let arguments = frame.arguments_as_array::<2>();
     let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
         return Ok(JSValue::FALSE);
     };

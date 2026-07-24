@@ -1403,3 +1403,45 @@ describe("uid/gid", () => {
     expect(thrown?.code).toBe("EPERM");
   });
 });
+
+describe("resourceUsage", () => {
+  // getrusage(2) reports ru_maxrss in kilobytes on Linux/BSD but in bytes on
+  // Darwin; Windows' PeakWorkingSetSize is bytes. Bun.ResourceUsage documents
+  // maxRSS in bytes, so the implementation must normalize. A child that faults
+  // in 64 MiB of pages must report at least 64 MiB of peak RSS in bytes, not
+  // the raw ~65 000 kilobyte figure Linux hands back.
+  const MiB = 1024 * 1024;
+  const touch64MiB =
+    "const a=new Uint8Array(64*1024*1024); for(let i=0;i<a.length;i+=4096)a[i]=1; process.stdout.write('t')";
+
+  it("spawn: maxRSS is reported in bytes", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", touch64MiB],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("t");
+    const usage = proc.resourceUsage()!;
+    expect(usage.maxRSS).toBeGreaterThanOrEqual(64 * MiB);
+    expect(usage.maxRSS).toBeLessThan(8 * 1024 * MiB);
+    expect(exitCode).toBe(0);
+  });
+
+  it("spawnSync: maxRSS is reported in bytes", () => {
+    const result = spawnSync({
+      cmd: [bunExe(), "-e", touch64MiB],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.stderr.toString()).toBe("");
+    expect(result.stdout.toString()).toBe("t");
+    const usage = result.resourceUsage!;
+    expect(usage.maxRSS).toBeGreaterThanOrEqual(64 * MiB);
+    expect(usage.maxRSS).toBeLessThan(8 * 1024 * MiB);
+    expect(result.exitCode).toBe(0);
+  });
+});

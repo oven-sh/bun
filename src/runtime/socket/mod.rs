@@ -155,6 +155,10 @@ impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
         NewSocket::on_timeout(this, s);
     }
     #[inline]
+    fn on_long_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+        NewSocket::on_timeout(this, s);
+    }
+    #[inline]
     fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
         NewSocket::on_end(this, s);
     }

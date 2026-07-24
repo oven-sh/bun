@@ -710,10 +710,21 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: `preload` points at a live boxed slice for this iteration
         // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
-        // Strip "file://".
-        let normalized: &[u8] = preload_slice
-            .strip_prefix(b"file://".as_slice())
-            .unwrap_or(preload_slice);
+        // Decode file:// URLs via WTF::URL::fileSystemPath (percent-decoding +
+        // Windows drive letters); fall back to the input on parse failure.
+        let decoded_path = if bun_core::strings::has_prefix_comptime(preload_slice, b"file://") {
+            bun_core::OwnedString::new(bun_jsc::URL::path_from_file_url(
+                bun_core::String::borrow_utf8(preload_slice),
+            ))
+        } else {
+            bun_core::OwnedString::default()
+        };
+        let decoded_slice = decoded_path.to_utf8();
+        let normalized: &[u8] = if decoded_slice.slice().is_empty() {
+            preload_slice
+        } else {
+            decoded_slice.slice()
+        };
 
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
         // resolves them internally. node:worker_threads is preloaded this way so

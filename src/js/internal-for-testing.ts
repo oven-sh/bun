@@ -463,6 +463,7 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  "internal/timers": require("internal/timers"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
   "internal/util/inspect": require("internal/util/inspect"),

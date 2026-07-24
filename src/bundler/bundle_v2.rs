@@ -1485,6 +1485,39 @@ pub mod bv2_impl {
         unsafe { (*p).into_static() }
     }
 
+    /// Logs resolver errors that `resolve()` returns without writing to any
+    /// log so `has_errors()` actually fires. Returns `true` when `err` is one
+    /// of those; shared by `run_resolver` and `resolve_import_records`.
+    #[cold]
+    pub(crate) fn log_unhandled_resolve_error(
+        log: &mut bun_ast::Log,
+        source: Option<&bun_ast::Source>,
+        range: bun_ast::Range,
+        err: _resolver::Error,
+        specifier: &[u8],
+        kind: ImportKind,
+        report: bool,
+    ) -> bool {
+        if err == _resolver::Error::InvalidDataURL {
+            if report {
+                bun_ast::Log::add_resolve_error_with_text_dupe(
+                    log,
+                    source,
+                    range,
+                    format_args!(
+                        "Could not resolve data URL: \"{}\"",
+                        bstr::BStr::new(specifier)
+                    ),
+                    specifier,
+                    kind,
+                );
+            }
+            return true;
+        }
+        // Other errors are logged by the resolver before it returns Failure.
+        false
+    }
+
     // Unified with the canonical definitions at the parent module level (this
     // avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
@@ -2329,8 +2362,18 @@ pub mod bv2_impl {
                                     );
                                 }
                             }
+                        } else {
+                            log_unhandled_resolve_error(
+                                log,
+                                source,
+                                import_record.range,
+                                err,
+                                &import_record.specifier,
+                                import_record.kind,
+                                !handles_import_errors
+                                    && !self.transpiler.options.ignore_module_resolution_errors,
+                            );
                         }
-                        // assume other errors are already in the log
                         return;
                     }
                 }
@@ -6222,8 +6265,22 @@ pub mod bv2_impl {
                                     }
                                 }
                             } else {
-                                // assume other errors are already in the log
-                                last_error = Some(err.into());
+                                let report = !import_record
+                                    .flags
+                                    .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                                    && !self.transpiler.options.ignore_module_resolution_errors;
+                                let ours = log_unhandled_resolve_error(
+                                    log,
+                                    Some(source),
+                                    import_record.range,
+                                    err,
+                                    import_record.path.text,
+                                    import_record.kind,
+                                    report,
+                                );
+                                if !ours || report {
+                                    last_error = Some(err.into());
+                                }
                             }
                             continue 'outer;
                         }

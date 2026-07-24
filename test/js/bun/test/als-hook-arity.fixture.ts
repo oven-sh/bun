@@ -9,74 +9,75 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 const als = new AsyncLocalStorage<{ tag: string }>();
 const order: string[] = [];
+const mark = (label: string) => order.push(`${label}:${als.getStore()?.tag ?? "none"}`);
 
 describe("registered inside an active ALS context", () => {
-  als.run({ tag: "collection" }, () => {
+  als.run({ tag: "ctx" }, () => {
     beforeAll(function zeroArg() {
-      order.push("beforeAll");
+      mark("beforeAll");
     });
     beforeEach(function zeroArg() {
-      order.push("beforeEach");
+      mark("beforeEach");
     });
     afterEach(function zeroArg() {
-      order.push("afterEach");
+      mark("afterEach");
     });
     afterAll(function zeroArg() {
-      order.push("afterAll");
+      mark("afterAll");
     });
     afterAll(function withDone(done) {
-      order.push("afterAll-done");
+      mark("afterAll-done");
       setImmediate(done);
     });
 
     test("zero-arg test", function zeroArg() {
-      order.push("zero-arg test");
-      expect(als.getStore()?.tag).toBe("collection");
+      mark("zero-arg test");
     });
 
     test("one-arg test still receives done", function withDone(done) {
-      order.push("done test");
+      mark("done test");
       expect(typeof done).toBe("function");
-      expect(als.getStore()?.tag).toBe("collection");
       setImmediate(done);
     });
 
     test.each([[1], [2]])("each %p", function withArg(n) {
-      order.push(`each ${n}`);
-      expect(als.getStore()?.tag).toBe("collection");
+      mark(`each ${n}`);
     });
 
     describe("nested describe", function zeroArg() {
+      mark("nested.body");
       afterAll(function zeroArg() {
-        order.push("nested.afterAll");
+        mark("nested.afterAll");
       });
       test("passes", function zeroArg() {
-        order.push("nested.test");
+        mark("nested.test");
       });
     });
   });
 });
 
-test("hooks and tests registered inside an ALS context use the callback's real arity", () => {
+test("hooks and tests registered inside an ALS context use the callback's real arity and restore the context", () => {
+  // Every entry ran inside the restored `{ tag: "ctx" }` store, in order.
   expect(order).toEqual([
-    "beforeAll",
-    "beforeEach",
-    "zero-arg test",
-    "afterEach",
-    "beforeEach",
-    "done test",
-    "afterEach",
-    "beforeEach",
-    "each 1",
-    "afterEach",
-    "beforeEach",
-    "each 2",
-    "afterEach",
-    "beforeEach",
-    "nested.test",
-    "afterEach",
-    "nested.afterAll",
-    "afterAll",
-    "afterAll-done",
+    "nested.body:ctx",
+    "beforeAll:ctx",
+    "beforeEach:ctx",
+    "zero-arg test:ctx",
+    "afterEach:ctx",
+    "beforeEach:ctx",
+    "done test:ctx",
+    "afterEach:ctx",
+    "beforeEach:ctx",
+    "each 1:ctx",
+    "afterEach:ctx",
+    "beforeEach:ctx",
+    "each 2:ctx",
+    "afterEach:ctx",
+    "beforeEach:ctx",
+    "nested.test:ctx",
+    "afterEach:ctx",
+    "nested.afterAll:ctx",
+    "afterAll:ctx",
+    "afterAll-done:ctx",
   ]);
 });

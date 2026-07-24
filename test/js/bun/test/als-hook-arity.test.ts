@@ -25,11 +25,11 @@ test("tests and hooks registered inside an AsyncLocalStorage context detect done
     (pass) registered inside an active ALS context > each 1
     (pass) registered inside an active ALS context > each 2
     (pass) registered inside an active ALS context > nested describe > passes
-    (pass) hooks and tests registered inside an ALS context use the callback's real arity
+    (pass) hooks and tests registered inside an ALS context use the callback's real arity and restore the context
 
      6 pass
      0 fail
-     6 expect() calls
+     2 expect() calls
     Ran 6 tests across 1 file."
   `);
   expect(stdout).toStartWith("bun test ");

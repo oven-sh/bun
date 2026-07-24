@@ -42,7 +42,7 @@ pub unsafe fn rename_symbols_in_chunk(
     let js = match content {
         Content::Javascript(js) => js,
         // Caller (`LinkerContext::generate_js_renamer`) only dispatches JS chunks.
-        _ => return Ok(ChunkRenamer::default()),
+        _ => unreachable!("rename_symbols_in_chunk called on non-JS chunk"),
     };
     let files_in_order: &[u32] = &js.files_in_chunk_order;
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");

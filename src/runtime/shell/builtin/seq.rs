@@ -15,7 +15,6 @@ enum State {
 
 pub struct Seq {
     state: State,
-    buf: Vec<u8>,
     start: f32,
     end: f32,
     increment: f32,
@@ -29,7 +28,6 @@ impl Default for Seq {
     fn default() -> Self {
         Self {
             state: State::Idle,
-            buf: Vec::new(),
             start: 1.0,
             end: 1.0,
             increment: 1.0,
@@ -192,13 +190,9 @@ impl Seq {
         if needs_io {
             let safeguard = Builtin::of(interp, cmd).stdout.needs_io().unwrap();
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            // enqueue copies into the IOWriter's buffer, so `out` can be moved into
-            // state afterward instead of stored-then-cloned.
-            let y = Builtin::of_mut(interp, cmd)
+            return Builtin::of_mut(interp, cmd)
                 .stdout
                 .enqueue(child, &out, safeguard);
-            Self::state_mut(interp, cmd).buf = out;
-            return y;
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &out);
         Builtin::done(interp, cmd, 0)

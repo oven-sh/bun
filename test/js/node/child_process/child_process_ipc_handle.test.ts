@@ -397,3 +397,226 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 });
+
+describe.skipIf(isWindows)("send() callback settlement on channel close", () => {
+  test.concurrent("every queued plain send callback settles (with null, like node)", async () => {
+    using dir = tempDir("ipc-close-settles-callbacks", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js');
+
+child.on('message', m => {
+  if (m !== 'ready') return;
+  // 8MB per message: far beyond what one synchronous write can hand to the
+  // kernel, so all three sends still sit (at least partly) in the send
+  // queue when the SIGKILL lands in this same tick. Node settles accepted
+  // plain sends with null even when the peer dies before reading them
+  // (req.oncomplete ignores the write status); none may be dropped.
+  const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
+  const results = [];
+  const total = 3;
+  for (let i = 0; i < total; i++) {
+    child.send(big, err => {
+      results.push(err === null ? 'null' : err.code);
+      if (results.length === total) {
+        console.log('CALLBACKS:' + results.join(','));
+        process.exit(0);
+      }
+    });
+  }
+  child.kill('SIGKILL');
+});
+setTimeout(() => { console.log('TIMEOUT:callbacks-never-settled'); process.exit(1); }, 15000);
+`,
+      "child.js": `
+process.send('ready');
+setInterval(() => {}, 1 << 30);
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(stdout.trim()).toBe("CALLBACKS:null,null,null");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("handle send queued behind plain backpressure settles null on close, like node", async () => {
+    using dir = tempDir("ipc-handle-behind-backpressure", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const net = require('node:net');
+const child = fork('child.js');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', () => {
+  let a = 'nocall', h = 'nocall';
+  // 8MB plain write saturates the pipe, so the handle send below is still
+  // queued (never written, no ack pending) when the SIGKILL lands. Node
+  // settles both callbacks with null in this shape (verified v26.3.0).
+  const big = Buffer.alloc(8 * 1024 * 1024, 'x').toString();
+  child.send(big, err => { a = err === null ? 'null' : err.code; });
+  child.send('withhandle', server, err => { h = err === null ? 'null' : err.code; });
+  child.kill('SIGKILL');
+  child.on('close', () => setImmediate(() => setImmediate(() => {
+    console.log(JSON.stringify({ a, h }));
+    server.close();
+    process.exit(0);
+  })));
+});
+`,
+      "child.js": `const end = Date.now() + 30_000; while (Date.now() < end) {}`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(JSON.parse(stdout.trim())).toEqual({ a: "null", h: "null" });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("sending a dgram socket delivers a dgram.Socket to the child", async () => {
+    using dir = tempDir("ipc-dgram-handle-pass", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const dgram = require('node:dgram');
+const child = fork('child.js');
+const sock = dgram.createSocket('udp4');
+sock.bind(0, () => {
+  child.send('msg', sock, err => {
+    if (err) { console.log('RESULT:' + (err.code || err.message)); process.exit(1); }
+  });
+});
+child.on('message', m => {
+  console.log('RESULT:' + m.got + ':' + m.handle);
+  sock.close();
+  child.kill();
+  process.exit(0);
+});
+// Watchdog: a dropped handle leaves both sides waiting with no observable
+// signal; fail with a diagnostic instead of hanging the test runner.
+setTimeout(() => { console.log('RESULT:timeout'); process.exit(1); }, 10000);
+`,
+      "child.js": `
+process.on('message', (m, handle) => {
+  // If the message arrives without its handle, the silent-drop bug is back.
+  const kind = handle === undefined ? 'missing' : (handle.constructor && handle.constructor.name);
+  if (handle && typeof handle.close === 'function') { try { handle.close(); } catch {} }
+  process.send({ got: m, handle: kind });
+});
+setTimeout(() => process.exit(0), 5000);
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(stdout.trim()).toBe("RESULT:msg:Socket");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("NODE_-prefixed user messages", () => {
+  test.concurrent(
+    "a user send with cmd NODE_CLUSTER reaches a plain-fork parent as internalMessage, like node",
+    async () => {
+      using dir = tempDir("ipc-node-cluster-user-msg", {
+        "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js');
+const got = [];
+const done = () => {
+  if (got.length === 2) {
+    console.log(JSON.stringify(got));
+    child.kill();
+    process.exit(0);
+  }
+};
+child.on('message', m => { got.push(['message', m]); done(); });
+child.on('internalMessage', m => { got.push(['internalMessage', m]); done(); });
+setTimeout(() => { console.log('TIMEOUT:' + JSON.stringify(got)); process.exit(1); }, 10000);
+`,
+        "child.js": `
+process.send({ cmd: 'NODE_CLUSTER', x: 1 });
+process.send({ cmd: 'OTHER', y: 2 });
+setInterval(() => {}, 1 << 30);
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "parent.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+      // Same routing as real node: the NODE_-prefixed message fires
+      // 'internalMessage' on the child handle; the other one is a normal message.
+      expect(JSON.parse(stdout.trim())).toEqual([
+        ["internalMessage", { cmd: "NODE_CLUSTER", x: 1 }],
+        ["message", { cmd: "OTHER", y: 2 }],
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+});
+
+describe.skipIf(isWindows)("http listen({ fd })", () => {
+  test.concurrent("adopts fd 0 (inetd-style) and stays alive with nothing else pending", async () => {
+    using dir = tempDir("http-listen-fd0", {
+      "parent.js": `
+const net = require('node:net');
+const server = net.createServer();
+server.listen(0, '127.0.0.1', async () => {
+  const port = server.address().port;
+  const child = Bun.spawn({
+    cmd: [process.execPath, 'child.js'],
+    stdio: [server._handle.fd, 'inherit', 'inherit'],
+    env: { ...process.env },
+    cwd: import.meta.dir,
+  });
+  // The child owns a dup; drop the parent's acceptor so requests reach it.
+  server.close();
+  await new Promise(r => setTimeout(r, 500));
+  // The adopted listen alone must keep the child alive.
+  console.log('child alive:', child.exitCode === null);
+  const res = await fetch('http://127.0.0.1:' + port + '/', { signal: AbortSignal.timeout(5000) });
+  console.log('response:', await res.text());
+  child.kill();
+  process.exit(0);
+});
+`,
+      "child.js": `
+const http = require('node:http');
+const s = http.createServer((req, res) => res.end('hello-fd0'));
+s.on('error', e => { console.error('listen error:', e.code); process.exit(3); });
+// fd 0: get_truthy would drop it and silently bind the default port instead.
+s.listen({ fd: 0 });
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(stdout).toContain("child alive: true");
+    expect(stdout).toContain("response: hello-fd0");
+    expect(exitCode).toBe(0);
+  });
+});

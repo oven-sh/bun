@@ -66,45 +66,38 @@ test.skipIf(isWindows || !nodeExe())(
   },
 );
 
-test.skipIf(isWindows || !nodeExe())(
-  "releases the descriptor of a received handle whose type it does not accept",
-  async () => {
-    const parentSource = [
-      `let reported = false;`,
-      `const handleFailed = Promise.withResolvers();`,
-      `process.on("uncaughtException", err => {`,
-      `  if (!reported) {`,
-      `    reported = true;`,
-      `    console.log("handle-error:", err.message);`,
-      `    handleFailed.resolve();`,
-      `  }`,
-      `});`,
-      `const childSource = 'const dgram = require("dgram"); const s = dgram.createSocket("udp4"); s.bind(0, () => { process.send("x", s); });';`,
-      `const child = Bun.spawn({`,
-      `  cmd: [process.env.NODE_BIN, "-e", childSource],`,
-      `  stdio: ["ignore", "inherit", "inherit"],`,
-      `  serialization: "json",`,
-      `  ipc(_message, _subprocess, handle) { console.log("unexpected handle:", String(handle)); },`,
-      `  env: { ...process.env },`,
-      `});`,
-      `await handleFailed.promise;`,
-      `child.kill();`,
-      `await child.exited;`,
-      `console.log("done");`,
-    ].join("\n");
+test.skipIf(isWindows || !nodeExe())("receives a dgram.Socket handle from a node child", async () => {
+  const parentSource = [
+    `const dgram = require("node:dgram");`,
+    `const gotHandle = Promise.withResolvers();`,
+    `const childSource = 'const dgram = require("dgram"); const s = dgram.createSocket("udp4"); s.bind(0, () => { process.send("x", s); });';`,
+    `const child = Bun.spawn({`,
+    `  cmd: [process.env.NODE_BIN, "-e", childSource],`,
+    `  stdio: ["ignore", "inherit", "inherit"],`,
+    `  serialization: "json",`,
+    `  ipc(message, _subprocess, handle) { gotHandle.resolve({ message, handle }); },`,
+    `  env: { ...process.env },`,
+    `});`,
+    `const { message, handle } = await gotHandle.promise;`,
+    `console.log("message:", message);`,
+    `console.log("handle is a dgram.Socket:", handle instanceof dgram.Socket);`,
+    `handle.close();`,
+    `child.kill();`,
+    `await child.exited;`,
+    `console.log("done");`,
+  ].join("\n");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parentSource],
-      env: { ...bunEnv, NODE_BIN: nodeExe()! },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", parentSource],
+    env: { ...bunEnv, NODE_BIN: nodeExe()! },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
-      stdout: "handle-error: dgram.Socket handles are not supported over IPC\ndone",
-      exitCode: 0,
-    });
-  },
-);
+  expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
+    stdout: "message: x\nhandle is a dgram.Socket: true\ndone",
+    exitCode: 0,
+  });
+});

@@ -523,7 +523,9 @@ mod json {
         let deserialized = match parsed {
             Ok(v) => v,
             Err(JsError::Thrown) | Err(JsError::Terminated) => {
-                global_this.clear_exception();
+                // Don't erase a pending TerminationException - clearing it
+                // would resurrect a terminated worker's execution.
+                global_this.clear_exception_except_termination();
                 return Err(IPCDecodeError::InvalidFormat);
             }
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -791,25 +793,35 @@ impl SendHandle {
     }
 
     /// Call the callback and deinit
-    pub fn complete(mut self, global: &JSGlobalObject) {
-        if let Some(handle) = &self.handle {
-            if handle.close_on_complete {
-                let js = handle.js.value();
-                if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
-                }
-            }
-        }
+    pub fn complete(mut self, global: &JSGlobalObject, close_fn: &mut Option<Protected>) {
+        self.schedule_handle_close(global, close_fn);
         let _ = self.callbacks.call_next_tick(global); // TODO: properly propagate exception upwards
         // self drops here → data/callbacks/handle Drop.
     }
 
-    pub fn abort_unsent(self, global: &JSGlobalObject) {
+    /// The channel closed with this message still parked behind a pending
+    /// handle ack: close the attached handle wrap (if any), and drop the
+    /// callbacks without settling them — node discards its _handleQueue on
+    /// abrupt close without invoking those callbacks (verified against
+    /// v26.3.0; see the "unsent queued handle callback never fires" test).
+    pub fn abort_parked(self, global: &JSGlobalObject, close_fn: &mut Option<Protected>) {
+        self.schedule_handle_close(global, close_fn);
+    }
+
+    fn schedule_handle_close(&self, global: &JSGlobalObject, close_fn: &mut Option<Protected>) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
                 let js = handle.js.value();
                 if js.is_object() {
-                    let _ = JSValue::call_next_tick_1(close_sent_handle_fn(global), global, js);
+                    let f = match close_fn {
+                        Some(p) => p.value(),
+                        None => {
+                            let f = close_sent_handle_fn(global);
+                            *close_fn = Some(f.protected());
+                            f
+                        }
+                    };
+                    let _ = JSValue::call_next_tick_1(f, global, js);
                 }
             }
         }
@@ -929,6 +941,11 @@ pub struct SendQueue {
     pub write_in_progress: bool,
     pub close_event_sent: bool,
 
+    /// Lazily created, per-channel cache of the `close_sent_handle` JSFunction
+    /// so handle-carrying sends don't allocate a fresh function per message.
+    /// `Protected` unprotects on Drop (JS thread, like the queued callbacks).
+    pub close_handle_fn: Option<Protected>,
+
     pub windows: WindowsState,
 }
 
@@ -997,6 +1014,7 @@ impl SendQueue {
             after_close_task: None,
             write_in_progress: false,
             close_event_sent: false,
+            close_handle_fn: None,
             windows: WindowsState::default(),
         }
     }
@@ -1163,14 +1181,29 @@ impl SendQueue {
         }
         this.close_event_sent = true;
         let global = this.get_global_this();
+        // Node's observable close contract (verified empirically on v26.3.0):
+        // every message handed to the channel settles its callback with null
+        // once the write request completes, even when the peer died first
+        // (req.oncomplete ignores the write status in
+        // lib/internal/child_process.js) — while messages parked in
+        // _handleQueue behind a pending NODE_HANDLE ack are discarded without
+        // their callbacks ever firing. Node opens that window the moment a
+        // handle send is *initiated* (_handleQueue is created synchronously
+        // inside _send), so everything queued after the first handle-bearing
+        // item is parked - not just items queued after its write completed.
+        let mut parked = this.waiting_for_ack.is_some();
         if let Some(item) = this.waiting_for_ack.take() {
-            item.complete(&global);
+            item.complete(&global, &mut this.close_handle_fn);
         }
         for item in std::mem::take(&mut this.queue) {
-            if item.data.cursor > 0 {
-                item.complete(&global);
+            let was_parked = parked;
+            if item.handle.is_some() {
+                parked = true;
+            }
+            if was_parked {
+                item.abort_parked(&global, &mut this.close_handle_fn);
             } else {
-                item.abort_unsent(&global);
+                item.complete(&global, &mut this.close_handle_fn);
             }
         }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
@@ -1308,7 +1341,7 @@ impl SendQueue {
         // consume the message and continue sending
         let item = self.waiting_for_ack.take().unwrap();
         self.retry_count = 0;
-        item.complete(global); // call the callback & deinit
+        item.complete(global, &mut self.close_handle_fn); // call the callback & deinit
         log!("IPC call continueSend() from onAckNack success");
         self.continue_send(global, ContinueSendReason::NewMessageAppended);
     }
@@ -1387,7 +1420,7 @@ impl SendQueue {
         if to_send_len == 0 {
             // item's length is 0, remove it and continue sending. this should rarely (never?) happen.
             let itm = self.queue.remove(0);
-            itm.complete(global); // call the callback & deinit
+            itm.complete(global, &mut self.close_handle_fn); // call the callback & deinit
             log!("IPC call continueSend() from empty item");
             return self.continue_send(global, reason);
         }
@@ -1431,7 +1464,7 @@ impl SendQueue {
                 // the message was fully sent, but there may be more items in the queue.
                 // shift the queue and try to send the next item immediately.
                 let item = self.queue.remove(0);
-                item.complete(&global_this); // call the callback & deinit
+                item.complete(&global_this, &mut self.close_handle_fn); // call the callback & deinit
             }
             self.continue_send(&global_this, ContinueSendReason::OnWritable);
             self.update_ref(&global_this);
@@ -1533,6 +1566,26 @@ impl SendQueue {
         match &self.socket {
             SocketUnion::Open(s) => Some(s),
             _ => None,
+        }
+    }
+
+    /// Raw descriptor of the live IPC channel, mirroring Node's `Control#fd`
+    /// getter (v26.3.0 lib/internal/child_process.js:596): `None` once the
+    /// channel is gone. Windows has no meaningful raw descriptor for the uv
+    /// pipe here; callers surface that as `undefined`, like a closed channel.
+    pub fn channel_fd(&self) -> Option<Fd> {
+        #[cfg(not(windows))]
+        {
+            let socket = self.get_socket()?;
+            let raw = socket.socket.get()?;
+            // SAFETY: `get()` is Some only for a live connected socket owned
+            // by this queue; the pointer is valid for the duration of the
+            // synchronous read below.
+            Some(unsafe { (*raw).get_fd() })
+        }
+        #[cfg(windows)]
+        {
+            None
         }
     }
 
@@ -1901,7 +1954,9 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
         Ok(Some(v)) if v.is_string() => v,
         Ok(_) => return None,
         Err(_) => {
-            global.clear_exception();
+            // Don't erase a pending TerminationException — clearing it would
+            // resurrect a terminated worker's execution.
+            global.clear_exception_except_termination();
             return None;
         }
     };
@@ -1983,7 +2038,7 @@ fn handle_ipc_message(
             if msg_data.is_object() {
                 let cmd = match msg_data.fast_get(global_this, jsc::BuiltinName::cmd) {
                     Err(_) => {
-                        global_this.clear_exception();
+                        global_this.clear_exception_except_termination();
                         break 'handle_message;
                     }
                     Ok(None) => break 'handle_message,
@@ -2129,7 +2184,9 @@ fn handle_ipc_message(
                     }
                     Ok(_) => {}
                     Err(_) => {
-                        global_this.clear_exception();
+                        // See import_windows_socket_payload: never clear a
+                        // pending TerminationException.
+                        global_this.clear_exception_except_termination();
                     }
                 }
             }
@@ -2537,9 +2594,11 @@ pub fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
+    options: JSValue,
+    target: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    crate::cpp::IPCSerialize(global_object, message, handle)
+    crate::cpp::IPCSerialize(global_object, message, handle, options, target)
 }
 
 #[track_caller]

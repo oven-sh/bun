@@ -65,6 +65,20 @@ fn emit_process_error_event(
     Ok(JSValue::UNDEFINED)
 }
 
+fn is_invalid_handle_type(global_object: &JSGlobalObject, ex: JSValue) -> JsResult<bool> {
+    if !ex.is_object() {
+        return Ok(false);
+    }
+    let Some(code) = ex.get(global_object, "code")? else {
+        return Ok(false);
+    };
+    if !code.is_string() {
+        return Ok(false);
+    }
+    let code_str = code.to_bun_string(global_object)?;
+    Ok(bun_core::OwnedString::new(code_str).eql_comptime(b"ERR_INVALID_HANDLE_TYPE"))
+}
+
 fn do_send_err(
     global_object: &JSGlobalObject,
     callback: JSValue,
@@ -118,7 +132,6 @@ pub(crate) fn do_send(
             is_internal = IsInternal::Internal;
         }
     }
-
     let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {
         let msg = match from {
@@ -157,7 +170,34 @@ pub(crate) fn do_send(
 
     let original_message = message;
     if !handle.is_undefined_or_null() {
-        let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
+        // Socket-list owner for serialize(): null = the process object; only
+        // ChildProcess#send injects "$target", so process.send ignores a user
+        // value and Subprocess.send gets undefined (no tracking).
+        let target = match from {
+            FromEnum::Process => JSValue::NULL,
+            _ => options_
+                .get(global_object, "$target")?
+                .unwrap_or(JSValue::UNDEFINED),
+        };
+        // Like node: an unsupported handle type throws synchronously, but a
+        // conversion write-failure (e.g. EBADF from an unbound dgram socket)
+        // settles through the send callback like async write errors.
+        let serialized_array: JSValue =
+            match IPC::ipc_serialize(global_object, message, handle, options_, target) {
+                Ok(v) => v,
+                Err(e) => {
+                    // Never take a TerminationException: taking it clears the
+                    // VM's termination request and resumes a terminating worker.
+                    if matches!(e, bun_jsc::JsError::Terminated) {
+                        return Err(e);
+                    }
+                    let ex = global_object.take_error(e);
+                    if is_invalid_handle_type(global_object, ex)? {
+                        return Err(global_object.throw_value(ex));
+                    }
+                    return do_send_err(global_object, callback, ex, from);
+                }
+            };
         if serialized_array.is_undefined_or_null() {
             handle = JSValue::UNDEFINED;
         } else {
@@ -173,6 +213,10 @@ pub(crate) fn do_send(
     #[cfg_attr(windows, allow(unused_mut, unused_variables))]
     let mut dup_err: Option<bun_sys::Error> = None;
     if !handle.is_undefined_or_null() {
+        let keep_open = !options_.is_undefined_or_null()
+            && options_
+                .get(global_object, "keepOpen")?
+                .is_some_and(|v| v.to_boolean());
         if let Some(listener) = Listener::from_js(handle) {
             log!("got listener");
             // SAFETY: from_js returned a non-null `*mut Listener`; the JS
@@ -202,10 +246,6 @@ pub(crate) fn do_send(
             let fd = unsafe { (*socket).socket.get().fd() };
             if fd != bun_sys::Fd::INVALID {
                 log!("got tcp socket fd");
-                let keep_open = !options_.is_undefined_or_null()
-                    && options_
-                        .get(global_object, "keepOpen")?
-                        .is_some_and(|v| v.to_boolean());
                 if !keep_open {
                     pause_target = handle;
                 }
@@ -216,6 +256,49 @@ pub(crate) fn do_send(
                 }
                 #[cfg(windows)]
                 {
+                    zig_handle = Some(if keep_open {
+                        Handle::init(fd, handle)
+                    } else {
+                        Handle::init_close_on_complete(fd, handle)
+                    });
+                }
+            }
+        } else if handle.is_int32() {
+            // Raw descriptor from serialize() (dgram.Socket, POSIX-only): dup
+            // and share it; the sender keeps its socket, so nothing closes on
+            // ack (node's dgram conversion has no postSend close).
+            #[cfg(not(windows))]
+            {
+                let raw = handle.as_int32();
+                if raw >= 0 {
+                    log!("got raw fd");
+                    match Handle::init_dup(bun_sys::Fd::from_native(raw), handle, false) {
+                        Ok(h) => zig_handle = Some(h),
+                        Err(e) => dup_err = Some(e),
+                    }
+                }
+            }
+        } else {
+            // node:http server connection (JSNodeHTTPServerSocket): read the
+            // uSockets descriptor; close-on-ack detaches the sender's side
+            // like the TCPSocket path above.
+            let raw = bun_jsc::cpp::NodeHTTP__getServerSocketFd(handle);
+            if raw >= 0 {
+                log!("got node:http server socket fd");
+                if !keep_open {
+                    // Same park-until-ack contract as the TCPSocket branch;
+                    // the pause itself happens natively after the send (this
+                    // wrapper has no JS pause()).
+                    pause_target = handle;
+                }
+                #[cfg(not(windows))]
+                match Handle::init_dup(bun_sys::Fd::from_native(raw as i32), handle, !keep_open) {
+                    Ok(h) => zig_handle = Some(h),
+                    Err(e) => dup_err = Some(e),
+                }
+                #[cfg(windows)]
+                {
+                    let fd = bun_sys::Fd::from_system(raw as usize as *mut core::ffi::c_void);
                     zig_handle = Some(if keep_open {
                         Handle::init(fd, handle)
                     } else {
@@ -242,6 +325,14 @@ pub(crate) fn do_send(
         }
     }
     if zig_handle.is_none() {
+        if !handle.is_undefined_or_null() {
+            // serialize() returned a native handle but its fd is gone; its
+            // side effects (socket_list, _connections--) already ran, so fail
+            // the send instead of silently dropping the NODE_HANDLE envelope.
+            use bun_jsc::SysErrorJsc as _;
+            let e = bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::send);
+            return do_send_err(global_object, callback, e.to_js(global_object), from);
+        }
         message = original_message;
         pause_target = JSValue::UNDEFINED;
     }
@@ -259,7 +350,11 @@ pub(crate) fn do_send(
                     global_object.report_active_exception_as_unhandled(e);
                 }
             }
-            Ok(_) => {}
+            // node:http server sockets carry no JS pause(); stop the
+            // sender's uSockets read loop natively so bytes arriving before
+            // the NODE_HANDLE_ACK are not drained on this side (no-op for
+            // any other handle shape via the downcast).
+            Ok(_) => bun_jsc::cpp::NodeHTTP__pauseServerSocket(pause_target),
             Err(e) => global_object.report_active_exception_as_unhandled(e),
         }
     }
@@ -317,9 +412,11 @@ pub fn emit_handle_ipc_message(
         unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     } else {
         if !target.is_cell() {
+            log!("emitHandleIPCMessage: target not a cell");
             return Ok(JSValue::UNDEFINED);
         }
         let Some(subprocess) = Subprocess::from_js_direct(target) else {
+            log!("emitHandleIPCMessage: target is not a Subprocess");
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS

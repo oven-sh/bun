@@ -198,6 +198,52 @@ pub(crate) fn on_internal_message_primary(
     Ok(JSValue::UNDEFINED)
 }
 
+#[bun_jsc::host_fn]
+pub(crate) fn settle_cluster_ack(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    // Externally-framed {cmd:'NODE_CLUSTER', ack: N} replies reach the JS
+    // internalMessage fallback in primary.ts instead of the Internal-framed
+    // path below; settle the same per-seq callback it would have.
+    let arguments = frame.arguments_as_array::<2>();
+    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(JSValue::FALSE);
+    };
+    let Some(ipc_data) = subprocess.ipc() else {
+        return Ok(JSValue::FALSE);
+    };
+    if !ipc_data.internal_msg_queue.is_ready() {
+        return Ok(JSValue::FALSE);
+    }
+    let message = arguments[1];
+    let Some(p) = message.get(global, "ack")? else {
+        return Ok(JSValue::FALSE);
+    };
+    if !p.is_int32() {
+        return Ok(JSValue::FALSE);
+    }
+    let ack = p.as_int32();
+    let entry = ipc_data
+        .internal_msg_queue
+        .callbacks
+        .get(&ack)
+        .map(|s| s.get());
+    let Some(callback_opt) = entry else {
+        return Ok(JSValue::FALSE);
+    };
+    ipc_data.internal_msg_queue.callbacks.swap_remove(&ack);
+    let cb = callback_opt.unwrap();
+    let event_loop = global.bun_vm().event_loop_mut();
+    event_loop.run_callback(
+        cb,
+        global,
+        ipc_data.internal_msg_queue.worker.get().unwrap(),
+        &[
+            message,
+            JSValue::NULL, // handle
+        ],
+    );
+    Ok(JSValue::TRUE)
+}
+
 pub(crate) fn handle_internal_message_primary(
     global: &JSGlobalObject,
     subprocess: &Subprocess<'_>,
@@ -215,8 +261,8 @@ pub(crate) fn handle_internal_message_primary(
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
-        if !p.is_undefined() {
-            let ack = p.to_int32();
+        if p.is_int32() {
+            let ack = p.as_int32();
             // Peek the JSValue first (ending the immutable borrow), then
             // swap_remove (which drops the Strong).
             let entry = ipc_data
@@ -256,6 +302,23 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 //
+
+#[bun_jsc::host_fn]
+pub(crate) fn channel_fd(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    // Node parity: `process.channel.fd` is the raw IPC descriptor while the
+    // channel is open, `undefined` otherwise (v26.3.0
+    // lib/internal/child_process.js Control#fd).
+    let vm = global.bun_vm().as_mut();
+    let Some(instance) = vm.get_ipc_instance() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: get_ipc_instance returns the VM-owned live heap pointer.
+    let fd = unsafe { (*instance).data.channel_fd() };
+    Ok(match fd {
+        Some(fd) => JSValue::from(fd.native() as i32),
+        None => JSValue::UNDEFINED,
+    })
+}
 
 #[bun_jsc::host_fn]
 pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {

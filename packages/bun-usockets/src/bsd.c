@@ -1295,26 +1295,28 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
     }
-#ifdef _WIN32
-    /* Windows rejects listen() on a duplicate of an already-listening socket
-     * only after another duplicate has listened, so two workers racing on the
-     * same shared fd can observe listen() -> WSAEINVAL while SO_ACCEPTCONN
-     * still reads 0 (the benign check in us_socket_group_listen_fd then
-     * fails). libuv's approach (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c) is to
-     * listen in the primary before WSADuplicateSocket; every worker's
-     * duplicate is then already listening and SO_ACCEPTCONN is reliably set. */
-    if (listen(fd, 511) != 0) {
-        *error = LIBUS_ERR;
-        bsd_close_socket(fd);
-        return LIBUS_SOCKET_ERROR;
-    }
-#endif
     struct bsd_addr_t tmp;
     if (bsd_local_addr(fd, &tmp) == 0) {
         *out_port = bsd_addr_get_port(&tmp);
     } else {
         *out_port = port;
     }
+#ifdef _WIN32
+    /* Listen before the socket is duplicated to workers, mirroring libuv's
+     * uv__tcp_xfer_export (UV_HANDLE_SHARED_TCP_SOCKET path):
+     * https://github.com/libuv/libuv/blob/v1.52.1/src/win/tcp.c#L1301-L1330
+     * A dup of a listening socket deterministically hits the benign
+     * already-listening path in the worker; racing listen() calls on dups of a
+     * bound-only socket intermittently fail with WSAEINVAL (SO_ACCEPTCONN
+     * probes on protocol info snapshotted pre-listen). SOMAXCONN like libuv;
+     * the user's backlog is ignored here because the primary listens before
+     * any worker (and its backlog option) exists. */
+    if (listen(fd, SOMAXCONN)) {
+        *error = WSAGetLastError();
+        bsd_close_socket(fd);
+        return LIBUS_SOCKET_ERROR;
+    }
+#endif
     return fd;
 }
 

@@ -1027,6 +1027,21 @@ public:
 
         return socket;
     }
+
+    /* Adopt an externally bound, already-listening fd using this HttpContext */
+    us_listen_socket_t *listen_fd(struct ssl_ctx_st *sslCtx, LIBUS_SOCKET_DESCRIPTOR fd, int options) {
+        int error = 0;
+        auto* socket = us_socket_group_listen_fd(&group, socketKind(), sslCtx, fd, 512, options | LIBUS_LISTEN_DEFER_ACCEPT, socketExtSize(), &error);
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+            us_socket_unref(&socket->s);
+        } else if (error) {
+            /* Bun.serve's on_listen_failed reads errno, not the out-param. */
+            errno = error;
+        }
+
+        return socket;
+    }
 };
 
 }

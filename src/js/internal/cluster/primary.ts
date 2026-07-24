@@ -6,11 +6,15 @@ const path = require("node:path");
 const { kHandle } = require("internal/shared");
 
 const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperPrimary", 4);
+const settleClusterAck = $newRustFunction("node_cluster_binding.rs", "settleClusterAck", 2);
 const onInternalMessage = $newRustFunction("node_cluster_binding.rs", "onInternalMessagePrimary", 3);
 const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
 const einvalErrorCode = $newRustFunction("node_util_binding.rs", "einvalErrorCode", 0);
+const ebadfErrorCode = $newRustFunction("node_util_binding.rs", "ebadfErrorCode", 0);
+const uvTranslateSysError = $newRustFunction("node_util_binding.rs", "uvTranslateSysError", 1);
 
 let child_process;
+let netForProbe;
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -172,6 +176,17 @@ cluster.fork = function (env) {
   });
 
   onInternalMessage(worker.process[kHandle], worker, onmessage);
+  // Cluster commands whose '$internal' framing was lost arrive as plain
+  // 'internalMessage' events; route them by cmd like Node does.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L31-L51
+  worker.process.on("internalMessage", function forwardExternalClusterMessage(message, handle) {
+    if (message !== null && typeof message === "object" && message.cmd === "NODE_CLUSTER") {
+      if (Number.isInteger(message.ack) && settleClusterAck(worker.process[kHandle], message)) {
+        return;
+      }
+      onmessage.$call(worker, message, handle);
+    }
+  });
   process.nextTick(emitForkNT, worker);
   cluster.workers[worker.id] = worker;
   return worker;
@@ -198,11 +213,14 @@ cluster.disconnect = function (cb) {
 };
 
 const methodMessageMapping = {
+  __proto__: null,
   close,
   exitedAfterDisconnect,
   listening,
   online,
+  probePort,
   queryServer,
+  shareListenFd,
 };
 
 function onmessage(message, _handle) {
@@ -323,6 +341,115 @@ function queryServer(worker, message) {
   });
 }
 
+// Bun-specific: http.Server workers self-bind with SO_REUSEPORT, so the primary
+// probe-binds once per key to surface EADDRINUSE the way Node's SharedHandle does.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js
+class ReusePortHandle {
+  key;
+  workers;
+  handle;
+  errno;
+  #pending;
+
+  constructor(key, address, { port }) {
+    this.key = key;
+    this.workers = new Map();
+    this.handle = null;
+    this.errno = 0;
+    this.#pending = null;
+
+    if (!(port > 0)) return;
+    netForProbe ??= require("node:net");
+    this.#pending = [];
+    const server = (this.handle = netForProbe.createServer(conn => conn.destroy()));
+    server.once("error", err => {
+      this.errno =
+        typeof err?.errno === "number" && err.errno !== 0 ? uvTranslateSysError(err.errno) : einvalErrorCode();
+      this.#settle();
+    });
+    server.listen({ port, host: address || undefined }, () => server.close(() => this.#settle()));
+  }
+
+  #settle() {
+    this.handle = null;
+    const pending = this.#pending;
+    this.#pending = null;
+    if (pending) for (const cb of pending) cb(this.errno, null, null);
+  }
+
+  add(worker, send) {
+    $assert(!this.workers.has(worker.id));
+    this.workers.set(worker.id, worker);
+    if (this.#pending) this.#pending.push(send);
+    else send(this.errno, null, null);
+  }
+
+  has(worker) {
+    return this.workers.has(worker.id);
+  }
+
+  remove(worker) {
+    if (!this.workers.has(worker.id)) return false;
+    this.workers.delete(worker.id);
+    if (this.workers.size !== 0) return false;
+    const { handle } = this;
+    if (handle) {
+      handle.close();
+      this.#settle();
+    }
+    return true;
+  }
+}
+
+// Node routes a worker's listen({fd}) through SharedHandle in the primary;
+// Bun dups the descriptor to the worker over SCM_RIGHTS so Bun.serve adopts it.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/shared_handle.js#L13-L29
+function shareListenFd(worker, message) {
+  if (worker.exitedAfterDisconnect) return;
+
+  const fd = message.fd;
+  if (process.platform === "win32") {
+    send(worker, { errno: einvalErrorCode(), ack: message.seq });
+    return;
+  }
+  if (typeof fd !== "number" || fd < 0) {
+    send(worker, { errno: ebadfErrorCode(), ack: message.seq });
+    return;
+  }
+  try {
+    const sent = send(worker, { errno: 0, ack: message.seq }, { fd });
+    if (sent === null) send(worker, { errno: einvalErrorCode(), ack: message.seq });
+  } catch {
+    send(worker, { errno: einvalErrorCode(), ack: message.seq });
+  }
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/primary.js#L268-L330 (queryServer)
+function probePort(worker, message) {
+  if (worker.exitedAfterDisconnect) return;
+
+  const key = `${message.address}:${message.port}:${message.addressType}:reuseport`;
+  const cachedHandle = handles.get(key);
+  let handle;
+  if (cachedHandle && !cachedHandle.has(worker)) handle = cachedHandle;
+
+  if (handle === undefined) {
+    try {
+      handle = new ReusePortHandle(key, message.address, message);
+    } catch {
+      send(worker, { errno: einvalErrorCode(), key, ack: message.seq });
+      return;
+    }
+    if (!cachedHandle) handles.set(key, handle);
+  }
+
+  handle.add(worker, errno => {
+    if (errno && !cachedHandle) handles.delete(key);
+    send(worker, { errno, key, ack: message.seq });
+    if (cachedHandle && handle !== cachedHandle && !errno) handle.remove(worker);
+  });
+}
+
 function listening(worker, message) {
   const info = {
     addressType: message.addressType,
@@ -346,6 +473,8 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/cluster/utils.js#L16-L29
+  message.cmd = "NODE_CLUSTER";
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 

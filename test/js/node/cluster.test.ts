@@ -943,7 +943,15 @@ if (cluster.isPrimary) {
   });
 } else if (process.env.ROLE === "die") {
   process.on("internalMessage", m => { if (m.act === "newconn") process.exit(0); });
-  net.createServer(() => {}).listen(0, "127.0.0.1");
+  // maxConnections = 0 makes this worker refuse the handoff, so the primary
+  // redistributes on EITHER outcome of the exit-vs-reply race: an escaped
+  // reply says accepted: false, and a killed reply surfaces as the IPC close.
+  // Exiting on a plain accepting server is racy even under real node - the
+  // accepted: true reply escapes whenever uv flushes it before exit, and the
+  // connection then dies with this worker.
+  const srv = net.createServer(() => {});
+  srv.maxConnections = 0;
+  srv.listen(0, "127.0.0.1");
 } else {
   net.createServer(sock => sock.on("data", d => process.send("live got: " + d))).listen(0, "127.0.0.1");
 }
@@ -1042,3 +1050,180 @@ if (cluster.isPrimary) {
   });
   expect(exitCode).toBe(0);
 }, 30_000);
+
+test("an out-of-range worker port throws in the worker and leaves the primary alive", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    console.log("sync code:", m.sync);
+    console.log("probe errno truthy:", !!m.probeErrno);
+    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 50);
+  });
+} else {
+  const http = require("node:http");
+  let sync = "no-throw";
+  try {
+    http.createServer().listen(70000);
+  } catch (e) {
+    sync = e.code;
+  }
+  // Also poke the primary directly with the malformed probe: it must reply
+  // with an errno instead of dying with an uncaughtException.
+  cluster._sendInternal({ act: "probePort", address: null, port: 70000, addressType: 4 }, reply => {
+    process.send({ sync, probeErrno: reply.errno });
+  });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("sync code: ERR_SOCKET_BAD_PORT");
+  expect(stdout).toContain("probe errno truthy: true");
+  expect(stdout).toContain("primary alive");
+});
+
+test("closing a worker http server releases the primary's port claim", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  // Reserve a concrete free port, release it, then hand it to the worker.
+  const probe = net.createServer();
+  probe.listen(0, "127.0.0.1", () => {
+    const port = probe.address().port;
+    probe.close(() => {
+      const worker = cluster.fork({ TEST_PORT: String(port) });
+      let blocker;
+      worker.on("message", m => {
+        if (m.step === "closed") {
+          // Occupy the port OUTSIDE the cluster, then ask the worker to re-listen.
+          blocker = net.createServer(c => c.destroy());
+          blocker.listen(port, "127.0.0.1", () => worker.send("relisten"));
+        } else if (m.step === "relisten-error") {
+          console.log("relisten code:", m.code, "syscall:", m.syscall);
+          worker.kill();
+          process.exit(0);
+        } else if (m.step === "relisten-ok") {
+          console.log("relisten wrongly succeeded");
+          worker.kill();
+          process.exit(1);
+        }
+      });
+    });
+  });
+} else {
+  const http = require("node:http");
+  const port = Number(process.env.TEST_PORT);
+  const first = http.createServer();
+  first.listen(port, "127.0.0.1", () => {
+    first.close(() => process.send({ step: "closed" }));
+  });
+  process.on("message", m => {
+    if (m !== "relisten") return;
+    const second = http.createServer();
+    second.on("error", e => process.send({ step: "relisten-error", code: e.code, syscall: e.syscall }));
+    second.listen(port, "127.0.0.1", () => process.send({ step: "relisten-ok" }));
+  });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  // The re-listen must hit a FRESH primary test bind (syscall "bind" from the
+  // probe reply), not a stale cached success that only fails later inside the
+  // worker's own listen.
+  expect(stdout).toContain("relisten code: EADDRINUSE syscall: bind");
+});
+
+test("externally-framed cluster acks settle the primary's parked reply callbacks", async () => {
+  // A newconn reply that arrives as an ordinary user-framed message
+  // ({cmd:'NODE_CLUSTER', ack: N} via plain process.send) must settle the
+  // per-seq callback the primary parked in the native internal-frame queue —
+  // otherwise the round-robin handoff never re-arms and every connection
+  // after the first hangs.
+  using dir = tempDir("cluster-external-ack", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+if (cluster.isPrimary) {
+  cluster.schedulingPolicy = cluster.SCHED_RR;
+  const worker = cluster.fork();
+  worker.on("message", async (m) => {
+    if (!m || !m.port) return;
+    const roundTrip = () =>
+      new Promise((resolve, reject) => {
+        const c = net.connect(m.port, "127.0.0.1");
+        c.on("close", resolve);
+        c.on("error", reject);
+        setTimeout(() => reject(new Error("connection never settled")), 5000).unref();
+      });
+    await roundTrip();
+    await roundTrip();
+    console.log("OK");
+    worker.kill();
+    process.exit(0);
+  });
+  worker.on("error", (e) => { console.error(e); process.exit(1); });
+} else {
+  const server = net.createServer(() => {});
+  server.listen(0, "127.0.0.1", () => {
+    const port = server.address().port;
+    // Take over newconn handling: reply through the user-framed channel so
+    // the ack reaches the primary's externally-framed fallback, then drop
+    // the connection so the client observes the close.
+    process.removeAllListeners("internalMessage");
+    process.on("internalMessage", (m, handle) => {
+      if (m && m.cmd === "NODE_CLUSTER" && m.act === "newconn") {
+        process.send({ cmd: "NODE_CLUSTER", ack: m.seq, accepted: true });
+        if (handle) {
+          if (typeof handle.destroy === "function") handle.destroy();
+          else if (typeof handle.close === "function") handle.close();
+        }
+      }
+    });
+    process.send({ port });
+  });
+}
+`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+test("a malformed external ack from a worker does not crash the primary", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("message", m => {
+    if (m !== "sent") return;
+    setTimeout(() => { console.log("primary alive"); worker.kill(); process.exit(0); }, 100);
+  });
+} else {
+  // Externally framed cluster-shaped messages with non-numeric acks used to
+  // reach a bare asInt32() in the primary's ack settlement.
+  process.send({ cmd: "NODE_CLUSTER", ack: null });
+  process.send({ cmd: "NODE_CLUSTER", ack: "not-a-number" });
+  process.send({ cmd: "NODE_CLUSTER", ack: {} });
+  // A fractional ack used to truncate onto whatever callback was parked at
+  // seq 0; the real cluster round-trip below must still complete.
+  process.send({ cmd: "NODE_CLUSTER", ack: 0.5 });
+  const server = require("node:net").createServer();
+  server.listen(0, "127.0.0.1", () => { server.close(); process.send("sent"); });
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("primary alive");
+});

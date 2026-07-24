@@ -339,7 +339,6 @@ pub struct Bufs {
     pub extension_path: PathBuffer,
     pub tsconfig_match_full_buf: PathBuffer,
     pub tsconfig_match_full_buf2: PathBuffer,
-    pub tsconfig_match_full_buf3: PathBuffer,
 
     pub esm_subpath: [u8; 512],
     pub esm_absolute_package_path: PathBuffer,
@@ -4738,47 +4737,28 @@ impl<'a> Resolver<'a> {
                 let matched_text =
                     &path[longest_match.prefix.len()..path.len() - longest_match.suffix.len()];
 
-                let total_length: Option<u32> = strings::index_of_char(original_path, b'*');
-                let prefix_end = total_length
-                    .map(|v| v as usize)
-                    .unwrap_or(original_path.len());
-                let prefix_parts: [&[u8]; 2] = [abs_base_url, &original_path[0..prefix_end]];
-
-                // Concatenate the matched text with the suffix from the wildcard path
-                let matched_text_with_suffix = bufs!(tsconfig_match_full_buf3);
-                let mut matched_text_with_suffix_len: usize = 0;
-                if total_length.is_some() {
-                    let suffix = strings::trim_left(&original_path[prefix_end..], b"*");
-                    matched_text_with_suffix_len = matched_text.len() + suffix.len();
-                    if matched_text_with_suffix_len > matched_text_with_suffix.len() {
-                        continue;
-                    }
-                    ::bun_core::concat_into(matched_text_with_suffix, &[matched_text, suffix]);
-                }
-
-                // 1. Normalize the base path
-                // so that "/Users/foo/project/", "../components/*" => "/Users/foo/components/""
-                let Some(prefix) = self
-                    .fs_ref()
-                    .abs_buf_checked(&prefix_parts, bufs!(tsconfig_match_full_buf2))
-                else {
-                    continue;
-                };
-
-                // 2. Join the new base path with the matched result
-                // so that "/Users/foo/components/", "/foo/bar" => /Users/foo/components/foo/bar
-                let parts: [&[u8]; 3] = [
-                    prefix,
-                    if matched_text_with_suffix_len > 0 {
-                        strings::trim_left(
-                            &matched_text_with_suffix[0..matched_text_with_suffix_len],
-                            b"/",
-                        )
+                // Substitute textually (TypeScript's replaceFirstStar), not via
+                // path-join: the '*' need not sit on a segment boundary.
+                let substituted_buf = bufs!(tsconfig_match_full_buf2);
+                let substituted: &[u8] =
+                    if let Some(star) = strings::index_of_char(original_path, b'*') {
+                        let star = star as usize;
+                        let before = &original_path[..star];
+                        let after = &original_path[star + 1..];
+                        let total = before.len() + matched_text.len() + after.len();
+                        if total > substituted_buf.len() {
+                            continue;
+                        }
+                        ::bun_core::concat_into(substituted_buf, &[before, matched_text, after]);
+                        &substituted_buf[..total]
                     } else {
-                        b""
-                    },
-                    strings::trim_left(longest_match.suffix, b"/"),
-                ];
+                        original_path
+                    };
+
+                // Resolve against "baseUrl" and normalize. The captured text
+                // may carry `..`, so normalize unconditionally; an absolute
+                // `substituted` replaces the base inside abs_buf_checked.
+                let parts: [&[u8]; 2] = [abs_base_url, substituted];
                 let Some(absolute_original_path) = self
                     .fs_ref()
                     .abs_buf_checked(&parts, bufs!(tsconfig_match_full_buf))

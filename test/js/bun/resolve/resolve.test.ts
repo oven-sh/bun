@@ -1013,6 +1013,111 @@ describe("resolving external URL specifiers with non-ASCII characters", () => {
   });
 });
 
+// tsconfig "paths" wildcard substitution: the captured text replaces the first
+// '*' in the target textually (TypeScript's replaceFirstStar). The key
+// pattern's suffix is consumed by the match and must not be re-appended, and
+// a '*' that is not on a segment boundary must not get a '/' inserted.
+// https://github.com/oven-sh/bun/issues/26193
+describe("tsconfig paths wildcard substitution", () => {
+  async function run(files: Record<string, string>, script: string) {
+    using dir = tempDir("tsconfig-paths-wildcard", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("maps a .js key suffix to a .ts target suffix (issue #26193)", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@src/*.js": ["./src/*.ts"] } },
+        }),
+        "src/lib.ts": `export const greeting = "hi";`,
+      },
+      `import { greeting } from "@src/lib.js"; console.log(greeting);`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "hi\n", exitCode: 0 });
+  });
+
+  it.concurrent("drops the key suffix when the target has no suffix", async () => {
+    // Longest prefix is equal ("tie/"), longest suffix "end" wins over "", so
+    // "tie/xend" matches "tie/*end" with * = "x" and resolves to ./tie-long/x.
+    const { stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "tie/*end": ["./tie-long/*"], "tie/*": ["./tie-short/*"] } },
+        }),
+        "tie-long/x.ts": `export const v = "long-x";`,
+        "tie-short/xend.ts": `export const v = "short-xend";`,
+      },
+      `import { v } from "tie/xend"; console.log(v);`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "long-x\n", exitCode: 0 });
+  });
+
+  it.concurrent("substitutes into a '*' not on a segment boundary", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "t*t3/foo": ["./test3-succ*s.ts"] } },
+        }),
+        "test3-success.ts": `export default "test3-success";`,
+      },
+      `import v from "test3/foo"; console.log(v);`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "test3-success\n", exitCode: 0 });
+  });
+
+  it.concurrent("still resolves plain prefix-only wildcards", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@/*": ["./src/*"] } },
+        }),
+        "src/a/b.ts": `export const ok = 1;`,
+      },
+      `import { ok } from "@/a/b"; console.log(ok);`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "1\n", exitCode: 0 });
+  });
+
+  it.concurrent("falls through to the next target when the first does not exist", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "lib/*.js": ["./first/*.ts", "./second/*.ts"] } },
+        }),
+        "second/thing.ts": `export const where = "second";`,
+      },
+      `import { where } from "lib/thing.js"; console.log(where);`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: "second\n", exitCode: 0 });
+  });
+
+  it.concurrent("normalizes '..' from the captured text through an absolute target", async () => {
+    using base = tempDir("tsconfig-paths-abs-target", {
+      "src/lib.ts": `export const v = "hi";`,
+    });
+    const abs = String(base).replaceAll("\\", "/");
+    const { stdout, exitCode } = await run(
+      {
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@pkg/*": [`${abs}/src/*`] } },
+        }),
+      },
+      `console.log(Bun.resolveSync("@pkg/sub/../lib", import.meta.dir));`,
+    );
+    expect({ stdout, exitCode }).toEqual({ stdout: join(String(base), "src", "lib.ts") + "\n", exitCode: 0 });
+    expect(stdout).not.toContain("..");
+  });
+});
+
 // Stress the resolver's directory-info cache: resolve through hundreds of
 // distinct package directories (each `put` hands back a slot pointer into the
 // shared dir-cache that must stay valid while the cache keeps growing) plus a

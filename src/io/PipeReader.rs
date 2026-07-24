@@ -136,6 +136,9 @@ pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     pub _buffer: Vec<u8>,
     pub _offset: usize,
+    /// Bytes of the `start_file_offset` offset still to be read and discarded
+    /// because the source cannot `pread`. Always 0 for seekable sources.
+    pub _skip_remaining: usize,
     pub vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
     // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
@@ -172,6 +175,7 @@ impl PosixBufferedReader {
             handle: PollOrFd::Closed,
             _buffer: Vec::new(),
             _offset: 0,
+            _skip_remaining: 0,
             vtable: BufferedReaderVTable::init::<T>(),
             flags: PosixFlags::new(),
             maxbuf: None,
@@ -205,12 +209,14 @@ impl PosixBufferedReader {
             handle: mem::replace(&mut other.handle, PollOrFd::Closed),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
+            _skip_remaining: other._skip_remaining,
             flags: other.flags,
             vtable: BufferedReaderVTable { kind, parent },
             maxbuf: None,
         };
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
+        other._skip_remaining = 0;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
         // Capture *mut Self before borrowing `handle` so the owner pointer
         // doesn't conflict with the field borrow.
@@ -448,7 +454,69 @@ impl PosixBufferedReader {
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(PosixFlags::USE_PREAD);
+        // `pread` only honors the offset on seekable sources. Pipes, sockets and
+        // ttys have to read those bytes out of the stream and discard them.
+        // `start` only ever inserts POLLABLE, so this is the file type `read`
+        // will go on to dispatch against.
+        if poll
+            || self
+                .flags
+                .intersects(PosixFlags::POLLABLE | PosixFlags::SOCKET)
+        {
+            self._skip_remaining = offset;
+        }
         self.start(fd, poll)
+    }
+
+    /// Reads and discards the bytes that precede the requested start offset on a
+    /// source that cannot `pread`. Returns false when the caller must stop for
+    /// this tick: the poll was re-armed, or EOF/an error was already reported.
+    fn drain_skipped(
+        parent: &mut PosixBufferedReader,
+        fd: Fd,
+        sys_fn: &impl Fn(Fd, &mut [u8], usize) -> sys::Result<usize>,
+    ) -> bool {
+        while parent._skip_remaining > 0 {
+            // `sys_fn` blocks on a blocking pipe (and anywhere RWF_NOWAIT is
+            // unavailable), so readiness has to be confirmed before every read —
+            // the same discipline `read_blocking_pipe` keeps.
+            match bun_core::is_readable(fd) {
+                bun_core::Pollable::Ready | bun_core::Pollable::Hup => {}
+                bun_core::Pollable::NotReady => {
+                    parent.register_poll();
+                    return false;
+                }
+            }
+
+            // Per-loop scratch buffer; single-threaded event loop (see
+            // `EventLoopCtx::pipe_read_buffer_mut`).
+            let scratch = parent.vtable.event_loop().pipe_read_buffer_mut();
+            let want = scratch.len().min(parent._skip_remaining);
+            match sys_fn(fd, &mut scratch[..want], parent._offset) {
+                sys::Result::Ok(0) => {
+                    // EOF before the offset was reached: the slice is empty.
+                    parent._skip_remaining = 0;
+                    parent.close_without_reporting();
+                    if !parent.flags.contains(PosixFlags::IS_DONE) {
+                        parent.done();
+                    }
+                    return false;
+                }
+                sys::Result::Ok(bytes_read) => {
+                    parent._skip_remaining -= bytes_read;
+                }
+                sys::Result::Err(err) => {
+                    // Both arms are tail calls: either may free `parent`.
+                    if err.is_retry() {
+                        parent.register_poll();
+                    } else {
+                        parent.on_error(err);
+                    }
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     // Exists for consistently with Windows.
@@ -636,6 +704,22 @@ impl PosixBufferedReader {
         // touches `parent` after one can have dispatched it.
         let parent = unsafe { &mut *this };
         let mut received_hup = received_hup_initially;
+        if parent._skip_remaining > 0 {
+            if !Self::drain_skipped(parent, fd, &|fd, buf, _| sys::read_nonblocking(fd, buf)) {
+                return;
+            }
+            // This function is only entered once its caller has confirmed the fd
+            // is readable, which is what lets the first read below be a blocking
+            // one. The drain just spent that readiness, so confirm it again.
+            match bun_core::is_readable(fd) {
+                bun_core::Pollable::Ready => {}
+                bun_core::Pollable::Hup => received_hup = true,
+                bun_core::Pollable::NotReady => {
+                    parent.register_poll();
+                    return;
+                }
+            }
+        }
         loop {
             let streaming = parent.vtable.is_streaming_enabled();
             let mut got_retry = false;
@@ -835,6 +919,9 @@ impl PosixBufferedReader {
         // contract. `on_reader_error` MAY free it, so nothing below touches
         // `parent` after dispatching an error (see the EAGAIN arm).
         let parent = unsafe { &mut *this };
+        if parent._skip_remaining > 0 && !Self::drain_skipped(parent, fd, &sys_fn) {
+            return;
+        }
         let streaming = parent.vtable.is_streaming_enabled();
 
         if streaming {
@@ -1102,6 +1189,9 @@ pub struct WindowsBufferedReader {
     /// It cannot change because we don't know what libuv will do with it.
     pub source: Option<Source>,
     pub _offset: usize,
+    /// Bytes of the `start_file_offset` offset still to be read and discarded
+    /// because the source is not seekable. Always 0 for file sources.
+    pub _skip_remaining: usize,
     pub _buffer: Vec<u8>,
     // for compatibility with Linux
     pub flags: WindowsFlags,
@@ -1144,6 +1234,7 @@ impl WindowsBufferedReader {
         WindowsBufferedReader {
             source: None,
             _offset: 0,
+            _skip_remaining: 0,
             _buffer: Vec::new(),
             flags: WindowsFlags::new(),
             maxbuf: None,
@@ -1166,10 +1257,12 @@ impl WindowsBufferedReader {
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
+        self._skip_remaining = other._skip_remaining;
         self.source = other.source.take();
 
         other.flags.insert(WindowsFlags::IS_DONE);
         other._offset = 0;
+        other._skip_remaining = 0;
         // other._buffer / other.source already cleared by mem::take above.
         // The field-by-field assigns above leave `self.maxbuf` untouched, so
         // drop any prior owner-count first to avoid leaking a MaxBuf ref when
@@ -1373,7 +1466,13 @@ impl WindowsBufferedReader {
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
-        self.start(fd, poll)
+        self.start(fd, poll)?;
+        // libuv only honors the offset on file sources. Pipes and ttys have to
+        // read those bytes out of the stream and discard them.
+        if !matches!(self.source, Some(Source::File(_))) {
+            self._skip_remaining = offset;
+        }
+        sys::Result::Ok(())
     }
 
     pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
@@ -1865,10 +1964,27 @@ impl WindowsBufferedReader {
             self.on_error(err);
             return;
         }
-        let amount_result = match amount {
+        let mut amount_result = match amount {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => unreachable!(),
         };
+        let mut slice = slice;
+
+        // A source that cannot seek ignored the offset libuv was handed, so the
+        // bytes before the requested start arrive here, at the head of the
+        // chunk. Shift the rest of it down over them; nothing past this point
+        // ever sees them because they are still in uncommitted spare capacity.
+        if self._skip_remaining > 0 && amount_result > 0 {
+            let dropped = self._skip_remaining.min(amount_result);
+            self._skip_remaining -= dropped;
+            slice.copy_within(dropped..amount_result, 0);
+            amount_result -= dropped;
+            slice = &mut core::mem::take(&mut slice)[..amount_result];
+            if amount_result == 0 && has_more != ReadState::Eof {
+                self.flags.remove(WindowsFlags::HAS_INFLIGHT_READ);
+                return;
+            }
+        }
 
         #[cfg(debug_assertions)]
         {

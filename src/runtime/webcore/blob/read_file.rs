@@ -184,6 +184,9 @@ pub struct ReadFile {
     pub byte_store: ByteStore,
     pub store: Option<StoreRef>,
     pub offset: SizeType,
+    /// Bytes of `offset` still to be read and discarded because the fd could
+    /// not be seeked. Always 0 once `lseek` applied `offset`.
+    pub skip_remaining: SizeType,
     pub max_length: SizeType,
     pub total_size: SizeType,
     pub opened_fd: Fd,
@@ -346,6 +349,7 @@ impl ReadFile {
             byte_store: ByteStore::default(),
             store: Some(store),
             offset: off,
+            skip_remaining: 0,
             max_length: max_len,
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
@@ -715,8 +719,11 @@ impl ReadFile {
 
         if self.offset > 0 {
             // We DO support offset in Bun.file()
-            // we ignore errors because it should continue to work even if its a pipe
-            let _ = bun_sys::set_file_offset(fd, self.offset);
+            // Pipes, sockets and ttys cannot seek, so the offset has to be read
+            // out of the stream and discarded instead.
+            if bun_sys::set_file_offset(fd, self.offset).is_err() {
+                self.skip_remaining = self.offset;
+            }
         }
     }
 
@@ -815,13 +822,28 @@ impl ReadFile {
                 let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 
                 if buf_len > 0 && self.errno.is_none() && !self.read_eof {
+                    // An unseekable fd still owes us `skip_remaining` bytes before
+                    // the blob's own bytes start. Read them into the stack buffer
+                    // and throw them away.
+                    let skipping = self.skip_remaining > 0;
+                    let (buf_ptr, buf_len) = if skipping {
+                        (
+                            stack_ptr,
+                            stack_buffer.len().min(self.skip_remaining as usize),
+                        )
+                    } else {
+                        (buf_ptr, buf_len)
+                    };
+
                     let mut read_amount: usize = 0;
                     let mut retry = false;
                     let continue_reading =
                         self.do_read((buf_ptr, buf_len), &mut read_amount, &mut retry);
 
                     // We might read into the stack buffer, so we need to copy it into the heap.
-                    if buf_ptr == stack_ptr {
+                    if skipping {
+                        self.skip_remaining -= read_amount as SizeType;
+                    } else if buf_ptr == stack_ptr {
                         // `do_read` wrote `read_amount` initialized bytes at
                         // `stack_buffer[..read_amount]`; the stack array is live
                         // for this iteration.
@@ -923,6 +945,9 @@ pub struct ReadFileUV<'a> {
     pub byte_store: ByteStore,
     pub store: StoreRef,
     pub offset: SizeType,
+    /// Bytes of `offset` still to be read and discarded because the handle is
+    /// not seekable. Always 0 when libuv can apply `offset` itself.
+    pub skip_remaining: SizeType,
     pub max_length: SizeType,
     pub total_size: SizeType,
     pub opened_fd: Fd,
@@ -1066,6 +1091,7 @@ impl<'a> ReadFileUV<'a> {
             byte_store: ByteStore::default(),
             store, // store.ref() — Arc clone owned here
             offset: off,
+            skip_remaining: 0,
             max_length: max_len,
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
@@ -1252,6 +1278,11 @@ impl<'a> ReadFileUV<'a> {
                 // we ignore errors because it should continue to work even if its a pipe
                 Err(_) | Ok(_) => {}
             }
+            // `uv_fs_read` only honors the offset on seekable handles; pipes and
+            // ttys ignore it, so the offset has to be consumed from the stream.
+            if !this.is_regular_file {
+                this.skip_remaining = this.offset;
+            }
         }
 
         // Special files might report a size of > 0, and be wrong.
@@ -1299,7 +1330,13 @@ impl<'a> ReadFileUV<'a> {
         // libuv writes into spare capacity before any read; callers only need
         // ptr/len, so expose the spare slice directly instead of materialising
         // a `&mut [u8]` over uninitialized bytes.
-        let limit = (self.max_length.saturating_sub(self.read_off)) as usize;
+        // The bytes before the blob's start still have to come out of the
+        // stream, so while skipping they count toward what we ask libuv for —
+        // otherwise a tight `max_length` would shrink every skip read.
+        let limit = self
+            .max_length
+            .saturating_sub(self.read_off)
+            .saturating_add(self.skip_remaining) as usize;
         let spare = self.buffer.spare_capacity_mut();
         let take = spare.len().min(limit);
         &mut spare[..take]
@@ -1407,12 +1444,18 @@ impl<'a> ReadFileUV<'a> {
             return;
         }
 
-        this.read_off += SizeType::try_from(result.int()).expect("int cast");
+        let read_amount = usize::try_from(result.int()).expect("int cast");
         // SAFETY: libuv wrote result.int() bytes into remaining_buffer()'s spare slice.
-        unsafe {
-            this.buffer
-                .uv_commit(usize::try_from(result.int()).expect("int cast"))
-        };
+        unsafe { this.buffer.uv_commit(read_amount) };
+
+        // Until `skip_remaining` is paid off the buffer holds nothing but the
+        // bytes before the blob's start, so they sit at its head.
+        let dropped = (this.skip_remaining as usize).min(read_amount);
+        if dropped > 0 {
+            this.buffer.drain(..dropped);
+            this.skip_remaining -= dropped as SizeType;
+        }
+        this.read_off += (read_amount - dropped) as SizeType;
 
         this.req.deinit();
         this.queue_read();

@@ -239,6 +239,62 @@ describe("url", () => {
     });
   });
 
+  // The host/hostname setter runs the basic URL parse with state override: it must strip
+  // ASCII tab/newline and percent-decode before domain-to-ASCII, exactly like the constructor.
+  describe("host/hostname setter matches constructor on IDNA input", () => {
+    const setHostname = (v: string) => {
+      const u = new URL("http://base9.example/a");
+      u.hostname = v;
+      return u.hostname;
+    };
+    const setHost = (v: string) => {
+      const u = new URL("http://base9.example/a");
+      u.host = v;
+      return u.host;
+    };
+    const ctor = (v: string) => new URL(`http://${v}/`).hostname;
+
+    it.each([
+      // tab/LF/CR in non-ASCII input must be stripped before IDNA, not punycode-encoded
+      ["\tß.de", "xn--zca.de"],
+      ["ü\t.de", "xn--tda.de"],
+      ["ß\n.de", "xn--zca.de"],
+      ["ß\r.de", "xn--zca.de"],
+      // pure-ASCII input was already stripped correctly
+      ["a\tb.com", "ab.com"],
+      // percent-escapes must be decoded before domain-to-ASCII
+      ["ü%41.de", "xn--a-dha.de"],
+      // mixed percent-escape and raw non-ASCII must not be silently dropped
+      ["%C3%BCü.de", "xn--tdaa.de"],
+      // astral plane (surrogate pair) code point with tab
+      ["\t\u{10348}.com", "xn--2c8c.com"],
+    ])("hostname/host setter with %j", (input, expected) => {
+      expect({
+        ctor: ctor(input),
+        hostname: setHostname(input),
+        host: setHost(input),
+      }).toEqual({ ctor: expected, hostname: expected, host: expected });
+    });
+
+    it("host setter with non-ASCII + port", () => {
+      const u = new URL("http://base9.example/a");
+      u.host = "\tß.de:8080";
+      expect({ hostname: u.hostname, port: u.port }).toEqual({ hostname: "xn--zca.de", port: "8080" });
+    });
+
+    it("host setter with non-ASCII + default port", () => {
+      const u = new URL("http://base9.example/a");
+      u.host = "ü%41.de:80";
+      expect({ hostname: u.hostname, port: u.port }).toEqual({ hostname: "xn--a-dha.de", port: "" });
+    });
+
+    it("hostname setter with only tab/newline leaves special-scheme host unchanged", () => {
+      const u = new URL("http://base9.example/a");
+      u.hostname = "\t\n\r";
+      expect(u.hostname).toBe("base9.example");
+    });
+  });
+
   // Web IDL record conversion interleaves Get with value conversion: mutations made by a
   // value's toString() are observed by the keys that follow it. Node agrees.
   it("URLSearchParams constructed from an object interleaves Get with value conversion", () => {

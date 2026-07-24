@@ -1,4 +1,4 @@
-use bun_collections::ArrayHashMap;
+use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_js_parser::lexer as js_lexer;
 use bun_parsers::json_parser;
@@ -114,11 +114,19 @@ impl JsonCache {
     }
 }
 
-// Heuristic: you probably don't have 100 of these
-// Probably like 5-10
-// Array iteration is faster and deterministically ordered in that case.
+/// One `compilerOptions.paths` entry. `star` is the `*` position in the key
+/// (cached at parse time; `None` for exact-match keys) so
+/// `match_tsconfig_paths` can skip the per-import `index_of_char` scan.
+#[derive(Default)]
+pub struct PathsEntry {
+    pub star: Option<u32>,
+    pub original_paths: Vec<Box<[u8]>>,
+}
+
+// `StringArrayHashMap` so `match_tsconfig_paths` can `get(&[u8])` without
+// boxing. Insertion order is preserved for deterministic wildcard iteration.
 // Both keys and values are owned (`Box`/`Vec`) and freed when the map drops.
-pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
+pub(crate) type PathsMap = StringArrayHashMap<PathsEntry>;
 
 // Hand-listed Pragma fields actually used below.
 #[derive(EnumSetType, Debug)]
@@ -629,7 +637,13 @@ impl TSConfigJSON {
                                         // (the extends-merge in the resolver) pass the stored slice
                                         // to the allocator, which requires the original length.
                                         values.shrink_to_fit();
-                                        let _ = result.paths.put(Box::from(key), values);
+                                        let _ = result.paths.put(
+                                            key,
+                                            PathsEntry {
+                                                star: strings::index_of_char(key, b'*'),
+                                                original_paths: values,
+                                            },
+                                        );
                                     }
                                     // else: Every entry was invalid; nothing to store. `values` drops here.
                                 }

@@ -1138,9 +1138,9 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
   it("Ed25519 with a localKeyId attribute", async () => {
     // Attribute ::= SEQUENCE { localKeyId OID, SET { OCTET STRING } }
     const attributes = "a014" + "3012" + "06092a864886f70d010915" + "3105" + "0403aabbcc";
-    expect(await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), attributes, publicKeyField(edPub)))).toBe(
-      true,
-    );
+    expect(
+      await signsAndVerifies(der(version2, edAlgorithm, wrapSeed(edSeed), attributes, publicKeyField(edPub))),
+    ).toBe(true);
   });
 
   it("X25519 with attributes [0] and publicKey [1]", async () => {
@@ -1219,7 +1219,8 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
 
   it("accepts long-form lengths on the SEQUENCE and attributes [0]", async () => {
     // one localKeyId attribute with a 120-byte value pushes both lengths into two-byte form
-    const bigAttributes = "a0818a" + "308187" + "06092a864886f70d010915" + "317a" + "0478" + Buffer.alloc(120).toString("hex");
+    const bigAttributes =
+      "a0818a" + "308187" + "06092a864886f70d010915" + "317a" + "0478" + Buffer.alloc(120).toString("hex");
     const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), bigAttributes, publicKeyField(edPub));
     expect(pkcs8[1]).toBe(0x81); // outer SEQUENCE length is long-form
     expect(await signsAndVerifies(pkcs8)).toBe(true);

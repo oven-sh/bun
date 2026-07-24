@@ -13,6 +13,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe));
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsDeepEqual,
+    (JSC::JSGlobalObject * globalObject,
+        JSC::CallFrame* callframe));
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionPartialDeepStrictEqual,
     (JSC::JSGlobalObject * globalObject,
         JSC::CallFrame* callframe));

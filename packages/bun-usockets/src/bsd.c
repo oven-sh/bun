@@ -524,8 +524,8 @@ int bsd_socket_set_source_specific_membership(LIBUS_SOCKET_DESCRIPTOR fd, const 
     return -1;
 }
 
-static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int ipv6) {
-    if (ttl < 1 || ttl > 255) {
+static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int min, int ipv4, int ipv6) {
+    if (ttl < min || ttl > 255) {
 #ifdef _WIN32
         WSASetLastError(WSAEINVAL);
 #endif
@@ -537,11 +537,12 @@ static int bsd_socket_ttl_any(LIBUS_SOCKET_DESCRIPTOR fd, int ttl, int ipv4, int
 }
 
 int bsd_socket_ttl_unicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
-    return bsd_socket_ttl_any(fd, ttl, IP_TTL, IPV6_UNICAST_HOPS);
+    return bsd_socket_ttl_any(fd, ttl, 1, IP_TTL, IPV6_UNICAST_HOPS);
 }
 
 int bsd_socket_ttl_multicast(LIBUS_SOCKET_DESCRIPTOR fd, int ttl) {
-    return bsd_socket_ttl_any(fd, ttl, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
+    // IP_MULTICAST_TTL accepts 0 (confine to the local host); IP_TTL does not.
+    return bsd_socket_ttl_any(fd, ttl, 0, IP_MULTICAST_TTL, IPV6_MULTICAST_HOPS);
 }
 
 int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay) {

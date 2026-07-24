@@ -34,26 +34,49 @@ domain.createDomain = domain.create = function () {
     emitter.removeListener("error", emitError);
   };
   d.bind = function (fn) {
-    return function () {
-      var args = Array.prototype.slice.$call(arguments);
+    function runBound() {
+      d.enter();
       try {
-        fn.$apply(null, args);
+        return fn.$apply(this, arguments);
       } catch (err) {
         emitError(err);
+      } finally {
+        d.exit();
       }
-    };
+    }
+    ObjectDefineProperty(runBound, "domain", {
+      __proto__: null,
+      configurable: true,
+      enumerable: false,
+      value: d,
+      writable: true,
+    });
+    return runBound;
   };
   d.intercept = function (fn) {
-    return function (err) {
-      if (err) {
+    return function runIntercepted() {
+      var er = arguments[0];
+      if (er && er instanceof Error) {
+        er.domainBound = fn;
+        er.domainThrown = false;
+        ObjectDefineProperty(er, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: d,
+          writable: true,
+        });
+        d.emit("error", er);
+        return;
+      }
+      var args = Array.prototype.slice.$call(arguments, 1);
+      d.enter();
+      try {
+        return fn.$apply(this, args);
+      } catch (err) {
         emitError(err);
-      } else {
-        var args = Array.prototype.slice.$call(arguments, 1);
-        try {
-          fn.$apply(null, args);
-        } catch (err) {
-          emitError(err);
-        }
+      } finally {
+        d.exit();
       }
     };
   };

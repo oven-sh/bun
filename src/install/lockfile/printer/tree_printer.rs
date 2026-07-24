@@ -3,16 +3,27 @@ use bun_io::Write;
 use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::TrackInstalledBin;
+use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
-    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, bin, resolution,
+    self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageNameHash,
+    Resolution, bin, resolution,
 };
 use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
+
+/// Disjoint `PackageManager` fields that the tree printer mutates/reads,
+/// passed alongside `Printer` (which already borrows `lockfile`/`options`/
+/// `update_requests` immutably) so [`print`] never needs `&mut
+/// PackageManager`.
+pub struct TreePrintCtx<'a> {
+    pub updating_packages: &'a bun_collections::StringArrayHashMap<PackageUpdateInfo>,
+    pub workspace_name_hash: Option<PackageNameHash>,
+    pub track_installed_bin: &'a mut TrackInstalledBin,
+    pub manifests: &'a mut crate::PackageManifestMap,
+}
 
 fn print_installed_workspace_section<
     W,
@@ -20,7 +31,7 @@ fn print_installed_workspace_section<
     const PRINT_SECTION_HEADER: bool,
 >(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &mut TreePrintCtx<'_>,
     writer: &mut W,
     workspace_package_id: PackageID,
     installed: &Bitset,
@@ -163,7 +174,7 @@ enum ShouldPrintPackageInstallResult<'a> {
 
 fn should_print_package_install<'a>(
     this: &Printer,
-    manager: &'a PackageManager,
+    manager: &'a TreePrintCtx<'_>,
     dep_id: DependencyID,
     installed: &Bitset,
     id_map: Option<&mut [DependencyID]>,
@@ -274,7 +285,7 @@ where
 
 fn print_installed_package<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &mut TreePrintCtx<'_>,
     dependency: &Dependency,
     package_id: PackageID,
     writer: &mut W,
@@ -287,9 +298,14 @@ where
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
 
-    let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
-        manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
+        crate::package_manager::package_manager_resolution::format_later_version_in_cache(
+            manager.manifests,
+            this.options,
+            this.lockfile,
+            dependency.name_hash,
+            &resolution,
+        )
     {
         if ENABLE_ANSI_COLORS {
             write!(
@@ -338,7 +354,7 @@ where
 /// - Prints a leading and trailing blank newline with diffs
 pub fn print<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
-    manager: &mut PackageManager,
+    manager: &mut TreePrintCtx<'_>,
     writer: &mut W,
     log_level: install::package_manager::Options::LogLevel,
 ) -> Result<(), crate::Error>
@@ -545,7 +561,7 @@ where
                 }
 
                 {
-                    if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
+                    if matches!(*manager.track_installed_bin, TrackInstalledBin::Pending) {
                         // `bin_name`'s borrow of `iterator.buf` must end before
                         // the loop's `iterator.next()`.
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
@@ -558,7 +574,7 @@ where
                                 bstr::BStr::new(&owned[..]),
                             )?;
 
-                            manager.track_installed_bin = TrackInstalledBin::Basename(owned);
+                            *manager.track_installed_bin = TrackInstalledBin::Basename(owned);
                         }
                     }
 

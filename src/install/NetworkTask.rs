@@ -39,6 +39,18 @@ pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
     FilenameStoreAppender(FileSystem::instance().filename_store())
 }
 
+/// Intern `bytes` into the global filename store (inline when it fits) and
+/// return the `StringOrTinyString` handle. Convenience for callers that need
+/// to release a lockfile/manifest borrow before a `&mut PackageManager` call.
+#[inline]
+pub(crate) fn intern_in_filename_store(bytes: &[u8]) -> bun_core::strings::StringOrTinyString {
+    bun_core::strings::StringOrTinyString::init_append_if_needed(
+        bytes,
+        &mut filename_store_appender(),
+    )
+    .expect("unreachable")
+}
+
 pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / leaked header content owned by
     // sibling fields, so the lifetime is erased to `'static`.
@@ -902,12 +914,21 @@ impl NetworkTask {
     /// Release any streaming-extraction resources that were never used because
     /// the request errored before a drain was scheduled. Called on the main
     /// thread from `runTasks` when falling back to the buffered path.
-    pub fn discard_unused_streaming_state(&mut self, manager: &mut PackageManager) {
-        debug_assert!(!self.streaming_committed);
-        if let Some(stream) = self.tarball_stream.take() {
+    ///
+    /// Implemented as an associated fn over the disjoint fields it touches so
+    /// `runTasks` can hold `&mut self.callback` (via the `Extract` match arm)
+    /// across the call.
+    pub fn discard_unused_streaming_state(
+        streaming_committed: bool,
+        tarball_stream: &mut Option<Box<TarballStream>>,
+        streaming_extract_task: &mut *mut crate::package_manager_task::Task<'static>,
+        preallocated_resolve_tasks: &mut crate::package_manager_real::PreallocatedTaskStore,
+    ) {
+        debug_assert!(!streaming_committed);
+        if let Some(stream) = tarball_stream.take() {
             drop(stream);
         }
-        if !self.streaming_extract_task.is_null() {
+        if !streaming_extract_task.is_null() {
             // ARENA: returned to `preallocated_resolve_tasks` pool, not freed.
             // SAFETY: `streaming_extract_task` was obtained from this same
             // `preallocated_resolve_tasks` pool via `get()` and is not aliased
@@ -915,23 +936,28 @@ impl NetworkTask {
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
             unsafe {
-                manager
-                    .preallocated_resolve_tasks
-                    .put(self.streaming_extract_task);
+                preallocated_resolve_tasks.put(*streaming_extract_task);
             }
-            self.streaming_extract_task = ptr::null_mut();
+            *streaming_extract_task = ptr::null_mut();
         }
     }
 
     /// Prepare this task for another HTTP attempt (used by retry logic when
     /// streaming extraction never started). Keeps the stream allocation so the
     /// retry can still benefit from streaming.
-    pub fn reset_streaming_for_retry(&mut self) {
-        debug_assert!(!self.streaming_committed);
-        if let Some(stream) = self.tarball_stream.as_deref_mut() {
+    ///
+    /// Implemented as an associated fn over the disjoint fields it touches so
+    /// `runTasks` can hold `&mut self.callback` across the call.
+    pub fn reset_streaming_for_retry(
+        streaming_committed: bool,
+        tarball_stream: &mut Option<Box<TarballStream>>,
+        response: &mut HTTPClientResult,
+    ) {
+        debug_assert!(!streaming_committed);
+        if let Some(stream) = tarball_stream.as_deref_mut() {
             stream.reset_for_retry();
         }
-        self.response = HTTPClientResult::default();
+        *response = HTTPClientResult::default();
     }
 
     /// Initialize a freshly-vended pool slot in place — a full struct overwrite

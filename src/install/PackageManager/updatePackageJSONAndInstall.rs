@@ -122,59 +122,54 @@ fn update_package_json_and_install_with_manager_with_updates(
         Global::crash();
     }
 
-    // reshaped for borrowck — `get_with_path` returns `&mut MapEntry`
-    // borrowed from `manager.workspace_package_json_cache`, but we then need
-    // `&mut *manager` for `PackageJSONEditor::edit` / `do_patch_commit` while still
-    // holding the entry. Demote to `*mut MapEntry` and re-
-    // borrow at point of use. The cache map is not mutated again until the
-    // next `get_with_path` call below, so the pointer remains valid.
-    let current_package_json_ptr: *mut MapEntry =
-        match manager.workspace_package_json_cache.get_with_path(
-            manager.log_mut(),
-            manager.original_package_json_path.as_bytes(),
-            GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
-            GetResult::ParseErr(err) => {
-                let _ = manager
-                    .log_mut()
-                    .print(std::ptr::from_mut(Output::error_writer()));
-                Output::err_generic(
-                    "failed to parse package.json \"{s}\": {s}",
-                    (
-                        BStr::new(manager.original_package_json_path.as_bytes()),
-                        err.name(),
-                    ),
-                );
-                Global::crash();
-            }
-            GetResult::ReadErr(err) => {
-                Output::err_generic(
-                    "failed to read package.json \"{s}\": {s}",
-                    (
-                        BStr::new(manager.original_package_json_path.as_bytes()),
-                        err.name(),
-                    ),
-                );
-                Global::crash();
-            }
-            GetResult::Entry(entry) => core::ptr::from_mut(entry),
-        };
-    // SAFETY: see note above — pointer into `manager.workspace_package_json_cache`,
-    // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
-    // is taken across this borrow; `PackageJSONEditor` and `do_patch_commit` touch only
-    // disjoint manager fields.
-    let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
-    let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
-    let current_package_json_indent = current_package_json.indentation;
-
-    // If there originally was a newline at the end of their package.json, preserve it
-    // so that we don't cause unnecessary diffs in their git history.
-    // https://github.com/oven-sh/bun/issues/1375
-    let preserve_trailing_newline_at_eof_for_package_json =
-        current_package_json.source.contents.last() == Some(&b'\n');
+    // `get_with_path` caches the parsed entry keyed by path, so we can scope
+    // this borrow to the reads, release it for the `&mut manager` work below,
+    // and re-borrow the same cached entry (no re-read/re-parse) when we need
+    // to write `source.contents` / `reparse_root` afterwards.
+    let (
+        mut current_package_json_root,
+        current_package_json_indent,
+        preserve_trailing_newline_at_eof_for_package_json,
+    ) = match manager.workspace_package_json_cache.get_with_path(
+        manager.log_mut(),
+        manager.original_package_json_path.as_bytes(),
+        GetJSONOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    ) {
+        GetResult::ParseErr(err) => {
+            let _ = manager
+                .log_mut()
+                .print(std::ptr::from_mut(Output::error_writer()));
+            Output::err_generic(
+                "failed to parse package.json \"{s}\": {s}",
+                (
+                    BStr::new(manager.original_package_json_path.as_bytes()),
+                    err.name(),
+                ),
+            );
+            Global::crash();
+        }
+        GetResult::ReadErr(err) => {
+            Output::err_generic(
+                "failed to read package.json \"{s}\": {s}",
+                (
+                    BStr::new(manager.original_package_json_path.as_bytes()),
+                    err.name(),
+                ),
+            );
+            Global::crash();
+        }
+        // If there originally was a newline at the end of their package.json,
+        // preserve it so that we don't cause unnecessary diffs in their git
+        // history. https://github.com/oven-sh/bun/issues/1375
+        GetResult::Entry(entry) => (
+            entry.root,
+            entry.indentation,
+            entry.source.contents.last() == Some(&b'\n'),
+        ),
+    };
 
     if subcommand == Subcommand::Remove {
         if !current_package_json_root.data.is_e_object() {
@@ -346,7 +341,7 @@ fn update_package_json_and_install_with_manager_with_updates(
                         not_in_workspace_root = Some(stuff);
                     } else {
                         PackageJSONEditor::edit_patched_dependencies(
-                            manager,
+                            &manager.ast_arena,
                             &mut current_package_json_root,
                             &stuff.patch_key,
                             &stuff.patchfile_path,
@@ -359,10 +354,28 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     manager.to_update = subcommand == Subcommand::Update;
 
-    // reshaped for borrowck — the field is owning
-    // (`Box<[UpdateRequest]>`), so we transfer ownership here and re-borrow from
-    // `manager.update_requests` after `install_with_manager` (which is the only writer).
+    // The field is owning (`Box<[UpdateRequest]>`), so transfer ownership here
+    // and re-borrow from `manager.update_requests` after `install_with_manager`
+    // (which is the only writer).
     manager.update_requests = updates.into_boxed_slice();
+
+    // Re-borrow the (now-cached) entry for the `source` read/write and
+    // `reparse_root` below; `manager` is only touched via
+    // `original_package_json_path` (disjoint field) and `log_mut()` (raw
+    // pointer, detached lifetime) for the remainder of this span.
+    let log = manager.log_mut();
+    let current_package_json = manager
+        .workspace_package_json_cache
+        .get_with_path(
+            log,
+            manager.original_package_json_path.as_bytes(),
+            GetJSONOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .expect("entry was cached by the first get_with_path above");
 
     let mut buffer_writer = js_printer::BufferWriter::init();
     buffer_writer.buffer.list.reserve(
@@ -411,7 +424,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // (`current_package_json_root`), so re-parse the
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
     // members during `install_with_manager`) reflects the new dependency list.
-    if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
+    if let Err(err) = current_package_json.reparse_root(log) {
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
         Global::crash();
     }
@@ -432,49 +445,43 @@ fn update_package_json_and_install_with_manager_with_updates(
         root_package_json_path_buf[root_package_json_path_len] = 0;
         let root_package_json_path = &root_package_json_path_buf[..root_package_json_path_len];
 
-        // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
+        // The lifetime of this borrow is only valid until the next call to
+        // `getWithPath`, which can happen after this scope.
         // https://github.com/oven-sh/bun/issues/12288
-        // reshaped for borrowck — see `current_package_json_ptr` above.
-        let root_package_json_ptr: *mut MapEntry =
-            match manager.workspace_package_json_cache.get_with_path(
-                manager.log_mut(),
-                root_package_json_path,
-                GetJSONOptions {
-                    guess_indentation: true,
-                    ..Default::default()
-                },
-            ) {
-                GetResult::ParseErr(err) => {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
-                    Output::err_generic(
-                        "failed to parse package.json \"{s}\": {s}",
-                        (BStr::new(root_package_json_path), err.name()),
-                    );
-                    Global::crash();
-                }
-                GetResult::ReadErr(err) => {
-                    Output::err_generic(
-                        "failed to read package.json \"{s}\": {s}",
-                        (
-                            BStr::new(manager.original_package_json_path.as_bytes()),
-                            err.name(),
-                        ),
-                    );
-                    Global::crash();
-                }
-                GetResult::Entry(entry) => core::ptr::from_mut(entry),
-            };
-        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
-        // next `get_with_path` (after this block). `edit_patched_dependencies` touches
-        // only disjoint manager fields.
-        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
+        let root_log = manager.log_mut();
+        let root_package_json = match manager.workspace_package_json_cache.get_with_path(
+            root_log,
+            root_package_json_path,
+            GetJSONOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        ) {
+            GetResult::ParseErr(err) => {
+                let _ = root_log.print(std::ptr::from_mut(Output::error_writer()));
+                Output::err_generic(
+                    "failed to parse package.json \"{s}\": {s}",
+                    (BStr::new(root_package_json_path), err.name()),
+                );
+                Global::crash();
+            }
+            GetResult::ReadErr(err) => {
+                Output::err_generic(
+                    "failed to read package.json \"{s}\": {s}",
+                    (
+                        BStr::new(manager.original_package_json_path.as_bytes()),
+                        err.name(),
+                    ),
+                );
+                Global::crash();
+            }
+            GetResult::Entry(entry) => entry,
+        };
 
         if let Some(stuff) = &not_in_workspace_root {
             let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
             PackageJSONEditor::edit_patched_dependencies(
-                manager,
+                &manager.ast_arena,
                 &mut root_package_json_root,
                 &stuff.patch_key,
                 &stuff.patchfile_path,
@@ -977,4 +984,4 @@ impl fmt::Display for MoreInstructions<'_> {
 use super::TrackInstalledBin;
 use super::options::{Do, LogLevel, PatchFeatures};
 use super::package_json_editor::EditOptions;
-use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
+use super::workspace_package_json_cache::{GetJSONOptions, GetResult};

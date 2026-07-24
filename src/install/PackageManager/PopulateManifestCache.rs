@@ -63,31 +63,23 @@ fn start_manifest_task(
     }
     manager.start_progress_bar_if_none();
 
-    // reshaped for borrowck — `get_network_task()`
-    // borrows `&mut manager.preallocated_network_tasks`, so compute everything
-    // that needs `&manager` *before* taking that borrow, then populate the pool
-    // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
-    let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
-    // Backref address only — stored, not dereffed in this function.
-    let manager_backref: *mut PackageManager = manager;
-
-    // Take the pool slot as a raw pointer so borrowck releases `manager` for the
-    // `enqueue_network_task` tail.
+    // Take the pool slot as a raw pointer (the pool API is pointer-based) so
+    // the `manager` borrow is released before `enqueue_network_task`.
     let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
     // `write_init` is a full struct overwrite that resets every other field to
     // its struct default. The slot may be uninitialized (heap fallback) or
     // stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, std::ptr::from_mut(manager), None) };
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
-    let task = unsafe { &mut *net_ptr };
-    // `scope` points into `manager.options` which is not mutated by
-    // `for_manifest` (it only writes the pool slot and `manager.log`).
-    task.for_manifest(
+    // `for_manifest` writes only the pool slot (disjoint from every `manager`
+    // field) and `manager.log` (a raw pointer to CLI-scope storage), so
+    // `scope`'s `&manager.options` borrow can coexist.
+    unsafe { &mut *net_ptr }.for_manifest(
         pkg_name,
-        scope.get(),
+        manager.scope_for_package_name(pkg_name),
         None,
         is_optional,
         needs_extended_manifest,

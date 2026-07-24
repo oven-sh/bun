@@ -115,6 +115,18 @@ impl PackageManifestMap {
         }
     }
 
+    /// Shared-borrow variant of [`by_name_hash_in_memory`] that also yields an
+    /// `Expired` entry. For callers that have already ensured the entry is
+    /// loaded (via [`by_name_hash`]/[`by_name_hash_allow_expired`]) and now
+    /// want to hold `&PackageManifest` alongside `&mut` borrows of other
+    /// `PackageManager` fields.
+    pub fn loaded_by_name_hash(&self, name_hash: PackageNameHash) -> Option<&npm::PackageManifest> {
+        match self.hash_map.get(&name_hash)? {
+            Value::Manifest(m) | Value::Expired(m) => Some(m),
+            Value::NotFound => None,
+        }
+    }
+
     pub fn by_name_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,

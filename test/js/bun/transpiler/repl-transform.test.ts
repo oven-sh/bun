@@ -85,33 +85,33 @@ describe("Bun.Transpiler replMode", () => {
 
     test("simple expression returns value object", async () => {
       const result = await runRepl("42");
-      expect(result).toEqual({ value: 42 });
+      expect(result).toEqual({ value: 42, variables: [], functions: "" });
     });
 
     test("arithmetic expression", async () => {
       const result = await runRepl("2 + 3 * 4");
-      expect(result).toEqual({ value: 14 });
+      expect(result).toEqual({ value: 14, variables: [], functions: "" });
     });
 
     test("string expression", async () => {
       const result = await runRepl('"hello world"');
-      expect(result).toEqual({ value: "hello world" });
+      expect(result).toEqual({ value: "hello world", variables: [], functions: "" });
     });
 
     test("object literal (auto-detected)", async () => {
       // Object literals don't need parentheses - the transpiler auto-detects them
       const result = await runRepl("{a: 1, b: 2}");
-      expect(result).toEqual({ value: { a: 1, b: 2 } });
+      expect(result).toEqual({ value: { a: 1, b: 2 }, variables: [], functions: "" });
     });
 
     test("array literal", async () => {
       const result = await runRepl("[1, 2, 3]");
-      expect(result).toEqual({ value: [1, 2, 3] });
+      expect(result).toEqual({ value: [1, 2, 3], variables: [], functions: "" });
     });
 
     test("await expression", async () => {
       const result = await runRepl("await Promise.resolve(100)");
-      expect(result).toEqual({ value: 100 });
+      expect(result).toEqual({ value: 100, variables: [], functions: "" });
     });
 
     test("await with variable", async () => {
@@ -122,7 +122,7 @@ describe("Bun.Transpiler replMode", () => {
 
       const code2 = transpiler.transformSync("x * 2");
       const result = await vm.runInContext(code2, ctx);
-      expect(result).toEqual({ value: 20 });
+      expect(result).toEqual({ value: 20, variables: [], functions: "" });
     });
   });
 
@@ -212,9 +212,12 @@ describe("Bun.Transpiler replMode", () => {
       // With semicolon, it's explicitly a block statement
       const code = transpiler.transformSync("{x: 1};");
       // The output should NOT treat this as an object literal
-      // It should be a block with a labeled statement, no value wrapper
-      expect(code).not.toContain("value:");
+      // It should be a block with a labeled statement and no completion value
+      // (the wrapper's own `value` property stays undefined)
       expect(code).toContain("x:");
+      const result = await runRepl("{x: 1};");
+      expect("value" in result).toBe(true);
+      expect(result).toEqual({ value: undefined, variables: [], functions: "" });
     });
 
     test("whitespace around object literal is handled", async () => {
@@ -252,7 +255,7 @@ describe("Bun.Transpiler replMode", () => {
       const code = transpiler.transformSync("await 1; await 2; await 3");
       const result = await vm.runInContext(code, ctx);
       // Last expression should be wrapped
-      expect(result).toEqual({ value: 3 });
+      expect(result).toEqual({ value: 3, variables: [], functions: "" });
     });
 
     test("destructuring assignment persists", async () => {
@@ -287,6 +290,212 @@ describe("Bun.Transpiler replMode", () => {
       const result = transpiler.transformSync("const fn = async () => await 1");
       // await inside arrow function doesn't trigger TLA transform
       expect(result).not.toMatch(/^\(async\s*\(\)/);
+    });
+  });
+
+  describe("result metadata", () => {
+    const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+
+    async function runRepl(code: string, context?: object) {
+      const ctx = vm.createContext(context ?? { console, Promise });
+      return await vm.runInContext(transpiler.transformSync(code), ctx);
+    }
+
+    describe("variables", () => {
+      test("lists declared names in source order", async () => {
+        const result = await runRepl("var a = 1; let b = 2, c = 3; const d = await Promise.resolve(4)");
+        expect(result.variables).toEqual(["a", "b", "c", "d"]);
+      });
+
+      test("destructuring declarations list every bound name", async () => {
+        const result = await runRepl("const { a, b: [c, ...d], ...rest } = { a: 1, b: [2, 3], e: 4 }");
+        expect(result.variables).toEqual(["a", "c", "d", "rest"]);
+      });
+
+      test("function and class declarations are listed", async () => {
+        const result = await runRepl("function foo() {} class Bar {}");
+        expect(result.variables).toEqual(["foo", "Bar"]);
+      });
+
+      test("duplicate declarations are listed once", async () => {
+        const result = await runRepl("var x = 1; var x = 2; x");
+        expect(result.value).toBe(2);
+        expect(result.variables).toEqual(["x"]);
+      });
+
+      test("import bindings are listed, internal namespace refs are not", () => {
+        const code = transpiler.transformSync('import def, { a, b as c } from "mod"; import * as ns from "other"');
+        expect(code).toMatch(/variables: \["def",\s*"a",\s*"c",\s*"ns"\]/);
+      });
+
+      test("default + namespace import lists names in source order", () => {
+        const code = transpiler.transformSync('import def, * as ns from "mod"');
+        expect(code).toMatch(/variables: \["def",\s*"ns"\]/);
+        // Both bindings are hoisted and assigned: the default comes off the
+        // namespace that was just awaited.
+        expect(code).toContain("var def");
+        expect(code).toContain("def = ns.default");
+      });
+
+      test("expression statements declare nothing", async () => {
+        const result = await runRepl("1 + 2");
+        expect(result).toEqual({ value: 3, variables: [], functions: "" });
+      });
+    });
+
+    describe("functions", () => {
+      test("captures replayable declarations that restore a fresh context", async () => {
+        const result = await runRepl("function add(a, b) { return a + b } const base = 10; add(base, 5)");
+        expect(result.value).toBe(15);
+        expect(result.variables).toEqual(["add", "base"]);
+        expect(result.functions).toContain("function add(a, b)");
+        // Pure `const`/`let` declarations are re-printed as `var` so replaying
+        // the source persists them onto a vm context.
+        expect(result.functions).toContain("var base = 10");
+
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("add(base, 32)", fresh)).toBe(42);
+      });
+
+      test("classes are serialized as var assignments", async () => {
+        const result = await runRepl("class Counter { constructor() { this.n = 3 } }");
+        expect(result.functions).toContain("var Counter = class Counter");
+
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("new Counter().n", fresh)).toBe(3);
+      });
+
+      test("declarations with side effects are excluded", async () => {
+        const ctx = vm.createContext({ effect: () => 123 });
+        const code = transpiler.transformSync(
+          "const pure = [1, 2]; const impure = effect(); function f() { return effect() }",
+        );
+        const result = await vm.runInContext(code, ctx);
+        expect(result.variables).toEqual(["pure", "impure", "f"]);
+        expect(result.functions).toContain("var pure = [1, 2]");
+        expect(result.functions).toContain("function f()");
+        expect(result.functions).not.toContain("impure");
+      });
+
+      test("declarations reading an excluded binding are excluded too", async () => {
+        const ctx = vm.createContext({ effect: () => 41 });
+        // `a` has a side effect, so `b` (which reads `a` when evaluated) and
+        // `c` (which reads `b`) cannot be replayed; `copy` only reads `ok`.
+        const code = transpiler.transformSync(
+          "const ok = 1; let a = effect(); let b = a; let c = [b]; const copy = ok; b",
+        );
+        const result = await vm.runInContext(code, ctx);
+        expect(result.value).toBe(41);
+        expect(result.variables).toEqual(["ok", "a", "b", "c", "copy"]);
+        expect(result.functions).toContain("var ok = 1");
+        expect(result.functions).toContain("var copy = ok");
+        expect(result.functions).not.toContain("var a =");
+        expect(result.functions).not.toContain("var b =");
+        expect(result.functions).not.toContain("var c =");
+
+        // The whole string evaluates on an empty context.
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("copy", fresh)).toBe(1);
+      });
+
+      test("later declarators may read earlier ones in the same statement", async () => {
+        const result = await runRepl("const a = 1, b = a, c = [a, b]; c");
+        expect(result.functions).toContain("var a = 1, b = a, c = [a, b]");
+
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("[a, b, c]", fresh)).toEqual([1, 1, [1, 1]]);
+      });
+
+      test("destructuring defaults reading an excluded binding are excluded", async () => {
+        const ctx = vm.createContext({ effect: () => 41 });
+        // `[x = a] = []` evaluates `a` (not replayable) when replayed.
+        const code = transpiler.transformSync("let a = effect(); const [x = a] = []; x");
+        const result = await vm.runInContext(code, ctx);
+        expect(result.value).toBe(41);
+        expect(result.variables).toEqual(["a", "x"]);
+        expect(result.functions).toBe("");
+      });
+
+      test("classes with non-empty static blocks are not serialized", async () => {
+        // A static block body runs when the class is evaluated; it is not
+        // analyzed for references (here it reads `a`, which is not
+        // replayable), so such a class is never replayed.
+        const ctx = vm.createContext({ effect: () => 41 });
+        const code = transpiler.transformSync("let a = effect(); class S { static { a } }");
+        const result = await vm.runInContext(code, ctx);
+        expect(result.variables).toEqual(["a", "S"]);
+        expect(result.functions).toBe("");
+      });
+
+      test("declarations reading an import binding are excluded", () => {
+        // Import statements are never part of the `functions` string, so a
+        // declaration that eagerly reads an import binding cannot be replayed.
+        const code = transpiler.transformSync('import { foo } from "mod"; const x = foo; const y = 1');
+        expect(code).toContain("var y = 1");
+        expect(code).not.toContain("var x = foo");
+      });
+
+      test("pure-annotated calls are never serialized", async () => {
+        // A call runs a body that is not analyzed: the IIFE and `f()` both
+        // read `a`, which is not replayable, so neither `x` nor `y` can be.
+        const ctx = vm.createContext({ effect: () => 41 });
+        const code = transpiler.transformSync(
+          "let a = effect(); function f() { return a } " +
+            "const x = /* @__PURE__ */ (() => a)(); const y = /* @__PURE__ */ f(); const ok = 1; x",
+        );
+        const result = await vm.runInContext(code, ctx);
+        expect(result.value).toBe(41);
+        expect(result.functions).toContain("function f()");
+        expect(result.functions).toContain("var ok = 1");
+        expect(result.functions).not.toContain("var x");
+        expect(result.functions).not.toContain("var y");
+
+        // Defining `f` is safe even though calling it in a fresh context is
+        // not; the string itself must evaluate cleanly.
+        const fresh = vm.createContext({});
+        vm.runInContext(result.functions, fresh);
+        expect(vm.runInContext("ok", fresh)).toBe(1);
+      });
+
+      test("using declarations are never serialized", () => {
+        // With `target: "bun"` a non-null `using` reaches the REPL transform
+        // unlowered; replaying it as a plain `var` would drop its disposal
+        // semantics, so it must not be captured even with a pure initializer.
+        const bunTarget = new Bun.Transpiler({ loader: "tsx", replMode: true, target: "bun" });
+        const code = bunTarget.transformSync("using res = { d: 1 }; 1");
+        expect(code).toContain('functions: ""');
+      });
+
+      test("declaration-only input still returns the wrapper", async () => {
+        const result = await runRepl("function later() { return 7 }");
+        // No completion value, but `value` stays an own property and the
+        // metadata is observable.
+        expect("value" in result).toBe(true);
+        expect(result.value).toBeUndefined();
+        expect(result.variables).toEqual(["later"]);
+        expect(result.functions).toContain("function later()");
+      });
+
+      test("TypeScript annotations are stripped from the printed source", async () => {
+        const result = await runRepl("const n: number = 1; function id<T>(x: T): T { return x }");
+        expect(result.functions).not.toContain(": number");
+        expect(result.functions).not.toContain("<T>");
+        expect(result.functions).toContain("var n = 1");
+        expect(result.functions).toContain("function id(x)");
+      });
+
+      test("async transform() returns the same metadata as transformSync()", async () => {
+        const code = await transpiler.transform("const q = 1; function g() {} q");
+        const result = await vm.runInContext(code, vm.createContext({}));
+        expect(result.value).toBe(1);
+        expect(result.variables).toEqual(["q", "g"]);
+        expect(result.functions).toContain("var q = 1");
+        expect(result.functions).toContain("function g()");
+      });
     });
   });
 

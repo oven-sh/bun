@@ -1023,6 +1023,24 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
+        // A preload-registered beforeAll/afterAll runs after `load_preloads()`
+        // has already cleared `is_in_preload`. Flag this window so spyOn can
+        // give such spies the same process lifetime as a top-level preload
+        // spy. `test_entry.is_none()` restricts this to hook-only sequences,
+        // which each own a whole ConcurrentGroup and so never overlap with a
+        // test body; preload beforeEach/afterEach re-run per test and do not
+        // need persistence.
+        let is_preload_all_hook =
+            next_item.added_in_phase == AddedInPhase::Preload && sequence.test_entry.is_none();
+        if is_preload_all_hook {
+            global_this.bun_vm().as_mut().is_running_preload_hook = true;
+        }
+        let _restore_preload_hook = scopeguard::guard((), move |()| {
+            if is_preload_all_hook {
+                global_this.bun_vm().as_mut().is_running_preload_hook = false;
+            }
+        });
+
         if BunTest::run_test_callback(
             buntest_strong,
             global_this,

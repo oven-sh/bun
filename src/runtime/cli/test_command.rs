@@ -3239,6 +3239,25 @@ impl TestCommand {
             // it for the loop body.
             scopeguard::defer! { unsafe { (*bun_test_root_ptr).exit_file(); } }
 
+            // Restore spyOn spies installed by this file so they do not leak
+            // into the next file. Spies installed during --preload are kept.
+            // Runs as a guard so the early `return Ok(())` when the entry
+            // point rejects is covered too. Under --isolate the global (and
+            // its mockModule) is swapped out between files, so skip it.
+            unsafe extern "C" {
+                fn JSMock__restoreTransientSpies(global: *mut jsc::JSGlobalObject);
+            }
+            let restore_isolation = vm.test_isolation_enabled;
+            let restore_global = vm.global().as_ptr();
+            scopeguard::defer! {
+                if !restore_isolation {
+                    // SAFETY: `restore_global` is a live Zig::GlobalObject for
+                    // the whole process; the C++ side opens a top-level
+                    // exception scope and swallows any throw.
+                    unsafe { JSMock__restoreTransientSpies(restore_global) };
+                }
+            }
+
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) keeps the borrows
@@ -3384,16 +3403,6 @@ impl TestCommand {
                 // need tracking to remain enabled and populated until then.
                 vm.auto_killer.clear();
                 vm.auto_killer.disable();
-
-                // Restore spyOn spies installed by this file so they do not
-                // leak into the next file. Spies installed during --preload
-                // are kept.
-                unsafe extern "C" {
-                    fn JSMock__restoreTransientSpies(global: *mut jsc::JSGlobalObject);
-                }
-                // SAFETY: `vm.global()` is a live Zig::GlobalObject; C++ side
-                // is nothrow (only walks a weak set and writes properties).
-                unsafe { JSMock__restoreTransientSpies(vm.global().as_ptr()) };
             }
 
             repeat_index += 1;

@@ -658,6 +658,13 @@ extern "C" void JSMock__restoreTransientSpies(Zig::GlobalObject* globalObject)
         return;
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    // Entered directly from Rust at file teardown with no enclosing throw
+    // scope; clearSpy() can reach overrideExportValue / putDirectIndex,
+    // which open their own throw scopes. Swallow anything they raise here
+    // rather than leaving an unchecked exception for the next file.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
     ActiveSpySet* spies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());
     ActiveSpySet* mocks = globalObject->mockModule.activeMocks
         ? uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeMocks.get())
@@ -675,6 +682,7 @@ extern "C" void JSMock__restoreTransientSpies(Zig::GlobalObject* globalObject)
         if (spy->spyInstalledDuringPreload)
             continue;
         spy->clearSpy();
+        scope.clearExceptionExceptTermination();
         spies->remove(spy);
         if (mocks)
             mocks->remove(spy);

@@ -28,7 +28,11 @@ pub fn is_shutting_down(this: &VirtualMachine) -> bool {
 
 // HOST_EXPORT(Bun__VirtualMachine__isInPreload, c)
 pub fn is_in_preload(this: &VirtualMachine) -> bool {
-    this.is_in_preload
+    // spyOn uses this to decide whether a spy should survive the per-file
+    // teardown. A spy installed inside a preload-registered beforeAll runs
+    // after `load_preloads()` has cleared `is_in_preload`, so treat that
+    // window the same.
+    this.is_in_preload || this.is_running_preload_hook
 }
 
 // HOST_EXPORT(Bun__VM__scriptExecutionStatus, c)

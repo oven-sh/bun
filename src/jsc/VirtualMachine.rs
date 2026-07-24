@@ -255,6 +255,10 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
+    /// True while the test runner is executing a preload-registered
+    /// beforeAll/afterAll hook body. Lets spyOn treat a spy installed from
+    /// such a hook the same as one installed at preload top level.
+    pub is_running_preload_hook: bool,
     pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,

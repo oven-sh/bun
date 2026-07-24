@@ -158,6 +158,63 @@ describe.concurrent("spyOn is scoped to the test file that installed it", () => 
     expect(exitCode).toBe(0);
   });
 
+  test("a spy installed inside a preload beforeAll persists across files", async () => {
+    using dir = tempDir("spyon-preload-beforeall", {
+      "MyModule.ts": moduleSource,
+      "preload.ts": `
+        import { beforeAll, spyOn } from "bun:test";
+        import { MyClass } from "./MyModule";
+        beforeAll(async () => {
+          spyOn(MyClass.prototype, "myMethod").mockImplementation(() => "FromPreload");
+        });
+      `,
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { MyClass } from "./MyModule";
+        test("a sees preload mock", () => {
+          expect(new MyClass().myMethod()).toBe("FromPreload");
+        });
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { MyClass } from "./MyModule";
+        test("b sees preload mock", () => {
+          expect(new MyClass().myMethod()).toBe("FromPreload");
+        });
+      `,
+    });
+
+    const { stderr, exitCode } = await runTests(String(dir), ["a.test.ts", "b.test.ts"], ["--preload", "./preload.ts"]);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a top-level throw after installing a spy still restores it before the next file", async () => {
+    using dir = tempDir("spyon-per-file-throw", {
+      "MyModule.ts": moduleSource,
+      "a.test.ts": `
+        import { spyOn } from "bun:test";
+        import { MyClass } from "./MyModule";
+        spyOn(MyClass.prototype, "myMethod").mockImplementation(() => "Hola");
+        throw new Error("boom");
+      `,
+      "b.test.ts": `
+        import { test, expect } from "bun:test";
+        import { MyClass } from "./MyModule";
+        test("b sees real", () => {
+          expect(new MyClass().myMethod()).toBe("Hello");
+        });
+      `,
+    });
+
+    const { stderr } = await runTests(String(dir), ["a.test.ts", "b.test.ts"]);
+    // a.test.ts fails because of the top-level throw; b.test.ts must still pass.
+    expect(stderr).toContain("(pass) b sees real");
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain('Received: "Hola"');
+  });
+
   test("a spy explicitly mockRestore()'d in its file is not double-restored", async () => {
     using dir = tempDir("spyon-explicit-restore", {
       "MyModule.ts": moduleSource,

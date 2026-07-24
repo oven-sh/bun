@@ -176,3 +176,46 @@ test.skipIf(!isASAN)(
   },
   timeout,
 );
+
+// Bun.sleepSync was a single uninterruptible std::thread::sleep, so a worker
+// parked in a long sleepSync never observed the parent's terminate(): VMTraps
+// only fire at JS safepoints and the event-loop wakeup cannot unblock nanosleep.
+test(
+  "terminate() interrupts a worker blocked in Bun.sleepSync",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const w = new Worker(
+          "data:text/javascript," + encodeURIComponent(
+            'postMessage("sleeping"); Bun.sleepSync(600000);'
+          ),
+        );
+        w.addEventListener("close", () => {
+          console.log("CLOSED");
+          process.exit(0);
+        });
+        // postMessage enqueue -> return -> sleepSync is synchronous on the worker
+        // thread; by the time this handler runs on the parent, the worker is
+        // already inside the sleep.
+        w.addEventListener("message", () => w.terminate());
+        setTimeout(() => {
+          console.log("HUNG");
+          process.exit(1);
+        }, 10000);
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("CLOSED\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

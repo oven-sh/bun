@@ -89,21 +89,42 @@ macro_rules! maybe_verbose_error_trace {
     };
 }
 
+const BASE_HEAD_PARAMS: &[ParamType] = &[
+    parse_param!(
+        "--env-file <STR>...               Load environment variables from the specified file(s)"
+    ),
+    parse_param!("--no-env-file                     Disable automatic loading of .env files"),
+    parse_param!(
+        "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
+    ),
+];
+
+const BASE_TAIL_PARAMS: &[ParamType] = &[parse_param!(
+    "-h, --help                        Display this menu and exit"
+)];
+
+/// Shared by every subcommand that keeps `-c` as the `--config` shorthand.
 pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
-    &[
-        parse_param!(
-            "--env-file <STR>...               Load environment variables from the specified file(s)"
-        ),
-        parse_param!("--no-env-file                     Disable automatic loading of .env files"),
-        parse_param!(
-            "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
-        ),
-        parse_param!(
-            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
-        ),
-        parse_param!("-h, --help                        Display this menu and exit"),
-    ],
+    BASE_HEAD_PARAMS,
+    &[parse_param!(
+        "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+    )],
+    BASE_TAIL_PARAMS,
+    maybe_verbose_error_trace!(),
+    &[parse_param!("<POS>...")],
+);
+
+/// Same as [`BASE_PARAMS_`], but `--config` has no `-c` shorthand: the runtime
+/// commands give `-c` to `--check` for Node compatibility, so advertising it
+/// here too would document an alias that never resolves to `--config`.
+pub(crate) const BASE_PARAMS_NO_CONFIG_SHORT_: &[ParamType] = concat_params!(
+    maybe_debug_params!(),
+    BASE_HEAD_PARAMS,
+    &[parse_param!(
+        "--config <PATH>?                  Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+    )],
+    BASE_TAIL_PARAMS,
     maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
@@ -191,6 +212,13 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
+        "--inspect-port <STR>              Set the default [host:]port used when the debugger is activated with --inspect"
+    ),
+    parse_param!("--debug-port <STR>"),
+    parse_param!("--permission"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
@@ -229,6 +257,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
     parse_param!(
         "-p, --print <STR>                 Evaluate argument as a script and print the result"
+    ),
+    parse_param!(
+        "--input-type <STR>                Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
     ),
     parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
@@ -317,6 +348,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+    // `-c` means `--check` for the runtime commands (Node.js compatibility).
+    // The AUTO/RUN tables pair this with BASE_PARAMS_NO_CONFIG_SHORT_ so
+    // `--config` keeps its long form and nothing else claims `-c`.
+    parse_param!(
+        "-c, --check                       Check the syntax of the entry point (or stdin) without executing it"
+    ),
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
@@ -359,7 +396,7 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     AUTO_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
-    BASE_PARAMS_
+    BASE_PARAMS_NO_CONFIG_SHORT_
 );
 
 pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -375,7 +412,7 @@ pub(crate) const RUN_PARAMS: &[ParamType] = concat_params!(
     RUN_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
-    BASE_PARAMS_
+    BASE_PARAMS_NO_CONFIG_SHORT_
 );
 
 const BAKE_DEBUG_PARAMS: &[ParamType] = &[
@@ -737,6 +774,102 @@ pub(crate) static Bun__Node__UseSystemCA: core::sync::atomic::AtomicBool =
 // `crate::cli::arguments::load_config*` callers are unaffected.
 pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_cmd_args};
 
+/// The string Node prefixes its CLI errors with. Same source as
+/// `process.execPath` (node_process::get_exec_path), so the prefix matches what
+/// scripts observe.
+fn node_error_prefix() -> &'static [u8] {
+    bun_core::self_exe_path()
+        .map(|p| p.as_bytes())
+        .unwrap_or(b"bun")
+}
+
+/// Print Node's missing-argument error for runtime CLI flags Bun borrows from
+/// Node.js (`<execPath>: <flag> requires an argument`) and exit with code 9,
+/// Node's exit code for invalid command-line arguments.
+#[cold]
+#[inline(never)]
+fn exit_node_requires_argument(flag: &[u8]) -> ! {
+    bun_core::pretty_errorln!(
+        "{}: {} requires an argument",
+        BStr::new(node_error_prefix()),
+        BStr::new(flag)
+    );
+    Output::flush();
+    Global::exit(9);
+}
+
+/// Options Node refuses to accept through the NODE_OPTIONS environment
+/// variable: the ones that change what the process executes.
+/// https://github.com/nodejs/node/blob/v26.3.0/src/node_options.cc
+const NODE_OPTIONS_DISALLOWED: &[&[u8]] = &[
+    b"-v",
+    b"--version",
+    b"-h",
+    b"--help",
+    b"-e",
+    b"--eval",
+    b"-p",
+    b"--print",
+    b"-pe",
+    b"-c",
+    b"--check",
+    b"-i",
+    b"--interactive",
+    b"--v8-options",
+    b"--test",
+    b"--",
+    b"--expose-internals",
+];
+
+/// Reject NODE_OPTIONS values Node itself refuses, with Node's message and
+/// exit code 9. Bun does not apply the remaining NODE_OPTIONS entries yet; this
+/// only covers the error contract scripts can rely on.
+#[cold]
+#[inline(never)]
+fn validate_node_options(env: &[u8]) {
+    let mut i = 0usize;
+    while i < env.len() {
+        while i < env.len() && env[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= env.len() {
+            break;
+        }
+        // Tokenize the way Node does: whitespace-separated, double quotes
+        // group a span containing whitespace.
+        let mut token: Vec<u8> = Vec::new();
+        let mut in_quotes = false;
+        while i < env.len() && (in_quotes || !env[i].is_ascii_whitespace()) {
+            if env[i] == b'"' {
+                in_quotes = !in_quotes;
+            } else {
+                token.push(env[i]);
+            }
+            i += 1;
+        }
+        if !token.starts_with(b"-") {
+            continue;
+        }
+        // Compare the option name (before any '='), treating '_' as '-' the
+        // way Node canonicalizes option names. The message echoes the spelling
+        // the user wrote.
+        let name = &token[..token.iter().position(|&b| b == b'=').unwrap_or(token.len())];
+        let canonical: Vec<u8> = name
+            .iter()
+            .map(|&b| if b == b'_' { b'-' } else { b })
+            .collect();
+        if NODE_OPTIONS_DISALLOWED.contains(&canonical.as_slice()) {
+            bun_core::pretty_errorln!(
+                "{}: {} is not allowed in NODE_OPTIONS",
+                BStr::new(node_error_prefix()),
+                BStr::new(name)
+            );
+            Output::flush();
+            Global::exit(9);
+        }
+    }
+}
+
 /// node aliases `-pe` to `--print --eval` as a whole token (node_options.cc):
 /// it can't be a short in either runtime, being ambiguous with `-p` carrying
 /// the attached value `e`. Bun's `-p` takes the code, so `-pe X` is `-p X`.
@@ -769,6 +902,28 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     ) {
         Ok(a) => a,
         Err(err) => {
+            // For runtime flags borrowed from Node.js, report a missing value
+            // the way `node` does (and with its exit code 9) so scripts that
+            // branch on Node's CLI error contract behave the same under Bun.
+            if err == clap::Error::MissingValue
+                && matches!(
+                    cmd,
+                    CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+                )
+            {
+                let node_flag: Option<&[u8]> = match (diag.short, diag.long.as_deref()) {
+                    (Some(b'e'), _) => Some(b"-e"),
+                    (Some(b'p'), _) => Some(b"-p"),
+                    (_, Some(b"eval")) => Some(b"--eval"),
+                    (_, Some(b"print")) => Some(b"--print"),
+                    (_, Some(b"inspect-port")) => Some(b"--inspect-port"),
+                    (_, Some(b"debug-port")) => Some(b"--debug-port"),
+                    _ => None,
+                };
+                if let Some(flag) = node_flag {
+                    exit_node_requires_argument(flag);
+                }
+            }
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
             command::tag_print_help(cmd, false);
@@ -1173,6 +1328,32 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
         }
+        if let Some(input_type) = args.option(b"--input-type") {
+            ctx.runtime_options.eval.input_type = input_type.into();
+        }
+
+        // Node's CLI contract only applies to the commands that stand in for
+        // `node`; `--check` is only declared in their tables.
+        if matches!(
+            cmd,
+            CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+        ) {
+            if let Some(node_options) = bun_core::env_var::NODE_OPTIONS::get() {
+                validate_node_options(node_options);
+            }
+
+            ctx.runtime_options.check_syntax = args.flag(b"--check");
+            if ctx.runtime_options.check_syntax && !ctx.runtime_options.eval.script.is_empty() {
+                // Node prints this (and exits 9) for `node -c -e foo`.
+                bun_core::pretty_errorln!(
+                    "{}: either --check or --eval can be used, not both",
+                    BStr::new(node_error_prefix())
+                );
+                Output::flush();
+                Global::exit(9);
+            }
+        }
+
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
@@ -1230,9 +1411,60 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             Global::exit(1);
         }
 
+        // Node.js permission-model flags. The model itself is not implemented;
+        // reject these loudly instead of silently running without the
+        // requested sandbox.
+        if args.flag(b"--permission") {
+            Output::err_generic(
+                "--permission is not supported by Bun (the Node.js permission model is not implemented)",
+                (),
+            );
+            Global::exit(1);
+        }
+        for allow_flag in [&b"--allow-fs-read"[..], b"--allow-fs-write"] {
+            if !args.options(allow_flag).is_empty() {
+                // Same constraint (and message substring) as Node's
+                // ERR_MISSING_OPTION: "--permission is required".
+                Output::err_generic(
+                    "--permission is required to use {}",
+                    format_args!("{}", BStr::new(allow_flag)),
+                );
+                Global::exit(1);
+            }
+        }
+
+        // `--inspect-port` / `--debug-port` (Node alias) set the default
+        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
+        // passed without its own [host:]port. They do not activate the
+        // debugger on their own, matching Node.
+        let inspect_port_value: Option<&[u8]> =
+            match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
+                (Some(value), _) => {
+                    if value.is_empty() {
+                        exit_node_requires_argument(b"--inspect-port=");
+                    }
+                    Some(value)
+                }
+                (None, Some(value)) => {
+                    if value.is_empty() {
+                        exit_node_requires_argument(b"--debug-port=");
+                    }
+                    Some(value)
+                }
+                (None, None) => None,
+            };
+        let default_debugger_target = || -> Box<[u8]> {
+            inspect_port_value
+                .map(Box::<[u8]>::from)
+                .unwrap_or_default()
+        };
+
         if let Some(inspect_flag) = args.option(b"--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Debugger::Enable(Default::default())
+                Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
+                    ..Default::default()
+                })
             } else {
                 Debugger::Enable(DebuggerEnable {
                     path_or_port: Box::<[u8]>::from(inspect_flag),
@@ -1242,6 +1474,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         } else if let Some(inspect_flag) = args.option(b"--inspect-wait") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
                     wait_for_connection: true,
                     ..Default::default()
                 })
@@ -1255,6 +1488,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         } else if let Some(inspect_flag) = args.option(b"--inspect-brk") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
                     ..Default::default()

@@ -1,7 +1,7 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
 
@@ -260,6 +260,230 @@ describe("echo | bun run -", () => {
   }
 
   group(run);
+});
+
+describe("bun --check", () => {
+  test.each(["-c", "--check"])("%s reports a syntax error without running the file", async flag => {
+    using dir = tempDir("check-bad", {
+      "bad.js": "var foo bar;\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "bad.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("bad.js:1");
+    expect(stderr).toContain("SyntaxError: Unexpected identifier");
+    expect(exitCode).toBe(1);
+  });
+
+  test.each(["-c", "--check"])("%s does not execute the file", async flag => {
+    using dir = tempDir("check-good", {
+      "good.js": 'throw new Error("should not run");\n',
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "good.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test("accepts a top-level return, which is only legal inside the CommonJS wrapper", async () => {
+    using dir = tempDir("check-wrapper", {
+      "wrapped.js": "if (true) {\n  return;\n}\n",
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "wrapped.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test("checks stdin when no file is given", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("var foo bar;\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr.startsWith("[stdin]")).toBe(true);
+    expect(exitCode).toBe(1);
+  });
+
+  test("--input-type=module checks stdin as an ES module", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--input-type=module", "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("export var p = 5;\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test("reports a missing target the way Node's loader does", async () => {
+    using dir = tempDir("check-missing", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "nope.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Error: Cannot find module '");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--check together with --eval exits 9, like Node", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "--eval", "foo"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain(": either --check or --eval can be used, not both");
+    expect(exitCode).toBe(9);
+  });
+});
+
+describe("node-style CLI errors", () => {
+  test.each(["--eval", "-e", "--print", "-p", "--inspect-port", "--debug-port"])(
+    "%s without a value exits 9",
+    async flag => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stdout).toBe("");
+      expect(stderr.split(/\r?\n/)[0]).toEndWith(`: ${flag} requires an argument`);
+      expect(exitCode).toBe(9);
+    },
+  );
+
+  test.each(["--inspect-port=", "--debug-port="])("%s with an empty value exits 9", async flag => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr.split(/\r?\n/)[0]).toEndWith(`: ${flag} requires an argument`);
+    expect(exitCode).toBe(9);
+  });
+
+  test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission is rejected", async flag => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "-e", "1"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("--permission is required");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--permission is rejected rather than silently ignored", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--permission", "-e", "1"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toContain("--permission is not supported by Bun");
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("NODE_OPTIONS", () => {
+  test.each([
+    "--version",
+    "-v",
+    "--help",
+    "-h",
+    "--eval",
+    "-e",
+    "--print",
+    "-p",
+    "-pe",
+    "--check",
+    "-c",
+    "-i",
+    "--interactive",
+    "--v8-options",
+    "--expose_internals",
+    "--expose-internals",
+    "--",
+    "--test",
+  ])("%s is rejected inside NODE_OPTIONS", async opt => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "1"],
+      env: { ...bunEnv, NODE_OPTIONS: opt },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr.split(/\r?\n/)[0]).toEndWith(`: ${opt} is not allowed in NODE_OPTIONS`);
+    expect(exitCode).toBe(9);
+  });
+
+  test("an allowed option is not rejected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "console.log('ok')"],
+      env: { ...bunEnv, NODE_OPTIONS: "--no-warnings" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 test("process._eval (undefined for normal run)", async () => {

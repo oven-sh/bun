@@ -18,7 +18,6 @@
 # A stale entry is invisible: the file simply never runs and nobody finds out.
 
 # Tests that are broken
-[ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
 
 # The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
 # agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot

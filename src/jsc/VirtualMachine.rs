@@ -966,6 +966,41 @@ impl VirtualMachine {
         self.rare_data.as_mut().unwrap()
     }
 
+    /// Drain every socket group linked into the per-VM uSockets loop. Must run
+    /// BEFORE JSC teardown: `close_all_groups` fires `on_close` → JS callbacks →
+    /// needs a live VM. `RareData`'s `Drop` runs after `WebWorker__teardownJSCVM`
+    /// and only `deinit()`s (asserts empty in debug).
+    ///
+    /// Takes `&self` because it only touches the uSockets loop (a separate heap
+    /// allocation reached via `uws_loop_mut`), not any `VirtualMachine` field.
+    pub fn close_all_socket_groups(&self) {
+        // closeAll() dispatches on_close into JS while the VM is still alive, so a
+        // handler can call Bun.connect/postgres/etc. and re-populate a group we
+        // just drained. Loop until every group is observed empty in the same pass
+        // (bounded: each retry only happens if a JS callback opened a new socket,
+        // and the cap stops a deliberately-spinning on_close from wedging
+        // teardown; the post-close force-drain in close_all handles whatever's
+        // left after the cap).
+        // Walk the loop's linked-group list rather than RareData's 14 embedded
+        // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
+        // sockets land *there*, not in RareData. Iterating only the embedded
+        // fields missed those, leaking one 88-byte us_socket_t per still-open
+        // accepted connection at process.exit() (the LSAN cluster on #29932
+        // build 49245).
+        let mut rounds: u8 = 0;
+        while rounds < 8 {
+            if !self.uws_loop_mut().close_all_groups() {
+                break;
+            }
+            rounds += 1;
+        }
+        // us_socket_close pushes to loop->data.closed_head; loop_post() normally
+        // frees it on the next tick. We're past the last tick, so drain it now or
+        // every us_socket_t (libc-allocated) becomes an LSAN leak once we
+        // unregister the RareData root region.
+        self.uws_loop_mut().drain_closed_sockets();
+    }
+
     pub fn is_main_thread(&self) -> bool {
         self.worker.is_none()
     }
@@ -1560,16 +1595,7 @@ impl VirtualMachine {
             // alive (closeAll() fires on_close → JS). After JSC teardown,
             // RareData's Drop only deinit()s the groups (asserts empty).
             if self.rare_data.is_some() {
-                // Note: reshaped for borrowck — `close_all_socket_groups`
-                // walks the loop's group list via `vm.uws_loop()` and never
-                // touches `vm.rare_data`, so the disjoint reborrow is sound.
-                // SAFETY: `self` is the live per-thread VM; the shared borrow
-                // only reads `event_loop_handle` (no overlap with `rare_data`).
-                let vm_ref = unsafe { &*core::ptr::from_ref(self) };
-                self.rare_data
-                    .as_deref_mut()
-                    .unwrap()
-                    .close_all_socket_groups(vm_ref);
+                self.close_all_socket_groups();
             }
             // Destroy the per-VM c-ares channel while JSC / `RareData.file_polls`
             // / `runtime_state` are all still live — `ares_destroy()` re-enters

@@ -860,11 +860,6 @@ where
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
-        // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
-        // `self` can be reborrowed inside the loop body for tombstone access,
-        // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
-        // across the loop.
-        let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
         // Wrap the Task itself in a guard so any exit path (including future
         // early-returns) flushes the buffered hashes via `enqueue()`.
         // Dereferenced as `&mut *current_task` for the loop body below.
@@ -881,14 +876,18 @@ where
             Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
             |mut t| t.enqueue(),
         );
-        // See the note above for why this drops *before* `current_task`.
-        let _flush = scopeguard::guard(ctx, |ctx| {
+        // See the note above for why this drops *before* `current_task`. The
+        // guard captures the `BackRef<Ctx>` (Copy) so the Watcher is reached on
+        // drop without holding a `&mut` across the loop body.
+        let _flush = scopeguard::guard(self.ctx, |mut ctx_ref| {
             Output::flush();
-            // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-            unsafe { (*ctx).flush_evictions() };
+            // SAFETY: BACKREF invariant — `ctx` outlives the reloader; at guard
+            // drop no other `&mut Ctx` borrow is live (the loop body's short
+            // `self.get_context()` reborrows have all retired).
+            unsafe { ctx_ref.get_mut() }
+                .bun_watcher_mut()
+                .flush_evictions();
         });
-        // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-        let ctx = unsafe { &mut *ctx };
 
         let fs: &mut FileSystem = FileSystem::instance();
         let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
@@ -916,7 +915,8 @@ where
                     if event.op.contains(WatchOp::DELETE)
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
-                        ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                        self.get_context()
+                            .remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
                     }
 
                     if self.verbose {
@@ -1202,7 +1202,7 @@ where
                                                                     )
                                                                 ));
                                                             }
-                                                            ctx.remove_at_index(
+                                                            self.get_context().remove_at_index(
                                                                 bun_watcher::Kind::File,
                                                                 entry_id as u16,
                                                                 0,

@@ -830,43 +830,6 @@ impl RareData {
             loop_,
         )
     }
-
-    // ── close_all_socket_groups ───────────────────────────────────────────
-    /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
-    /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM`, so doing the closeAll
-    /// there would dispatch into freed JSC heap.
-    pub fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
-        // closeAll() dispatches on_close into JS while the VM is still alive, so a
-        // handler can call Bun.connect/postgres/etc. and re-populate a group we
-        // just drained. Loop until every group is observed empty in the same pass
-        // (bounded — each retry only happens if a JS callback opened a *new*
-        // socket, and the cap stops a deliberately-spinning on_close from wedging
-        // teardown; the post-close force-drain in close_all handles whatever's
-        // left after the cap).
-        // Walk the loop's linked-group list rather than just our 14 embedded
-        // fields: Listener/uWS-App groups own their own SocketGroup, and accepted
-        // sockets land *there*, not in RareData. Iterating only the embedded
-        // fields missed those, leaking one 88-byte us_socket_t per still-open
-        // accepted connection at process.exit() (the LSAN cluster on #29932
-        // build 49245).
-        let _ = self;
-        let mut rounds: u8 = 0;
-        while rounds < 8 {
-            // `uws_loop_mut()` is the centralised BACKREF accessor for the
-            // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_mut().close_all_groups() {
-                break;
-            }
-            rounds += 1;
-        }
-        // us_socket_close pushes to loop->data.closed_head; loop_post() normally
-        // frees it on the next tick. We're past the last tick, so drain it now —
-        // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
-        // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
-        // can't trace once we unregister the root region).
-        vm.uws_loop_mut().drain_closed_sockets();
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

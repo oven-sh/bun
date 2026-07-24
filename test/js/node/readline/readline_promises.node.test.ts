@@ -1,6 +1,8 @@
 import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
+import readline from "node:readline";
 import readlinePromises from "node:readline/promises";
+import { promisify } from "node:util";
 const { describe, it, expect, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 // ----------------------------------------------------------------------------
@@ -91,5 +93,65 @@ describe("readline/promises.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
+  });
+});
+
+describe("readline question() with an aborted signal", () => {
+  async function rejection(promise: Promise<unknown>) {
+    return await promise.then(
+      () => {
+        throw new Error("question() resolved, expected it to reject");
+      },
+      (err: any) => err,
+    );
+  }
+
+  it("rejects instead of throwing synchronously", async () => {
+    const fi = new FakeInput();
+    using rl = readlinePromises.createInterface({ input: fi, output: fi });
+
+    const reason = new Error("cancelled before the prompt");
+    const promise = rl.question("Question?", { signal: AbortSignal.abort(reason) });
+    expect(promise).toBeInstanceOf(Promise);
+
+    const error = await rejection(promise);
+    expect({ name: error.name, code: error.code, cause: error.cause }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      cause: reason,
+    });
+    // the prompt is never written when the signal is already aborted
+    expect(fi.output).toBe("");
+  });
+
+  it("rejects instead of throwing synchronously through util.promisify", async () => {
+    const fi = new FakeInput();
+    using rl = readline.createInterface({ input: fi, output: fi });
+    const question = promisify(rl.question);
+
+    const reason = new Error("cancelled before the prompt");
+    const promise = question.call(rl, "Question?", { signal: AbortSignal.abort(reason) });
+    expect(promise).toBeInstanceOf(Promise);
+
+    const error = await rejection(promise);
+    expect({ name: error.name, code: error.code, cause: error.cause }).toEqual({
+      name: "AbortError",
+      code: "ABORT_ERR",
+      cause: reason,
+    });
+    expect(fi.output).toBe("");
+  });
+
+  it("rejects when the signal aborts after the question was asked", async () => {
+    const fi = new FakeInput();
+    using rl = readlinePromises.createInterface({ input: fi, output: fi });
+
+    const controller = new AbortController();
+    const promise = rl.question("Question?", { signal: controller.signal });
+    expect(fi.output).toBe("Question?");
+    controller.abort();
+
+    const error = await rejection(promise);
+    expect({ name: error.name, code: error.code }).toEqual({ name: "AbortError", code: "ABORT_ERR" });
   });
 });

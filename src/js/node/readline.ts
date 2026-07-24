@@ -43,7 +43,7 @@ const {
 
 const internalGetStringWidth = $newCppFunction("stringWidth.cpp", "jsFunctionBunStringWidth", 1);
 
-const PromiseReject = Promise.$reject;
+const PromiseReject = Promise.$reject.bind(Promise);
 
 var isWritable;
 

@@ -87,47 +87,9 @@ impl Report {
         // functionHasExecutedCache), so we must preserve write provenance.
         let vm = global_this.vm_ptr();
 
-        let mut collector = BlockCollector {
-            blocks: Vec::new(),
-            function_blocks: Vec::new(),
-        };
-
-        // A source URL can have multiple JSC source IDs when the same file is
-        // evaluated more than once (e.g. cache-busting `import("./mod?v=" + n)`).
-        // Query the profiler for every instance so earlier instances' hits are
-        // not lost.
-        for source_id in byte_range_mapping
-            .prior_source_ids
-            .iter()
-            .copied()
-            .chain(core::iter::once(byte_range_mapping.source_id))
-        {
-            // SAFETY: `vm` is the live `*mut VM` owning `global_this`; the collector
-            // and the callback are kept alive for the duration of the FFI call;
-            // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
-            let ok = unsafe {
-                CodeCoverage__withBlocksAndFunctions(
-                    vm,
-                    source_id,
-                    (&raw mut collector).cast::<c_void>(),
-                    ignore_sourcemap_,
-                    BlockCollector::collect,
-                )
-            };
-            if !ok {
-                return None;
-            }
-        }
-
+        let collector = byte_range_mapping.collect_blocks(vm, ignore_sourcemap_)?;
         if collector.blocks.is_empty() {
             return None;
-        }
-
-        if !byte_range_mapping.prior_source_ids.is_empty() {
-            // The source text is identical across instances, so ranges line up
-            // byte-for-byte; union the per-instance data per range.
-            merge_duplicate_ranges(&mut collector.blocks);
-            merge_duplicate_ranges(&mut collector.function_blocks);
         }
 
         // No ownership transfer here:
@@ -532,6 +494,50 @@ impl ByteRangeMapping {
         thread_map_opt()
     }
 
+    /// Collect the profiler's basic-block and function ranges for every
+    /// instance of this source URL. A URL has multiple JSC source IDs when the
+    /// same file is evaluated more than once (e.g. cache-busting
+    /// `import("./mod?v=" + n)`); the per-instance data is unioned so earlier
+    /// instances' hits are not lost.
+    fn collect_blocks(&self, vm: *mut VM, ignore_sourcemap: bool) -> Option<BlockCollector> {
+        let mut collector = BlockCollector {
+            blocks: Vec::new(),
+            function_blocks: Vec::new(),
+        };
+
+        for source_id in self
+            .prior_source_ids
+            .iter()
+            .copied()
+            .chain(core::iter::once(self.source_id))
+        {
+            // SAFETY: `vm` is the caller's live `*mut VM`; the collector and the
+            // callback are kept alive for the duration of the FFI call;
+            // CodeCoverage__withBlocksAndFunctions invokes the callback synchronously.
+            let ok = unsafe {
+                CodeCoverage__withBlocksAndFunctions(
+                    vm,
+                    source_id,
+                    (&raw mut collector).cast::<c_void>(),
+                    ignore_sourcemap,
+                    BlockCollector::collect,
+                )
+            };
+            if !ok {
+                return None;
+            }
+        }
+
+        if !self.prior_source_ids.is_empty() {
+            // The source text is identical across instances, so ranges line up
+            // byte-for-byte; union the per-instance data per range.
+            merge_duplicate_ranges(&mut collector.blocks);
+            merge_duplicate_ranges(&mut collector.function_blocks);
+        }
+
+        Some(collector)
+    }
+
     pub fn generate_report_from_blocks(
         &self,
         source_url: ZigStringSlice,
@@ -921,11 +927,6 @@ pub(crate) extern "C" fn ByteRangeMapping__generate(
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn ByteRangeMapping__getSourceID(this: &ByteRangeMapping) -> i32 {
-    this.source_id
-}
-
-#[unsafe(no_mangle)]
 pub(crate) extern "C" fn ByteRangeMapping__find(
     path: bun_core::String,
 ) -> Option<NonNull<ByteRangeMapping>> {
@@ -943,9 +944,6 @@ pub(crate) extern "C" fn ByteRangeMapping__find(
 pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     global_this: &JSGlobalObject,
     source_url: bun_core::String,
-    blocks_ptr: NonNull<BasicBlockRange>,
-    blocks_len: usize,
-    function_start_offset: usize,
     ignore_sourcemap: bool,
 ) -> JSValue {
     let Some(this_ptr) = ByteRangeMapping__find(source_url.clone()) else {
@@ -954,18 +952,21 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
     // SAFETY: pointer into the thread-local map, valid for this call.
     let this = unsafe { &*this_ptr.as_ptr() };
 
-    // SAFETY: blocks_ptr[0..blocks_len] is a valid contiguous C array from JSC.
-    let all = unsafe { core::slice::from_raw_parts(blocks_ptr.as_ptr(), blocks_len) };
-    let blocks: &[BasicBlockRange] = &all[0..function_start_offset];
-    let mut function_blocks: &[BasicBlockRange] = &all[function_start_offset..blocks_len];
-    if function_blocks.len() > 1 {
-        function_blocks = &function_blocks[1..];
+    let Some(collector) = this.collect_blocks(global_this.vm_ptr(), ignore_sourcemap) else {
+        return JSValue::NULL;
+    };
+    if collector.blocks.is_empty() {
+        return match JSValue::create_empty_array(global_this, 0) {
+            Ok(v) => v,
+            Err(_) => JSValue::ZERO,
+        };
     }
+
     let url_slice = source_url.to_utf8();
     let report = match this.generate_report_from_blocks(
         url_slice,
-        blocks,
-        function_blocks,
+        &collector.blocks,
+        &collector.function_blocks,
         ignore_sourcemap,
     ) {
         Ok(r) => r,

@@ -621,6 +621,14 @@ test("instance 2 calls only fnB", async () => {
   const { fnB } = await load();
   expect(fnB(1)).toBe(33);
 });
+
+test("bun:jsc codeCoverageForFile sees both instances", () => {
+  const { codeCoverageForFile } = require("bun:jsc");
+  const report: string = codeCoverageForFile(require("path").join(import.meta.dir, "qs-target.ts"));
+  const m = report.match(/\\|\\s*([\\d.]+)\\s*\\|\\s*([\\d.]+)\\s*\\|(.*)$/);
+  expect(m).not.toBeNull();
+  expect([m![1], m![2], m![3].trim()]).toEqual(["100.00", "100.00", ""]);
+});
 `,
   });
 

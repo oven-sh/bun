@@ -49,7 +49,6 @@
 extern "C" char* mi_stats_get_json(size_t, char*);
 extern "C" char* mi_heap_dump_json(bool include_blocks, bool hash_addresses);
 
-#include <JavaScriptCore/ControlFlowProfiler.h>
 
 #if OS(DARWIN)
 #if ASSERT_ENABLED
@@ -878,8 +877,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject, Ca
 }
 
 extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
-    JSC::JSGlobalObject*, BunString sourceURL, BasicBlockRange* ranges,
-    size_t len, size_t functionOffset, bool ignoreSourceMap);
+    JSC::JSGlobalObject*, BunString sourceURL, bool ignoreSourceMap);
 
 JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     (JSGlobalObject * globalObject,
@@ -892,41 +890,16 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
     RETURN_IF_EXCEPTION(throwScope, {});
     bool ignoreSourceMap = callFrame->argument(1).toBoolean(globalObject);
 
-    auto sourceID = Zig::sourceIDForSourceURL(fileName);
-    if (!sourceID) {
+    JSValue result = JSValue::decode(ByteRangeMapping__findExecutedLines(
+        globalObject, Bun::toString(fileName), ignoreSourceMap));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (result.isNull()) {
         throwException(globalObject, throwScope,
             createError(globalObject, "No source for file"_s));
         return {};
     }
 
-    auto basicBlocks = vm.controlFlowProfiler()->getBasicBlocksForSourceIDWithoutFunctionRange(
-        sourceID, vm);
-
-    if (basicBlocks.isEmpty()) {
-        return JSC::JSValue::encode(
-            JSC::constructEmptyArray(globalObject, nullptr, 0));
-    }
-
-    size_t functionStartOffset = basicBlocks.size();
-
-    const Vector<std::tuple<bool, unsigned, unsigned>>& functionRanges = vm.functionHasExecutedCache()->getFunctionRanges(sourceID);
-
-    basicBlocks.reserveCapacity(functionRanges.size() + basicBlocks.size());
-
-    for (const auto& functionRange : functionRanges) {
-        BasicBlockRange range;
-        range.m_hasExecuted = std::get<0>(functionRange);
-        range.m_startOffset = static_cast<int>(std::get<1>(functionRange));
-        range.m_endOffset = static_cast<int>(std::get<2>(functionRange));
-        range.m_executionCount = range.m_hasExecuted
-            ? 1
-            : 0; // This is a hack. We don't actually count this.
-        basicBlocks.append(range);
-    }
-
-    return ByteRangeMapping__findExecutedLines(
-        globalObject, Bun::toString(fileName), basicBlocks.begin(),
-        basicBlocks.size(), functionStartOffset, ignoreSourceMap);
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * globalObject, CallFrame* callFrame))

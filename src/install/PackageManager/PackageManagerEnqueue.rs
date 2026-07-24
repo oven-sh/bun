@@ -1084,7 +1084,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         id,
                                                         dependency.behavior,
                                                         find_result_version,
-                                                        find_result_package,
+                                                        &find_result_package,
                                                         install_peer,
                                                         success_fn,
                                                     )
@@ -1952,8 +1952,8 @@ pub(crate) struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
-/// Takes `find_result_package` by value (240-byte POD) instead of
-/// `Npm::FindResult<'_>` so callers can release their borrow of
+/// `find_result_package` points at a caller-owned stack copy instead of the
+/// `Npm::FindResult<'_>` borrow so callers can release their borrow of
 /// `this.manifests` before handing us `&mut PackageManager`. The manifest
 /// itself is re-borrowed here via disjoint field access on `this.manifests`
 /// (both call sites have already populated the map entry via
@@ -1967,7 +1967,7 @@ fn get_or_put_resolved_package_with_find_result(
     dependency_id: DependencyID,
     behavior: Behavior,
     find_result_version: Semver::Version,
-    find_result_package: Npm::PackageVersion,
+    find_result_package: &Npm::PackageVersion,
     install_peer: bool,
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
@@ -2028,31 +2028,22 @@ fn get_or_put_resolved_package_with_find_result(
     // appendPackage sets the PackageID on the package. `from_npm` reads the
     // manifest but only writes `lockfile` and `known_npm_aliases`, so borrow
     // `this.manifests` immutably alongside those disjoint `&mut` field
-    // borrows. The tarball URL is copied out of the manifest here as well so
-    // the `this.manifests` borrow ends before the whole-`&mut this` calls in
-    // the preinstall match below.
-    let (new_pkg, tarball_url_tiny) = {
+    // borrows.
+    let new_pkg = {
         let log = this.log_mut();
         let manifest = this
             .manifests
             .loaded_by_name_hash(name_hash)
             .expect("manifest was just loaded by caller");
-        (
-            Package::from_npm(
-                &mut this.known_npm_aliases,
-                &mut this.lockfile,
-                log,
-                manifest,
-                find_result_version,
-                &find_result_package,
-                Features::NPM,
-            )?,
-            StringOrTinyString::init_append_if_needed(
-                manifest.str(&find_result_package.tarball_url),
-                &mut crate::network_task::filename_store_appender(),
-            )
-            .expect("unreachable"),
-        )
+        Package::from_npm(
+            &mut this.known_npm_aliases,
+            &mut this.lockfile,
+            log,
+            manifest,
+            find_result_version,
+            find_result_package,
+            Features::NPM,
+        )?
     };
     let package = this.lockfile.append_package(&new_pkg)?;
 
@@ -2069,6 +2060,20 @@ fn get_or_put_resolved_package_with_find_result(
     // way out.
     let pkg_meta_id = package.meta.id;
     let result = (|| {
+        // Lazily copy the tarball URL out of `this.manifests` into the
+        // filename store (only the Extract/CalcPatchHash arms need it), then
+        // release the `&this.manifests` borrow before the whole-`&mut this`
+        // calls.
+        let tarball_url_tiny = |this: &PackageManager| {
+            StringOrTinyString::init_append_if_needed(
+                this.manifests
+                    .loaded_by_name_hash(name_hash)
+                    .expect("manifest was just loaded by caller")
+                    .str(&find_result_package.tarball_url),
+                &mut crate::network_task::filename_store_appender(),
+            )
+            .expect("unreachable")
+        };
         // non-null if the package is in "patchedDependencies"
         let mut name_and_version_hash: Option<u64> = None;
         let mut patchfile_hash: Option<u64> = None;
@@ -2106,6 +2111,7 @@ fn get_or_put_resolved_package_with_find_result(
                     );
                     debug_assert!(!this.network_dedupe_map.contains(&task_id));
 
+                    let url_tiny = tarball_url_tiny(this);
                     break 'extract Some(ResolvedPackageResult {
                         package,
                         is_first_time: true,
@@ -2113,7 +2119,7 @@ fn get_or_put_resolved_package_with_find_result(
                             run_tasks::generate_network_task_for_tarball(
                                 this,
                                 task_id,
-                                tarball_url_tiny.slice(),
+                                url_tiny.slice(),
                                 behavior.is_required(),
                                 dependency_id,
                                 &package,
@@ -2136,7 +2142,7 @@ fn get_or_put_resolved_package_with_find_result(
                             Some(EnqueueAfterState {
                                 pkg_id: package.meta.id,
                                 dependency_id,
-                                url: Box::<[u8]>::from(tarball_url_tiny.slice()),
+                                url: Box::<[u8]>::from(tarball_url_tiny(this).slice()),
                             }),
                         ),
                     )),
@@ -2503,7 +2509,7 @@ fn get_or_put_resolved_package(
                 dependency_id,
                 behavior,
                 find_result_version,
-                find_result_package,
+                &find_result_package,
                 install_peer,
                 success_fn,
             )

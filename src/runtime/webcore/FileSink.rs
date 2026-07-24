@@ -1128,6 +1128,25 @@ impl FileSink {
 
         match flush_result {
             WriteResult::Done(written) => {
+                if self.pending.get().state == streams::PendingState::Pending {
+                    // A backpressured `write()` left its promise outstanding and
+                    // `flush()` drained the remainder just now. `IOWriter::flush`
+                    // doesn't route through `on_write`, so nothing else will
+                    // settle that promise: hand it back (like the Pending/Err
+                    // arms) and schedule `run_pending`. `pending.result` already
+                    // holds `Owned(consumed)` from `to_result`. Grab the promise
+                    // before `writer.end()` so `on_close` re-entry runs with the
+                    // slot already pinned.
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but does not invoke any FileSink
+                    // host-fn synchronously.
+                    let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.update_ref(false);
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise_result).to_js() });
+                }
                 self.update_ref(false);
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
@@ -1187,6 +1206,21 @@ impl FileSink {
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })
             }
             WriteResult::Wrote(written) => {
+                if self.pending.get().state == streams::PendingState::Pending {
+                    // Same as the Done arm above: `flush()` drained the
+                    // backpressured write's remainder without routing through
+                    // `on_write`, so hand back the outstanding promise and
+                    // schedule `run_pending` to resolve it with the
+                    // `Owned(consumed)` `to_result` already latched.
+                    // SAFETY: JsCell — `WritablePending::promise` allocates a
+                    // JSPromise (may GC) but does not invoke any FileSink
+                    // host-fn synchronously.
+                    let promise_result = unsafe { self.pending.get_mut() }.promise(global_this);
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    // SAFETY: `WritablePending::promise()` never returns null.
+                    return sys::Result::Ok(unsafe { (*promise_result).to_js() });
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }

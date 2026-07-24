@@ -273,6 +273,94 @@ it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte
   expect(received).toBe(size);
 });
 
+// end() called after a backpressured write() once the reader has drained the
+// socket buffer: end_from_js's own flush() writes the remaining buffered bytes
+// synchronously and lands in the Done/Wrote arm. Those arms used to return the
+// drained byte count without touching the pending slot, so the write()'s
+// promise was orphaned and never settled. end() now hands back that same
+// promise (like the Pending/Err arms) and schedules run_pending to resolve it
+// with the write's chunk size.
+it.skipIf(!isPosix)(
+  "end() after a backpressured write() whose remainder drains synchronously returns and resolves the write's promise",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    const sink = Bun.file(writeFd).writer();
+    try {
+      // Write 16 KiB chunks until one backpressures. 16 KiB is at least the
+      // sink's CHUNK_SIZE on every target so each write reaches the fd
+      // immediately, and when backpressure hits the sink's buffered remainder
+      // is at most one chunk — small enough that end()'s flush() can push it
+      // out in one go after the read side has been drained.
+      const chunkSize = 16 * 1024;
+      const chunk = Buffer.alloc(chunkSize, 0x61);
+      let total = 0;
+      let writePromise!: Promise<number>;
+      for (let i = 0; i < 4096; i++) {
+        const r = sink.write(chunk);
+        total += chunkSize;
+        if (r instanceof Promise) {
+          writePromise = r;
+          break;
+        }
+      }
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      // Drain the read side synchronously so the socket buffer has room before
+      // end()'s flush() runs. No await in between: the deferred auto-flush
+      // (which already handles this correctly) must not fire first.
+      const buf = Buffer.alloc(64 * 1024);
+      let drained = 0;
+      const drainSync = () => {
+        for (;;) {
+          try {
+            const n = fs.readSync(readFd, buf);
+            if (!n) break;
+            drained += n;
+          } catch {
+            break;
+          }
+        }
+      };
+      drainSync();
+      expect(drained).toBeGreaterThan(0);
+
+      // flush() writes the buffered remainder. When it completes (Done/Wrote),
+      // end() hands back the write()'s promise instead of a bare number that
+      // strands it; when the remainder still doesn't fit (Pending) it already
+      // did. Either way end()'s result and write()'s promise are the same
+      // object and it resolves to the backpressured chunk's size.
+      const endResult = sink.end();
+      expect(endResult).toBe(writePromise);
+
+      // Keep the reader draining so any still-pending tail finishes.
+      const reader = (async () => {
+        while (drained < total) {
+          drainSync();
+          if (drained >= total) break;
+          await new Promise<void>(r => setImmediate(r));
+        }
+      })();
+
+      expect(await writePromise).toBe(chunkSize);
+      await reader;
+      expect(drained).toBe(total);
+
+      // Once settled a follow-up end() short-circuits to a number.
+      expect(typeof sink.end()).toBe("number");
+    } finally {
+      try {
+        await Promise.resolve(sink.end()).catch(() => {});
+      } catch {}
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      try {
+        fs.closeSync(readFd);
+      } catch {}
+    }
+  },
+);
+
 // end() called after a backpressured write() with the reader already gone:
 // end_from_js's own flush() sees EPIPE synchronously. Throwing it would leave
 // the write()'s outstanding promise orphaned (never settled here; in the spawn

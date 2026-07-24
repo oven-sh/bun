@@ -2065,7 +2065,9 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         !filepath.is_empty() && filepath[0] == b'.'
     }
 
-    const SYNTAX_TOKENS: &'static [u8] = b"*[{?!";
+    // `\` is an escape on POSIX; on Windows it is a path separator and
+    // only reaches a component slice as a trailing sep, so skip it there.
+    const SYNTAX_TOKENS: &'static [u8] = if IS_WINDOWS { b"*[{?!" } else { b"*[{?!\\" };
 
     fn check_special_syntax(pattern: &[u8]) -> bool {
         strings::index_of_any(pattern, Self::SYNTAX_TOKENS).is_some()
@@ -2138,6 +2140,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                             // because that only applies negation if at the
                             // beginning of the string.
                             b'[' | b'{' | b'?' | b'*' => break 'out_of_check_wildcard_filepath,
+                            b'\\' if !IS_WINDOWS => break 'out_of_check_wildcard_filepath,
                             _ => {}
                         }
                     }

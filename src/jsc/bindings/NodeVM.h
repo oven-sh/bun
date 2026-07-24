@@ -23,6 +23,14 @@ namespace NodeVM {
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ProgramExecutable* executable, const JSC::SourceCode& source);
 RefPtr<JSC::CachedBytecode> getBytecode(JSGlobalObject* globalObject, JSC::ModuleProgramExecutable* executable, const JSC::SourceCode& source);
 bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedData);
+// Wraps serialized bytecode in a { magic, version, hash } header so that cachedData
+// coming back from JS can be verified before it reaches JSC's bytecode decoder,
+// which assumes a well formed payload. Returns the JS-exposed Buffer.
+JSC::JSUint8Array* createCachedDataBuffer(JSGlobalObject* globalObject, std::span<const uint8_t> bytecode);
+// Checks the header written by createCachedDataBuffer. Returns the payload (as an
+// owning copy, since the decoder can be retained by lazily decoded functions) or
+// nullptr if the buffer must be rejected.
+RefPtr<JSC::CachedBytecode> unwrapCachedData(std::span<const uint8_t> cachedData);
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);

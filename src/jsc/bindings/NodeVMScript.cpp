@@ -148,10 +148,12 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         }
         ASSERT(executable);
 
-        JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
-        JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
-        Ref<JSC::CachedBytecode> cachedBytecode = JSC::CachedBytecode::create(std::span(cachedData), nullptr, {});
-        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, WTF::move(cachedBytecode));
+        JSC::UnlinkedProgramCodeBlock* unlinkedBlock = nullptr;
+        if (RefPtr<JSC::CachedBytecode> cachedBytecode = unwrapCachedData(std::span(cachedData))) {
+            JSC::LexicallyScopedFeatures lexicallyScopedFeatures = globalObject->globalScopeExtension() ? JSC::TaintedByWithScopeLexicallyScopedFeature : JSC::NoLexicallyScopedFeatures;
+            JSC::SourceCodeKey key(script->source(), {}, JSC::SourceCodeType::ProgramType, lexicallyScopedFeatures, JSC::JSParserScriptMode::Classic, JSC::DerivedContextType::None, JSC::EvalContextType::None, false, {}, std::nullopt);
+            unlinkedBlock = JSC::decodeCodeBlock<UnlinkedProgramCodeBlock>(vm, key, cachedBytecode.releaseNonNull());
+        }
 
         if (!unlinkedBlock) {
             script->cachedDataRejected(TriState::True);
@@ -173,9 +175,9 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
             }
         }
     } else if (produceCachedData) {
+        // cacheBytecode records whether production actually succeeded; it fails
+        // for source that does not parse as a program.
         script->cacheBytecode();
-        // TODO(@heimskr): is there ever a case where bytecode production fails?
-        script->cachedDataProduced(true);
     }
 
     return JSValue::encode(script);
@@ -219,10 +221,13 @@ JSC::JSUint8Array* NodeVMScript::getBytecodeBuffer()
             cacheBytecode();
         }
 
-        ASSERT(m_cachedBytecode);
+        // Bytecode production fails without throwing when the source does not
+        // parse as a program; there is no cachedData to expose in that case.
+        if (!m_cachedBytecode) [[unlikely]] {
+            return nullptr;
+        }
 
-        std::span<const uint8_t> bytes = m_cachedBytecode->span();
-        m_cachedBytecodeBuffer.set(vm(), this, WebCore::createBuffer(globalObject(), bytes));
+        m_cachedBytecodeBuffer.set(vm(), this, createCachedDataBuffer(globalObject(), m_cachedBytecode->span()));
         if (!m_cachedBytecodeBuffer) {
             return nullptr;
         }

@@ -137,6 +137,20 @@ describe("FormData", () => {
       },
     },
     {
+      // `"`, CR and LF in names arrive percent-encoded (%22 / %0D / %0A, hex
+      // in either case) and are decoded; other `%` sequences stay literal.
+      name: "percent-encoded names",
+      body: '--foo\r\nContent-Disposition: form-data; name="a%22b"\r\n\r\nbar\r\n--foo\r\nContent-Disposition: form-data; name="quote%22crlf%0D%0Alower%0d%0aname"\r\n\r\nbaz\r\n--foo\r\nContent-Disposition: form-data; name="keep%41%25%"\r\n\r\nqux\r\n--foo--\r\n',
+      headers: {
+        "Content-Type": "multipart/form-data; boundary=foo",
+      },
+      expected: {
+        'a"b': "bar",
+        'quote"crlf\r\nlower\r\nname': "baz",
+        "keep%41%25%": "qux",
+      },
+    },
+    {
       name: "with name and filename",
       body: '--foo\r\nContent-Disposition: form-data; name="foo"; filename="bar"\r\n\r\nbaz\r\n--foo--\r\n',
       headers: {
@@ -921,6 +935,37 @@ it("drops multipart part Content-Type values containing control characters", asy
   expect(tabbed instanceof Blob).toBe(true);
   expect(await tabbed.text()).toBe("tabbed");
   expect(tabbed.type).toBe("text/plain;\tcharset=utf-8");
+});
+
+it("percent-decodes %22, %0D and %0A in multipart names and filenames", async () => {
+  // The multipart/form-data serializer writes `"`, CR and LF in entry names
+  // and filenames as %22, %0D and %0A; parsing applies the inverse mapping.
+  // https://andreubotella.github.io/multipart-form-data/#parse-a-multipart-form-data-name
+  const body =
+    "--formboundary\r\n" +
+    'Content-Disposition: form-data; name="quoted"; filename="quote%22lf%0acr%0Dname.txt"\r\n' +
+    "Content-Type: text/plain\r\n" +
+    "\r\n" +
+    "first\r\n" +
+    "--formboundary\r\n" +
+    'Content-Disposition: form-data; name="literal"; filename="keep%41%25%.txt"\r\n' +
+    "Content-Type: text/plain\r\n" +
+    "\r\n" +
+    "second\r\n" +
+    "--formboundary--\r\n";
+
+  const formData = await new Response(body, {
+    headers: { "Content-Type": "multipart/form-data; boundary=formboundary" },
+  }).formData();
+
+  const quoted = formData.get("quoted") as File;
+  expect(quoted.name).toBe('quote"lf\ncr\rname.txt');
+  expect(await quoted.text()).toBe("first");
+
+  // Only %22, %0D and %0A are decoded; unrelated `%` sequences are untouched.
+  const literal = formData.get("literal") as File;
+  expect(literal.name).toBe("keep%41%25%.txt");
+  expect(await literal.text()).toBe("second");
 });
 
 test("FormData.toJSON merges duplicate numeric field names into an array", async () => {

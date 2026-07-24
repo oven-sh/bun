@@ -86,6 +86,11 @@ void ClipboardItem::collectDataForWriting(Clipboard& destination, CompletionHand
     m_dataSource->collectDataForWriting(destination, WTF::move(completion));
 }
 
+void ClipboardItem::cancelDataCollection()
+{
+    m_dataSource->cancelCollect();
+}
+
 bool ClipboardItem::supports(const String& type)
 {
     auto essence = parseMIMETypeEssence(type);

@@ -363,6 +363,66 @@ describe("read / write", () => {
     ).rejects.toThrow(TypeError);
   });
 
+  // Regression: the write's data source holds only a WeakPtr back-edge to its
+  // item, so the ItemWriter has to own the items. Without that, an item whose
+  // representation never settles is collected mid-write and destroys its data
+  // source with the collect completion still armed — a debug assert, and a
+  // permanently pending promise in release.
+  test("an in-flight write keeps its item alive across GC", async () => {
+    // No reference to the item survives this statement; only the writer holds
+    // it. Resolve the representation *after* GC so the assertion is that the
+    // write still completes — a symptom visible in release, unlike "still
+    // pending", which is also what the bug looks like.
+    const { promise: rep, resolve } = Promise.withResolvers<string>();
+    const write = navigator.clipboard.write([new ClipboardItem({ "text/plain": rep })]);
+    Bun.gc(true);
+    Bun.gc(true);
+    resolve("survived");
+    // Settles either way (a machine with no clipboard rejects NotAllowedError);
+    // what must not happen is hanging forever because the item was collected.
+    const outcome = await write.then(() => "settled", e => (e as Error).name);
+    expect(["settled", "NotAllowedError"]).toContain(outcome);
+  });
+
+  // Regression: a superseded writer must retire the collect still armed on its
+  // items. The collect completion holds a Ref back to the writer, so dropping
+  // the items without retiring leaves writer, item and the GC-guarded
+  // aggregate promise (which pins the user's promise) alive for good.
+  test("a superseded write releases its items and their promises", async () => {
+    const refs: WeakRef<object>[] = [];
+    for (let i = 0; i < 300; i++) {
+      const stuck = new Promise<string>(() => {});
+      refs.push(new WeakRef(stuck));
+      // Each iteration supersedes the previous writer, which never settles.
+      navigator.clipboard.write([new ClipboardItem({ "text/plain": stuck })]).catch(() => {});
+    }
+    for (let i = 0; i < 5; i++) Bun.gc(true);
+    const live = refs.filter(r => r.deref() !== undefined).length;
+    // The most recent writer legitimately still holds its item; everything
+    // before it must be collectable.
+    expect(live).toBeLessThan(20);
+  });
+
+  // Regression: `copy` listeners run synchronously from the finishing write, so
+  // a listener that starts another write over the same item used to have its
+  // freshly-armed collect retired by the writer that was tearing down.
+  test("a write started from a copy listener is not cancelled by the one that fired it", async () => {
+    const item = new ClipboardItem({ "text/plain": new Blob(["nested"], { type: "text/plain" }) });
+    let nested: Promise<void> | null = null;
+    const onCopy = () => {
+      if (!nested) nested = navigator.clipboard.write([item]);
+    };
+    navigator.clipboard.addEventListener("copy", onCopy);
+    try {
+      await navigator.clipboard.write([item]).catch(() => {});
+      if (!nested) return; // no clipboard on this machine: no copy event fired
+      const outcome = await nested.then(() => "settled", (e: Error) => e.name);
+      expect(["settled", "NotAllowedError"]).toContain(outcome);
+    } finally {
+      navigator.clipboard.removeEventListener("copy", onCopy);
+    }
+  });
+
   test("round-trips representations, or rejects with NotAllowedError where there is no clipboard", async () => {
     let saved: ClipboardItem[] = [];
     try {

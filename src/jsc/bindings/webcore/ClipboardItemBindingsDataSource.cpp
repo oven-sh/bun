@@ -231,6 +231,15 @@ void ClipboardItemBindingsDataSource::collectDataForWriting(Clipboard&, CollectC
     }
 }
 
+void ClipboardItemBindingsDataSource::cancelCollect()
+{
+    // Bump the generation first so the in-flight reaction, if it ever runs,
+    // recognises itself as superseded and does not settle anything.
+    ++m_collectGeneration;
+    m_allTypesSettled = nullptr;
+    invokeCompletionHandler(std::nullopt);
+}
+
 void ClipboardItemBindingsDataSource::didSettleAllTypes()
 {
     // Take ownership up front: toWTFString/.get() below run user JS, which can

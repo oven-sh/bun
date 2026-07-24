@@ -196,6 +196,7 @@ void Clipboard::ItemWriter::write(const Vector<RefPtr<ClipboardItem>>& items)
         }
     }
 
+    m_items = items;
     m_dataToWrite.fill(std::nullopt, items.size());
     m_pendingItemCount = items.size();
 
@@ -213,6 +214,11 @@ void Clipboard::ItemWriter::write(const Vector<RefPtr<ClipboardItem>>& items)
             if (!--m_pendingItemCount)
                 protectedThis->didSetAllData();
         });
+        // A data source that completed synchronously may already have failed
+        // the write and released our items; arming the remaining collects
+        // would leave their completions with no owner to discharge them.
+        if (!m_promise)
+            break;
     }
 
     // Only for a list that never entered the loop. Keying this on
@@ -274,20 +280,22 @@ void Clipboard::ItemWriter::didSetAllData()
 void Clipboard::ItemWriter::didFinishPlatformWrite(const String& failureMessage)
 {
     RefPtr promise = std::exchange(m_promise, nullptr);
-    if (!promise) {
-        detachFromClipboard();
+    RefPtr clipboard = m_clipboard.get();
+    // Detach before settling or dispatching. A `copy` listener runs
+    // synchronously and may start another write over the same items; if this
+    // writer still held them it would then retire the collect that new write
+    // just armed, rejecting it for no reason.
+    detachFromClipboard();
+    if (!promise)
         return;
-    }
 
     if (!failureMessage.isNull())
         promise->reject(ExceptionCode::NotAllowedError, failureMessage);
     else {
         promise->resolve();
-        if (RefPtr clipboard = m_clipboard.get())
+        if (clipboard)
             clipboard->fireClipboardEvent(eventNames().copyEvent);
     }
-
-    detachFromClipboard();
 }
 
 void Clipboard::ItemWriter::reject(ExceptionCode code, const String& message)
@@ -313,7 +321,24 @@ void Clipboard::ItemWriter::invalidate()
 {
     if (RefPtr promise = std::exchange(m_promise, nullptr))
         promise->reject(ExceptionCode::AbortError);
+    releaseItems();
     m_clipboard = nullptr;
+}
+
+// Retires any collect still outstanding on our items and drops them. Both are
+// required: the collect completion holds a Ref back to this writer, so merely
+// dropping the items would leave that reference (and the item, and its
+// GC-guarded aggregate promise) alive forever; and merely retiring without
+// dropping would keep the items past the write. Retiring re-enters
+// detachFromClipboard, so the vector is taken first and the loop runs over the
+// local copy.
+void Clipboard::ItemWriter::releaseItems()
+{
+    auto items = std::exchange(m_items, {});
+    for (auto& item : items) {
+        if (item)
+            item->cancelDataCollection();
+    }
 }
 
 // Clears the clipboard's pointer back to this writer. The callers all hold a
@@ -321,6 +346,7 @@ void Clipboard::ItemWriter::invalidate()
 // underneath them.
 void Clipboard::ItemWriter::detachFromClipboard()
 {
+    releaseItems();
     RefPtr clipboard = m_clipboard.get();
     if (clipboard && clipboard->m_activeItemWriter.get() == this)
         clipboard->m_activeItemWriter = nullptr;

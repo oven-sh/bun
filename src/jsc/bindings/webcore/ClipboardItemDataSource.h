@@ -63,6 +63,12 @@ public:
     virtual void getType(const String&, Ref<DeferredPromise>&&) = 0;
     virtual void collectDataForWriting(Clipboard& destination, CollectCompletionHandler&&) = 0;
 
+    // Retire an outstanding collect without waiting for its representations.
+    // The completion holds a Ref to the writer that requested it, so a writer
+    // that is going away must call this or that reference — and with it the
+    // item and its GC-guarded aggregate promise — is never released.
+    virtual void cancelCollect() = 0;
+
 protected:
     WeakRef<ClipboardItem> m_item;
 };

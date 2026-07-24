@@ -90,6 +90,7 @@ public:
     static String parseMIMETypeEssence(const String&);
 
     void collectDataForWriting(Clipboard& destination, CompletionHandler<void(std::optional<ClipboardItemData>, JSC::JSValue failureReason)>&&);
+    void cancelDataCollection();
 
     PresentationStyle presentationStyle() const { return m_presentationStyle; }
 

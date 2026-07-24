@@ -68,6 +68,7 @@ private:
     Vector<String> types() const final;
     void getType(const String&, Ref<DeferredPromise>&&) final;
     void collectDataForWriting(Clipboard& destination, CollectCompletionHandler&&) final;
+    void cancelCollect() final;
 
     // Runs once, when every representation has settled.
     void didSettleAllTypes();

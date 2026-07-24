@@ -106,9 +106,17 @@ private:
         // Rejects with the value a representation failed with, so the caller
         // sees its own rejection reason rather than a generic NotAllowedError.
         void rejectWithValue(JSC::JSValue failureReason);
+        void releaseItems();
         void detachFromClipboard();
 
         WeakPtr<Clipboard, WeakPtrImplWithEventTargetData> m_clipboard;
+        // The writer owns the items for the duration of the write. Nothing else
+        // does: the binding's sequence is a local, and the data source's
+        // reaction holds only a WeakPtr back-edge (a strong one would close a
+        // native<->GC cycle). Without this an item collected mid-write destroys
+        // its data source with the collect completion still armed — a debug
+        // assert, and a permanently pending write() promise in release.
+        Vector<RefPtr<ClipboardItem>> m_items;
         RefPtr<DeferredPromise> m_promise;
         Vector<std::optional<ClipboardItemData>> m_dataToWrite;
         unsigned m_pendingItemCount { 0 };

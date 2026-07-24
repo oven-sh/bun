@@ -47,7 +47,7 @@ private:
     Vector<String> types() const final;
     void getType(const String&, Ref<DeferredPromise>&&) final;
     void collectDataForWriting(Clipboard& destination, CollectCompletionHandler&&) final;
-    void cancelCollect() final { }
+    void cancelCollect() final {}
 
     ClipboardItemData m_data;
 };

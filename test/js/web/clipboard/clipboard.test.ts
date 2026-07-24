@@ -380,7 +380,10 @@ describe("read / write", () => {
     resolve("survived");
     // Settles either way (a machine with no clipboard rejects NotAllowedError);
     // what must not happen is hanging forever because the item was collected.
-    const outcome = await write.then(() => "settled", e => (e as Error).name);
+    const outcome = await write.then(
+      () => "settled",
+      e => (e as Error).name,
+    );
     expect(["settled", "NotAllowedError"]).toContain(outcome);
   });
 
@@ -416,7 +419,10 @@ describe("read / write", () => {
     try {
       await navigator.clipboard.write([item]).catch(() => {});
       if (!nested) return; // no clipboard on this machine: no copy event fired
-      const outcome = await nested.then(() => "settled", (e: Error) => e.name);
+      const outcome = await nested.then(
+        () => "settled",
+        (e: Error) => e.name,
+      );
       expect(["settled", "NotAllowedError"]).toContain(outcome);
     } finally {
       navigator.clipboard.removeEventListener("copy", onCopy);

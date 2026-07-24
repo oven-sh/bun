@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import inspector from "node:inspector";
 import inspectorPromises from "node:inspector/promises";
 
@@ -251,6 +252,59 @@ describe("node:inspector", () => {
       // Both profiles should be valid
       expect(result1.profile.nodes.length).toBeGreaterThanOrEqual(1);
       expect(result2.profile.nodes.length).toBeGreaterThanOrEqual(1);
+    });
+
+    // The Profiler domain and bun:jsc share the VM's single JSC SamplingProfiler.
+    // Profiler.start must discard samples an earlier user left behind, or an empty
+    // start..stop window reports them with an endTime that precedes its startTime.
+    test("Profiler.start discards samples from a prior sampling-profiler run", async () => {
+      // startSamplingProfiler() is process-global: run it in a subprocess.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const { startSamplingProfiler } = require("bun:jsc");
+          const { Session } = require("node:inspector");
+
+          function burnCpu() {
+            let x = 0;
+            const end = Date.now() + 250;
+            while (Date.now() < end) {
+              for (let i = 0; i < 100000; i++) x += Math.sqrt(i);
+            }
+            return x;
+          }
+
+          startSamplingProfiler();
+          burnCpu();
+
+          const session = new Session();
+          session.connect();
+          session.post("Profiler.enable");
+          session.post("Profiler.start");
+          const { profile } = session.post("Profiler.stop");
+          session.disconnect();
+
+          console.log(
+            JSON.stringify({
+              startTime: profile.startTime,
+              endTime: profile.endTime,
+              functionNames: profile.nodes.map(n => n.callFrame.functionName),
+            }),
+          );
+          `,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const { startTime, endTime, functionNames } = JSON.parse(stdout);
+      expect(functionNames).not.toContain("burnCpu");
+      expect(endTime).toBeGreaterThanOrEqual(startTime);
+      expect(exitCode).toBe(0);
     });
 
     test("disconnect() stops running profiler", () => {

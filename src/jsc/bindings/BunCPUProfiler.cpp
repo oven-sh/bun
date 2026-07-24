@@ -57,6 +57,16 @@ void startCPUProfiler(JSC::VM& vm)
 
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
     samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+
+    // ensureSamplingProfiler() reuses the VM's single SamplingProfiler, so other
+    // users (e.g. bun:jsc's startSamplingProfiler) may have left samples in it.
+    // Discard them so this profile only covers its own start..stop window.
+    {
+        auto& lock = samplingProfiler.getLock();
+        WTF::Locker profilerLocker { lock };
+        samplingProfiler.clearData();
+    }
+
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     s_isProfilerRunning = true;

@@ -329,6 +329,10 @@ pub struct VirtualMachine {
     pub channel_ref: Async::KeepAlive,
     pub channel_ref_overridden: bool,
     pub channel_ref_should_ignore_one_disconnect_event_listener: bool,
+    /// Shared reference count for the IPC channel keep-alive. Both the
+    /// `message`/`disconnect` listener hooks and `channel.refCounted()` feed
+    /// it; the poll is kept alive while it is above zero (unless overridden).
+    pub channel_ref_count: u32,
 
     /// A set of extensions that exist in the require.extensions map.
     pub commonjs_custom_extensions:

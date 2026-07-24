@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, randomPort, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -297,6 +297,73 @@ describe("websocket", () => {
 
   afterEach(() => {
     inspectee?.kill();
+  });
+});
+
+// JSInjectedScriptHostPrototype / JSJavaScriptCallFramePrototype host functions declare a
+// ThrowScope and then tail-call into an impl that declares its own; without a
+// RELEASE_AND_RETURN the first Runtime.evaluate aborts under exception-check validation with
+// "Unchecked JS exception ... jsInjectedScriptHostPrototypeFunctionEvaluateWithScopeExtension".
+// ENABLE_EXCEPTION_SCOPE_VERIFICATION is (ASSERT_ENABLED || ASAN_ENABLED), so this runs on
+// debug and asan builds; plain release compiles it out.
+test.skipIf(!isDebug && !isASAN)("Runtime.evaluate does not trip exception-check validation", async () => {
+  await using child = spawn({
+    cwd: import.meta.dir,
+    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", "inspectee.js"],
+    env: {
+      ...bunEnv,
+      BUN_JSC_validateExceptionChecks: "1",
+      BUN_JSC_dumpSimulatedThrows: "1",
+    },
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  const decoder = new TextDecoder();
+  const { promise: urlPromise, resolve: resolveUrl, reject: rejectUrl } = Promise.withResolvers<URL>();
+  const drained = (async () => {
+    for await (const chunk of child.stderr) {
+      stderr += decoder.decode(chunk);
+      for (const line of stderr.split("\n")) {
+        try {
+          const u = new URL(line.trim());
+          if (u.protocol.includes("ws")) resolveUrl(u);
+        } catch {}
+      }
+    }
+    rejectUrl(new Error("inspectee exited before printing inspector URL:\n" + stderr));
+  })();
+
+  const url = await urlPromise;
+  const ws = new WebSocket(url);
+  let reply: unknown;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener("open", () => resolve());
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+
+    ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "1 + 1" } }));
+    reply = await new Promise<unknown>((resolve, reject) => {
+      ws.addEventListener("message", ({ data }) => resolve(JSON.parse(String(data))));
+      ws.addEventListener("close", ({ code, reason }) => resolve({ closed: { code, reason } }));
+      ws.addEventListener("error", cause => reject(new Error("WebSocket error", { cause })));
+    });
+  } finally {
+    ws.close();
+    child.kill();
+  }
+
+  await Promise.all([child.exited, drained]);
+  // Without the WebKit-side fix the inspectee SIGABRTs ("Unchecked JS exception")
+  // before replying, so the socket closes 1006 and reply is { closed: { code: 1006, ... } }.
+  if (child.signalCode === "SIGABRT") {
+    throw new Error(`inspectee aborted under validateExceptionChecks (reply=${JSON.stringify(reply)}):\n${stderr}`);
+  }
+  expect(reply).toMatchObject({
+    id: 1,
+    result: { result: { type: "number", value: 2 } },
   });
 });
 

@@ -193,7 +193,8 @@ function fetchWithAgent(url, init, counter) {
     let blobPromise: Promise<ArrayBuffer> | undefined;
     if (body != null && typeof body === "object") {
       if (body instanceof URLSearchParams) {
-        if (!headers.has("content-type")) headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
+        if (!headers.has("content-type"))
+          headers.set("content-type", "application/x-www-form-urlencoded;charset=UTF-8");
         body = body.toString();
       } else if (body instanceof FormData) {
         // Let the native encoder produce the multipart body + boundary.

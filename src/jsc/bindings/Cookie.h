@@ -42,20 +42,8 @@ public:
         int64_t expires, bool secure, CookieSameSite sameSite,
         bool httpOnly, double maxAge, bool partitioned);
 
-    static ExceptionOr<Ref<Cookie>> create(const CookieInit& init)
-    {
-        if (!isValidCookieName(init.name)) {
-            return Exception { TypeError, "Invalid cookie name: contains invalid characters"_s };
-        }
-        if (!isValidCookiePath(init.path)) {
-            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
-        }
-        if (!isValidCookieDomain(init.domain)) {
-            return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
-        }
-
-        return create(init.name, init.value, init.domain, init.path, init.expires, init.secure, init.sameSite, init.httpOnly, init.maxAge, init.partitioned);
-    }
+    // "Set a cookie": additionally enforces the __Secure-/__Host- name prefix rules.
+    static ExceptionOr<Ref<Cookie>> create(const CookieInit& init);
 
     static ExceptionOr<Ref<Cookie>> parse(StringView cookieString);
 
@@ -72,6 +60,9 @@ public:
         if (!isValidCookieDomain(domain)) {
             return Exception { TypeError, "Invalid cookie domain: contains invalid characters"_s };
         }
+        if (auto validation = validatePrefixDomain(m_name, domain); validation.hasException()) {
+            return validation.releaseException();
+        }
         m_domain = domain;
         return {};
     }
@@ -79,8 +70,11 @@ public:
     const String& path() const { return m_path; }
     ExceptionOr<void> setPath(const String& path)
     {
-        if (!isValidCookiePath(path)) {
-            return Exception { TypeError, "Invalid cookie path: contains invalid characters"_s };
+        if (auto validation = validateCookiePath(path); validation.hasException()) {
+            return validation.releaseException();
+        }
+        if (auto validation = validatePrefixPath(m_name, path); validation.hasException()) {
+            return validation.releaseException();
         }
         m_path = path;
         return {};
@@ -91,7 +85,14 @@ public:
     bool hasExpiry() const { return m_expires != emptyExpiresAtValue; }
 
     bool secure() const { return m_secure; }
-    void setSecure(bool secure) { m_secure = secure; }
+    ExceptionOr<void> setSecure(bool secure)
+    {
+        if (auto validation = validatePrefixSecure(m_name, secure); validation.hasException()) {
+            return validation.releaseException();
+        }
+        m_secure = secure;
+        return {};
+    }
 
     CookieSameSite sameSite() const { return m_sameSite; }
     void setSameSite(CookieSameSite sameSite) { m_sameSite = sameSite; }
@@ -117,7 +118,19 @@ public:
     static bool isValidCookiePath(const String& path);
     static bool isValidCookieDomain(const String& domain);
 
+    static bool hasHostPrefix(const String& name);
+    static bool hasSecurePrefix(const String& name);
+
+    static ExceptionOr<void> validateCookiePath(const String& path);
+    static ExceptionOr<void> validateNamePrefix(const String& name, const String& domain, const String& path, bool secure);
+
 private:
+    // A cookie's name is immutable, so each attribute the name's prefix constrains is checked
+    // on its own: at creation, when it is set on a CookieMap, and whenever it is mutated.
+    static ExceptionOr<void> validatePrefixSecure(const String& name, bool secure);
+    static ExceptionOr<void> validatePrefixDomain(const String& name, const String& domain);
+    static ExceptionOr<void> validatePrefixPath(const String& name, const String& path);
+
     Cookie(const String& name, const String& value,
         const String& domain, const String& path,
         int64_t expires, bool secure, CookieSameSite sameSite,

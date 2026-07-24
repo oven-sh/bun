@@ -775,7 +775,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsCookiePrototypeSetter_secure, (JSGlobalObject * lexic
     auto& impl = thisObject->wrapped();
     auto value = convert<IDLBoolean>(*lexicalGlobalObject, JSValue::decode(encodedValue));
     RETURN_IF_EXCEPTION(throwScope, false);
-    impl.setSecure(value);
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.setSecure(value));
     return true;
 }
 

@@ -379,10 +379,9 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     CookieInit cookieInit = {};
 
     // Check if we're setting with a Cookie object directly
-    if (arg0.isObject() && JSCookie::toWrapped(vm, arg0)) {
-        auto* cookieImpl = JSCookie::toWrapped(vm, arg0);
-        if (cookieImpl)
-            impl.set(Ref<Cookie>(*cookieImpl));
+    if (auto* cookieImpl = arg0.isObject() ? JSCookie::toWrapped(vm, arg0) : nullptr) {
+        WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.set(Ref<Cookie>(*cookieImpl)));
+        RETURN_IF_EXCEPTION(throwScope, {});
         return JSValue::encode(jsUndefined());
     } else if (arg0.isObject()) {
         auto* obj = arg0.getObject();
@@ -418,7 +417,8 @@ static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_setBody(JSC::JSGl
     }
     auto cookie = cookie_exception.releaseReturnValue();
 
-    impl.set(WTF::move(cookie));
+    WebCore::propagateException(*lexicalGlobalObject, throwScope, impl.set(WTF::move(cookie)));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     return JSValue::encode(jsUndefined());
 }

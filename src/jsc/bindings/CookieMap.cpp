@@ -180,29 +180,35 @@ void CookieMap::removeInternal(const String& name)
     });
 }
 
-void CookieMap::set(Ref<Cookie> cookie)
+ExceptionOr<void> CookieMap::set(Ref<Cookie> cookie)
 {
+    // A Cookie can also reach here straight from Cookie.parse(), which reports what was on
+    // the wire rather than enforcing the prefix rules, so re-check before it is emitted.
+    if (auto validation = Cookie::validateNamePrefix(cookie->name(), cookie->domain(), cookie->path(), cookie->secure()); validation.hasException()) {
+        return validation.releaseException();
+    }
+
     removeInternal(cookie->name());
     // Add the new cookie
     m_modifiedCookies.append(WTF::move(cookie));
+    return {};
 }
 
 ExceptionOr<void> CookieMap::remove(const CookieStoreDeleteOptions& options)
 {
-    removeInternal(options.name);
-
     String name = options.name;
-    String domain = options.domain;
-    String path = options.path;
-    bool secure = name.startsWithIgnoringASCIICase("__Secure-"_s) || name.startsWithIgnoringASCIICase("__Host-"_s);
+    // The expiring cookie has to satisfy the prefix rules too, or the user agent ignores it
+    // and the cookie stays in the browser.
+    bool secure = Cookie::hasSecurePrefix(name) || Cookie::hasHostPrefix(name);
+    CookieInit init { name, ""_s, options.domain, options.path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false };
 
-    // Add the new cookie
-    auto cookie_exception = Cookie::create(name, ""_s, domain, path, 1, secure, CookieSameSite::Lax, false, std::numeric_limits<double>::quiet_NaN(), false);
+    auto cookie_exception = Cookie::create(init);
     if (cookie_exception.hasException()) {
         return cookie_exception.releaseException();
     }
-    auto cookie = cookie_exception.releaseReturnValue();
-    m_modifiedCookies.append(WTF::move(cookie));
+
+    removeInternal(name);
+    m_modifiedCookies.append(cookie_exception.releaseReturnValue());
     return {};
 }
 

@@ -311,6 +311,21 @@ function assignFunctionName(name, fn, descriptor = nodeKEmptyObject) {
   });
 }
 
+// Ported from node lib/internal/util.js pendingDeprecate(). Bun tracks
+// --pending-deprecation natively and never surfaces it to JS, so the emitter
+// here is a no-op; the wrapper still has to preserve `length` like node's.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util.js#L204
+function nodePendingDeprecate(fn) {
+  function deprecated(...args) {
+    return fn.$apply(this, args);
+  }
+  Object.defineProperty(deprecated, "length", {
+    __proto__: null,
+    ...Object.getOwnPropertyDescriptor(fn, "length"),
+  });
+  return deprecated;
+}
+
 function nodeIsError(e) {
   return require("node:util/types").isNativeError(e) || e instanceof Error;
 }
@@ -467,6 +482,7 @@ export const exposedInternals = {
     assertCrypto() {},
     getCIDR,
     isError: nodeIsError,
+    pendingDeprecate: nodePendingDeprecate,
     assignFunctionName,
     kEnumerableProperty: Object.freeze({ __proto__: null, enumerable: true }),
     kEmptyObject: nodeKEmptyObject,

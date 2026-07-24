@@ -216,9 +216,7 @@ mod _impl {
         let mut needs_next_value = false;
         let mut j = 1usize;
         while j < arg.len() {
-            let Some(takes) = short_takes_value(arg[j]) else {
-                return None;
-            };
+            let takes = short_takes_value(arg[j])?;
             let next = j + 1;
             match takes {
                 bun_clap::Values::None => {

@@ -1561,6 +1561,16 @@ impl<'a> BundleOptions<'a> {
         // into the loader). `Cow` keeps the literals zero-alloc — matters because
         // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
         let node_env: Option<Cow<[u8]>> = 'node_env: {
+            match self.force_node_env {
+                ForceNodeEnv::Production => {
+                    break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
+                }
+                ForceNodeEnv::Development => {
+                    break 'node_env Some(Cow::Borrowed(b"\"development\"".as_slice()));
+                }
+                ForceNodeEnv::Unspecified => {}
+            }
+
             if let Some(e) = loader_.as_deref() {
                 if let Some(env_) = e.get_node_env() {
                     break 'node_env Some(Cow::Owned(env_.to_vec()));

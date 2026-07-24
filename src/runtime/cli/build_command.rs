@@ -437,6 +437,12 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.env_prefix);
 
         if ctx.bundler_options.production {
+            this_transpiler.options.set_production(true);
+            this_transpiler.resolver.opts.set_production(true);
+            // Lock NODE_ENV so an ambient NODE_ENV=development/test in the
+            // process environment cannot override the explicit --production flag.
+            this_transpiler.options.force_node_env = options::ForceNodeEnv::Production;
+            this_transpiler.resolver.opts.force_node_env = options::ForceNodeEnv::Production;
             // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
             unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
         }

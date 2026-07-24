@@ -2872,12 +2872,12 @@ impl RunCommand {
         // A pipe entry point (e.g. `bun <(echo ...)` opens `/dev/fd/N`, or a
         // named FIFO) cannot be re-opened from its canonical path:
         // `get_fd_path` yields `pipe:[inode]` on Linux and fails outright on
-        // macOS. Read it now from the open fd and serve it as the
-        // `eval_source`, booting with the path as given so `process.argv[1]`
-        // and `__filename` reflect what the user typed. Deliberately only
-        // FIFOs: sockets cannot be re-opened via /dev/fd on Linux so `open`
-        // above already failed, and char/block devices (e.g. /dev/zero) would
-        // read forever.
+        // macOS. Read it now from the open fd and route through the same
+        // `[stdin]` virtual-source path `exec_stdin` uses; the path as typed
+        // is prepended to passthrough so `process.argv[1]` is preserved.
+        // Deliberately only FIFOs: sockets cannot be re-opened via /dev/fd on
+        // Linux so `open` above already failed, and char/block devices (e.g.
+        // /dev/zero) would read forever.
         if bun_sys::S::ISFIFO(mode) {
             let mut contents: Vec<u8> = Vec::new();
             if bun_sys::File::from_fd(fd)
@@ -2887,24 +2887,32 @@ impl RunCommand {
                 return false;
             }
             ctx.runtime_options.eval.script = contents.into_boxed_slice();
-            let absolute_script_path: Box<[u8]> = if paths::is_absolute(target) {
-                script_name_buf[..open_len].to_vec().into_boxed_slice()
-            } else {
-                let mut cwd_buf = PathBuffer::uninit();
-                let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
-                    return false;
-                };
-                let cwd_len = cwd.as_bytes().len();
-                cwd_buf[cwd_len] = paths::SEP;
-                paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
-                    &cwd_buf[..cwd_len + 1],
-                    &mut script_name_buf.0,
-                    &[target],
-                )
-                .to_vec()
-                .into_boxed_slice()
+
+            let mut passthrough_list: Vec<Box<[u8]>> = Vec::with_capacity(ctx.passthrough.len() + 1);
+            passthrough_list.push(target.to_vec().into_boxed_slice());
+            passthrough_list.append(&mut ctx.passthrough);
+            ctx.passthrough = passthrough_list;
+
+            #[cfg(windows)]
+            const STDIN_TRIGGER: &[u8] = b"\\[stdin]";
+            #[cfg(not(windows))]
+            const STDIN_TRIGGER: &[u8] = b"/[stdin]";
+            let mut entry_point_buf = [0u8; MAX_PATH_BYTES + STDIN_TRIGGER.len()];
+            let mut cwd_buf = PathBuffer::uninit();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+                return false;
             };
-            return Self::_boot_and_handle_error(ctx, &absolute_script_path, None);
+            let cwd_bytes = cwd.as_bytes();
+            let cwd_len = cwd_bytes.len();
+            entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
+            entry_point_buf[cwd_len..cwd_len + STDIN_TRIGGER.len()].copy_from_slice(STDIN_TRIGGER);
+            let entry_path = &entry_point_buf[..cwd_len + STDIN_TRIGGER.len()];
+
+            let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
+            if let Err(err) = Self::boot(ctx, owned, None) {
+                Self::boot_failed_exit(ctx, target, &err);
+            }
+            return true;
         }
 
         // Re-derive the canonical absolute path from the open fd (resolves

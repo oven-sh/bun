@@ -3943,7 +3943,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         let is_stdin = specifier.len() > STDIN.len()
             && specifier.ends_with(STDIN)
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
-        if is_eval || is_stdin || specifier == eval_source.path.text {
+        if is_eval || is_stdin {
             // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
             // outlives the synchronous transpile this borrow feeds into.
             virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
@@ -4898,14 +4898,11 @@ unsafe fn _resolve<'a>(
 
     // `[eval]` / `[stdin]` virtual sources.
     // SAFETY: `vm` is the live per-thread VM.
-    if let Some(eval_source) = unsafe { &*vm }.module_loader.eval_source.as_deref() {
-        if specifier.ends_with(EVAL_SUFFIX)
-            || specifier.ends_with(STDIN_SUFFIX)
-            || specifier == eval_source.path.text
-        {
-            *ret_path = specifier;
-            return Ok(());
-        }
+    if unsafe { &*vm }.module_loader.eval_source.is_some()
+        && (specifier.ends_with(EVAL_SUFFIX) || specifier.ends_with(STDIN_SUFFIX))
+    {
+        *ret_path = specifier;
+        return Ok(());
     }
 
     // `blob:` URLs registered via `URL.createObjectURL`.

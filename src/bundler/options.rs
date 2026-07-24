@@ -499,10 +499,11 @@ pub fn get_loader_and_virtual_source<'a>(
         } else {
             b"/[stdin]"
         };
-        if strings::ends_with(specifier, EVAL_SUFFIX)
-            || strings::ends_with(specifier, STDIN_SUFFIX)
-            || specifier == eval_source.path.text
-        {
+        if strings::ends_with(specifier, EVAL_SUFFIX) {
+            virtual_source = Some(eval_source);
+            loader = Some(Loader::Tsx);
+        }
+        if strings::ends_with(specifier, STDIN_SUFFIX) {
             virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }

@@ -4021,15 +4021,13 @@ impl VirtualMachine {
             ret.path = result.path.as_bytes();
             return Ok(());
         }
-        if let Some(eval_source) = self.module_loader.eval_source.as_deref() {
-            if specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
-                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes())
-                || specifier == eval_source.path.text
-            {
-                ret.result = None;
-                ret.path = self.dupe_resolved_path(specifier);
-                return Ok(());
-            }
+        if self.module_loader.eval_source.is_some()
+            && (specifier.ends_with(bun_paths::path_literal!("/[eval]").as_bytes())
+                || specifier.ends_with(bun_paths::path_literal!("/[stdin]").as_bytes()))
+        {
+            ret.result = None;
+            ret.path = self.dupe_resolved_path(specifier);
+            return Ok(());
         }
         if let Some(blob_id) = specifier.strip_prefix(b"blob:".as_slice()) {
             ret.result = None;

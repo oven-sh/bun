@@ -4006,6 +4006,9 @@ Server.prototype[kRealListen] = function (
   if (addr && typeof addr === "object") {
     const familyLast = String(addr.family).slice(-1);
     this._connectionKey = `${familyLast}:${addr.address}:${port}`;
+  } else if (typeof addr === "string") {
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2029
+    this._connectionKey = `-1:${addr}:-1`;
   }
 
   if (contexts) {
@@ -4197,6 +4200,8 @@ function listenInCluster(
       server.emit("error", ex);
       return;
     }
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2029
+    server._connectionKey = `${addressType}:${address}:${port}`;
     const sharedFd = handle?.sharedFd;
     if (handle && typeof sharedFd === "number") {
       server[kClusterHandle] = handle;

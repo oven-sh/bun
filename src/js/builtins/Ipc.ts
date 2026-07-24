@@ -208,18 +208,10 @@ export function serialize(message, handle, options, target) {
       throw $ERR_INVALID_HANDLE_TYPE();
     }
     const fd = handle[require("internal/dgram").kStateSymbol]?.handle?.fd;
-    if (typeof fd !== "number" || fd < 0) {
-      // An unbound dgram socket has no descriptor: fail the send like node's
-      // uv write does (EBADF) rather than silently dropping the handle.
-      const err: any = new Error("write EBADF");
-      err.code = "EBADF";
-      err.errno = -9;
-      err.syscall = "write";
-      throw err;
-    }
-    // The raw descriptor is the native payload: the sender keeps its socket
-    // (node's dgram.Socket conversion has no postSend close).
-    return [fd, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
+    // The raw descriptor is the native payload (node's dgram conversion has no
+    // postSend close). A missing/negative fd falls through do_send's int32
+    // branch to its EBADF SystemError path.
+    return [typeof fd === "number" ? fd : -1, { cmd: "NODE_HANDLE", msg: message, type: "dgram.Socket", dgramType: handle.type }];
   }
   throw $ERR_INVALID_HANDLE_TYPE();
 }

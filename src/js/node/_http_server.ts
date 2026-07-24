@@ -106,6 +106,7 @@ function traceServerRequestEnd() {
 }
 
 const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
+const ebadfErrorCode = $newRustFunction("node_util_binding.rs", "ebadfErrorCode", 0);
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -704,7 +705,7 @@ function onShareListenFdReply(server, tls, port, host, socketPath, onListen, rep
   const replyErrno = reply.errno;
   if (replyErrno || sharedFd === undefined) {
     if (sharedFd !== undefined) closeSharedFd(sharedFd);
-    server.emit("error", new ExceptionWithHostPort(replyErrno || -9, "listen", null, 0));
+    server.emit("error", new ExceptionWithHostPort(replyErrno || ebadfErrorCode(), "listen", null, 0));
     return;
   }
   try {

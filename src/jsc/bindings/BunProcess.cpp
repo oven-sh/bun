@@ -4284,9 +4284,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
     RETURN_IF_EXCEPTION(scope, {});
 
 #if !OS(WINDOWS)
-    // Node signals the target with SIGUSR1, which starts its inspector.
+    // Node sends SIGUSR1, which its own handler turns into "start the
+    // inspector".
     // https://github.com/nodejs/node/blob/v26.3.0/src/node_process_methods.cc#L539
-    if (kill(pid, SIGUSR1) < 0) {
+    // Bun installs no SIGUSR1 handler, so delivering the signal would kill the
+    // target instead of debugging it. Probe with signal 0 so a missing process
+    // still raises ESRCH -- `node inspect -p <pid>` reports "Target process:
+    // <pid> doesn't exist." off that errno -- and leave a live target running:
+    // it is reachable if it was started with --inspect.
+    if (kill(pid, 0) < 0) {
         throwSystemError(scope, globalObject, "kill"_s, errno);
         return {};
     }

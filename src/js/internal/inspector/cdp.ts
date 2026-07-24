@@ -306,7 +306,7 @@ function ownSourceMappingURL(source: string): string {
 // `value: null` plus a `description`, so the two protocols disagree on every
 // such value.
 // https://chromedevtools.github.io/devtools-protocol/tot/Runtime/#type-UnserializableValue
-const UNSERIALIZABLE_NUMBERS = new SafeSet(["NaN", "Infinity", "-Infinity", "-0"]);
+const UNSERIALIZABLE_NUMBERS = new Set(["NaN", "Infinity", "-Infinity", "-0"]);
 
 // JSC names a collection by its class alone and puts the element count in a
 // separate `size` field; V8 folds the count into the description and has no

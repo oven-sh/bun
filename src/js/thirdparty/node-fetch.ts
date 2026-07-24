@@ -324,7 +324,9 @@ function fetchWithAgent(url, init, counter) {
             typeof body === "object" &&
             (typeof (body as any).pipe === "function" || typeof (body as any).getReader === "function")
           ) {
-            finalize(new FetchError("Cannot follow redirect with body being a readable stream", "unsupported-redirect"));
+            finalize(
+              new FetchError("Cannot follow redirect with body being a readable stream", "unsupported-redirect"),
+            );
             return;
           }
           finalize(fetchWithAgent(locationURL, nextInit, counter + 1));

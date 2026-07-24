@@ -3663,34 +3663,32 @@ impl<'a> HTTPClient<'a> {
             }
 
             let shared_resp = scratch::response_headers();
-            let response = match picohttp::Response::parse_parts(
-                to_read,
-                shared_resp,
-                Some(&mut amount_read),
-            ) {
-                Ok(r) => r,
-                Err(picohttp::ParseResponseError::ShortRead) => {
-                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                    // request-side knob (Node `--max-http-header-size`); reusing
-                    // it here rejects legitimate responses with large
-                    // `Location`/`Set-Cookie` headers. The intent is to bound
-                    // `response_message_buffer` growth, so use a generous fixed
-                    // cap independent of that knob.
-                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
-                        self.close_and_fail::<IS_SSL>(
-                            crate::Error::ResponseHeadersTooLarge,
-                            socket,
-                        );
+            let response =
+                match picohttp::Response::parse_parts(to_read, shared_resp, Some(&mut amount_read))
+                {
+                    Ok(r) => r,
+                    Err(picohttp::ParseResponseError::ShortRead) => {
+                        // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
+                        // request-side knob (Node `--max-http-header-size`); reusing
+                        // it here rejects legitimate responses with large
+                        // `Location`/`Set-Cookie` headers. The intent is to bound
+                        // `response_message_buffer` growth, so use a generous fixed
+                        // cap independent of that knob.
+                        const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+                        if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
+                            self.close_and_fail::<IS_SSL>(
+                                crate::Error::ResponseHeadersTooLarge,
+                                socket,
+                            );
+                            return;
+                        }
+                        short_read!();
+                    }
+                    Err(e) => {
+                        self.close_and_fail::<IS_SSL>(e.into(), socket);
                         return;
                     }
-                    short_read!();
-                }
-                Err(e) => {
-                    self.close_and_fail::<IS_SSL>(e.into(), socket);
-                    return;
-                }
-            };
+                };
 
             // we save the successful parsed response
             // SAFETY: header name/value slices borrow `to_read` (→ `buffer` /

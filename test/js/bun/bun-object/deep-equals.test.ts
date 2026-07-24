@@ -90,7 +90,7 @@ describe("Bun.deepEquals fast-path coverage", () => {
     });
 
     it("Int32-shape arrays with holes", () => {
-      const a = [1, , 3]; // hole at index 1
+      const a = [1, , 3];
       const b = [1, , 3];
       expect(eq(a, b)).toBe(true);
       const c = [1, 2, 3];
@@ -224,9 +224,9 @@ describe("Bun.deepEquals fast-path coverage", () => {
       if (!Bun.deepEquals(a, b)) throw new Error("expected equal");
     }
     const elapsed = (Bun.nanoseconds() - t0) / 1e6;
-    // memcmp of 100k 8-byte slots runs in microseconds; the per-element recursion
-    // this replaced needed ~1.2ms per comparison in a release build and ~60ms in
-    // a debug+ASAN build, so 50 iterations there cost roughly 3 seconds.
+    // With the Int32Shape memcmp path this runs in ~2.5ms under debug+ASAN.
+    // Without it (pre-#35387 per-element recursion) the same 50 iterations cost
+    // ~60ms release / ~3000ms debug+ASAN, so the bound below is the regression guard.
     expect(elapsed).toBeLessThan(500);
   });
 });

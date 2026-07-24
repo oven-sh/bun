@@ -885,11 +885,13 @@ function serializeRunError(error: unknown, depth = 0) {
       name: error.name,
       cause: cause !== undefined && depth < 8 ? serializeRunCause(cause, depth + 1) : undefined,
     };
-    // Only JSON-safe primitives survive the pipe (node uses the v8 serializer).
+    // Only JSON-safe primitives survive the pipe as-is (node uses the v8
+    // serializer); carry anything else via inspect() so the tap reporter's
+    // assertion-like block still renders expected/actual.
     for (const key of kSerializedErrorExtras) {
       const value = (error as Record<string, unknown>)[key];
       if (isJsonRoundTripPrimitive(value)) out[key] = value;
-      else if (typeof value === "number") out[key] = String(value);
+      else if (value !== undefined) out[key] = require("node:util").inspect(value);
     }
     return out;
   }
@@ -3932,10 +3934,6 @@ function addTest(
       else test(name, directiveRunner);
       return Promise.resolve(undefined);
     }
-    // A skipped body never runs — in node either — so nothing would report it.
-    // Emit at registration: bun:test collects every test before running any, so
-    // there is no later point that still knows the declaration position.
-    reportDirectiveOnlyNode(node, effectiveMode);
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
@@ -4170,12 +4168,6 @@ function addSuite(
     if (passOptions !== undefined) test(name, directiveRunner, passOptions);
     else test(name, directiveRunner);
     return Promise.resolve(undefined);
-  }
-  if (effectiveMode === "skip" || (effectiveMode === "todo" && !runChildReporterEnabled)) {
-    // A skipped suite reports as a leaf: its directive event is its completion
-    // (its children are never declared at all).
-    suiteNode.suiteReported = true;
-    reportDirectiveOnlyNode(suiteNode, effectiveMode);
   }
 
   if (passOptions !== undefined) {

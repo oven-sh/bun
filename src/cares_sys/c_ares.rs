@@ -680,6 +680,9 @@ impl AddrInfo_hints {
 pub struct ChannelOptions {
     pub timeout: Option<i32>,
     pub tries: Option<i32>,
+    /// Cap on the per-query retry timeout in ms (ARES_OPT_MAXTIMEOUTMS);
+    /// like Node, values <= 0 leave c-ares' default backoff uncapped.
+    pub max_timeout: Option<i32>,
 }
 
 bun_opaque::opaque_ffi! {
@@ -771,8 +774,14 @@ impl Channel {
             ..Default::default()
         };
 
-        let optmask: c_int =
+        let mut optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
+        if let Some(max_timeout) = options.max_timeout
+            && max_timeout > 0
+        {
+            opts.maxtimeout = max_timeout;
+            optmask |= ARES_OPT_MAXTIMEOUTMS;
+        }
 
         // SAFETY: c-ares FFI; opts/channel are valid stack pointers.
         let rc = unsafe { ares_init_options(&raw mut channel, &raw mut opts, optmask) };
@@ -2004,6 +2013,7 @@ pub const ARES_OPT_FLAGS: c_int = 1 << 0;
 pub const ARES_OPT_TRIES: c_int = 1 << 2;
 pub const ARES_OPT_SOCK_STATE_CB: c_int = 1 << 9;
 pub const ARES_OPT_TIMEOUTMS: c_int = 1 << 13;
+pub const ARES_OPT_MAXTIMEOUTMS: c_int = 1 << 20;
 pub const ARES_NI_NAMEREQD: c_int = 1 << 2;
 pub const ARES_NI_LOOKUPHOST: c_int = 1 << 8;
 pub const ARES_NI_LOOKUPSERVICE: c_int = 1 << 9;

@@ -5903,6 +5903,9 @@ impl Resolver {
             if let Some(tries) = options.get_truthy(global_this, "tries")? {
                 opts.tries = Some(tries.coerce_to_i32(global_this)?);
             }
+            if let Some(max_timeout) = options.get_truthy(global_this, "maxTimeout")? {
+                opts.max_timeout = Some(max_timeout.coerce_to_i32(global_this)?);
+            }
             opts_cell.set(opts);
         }
 

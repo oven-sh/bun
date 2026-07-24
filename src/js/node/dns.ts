@@ -10,6 +10,7 @@ const {
   validateBoolean,
   validateNumber,
   validateInt32,
+  validateUint32,
   validatePort,
 } = require("internal/validators");
 
@@ -375,10 +376,11 @@ function lookupService(address, port, callback) {
 }
 
 function validateResolverOptions(options) {
-  const { timeout = -1, tries = 4 } = { ...options };
+  const { timeout = -1, tries = 4, maxTimeout = 0 } = { ...options };
   validateInt32(timeout, "options.timeout", -1);
   validateInt32(tries, "options.tries", 1);
-  return { timeout, tries };
+  validateUint32(maxTimeout, "options.maxTimeout");
+  return { timeout, tries, maxTimeout };
 }
 
 var InternalResolver = class Resolver {

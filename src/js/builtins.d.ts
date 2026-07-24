@@ -604,7 +604,7 @@ declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
-declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(): Error;
+declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(message?: string): Error;
 declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
 declare function $ERR_INSPECTOR_ALREADY_CONNECTED(): Error;
 declare function $ERR_INSPECTOR_NOT_CONNECTED(): Error;

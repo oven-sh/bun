@@ -130,7 +130,15 @@ function open(port?: number, host?: string, wait?: boolean) {
     return disposable;
   }
   if (resolvedUrl === null) {
-    throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
+    // A prior inspector.open() success is caught by the top guard above, so
+    // null here means the debugger thread was started outside node:inspector
+    // (CLI --inspect / BUN_INSPECT). That server speaks the JSC protocol and
+    // never registered a controlCallback, so inspector.close() cannot shut it
+    // down; the default ERR_INSPECTOR_ALREADY_ACTIVATED message would send the
+    // user to a no-op close().
+    throw $ERR_INSPECTOR_ALREADY_ACTIVATED(
+      "An inspector was already started via --inspect and cannot be reopened from node:inspector",
+    );
   }
 
   activeInspectorUrl = resolvedUrl;

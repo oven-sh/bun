@@ -1,9 +1,15 @@
 import * as vercelFetch from "@vercel/fetch";
 import * as iso from "isomorphic-fetch";
-import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
+import fetch2, { fetch, FetchError, Headers, Request, Response } from "node-fetch";
+import * as http from "node:http";
+import * as https from "node:https";
+import * as net from "node:net";
+import * as zlib from "node:zlib";
+import { once } from "node:events";
 import * as stream from "stream";
 
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { tls as tlsCert } from "harness";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -157,4 +163,242 @@ test("node-fetch request body streams properly", async () => {
   const allData = Buffer.concat(receivedChunks).toString();
   expect(allData).toBe("first chunksecond chunkthird chunk");
   expect(requestBodyComplete).toBe(true);
+});
+
+// https://github.com/oven-sh/bun/issues/5686
+describe("node-fetch honours the agent option", () => {
+  function makeAgent() {
+    let calls = 0;
+    const agent = new (class extends http.Agent {
+      createConnection(opts, cb) {
+        calls++;
+        return net.createConnection(opts, cb);
+      }
+    })({ keepAlive: false });
+    return { agent, calls: () => calls };
+  }
+
+  async function withServer(handler, fn) {
+    const server = http.createServer(handler);
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      await fn(server.address().port);
+    } finally {
+      server.close();
+    }
+  }
+
+  test("calls agent.createConnection", async () => {
+    const { agent, calls } = makeAgent();
+    await withServer(
+      (req, res) => res.end("ok"),
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+        expect(await res.text()).toBe("ok");
+        expect(res.status).toBe(200);
+        expect(res.url).toBe(`http://127.0.0.1:${port}/`);
+        expect(res.body).toBeInstanceOf(stream.Readable);
+      },
+    );
+    expect(calls()).toBe(1);
+    agent.destroy();
+  });
+
+  test("agent as a function receives the parsed URL", async () => {
+    const { agent, calls } = makeAgent();
+    let receivedHostname;
+    await withServer(
+      (req, res) => res.end("ok"),
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/`, {
+          agent: parsed => {
+            receivedHostname = parsed.hostname;
+            return agent;
+          },
+        });
+        expect(await res.text()).toBe("ok");
+      },
+    );
+    expect(receivedHostname).toBe("127.0.0.1");
+    expect(calls()).toBe(1);
+    agent.destroy();
+  });
+
+  test("forwards method, headers and body", async () => {
+    const { agent, calls } = makeAgent();
+    await withServer(
+      (req, res) => {
+        let body = "";
+        req.on("data", c => (body += c));
+        req.on("end", () => {
+          res.setHeader("x-echo", req.headers["x-foo"] ?? "");
+          res.end(`${req.method}:${body}`);
+        });
+      },
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/`, {
+          agent,
+          method: "POST",
+          headers: { "x-foo": "bar" },
+          body: "hello",
+        });
+        expect(await res.text()).toBe("POST:hello");
+        expect(res.headers.get("x-echo")).toBe("bar");
+        expect(res.headers.raw()["x-echo"]).toEqual(["bar"]);
+      },
+    );
+    expect(calls()).toBe(1);
+    agent.destroy();
+  });
+
+  test("decompresses gzip responses", async () => {
+    const { agent } = makeAgent();
+    await withServer(
+      (req, res) => {
+        res.writeHead(200, { "content-encoding": "gzip" });
+        res.end(zlib.gzipSync("compressed body"));
+      },
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+        expect(await res.text()).toBe("compressed body");
+      },
+    );
+    agent.destroy();
+  });
+
+  test("follows redirects through the agent", async () => {
+    const { agent, calls } = makeAgent();
+    await withServer(
+      (req, res) => {
+        if (req.url === "/start") {
+          res.writeHead(302, { location: "/end" });
+          res.end();
+        } else {
+          res.end("landed");
+        }
+      },
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/start`, { agent });
+        expect(await res.text()).toBe("landed");
+        expect(res.status).toBe(200);
+      },
+    );
+    expect(calls()).toBe(2);
+    agent.destroy();
+  });
+
+  test("redirect: 'manual' returns the 3xx response", async () => {
+    const { agent } = makeAgent();
+    await withServer(
+      (req, res) => {
+        res.writeHead(302, { location: "/elsewhere" });
+        res.end();
+      },
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent, redirect: "manual" });
+        expect(res.status).toBe(302);
+        expect(res.headers.get("location")).toBe("/elsewhere");
+      },
+    );
+    agent.destroy();
+  });
+
+  test("rejects with FetchError on connection failure", async () => {
+    const { agent } = makeAgent();
+    // Bind a socket to reserve a port, then close it so nothing is listening.
+    const probe = net.createServer().listen(0);
+    await once(probe, "listening");
+    const port = probe.address().port;
+    await new Promise(r => probe.close(r));
+
+    await expect(fetch2(`http://127.0.0.1:${port}/`, { agent })).rejects.toThrow(FetchError);
+    agent.destroy();
+  });
+
+  test("aborts via signal", async () => {
+    const { agent } = makeAgent();
+    await withServer(
+      () => {
+        /* never respond */
+      },
+      async port => {
+        const controller = new AbortController();
+        const p = fetch2(`http://127.0.0.1:${port}/`, { agent, signal: controller.signal });
+        controller.abort();
+        await expect(p).rejects.toMatchObject({ name: "AbortError" });
+      },
+    );
+    agent.destroy();
+  });
+
+  test("picks https.request for https: URLs", async () => {
+    let calls = 0;
+    const agent = new (class extends https.Agent {
+      createConnection(opts, cb) {
+        calls++;
+        return https.Agent.prototype.createConnection.call(this, opts, cb);
+      }
+    })({ keepAlive: false, rejectUnauthorized: false });
+
+    const server = https.createServer({ ...tlsCert }, (req, res) => res.end("secure"));
+    server.listen(0);
+    await once(server, "listening");
+    try {
+      const port = server.address().port;
+      const res = await fetch2(`https://127.0.0.1:${port}/`, { agent });
+      expect(await res.text()).toBe("secure");
+    } finally {
+      server.close();
+    }
+    expect(calls).toBe(1);
+    agent.destroy();
+  });
+
+  test("tunnels via a CONNECT-proxy agent", async () => {
+    // Minimal CONNECT proxy that records every CONNECT target.
+    const targets = [];
+    const proxy = net.createServer(client => {
+      client.once("data", chunk => {
+        const line = chunk.toString().split("\r\n")[0];
+        const [, hostPort] = line.match(/^CONNECT (\S+) HTTP\/1\.1$/);
+        targets.push(hostPort);
+        const [host, port] = hostPort.split(":");
+        const upstream = net.connect(+port, host, () => {
+          client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          client.pipe(upstream);
+          upstream.pipe(client);
+        });
+        upstream.on("error", () => client.destroy());
+      });
+    });
+    proxy.listen(0);
+    await once(proxy, "listening");
+    const proxyPort = proxy.address().port;
+
+    // Agent whose createConnection establishes the tunnel first (what
+    // socks-proxy-agent / https-proxy-agent do).
+    class TunnelAgent extends http.Agent {
+      createConnection(opts, cb) {
+        const sock = net.connect(proxyPort, "127.0.0.1", () => {
+          sock.write(`CONNECT ${opts.host}:${opts.port} HTTP/1.1\r\n\r\n`);
+          sock.once("data", () => cb(null, sock));
+        });
+        sock.on("error", cb);
+      }
+    }
+    const agent = new TunnelAgent({ keepAlive: false });
+
+    await withServer(
+      (req, res) => res.end("via proxy"),
+      async port => {
+        const res = await fetch2(`http://127.0.0.1:${port}/`, { agent });
+        expect(await res.text()).toBe("via proxy");
+        expect(targets).toEqual([`127.0.0.1:${port}`]);
+      },
+    );
+
+    agent.destroy();
+    proxy.close();
+  });
 });

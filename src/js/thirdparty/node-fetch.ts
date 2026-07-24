@@ -33,11 +33,13 @@ class Headers extends WebHeaders {
 
 const kHeaders = Symbol("kHeaders");
 const kBody = Symbol("kBody");
+const kUrl = Symbol("kUrl");
 const HeadersPrototype = Headers.prototype;
 
 class Response extends WebResponse {
   [kBody]: any;
   [kHeaders];
+  [kUrl]?: string;
 
   constructor(body, init) {
     const { Readable, Stream } = require("node:stream");
@@ -46,6 +48,11 @@ class Response extends WebResponse {
     }
 
     super(body, init);
+    if (init && typeof init.url === "string") this[kUrl] = init.url;
+  }
+
+  get url() {
+    return this[kUrl] ?? super.url;
   }
 
   get body() {
@@ -115,8 +122,6 @@ class Response extends WebResponse {
 }
 var ResponsePrototype = Response.prototype;
 
-const kUrl = Symbol("kUrl");
-
 class Request extends WebRequest {
   [kUrl]?: string;
 
@@ -137,6 +142,212 @@ class Request extends WebRequest {
   }
 }
 
+const FOLLOW_MAX_DEFAULT = 20;
+
+/**
+ * node-fetch's `agent` option cannot be expressed through native fetch, so when it's
+ * set the request is driven by node:http / node:https (which honour `agent.addRequest`
+ * / `createConnection`). The surface here mirrors what node-fetch itself does.
+ */
+function fetchWithAgent(url, init, counter) {
+  return new Promise((resolve, reject) => {
+    const http = require("node:http");
+    const https = require("node:https");
+    const { Readable, PassThrough, pipeline } = require("node:stream");
+    const zlib = require("node:zlib");
+
+    let href: string;
+    let parsed: URL;
+    try {
+      href = url instanceof WebRequest ? url.url : url instanceof URL ? url.href : String(url);
+      parsed = new URL(href);
+    } catch {
+      reject(new TypeError(`Only absolute URLs are supported. Received: ${url}`));
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      reject(new TypeError(`Only HTTP(S) protocols are supported. Received: ${parsed.protocol}`));
+      return;
+    }
+
+    let agent = init.agent;
+    if ($isCallable(agent)) agent = agent.$call(undefined, parsed);
+
+    const method = (init.method || (url instanceof WebRequest && url.method) || "GET").toUpperCase();
+    const compress = init.compress !== false;
+    const redirect = init.redirect || "follow";
+    const follow = typeof init.follow === "number" ? init.follow : FOLLOW_MAX_DEFAULT;
+    const signal = init.signal;
+
+    const headers = new Headers(init.headers || (url instanceof WebRequest && url.headers) || undefined);
+    if (!headers.has("accept")) headers.set("accept", "*/*");
+    if (compress && !headers.has("accept-encoding")) headers.set("accept-encoding", "gzip, deflate, br");
+    if (!headers.has("connection") && !agent) headers.set("connection", "close");
+
+    let body = init.body ?? (url instanceof WebRequest ? url.body : null);
+    if (body != null && (method === "GET" || method === "HEAD")) {
+      reject(new TypeError("Request with GET/HEAD method cannot have body"));
+      return;
+    }
+    if (body != null && !headers.has("content-length") && !headers.has("transfer-encoding")) {
+      if (typeof body === "string") headers.set("content-length", String(Buffer.byteLength(body)));
+      else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+        headers.set("content-length", String((body as ArrayBufferView).byteLength ?? (body as ArrayBuffer).byteLength));
+      } else if (body instanceof Blob) headers.set("content-length", String(body.size));
+    }
+
+    const requestOpts = {
+      protocol: parsed.protocol,
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: parsed.pathname + parsed.search,
+      method,
+      headers: headers.toJSON(),
+      agent,
+    };
+
+    const send = parsed.protocol === "https:" ? https.request : http.request;
+    const req = send(requestOpts);
+    let settled = false;
+
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      const err: any = new DOMException("The operation was aborted.", "AbortError");
+      err.type = "aborted";
+      reject(err);
+      req.destroy();
+    };
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+        return;
+      }
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+
+    req.on("error", err => {
+      if (settled) return;
+      settled = true;
+      if (signal) signal.removeEventListener("abort", onAbort);
+      reject(new FetchError(`request to ${href} failed, reason: ${err.message}`, "system", err));
+    });
+
+    req.on("response", (res: any) => {
+      if (settled) return;
+      if (signal) signal.removeEventListener("abort", onAbort);
+
+      const responseHeaders = new Headers();
+      const rawHeaders: string[] = res.rawHeaders;
+      for (let i = 0; i < rawHeaders.length; i += 2) {
+        responseHeaders.append(rawHeaders[i], rawHeaders[i + 1]);
+      }
+
+      const status: number = res.statusCode;
+      if (isRedirect(status)) {
+        const location = responseHeaders.get("location");
+        let locationURL: string | null = null;
+        if (location !== null) {
+          try {
+            locationURL = new URL(location, href).href;
+          } catch {
+            if (redirect !== "manual") {
+              settled = true;
+              res.resume();
+              reject(new FetchError(`uri requested responds with an invalid redirect URL: ${location}`, "invalid-redirect"));
+              return;
+            }
+          }
+        }
+        if (redirect === "error") {
+          settled = true;
+          res.resume();
+          reject(new FetchError(`uri requested responds with a redirect, redirect mode is set to error: ${href}`, "no-redirect"));
+          return;
+        }
+        if (redirect === "follow" && locationURL !== null) {
+          if (counter >= follow) {
+            settled = true;
+            res.resume();
+            reject(new FetchError(`maximum redirect reached at: ${href}`, "max-redirect"));
+            return;
+          }
+          const nextInit: any = { ...init, counter: counter + 1 };
+          const nextURL = new URL(locationURL);
+          if (nextURL.hostname !== parsed.hostname || nextURL.protocol !== parsed.protocol) {
+            const h = new Headers(init.headers || undefined);
+            for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) h.delete(name);
+            nextInit.headers = h;
+          }
+          if (status === 303 || ((status === 301 || status === 302) && method === "POST")) {
+            nextInit.method = "GET";
+            nextInit.body = undefined;
+          } else if (body != null && typeof body === "object" && typeof (body as any).pipe === "function") {
+            settled = true;
+            res.resume();
+            reject(new FetchError("Cannot follow redirect with body being a readable stream", "unsupported-redirect"));
+            return;
+          }
+          settled = true;
+          res.resume();
+          resolve(fetchWithAgent(locationURL, nextInit, counter + 1));
+          return;
+        }
+        // redirect === "manual" or no location: fall through and return the 3xx response as-is.
+      }
+
+      let raw: any = res.pipe(new PassThrough());
+      const codings = (responseHeaders.get("content-encoding") || "").toLowerCase();
+      if (compress && method !== "HEAD" && status !== 204 && status !== 304) {
+        let decoder: any;
+        if (codings === "gzip" || codings === "x-gzip") decoder = zlib.createGunzip({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
+        else if (codings === "deflate" || codings === "x-deflate") decoder = zlib.createInflate({ flush: zlib.Z_SYNC_FLUSH, finishFlush: zlib.Z_SYNC_FLUSH });
+        else if (codings === "br") decoder = zlib.createBrotliDecompress();
+        if (decoder) {
+          const out = new PassThrough();
+          pipeline(raw, decoder, out, () => {});
+          raw = out;
+          responseHeaders.delete("content-encoding");
+          responseHeaders.delete("content-length");
+        }
+      }
+
+      settled = true;
+      const response = new Response(status === 204 || status === 304 || method === "HEAD" ? null : raw, {
+        status,
+        statusText: res.statusMessage || "",
+        headers: responseHeaders,
+        url: href,
+      });
+      if (counter > 0) Object.defineProperty(response, "redirected", { value: true, configurable: true });
+      resolve(response);
+    });
+
+    if (body == null) {
+      req.end();
+    } else if (typeof body === "string" || body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+      req.end(body instanceof ArrayBuffer ? new Uint8Array(body) : body);
+    } else if (body instanceof Blob) {
+      body.arrayBuffer().then(
+        buf => req.end(new Uint8Array(buf)),
+        err => {
+          if (!settled) {
+            settled = true;
+            reject(new FetchError(`request to ${href} failed, reason: ${err.message}`, "system", err));
+          }
+          req.destroy(err);
+        },
+      );
+    } else if (typeof (body as any).pipe === "function") {
+      (body as any).pipe(req);
+    } else if (typeof (body as any).getReader === "function") {
+      Readable.fromWeb(body as any).pipe(req);
+    } else {
+      req.end(String(body));
+    }
+  });
+}
+
 /**
  * `node-fetch` works like the browser-fetch API, except it's a little more strict on some features,
  * and uses node streams instead of web streams.
@@ -150,8 +361,14 @@ async function fetch(
   url: any,
 
   // eslint-disable-next-line no-unused-vars
-  init?: RequestInit & { body?: any },
+  init?: RequestInit & { body?: any; agent?: any; compress?: boolean; follow?: number; counter?: number },
 ) {
+  // Native fetch has no `agent`; when one is supplied, fall back to the
+  // node:http path so custom agents (proxy agents, overridden
+  // createConnection, pooling) are actually used.
+  if (init != null && init.agent != null && init.agent !== false) {
+    return fetchWithAgent(url, init, init.counter || 0);
+  }
   // Convert Node.js streams to Web ReadableStream if they don't have Symbol.asyncIterator.
   // This is needed for libraries like `form-data` that use CombinedStream which extends
   // Node.js Stream but doesn't implement Symbol.asyncIterator.

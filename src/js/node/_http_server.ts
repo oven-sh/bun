@@ -1217,6 +1217,26 @@ function onServerConnection(this: Server, socketHandle) {
     // Already wrapped (shouldn't happen for a brand-new connection).
     return;
   }
+  // Like Node.js's net.Server onconnection: once maxConnections is reached,
+  // each further accepted connection is reported via 'drop' and destroyed
+  // before http's connectionListener sees it. Close before emit (same as
+  // net.ts) so a throwing 'drop' listener cannot leave the socket open for
+  // onNodeHTTPRequest to wrap and serve.
+  const maxConnections = this.maxConnections;
+  if (maxConnections != null && this[kTrackedConnections].size >= maxConnections) {
+    const remote = socketHandle.remoteAddress;
+    const local = socketHandle.localAddress;
+    socketHandle.close();
+    this.emit("drop", {
+      localAddress: local?.address,
+      localPort: local?.port,
+      localFamily: local?.family,
+      remoteAddress: remote?.address,
+      remotePort: remote?.port,
+      remoteFamily: remote?.family,
+    });
+    return;
+  }
   const isTLS = !!this[tlsSymbol];
   const socket = new NodeHTTPServerSocket(this, socketHandle, isTLS);
   // Node's connectionListener attaches the HTTPParser (socket.parser) before

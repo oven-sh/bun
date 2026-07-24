@@ -74,6 +74,23 @@ impl TerminalCreateResult {
     }
 }
 
+/// True if a NUL-terminated env entry is `TERM=<value>`. Env var names are
+/// case-insensitive on Windows (mirrors the `PATH=` check in `append_envp_from_js`).
+fn envp_entry_is_term(entry: CStrPtr) -> bool {
+    if entry.is_null() {
+        return false;
+    }
+    // SAFETY: every non-null `env_array` entry points at a NUL-terminated
+    // C string owned by `cstr_storage` or `inherited_env_storage`, both of
+    // which outlive this check.
+    let bytes = unsafe { CStr::from_ptr(entry) }.to_bytes();
+    if cfg!(windows) {
+        strings::starts_with_case_insensitive_ascii(bytes, b"TERM=")
+    } else {
+        strings::has_prefix_comptime(bytes, b"TERM=")
+    }
+}
+
 // ── IPC owner trait impl for Subprocess ─────────────────────────────────────
 // Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
 // because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
@@ -912,6 +929,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     bun_output::scoped_log!(Subprocess, "spawn maxBuffer: {:?}", max_buffer);
 
+    let terminal_term_name: Option<&[u8]> = existing_terminal
+        .as_deref()
+        .or_else(|| terminal_info.as_ref().map(TerminalCreateResult::term))
+        .map(Terminal::term_name);
+
     // Owns the `K=V\0` storage when inheriting the parent env; the struct
     // lives until spawn returns.
     let mut inherited_env_storage: Option<bun_dotenv::NullDelimitedEnvMap> = None;
@@ -936,6 +958,22 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         inherited_env_storage = Some(envmap);
     }
     let _ = &inherited_env_storage;
+
+    // A PTY child must see TERM matching the emulated terminal, not the
+    // parent's. The caller's explicit `env.TERM` wins; otherwise drop any
+    // inherited TERM= and inject the terminal's `name` (default "xterm-256color").
+    if let Some(term_name) = terminal_term_name {
+        let user_set_term = override_env && env_array.iter().any(|p| envp_entry_is_term(*p));
+        if !user_set_term {
+            env_array.retain(|p| !envp_entry_is_term(*p));
+            let mut line = Vec::with_capacity(b"TERM=".len() + term_name.len());
+            line.extend_from_slice(b"TERM=");
+            line.extend_from_slice(term_name);
+            let line = ZBox::from_vec(line);
+            env_array.push(line.as_ptr());
+            cstr_storage.push(line);
+        }
+    }
 
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd() {

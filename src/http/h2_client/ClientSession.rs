@@ -1007,19 +1007,19 @@ impl ClientSession {
 
         if stream.headers_ready {
             stream.headers_ready = false;
-            let (result, response) =
-                match client.apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
-                {
-                    Ok(r) => r,
-                    Err(err) => {
-                        self.rst_stream(stream, wire::ErrorCode::CANCEL);
-                        let _ = self.flush();
-                        stream.client = None;
-                        client.h2 = None;
-                        client.h2_fail(err);
-                        return true;
-                    }
-                };
+            let (result, response) = match client
+                .apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
+            {
+                Ok(r) => r,
+                Err(err) => {
+                    self.rst_stream(stream, wire::ErrorCode::CANCEL);
+                    let _ = self.flush();
+                    stream.client = None;
+                    client.h2 = None;
+                    client.h2_fail(err);
+                    return true;
+                }
+            };
             // handleResponseMetadata set is_redirect_pending. The doRedirect
             // contract assumes the caller already detached the stream.
             // Detach + RST here unconditionally so the
@@ -1136,7 +1136,6 @@ impl ClientSession {
         client.h2_progress_update(self.ctx, self.socket);
         true
     }
-
 }
 
 impl Drop for ClientSession {

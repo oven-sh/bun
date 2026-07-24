@@ -45,7 +45,6 @@ pub mod route_param {
         pub value: crate::api::StringPointer,
     }
 }
-pub use route_param::List as ParamsList;
 
 // ── whatwg (WTF::URL FFI shim, MOVE_DOWN from bun_jsc) ────────────────────
 // The JS-value entry points (`hrefFromJS`, `fromJS`)

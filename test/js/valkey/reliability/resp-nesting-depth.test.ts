@@ -348,7 +348,10 @@ describe("Valkey: RESP push frame routing", () => {
         const psubscribed = client.psubscribe("news.*");
         const pinged = client.send("PING", []);
 
-        expect(await psubscribed).toEqual({ type: "psubscribe", data: ["news.*", 1] });
+        // Like `subscribe()`, a subscription command resolves with the
+        // subscribed-channel count. `psubscribe` registers no channel
+        // handler, so that count is 0.
+        expect(await psubscribed).toBe(0);
         expect(await pinged).toBe("PONG");
       } finally {
         client.close();

@@ -281,12 +281,6 @@ pub struct ValkeyClient {
     pub vm: &'static VirtualMachine,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum SubscribeHandled {
-    Handled,
-    Fallthrough,
-}
-
 pub(crate) struct DeferredFailure {
     message: Box<[u8]>,
     err: RedisError,
@@ -436,6 +430,7 @@ impl ValkeyClient {
             self.in_flight
                 .write_item(command::PromisePair {
                     meta: cmd.meta,
+                    remaining_replies: cmd.remaining_replies,
                     promise: cmd.promise,
                 })
                 .unwrap_or_oom();
@@ -654,6 +649,9 @@ impl ValkeyClient {
     pub fn on_close(&mut self) -> JsTerminated<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
+        // Any partially buffered reply belongs to the dead socket.
+        self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
 
         // If manually closing, don't attempt to reconnect
         if self.flags.is_manually_closed {
@@ -887,14 +885,13 @@ impl ValkeyClient {
         Ok(())
     }
 
-    /// Try handling this response as a subscriber-state response.
-    /// Returns `handled` if we handled it, `fallthrough` if we did not.
+    /// Dispatch a subscription push (message/subscribe/unsubscribe) and
+    /// settle the paired promise if the caller consumed one.
     fn handle_subscribe_response(
         &mut self,
         value: &mut RESPValue,
         pair: Option<&mut command::PromisePair>,
-    ) -> JsResult<SubscribeHandled> {
-        // Resolve the promise with the potentially transformed value
+    ) -> JsResult<()> {
         let global_this = self.global_object();
 
         debug!("Handling a subscribe response: {}", value);
@@ -902,73 +899,54 @@ impl ValkeyClient {
         // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
         let _exit = self.vm.enter_event_loop_scope();
 
-        match value {
-            RESPValue::Error(_) => {
-                if let Some(p) = pair {
-                    p.promise
-                        .reject(&global_this, resp_value_to_js(value, &global_this))?;
-                }
-                Ok(SubscribeHandled::Handled)
-            }
-            RESPValue::Push(push) => {
-                let p = self.parent();
-                let sub_count = p
-                    ._subscription_ctx
-                    .get()
-                    .channels_subscribed_to_count(&global_this)?;
+        let RESPValue::Push(push) = value else {
+            return Ok(());
+        };
+        let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) else {
+            return Ok(());
+        };
 
-                if let Some(msg_type) = protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                    match msg_type {
-                        protocol::SubscriptionPushMessage::Message => {
-                            self.on_valkey_message(&mut push.data);
-                            Ok(SubscribeHandled::Handled)
-                        }
-                        protocol::SubscriptionPushMessage::Subscribe => {
-                            p.add_subscription();
-                            self.on_valkey_subscribe(value);
+        let p = self.parent();
+        let sub_count = p
+            ._subscription_ctx
+            .get()
+            .channels_subscribed_to_count(&global_this)?;
 
-                            // For SUBSCRIBE responses, only resolve the promise for the first channel confirmation
-                            // Additional channel confirmations from multi-channel SUBSCRIBE commands don't need promise pairs
-                            if let Some(req_pair) = pair {
-                                req_pair.promise.promise.resolve(
-                                    &global_this,
-                                    JSValue::js_number(f64::from(sub_count)),
-                                )?;
-                            }
-                            Ok(SubscribeHandled::Handled)
-                        }
-                        protocol::SubscriptionPushMessage::Unsubscribe => {
-                            self.on_valkey_unsubscribe()?;
-                            self.parent().remove_subscription();
-
-                            // For UNSUBSCRIBE responses, only resolve the promise if we have one
-                            // Additional channel confirmations from multi-channel UNSUBSCRIBE commands don't need promise pairs
-                            if let Some(req_pair) = pair {
-                                req_pair
-                                    .promise
-                                    .promise
-                                    .resolve(&global_this, JSValue::UNDEFINED)?;
-                            }
-                            Ok(SubscribeHandled::Handled)
-                        }
-                    }
+        match msg_type {
+            protocol::SubscriptionPushMessage::Message => {
+                // `pmessage` payload is [pattern, channel, message]; skip the
+                // pattern so `on_valkey_message` sees [channel, message].
+                let data = if push.kind.as_ref() == b"pmessage" && !push.data.is_empty() {
+                    &mut push.data[1..]
                 } else {
-                    // We should rarely reach this point. If we're guaranteed to be handling a subscribe/unsubscribe,
-                    // then this is an unexpected path.
-                    bun_core::hint::cold();
-                    self.fail(
-                        b"Push message is not a subscription message.",
-                        RedisError::InvalidResponseType,
-                    )?;
-                    Ok(SubscribeHandled::Handled)
+                    &mut push.data[..]
+                };
+                self.on_valkey_message(data);
+            }
+            protocol::SubscriptionPushMessage::Subscribe => {
+                p.add_subscription();
+                self.on_valkey_subscribe(value);
+                if let Some(req_pair) = pair {
+                    req_pair
+                        .promise
+                        .promise
+                        .resolve(&global_this, JSValue::js_number(f64::from(sub_count)))?;
                 }
             }
-            _ => {
-                // This may be a regular command response. Let's pass it down
-                // to the next handler.
-                Ok(SubscribeHandled::Fallthrough)
+            protocol::SubscriptionPushMessage::Unsubscribe => {
+                if self.parent().is_subscriber() {
+                    self.on_valkey_unsubscribe()?;
+                    self.parent().remove_subscription();
+                }
+                if let Some(req_pair) = pair {
+                    req_pair
+                        .promise
+                        .promise
+                        .resolve(&global_this, JSValue::UNDEFINED)?;
+                }
             }
         }
+        Ok(())
     }
 
     fn handle_hello_response(&mut self, value: &mut RESPValue) -> JsTerminated<()> {
@@ -1084,84 +1062,49 @@ impl ValkeyClient {
                 }
             };
         }
-        // Check if this is a subscription push message that might not need a promise pair
-        let mut should_consume_promise_pair = true;
-        let mut pair_maybe: Option<command::PromisePair> = None;
-
-        // For subscription clients, check if this is a push message that doesn't need a promise pair
+        // RESP3 push frames (`>`) are out-of-band: the type byte alone
+        // marks them unsolicited, so they never occupy a command's reply
+        // slot regardless of subscriber mode.
         if let RESPValue::Push(push) = value {
-            match protocol::SubscriptionPushMessage::from_bytes(&push.kind) {
-                Some(protocol::SubscriptionPushMessage::Message) => {
-                    // Message pushes never need promise pairs
-                    should_consume_promise_pair = false;
+            let msg_type = protocol::SubscriptionPushMessage::from_bytes(&push.kind);
+            // A `(p|s)subscribe`/`(p|s)unsubscribe` confirmation only counts
+            // against the in-flight head when that head is the matching
+            // direction; other push kinds consume no reply slot.
+            let mut pair_maybe: Option<command::PromisePair> = None;
+            let head_flag = match msg_type {
+                Some(protocol::SubscriptionPushMessage::Subscribe) => {
+                    Some(command::Meta::SUBSCRIBE_REQUEST)
                 }
-                Some(
-                    protocol::SubscriptionPushMessage::Subscribe
-                    | protocol::SubscriptionPushMessage::Unsubscribe,
-                ) => {
-                    // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                    if self.in_flight.readable_length() == 0 {
-                        should_consume_promise_pair = false;
-                    }
+                Some(protocol::SubscriptionPushMessage::Unsubscribe) => {
+                    Some(command::Meta::UNSUBSCRIBE_REQUEST)
                 }
-                None => {
-                    if !protocol::SubscriptionPushMessage::is_reply_kind(&push.kind) {
-                        should_consume_promise_pair = false;
+                _ => None,
+            };
+            if let Some(flag) = head_flag
+                && self.in_flight.readable_length() > 0
+            {
+                let head = self.in_flight.peek_item_mut(0);
+                if head.meta.contains(flag) {
+                    head.remaining_replies = head.remaining_replies.saturating_sub(1);
+                    if head.remaining_replies == 0 {
+                        pair_maybe = self.in_flight.read_item();
                     }
                 }
             }
-        }
-
-        // Only consume promise pair if we determined we need one
-        // The reaosn we consume pairs is that a SUBSCRIBE message may actually be followed by a number of SUBSCRIBE
-        // responses which indicate all the channels we have connected to. As a stop-gap, we currently ignore the
-        // actual of content of the SUBSCRIBE responses and just resolve the first one with the count of channels.
-        if should_consume_promise_pair {
-            pair_maybe = self.in_flight.read_item();
-        }
-
-        // We handle subscriptions specially because they are not regular commands and their failure will potentially
-        // cause the client to drop out of subscriber mode.
-        let request_is_subscribe = pair_maybe
-            .as_ref()
-            .map(|p| p.meta.contains(command::Meta::SUBSCRIPTION_REQUEST))
-            .unwrap_or(false);
-        if self.parent().is_subscriber() || request_is_subscribe {
-            debug!("This client is a subscriber. Handling as subscriber...");
-
-            match value {
-                RESPValue::Error(err) => {
-                    self.fail(err, RedisError::InvalidResponse)?;
-                    return Ok(());
-                }
-                RESPValue::Push(push) => {
-                    if protocol::SubscriptionPushMessage::from_bytes(&push.kind).is_some() {
-                        if self.handle_subscribe_response(value, pair_maybe.as_mut())?
-                            == SubscribeHandled::Handled
-                        {
-                            return Ok(());
-                        }
-                    } else {
-                        bun_core::hint::cold();
-                        self.fail(
-                            b"Unexpected push message kind without promise",
-                            RedisError::InvalidResponseType,
-                        )?;
-                        return Ok(());
-                    }
-                }
-                _ => {
-                    // In the else case, we fall through to the regular
-                    // handler. Subscribers can send .Push commands which have
-                    // the same semantics as regular commands.
-                }
+            if msg_type.is_some() {
+                self.handle_subscribe_response(value, pair_maybe.as_mut())?;
+            } else {
+                // Non-subscription push (e.g. `invalidate`): no command is
+                // waiting for it; drop so the next real reply pairs correctly.
+                debug!("Dropping out-of-band push: {}", bstr::BStr::new(&push.kind));
             }
-
-            debug!("Treating subscriber response as a regular command...");
+            return Ok(());
         }
 
-        // For regular commands, get the next command+promise pair from the queue
-        let Some(mut pair) = pair_maybe else {
+        // For regular (non-push) replies, the next in-flight command owns
+        // this reply.
+        let Some(mut pair) = self.in_flight.read_item() else {
+            debug!("Reply with no in-flight command: {}", value);
             return Ok(());
         };
 
@@ -1314,6 +1257,7 @@ impl ValkeyClient {
         self.in_flight
             .write_item(command::PromisePair {
                 meta: offline_cmd.meta,
+                remaining_replies: offline_cmd.remaining_replies,
                 promise: offline_cmd.promise,
             })
             .unwrap_or_oom();
@@ -1401,6 +1345,7 @@ impl ValkeyClient {
 
         let cmd_pair = command::PromisePair {
             meta: command.meta,
+            remaining_replies: command.expected_reply_count(),
             promise,
         };
 

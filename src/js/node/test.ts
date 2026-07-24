@@ -427,7 +427,12 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     // gates on isTestRunner); a library run() honors just opts.signal, so the
     // CLI eval driver owns SIGINT/SIGTERM and routes them through the signal.
     const signal = opts.signal as AbortSignal | undefined;
-    if (signal?.aborted) onInterrupt();
+    // Captured before the loop: node reports per-file testAborted verdicts for
+    // a signal that was already aborted at run() time, but a mid-run abort
+    // tears the stream down without them (its FAIL_FAST reporter contract —
+    // test-runner-error-reporter.js — counts exactly one failure).
+    const preAborted = signal?.aborted === true;
+    if (preAborted) onInterrupt();
     signal?.addEventListener("abort", onInterrupt, { once: true });
     let nextFile = 0;
     try {
@@ -441,8 +446,10 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     // node reports each file the abort skipped as testAborted rather than
     // silently dropping it (observed on v26.3.0: complete carries the ordinal
     // and passed:false, the verdict counts as cancelled, success goes false).
-    for (; nextFile < files.length; nextFile++) {
-      reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
+    if (preAborted) {
+      for (; nextFile < files.length; nextFile++) {
+        reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
+      }
     }
 
     if (state.interrupted) {

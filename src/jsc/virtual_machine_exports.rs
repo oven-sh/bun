@@ -123,7 +123,10 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) -> JSValu
         // jsFunctionReportUncaughtException (guardCallback's routing for
         // fs/dns/crypto callback throws), napi_fatal_exception, node:events
         // error with no listener, and JSC's reportUncaughtExceptionAtEventLoop
-        // — all Node-compat uncaught throws where the caller's task is dead.
+        // VM hook (microtask/promise reaction escaped with nothing to catch
+        // it) — all Node-compat uncaught throws where the caller's task is
+        // dead. Bun-native frame loops that just want to print and continue
+        // call Bun__reportError instead, which stays on the keep-alive path.
         let _ = global.bun_vm().as_mut().uncaught_exception_fatal(
             global,
             value,

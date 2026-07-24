@@ -394,7 +394,7 @@ static void wsOnMessage(void* ctx, std::span<const char> utf8)
     t.handleMessage(utf8);
     if (auto* ex = catchScope.exception()) [[unlikely]] {
         catchScope.clearExceptionExceptTermination();
-        t.m_global->reportUncaughtExceptionAtEventLoop(t.m_global, ex);
+        Bun__reportError(t.m_global, JSC::JSValue::encode(JSC::JSValue(ex)));
     }
 }
 
@@ -554,7 +554,7 @@ void Transport::onData(const char* data, int length)
 
         if (auto* ex = catchScope.exception()) [[unlikely]] {
             if (!catchScope.clearExceptionExceptTermination()) break;
-            m_global->reportUncaughtExceptionAtEventLoop(m_global, ex);
+            Bun__reportError(m_global, JSC::JSValue::encode(JSC::JSValue(ex)));
         }
     }
     if (off) m_rx.removeAt(0, off);

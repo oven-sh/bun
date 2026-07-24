@@ -4276,6 +4276,27 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+
+#if !OS(WINDOWS)
+    // Node signals the target with SIGUSR1, which starts its inspector.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_process_methods.cc#L539
+    if (kill(pid, SIGUSR1) < 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
+        return {};
+    }
+    return JSValue::encode(jsUndefined());
+#else
+    throwTypeError(globalObject, scope, "process._debugProcess is not supported on Windows"_s);
+    return {};
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
@@ -4457,7 +4478,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_functionDebugEnd                            Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_functionDebugProcess                        Function 1
   _eval                            processGetEval                                      CustomAccessor
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0

@@ -21,6 +21,7 @@ pub mod js_bindings {
             ),
             ("getFeaturesAsVLQ", __jsc_host_js_get_features_as_vlq),
             ("getFeatureData", __jsc_host_js_get_feature_data),
+            ("getCurrentAction", __jsc_host_js_get_current_action),
             ("segfault", __jsc_host_js_segfault),
             ("segfaultInDll", __jsc_host_js_segfault_in_dll),
             ("panic", __jsc_host_js_panic),
@@ -68,6 +69,24 @@ pub mod js_bindings {
 
             Ok(JSValue::js_number((base_address - vmaddr_slide) as f64))
         }
+    }
+
+    #[bun_jsc::host_fn]
+    pub(crate) fn js_get_current_action(
+        global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        use crash_handler::Action;
+        let name: &'static [u8] = match crash_handler::current_action() {
+            None => return Ok(JSValue::UNDEFINED),
+            Some(Action::Parse(_)) => b"parse",
+            Some(Action::Visit(_)) => b"visit",
+            Some(Action::Print(_)) => b"print",
+            Some(Action::BundleGenerateChunk(_)) => b"bundleGenerateChunk",
+            Some(Action::Resolver(_)) => b"resolver",
+            Some(Action::Dlopen(_)) => b"dlopen",
+        };
+        BunString::static_(name).to_js(global)
     }
 
     #[bun_jsc::host_fn]

@@ -100,6 +100,7 @@ export const cssInternals = {
 
 export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
+  getCurrentAction: () => string | undefined;
   segfault: () => void;
   panic: () => void;
   rootError: () => void;

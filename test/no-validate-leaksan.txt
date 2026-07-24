@@ -60,6 +60,7 @@ test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js
 test/js/node/test/parallel/test-worker-workerdata-sharedarraybuffer.js
 test/js/node/test/parallel/test-worker.js
 test/js/node/test/parallel/test-worker.mjs
+test/js/node/worker_threads/nested-worker-unref.test.ts
 test/js/node/worker_threads/worker_destruction.test.ts
 # Two tests hit their 5s timeout under BUN_DESTRUCT_VM_ON_EXIT; passes without
 # LSAN and no sanitizer report, just slow VM teardown.

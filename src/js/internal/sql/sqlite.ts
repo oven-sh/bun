@@ -33,7 +33,28 @@ const enum SQLCommand {
 interface SQLParsedInfo {
   command: SQLCommand;
   lastToken?: string;
-  canReturnRows: boolean;
+}
+
+function isSQLWordChar(code: number): boolean {
+  // A-Z (the query is upper-cased before scanning), 0-9, "_", "$"
+  return (code >= 65 && code <= 90) || (code >= 48 && code <= 57) || code === 95 || code === 36;
+}
+
+function keywordToCommand(word: string): SQLCommand {
+  switch (word) {
+    case "INSERT":
+      return SQLCommand.insert;
+    case "UPDATE":
+      return SQLCommand.update;
+    case "SET":
+      return SQLCommand.updateSet;
+    case "WHERE":
+      return SQLCommand.where;
+    case "IN":
+      return SQLCommand.in;
+    default:
+      return SQLCommand.none;
+  }
 }
 
 function commandToString(command: SQLCommand, lastToken?: string): string {
@@ -54,159 +75,101 @@ function commandToString(command: SQLCommand, lastToken?: string): string {
 }
 
 /**
- * Parse the SQL query and return the command and the last token
+ * Parse the SQL query for the cosmetic command label and for helper command
+ * detection. This is a best-effort lexer: it skips string literals, quoted
+ * identifiers and comments so command keywords inside them are not mistaken
+ * for the real command. Whether a query returns rows is decided by SQLite
+ * (via the prepared statement's column count), not here.
  * @param query - The SQL query to parse
- * @param partial - Whether to stop on the first command we find
- * @returns The command, the last token, and whether it can return rows
+ * @returns The leading command keyword and the command nearest the end
  */
-function parseSQLQuery(query: string, partial: boolean = false): SQLParsedInfo {
-  const text = query.toUpperCase().trim();
-  const text_len = text.length;
+function parseSQLQuery(query: string): SQLParsedInfo {
+  const text = query.toUpperCase();
+  const len = text.length;
 
-  let token = "";
   let command = SQLCommand.none;
-  let lastToken = "";
-  let canReturnRows = false;
-  let quoted: false | "'" | '"' = false;
-  // we need to reverse search so we find the closest command to the parameter
-  for (let i = text_len - 1; i >= 0; i--) {
+  let firstToken = "";
+
+  let i = 0;
+  while (i < len) {
     const char = text[i];
-    switch (char) {
-      case " ":
-      case "\n":
-      case "\t":
-      case "\r":
-      case "\f":
-      case "\v": {
-        switch (token) {
-          case "INSERT": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.insert;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.insert, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "UPDATE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.update;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.update, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "WHERE": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.where;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.where, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "SET": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.updateSet;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.updateSet, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "IN": {
-            if (command === SQLCommand.none) {
-              command = SQLCommand.in;
-            }
-            lastToken = token;
-            token = "";
-            if (partial) {
-              return { command: SQLCommand.in, lastToken, canReturnRows };
-            }
-            continue;
-          }
-          case "SELECT":
-          case "PRAGMA":
-          case "WITH":
-          case "EXPLAIN":
-          case "RETURNING": {
-            lastToken = token;
-            canReturnRows = true;
-            token = "";
-            continue;
-          }
-          default: {
-            lastToken = token;
-            token = "";
-            continue;
-          }
-        }
-      }
-      default: {
-        // skip quoted commands
-        if (char === '"' || char === "'") {
-          if (quoted === char) {
-            quoted = false;
-          } else {
-            quoted = char;
-          }
-          continue;
-        }
-        if (!quoted) {
-          token = char + token;
-        }
-      }
+
+    // line comment: -- ... end of line
+    if (char === "-" && text[i + 1] === "-") {
+      i += 2;
+      while (i < len && text[i] !== "\n") i++;
+      continue;
     }
-  }
-  if (token) {
-    lastToken = token;
-    switch (token) {
-      case "INSERT":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.insert;
-        }
-        break;
-      case "UPDATE":
-        if (command === SQLCommand.none) command = SQLCommand.update;
-        break;
-      case "WHERE":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.where;
-        }
-        break;
-      case "SET":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.updateSet;
-        }
-        break;
-      case "IN":
-        if (command === SQLCommand.none) {
-          command = SQLCommand.in;
-        }
-        break;
-      case "SELECT":
-      case "PRAGMA":
-      case "WITH":
-      case "EXPLAIN":
-      case "RETURNING": {
-        canReturnRows = true;
-        break;
-      }
-      default:
-        command = SQLCommand.none;
-        break;
+    // block comment: /* ... */
+    if (char === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < len && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i += 2;
+      continue;
     }
+    // string literal: '...' with '' as an escaped quote
+    if (char === "'") {
+      i++;
+      while (i < len) {
+        if (text[i] === "'") {
+          if (text[i + 1] === "'") {
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // quoted identifier: "..." with "" as an escaped quote
+    if (char === '"') {
+      i++;
+      while (i < len) {
+        if (text[i] === '"') {
+          if (text[i + 1] === '"') {
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    // backtick and bracket identifiers
+    if (char === "`") {
+      i++;
+      while (i < len && text[i] !== "`") i++;
+      i++;
+      continue;
+    }
+    if (char === "[") {
+      i++;
+      while (i < len && text[i] !== "]") i++;
+      i++;
+      continue;
+    }
+    // keyword or identifier word
+    if (isSQLWordChar(text.charCodeAt(i))) {
+      const start = i;
+      i++;
+      while (i < len && isSQLWordChar(text.charCodeAt(i))) i++;
+      const word = text.slice(start, i);
+      if (firstToken === "") firstToken = word;
+      const cmd = keywordToCommand(word);
+      // keep the command keyword closest to the end of the query
+      if (cmd !== SQLCommand.none) command = cmd;
+      continue;
+    }
+
+    // whitespace, punctuation and operators
+    i++;
   }
-  return { command, lastToken, canReturnRows };
+
+  return { command, lastToken: firstToken };
 }
 
 class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
@@ -238,19 +201,28 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
     const { sql, values, mode, parsedInfo } = this;
     try {
       const command = parsedInfo.command;
-      // For SELECT queries, we need to use a prepared statement
-      // For other queries, we can check if there are multiple statements and use db.run() if so
-      if (parsedInfo.canReturnRows) {
-        // SELECT queries must use prepared statements for results
-        const stmt = db.prepare(sql);
-        let result: unknown[] | undefined;
+      // Let SQLite decide: a prepared statement with result columns is row-
+      // returning. Preparing compiles without executing, so nothing runs twice.
+      let stmt: BunSQLiteModule.Statement | undefined;
+      try {
+        stmt = db.prepare(sql);
+      } catch {
+        // Whitespace- or comment-only input makes sqlite3_prepare_v3 return a
+        // NULL statement; db.run() handles that and re-raises real errors.
+      }
 
-        if (mode === SQLQueryResultMode.values) {
-          result = stmt.values.$apply(stmt, values);
-        } else if (mode === SQLQueryResultMode.raw) {
-          result = stmt.raw.$apply(stmt, values);
-        } else {
-          result = stmt.all.$apply(stmt, values);
+      if (stmt && stmt.native.columnsCount > 0) {
+        let result: unknown[] | undefined;
+        try {
+          if (mode === SQLQueryResultMode.values) {
+            result = stmt.values.$apply(stmt, values);
+          } else if (mode === SQLQueryResultMode.raw) {
+            result = stmt.raw.$apply(stmt, values);
+          } else {
+            result = stmt.all.$apply(stmt, values);
+          }
+        } finally {
+          stmt.finalize();
         }
 
         const sqlResult = $isArray(result) ? new SQLResultArray(result) : new SQLResultArray([result]);
@@ -258,10 +230,11 @@ class SQLiteQueryHandle implements BaseQueryHandle<BunSQLiteModule.Database> {
         sqlResult.command = commandToString(command, parsedInfo.lastToken);
         sqlResult.count = $isArray(result) ? result.length : 1;
 
-        stmt.finalize();
         query.resolve(sqlResult);
       } else {
-        // For INSERT/UPDATE/DELETE/CREATE etc., use db.run() which handles multiple statements natively
+        // No result columns: writes/DDL. db.run() also executes every
+        // statement when multiple are provided in a single string.
+        stmt?.finalize();
         const changes = db.run.$apply(db, [sql].concat(values));
         const sqlResult = new SQLResultArray();
 
@@ -394,8 +367,8 @@ class SQLiteAdapter implements DatabaseAdapter<BunSQLiteModule.Database, BunSQLi
   }
 
   getHelperCommand(query: string): SharedSQLCommand {
-    // when partial is true we stop on the first command we find
-    const { command } = parseSQLQuery(query, true);
+    // detect the command keyword governing the helper (nearest the end)
+    const { command } = parseSQLQuery(query);
 
     // only selectIn, insert, update, updateSet are allowed
     if (command === SQLCommand.none || command === SQLCommand.where) {

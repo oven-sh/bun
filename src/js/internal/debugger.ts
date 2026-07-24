@@ -314,17 +314,14 @@ export default function (
     exit("Failed to start inspector:\n", error);
   }
 
-  // --inspect serves a CDP endpoint alongside Bun's JSC one. Report it so
-  // node:inspector answers url() with it, refuses inspector.open() with
-  // ERR_INSPECTOR_ALREADY_ACTIVATED and can stop the server through
-  // inspector.close(), the way Node behaves for a CLI-started inspector.
   const { cdpUrl } = debug;
-  if (enableNodeCDP && cdpUrl) {
-    reportNodeInspectorServerStarted(cdpUrl, createNodeInspectorControl(debug), undefined);
-  }
 
   // If the user types --inspect, we print the URL to the console.
   // If the user is using an editor extension, don't print anything.
+  // Printed before reportNodeInspectorServerStarted releases the inspected
+  // thread: Node writes its banner before any script output, and tools
+  // scraping stderr for it (test-inspector-port-zero) rely on that order --
+  // a short-lived script could otherwise exit before this thread got to it.
   if (!isAutomatic) {
     const debugUrl = debug.url;
     if (debugUrl) {
@@ -351,6 +348,15 @@ export default function (
       Bun.write(Bun.stderr, `Listening on ${dim(url)}\n`);
       Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
     }
+  }
+
+  // --inspect serves a CDP endpoint alongside Bun's JSC one. Report it so
+  // node:inspector answers url() with it, refuses inspector.open() with
+  // ERR_INSPECTOR_ALREADY_ACTIVATED and can stop the server through
+  // inspector.close(), the way Node behaves for a CLI-started inspector.
+  // This also releases the inspected thread, which blocks on the report.
+  if (enableNodeCDP && cdpUrl) {
+    reportNodeInspectorServerStarted(cdpUrl, createNodeInspectorControl(debug), undefined);
   }
 
   const notifyUrl = process.env["BUN_INSPECT_NOTIFY"] || "";

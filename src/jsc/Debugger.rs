@@ -240,11 +240,7 @@ impl Debugger {
         });
 
         bun_core::scoped_log!(debugger, "spin");
-        // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
-        // load, so this loop is a no-op on first call.
-        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
-        }
+        Debugger::wait_for_thread_startup();
         if bun_core::Environment::ENABLE_LOGS {
             bun_core::scoped_log!(
                 debugger,
@@ -384,6 +380,16 @@ impl Debugger {
         }
     }
 
+    /// Block until the debugger thread finishes its startup (inspector server
+    /// listening or failed): `create()` arms the futex before spawning and
+    /// `start_js_debugger_thread` clears it on every exit path. A no-op when
+    /// the thread already started (futex back at 0).
+    pub fn wait_for_thread_startup() {
+        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+        }
+    }
+
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the
     /// JSC inspector context, spawn the debugger VM thread, and arm the
     /// keep-alive on the parent loop.
@@ -413,6 +419,12 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
+            // Armed before the spawn; `start_js_debugger_thread` clears it on
+            // every exit path once the inspector server is up (or failed).
+            // `wait_for_thread_startup` blocks on it so a `--inspect` process
+            // prints the listening banner before any script output, as Node
+            // does (its inspector server binds synchronously at startup).
+            FUTEX_ATOMIC.store(1, Ordering::Relaxed);
             // `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
             // pointer is only ever dereferenced on the debugger thread under

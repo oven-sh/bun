@@ -180,10 +180,12 @@ impl zStream_struct {
     /// A zeroed stream with the given allocator pair.
     ///
     /// # Safety
-    /// `free` must be able to free memory returned by `alloc`; this is the
-    /// only place a caller vouches for invariant (S2). zlib defaults a null
-    /// `zalloc` and null `zfree` independently, so passing only one of the
-    /// two yields a cross-allocator free in `*_end()`.
+    /// `alloc(opaque, items, size)` must return either null or a pointer to
+    /// a writable allocation of `items * size` bytes, and `free` must accept
+    /// exactly those pointers; this is the only place a caller vouches for
+    /// invariant (S2). zlib defaults a null `zalloc` and null `zfree`
+    /// independently, so passing only one of the two yields a
+    /// cross-allocator free in `*_end()`.
     #[inline]
     pub unsafe fn with_allocator(alloc: alloc_func, free: free_func) -> Self {
         Self {

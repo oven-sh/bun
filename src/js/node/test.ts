@@ -3658,6 +3658,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // Awaited unconditionally: a late it.only() would otherwise be invisible
     // to the only-scan itself, and the helper is near-free with no builds.
     await awaitSuiteBuilds(standaloneQueue);
+    // node evaluates only-ness when each test is constructed, so a queue whose
+    // only-marked tests are later dropped by a name/tag filter still runs in
+    // only mode (and reports nothing) rather than falling back to running all.
+    const queueHasOnly = standaloneQueueHasOnly(standaloneQueue);
     const filters = opts.testTagFilterExpressions as string[] | null;
     if (filters !== null && filters.length > 0) {
       const pruned = pruneStandaloneEntries(standaloneQueue, filters);
@@ -3675,7 +3679,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
 
     // node honors `only` in the shared process: when any registration carries
     // it, everything outside the only-marked branches is dropped silently.
-    if (standaloneQueueHasOnly(standaloneQueue)) {
+    if (queueHasOnly) {
       const pruned = pruneToOnly(standaloneQueue);
       standaloneQueue.length = 0;
       standaloneQueue.push(...pruned);

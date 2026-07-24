@@ -165,6 +165,9 @@ pub struct LinkerContext<'a> {
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub cycle_detector: Vec<ImportTracker>,
+    /// Scratch sort-index buffer reused across
+    /// [`Self::match_imports_with_exports_for_file`] calls.
+    pub import_order_scratch: Vec<usize>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub cjs_runtime_ref: Ref,
@@ -220,6 +223,7 @@ impl<'a> Default for LinkerContext<'a> {
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
+            import_order_scratch: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
@@ -514,6 +518,7 @@ impl<'a> LinkerContext<'a> {
             bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
         });
         self.cycle_detector = Vec::new();
+        self.import_order_scratch = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -3900,8 +3905,13 @@ impl<'a> LinkerContext<'a> {
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
+        // Reuse the per-LinkerContext scratch buffer (one per bundle, not one
+        // per file) so the sort-index vector isn't freshly allocated for every
+        // reachable file. `take` so `&mut self` stays available in the loop.
+        let mut order = core::mem::take(&mut self.import_order_scratch);
+        order.clear();
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        order.extend(0..unsafe { (&*keys).len() });
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
         order
             .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
@@ -4035,6 +4045,8 @@ impl<'a> LinkerContext<'a> {
                 MatchImportKind::Ignore => {}
             }
         }
+
+        self.import_order_scratch = order;
     }
 
     /// Thin inherent-method shim so callers can write

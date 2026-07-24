@@ -1,6 +1,5 @@
 // exercise DOMJIT-annotated host functions (and host functions that once were)
-// across JIT tiers: baseline (~1K), DFG (~10K), FTL (~100K).
-// JSC defaults: thresholdForOptimizeSoon=1000, thresholdForFTLOptimizeAfterWarmUp=64000.
+// across JIT tiers: baseline/DFG/FTL.
 
 import { describe, expect, test } from "bun:test";
 
@@ -20,29 +19,33 @@ const decoder = new TextDecoder();
 const encodedTest = new Uint8Array([116, 101, 115, 116]); // "test"
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-// 100000 is past the FTL warm-up threshold; the old extra 1000000 tier only
-// re-ran FTL steady state and dominated ASAN/debug runtime.
-const tiers = [1000, 10000, 100000];
+// Bun forces useConcurrentJIT=true, so the FTL replacement compiles off-thread
+// and is only installed AFTER a tier's callback returns: the final tier must be
+// a repeat so the FTLFunctionCall compiled during the previous tier actually
+// executes. 200000 clears the bytecode-scaled thresholdForFTLOptimizeAfterWarmUp
+// for every callback here (FFI's ~1K-bytecode body is the worst case).
+const tiers = [1000, 10000, 200000, 200000];
 
 describe("DOMJIT", () => {
   const buf = new Uint8Array(4);
-  for (const iter of tiers) {
-    test(`Buffer.alloc x${iter}`, () => {
+  for (const [n, iter] of tiers.entries()) {
+    const tag = `#${n + 1} x${iter}`;
+    test(`Buffer.alloc ${tag}`, () => {
       let last!: Buffer;
       for (let i = 0; i < iter; i++) last = Buffer.alloc(1);
       expect([last.length, last[0]]).toEqual([1, 0]);
     });
-    test(`Buffer.allocUnsafe x${iter}`, () => {
+    test(`Buffer.allocUnsafe ${tag}`, () => {
       let last!: Buffer;
       for (let i = 0; i < iter; i++) last = Buffer.allocUnsafe(1);
       expect(last.length).toBe(1);
     });
-    test(`Buffer.allocUnsafeSlow x${iter}`, () => {
+    test(`Buffer.allocUnsafeSlow ${tag}`, () => {
       let last!: Buffer;
       for (let i = 0; i < iter; i++) last = Buffer.allocUnsafeSlow(1);
       expect(last.length).toBe(1);
     });
-    test(`Performance.now x${iter}`, () => {
+    test(`Performance.now ${tag}`, () => {
       let prev = performance.now();
       let ok = true;
       let last = prev;
@@ -54,40 +57,40 @@ describe("DOMJIT", () => {
       expect(ok).toBe(true);
       expect(Number.isFinite(last)).toBe(true);
     });
-    test(`TextEncoder.encode x${iter}`, () => {
+    test(`TextEncoder.encode ${tag}`, () => {
       let last!: Uint8Array;
       for (let i = 0; i < iter; i++) last = encoder.encode("test");
       expect([...last]).toEqual([116, 101, 115, 116]);
     });
-    test(`TextEncoder.encodeInto x${iter}`, () => {
+    test(`TextEncoder.encodeInto ${tag}`, () => {
       let last!: TextEncoderEncodeIntoResult;
       for (let i = 0; i < iter; i++) last = encoder.encodeInto("test", buf);
       expect(last).toEqual({ read: 4, written: 4 });
       expect([...buf]).toEqual([116, 101, 115, 116]);
     });
-    test(`Crypto.timingSafeEqual x${iter}`, () => {
+    test(`Crypto.timingSafeEqual ${tag}`, () => {
       const a = new Uint8Array([1, 2, 3, 4]);
       const b = new Uint8Array([1, 2, 3, 4]);
       let last = false;
       for (let i = 0; i < iter; i++) last = crypto.timingSafeEqual(a, b);
       expect(last).toBe(true);
     });
-    test(`Crypto.randomUUID x${iter}`, () => {
+    test(`Crypto.randomUUID ${tag}`, () => {
       let last = "";
       for (let i = 0; i < iter; i++) last = crypto.randomUUID();
       expect(last).toMatch(uuid);
     });
-    test(`Crypto.getRandomValues x${iter}`, () => {
+    test(`Crypto.getRandomValues ${tag}`, () => {
       let last!: Uint8Array;
       for (let i = 0; i < iter; i++) last = crypto.getRandomValues(buf);
       expect(last).toBe(buf);
     });
-    test(`TextDecoder.decode x${iter}`, () => {
+    test(`TextDecoder.decode ${tag}`, () => {
       let last = "";
       for (let i = 0; i < iter; i++) last = decoder.decode(encodedTest);
       expect(last).toBe("test");
     });
-    test(`Stats x${iter}`, () => {
+    test(`Stats ${tag}`, () => {
       let isSymbolicLink!: boolean,
         isSocket!: boolean,
         isFile!: boolean,
@@ -114,7 +117,7 @@ describe("DOMJIT", () => {
         isBlockDevice: false,
       });
     });
-    test(`FFI ptr and read x${iter}`, () => {
+    test(`FFI ptr and read ${tag}`, () => {
       let intptr!: number,
         rptr!: number,
         f64!: number,

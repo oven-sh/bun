@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isDebug, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("yarn.lock migration basic", () => {
@@ -1348,30 +1348,36 @@ describe("bun pm migrate for existing yarn.lock", () => {
     "yarn-stuff",
     "yarn-stuff/abbrev-link-target",
   ];
-  test.each(folders)("%s", async folder => {
-    const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
-    const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
+  // yarn-cli-repo is yarn's own lockfile (~8k lines) and needs more than the 5s default under debug+ASAN.
+  test.each(folders)(
+    "%s",
+    async folder => {
+      const packageJsonContent = await Bun.file(join(import.meta.dir, "yarn", folder, "package.json")).text();
+      const yarnLockContent = await Bun.file(join(import.meta.dir, "yarn", folder, "yarn.lock")).text();
 
-    const tempDir = tempDirWithFiles("yarn-lock-migration-", {
-      "package.json": packageJsonContent,
-      "yarn.lock": yarnLockContent,
-    });
+      const tempDir = tempDirWithFiles("yarn-lock-migration-", {
+        "package.json": packageJsonContent,
+        "yarn.lock": yarnLockContent,
+      });
 
-    const migrateResult = Bun.spawn({
-      cmd: [bunExe(), "pm", "migrate", "-f"],
-      cwd: tempDir,
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-      stdin: "ignore",
-    });
+      const migrateResult = Bun.spawn({
+        cmd: [bunExe(), "pm", "migrate", "-f"],
+        cwd: tempDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
 
-    expect(migrateResult.exited).resolves.toBe(0);
-    expect(Bun.file(join(tempDir, "bun.lock")).exists()).resolves.toBe(true);
+      const exitCode = await migrateResult.exited;
+      expect(exitCode).toBe(0);
+      expect(fs.existsSync(join(tempDir, "bun.lock"))).toBe(true);
 
-    const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
-    expect(bunLockContent).toMatchSnapshot(folder);
-  });
+      const bunLockContent = await Bun.file(join(tempDir, "bun.lock")).text();
+      expect(bunLockContent).toMatchSnapshot(folder);
+    },
+    isDebug ? 60_000 : undefined,
+  );
 
   test("yarn.lock with packages that have os/cpu requirements", async () => {
     const tempDir = tempDirWithFiles("yarn-migration-os-cpu", {

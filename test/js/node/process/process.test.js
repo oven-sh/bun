@@ -724,6 +724,67 @@ describe.concurrent(() => {
       // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
       expect(exitCode).toBe(1);
     });
+
+    it("drains microtasks queued by an async listener", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let done = false;
+           process.on("beforeExit", async () => {
+             if (done) return;
+             await Promise.resolve();
+             done = true;
+             console.log("cleanup ran");
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "cleanup ran\n", stderr: "", exitCode: 0 });
+    });
+
+    it("drains microtasks queued via queueMicrotask", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let done = false;
+           process.on("beforeExit", () => {
+             if (done) return;
+             queueMicrotask(() => {
+               done = true;
+               console.log("microtask ran");
+             });
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "microtask ran\n", stderr: "", exitCode: 0 });
+    });
+
+    it("re-enters the event loop for work scheduled after an await", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `let done = false;
+           process.on("beforeExit", async () => {
+             if (done) return;
+             done = true;
+             await Promise.resolve();
+             setTimeout(() => console.log("timer ran"), 1);
+           });`,
+        ],
+        env: bunEnv,
+        stdio: ["inherit", "pipe", "pipe"],
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "timer ran\n", stderr: "", exitCode: 0 });
+    });
   });
 
   describe("process.onExit", () => {

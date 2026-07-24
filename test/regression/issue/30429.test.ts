@@ -1,34 +1,27 @@
 // https://github.com/oven-sh/bun/issues/30429
-//
-// `PathName::init` leaves `.dir` empty when the only separator is the leading
-// one (e.g. `/a.js`). `dir_info_cached_maybe_log` used to assert that its
-// input was absolute, so any module directly under `/` would panic the
-// resolver with `cannot resolve DirInfo for non-absolute path:` before it
-// could run.
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { randomBytes } from "crypto";
 import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
+const rootFile = `/bun-regression-30429-${process.pid}-${randomBytes(6).toString("hex")}.js`;
+let canWriteRoot = false;
+if (!isWindows) {
+  try {
+    writeFileSync(rootFile, `module.exports = "root-ok";\nconsole.log("root-ok");\n`, { flag: "wx" });
+    canWriteRoot = true;
+  } catch {
+    // non-root environments (e.g. macOS CI): describe below is skipped
+  }
+}
+
 // POSIX filesystem root only; Windows drive roots are a separate shape.
-describe.skipIf(isWindows)("module directly under filesystem root", () => {
-  const rootFile = `/bun-regression-30429-${process.pid}.js`;
-  let canWriteRoot = false;
-
-  beforeAll(() => {
-    try {
-      writeFileSync(rootFile, `module.exports = "root-ok";\nconsole.log("root-ok");\n`);
-      canWriteRoot = true;
-    } catch {
-      // macOS CI and other non-root environments: fall through to skip below.
-    }
-  });
-
+describe.concurrent.skipIf(isWindows || !canWriteRoot)("module directly under filesystem root", () => {
   afterAll(() => {
     if (canWriteRoot) rmSync(rootFile, { force: true });
   });
 
   test("run", async () => {
-    if (!canWriteRoot) return;
     await using proc = Bun.spawn({
       cmd: [bunExe(), rootFile],
       env: bunEnv,
@@ -41,7 +34,6 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
   });
 
   test("require from a subdirectory", async () => {
-    if (!canWriteRoot) return;
     using dir = tempDir("issue-30429-require", {
       "c.js": `console.log(require(${JSON.stringify(rootFile)}));\n`,
     });
@@ -58,7 +50,6 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
   });
 
   test("dynamic import from a subdirectory", async () => {
-    if (!canWriteRoot) return;
     using dir = tempDir("issue-30429-import", {
       "c.mjs": `const m = await import(${JSON.stringify(rootFile)});\nconsole.log(m.default);\n`,
     });
@@ -75,7 +66,6 @@ describe.skipIf(isWindows)("module directly under filesystem root", () => {
   });
 
   test("bun build", async () => {
-    if (!canWriteRoot) return;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--target=bun", rootFile],
       env: bunEnv,

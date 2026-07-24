@@ -207,36 +207,41 @@ describe("userInfo", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      userInfo: { threw: { name: "SystemError", code: "ERR_SYSTEM_ERROR", syscall: "uv_os_get_passwd", info: "ENOENT" } },
+      userInfo: {
+        threw: { name: "SystemError", code: "ERR_SYSTEM_ERROR", syscall: "uv_os_get_passwd", info: "ENOENT" },
+      },
       // os.homedir() checks $HOME first; with $HOME set it returns that verbatim.
       homedir: { returned: "/not-a-real-home" },
     });
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent.skipIf(!canSetpriv)("homedir() throws ERR_SYSTEM_ERROR when $HOME is unset and no passwd entry", async () => {
-    const uid = "54321";
-    const { HOME, USERPROFILE, ...envWithoutHome } = bunEnv;
-    await using proc = Bun.spawn({
-      cmd: [
-        "setpriv",
-        `--reuid=${uid}`,
-        `--regid=${uid}`,
-        "--clear-groups",
-        bunExe(),
-        "-e",
-        `try { require("node:os").homedir() }
+  it.concurrent.skipIf(!canSetpriv)(
+    "homedir() throws ERR_SYSTEM_ERROR when $HOME is unset and no passwd entry",
+    async () => {
+      const uid = "54321";
+      const { HOME, USERPROFILE, ...envWithoutHome } = bunEnv;
+      await using proc = Bun.spawn({
+        cmd: [
+          "setpriv",
+          `--reuid=${uid}`,
+          `--regid=${uid}`,
+          "--clear-groups",
+          bunExe(),
+          "-e",
+          `try { require("node:os").homedir() }
          catch (e) { process.stdout.write(JSON.stringify({ name: e.name, code: e.code, syscall: e.syscall })) }`,
-      ],
-      env: envWithoutHome,
-      stderr: "pipe",
-    });
+        ],
+        env: envWithoutHome,
+        stderr: "pipe",
+      });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ name: "SystemError", code: "ERR_SYSTEM_ERROR", syscall: "uv_os_homedir" });
-    expect(exitCode).toBe(0);
-  });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ name: "SystemError", code: "ERR_SYSTEM_ERROR", syscall: "uv_os_homedir" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("has node's shape", () => {
     const info = os.userInfo();

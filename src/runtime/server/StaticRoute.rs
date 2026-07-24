@@ -102,7 +102,7 @@ impl StaticRoute {
         }
 
         let cached_blob_size = blob.size();
-        let has_date = headers.get(b"date").is_some();
+        let has_date = headers.get(b"date").is_some_and(|v| !v.is_empty());
         bun_core::heap::into_raw(Box::new(StaticRoute {
             ref_count: Cell::new(1),
             blob,
@@ -244,7 +244,7 @@ impl StaticRoute {
             }
 
             let cached_blob_size = blob.size();
-            let has_date = headers.get(b"date").is_some();
+            let has_date = headers.get(b"date").is_some_and(|v| !v.is_empty());
             return Ok(Some(bun_core::heap::into_raw(Box::new(StaticRoute {
                 ref_count: Cell::new(1),
                 blob,
@@ -494,6 +494,9 @@ impl StaticRoute {
 
         debug_assert_eq!(names.len(), values.len());
         for (name, value) in names.iter().zip(values) {
+            if value.length == 0 {
+                continue;
+            }
             resp.write_header(
                 &buf[name.offset as usize..][..name.length as usize],
                 &buf[value.offset as usize..][..value.length as usize],

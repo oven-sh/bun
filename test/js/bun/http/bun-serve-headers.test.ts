@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { tempDir } from "harness";
 import { once } from "node:events";
 import * as net from "node:net";
+import * as path from "node:path";
 
 // An empty (or whitespace-only) header value must be treated as absent for the
 // well-known headers Bun fills in automatically, so the response head carries
@@ -66,13 +68,81 @@ describe("empty header value does not duplicate auto-headers", () => {
 
   test("Response.json with empty content-type", async () => {
     const head = await rawHead(() => Response.json({ a: 1 }, { headers: { "content-type": "" } }));
-    expect(lines(head, "content-type")).toHaveLength(1);
+    const ct = lines(head, "content-type");
+    expect(ct).toHaveLength(1);
+    expect(ct[0].toLowerCase()).toBe("content-type: application/json;charset=utf-8");
   });
 
   test("both empty at once: one of each", async () => {
     const head = await rawHead(() => new Response("x", { headers: { "content-type": "", "date": "" } }));
     expect(lines(head, "content-type")).toHaveLength(1);
     expect(lines(head, "date")).toHaveLength(1);
+  });
+
+  async function rawHeadStatic(response: Response): Promise<string> {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      development: false,
+      static: { "/": response },
+      fetch() {
+        return new Response("unreachable");
+      },
+    });
+    const socket = net.connect(server.port, "127.0.0.1");
+    try {
+      socket.on("error", () => {});
+      await once(socket, "connect");
+      socket.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+      let raw = "";
+      await new Promise<void>(resolve => {
+        socket.on("data", c => (raw += c.toString("latin1")));
+        socket.on("close", resolve);
+      });
+      return raw.split("\r\n\r\n")[0];
+    } finally {
+      socket.destroy();
+    }
+  }
+
+  test("static route: content-type empty", async () => {
+    const head = await rawHeadStatic(new Response("x", { headers: { "content-type": "" } }));
+    const ct = lines(head, "content-type");
+    expect(ct).toHaveLength(1);
+    expect(ct[0].toLowerCase()).toBe("content-type: text/plain;charset=utf-8");
+  });
+
+  test("static route: date empty", async () => {
+    const head = await rawHeadStatic(new Response("x", { headers: { date: "" } }));
+    const date = lines(head, "date");
+    expect(date).toHaveLength(1);
+    expect(date[0]).toMatch(/^Date: \S/);
+    expect(Number.isFinite(new Date(date[0].slice(6)).getTime())).toBe(true);
+  });
+
+  test("static route: both empty", async () => {
+    const head = await rawHeadStatic(new Response("x", { headers: { "content-type": "", "date": "" } }));
+    const ct = lines(head, "content-type");
+    const date = lines(head, "date");
+    expect({ ct: ct.length, date: date.length }).toEqual({ ct: 1, date: 1 });
+    expect(ct[0].toLowerCase()).toBe("content-type: text/plain;charset=utf-8");
+    expect(date[0]).toMatch(/^Date: \S/);
+  });
+
+  test("static route: non-empty user values preserved", async () => {
+    const head = await rawHeadStatic(
+      new Response("x", { headers: { "content-type": "text/html", "date": "Sun, 06 Oct 2024 13:37:01 GMT" } }),
+    );
+    expect(lines(head, "content-type")).toEqual(["Content-Type: text/html"]);
+    expect(lines(head, "date")).toEqual(["Date: Sun, 06 Oct 2024 13:37:01 GMT"]);
+  });
+
+  test("file route: date empty", async () => {
+    using dir = tempDir("serve-file-empty-date", { "a.txt": "x" });
+    const head = await rawHeadStatic(new Response(Bun.file(path.join(String(dir), "a.txt")), { headers: { date: "" } }));
+    const date = lines(head, "date");
+    expect(date).toHaveLength(1);
+    expect(date[0]).toMatch(/^Date: \S/);
   });
 
   test("non-empty user values are still preserved", async () => {

@@ -2118,3 +2118,38 @@ it("a Bun.listen error: handler that itself throws keeps the server alive", asyn
   expect(stderr).toContain("from-error-handler");
   expect(exitCode).toBe(1);
 });
+
+it("a throwing Bun.spawn ipc handler keeps the parent alive", async () => {
+  // Same keep-alive default as the Bun.listen handlers above, reached
+  // through EventLoop::run_callback instead of the socket error path.
+  using dir = tempDir("spawn-ipc-throw", {
+    "parent.js": `
+      const child = Bun.spawn({
+        cmd: [process.execPath, "child.js"],
+        ipc(message) {
+          if (message === "boom") throw new Error("ipc-boom");
+          console.log("got:" + message);
+        },
+      });
+      await child.exited;
+    `,
+    "child.js": `
+      process.send("boom");
+      process.send("second");
+      setTimeout(() => process.exit(0), 200);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // The second ipc message still ran: the first throw did not exit.
+  expect(stdout).toContain("got:second");
+  expect(stderr).toContain("ipc-boom");
+  // Reported error arms exit 1 for the natural end of the run.
+  expect(exitCode).toBe(1);
+});

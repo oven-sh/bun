@@ -1261,8 +1261,10 @@ test("JSC-protocol clients keep seeing generated positions and Bun's source map"
 }, 30_000);
 // The lazy module reuses the fixture's shift-inducing shape (quote rewrite,
 // blank-line collapse) so its original coordinates differ from the
-// transpiler's output; `poke` runs on a timer so the parse-time breakpoint
-// re-resolution has completed before the line executes.
+// transpiler's output. `poke` runs on an interval so the first call after
+// the debugger thread's breakpoint re-set has landed hits it; calls before
+// that simply return (the child is killed in finally, so the interval
+// cannot leak).
 const lazyShiftFixture = `// leading comment
 
 const value = 'single quotes';
@@ -1275,7 +1277,7 @@ if (1 > 0) {
 export function poke() {
   return value.length;
 }
-setTimeout(poke, 500);
+setInterval(poke, 50);
 `;
 
 test("a by-URL breakpoint set before its script parses is re-resolved through the map", async () => {

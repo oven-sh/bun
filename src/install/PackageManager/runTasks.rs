@@ -391,15 +391,23 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
-                    // A full idle-timeout (default 5 min) against a wedged
-                    // endpoint won't recover on immediate retry; fail fast
-                    // instead of multiplying it by `max_retry_count` (~30 min).
-                    if !task.response.is_timeout() && task.retried < manager.options.max_retry_count
-                    {
+                    if task.retried < manager.options.max_retry_count {
+                        let is_idle_timeout = task.response.is_timeout();
                         task.retried += 1;
                         enqueue::enqueue_network_task(manager, task_ptr);
 
-                        if manager.options.log_level.is_verbose() {
+                        // An idle-timeout (default 5 min) is long enough that
+                        // users see the process as hung; surface each retry so
+                        // the 6x wait isn't silent.
+                        if is_idle_timeout && log_level != Options::LogLevel::Silent {
+                            bun_core::warn!(
+                                "Timeout downloading package manifest <b>{}<r>. Retrying {}/{}...",
+                                bstr::BStr::new(name),
+                                task.retried,
+                                manager.options.max_retry_count,
+                            );
+                            Output::flush();
+                        } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,
@@ -664,10 +672,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    // See the manifest arm above: a full idle-timeout is not a
-                    // transient blip, so don't multiply it by `max_retry_count`.
-                    if !task.response.is_timeout() && task.retried < manager.options.max_retry_count
-                    {
+                    if task.retried < manager.options.max_retry_count {
+                        // Captured before `reset_streaming_for_retry` clears
+                        // `task.response`.
+                        let is_idle_timeout = task.response.is_timeout();
                         task.retried += 1;
                         // Streaming never committed (asserted above), so
                         // the pre-allocated stream is safe to reuse for
@@ -675,7 +683,20 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         task.reset_streaming_for_retry();
                         enqueue::enqueue_network_task(manager, task_ptr);
 
-                        if manager.options.log_level.is_verbose() {
+                        // See the manifest arm above re: surfacing idle-timeouts.
+                        if is_idle_timeout && log_level != Options::LogLevel::Silent {
+                            bun_core::warn!(
+                                "Timeout downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                bstr::BStr::new(extract.name.slice()),
+                                extract.resolution.fmt(
+                                    &manager.lockfile.buffers.string_bytes,
+                                    PathSep::Auto,
+                                ),
+                                task.retried,
+                                manager.options.max_retry_count,
+                            );
+                            Output::flush();
+                        } else if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
                                 manager.log_mut(),
                                 None,

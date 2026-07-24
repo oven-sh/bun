@@ -51,9 +51,9 @@ afterEach(async () => {
 });
 
 // An endpoint that accepts the TCP connection but never writes a byte back
-// should fail after ONE idle-timeout, not be retried `max_retry_count` times
-// (which stretched the default 5-min timeout to ~30 min).
-describe("does not retry after an idle-timeout", () => {
+// must print a `warn:` on each retry so the (default ~30 min) wait isn't
+// silent; previously only `--verbose` surfaced these.
+describe("warns on each retry after an idle-timeout", () => {
   async function silentServer() {
     const state = { connects: 0 };
     const sockets = new Set<net.Socket>();
@@ -78,8 +78,9 @@ describe("does not retry after an idle-timeout", () => {
   const installEnv = {
     ...env,
     // Trip the idle timer in seconds instead of the 5-minute default so
-    // one attempt (and, on a regressed build, all 6) finishes in-test.
+    // the full retry cycle finishes inside the test timeout.
     BUN_CONFIG_HTTP_IDLE_TIMEOUT: "2",
+    BUN_CONFIG_HTTP_RETRY_COUNT: "2",
   };
 
   it("against a silent registry (manifest path)", async () => {
@@ -98,9 +99,14 @@ describe("does not retry after an idle-timeout", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ connects: silent.state.connects, stderr, exitCode }).toEqual({
-      connects: 1,
-      stderr: expect.stringContaining("Timeout"),
+    const warnLines = stderr.split("\n").filter(l => l.includes("warn:"));
+    expect({ connects: silent.state.connects, warnLines, stderr, exitCode }).toEqual({
+      connects: 3,
+      warnLines: [
+        expect.stringContaining("Timeout downloading package manifest any-pkg. Retrying 1/2"),
+        expect.stringContaining("Timeout downloading package manifest any-pkg. Retrying 2/2"),
+      ],
+      stderr: expect.stringContaining("error: Timeout downloading package manifest any-pkg"),
       exitCode: 1,
     });
     expect(stdout).not.toContain("installed");
@@ -143,11 +149,16 @@ describe("does not retry after an idle-timeout", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ connects: silent.state.connects, stderr, exitCode }).toEqual({
-      connects: 1,
-      stderr: expect.stringContaining("Timeout"),
+    const warnLines = stderr.split("\n").filter(l => l.includes("warn:"));
+    expect({ warnLines, stderr, exitCode }).toEqual({
+      warnLines: [
+        expect.stringContaining("Timeout downloading tarball BaR@0.0.2. Retrying 1/2"),
+        expect.stringContaining("Timeout downloading tarball BaR@0.0.2. Retrying 2/2"),
+      ],
+      stderr: expect.stringContaining("error: Timeout downloading tarball BaR@0.0.2"),
       exitCode: 1,
     });
+    expect(silent.state.connects).toBeGreaterThanOrEqual(3);
     expect(stdout).not.toContain("installed");
   }, 60_000);
 });

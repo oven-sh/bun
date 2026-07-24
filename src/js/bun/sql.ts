@@ -717,7 +717,12 @@ const SQL: typeof Bun.SQL = function SQL(
         return result;
       } catch (err) {
         if (!(state.connectionState & ReservedConnectionState.closed)) {
-          await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          try {
+            await run_internal_transaction_sql(`${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`);
+          } catch {
+            // Best-effort; the savepoint may no longer exist if the engine
+            // already rolled the whole transaction back (SQLite SQLITE_FULL/IOERR).
+          }
         }
         throw err;
       }
@@ -761,12 +766,14 @@ const SQL: typeof Bun.SQL = function SQL(
       if ($isArray(transaction_result)) {
         transaction_result = await Promise.all(transaction_result);
       }
-      // at this point we dont need to rollback anymore
-      needs_rollback = false;
       if (BEFORE_COMMIT_OR_ROLLBACK_COMMAND) {
         await run_internal_transaction_sql(BEFORE_COMMIT_OR_ROLLBACK_COMMAND);
+        BEFORE_COMMIT_OR_ROLLBACK_COMMAND = null;
       }
       await run_internal_transaction_sql(COMMIT_COMMAND);
+      // COMMIT succeeded; only now is it safe to skip ROLLBACK on the error path.
+      // SQLite leaves the transaction OPEN when COMMIT fails (e.g. SQLITE_BUSY).
+      needs_rollback = false;
       return resolve(transaction_result);
     } catch (err) {
       try {
@@ -776,8 +783,9 @@ const SQL: typeof Bun.SQL = function SQL(
           }
           await run_internal_transaction_sql(ROLLBACK_COMMAND);
         }
-      } catch (err) {
-        return reject(err);
+      } catch {
+        // Best-effort cleanup; the adapter may have already torn the transaction
+        // down (SQLite SQLITE_FULL/IOERR, Postgres/MySQL on COMMIT failure).
       }
       return reject(err);
     } finally {

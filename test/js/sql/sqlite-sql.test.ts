@@ -1,6 +1,7 @@
 import { randomUUIDv7, SQL } from "bun";
+import { Database } from "bun:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { isDebug, tempDirWithFiles } from "harness";
 import { existsSync } from "node:fs";
 import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
@@ -1144,6 +1145,62 @@ describe("Transactions", () => {
     const accounts = await sql`SELECT * FROM accounts WHERE id = 1`;
     expect(accounts[0].balance).toBe(1002);
   });
+
+  test("failed COMMIT (SQLITE_BUSY) rolls back instead of leaking an open transaction", async () => {
+    const dir = tempDirWithFiles("sqlite-commit-busy", {});
+    const dbPath = path.join(dir, "busy.db");
+
+    const fileSql = new SQL({ adapter: "sqlite", filename: dbPath });
+    try {
+      await fileSql`CREATE TABLE t (v TEXT)`;
+      await fileSql`INSERT INTO t VALUES ('seed')`;
+
+      {
+        // Hold a read lock from a second connection so COMMIT on the writer returns SQLITE_BUSY.
+        using reader = new Database(dbPath);
+        reader.run("BEGIN DEFERRED");
+        reader.query("SELECT COUNT(*) c FROM t").get();
+
+        const beginError = await fileSql
+          .begin(async tx => {
+            await tx`INSERT INTO t VALUES ('in-tx')`;
+          })
+          .then(
+            () => null,
+            e => e,
+          );
+        expect(String(beginError)).toContain("database is locked");
+        reader.run("ROLLBACK");
+      }
+
+      // The connection must no longer be inside the aborted transaction.
+      await fileSql`INSERT INTO t VALUES ('later-1')`;
+      await fileSql`INSERT INTO t VALUES ('later-2')`;
+
+      // A fresh connection must be able to read (no stale RESERVED lock).
+      {
+        using other = new Database(dbPath);
+        const rowsFromOther = other.query("SELECT v FROM t ORDER BY v").all() as { v: string }[];
+        expect(rowsFromOther.map(r => r.v)).toEqual(["later-1", "later-2", "seed"]);
+      }
+
+      // A subsequent begin() on the same instance must work.
+      const second = await fileSql.begin(async tx => {
+        await tx`INSERT INTO t VALUES ('later-3')`;
+        return "ok";
+      });
+      expect(second).toBe("ok");
+
+      // All post-failure writes must be durable after close.
+      await fileSql.close();
+      using final = new Database(dbPath);
+      const finalRows = (final.query("SELECT v FROM t ORDER BY v").all() as { v: string }[]).map(r => r.v);
+      expect(finalRows).toEqual(["later-1", "later-2", "later-3", "seed"]);
+    } finally {
+      await fileSql.close().catch(() => {});
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("SQLite-specific features", () => {
@@ -2014,7 +2071,7 @@ describe("Memory and resource management", () => {
 
     await sql`CREATE TABLE stmt_test (id INTEGER PRIMARY KEY, value TEXT)`;
 
-    const iterations = 10000;
+    const iterations = isDebug ? 1000 : 10000;
 
     for (let i = 0; i < iterations; i++) {
       await sql`INSERT INTO stmt_test (id, value) VALUES (${i}, ${"test" + i})`;

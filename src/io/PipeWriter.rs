@@ -1165,11 +1165,16 @@ pub trait BaseWindowsPipeWriter {
             }
             Source::Tty(tty) => {
                 let p = tty.as_ptr();
-                // SAFETY: tty is heap-allocated (via open_tty heap::alloc) or the
-                // process-static stdin tty; freed in on_tty_close (gated on is_stdin_tty).
-                unsafe { (*p).data = p.cast::<c_void>() };
-                // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
-                unsafe { (*p).close(on_tty_close) };
+                if crate::source::stdin_tty::is_stdin_tty(p) {
+                    // The stdin tty is a process-static singleton shared with
+                    // every reader/writer on fd 0; never uv_close it.
+                } else {
+                    // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc);
+                    // on_tty_close reclaims it.
+                    unsafe { (*p).data = p.cast::<c_void>() };
+                    // SAFETY: tty is a live uv handle; libuv calls on_tty_close after close completes.
+                    unsafe { (*p).close(on_tty_close) };
+                }
             }
         }
         *self.source_mut() = None;
@@ -1298,11 +1303,11 @@ extern "C" fn on_pipe_close(handle: *mut uv::Pipe) {
 extern "C" fn on_tty_close(handle: *mut uv::uv_tty_t) {
     // `close()` set `handle.data = handle` and then called `uv_close(handle)`;
     // libuv passes the same pointer back, so `handle` *is* the tty ptr.
-    // The stdin tty (fd 0) lives in static storage; never free it.
-    if !crate::source::stdin_tty::is_stdin_tty(handle) {
-        // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
-        drop(unsafe { bun_core::heap::take(handle) });
-    }
+    // Caller already gates on `!is_stdin_tty` before scheduling close, so
+    // this is always a heap allocation.
+    debug_assert!(!crate::source::stdin_tty::is_stdin_tty(handle));
+    // SAFETY: non-stdin tty is heap-allocated (open_tty heap::alloc).
+    drop(unsafe { bun_core::heap::take(handle) });
 }
 
 /// Common parent requirements for Windows writers (event loop access + ref counting).

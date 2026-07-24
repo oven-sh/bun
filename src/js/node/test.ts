@@ -852,12 +852,18 @@ function nestingOf(node: TestNode) {
   return depth;
 }
 
-// A non-Error cause crosses the pipe by value (node's v8 serializer preserves
-// primitives and plain objects); the envelope tags it so the parent does not
-// rebuild it as an Error.
+// A non-Error cause crosses the pipe by value; the envelope tags it so the
+// parent does not rebuild it as an Error. The pipe is JSON, so only JSON-safe
+// primitives survive as-is; anything else (BigInt, circular object, Symbol)
+// would throw in JSON.stringify and the catch in emitRunChildEvent would drop
+// the whole event, so carry its inspect() string instead.
 function serializeRunCause(cause: unknown, depth: number) {
   if (Error.isError(cause)) return serializeRunError(cause, depth);
-  return { __proto__: null, nonError: true, value: cause };
+  const t = typeof cause;
+  if (cause === null || t === "string" || t === "number" || t === "boolean") {
+    return { __proto__: null, nonError: true, value: cause };
+  }
+  return { __proto__: null, nonError: true, value: require("node:util").inspect(cause) };
 }
 
 // Errors cross the process boundary as plain JSON; the parent rebuilds an Error.

@@ -9,7 +9,8 @@
 // `debugger;` statement.
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { isASAN, isDebug, tempDir } from "harness";
+import { enableAndWaitForDebuggerPause, spawnInspectorWS } from "./inspector-ws-helper";
 
 type Scope = {
   type: string;
@@ -26,155 +27,51 @@ type InspectResult = {
 async function inspectAtDebugger(files: Record<string, string>, entry: string): Promise<InspectResult> {
   using dir = tempDir("debugger-scopes", files);
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/scopes", entry],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  await using session = await spawnInspectorWS({ args: [entry], cwd: String(dir), urlPath: "/scopes" });
+  const { send, proc } = session;
 
-  // Drain stderr and extract the inspector WebSocket URL from the banner.
-  let stderrBuf = "";
-  let stderrLineBuf = "";
-  const { promise: urlPromise, resolve: urlResolve, reject: urlReject } = Promise.withResolvers<URL>();
-  let urlFound = false;
-  (async () => {
-    const decoder = new TextDecoder();
-    for await (const chunk of proc.stderr as ReadableStream<Uint8Array>) {
-      const text = decoder.decode(chunk);
-      stderrBuf += text;
-      if (urlFound) continue;
-      stderrLineBuf += text;
-      const lines = stderrLineBuf.split("\n");
-      stderrLineBuf = lines.pop() ?? "";
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const u = new URL(trimmed);
-          if (u.protocol === "ws:" || u.protocol === "wss:") {
-            urlFound = true;
-            urlResolve(u);
-            break;
-          }
-        } catch {}
-      }
+  const paused = await enableAndWaitForDebuggerPause(session);
+  expect(paused.reason).toBe("DebuggerStatement");
+  const frame = paused.callFrames[0];
+  const scopeChain: Scope[] = frame.scopeChain;
+
+  const scopeProperties: string[][] = [];
+  for (const scope of scopeChain) {
+    // The global scope is very large and irrelevant here.
+    if (scope.type === "global") {
+      scopeProperties.push(["<global>"]);
+      continue;
     }
-    if (!urlFound) urlReject(new Error(`inspector URL not found in stderr: ${JSON.stringify(stderrBuf)}`));
-  })().catch(err => {
-    if (!urlFound) urlReject(err);
-  });
-
-  const url = await urlPromise;
-  const ws = new WebSocket(url);
-  try {
-    await new Promise<void>((resolve, reject) => {
-      ws.addEventListener("open", () => resolve(), { once: true });
-      ws.addEventListener("error", e => reject(new Error("WebSocket error", { cause: e })), { once: true });
-      ws.addEventListener("close", e => reject(new Error("WebSocket closed", { cause: e })), { once: true });
+    const { properties } = await send("Runtime.getDisplayableProperties", {
+      objectId: scope.object.objectId,
     });
-
-    type Waiter = { resolve: (value: any) => void; reject: (error: Error) => void };
-    let nextId = 1;
-    const pending = new Map<number, Waiter>();
-    const eventWaiters = new Map<string, Waiter>();
-    let closeError: Error | undefined;
-
-    const failAll = (error: Error) => {
-      if (closeError) return;
-      closeError = error;
-      for (const w of pending.values()) w.reject(error);
-      pending.clear();
-      for (const w of eventWaiters.values()) w.reject(error);
-      eventWaiters.clear();
-    };
-    ws.addEventListener("error", e => failAll(new Error("WebSocket error", { cause: e })));
-    ws.addEventListener("close", e => failAll(new Error(`WebSocket closed (${e.code})`, { cause: e })));
-
-    ws.addEventListener("message", ev => {
-      const msg = JSON.parse(String(ev.data));
-      if (typeof msg.id === "number") {
-        const w = pending.get(msg.id);
-        if (w) {
-          pending.delete(msg.id);
-          if (msg.error) w.reject(new Error(JSON.stringify(msg.error)));
-          else w.resolve(msg.result);
-        }
-      } else if (typeof msg.method === "string") {
-        const w = eventWaiters.get(msg.method);
-        if (w) {
-          eventWaiters.delete(msg.method);
-          w.resolve(msg.params);
-        }
-      }
-    });
-
-    const send = (method: string, params: Record<string, unknown> = {}) =>
-      new Promise<any>((resolve, reject) => {
-        if (closeError) return reject(closeError);
-        const id = nextId++;
-        pending.set(id, { resolve, reject });
-        ws.send(JSON.stringify({ id, method, params }));
-      });
-
-    const waitForEvent = (method: string) =>
-      new Promise<any>((resolve, reject) => {
-        if (closeError) return reject(closeError);
-        eventWaiters.set(method, { resolve, reject });
-      });
-
-    await Promise.all([
-      send("Inspector.enable"),
-      send("Debugger.enable"),
-      send("Debugger.setBreakpointsActive", { active: true }),
-      send("Debugger.setPauseOnDebuggerStatements", { enabled: true }),
-    ]);
-
-    const pausedPromise = waitForEvent("Debugger.paused");
-    send("Inspector.initialized").catch(() => {});
-
-    const paused = await pausedPromise;
-    expect(paused.reason).toBe("DebuggerStatement");
-    const frame = paused.callFrames[0];
-    const scopeChain: Scope[] = frame.scopeChain;
-
-    const scopeProperties: string[][] = [];
-    for (const scope of scopeChain) {
-      // The global scope is very large and irrelevant here.
-      if (scope.type === "global") {
-        scopeProperties.push(["<global>"]);
-        continue;
-      }
-      const { properties } = await send("Runtime.getDisplayableProperties", {
-        objectId: scope.object.objectId,
-      });
-      scopeProperties.push((properties as Array<{ name: string }>).map(p => p.name).sort());
-    }
-
-    await send("Debugger.resume");
-
-    // The debuggee keeps its event loop alive while the inspector connection
-    // is open, so close before awaiting exit.
-    ws.close();
-
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toContain("reached-end");
-    expect(exitCode).toBe(0);
-
-    return {
-      functionName: frame.functionName,
-      scopeChain,
-      scopeProperties,
-    };
-  } finally {
-    try {
-      ws.close();
-    } catch {}
+    scopeProperties.push((properties as Array<{ name: string }>).map(p => p.name).sort());
   }
+
+  await send("Debugger.resume");
+
+  // The debuggee keeps its event loop alive while the inspector connection is
+  // open, so close before awaiting exit.
+  session.close();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toContain("reached-end");
+  expect(exitCode).toBe(0);
+
+  return {
+    functionName: frame.functionName,
+    scopeChain,
+    scopeProperties,
+  };
 }
 
-describe("Debugger.paused module scope chain", () => {
+// The WebSocket inspector transport is unreliable under the CI release-ASAN
+// build (test/expectations.txt quarantines cli/inspect/inspect.test.ts there
+// for the same reason): the debuggee drops the socket with code 1006 shortly
+// after accept. Skip on that lane only. The local `bun bd` debug build also
+// has ASAN enabled but does not exhibit this, so keep running there (isDebug)
+// so the fail-before / pass-after proof is observable.
+describe.skipIf(isASAN && !isDebug).concurrent("Debugger.paused module scope chain", () => {
   test("ESM top-level let/const/var/function appear in the module scope", async () => {
     const { functionName, scopeChain, scopeProperties } = await inspectAtDebugger(
       {

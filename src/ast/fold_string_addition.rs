@@ -7,8 +7,8 @@ use bun_alloc::Arena; // bumpalo::Bump re-export
 // provide the minimal surface here.
 
 #[inline]
-fn store_append_string(s: E::EString) -> StoreRef<E::EString> {
-    data::Store::append(s)
+fn store_append_string(alloc: bun_alloc::AstAlloc, s: E::EString) -> StoreRef<E::EString> {
+    data::Store::append(alloc, s)
 }
 
 /// Link `other` onto `lhs`'s rope tail.
@@ -42,17 +42,18 @@ fn estring_push(lhs: &mut E::EString, mut other: StoreRef<E::EString>) {
 
 /// Deep-copy the `next` chain into fresh Store nodes so mutating the result
 /// can't alias an inlined-enum's string.
-fn clone_rope_nodes(s: &E::EString) -> E::EString {
+fn clone_rope_nodes(alloc: bun_alloc::AstAlloc, s: &E::EString) -> E::EString {
     let mut root = s.shallow_clone();
     if let Some(first) = root.next {
         // Clone the first link, then walk the freshly-cloned chain via
         // `StoreRef` (safe `Deref`/`DerefMut`) instead of a raw `*mut`
         // cursor. Each cloned node's `next` still points at the original
         // chain (shallow clone), so re-clone link-by-link.
-        let mut tail: StoreRef<E::EString> = store_append_string(first.get().shallow_clone());
+        let mut tail: StoreRef<E::EString> =
+            store_append_string(alloc, first.get().shallow_clone());
         root.next = Some(tail);
         while let Some(next) = tail.next {
-            let cloned = store_append_string(next.get().shallow_clone());
+            let cloned = store_append_string(alloc, next.get().shallow_clone());
             tail.next = Some(cloned);
             tail = cloned;
         }
@@ -69,6 +70,7 @@ fn clone_rope_nodes(s: &E::EString) -> E::EString {
 /// besides inlined enums comes up to set this to true, please rename the
 /// variable and document it.
 fn join_strings(
+    alloc: bun_alloc::AstAlloc,
     left: &E::EString,
     right: &E::EString,
     has_inlined_enum_poison: bool,
@@ -85,7 +87,7 @@ fn join_strings(
         //     D = B + "d",
         //   };
         //   console.log(A.B, A.D);
-        clone_rope_nodes(left)
+        clone_rope_nodes(alloc, left)
     } else {
         left.shallow_clone()
     };
@@ -98,11 +100,14 @@ fn join_strings(
     //     C = ("3" + B) + "4",
     //   };
     //   console.log(A.B, A.C);
-    let rhs_clone = store_append_string(if has_inlined_enum_poison {
-        clone_rope_nodes(right)
-    } else {
-        right.shallow_clone()
-    });
+    let rhs_clone = store_append_string(
+        alloc,
+        if has_inlined_enum_poison {
+            clone_rope_nodes(alloc, right)
+        } else {
+            right.shallow_clone()
+        },
+    );
 
     estring_push(&mut new, rhs_clone);
     new.prefer_template = new.prefer_template || rhs_clone.get().prefer_template;
@@ -146,6 +151,7 @@ pub enum FoldStringAdditionKind {
 /// NOTE: unlike esbuild's js_ast_helpers.FoldStringAddition, this does mutate
 /// the input AST in the case of rope strings
 pub fn fold_string_addition(
+    alloc: bun_alloc::AstAlloc,
     l: Expr,
     r: Expr,
     bump: &Arena,
@@ -160,7 +166,7 @@ pub fn fold_string_addition(
         // See comment on `FoldStringAdditionKind` for examples
         match rhs.data {
             Data::EString(_) | Data::ETemplate(_) => {
-                if let Some(str) = lhs.to_string_expr_without_side_effects(bump) {
+                if let Some(str) = lhs.to_string_expr_without_side_effects(alloc, bump) {
                     lhs = str;
                 }
             }
@@ -170,7 +176,7 @@ pub fn fold_string_addition(
 
     match lhs.data {
         Data::EString(left) => {
-            if let Some(str) = rhs.to_string_expr_without_side_effects(bump) {
+            if let Some(str) = rhs.to_string_expr_without_side_effects(alloc, bump) {
                 rhs = str;
             }
 
@@ -183,7 +189,13 @@ pub fn fold_string_addition(
                                 || matches!(r.data, Data::EInlinedEnum(_));
 
                             return Some(Expr::init(
-                                join_strings(left.get(), right.get(), has_inlined_enum_poison),
+                                alloc,
+                                join_strings(
+                                    alloc,
+                                    left.get(),
+                                    right.get(),
+                                    has_inlined_enum_poison,
+                                ),
                                 lhs.loc,
                             ));
                         }
@@ -192,10 +204,12 @@ pub fn fold_string_addition(
                     Data::ETemplate(right) => {
                         if right.head.is_utf8() {
                             return Some(Expr::init(
+                                alloc,
                                 E::Template {
                                     tag: None,
                                     parts: right.parts,
                                     head: e::TemplateContents::Cooked(join_strings(
+                                        alloc,
                                         left.get(),
                                         right.head.cooked(),
                                         matches!(l.data, Data::EInlinedEnum(_)),
@@ -227,7 +241,7 @@ pub fn fold_string_addition(
 
         Data::ETemplate(mut left) => {
             // "`${x}` + 0" => "`${x}` + '0'"
-            if let Some(str) = rhs.to_string_expr_without_side_effects(bump) {
+            if let Some(str) = rhs.to_string_expr_without_side_effects(alloc, bump) {
                 rhs = str;
             }
 
@@ -248,6 +262,7 @@ pub fn fold_string_addition(
                                 let last_tail = &left.parts()[i].tail;
                                 if last_tail.is_utf8() {
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
+                                        alloc,
                                         last_tail.cooked(),
                                         right.get(),
                                         matches!(r.data, Data::EInlinedEnum(_)),
@@ -257,6 +272,7 @@ pub fn fold_string_addition(
                                 }
                             } else if left.head.is_utf8() {
                                 let new_head = join_strings(
+                                    alloc,
                                     left.head.cooked(),
                                     right.get(),
                                     matches!(r.data, Data::EInlinedEnum(_)),
@@ -274,6 +290,7 @@ pub fn fold_string_addition(
                                 let last_tail = &left.parts()[i].tail;
                                 if last_tail.is_utf8() && right.head.is_utf8() {
                                     let new_tail = e::TemplateContents::Cooked(join_strings(
+                                        alloc,
                                         last_tail.cooked(),
                                         right.head.cooked(),
                                         matches!(r.data, Data::EInlinedEnum(_)),
@@ -290,6 +307,7 @@ pub fn fold_string_addition(
                                 }
                             } else if left.head.is_utf8() && right.head.is_utf8() {
                                 let new_head = join_strings(
+                                    alloc,
                                     left.head.cooked(),
                                     right.head.cooked(),
                                     matches!(r.data, Data::EInlinedEnum(_)),

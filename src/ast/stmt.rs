@@ -9,10 +9,11 @@ pub struct Stmt {
 }
 
 impl Stmt {
-    pub fn assign(a: Expr, b: Expr) -> Stmt {
+    pub fn assign(alloc: bun_alloc::AstAlloc, a: Expr, b: Expr) -> Stmt {
         Stmt::alloc(
+            alloc,
             S::SExpr {
-                value: Expr::assign(a, b),
+                value: Expr::assign(alloc, a, b),
                 ..Default::default()
             },
             a.loc,
@@ -88,7 +89,11 @@ impl Stmt {
     }
 
     #[inline]
-    fn comptime_alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
+    fn comptime_alloc<T: StatementData>(
+        alloc: bun_alloc::AstAlloc,
+        orig_data: T,
+        loc: crate::Loc,
+    ) -> Stmt {
         Stmt {
             loc,
             data: orig_data.store_alloc(alloc),
@@ -107,8 +112,12 @@ impl Stmt {
     }
 
     #[inline]
-    pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {
-        Stmt::comptime_alloc(orig_data, loc)
+    pub fn alloc<T: StatementData>(
+        alloc: bun_alloc::AstAlloc,
+        orig_data: T,
+        loc: crate::Loc,
+    ) -> Stmt {
+        Stmt::comptime_alloc(alloc, orig_data, loc)
     }
 }
 

@@ -46,10 +46,10 @@ pub struct Array {
     pub was_originally_macro: bool,
     pub close_bracket_loc: crate::Loc,
 }
-impl Default for Array {
-    fn default() -> Self {
+impl Array {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
-            items: bun_alloc::AstAlloc::vec(),
+            items: alloc.vec(),
             comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
@@ -76,7 +76,7 @@ impl Array {
 impl Array {
     pub fn inline_spread_of_array_literals(
         &mut self,
-        _bump: &Bump,
+        alloc: bun_alloc::AstAlloc,
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
@@ -85,7 +85,7 @@ impl Array {
         // over invalid bit patterns. Push into reserved capacity instead —
         // same allocation profile (one upfront `with_capacity`), no uninit.
         let mut out: ExprNodeList =
-            ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
+            alloc.vec_with_capacity(estimated_count + self.items.len_u32() as usize);
         // Reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` does not overlap a shared borrow of `self`.
         let items_len = self.items.len_u32() as usize;
@@ -96,7 +96,7 @@ impl Array {
                     if let crate::expr::Data::EArray(inner) = &val.value.data {
                         for inner_item in inner.items.slice() {
                             if matches!(inner_item.data, crate::expr::Data::EMissing(_)) {
-                                out.push(Expr::init(Undefined {}, inner_item.loc));
+                                out.push(Expr::init(alloc, Undefined {}, inner_item.loc));
                             } else {
                                 out.push(*inner_item);
                             }
@@ -222,11 +222,11 @@ pub struct New {
 
     pub close_parens_loc: crate::Loc,
 }
-impl Default for New {
-    fn default() -> Self {
+impl New {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: bun_alloc::AstAlloc::vec(),
+            args: alloc.vec(),
             can_be_unwrapped_if_unused: CallUnwrap::Never,
             close_parens_loc: crate::Loc::EMPTY,
         }
@@ -274,11 +274,11 @@ pub struct Call {
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
 }
-impl Default for Call {
-    fn default() -> Self {
+impl Call {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
-            args: bun_alloc::AstAlloc::vec(),
+            args: alloc.vec(),
             optional_chain: None,
             is_direct_eval: false,
             close_paren_loc: crate::Loc::EMPTY,
@@ -623,12 +623,12 @@ pub struct JSXElement {
 
     pub close_tag_loc: crate::Loc,
 }
-impl Default for JSXElement {
-    fn default() -> Self {
+impl JSXElement {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
             tag: None,
-            properties: bun_alloc::AstAlloc::vec(),
-            children: bun_alloc::AstAlloc::vec(),
+            properties: alloc.vec(),
+            children: alloc.vec(),
             key_prop_index: -1,
             flags: crate::flags::JSXElementBitset::default(),
             close_tag_loc: crate::Loc::EMPTY,
@@ -1210,10 +1210,10 @@ pub struct Object {
 
     pub close_brace_loc: crate::Loc,
 }
-impl Default for Object {
-    fn default() -> Self {
+impl Object {
+    pub fn empty(alloc: bun_alloc::AstAlloc) -> Self {
         Self {
-            properties: bun_alloc::AstAlloc::vec(),
+            properties: alloc.vec(),
             comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
@@ -1286,15 +1286,6 @@ impl From<SetError> for crate::Error {
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
 // Sort helpers stay in the gated impl below.
 impl Object {
-    pub const EMPTY: Object = Object {
-        properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: crate::Loc::EMPTY,
-        is_single_line: false,
-        is_parenthesized: false,
-        was_originally_macro: false,
-        close_brace_loc: crate::Loc::EMPTY,
-    };
-
     pub fn get(&self, key: &[u8]) -> Option<Expr> {
         self.as_property(key).map(|q| q.expr)
     }
@@ -1330,35 +1321,49 @@ impl Object {
         false
     }
 
-    pub fn put(&mut self, _bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+    pub fn put(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        key: &[u8],
+        expr: Expr,
+    ) -> Result<(), AllocError> {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
-            let key = Expr::init(EString::init(key), expr.loc);
+            let key = Expr::init(alloc, EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
                     flags: own_key_property_flags(&key),
                     key: Some(key),
                     value: Some(expr),
-                    ..G::Property::default()
+                    ..G::Property::empty(alloc)
                 },
             );
         }
         Ok(())
     }
 
-    pub fn put_string(&mut self, bump: &Bump, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+    pub fn put_string(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), AllocError> {
         self.put(
-            bump,
+            alloc,
             key,
-            Expr::init(EString::init(value), crate::Loc::EMPTY),
+            Expr::init(alloc, EString::init(value), crate::Loc::EMPTY),
         )
     }
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
     /// the leaf `E.Object` expression.
-    pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
+    pub fn get_or_put_object(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        rope: &Rope,
+    ) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1371,7 +1376,7 @@ impl Object {
                     };
                     if let Some(last) = array.items.last() {
                         if let crate::expr::Data::EObject(mut obj) = last.data {
-                            return obj.get_or_put_object(next, _bump);
+                            return obj.get_or_put_object(alloc, next);
                         }
                         return Err(SetError::Clobber);
                     }
@@ -1379,7 +1384,7 @@ impl Object {
                 }
                 crate::expr::Data::EObject(mut object) => {
                     if let Some(next) = rope.next_ref() {
-                        return object.get_or_put_object(next, _bump);
+                        return object.get_or_put_object(alloc, next);
                     }
                     return Ok(existing);
                 }
@@ -1388,9 +1393,9 @@ impl Object {
         }
 
         if let Some(next) = rope.next_ref() {
-            let obj = Expr::init(Object::default(), rope.head.loc);
+            let obj = Expr::init(alloc, Object::empty(alloc), rope.head.loc);
             let out = match obj.data {
-                crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
+                crate::expr::Data::EObject(mut o) => o.get_or_put_object(alloc, next)?,
                 _ => unreachable!(),
             };
             VecExt::append(
@@ -1399,20 +1404,20 @@ impl Object {
                     key: Some(rope.head),
                     value: Some(obj),
                     flags: own_key_property_flags(&rope.head),
-                    ..G::Property::default()
+                    ..G::Property::empty(alloc)
                 },
             );
             return Ok(out);
         }
 
-        let out = Expr::init(Object::default(), rope.head.loc);
+        let out = Expr::init(alloc, Object::empty(alloc), rope.head.loc);
         VecExt::append(
             &mut self.properties,
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
                 flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
+                ..G::Property::empty(alloc)
             },
         );
         Ok(out)
@@ -1436,14 +1441,14 @@ impl Object {
     /// Appends a property without checking for an existing key. Callers that
     /// need duplicate detection must check `as_property` with UTF-8 bytes
     /// first — a UTF-16 EString key's raw `data` view is not byte-comparable.
-    pub fn append_property(&mut self, key: Expr, value: Expr) {
+    pub fn append_property(&mut self, alloc: bun_alloc::AstAlloc, key: Expr, value: Expr) {
         VecExt::append(
             &mut self.properties,
             G::Property {
                 flags: own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
-                ..G::Property::default()
+                ..G::Property::empty(alloc)
             },
         );
     }
@@ -2046,7 +2051,8 @@ impl TemplateContents {
 
 impl Template {
     /// "`a${'b'}c`" => "`abc`"
-    pub fn fold(&mut self, bump: &Bump, loc: crate::Loc) -> Expr {
+    pub fn fold(&mut self, alloc: bun_alloc::AstAlloc, loc: crate::Loc) -> Expr {
+        let bump = alloc.arena();
         if self.tag.is_some()
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
@@ -2062,12 +2068,12 @@ impl Template {
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
 
         if self.parts().is_empty() {
-            return Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+            return Expr::init(alloc, core::mem::take(self.head.cooked_mut()), loc);
         }
 
         let mut parts =
             bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
-        let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
+        let mut head = Expr::init(alloc, core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
             // Field-wise copy (TemplatePart is not `Copy` only
             // because `EString` does not derive it; all fields are structurally `Copy`).
@@ -2083,24 +2089,25 @@ impl Template {
             match &part.value.data {
                 crate::expr::Data::ENumber(n) => {
                     if let Some(s) = n.to_string(bump) {
-                        part.value = Expr::init(EString::init(&s), part.value.loc);
+                        part.value = Expr::init(alloc, EString::init(&s), part.value.loc);
                     }
                 }
                 crate::expr::Data::ENull(_) => {
-                    part.value = Expr::init(EString::init(b"null"), part.value.loc);
+                    part.value = Expr::init(alloc, EString::init(b"null"), part.value.loc);
                 }
                 crate::expr::Data::EBoolean(b) => {
                     part.value = Expr::init(
+                        alloc,
                         EString::init(if b.value { &b"true"[..] } else { &b"false"[..] }),
                         part.value.loc,
                     );
                 }
                 crate::expr::Data::EUndefined(_) => {
-                    part.value = Expr::init(EString::init(b"undefined"), part.value.loc);
+                    part.value = Expr::init(alloc, EString::init(b"undefined"), part.value.loc);
                 }
                 crate::expr::Data::EBigInt(value) => {
                     if !BigInt::has_radix(&value.value) {
-                        part.value = Expr::init(EString::init(&value.value), part.value.loc);
+                        part.value = Expr::init(alloc, EString::init(&value.value), part.value.loc);
                     }
                 }
                 _ => {}
@@ -2129,6 +2136,7 @@ impl Template {
                             .expect("infallible: variant checked")
                             .push(
                                 Expr::init(
+                                    alloc,
                                     part.value
                                         .data
                                         .e_string()
@@ -2147,10 +2155,14 @@ impl Template {
                             .e_string_mut()
                             .expect("infallible: variant checked")
                             .push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
+                                Expr::init(
+                                    alloc,
+                                    core::mem::take(part.tail.cooked_mut()),
+                                    part.tail_loc,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                     }
 
@@ -2170,6 +2182,7 @@ impl Template {
                         {
                             prev_part.tail.cooked_mut().push(
                                 Expr::init(
+                                    alloc,
                                     part.value
                                         .data
                                         .e_string()
@@ -2185,10 +2198,14 @@ impl Template {
 
                         if part.tail.cooked().len() > 0 {
                             prev_part.tail.cooked_mut().push(
-                                Expr::init(core::mem::take(part.tail.cooked_mut()), part.tail_loc)
-                                    .data
-                                    .e_string_mut()
-                                    .unwrap(),
+                                Expr::init(
+                                    alloc,
+                                    core::mem::take(part.tail.cooked_mut()),
+                                    part.tail_loc,
+                                )
+                                .data
+                                .e_string_mut()
+                                .unwrap(),
                             );
                         }
                     } else {
@@ -2212,6 +2229,7 @@ impl Template {
         // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
         // provenance for downstream mutators.
         Expr::init(
+            alloc,
             Template {
                 tag: None,
                 parts: crate::StoreSlice::from_bump(parts),

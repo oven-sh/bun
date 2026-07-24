@@ -139,12 +139,13 @@ impl Expr {
     }
 
     /// Materialize an immutable JSON leaf/container value as an `Expr`.
-    pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
+    pub fn from_json_value(alloc: bun_alloc::AstAlloc, value: &E::JsonValue, loc: Loc) -> Expr {
         match value {
-            E::JsonValue::Null => Expr::init(E::Null, loc),
-            E::JsonValue::Boolean(value) => Expr::init(E::Boolean { value: *value }, loc),
-            E::JsonValue::Number(n) => Expr::init(*n, loc),
+            E::JsonValue::Null => Expr::init(alloc, E::Null, loc),
+            E::JsonValue::Boolean(value) => Expr::init(alloc, E::Boolean { value: *value }, loc),
+            E::JsonValue::Number(n) => Expr::init(alloc, *n, loc),
             E::JsonValue::String(s) => Expr::init(
+                alloc,
                 E::String {
                     data: *s,
                     ..Default::default()
@@ -163,9 +164,13 @@ impl Expr {
     }
 
     /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
-    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+    pub fn for_each_property(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        mut f: impl FnMut(&[u8], Loc, Expr),
+    ) {
         let _: Result<(), core::convert::Infallible> =
-            self.try_for_each_property(|key, loc, value| {
+            self.try_for_each_property(alloc, |key, loc, value| {
                 f(key, loc, value);
                 Ok(())
             });
@@ -174,6 +179,7 @@ impl Expr {
     /// [`Expr::for_each_property`] with a fallible callback; stops at the first `Err`.
     pub fn try_for_each_property<Error>(
         &self,
+        alloc: bun_alloc::AstAlloc,
         mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
     ) -> Result<(), Error> {
         match &self.data {
@@ -195,7 +201,7 @@ impl Expr {
                     f(
                         property.key.slice(),
                         property.key_loc,
-                        Expr::from_json_value(&property.value, property.key_loc),
+                        Expr::from_json_value(alloc, &property.value, property.key_loc),
                     )?;
                 }
             }
@@ -214,7 +220,7 @@ impl Expr {
     }
 
     /// Look up `name` among the properties of an object-literal expression.
-    pub fn as_property(&self, name: &[u8]) -> Option<Query> {
+    pub fn as_property(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<Query> {
         match &self.data {
             Data::EObject(obj) => {
                 if obj.properties.len_u32() == 0 {
@@ -230,7 +236,7 @@ impl Expr {
                     .enumerate()
                     .find(|(_, p)| p.key.slice() == name)?;
                 Some(Query {
-                    expr: Expr::from_json_value(&prop.value, prop.key_loc),
+                    expr: Expr::from_json_value(alloc, &prop.value, prop.key_loc),
                     loc: prop.key_loc,
                     i: i as u32,
                 })
@@ -239,12 +245,12 @@ impl Expr {
         }
     }
 
-    pub fn get(&self, name: &[u8]) -> Option<Expr> {
-        self.as_property(name).map(|q| q.expr)
+    pub fn get(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<Expr> {
+        self.as_property(alloc, name).map(|q| q.expr)
     }
 
-    pub fn get_object(&self, name: &[u8]) -> Option<Expr> {
-        self.as_property(name)
+    pub fn get_object(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<Expr> {
+        self.as_property(alloc, name)
             .and_then(|q| q.expr.is_object().then_some(q.expr))
     }
 
@@ -352,7 +358,13 @@ impl Expr {
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
     /// This does not handle edgecases like `-1` or stringifying arbitrary property lookups.
-    pub fn get_by_index(&self, index: u32, index_str: &[u8], bump: &Bump) -> Option<Expr> {
+    pub fn get_by_index(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        index: u32,
+        index_str: &[u8],
+        bump: &Bump,
+    ) -> Option<Expr> {
         match &self.data {
             Data::EArray(array) => {
                 if index >= array.items.len_u32() {
@@ -363,14 +375,14 @@ impl Expr {
             Data::EArrayJSON(array) => {
                 let items = array.get().items();
                 let item = items.get(index as usize)?;
-                Some(Expr::from_json_value(item, self.loc))
+                Some(Expr::from_json_value(alloc, item, self.loc))
             }
             Data::EObjectJSON(object) => object
                 .get()
                 .properties()
                 .iter()
                 .find(|p| p.key.slice() == index_str)
-                .map(|p| Expr::from_json_value(&p.value, p.key_loc)),
+                .map(|p| Expr::from_json_value(alloc, &p.value, p.key_loc)),
             Data::EObject(object) => {
                 for prop in object.properties.slice_const() {
                     let Some(key) = &prop.key else { continue };
@@ -398,6 +410,7 @@ impl Expr {
                     // However, since this is only used in the JSON prettifier for `bun pm view`, it's not a blocker for shipping.
                     if slice.len() > index as usize {
                         return Some(Expr::init(
+                            alloc,
                             E::String {
                                 data: Str::new(&slice[index as usize..][..1]),
                                 ..Default::default()
@@ -424,7 +437,12 @@ impl Expr {
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
     // The arena is threaded explicitly because get_by_index allocates an
     // E.String slice into &Bump.
-    pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
+    pub fn get_path_may_be_index(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        bump: &Bump,
+        name: &[u8],
+    ) -> Option<Expr> {
         if name.is_empty() {
             return None;
         }
@@ -436,7 +454,7 @@ impl Expr {
                     let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
-                        base_expr = base_expr.get(key)?;
+                        base_expr = base_expr.get(alloc, key)?;
                     }
 
                     let index_str: &[u8] = &name[idx + 1..end_idx];
@@ -447,22 +465,22 @@ impl Expr {
                     } else {
                         b""
                     };
-                    let result = base_expr.get_by_index(index, index_str, bump)?;
+                    let result = base_expr.get_by_index(alloc, index, index_str, bump)?;
                     if !rest.is_empty() {
-                        return result.get_path_may_be_index(bump, rest);
+                        return result.get_path_may_be_index(alloc, bump, rest);
                     }
                     return Some(result);
                 }
                 b'.' => {
                     let key = &name[..idx];
-                    let sub_expr = self.get(key)?;
+                    let sub_expr = self.get(alloc, key)?;
                     let subpath: &[u8] = if name.len() > idx {
                         &name[idx + 1..]
                     } else {
                         b""
                     };
                     if !subpath.is_empty() {
-                        return sub_expr.get_path_may_be_index(bump, subpath);
+                        return sub_expr.get_path_may_be_index(alloc, bump, subpath);
                     }
                     return Some(sub_expr);
                 }
@@ -470,13 +488,18 @@ impl Expr {
             }
         }
 
-        self.get(name)
+        self.get(alloc, name)
     }
 
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
+    pub fn set(
+        &mut self,
+        alloc: bun_alloc::AstAlloc,
+        name: &[u8],
+        value: Expr,
+    ) -> Result<(), AllocError> {
         debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
             unreachable!()
@@ -497,6 +520,7 @@ impl Expr {
             &mut obj.properties,
             G::Property {
                 key: Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(name),
                         ..Default::default()
@@ -504,7 +528,7 @@ impl Expr {
                     Loc::EMPTY,
                 )),
                 value: Some(value),
-                ..Default::default()
+                ..G::Property::empty(alloc)
             },
         );
         Ok(())
@@ -515,7 +539,7 @@ impl Expr {
     /// Sets the value of a property to a string, creating it if it doesn't exist.
     pub fn set_string(
         expr: &mut Expr,
-        _bump: &Bump,
+        alloc: bun_alloc::AstAlloc,
         name: &[u8],
         value: &[u8],
     ) -> Result<(), AllocError> {
@@ -531,6 +555,7 @@ impl Expr {
             };
             if key_str.eql_bytes(name) {
                 prop.value = Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
@@ -545,6 +570,7 @@ impl Expr {
             &mut obj.properties,
             G::Property {
                 key: Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(name),
                         ..Default::default()
@@ -552,13 +578,14 @@ impl Expr {
                     Loc::EMPTY,
                 )),
                 value: Some(Expr::init(
+                    alloc,
                     E::String {
                         data: Str::new(value),
                         ..Default::default()
                     },
                     Loc::EMPTY,
                 )),
-                ..Default::default()
+                ..G::Property::empty(alloc)
             },
         );
         Ok(())
@@ -566,11 +593,12 @@ impl Expr {
 
     pub fn get_string<'b>(
         &self,
+        alloc: bun_alloc::AstAlloc,
         bump: &'b Bump,
         name: &[u8],
     ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
         let expr = self;
-        if let Some(q) = expr.as_property(name) {
+        if let Some(q) = expr.as_property(alloc, name) {
             if let Some(str) = q.expr.as_string(bump) {
                 return Ok(Some((str, q.expr.loc)));
             }
@@ -578,8 +606,8 @@ impl Expr {
         Ok(None)
     }
 
-    pub fn get_number(&self, name: &[u8]) -> Option<(f64, Loc)> {
-        if let Some(q) = self.as_property(name) {
+    pub fn get_number(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<(f64, Loc)> {
+        if let Some(q) = self.as_property(alloc, name) {
             if let Some(num) = q.expr.as_number() {
                 return Some((num, q.expr.loc));
             }
@@ -589,10 +617,11 @@ impl Expr {
 
     pub fn get_string_cloned<'b>(
         &self,
+        alloc: bun_alloc::AstAlloc,
         bump: &'b Bump,
         name: &[u8],
     ) -> Result<Option<&'b [u8]>, AllocError> {
-        match self.as_property(name) {
+        match self.as_property(alloc, name) {
             Some(q) => q.expr.as_string_cloned(bump),
             None => Ok(None),
         }
@@ -601,8 +630,8 @@ impl Expr {
     // `Query` holds `expr` by value (Copy). The iterator stores the
     // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
-    pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
-        let q = self.as_property(name)?;
+    pub fn get_array(&self, alloc: bun_alloc::AstAlloc, name: &[u8]) -> Option<ArrayIterator> {
+        let q = self.as_property(alloc, name)?;
         q.expr.as_array()
     }
 }
@@ -626,7 +655,7 @@ pub enum ArrayIterator {
 }
 
 impl ArrayIterator {
-    pub fn next(&mut self) -> Option<Expr> {
+    pub fn next(&mut self, alloc: bun_alloc::AstAlloc) -> Option<Expr> {
         match self {
             ArrayIterator::Full { array, index } => {
                 if *index >= array.items.len_u32() {
@@ -639,7 +668,7 @@ impl ArrayIterator {
             ArrayIterator::Json { array, index, loc } => {
                 let item = array.get().items().get(*index as usize)?;
                 *index += 1;
-                Some(Expr::from_json_value(item, *loc))
+                Some(Expr::from_json_value(alloc, item, *loc))
             }
         }
     }
@@ -719,11 +748,17 @@ impl Expr {
     // PERF: `Op::Code` does not derive `ConstParamTy` (Op.rs owns the enum);
     // pass at runtime here. Revisit once `Code` gains `ConstParamTy` — call
     // sites are a handful of literal ops.
-    pub fn join_with_left_associative_op(op: Op::Code, a: Expr, b: Expr) -> Expr {
-        Self::join_with_left_associative_op_with_check(op, a, b, bun_core::StackCheck::init())
+    pub fn join_with_left_associative_op(
+        alloc: bun_alloc::AstAlloc,
+        op: Op::Code,
+        a: Expr,
+        b: Expr,
+    ) -> Expr {
+        Self::join_with_left_associative_op_with_check(alloc, op, a, b, bun_core::StackCheck::init())
     }
 
     fn join_with_left_associative_op_with_check(
+        alloc: bun_alloc::AstAlloc,
         op: Op::Code,
         a: Expr,
         b: Expr,
@@ -734,6 +769,7 @@ impl Expr {
             if let Data::EBinary(mut comma) = a.data {
                 if comma.op == crate::OpCode::BinComma {
                     comma.right = Self::join_with_left_associative_op_with_check(
+                        alloc,
                         op,
                         comma.right,
                         b,
@@ -748,8 +784,10 @@ impl Expr {
             if let Data::EBinary(binary) = b.data {
                 if binary.op == op {
                     return Self::join_with_left_associative_op_with_check(
+                        alloc,
                         op,
                         Self::join_with_left_associative_op_with_check(
+                            alloc,
                             op,
                             a,
                             binary.left,
@@ -765,6 +803,7 @@ impl Expr {
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
         Expr::init(
+            alloc,
             E::Binary {
                 op,
                 left: a,
@@ -774,8 +813,7 @@ impl Expr {
         )
     }
 
-    // Uses the thread-local `data::Store`, so no allocator parameter is needed.
-    pub fn join_with_comma(self, b: Expr) -> Expr {
+    pub fn join_with_comma(self, alloc: bun_alloc::AstAlloc, b: Expr) -> Expr {
         if self.is_missing() {
             return b;
         }
@@ -783,6 +821,7 @@ impl Expr {
             return self;
         }
         Expr::init(
+            alloc,
             E::Binary {
                 op: crate::OpCode::BinComma,
                 left: self,
@@ -792,15 +831,15 @@ impl Expr {
         )
     }
 
-    pub fn join_all_with_comma(all: &[Expr]) -> Expr {
+    pub fn join_all_with_comma(alloc: bun_alloc::AstAlloc, all: &[Expr]) -> Expr {
         debug_assert!(!all.is_empty());
         match all.len() {
             1 => all[0],
-            2 => Expr::join_with_comma(all[0], all[1]),
+            2 => Expr::join_with_comma(all[0], alloc, all[1]),
             _ => {
                 let mut expr = all[0];
                 for it in &all[1..] {
-                    expr = Expr::join_with_comma(expr, *it);
+                    expr = Expr::join_with_comma(expr, alloc, *it);
                 }
                 expr
             }
@@ -1030,7 +1069,7 @@ impl Expr {
     }
 
     #[inline]
-    pub fn init<T: IntoExprData>(st: T, loc: Loc) -> Expr {
+    pub fn init<T: IntoExprData>(alloc: bun_alloc::AstAlloc, st: T, loc: Loc) -> Expr {
         Expr {
             loc,
             data: st.into_data_store(alloc),
@@ -1047,8 +1086,9 @@ impl Expr {
         matches!(self.data, Data::EMissing(_))
     }
     #[inline]
-    pub fn assign(a: Expr, b: Expr) -> Expr {
+    pub fn assign(alloc: bun_alloc::AstAlloc, a: Expr, b: Expr) -> Expr {
         Expr::init(
+            alloc,
             E::Binary {
                 op: crate::OpCode::BinAssign,
                 left: a,
@@ -1242,17 +1282,18 @@ impl Expr {
     // `assign` lives in the `init`/`allocate` impl block above.
 
     #[inline]
-    pub fn at<T: IntoExprData>(&self, t: T) -> Expr {
-        Expr::init(t, self.loc)
+    pub fn at<T: IntoExprData>(&self, alloc: bun_alloc::AstAlloc, t: T) -> Expr {
+        Expr::init(alloc, t, self.loc)
     }
 
     // Wraps the provided expression in the "!" prefix operator. The expression
     // will potentially be simplified to avoid generating unnecessary extra "!"
     // operators. For example, calling this with "!!x" will return "!x" instead
     // of returning "!!!x".
-    pub fn not(&self, bump: &Bump) -> Expr {
-        self.maybe_simplify_not(bump).unwrap_or_else(|| {
+    pub fn not(&self, alloc: bun_alloc::AstAlloc) -> Expr {
+        self.maybe_simplify_not(alloc).unwrap_or_else(|| {
             Expr::init(
+                alloc,
                 E::Unary {
                     op: crate::OpCode::UnNot,
                     value: *self,
@@ -1273,27 +1314,30 @@ impl Expr {
     /// whole operator (i.e. the "!x") if it can be simplified, or false if not.
     /// It's separate from "Not()" above to avoid allocation on failure in case
     /// that is undesired.
-    pub fn maybe_simplify_not(&self, bump: &Bump) -> Option<Expr> {
+    pub fn maybe_simplify_not(&self, alloc: bun_alloc::AstAlloc) -> Option<Expr> {
         let expr = self;
         match expr.data {
             Data::ENull(_) | Data::EUndefined(_) => {
-                return Some(expr.at(E::Boolean { value: true }));
+                return Some(expr.at(alloc, E::Boolean { value: true }));
             }
             Data::EBoolean(b) | Data::EBranchBoolean(b) => {
-                return Some(expr.at(E::Boolean { value: !b.value }));
+                return Some(expr.at(alloc, E::Boolean { value: !b.value }));
             }
             Data::ENumber(n) => {
-                return Some(expr.at(E::Boolean {
-                    value: n.value() == 0.0 || n.value().is_nan(),
-                }));
+                return Some(expr.at(
+                    alloc,
+                    E::Boolean {
+                        value: n.value() == 0.0 || n.value().is_nan(),
+                    },
+                ));
             }
             Data::EBigInt(b) => {
                 if let Some(equal) = E::BigInt::check_equality(&b.value, b"0") {
-                    return Some(expr.at(E::Boolean { value: equal }));
+                    return Some(expr.at(alloc, E::Boolean { value: equal }));
                 }
             }
             Data::EFunction(_) | Data::EArrow(_) | Data::ERegExp(_) => {
-                return Some(expr.at(E::Boolean { value: false }));
+                return Some(expr.at(alloc, E::Boolean { value: false }));
             }
             // "!!!a" => "!a"
             Data::EUnary(un) => {
@@ -1335,14 +1379,14 @@ impl Expr {
                     }
                     crate::OpCode::BinComma => {
                         // "!(a, b)" => "a, !b"
-                        ex.right = ex.right.not(bump);
+                        ex.right = ex.right.not(alloc);
                         return Some(*expr);
                     }
                     _ => {}
                 }
             }
             Data::EInlinedEnum(inlined) => {
-                return inlined.value.maybe_simplify_not(bump);
+                return inlined.value.maybe_simplify_not(alloc);
             }
             _ => {}
         }
@@ -1350,7 +1394,11 @@ impl Expr {
         None
     }
 
-    pub fn to_string_expr_without_side_effects(&self, bump: &Bump) -> Option<Expr> {
+    pub fn to_string_expr_without_side_effects(
+        &self,
+        alloc: bun_alloc::AstAlloc,
+        bump: &Bump,
+    ) -> Option<Expr> {
         let expr = self;
         let unwrapped = expr.unwrap_inlined();
         let slice: Option<&[u8]> = match unwrapped.data {
@@ -1384,6 +1432,7 @@ impl Expr {
         };
         slice.map(|s| {
             Expr::init(
+                alloc,
                 E::String {
                     data: s.into(),
                     ..Default::default()
@@ -1835,7 +1884,7 @@ fn json_value_deep_clone(
             loc,
             data: Data::EArrayJSON(*a).deep_clone(into)?,
         },
-        _ => Expr::from_json_value(value, loc),
+        _ => Expr::from_json_value(into, value, loc),
     })
 }
 
@@ -1899,14 +1948,14 @@ impl Data {
                         value: Some(json_value_deep_clone(&row.value, value_loc, into)?),
                         kind: G::PropertyKind::Normal,
                         initializer: None,
-                        ..Default::default()
+                        ..G::Property::empty(into)
                     });
                 }
                 let item = bump.alloc(E::Object {
                     properties,
                     is_single_line: el.is_single_line,
                     close_brace_loc: el.close_brace_loc,
-                    ..Default::default()
+                    ..E::Object::empty(into)
                 });
                 Ok(Data::EObject(StoreRef::from_bump(item)))
             }
@@ -1923,7 +1972,7 @@ impl Data {
                     items,
                     is_single_line: el.is_single_line,
                     close_bracket_loc: el.close_bracket_loc,
-                    ..Default::default()
+                    ..E::Array::empty(into)
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }

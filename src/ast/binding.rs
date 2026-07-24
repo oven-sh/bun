@@ -1,12 +1,10 @@
-use bun_collections::VecExt;
-
 use bun_alloc::Arena;
 
 use crate::StoreRef;
 use crate::b::B;
 use crate::base::Ref;
 use crate::expr::{Data as ExprData, Expr};
-use crate::{ExprNodeList, flags};
+use crate::flags;
 use crate::{e as E, g as G};
 
 /// `Binding`'s payload union lives at `crate::b::B`; re-export it as `Data`
@@ -183,14 +181,20 @@ impl Binding {
     /// `visitStmt.rs` (`p.to_expr_wrapper_namespace`) and the `&mut` call-site
     /// in `maybe.rs` (`&mut p.to_expr_wrapper_hoisted`) type-check without
     /// edits — `T: Borrow<T>` and `&mut T: Borrow<T>` are both blanket impls.
-    pub fn to_expr<W>(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: W) -> Expr
+    pub fn to_expr<W>(
+        alloc: bun_alloc::AstAlloc,
+        binding: &Binding,
+        ctx: *mut core::ffi::c_void,
+        wrapper: W,
+    ) -> Expr
     where
         W: core::borrow::Borrow<ToExprWrapper>,
     {
-        Self::to_expr_inner(binding, ctx, *wrapper.borrow())
+        Self::to_expr_inner(alloc, binding, ctx, *wrapper.borrow())
     }
 
     fn to_expr_inner(
+        alloc: bun_alloc::AstAlloc,
         binding: &Binding,
         ctx: *mut core::ffi::c_void,
         wrapper: ToExprWrapper,
@@ -204,18 +208,17 @@ impl Binding {
             B::BIdentifier(b) => wrapper.wrap_identifier(ctx, loc, b.r#ref),
             B::BArray(b) => {
                 let b = b.get();
-                let bump = wrapper.arena();
                 let items = b.items();
                 let len = items.len();
-                let mut exprs = bun_alloc::ArenaVec::with_capacity_in(len, bump);
+                let mut exprs = alloc.vec_with_capacity(len);
                 let mut i: usize = 0;
                 while i < len {
                     let item = &items[i];
-                    let expr = Self::to_expr_inner(&item.binding, ctx, wrapper);
+                    let expr = Self::to_expr_inner(alloc, &item.binding, ctx, wrapper);
                     let converted = if b.has_spread && i == len - 1 {
-                        Expr::init(E::Spread { value: expr }, expr.loc)
+                        Expr::init(alloc, E::Spread { value: expr }, expr.loc)
                     } else if let Some(default) = item.default_value {
-                        Expr::assign(expr, default)
+                        Expr::assign(alloc, expr, default)
                     } else {
                         expr
                     };
@@ -223,19 +226,19 @@ impl Binding {
                     i += 1;
                 }
                 Expr::init(
+                    alloc,
                     E::Array {
-                        items: ExprNodeList::from_bump_vec(exprs),
+                        items: exprs,
                         is_single_line: b.is_single_line,
-                        ..Default::default()
+                        ..E::Array::empty(alloc)
                     },
                     loc,
                 )
             }
             B::BObject(b) => {
                 let b = b.get();
-                let bump = wrapper.arena();
                 let props_in = b.properties();
-                let mut properties = bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
+                let mut properties = alloc.vec_with_capacity(props_in.len());
                 for item in props_in.iter() {
                     properties.push(G::Property {
                         flags: item.flags,
@@ -245,16 +248,17 @@ impl Binding {
                         } else {
                             G::PropertyKind::Normal
                         },
-                        value: Some(Self::to_expr_inner(&item.value, ctx, wrapper)),
+                        value: Some(Self::to_expr_inner(alloc, &item.value, ctx, wrapper)),
                         initializer: item.default_value,
-                        ..Default::default()
+                        ..G::Property::empty(alloc)
                     });
                 }
                 Expr::init(
+                    alloc,
                     E::Object {
-                        properties: G::PropertyList::from_bump_vec(properties),
+                        properties,
                         is_single_line: b.is_single_line,
-                        ..Default::default()
+                        ..E::Object::empty(alloc)
                     },
                     loc,
                 )

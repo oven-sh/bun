@@ -1,4 +1,3 @@
-use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 
 use crate as js_ast;
@@ -66,21 +65,20 @@ pub(crate) fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
+    fn call_from_new(alloc: bun_alloc::AstAlloc, e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
         let call = E::Call {
             target: e.target,
-            args: bun_alloc::AstAlloc::take(&mut e.args),
+            args: alloc.take(&mut e.args),
             close_paren_loc: e.close_parens_loc,
             can_be_unwrapped_if_unused: e.can_be_unwrapped_if_unused,
-            ..Default::default()
+            ..E::Call::empty(alloc)
         };
-        js_ast::Expr::init(call, loc)
+        js_ast::Expr::init(alloc, call, loc)
     }
 
-    // `_bump` is unused; the `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(
-        _bump: &Bump,
+        alloc: bun_alloc::AstAlloc,
         e: &mut E::New,
         symbols: &[Symbol],
         loc: crate::Loc,
@@ -113,7 +111,7 @@ impl KnownGlobal {
             | KnownGlobal::URIError
             | KnownGlobal::AggregateError => {
                 // Convert `new Error(...)` to `Error(...)` to save bytes
-                Some(Self::call_from_new(e, loc))
+                Some(Self::call_from_new(alloc, e, loc))
             }
 
             KnownGlobal::Object => {
@@ -121,7 +119,7 @@ impl KnownGlobal {
 
                 if n == 0 {
                     // new Object() -> {}
-                    return Some(js_ast::Expr::init(E::Object::default(), loc));
+                    return Some(js_ast::Expr::init(alloc, E::Object::empty(alloc), loc));
                 }
 
                 if n == 1 {
@@ -135,14 +133,14 @@ impl KnownGlobal {
                         js_ast::ExprData::ENull(_) | js_ast::ExprData::EUndefined(_) => {
                             // new Object(null) -> {}
                             // new Object(undefined) -> {}
-                            return Some(js_ast::Expr::init(E::Object::default(), loc));
+                            return Some(js_ast::Expr::init(alloc, E::Object::empty(alloc), loc));
                         }
                         _ => {}
                     }
                 }
 
                 // For other cases, just remove 'new'
-                Some(Self::call_from_new(e, loc))
+                Some(Self::call_from_new(alloc, e, loc))
             }
 
             KnownGlobal::Array => {
@@ -151,7 +149,7 @@ impl KnownGlobal {
                 match n {
                     0 => {
                         // new Array() -> []
-                        Some(js_ast::Expr::init(E::Array::default(), loc))
+                        Some(js_ast::Expr::init(alloc, E::Array::empty(alloc), loc))
                     }
                     1 => {
                         // For single argument, only convert to literal if we're SURE it's not a number
@@ -163,9 +161,10 @@ impl KnownGlobal {
                                 // new Array({}) -> [{}], new Array([1]) -> [[1]]
                                 // These are definitely not numbers, safe to convert
                                 return Some(js_ast::Expr::init(
+                                    alloc,
                                     E::Array {
-                                        items: bun_alloc::AstAlloc::take(&mut e.args),
-                                        ..Default::default()
+                                        items: alloc.take(&mut e.args),
+                                        ..E::Array::empty(alloc)
                                     },
                                     loc,
                                 ));
@@ -185,9 +184,10 @@ impl KnownGlobal {
                             | js_ast::expr::PrimitiveType::Bigint => {
                                 // These are definitely not numbers, safe to convert
                                 Some(js_ast::Expr::init(
+                                    alloc,
                                     E::Array {
-                                        items: bun_alloc::AstAlloc::take(&mut e.args),
-                                        ..Default::default()
+                                        items: alloc.take(&mut e.args),
+                                        ..E::Array::empty(alloc)
                                     },
                                     loc,
                                 ))
@@ -195,7 +195,7 @@ impl KnownGlobal {
                             js_ast::expr::PrimitiveType::Number => {
                                 let val = match arg.data {
                                     js_ast::ExprData::ENumber(num) => num.value(),
-                                    _ => return Some(Self::call_from_new(e, loc)),
+                                    _ => return Some(Self::call_from_new(alloc, e, loc)),
                                 };
                                 if
                                 // only want this with whitespace minification
@@ -224,19 +224,20 @@ impl KnownGlobal {
                                         },
                                     );
                                     return Some(js_ast::Expr::init(
+                                        alloc,
                                         E::Array {
-                                            items: Vec::move_from_list(list),
-                                            ..Default::default()
+                                            items: alloc.vec_from_iter(list),
+                                            ..E::Array::empty(alloc)
                                         },
                                         loc,
                                     ));
                                 }
-                                Some(Self::call_from_new(e, loc))
+                                Some(Self::call_from_new(alloc, e, loc))
                             }
                             js_ast::expr::PrimitiveType::Unknown
                             | js_ast::expr::PrimitiveType::Mixed => {
                                 // Could be a number, preserve Array() call
-                                Some(Self::call_from_new(e, loc))
+                                Some(Self::call_from_new(alloc, e, loc))
                             }
                         }
                     }
@@ -245,9 +246,10 @@ impl KnownGlobal {
                         // new Array(1, 2, 3) -> [1, 2, 3]
                         // But NOT new Array(3) which creates an array with 3 empty slots
                         Some(js_ast::Expr::init(
+                            alloc,
                             E::Array {
-                                items: bun_alloc::AstAlloc::take(&mut e.args),
-                                ..Default::default()
+                                items: alloc.take(&mut e.args),
+                                ..E::Array::empty(alloc)
                             },
                             loc,
                         ))
@@ -257,7 +259,7 @@ impl KnownGlobal {
 
             KnownGlobal::Function => {
                 // Just remove 'new' for Function
-                Some(Self::call_from_new(e, loc))
+                Some(Self::call_from_new(alloc, e, loc))
             }
             KnownGlobal::RegExp => {
                 // Don't optimize RegExp - the semantics are too complex:

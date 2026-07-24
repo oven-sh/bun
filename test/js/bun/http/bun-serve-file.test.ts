@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { unlinkSync } from "node:fs";
+import { connect } from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1278,4 +1279,108 @@ test("file route serves a burst of concurrent requests after reloads", async () 
 
   const a = await fetch(`${server.url}a`).then(r => r.text());
   expect(a).toBe("a-new");
+});
+
+// FileRoute used to end 205/307/308 via end_without_body, which writes no
+// Content-Length; RFC 9112 §6.3 does not self-terminate those, so HTTP/1.1
+// keep-alive clients blocked waiting for body framing. 307/308 now stream the
+// file body like StaticRoute and the fetch-handler path do (RFC 9110 §15.4
+// permits a redirect body); 205 stays bodiless per RFC 9110 §15.3.6 and
+// writes Content-Length: 0.
+test("file route 205/307/308 responses are framed on HTTP/1.1 keep-alive", async () => {
+  using dir = tempDir("serve-file-bodiless-status", {
+    "f.txt": "hello",
+  });
+  const file = () => Bun.file(join(String(dir), "f.txt"));
+  await using server = Bun.serve({
+    port: 0,
+    routes: {
+      "/204": new Response(file(), { status: 204 }),
+      "/205": new Response(file(), { status: 205 }),
+      "/304": new Response(file(), { status: 304 }),
+      "/307": new Response(file(), { status: 307, headers: { Location: "/204" } }),
+      "/308": new Response(file(), { status: 308, headers: { Location: "/204" } }),
+    },
+    fetch: req =>
+      new URL(req.url).pathname === "/handler-307"
+        ? new Response(file(), { status: 307, headers: { Location: "/204" } })
+        : new Response("fallback"),
+  });
+
+  async function rawGet(path: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const sock = connect(server.port, "127.0.0.1", () => {
+      sock.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n`);
+    });
+    let buf = "";
+    sock.on("data", d => {
+      buf += d.toString("latin1");
+      if (buf.includes("\r\n\r\n")) {
+        sock.end();
+        resolve(buf);
+      }
+    });
+    sock.on("close", () => resolve(buf));
+    sock.on("error", reject);
+    return promise;
+  }
+
+  const framing = async (path: string) => {
+    const raw = await rawGet(path);
+    const head = raw.split("\r\n\r\n")[0];
+    return {
+      contentLength: /^content-length:\s*(\S+)/im.exec(head)?.[1] ?? null,
+      connectionClose: /^connection:\s*close/im.test(head),
+    };
+  };
+
+  // 307/308 ship the file body (same Content-Length as the fetch-handler path).
+  for (const path of ["/307", "/308", "/handler-307"]) {
+    expect({ path, ...(await framing(path)) }).toEqual({
+      path,
+      contentLength: "5",
+      connectionClose: false,
+    });
+  }
+  // 205 is a null-body status but not self-terminating: Content-Length: 0.
+  expect(await framing("/205")).toEqual({ contentLength: "0", connectionClose: false });
+  // 204/304 are self-terminating and stay header-only (RFC 9110 §8.6 forbids
+  // Content-Length on 204).
+  for (const path of ["/204", "/304"]) {
+    expect({ path, ...(await framing(path)) }).toEqual({
+      path,
+      contentLength: null,
+      connectionClose: false,
+    });
+  }
+
+  // Two back-to-back 307s on a keep-alive connection: the second resolving
+  // proves the first's framing was complete. Skipped on Windows: pipelining
+  // a Bun.file() route there hits a pre-existing bug (connection closes with
+  // zero bytes, independent of status; reproduces on main with status 200).
+  if (!isWindows) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const sock = connect(server.port, "127.0.0.1", () => {
+      sock.write("GET /307 HTTP/1.1\r\nHost: x\r\n\r\nGET /307 HTTP/1.1\r\nHost: x\r\n\r\n");
+    });
+    let buf = "";
+    sock.on("data", d => {
+      buf += d.toString("latin1");
+      if ((buf.match(/HTTP\/1\.1 307/g) || []).length === 2) {
+        sock.end();
+        resolve(buf);
+      }
+    });
+    sock.on("close", () => resolve(buf));
+    sock.on("error", reject);
+    expect((await promise).match(/HTTP\/1\.1 307/g)?.length).toBe(2);
+  }
+
+  // And fetch (redirect:"manual") must complete rather than time out.
+  const res = await fetch(`${server.url}307`, { redirect: "manual" });
+  expect({
+    status: res.status,
+    contentLength: res.headers.get("content-length"),
+    body: await res.text(),
+  }).toEqual({ status: 307, contentLength: "5", body: "hello" });
 });

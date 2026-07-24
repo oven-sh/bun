@@ -1415,6 +1415,82 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   expect(exitCode).toBe(0);
 });
 
+// https://github.com/oven-sh/bun/issues/35394
+// A throw in a websocket handler without a websocket.error callback used to
+// route through VirtualMachine::uncaught_exception, which bumps
+// unhandled_error_counter and makes an otherwise-idle server's event loop
+// report dead and exit 1. The server must keep listening, same as when a
+// fetch handler throws.
+it("server keeps listening after a websocket handler throws without a websocket.error callback", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, server) {
+            if (server.upgrade(req)) return;
+            return new Response("no", { status: 400 });
+          },
+          websocket: {
+            open(ws) { ws.send("hi"); },
+            message() { throw new Error("boom"); },
+          },
+        });
+        process.stdout.write(server.port + "\\n");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const readUntil = async (stream: ReadableStream<Uint8Array>, needle: string) => {
+    const reader = stream.getReader();
+    let buf = "";
+    try {
+      while (!buf.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += Buffer.from(value).toString();
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    return buf;
+  };
+
+  const port = parseInt((await readUntil(proc.stdout, "\n")).trim(), 10);
+  expect(port).toBeGreaterThan(0);
+  const url = `ws://127.0.0.1:${port}/`;
+
+  const first = Promise.withResolvers<void>();
+  const ws1 = new WebSocket(url);
+  ws1.onmessage = () => {
+    ws1.send("trigger");
+    first.resolve();
+  };
+  ws1.onerror = e => first.reject(new Error(String((e as ErrorEvent).message ?? e)));
+  await first.promise;
+
+  // The throw is printed to stderr on both the fixed and unfixed builds; once
+  // it appears the server has finished dispatching the message handler.
+  expect(await readUntil(proc.stderr, "boom")).toContain("boom");
+  ws1.close();
+
+  // Second connection must still open. Race against process exit so the
+  // unfixed build fails fast instead of hanging on a refused connection.
+  const second = Promise.withResolvers<string>();
+  const ws2 = new WebSocket(url);
+  ws2.onmessage = e => second.resolve(String(e.data));
+  ws2.onerror = () => second.resolve("second connection refused");
+  const result = await Promise.race([second.promise, proc.exited.then(code => `server exited with code ${code}`)]);
+  ws2.close();
+
+  expect(result).toBe("hi");
+});
+
 // publish() fans out to N subscribers and must report backpressure/drops the
 // same way ws.send() does for a single socket.
 describe.concurrent("publish() return value reflects subscriber backpressure", () => {

@@ -94,16 +94,15 @@ impl Handler {
             return;
         }
 
-        // VirtualMachine is the
-        // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
-        // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
-        // mutable pointer from the stored BackRef (== `vm`) rather than casting the
-        // shared ref, which rustc's invalid_reference_casting lint rejects.
+        // Match the HTTP request error path (`RequestContext::finish_running_error_handler`):
+        // report via `on_unhandled_rejection` so `bun test` still captures it, but don't route
+        // through `uncaught_exception`, which bumps `unhandled_error_counter` and makes an
+        // otherwise-idle server's event loop report dead (issue #35394).
         let _ = vm;
         let mut vm_ref = self.vm;
         // SAFETY: process-lifetime singleton; sole `&mut` on the JS thread.
         let vm_mut = unsafe { vm_ref.get_mut() };
-        let _ = vm_mut.uncaught_exception(global_object, error_value, false);
+        (vm_mut.on_unhandled_rejection)(vm_mut, global_object, error_value);
     }
 
     pub fn from_js(global_object: &JSGlobalObject, object: JSValue) -> JsResult<Handler> {

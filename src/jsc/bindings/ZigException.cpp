@@ -629,6 +629,22 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
                     if (except.stack.frames_len > 0) {
                         getFromSourceURL = false;
                         except.remapped = true;
+                    } else if (stack.find("\n    at "_s) == WTF::notFound) {
+                        // A non-empty `stack` string with no frame lines at all
+                        // is a user-assigned custom value: Bun's own computed
+                        // stack contains "\n    at " lines whenever frames exist
+                        // and is undefined when they don't (e.g.
+                        // Error.stackTraceLimit = 0 fails the isString() check
+                        // above). Preserve the custom value verbatim so the
+                        // printer renders it as-is, matching Node; leaving
+                        // `frames_len`/source lines empty makes the printer's
+                        // frame and source-preview sections no-ops. Strings that
+                        // do contain frame lines but parse to zero frames (Bun's
+                        // own module-level frames have no parentheses for
+                        // V8StackTraceIterator to accept) fall through to the
+                        // stored source position below, unchanged from before.
+                        except.stack_string = Bun::toStringRef(stack);
+                        getFromSourceURL = false;
                     }
                 }
             }

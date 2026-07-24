@@ -312,6 +312,7 @@ impl ErrorReportRequest {
             system_code: BunString::EMPTY,
             path: BunString::EMPTY,
             fd: -1,
+            stack_string: BunString::EMPTY,
         };
 
         {

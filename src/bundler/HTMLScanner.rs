@@ -13,15 +13,20 @@ use lol_html::html_content::Element;
 bun_core::declare_scope!(HTMLScanner, hidden);
 
 pub(crate) struct HTMLScanner<'a> {
-    // arena field dropped — global mimalloc (see PORTING.md §Allocators).
+    pub alloc: bun_alloc::AstAlloc,
     pub import_records: Vec<ImportRecord>,
     pub log: &'a mut Log,
     pub source: &'a Source,
 }
 
 impl<'a> HTMLScanner<'a> {
-    pub(crate) fn init(log: &'a mut Log, source: &'a Source) -> HTMLScanner<'a> {
+    pub(crate) fn init(
+        alloc: bun_alloc::AstAlloc,
+        log: &'a mut Log,
+        source: &'a Source,
+    ) -> HTMLScanner<'a> {
         HTMLScanner {
+            alloc,
             import_records: Vec::new(),
             log,
             source,
@@ -66,7 +71,7 @@ impl<'a> HTMLScanner<'a> {
             input_path
         };
 
-        let owned: &'static [u8] = Box::leak(Box::<[u8]>::from(path_to_use));
+        let owned: &'static [u8] = self.alloc.dupe_str(path_to_use);
         let record = ImportRecord {
             path: FsPath::init(owned),
             kind,

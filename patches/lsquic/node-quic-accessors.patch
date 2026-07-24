@@ -605,7 +605,7 @@
  void
  lsquic_engine_cooldown (lsquic_engine_t *engine)
  {
-@@ -3564,6 +3723,18 @@
+@@ -3564,6 +3723,21 @@
  }
  
  
@@ -613,11 +613,14 @@
 + * this call.  node:quic reuses one endpoint (and thus one engine) across
 + * connects whose maxIdleTimeout options differ; the engine's private
 + * settings copy must track the current connect (the analog of the fresh
-+ * per-connect SSL_CTX). */
++ * per-connect SSL_CTX).  The readers in this patch fall back to the
++ * seconds field when ms is zero, so clear that too so 0 means disabled. */
 +void
 +lsquic_engine_set_idle_timeout_ms (lsquic_engine_t *engine, unsigned ms)
 +{
 +    engine->pub.enp_settings.es_idle_timeout_ms = ms;
++    if (ms == 0)
++        engine->pub.enp_settings.es_idle_timeout = 0;
 +}
 +
 +

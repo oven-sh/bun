@@ -355,19 +355,37 @@ mod elf {
             return None;
         }
         // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
         // Format at target: [u64 payload_len][payload bytes]
+        let vaddr = usize::try_from(vaddr).ok()?;
+        // Both the vaddr and the length prefix it points at are untrusted
+        // (truncated download, AV rewriting, post-build tampering), so check
+        // against the program headers that the whole range is mapped by the
+        // PT_LOAD the compile-time writer extended — otherwise the reads
+        // below would fault before startup can fall back gracefully.
+        let header_size = size_of::<u64>();
+        let payload_capacity = bun_sys::elf::find_loaded_module(vaddr)
+            .and_then(|module| module.segment_end.checked_sub(vaddr))
+            .and_then(|available| available.checked_sub(header_size));
+        let Some(payload_capacity) = payload_capacity else {
+            bun_core::debug_warn!("bun standalone module graph vaddr is not mapped");
+            return None;
+        };
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
         let target = vaddr as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
+        // SAFETY: `[vaddr, vaddr + 8)` is inside a PT_LOAD (checked above).
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
-        Some((unsafe { target.add(8) }, payload_len as usize))
+        if payload_len > payload_capacity as u64 {
+            bun_core::debug_warn!("bun standalone module graph length exceeds its segment");
+            return None;
+        }
+        // SAFETY: payload_len bytes follow the 8-byte header at `target`,
+        // all inside the containing PT_LOAD (checked above).
+        Some((unsafe { target.add(header_size) }, payload_len as usize))
     }
 }
 

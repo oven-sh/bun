@@ -1141,8 +1141,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // eval grammar accepts ESM and CJS in the same source, so every
             // valid spelling's requested parse semantics are already
             // satisfied; accept them. A file entry point ignores the option
-            // and the REPL rejects it, both like node.
-            ctx.runtime_options.input_type_specified = true;
+            // and the REPL rejects it (src/js/eval/node-repl.ts), both like
+            // node.
         }
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");

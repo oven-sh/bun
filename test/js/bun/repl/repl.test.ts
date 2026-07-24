@@ -1664,14 +1664,22 @@ describe.concurrent("--interactive", () => {
 
   // Node places the --input-type rejection inside the else of the
   // NODE_REPL_EXTERNAL_MODULE branch (lib/internal/main/repl.js), so an
-  // external replacement loads regardless. Bun used to exit 9 first.
-  test(
-    "NODE_REPL_EXTERNAL_MODULE wins over the --input-type rejection",
-    async () => {
-      using dir = tempDir("ext-repl-input-type", { "ext.js": `console.log("external-repl-42")` });
-      const { stdout, stderr, exitCode } = await runInteractive(["--input-type=module"], "", {
+  // external replacement loads regardless. The env-file case guards against
+  // the gate and the bootstrap reading different env stores (libc environ vs
+  // the DotEnv loader behind process.env).
+  test.each([
+    ["process env", { env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" } }],
+    ["--env-file", { args: ["--env-file=ext.env"] }],
+  ])(
+    "NODE_REPL_EXTERNAL_MODULE via %s wins over the --input-type rejection",
+    async (_, { env: extraEnv, args = [] }: { env?: Record<string, string>; args?: string[] }) => {
+      using dir = tempDir("ext-repl-input-type", {
+        "ext.js": `console.log("external-repl-42")`,
+        "ext.env": "NODE_REPL_EXTERNAL_MODULE=./ext.js\n",
+      });
+      const { stdout, stderr, exitCode } = await runInteractive([...args, "--input-type=module"], "", {
         cwd: String(dir),
-        env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" },
+        env: extraEnv,
       });
       expect({ stdout, stderr }).toEqual({
         stdout: expect.stringContaining("external-repl-42"),

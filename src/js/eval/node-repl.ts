@@ -14,6 +14,17 @@ if (ext) {
   // Node loads this in place of the built-in REPL (lib/internal/main/repl.js).
   require(require("node:path").resolve(ext));
 } else {
+  // Node's getOptionValue("--input-type") gate from lib/internal/main/repl.js,
+  // inside this else so NODE_REPL_EXTERNAL_MODULE (via process.env, which also
+  // covers .env/--env-file) wins.
+  for (const a of process.execArgv) {
+    if (a === "--input-type" || a.startsWith("--input-type=")) {
+      console.error("Cannot specify --input-type for REPL");
+      // kInvalidCommandLineArgument
+      process.exit(9);
+    }
+  }
+
   const REPL = require("node:repl");
   const createInternalRepl = (REPL as Record<symbol, Function>)[Symbol.for("bun.repl.createInternalRepl")];
 

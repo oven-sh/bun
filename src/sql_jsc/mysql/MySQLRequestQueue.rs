@@ -99,11 +99,11 @@ impl MySQLRequestQueue {
     }
 
     /// Drive the queue forward. Takes the embedding [`MySQLConnection`]
-    /// (= `JSMySQLConnection`) by shared reference: every connection method
-    /// reached below is `&self`, and every queue field is `Cell`/`JsCell`, so
-    /// `&Self` (reached via `connection.connection.get().queue`) suffices for
-    /// all queue mutation. The only `unsafe` in the body is the three
-    /// `JSMySQLQuery::deref` refcount drops.
+    /// (= `JSMySQLConnection`) by shared reference, and every queue field is
+    /// `Cell`/`JsCell`, so a plain `&Self` suffices for all queue mutation.
+    /// `req.run(connection)` re-enters `connection` (via `connection_mut()`
+    /// for the writer) under the module's `JsCell` invariant. The only
+    /// `unsafe` in the body is the three `JSMySQLQuery::deref` refcount drops.
     pub(crate) fn advance(connection: &MySQLConnection) {
         let queue: &Self = &connection.connection.get().queue;
         // Early returns become `break 'advance` so the trailing cleanup pass
@@ -151,10 +151,6 @@ impl MySQLRequestQueue {
                     continue;
                 }
 
-                // `run()` reads queue scalars (`can_execute_query` /
-                // `can_pipeline` / `can_prepare_query`) through `connection`'s
-                // shared reborrow into the same `Cell`-wrapped fields —
-                // overlapping shared reads are sound.
                 if let Err(err) = req.run(connection) {
                     debug!("run failed");
                     connection.on_error(Some(req.get()), err);

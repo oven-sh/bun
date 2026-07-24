@@ -1,7 +1,7 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_jsc::JsCell;
-use bun_ptr::ParentRef;
+use bun_ptr::BackRef;
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 use core::cell::Cell;
 
@@ -56,9 +56,8 @@ pub struct MySQLConnection {
     pub status: ConnectionState,
 
     write_buffer: OffsetByteList,
-    // `JsCell`/`Cell` so the buffered `Reader` (which holds a `ParentRef` to
-    // this struct) can advance the read cursor through a shared borrow while
-    // `process_packets` holds `&mut self` over the remaining disjoint fields.
+    // `JsCell`/`Cell` so the buffered `Reader` can advance the read cursor
+    // via interior mutability, matching `PostgresSQLConnection::Reader`.
     read_buffer: JsCell<OffsetByteList>,
     last_message_start: Cell<u32>,
     sequence_id: u8,
@@ -169,13 +168,13 @@ impl MySQLConnection {
         }
     }
 
-    pub fn can_pipeline(&mut self) -> bool {
+    pub fn can_pipeline(&self) -> bool {
         self.queue.can_pipeline(self.js_connection_ref())
     }
-    pub fn can_prepare_query(&mut self) -> bool {
+    pub fn can_prepare_query(&self) -> bool {
         self.queue.can_prepare_query(self.js_connection_ref())
     }
-    pub fn can_execute_query(&mut self) -> bool {
+    pub fn can_execute_query(&self) -> bool {
         self.queue.can_execute_query(self.js_connection_ref())
     }
 
@@ -235,7 +234,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    fn advance(&mut self) {
+    fn advance(&self) {
         MySQLRequestQueue::advance(self.js_connection_ref());
     }
 
@@ -575,9 +574,10 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
-            // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
-            // `C` writes through a raw pointer so the offset update still lands.
-            // Always skip the full packet, we dont care about padding or unread bytes.
+            // `NewReader<C>: Copy` so the scopeguard captures by copy; the
+            // inner `C` writes through interior-mutable state so the offset
+            // update still lands. Always skip the full packet, we dont care
+            // about padding or unread bytes.
             let _skip_guard = scopeguard::guard(reader, move |r| {
                 r.set_offset_from_start(packet_length);
             });
@@ -1094,7 +1094,7 @@ impl MySQLConnection {
     pub fn buffered_reader(&self) -> NewReader<Reader> {
         NewReader {
             wrapped: Reader {
-                connection: ParentRef::new(self),
+                connection: BackRef::new(self),
             },
         }
     }
@@ -1613,16 +1613,21 @@ impl WriterContext for Writer {
     }
 }
 
-// `Reader.connection` is a back-reference to the protocol connection that
-// strictly outlives the reader (constructed via `buffered_reader(&self)` and
-// never stored). `read_buffer` / `last_message_start` are `JsCell` / `Cell`,
-// so mutation routes through interior mutability and the shared `ParentRef`
-// deref suffices. `process_packets` (and its callees) never touch those two
-// fields through their own `&mut self`; every other connection field they do
-// touch is disjoint.
+// `Reader.connection` is a backref (LIFETIMES.tsv BACKREF): the connection
+// strictly outlives any `Reader` (constructed via `buffered_reader(&self)` and
+// never stored). R-2: `BackRef` (shared) — `read_buffer` / `last_message_start`
+// are `JsCell` / `Cell`, so mutation routes through `with_mut` / `set`.
+// `process_packets` and its callees still take `&mut self`; under the
+// module's `JsCell` invariant they never touch `read_buffer` /
+// `last_message_start` through that borrow, and the whole struct lives inside
+// `JSMySQLConnection.connection: JsCell<…>` so re-entrant access goes through
+// the same `UnsafeCell` barrier as the rest of the module (same pattern as
+// `js_connection_ref()` + `connection_mut()`). Finishing the `&self`
+// conversion of `process_packets` to match `PostgresSQLConnection::on_data`
+// is the follow-up.
 #[derive(Clone, Copy)]
 pub struct Reader {
-    pub connection: ParentRef<MySQLConnection>,
+    pub connection: BackRef<MySQLConnection>,
 }
 
 impl Reader {

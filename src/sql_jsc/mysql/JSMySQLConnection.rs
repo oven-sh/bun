@@ -698,15 +698,15 @@ impl JSMySQLConnection {
     }
     #[inline]
     pub fn can_pipeline(&self) -> bool {
-        self.connection_mut().can_pipeline()
+        self.connection.get().can_pipeline()
     }
     #[inline]
     pub fn can_prepare_query(&self) -> bool {
-        self.connection_mut().can_prepare_query()
+        self.connection.get().can_prepare_query()
     }
     #[inline]
     pub fn can_execute_query(&self) -> bool {
-        self.connection_mut().can_execute_query()
+        self.connection.get().can_execute_query()
     }
     #[inline]
     pub fn get_writer(&self) -> NewWriter<my_sql_connection::Writer> {

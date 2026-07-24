@@ -8,6 +8,8 @@ const defineProperties = Object.defineProperties;
 const toStringTag = Symbol.toStringTag;
 const isArray = Array.isArray;
 const isTypedArray = ArrayBuffer.isView;
+const getPrototypeOf = Object.getPrototypeOf;
+const AsyncFunctionPrototype = getPrototypeOf(async function () {});
 
 let internalFieldTuple;
 
@@ -600,6 +602,14 @@ class Database implements SqliteTypes.Database {
   // thank you @JoshuaWise!
   transaction(fn, self) {
     if (typeof fn !== "function") throw new TypeError("Expected first argument to be a function");
+    // SQLite transactions are bound to the synchronous call: an async callback would
+    // COMMIT at its first await, leaving every later statement (and the rollback on
+    // throw) outside the transaction. https://github.com/oven-sh/bun/issues/24662
+    if (getPrototypeOf(fn) === AsyncFunctionPrototype) {
+      throw new TypeError(
+        "db.transaction() callback cannot be an async function. Run any awaited work before starting the transaction.",
+      );
+    }
 
     const db = this;
     const controller = getController(db, self);
@@ -671,6 +681,15 @@ const wrapTransaction = (fn, db, { begin, commit, rollback, savepoint, release, 
     try {
       before.run();
       const result = fn.$apply(this, args);
+      // Catches non-async callbacks that still return a promise; the catch below rolls
+      // back. `result` is never handed to the caller, so mark it handled: nothing else
+      // can attach a rejection handler to it, and an unhandled rejection is fatal.
+      if ($isPromise(result) || typeof result?.then === "function") {
+        if ($isPromise(result)) $markPromiseAsHandled(result);
+        throw new TypeError(
+          "db.transaction() callback cannot return a Promise. Run any awaited work before starting the transaction.",
+        );
+      }
       after.run();
       return result;
     } catch (ex) {

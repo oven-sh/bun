@@ -504,22 +504,16 @@ async function runOneFile(
     await drainStderr;
     const exitCode = await proc.exited;
 
-    // Two failure shapes: the file died before reporting anything (top-level
-    // throw — node emits a file-level test:fail and no per-file summary), or its
-    // tests failed (covered by the children's events; completes `subtestsFailed`).
+    // A nonzero exit with no child-reported failures means the file itself died
+    // (top-level throw); child-reported failures are already covered by the
+    // republished events and need no file-level verdict.
     const fileFailed = exitCode !== 0 && fileCounts.failed === 0;
-    const subtestsFailed = fileCounts.failed > 0;
     const fileDuration = Date.now() - fileStarted;
     // Node's FileTest.#skipReporting(): no file-level complete/pass/fail when
     // the child reported at least one test and the only error is subtestsFailed
     // (or none); here that is `reportedChildren > 0 && !fileFailed`.
     const reportedChildren = fileCounts.tests + fileCounts.suites;
     let error: Error | undefined;
-
-    if (subtestsFailed) {
-      const failed = fileCounts.failed;
-      error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
-    }
 
     // Count the file-node before emitting the per-file summary so a synchronous
     // test:summary listener sees the same totals the run-level summary will.
@@ -553,7 +547,7 @@ async function runOneFile(
           __proto__: null,
           duration_ms: fileDuration,
           type: "test",
-          passed: !fileFailed && !subtestsFailed,
+          passed: !fileFailed,
           error,
         },
       });

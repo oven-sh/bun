@@ -37,7 +37,7 @@ describe("Headers", async () => {
   it("isomorphic-encodes latin-1 (obs-text) request header values on the wire", async () => {
     // https://fetch.spec.whatwg.org/#concept-header-value
     // Values are ByteStrings: U+00E9 must go out as the single byte 0xE9, not UTF-8 0xC3 0xA9.
-    const { promise: gotHead, resolve } = Promise.withResolvers();
+    const { promise: gotHead, resolve, reject } = Promise.withResolvers();
     const srv = net.createServer(s => {
       let b = Buffer.alloc(0);
       s.on("data", d => {
@@ -47,16 +47,18 @@ describe("Headers", async () => {
           s.end("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
         }
       });
-      s.on("error", () => {});
+      s.once("error", reject);
     });
     srv.listen(0, "127.0.0.1");
     await once(srv, "listening");
     try {
       const port = srv.address().port;
-      await fetch(`http://127.0.0.1:${port}/`, {
-        headers: { "x-t": "caf\u00e9", "x-u": "\u0080\u00ff" },
-      });
-      const head = await gotHead;
+      const [, head] = await Promise.all([
+        fetch(`http://127.0.0.1:${port}/`, {
+          headers: { "x-t": "caf\u00e9", "x-u": "\u0080\u00ff" },
+        }),
+        gotHead,
+      ]);
       const lines = head.toString("latin1").split("\r\n");
       const hex = name => {
         const line = lines.find(l => l.toLowerCase().startsWith(name + ":"));

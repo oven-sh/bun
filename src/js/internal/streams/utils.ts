@@ -146,6 +146,9 @@ function isReadableFinished(stream, strict?) {
 
 function isReadable(stream) {
   if (stream && stream[kIsReadable] != null) return stream[kIsReadable];
+  // Bun's WHATWG streams are native and don't carry node's kIsReadable brand; read [[state]]
+  // directly to match node's ReadableStream.prototype[kIsReadable] getter.
+  if (isReadableStream(stream)) return $webStreamState(stream) === 0; // "readable"
   if (typeof stream?.readable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
   return isReadableNodeStream(stream) && stream.readable && !isReadableFinished(stream);
@@ -153,6 +156,7 @@ function isReadable(stream) {
 
 function isWritable(stream) {
   if (stream && stream[kIsWritable] != null) return stream[kIsWritable];
+  if (isWritableStream(stream)) return $webStreamState(stream) === 0; // "writable"
   if (typeof stream?.writable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
   return isWritableNodeStream(stream) && stream.writable && !isWritableEnded(stream);
@@ -261,13 +265,18 @@ function willEmitClose(stream) {
 }
 
 function isDisturbed(stream) {
-  return !!(stream && (stream[kIsDisturbed] ?? (stream.readableDidRead || stream.readableAborted)));
+  return !!(
+    stream &&
+    (stream[kIsDisturbed] ??
+      (isReadableStream(stream) ? stream.$disturbed : stream.readableDidRead || stream.readableAborted))
+  );
 }
 
 function isErrored(stream) {
   return !!(
     stream &&
     (stream[kIsErrored] ??
+      (isReadableStream(stream) || isWritableStream(stream) ? $webStreamState(stream) === 2 : undefined) ??
       stream.readableErrored ??
       stream.writableErrored ??
       stream._readableState?.errorEmitted ??

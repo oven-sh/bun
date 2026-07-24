@@ -1738,6 +1738,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBunPeekPromiseSettledValue);
 JSC_DECLARE_HOST_FUNCTION(jsBunPokePromiseAsHandled);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamClosedPromise);
 JSC_DECLARE_HOST_FUNCTION(jsWebStreamControllerError);
+JSC_DECLARE_HOST_FUNCTION(jsWebStreamState);
 
 JSC_DEFINE_HOST_FUNCTION(makeGetterTypeErrorForBuiltins, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -1864,6 +1865,21 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamClosedPromise, (JSGlobalObject * globalObjec
         return JSValue::encode(Bun::WebStreams::webStreamClosedPromise(globalObject, readable));
     if (auto* writable = dynamicDowncast<WebCore::JSWritableStream>(streamValue))
         return JSValue::encode(Bun::WebStreams::webStreamClosedPromise(globalObject, writable));
+
+    auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
+    return JSValue::encode(throwTypeError(globalObject, scope, "Expected a ReadableStream or WritableStream"_s));
+}
+
+// node:stream's isReadable/isWritable/isErrored/isDisturbed expect WHATWG streams to carry the
+// Symbol.for("nodejs.stream.*") brand getters that node's own web stream impl defines. Bun's
+// native streams don't, so those helpers duck-type and read the underlying [[state]] here instead.
+JSC_DEFINE_HOST_FUNCTION(jsWebStreamState, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    JSValue streamValue = callFrame->argument(0);
+    if (auto* readable = dynamicDowncast<WebCore::JSReadableStream>(streamValue))
+        return JSValue::encode(jsNumber(static_cast<int32_t>(readable->m_state)));
+    if (auto* writable = dynamicDowncast<WebCore::JSWritableStream>(streamValue))
+        return JSValue::encode(jsNumber(static_cast<int32_t>(writable->m_state)));
 
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
     return JSValue::encode(throwTypeError(globalObject, scope, "Expected a ReadableStream or WritableStream"_s));
@@ -3088,6 +3104,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
         GlobalPropertyInfo(builtinNames.pokePromiseAsHandledPrivateName(), JSFunction::create(vm, this, 1, String(), jsBunPokePromiseAsHandled, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.webStreamClosedPromisePrivateName(), JSFunction::create(vm, this, 1, String(), jsWebStreamClosedPromise, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.webStreamControllerErrorPrivateName(), JSFunction::create(vm, this, 2, String(), jsWebStreamControllerError, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
+        GlobalPropertyInfo(builtinNames.webStreamStatePrivateName(), JSFunction::create(vm, this, 1, String(), jsWebStreamState, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.fulfillModuleSyncPrivateName(), JSFunction::create(vm, this, 1, String(), functionFulfillModuleSync, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.esmNamespaceForCjsPrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmNamespaceForCjs, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),
         GlobalPropertyInfo(builtinNames.esmRegistryDeletePrivateName(), JSFunction::create(vm, this, 1, String(), functionEsmRegistryDelete, ImplementationVisibility::Public), PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly),

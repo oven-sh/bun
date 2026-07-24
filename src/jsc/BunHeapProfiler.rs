@@ -1,17 +1,86 @@
 use crate::CrateError as Error;
 use bun_core::Output;
+use bun_core::WTFStringImplExt as _;
 use bun_core::{OwnedString, String as BunString};
 use bun_paths::{AutoAbsPath, PathBuffer, resolve_path};
 use bun_sys::{self as sys, E, Fd, FdDirExt};
 
 use crate::VM;
 
+#[derive(Clone)]
 pub struct HeapProfilerConfig {
-    // The config originates from CLI args and lives until process exit, so
-    // `&'static [u8]` matches the ownership exactly.
-    pub name: &'static [u8],
-    pub dir: &'static [u8],
+    // Owned copies: the main thread's config comes from process-lifetime CLI
+    // args, but a Worker's comes from its `execArgv` (worker lifetime).
+    pub name: Box<[u8]>,
+    pub dir: Box<[u8]>,
     pub text_format: bool,
+}
+
+/// Scan a Worker's `execArgv` for the `--heap-prof` flag family. Returns a
+/// config only when `--heap-prof` itself is present; `--heap-prof-interval`
+/// is accepted-and-ignored like the CLI (see Arguments.rs).
+///
+/// # Safety
+/// Each `WTFStringImpl` in `exec_argv` must be a live WTF string.
+pub unsafe fn parse_worker_exec_argv(
+    exec_argv: &[bun_core::WTFStringImpl],
+) -> Option<HeapProfilerConfig> {
+    let mut enabled = false;
+    let mut name: Box<[u8]> = Box::default();
+    let mut dir: Box<[u8]> = Box::default();
+
+    let mut i = 0;
+    while i < exec_argv.len() {
+        let arg = exec_argv[i];
+        i += 1;
+        if arg.is_null() {
+            continue;
+        }
+        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
+        let owned = unsafe { &*arg }.to_owned_slice_z();
+        let bytes = owned.as_bytes();
+        // First non-flag token ends parsing (same short-circuit as
+        // `parse_worker_exec_argv_allow_addons`).
+        if bytes.first() != Some(&b'-') {
+            break;
+        }
+        if bytes == b"--" {
+            break;
+        }
+        if bytes == b"--heap-prof" {
+            enabled = true;
+            continue;
+        }
+        // Value flags accept both `--flag value` and `--flag=value`.
+        let mut take_value = |flag: &[u8]| -> Option<Box<[u8]>> {
+            if bytes == flag {
+                let value = exec_argv.get(i).copied()?;
+                i += 1;
+                if value.is_null() {
+                    return None;
+                }
+                // SAFETY: per fn contract — a live `WTFStringImpl*`.
+                return Some(unsafe { &*value }.to_owned_slice_z().as_bytes().into());
+            }
+            if bytes.strip_prefix(flag).and_then(<[u8]>::first) == Some(&b'=') {
+                return Some(bytes[flag.len() + 1..].into());
+            }
+            None
+        };
+        if let Some(value) = take_value(b"--heap-prof-name") {
+            name = value;
+        } else if let Some(value) = take_value(b"--heap-prof-dir") {
+            dir = value;
+        } else {
+            let _ = take_value(b"--heap-prof-interval");
+        }
+    }
+
+    enabled.then(|| HeapProfilerConfig {
+        name,
+        dir,
+        text_format: false,
+    })
 }
 
 // C++ function declarations
@@ -19,7 +88,14 @@ unsafe extern "C" {
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is ABI-identical
     // to a non-null `*mut VM` and C++ mutation is interior to the opaque cell.
     safe fn Bun__generateHeapProfile(vm: &mut VM) -> BunString;
-    safe fn Bun__generateHeapSnapshotV8(vm: &mut VM) -> BunString;
+    safe fn Bun__generateHeapSamplingProfile(vm: &mut VM) -> BunString;
+    safe fn Bun__startHeapProfiler(vm: &mut VM);
+}
+
+/// Start the sampling profiler that backs the `--heap-prof` `.heapprofile`
+/// output. No-op if `--cpu-prof` already started it on this thread.
+pub fn start_heap_profiler(vm: &mut VM) {
+    Bun__startHeapProfiler(vm);
 }
 
 pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> Result<(), Error> {
@@ -28,7 +104,9 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
     let profile_string = OwnedString::new(if config.text_format {
         Bun__generateHeapProfile(vm)
     } else {
-        Bun__generateHeapSnapshotV8(vm)
+        // Node's `--heap-prof` writes a V8 sampling heap profile
+        // ({head, samples}), not a heap snapshot.
+        Bun__generateHeapSamplingProfile(vm)
     });
 
     if profile_string.is_empty() {
@@ -103,7 +181,7 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
     // Generate filename
     let mut filename_buf = PathBuffer::uninit();
     let filename: &[u8] = if !config.name.is_empty() {
-        config.name
+        &config.name
     } else {
         generate_default_filename(&mut filename_buf, config.text_format)?
     };
@@ -111,7 +189,7 @@ fn build_output_path(path: &mut AutoAbsPath, config: &HeapProfilerConfig) -> Res
     // Join directory and filename; `join` resolves absolute segments where
     // `append` asserts on them (node accepts absolute --heap-prof-dir/-name).
     if !config.dir.is_empty() {
-        path.join(&[config.dir])?;
+        path.join(&[&config.dir])?;
     }
     path.join(&[filename])?;
     Ok(())

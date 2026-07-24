@@ -1376,15 +1376,17 @@ impl Run {
         // ── Heap profiler ───────────────────────────────────────────────────
         if ctx.runtime_options.heap_prof.enabled {
             let opts = &ctx.runtime_options.heap_prof;
-            // SAFETY: `ctx` is process-lifetime; see CPU-profiler note above.
-            let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
-            // SAFETY: same process-lifetime erasure as `name` above.
-            let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
             vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
+                name: opts.name.clone(),
+                dir: opts.dir.clone(),
                 text_format: opts.text_format,
             });
+            if !opts.text_format {
+                // `.heapprofile` output needs sampled stacks (see
+                // BunHeapProfiler.cpp); the markdown format snapshots at exit.
+                // SAFETY: `vm.jsc_vm` set in `init`.
+                bun_jsc::bun_heap_profiler::start_heap_profiler(unsafe { &mut *vm.jsc_vm });
+            }
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 

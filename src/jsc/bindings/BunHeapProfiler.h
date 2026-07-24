@@ -14,4 +14,8 @@ namespace Bun {
 // The output is hierarchical but with clear section markers for easy navigation
 WTF::String generateHeapProfile(JSC::VM& vm);
 
+// V8 `--heap-prof`-compatible sampling heap profile JSON ({head, samples}),
+// synthesized from the time-based SamplingProfiler. See BunHeapProfiler.cpp.
+WTF::String generateHeapSamplingProfile(JSC::VM& vm);
+
 } // namespace Bun

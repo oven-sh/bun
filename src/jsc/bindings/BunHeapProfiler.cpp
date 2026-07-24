@@ -1,17 +1,23 @@
 #include "root.h"
 #include "BunHeapProfiler.h"
+#include "BunCPUProfiler.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
-#include <JavaScriptCore/BunV8HeapSnapshotBuilder.h>
+#include <JavaScriptCore/SamplingProfiler.h>
+#include <JavaScriptCore/DeferGC.h>
+#include <JavaScriptCore/HeapInlines.h>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/ScriptExecutable.h>
+#include <JavaScriptCore/SourceProvider.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Vector.h>
 #include <wtf/JSONValues.h>
+#include <wtf/URL.h>
 #include <algorithm>
 
 namespace Bun {
@@ -936,14 +942,197 @@ WTF::String generateHeapProfile(JSC::VM& vm)
     return output.toString();
 }
 
-WTF::String generateHeapSnapshotV8(JSC::VM& vm)
-{
-    vm.ensureHeapProfiler();
-    auto& heapProfiler = *vm.heapProfiler();
-    heapProfiler.clearSnapshots();
+// ── V8 sampling heap profile (`--heap-prof`, .heapprofile) ──────────────────
+//
+// V8's `--heap-prof` samples allocations and attributes bytes to the JS call
+// stack. JSC has no allocation-sampling profiler, so we approximate: the
+// time-based SamplingProfiler runs for the process lifetime, and at exit the
+// sampled stacks are folded into the V8 `{head, samples}` tree with the live
+// GC heap size distributed evenly across samples. Function attribution is
+// real (sampled stacks); the per-node byte sizes are a time-weighted
+// approximation, not per-allocation truth.
 
-    JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
-    return builder.json();
+namespace {
+
+struct SamplingHeapNode {
+    int id { 0 };
+    WTF::String functionName;
+    WTF::String url;
+    int scriptId { 0 };
+    int lineNumber { -1 };
+    int columnNumber { -1 };
+    size_t selfSize { 0 };
+    WTF::Vector<size_t> children; // indices into the node vector
+    WTF::HashMap<WTF::String, size_t> childByKey;
+};
+
+} // anonymous namespace
+
+// Absolute file path -> `file://` URL, mirroring the CPU profiler (#29240):
+// DevTools expects `callFrame.url` to be a proper URL.
+static void normalizeProfileURL(WTF::String& u)
+{
+    if (u.isEmpty())
+        return;
+    bool isAbsolutePath = false;
+    if (u[0] == '/') {
+        isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[1] == ':') {
+        char firstChar = u[0];
+        if ((firstChar >= 'A' && firstChar <= 'Z') || (firstChar >= 'a' && firstChar <= 'z'))
+            isAbsolutePath = true;
+    } else if (u.length() >= 2 && u[0] == '\\' && u[1] == '\\') {
+        isAbsolutePath = true;
+    }
+    if (isAbsolutePath)
+        u = WTF::URL::fileURLWithFileSystemPath(u).string();
+}
+
+static void appendSamplingHeapNodeJSON(WTF::StringBuilder& sb, const WTF::Vector<SamplingHeapNode>& nodes, size_t index)
+{
+    const auto& node = nodes[index];
+    sb.append("{\"callFrame\":{\"functionName\":"_s);
+    sb.appendQuotedJSONString(node.functionName);
+    sb.append(",\"scriptId\":\""_s);
+    sb.append(node.scriptId);
+    sb.append("\",\"url\":"_s);
+    sb.appendQuotedJSONString(node.url);
+    sb.append(",\"lineNumber\":"_s);
+    sb.append(node.lineNumber);
+    sb.append(",\"columnNumber\":"_s);
+    sb.append(node.columnNumber);
+    sb.append("},\"selfSize\":"_s);
+    sb.append(static_cast<uint64_t>(node.selfSize));
+    sb.append(",\"id\":"_s);
+    sb.append(node.id);
+    sb.append(",\"children\":["_s);
+    for (size_t i = 0; i < node.children.size(); i++) {
+        if (i)
+            sb.append(',');
+        appendSamplingHeapNodeJSON(sb, nodes, node.children[i]);
+    }
+    sb.append("]}"_s);
+}
+
+WTF::String generateHeapSamplingProfile(JSC::VM& vm)
+{
+    WTF::Vector<SamplingHeapNode> nodes;
+    {
+        SamplingHeapNode root;
+        root.id = 1;
+        root.functionName = "(root)"_s;
+        root.url = ""_s;
+        nodes.append(WTF::move(root));
+    }
+    int nextNodeId = 2;
+    // Leaf node index per sample, in timestamp order.
+    WTF::Vector<size_t> sampleLeaves;
+
+    JSC::SamplingProfiler* profiler = vm.samplingProfiler();
+
+    // JSLock + DeferGC held while stack traces (which hold raw Executable
+    // pointers) are processed, mirroring stopCPUProfiler().
+    JSC::JSLockHolder locker(vm);
+    JSC::DeferGC deferGC(vm);
+
+    if (profiler) {
+        auto& lock = profiler->getLock();
+        WTF::Locker profilerLocker { lock };
+        profiler->pause();
+        auto stackTraces = profiler->releaseStackTraces();
+        profiler->clearData();
+
+        WTF::Vector<size_t> sortedIndices;
+        sortedIndices.reserveInitialCapacity(stackTraces.size());
+        for (size_t i = 0; i < stackTraces.size(); i++)
+            sortedIndices.append(i);
+        std::sort(sortedIndices.begin(), sortedIndices.end(), [&stackTraces](size_t a, size_t b) {
+            return stackTraces[a].timestamp < stackTraces[b].timestamp;
+        });
+
+        for (size_t idx : sortedIndices) {
+            auto& stackTrace = stackTraces[idx];
+            if (stackTrace.frames.isEmpty()) {
+                sampleLeaves.append(0); // attribute to (root)
+                continue;
+            }
+
+            size_t currentIndex = 0;
+            // frames[0] is the innermost frame; walk outermost -> innermost.
+            for (int i = stackTrace.frames.size() - 1; i >= 0; i--) {
+                auto& frame = stackTrace.frames[i];
+
+                WTF::String functionName = frame.displayName(vm);
+                WTF::String url;
+                int scriptId = 0;
+                int lineNumber = -1;
+                int columnNumber = -1;
+
+                if (frame.frameType == JSC::SamplingProfiler::FrameType::Executable && frame.executable) {
+                    auto sourceProviderAndID = frame.sourceProviderAndID();
+                    auto* provider = std::get<0>(sourceProviderAndID);
+                    if (provider) {
+                        url = provider->sourceURL();
+                        scriptId = static_cast<int>(provider->asID());
+                    }
+                    normalizeProfileURL(url);
+
+                    // JSC reports 1-based positions; V8 profiles are 0-based.
+                    int rawLine = frame.functionStartLine();
+                    unsigned rawColumn = frame.functionStartColumn();
+                    if (rawLine > 0 && rawColumn != std::numeric_limits<unsigned>::max()) {
+                        lineNumber = rawLine - 1;
+                        columnNumber = rawColumn > 0 ? static_cast<int>(rawColumn) - 1 : 0;
+                    }
+                }
+
+                WTF::String key = makeString(functionName, '\x01', url, '\x01', lineNumber, '\x01', columnNumber);
+                auto it = nodes[currentIndex].childByKey.find(key);
+                if (it != nodes[currentIndex].childByKey.end()) {
+                    currentIndex = it->value;
+                } else {
+                    SamplingHeapNode child;
+                    child.id = nextNodeId++;
+                    child.functionName = WTF::move(functionName);
+                    child.url = WTF::move(url);
+                    child.scriptId = scriptId;
+                    child.lineNumber = lineNumber;
+                    child.columnNumber = columnNumber;
+                    size_t childIndex = nodes.size();
+                    nodes.append(WTF::move(child));
+                    nodes[currentIndex].childByKey.set(key, childIndex);
+                    nodes[currentIndex].children.append(childIndex);
+                    currentIndex = childIndex;
+                }
+            }
+            sampleLeaves.append(currentIndex);
+        }
+    }
+
+    // Distribute the live heap size evenly across samples (see file comment).
+    size_t heapSize = vm.heap.size();
+    size_t sampleCount = sampleLeaves.size();
+    size_t bytesPerSample = sampleCount ? heapSize / sampleCount : 0;
+    for (size_t leafIndex : sampleLeaves)
+        nodes[leafIndex].selfSize += bytesPerSample;
+
+    WTF::StringBuilder sb;
+    sb.append("{\"head\":"_s);
+    appendSamplingHeapNodeJSON(sb, nodes, 0);
+    sb.append(",\"samples\":["_s);
+    for (size_t i = 0; i < sampleLeaves.size(); i++) {
+        if (i)
+            sb.append(',');
+        sb.append("{\"size\":"_s);
+        sb.append(static_cast<uint64_t>(bytesPerSample));
+        sb.append(",\"nodeId\":"_s);
+        sb.append(nodes[sampleLeaves[i]].id);
+        sb.append(",\"ordinal\":"_s);
+        sb.append(static_cast<uint64_t>(i));
+        sb.append('}');
+    }
+    sb.append("]}"_s);
+    return sb.toString();
 }
 
 } // namespace Bun
@@ -954,8 +1143,16 @@ extern "C" BunString Bun__generateHeapProfile(JSC::VM* vm)
     return Bun::toStringRef(result);
 }
 
-extern "C" BunString Bun__generateHeapSnapshotV8(JSC::VM* vm)
+extern "C" BunString Bun__generateHeapSamplingProfile(JSC::VM* vm)
 {
-    WTF::String result = Bun::generateHeapSnapshotV8(*vm);
+    WTF::String result = Bun::generateHeapSamplingProfile(*vm);
     return Bun::toStringRef(result);
+}
+
+extern "C" void Bun__startHeapProfiler(JSC::VM* vm)
+{
+    // The heap profiler rides on the same per-thread SamplingProfiler as
+    // `--cpu-prof`; don't restart (and reset) it if that already did.
+    if (!Bun::isCPUProfilerRunning())
+        Bun::startCPUProfiler(*vm);
 }

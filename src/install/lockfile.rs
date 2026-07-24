@@ -905,6 +905,40 @@ impl Lockfile {
         invalid_package_id
     }
 
+    /// Returns the package whose dependency list contains `id`, or
+    /// `invalid_package_id` if no package declares it (e.g. a dependency
+    /// appended directly by the auto-installer).
+    pub fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> PackageID {
+        let dependencies_lists = self.packages.items_dependencies();
+        for (pkg_id, dependencies) in dependencies_lists.iter().enumerate() {
+            if dependencies.contains(id) {
+                return PackageID::try_from(pkg_id).expect("int cast");
+            }
+        }
+
+        invalid_package_id
+    }
+
+    /// Is dependency `id` declared by a local package (see
+    /// [`resolution::Tag::is_local_package`])? Its `file:` paths are then
+    /// trusted like root dependencies; paths declared by remote packages
+    /// (registry, git, tarball) are not.
+    ///
+    /// A `Folder` declaring package is always itself declared by the root or a
+    /// workspace: only those folder dependencies have their package.json
+    /// parsed. A folder dependency of any other package is recorded as a
+    /// resolution with no dependencies of its own (see the transitive folder
+    /// branch in `get_or_put_resolved_package`), so it never declares one.
+    pub fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
+        let parent_id = self.get_parent_pkg_of_dependency(id);
+        if parent_id == invalid_package_id {
+            return false;
+        }
+        self.packages.items_resolution()[parent_id as usize]
+            .tag
+            .is_local_package()
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub fn is_workspace_tree_id(&self, id: tree::Id) -> bool {

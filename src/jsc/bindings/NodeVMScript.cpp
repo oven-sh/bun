@@ -288,17 +288,23 @@ static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, 
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so
         // the ERR_SCRIPT_EXECUTION_* error below replaces it.
-        if (vm.hasPendingTerminationException())
-            DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
+        auto clearPendingTermination = [&] {
+            if (vm.hasPendingTerminationException())
+                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+            vm.clearHasTerminationRequest();
+        };
         if (script->getSigintReceived()) {
+            clearPendingTermination();
             script->setSigintReceived(false);
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
         } else if (timeout) {
+            clearPendingTermination();
             throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, *timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.Script terminated due neither to SIGINT nor to timeout");
         }
+        // else: termination came from outside this Script (the bun:test
+        // watchdog around the test body, Worker.terminate(), etc.). Leave
+        // the request set and the TerminationException in the scope so it
+        // propagates to whoever armed it.
         return true;
     }
 

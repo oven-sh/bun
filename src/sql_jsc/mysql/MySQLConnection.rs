@@ -676,6 +676,11 @@ impl MySQLConnection {
             .extend_from_slice(&handshake.auth_plugin_data_part_1[..]);
         self.auth_data
             .extend_from_slice(&handshake.auth_plugin_data_part_2[..]);
+        // Part 2 ends with the NUL that terminates auth-plugin-data. It is not
+        // part of the nonce: caching_sha2_password's RSA path XORs the password
+        // cyclically against it, so keeping it corrupts passwords of 20 bytes
+        // and over (#26195).
+        self.auth_data.truncate(Auth::SCRAMBLE_LENGTH);
 
         // Get auth plugin
         if !handshake.auth_plugin_name.slice().is_empty() {
@@ -904,6 +909,8 @@ impl MySQLConnection {
                 let auth_method = AuthMethod::from_string(auth_switch.plugin_name.slice())
                     .ok_or(AnyMySQLError::UnsupportedAuthPlugin)?;
                 let auth_data = auth_switch.plugin_data.slice();
+                // Terminated the same way as the handshake's auth-plugin-data.
+                let auth_data = &auth_data[..auth_data.len().min(Auth::SCRAMBLE_LENGTH)];
                 self.auth_plugin = Some(auth_method);
                 self.auth_data.clear();
                 self.auth_data.extend_from_slice(auth_data);

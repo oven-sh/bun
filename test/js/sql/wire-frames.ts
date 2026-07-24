@@ -291,6 +291,10 @@ export function mysqlRawPacket(seq: number, payload: Buffer, declaredLength: num
 // PART_2; PART_2's 13th byte is the protocol's trailing NUL filler, not nonce data.
 export const MYSQL_MOCK_AUTH_DATA_PART_1: Buffer = Buffer.alloc(8, 0x61);
 export const MYSQL_MOCK_AUTH_DATA_PART_2: Buffer = Buffer.concat([Buffer.alloc(12, 0x62), Buffer.from([0])]);
+export const MYSQL_MOCK_NONCE: Buffer = Buffer.concat([
+  MYSQL_MOCK_AUTH_DATA_PART_1,
+  MYSQL_MOCK_AUTH_DATA_PART_2.subarray(0, 12),
+]);
 
 // MySQL Protocol::HandshakeV10 — page_protocol_connection_phase_packets_protocol_handshake_v10.html
 // Int<1>(10) NulString(server_version) Int<4>(thread_id) String<8>(auth1) Int<1>(0) Int<2>(cap_lo)
@@ -323,15 +327,32 @@ export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
   return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
 }
 
+// MySQL Protocol::ERR_Packet — page_protocol_basic_err_packet.html:
+//   Int<1>(0xff) Int<2>(error_code) String<1>('#') String<5>(sql_state) String<EOF>(error_message)
+export function mysqlErrorPacket(seq: number, errorCode: number, sqlState: string, message: string): Buffer {
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([
+      Buffer.from([0xff, errorCode & 0xff, (errorCode >> 8) & 0xff]),
+      Buffer.from(`#${sqlState}`),
+      Buffer.from(message, "utf-8"),
+    ]),
+  );
+}
+
 // MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:
 //   Int<1>(0x01) String<EOF>(plugin-specific payload)
 export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
   return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x01]), data]));
 }
 
-// caching_sha2_password fast_auth_success marker carried in an AuthMoreData payload —
-// page_caching_sha2_authentication_exchanges.html (its sibling, 0x04, is perform_full_authentication).
+// caching_sha2_password markers carried in an AuthMoreData payload —
+// page_caching_sha2_authentication_exchanges.html. The server answers the client's
+// scramble with fast_auth_success or perform_full_authentication; over a plaintext
+// connection the client answers the latter with request_public_key.
 export const MYSQL_FAST_AUTH_SUCCESS = 0x03;
+export const MYSQL_PERFORM_FULL_AUTHENTICATION = 0x04;
+export const MYSQL_REQUEST_PUBLIC_KEY = 0x02;
 
 // MySQL Protocol::AuthSwitchRequest — page_protocol_connection_phase_packets_protocol_auth_switch_request.html:
 //   Int<1>(0xfe) NulString(plugin_name) String<EOF>(plugin_provided_data)

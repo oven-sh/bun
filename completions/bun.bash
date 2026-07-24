@@ -4,8 +4,8 @@
 
 _file_arguments() {
     local extensions="${1}"
-    local reset=$(shopt -p globstar)
-    shopt -s globstar
+    local reset="$(shopt -p globstar extglob)"
+    shopt -s globstar extglob
 
     if [[ -z "${cur_word}" ]]; then
         COMPREPLY+=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
@@ -13,7 +13,7 @@ _file_arguments() {
         COMPREPLY+=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
     fi
 
-    $reset
+    eval "$reset"
 }
 
 _long_short_completion() {
@@ -31,27 +31,14 @@ _long_short_completion() {
 }
 
 _read_scripts_in_package_json() {
-    local package_json;
-    local line=0;
     local working_dir="${PWD}";
-
+    local line=0;
     for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
         [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
     done
-
-    [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
-
-    [[ "${package_json}" =~ "\"scripts\""[[:space:]]*":"[[:space:]]*\{(.*)\} ]] && {
-        local package_json_compreply;
-        local matched="${BASH_REMATCH[@]:1}";
-        local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
-        readarray -td, scripts <<<"${scripts}";
-        for completion in "${scripts[@]}"; do
-            [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
-        done
-        COMPREPLY+=( $(compgen -W "${package_json_compreply[*]}" -- "${cur_word}") );
-    }
+    local scripts
+    scripts=$(cd "${working_dir}" 2>/dev/null && SHELL=bash bun getcompletes s 2>/dev/null)
+    COMPREPLY+=( $(compgen -W "${scripts}" -- "${cur_word}") )
 }
 
 _bun_completions() {
@@ -127,7 +114,7 @@ _bun_completions() {
     case "${COMP_WORDS[1]}" in
         help|completions|--help|-h|-v|--version) return;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts)?($|))";
+            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?($|))";
             _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}" "${GLOBAL_OPTIONS_SHORT}";
             _read_scripts_in_package_json;
             return;;
@@ -175,7 +162,6 @@ _bun_completions() {
             _long_short_completion "${BUN_PATCH_OPTIONS_LONG} ${BUN_PATCH_OPTIONS_SHORT}" "${BUN_PATCH_OPTIONS_SHORT}";
             return;;
         pm)
-            _long_short_completion "${BUN_PM_OPTIONS_LONG} ${BUN_PM_OPTIONS_SHORT}" "${BUN_PM_OPTIONS_SHORT}";
             COMPREPLY+=( $(compgen -W "bin cache default-trusted hash hash-print hash-string ls migrate pack pkg trust untrusted version view whoami why" -- "${cur_word}") );
             return;;
         info)
@@ -197,7 +183,7 @@ _bun_completions() {
             _long_short_completion "${GLOBAL_OPTIONS_LONG} ${GLOBAL_OPTIONS_SHORT}" "${GLOBAL_OPTIONS_SHORT}";
             COMPREPLY+=( $(compgen -W "${SUBCOMMANDS}" -- "${cur_word}") );
             _read_scripts_in_package_json;
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts)?($|))";
+            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?($|))";
             return;;
     esac
 }

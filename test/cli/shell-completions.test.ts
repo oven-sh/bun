@@ -15,9 +15,14 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 const fishBin = Bun.which("fish");
 
 async function embeddedCompletions(shell: "fish" | "bash" | "zsh"): Promise<string> {
+  // `bun completions` first tries to install a bunx symlink relative to the
+  // executable and under $HOME/$BUN_INSTALL. Point those at a throwaway dir so
+  // the test has no filesystem side effects.
+  using home = tempDir("bun-completions-home", {});
   await using proc = Bun.spawn({
     cmd: [bunExe(), "completions"],
-    env: { ...bunEnv, SHELL: `/bin/${shell}` },
+    env: { ...bunEnv, SHELL: `/bin/${shell}`, HOME: String(home), BUN_INSTALL: String(home) },
+    cwd: String(home),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -47,7 +52,7 @@ const expectedFishFlags: Array<[string, string]> = [
   ["upgrade", "canary"],
 ];
 
-describe.skipIf(isWindows)("shell completions", () => {
+describe.concurrent.skipIf(isWindows)("shell completions", () => {
   test("fish: includes runtime and per-command flags", async () => {
     const fish = await embeddedCompletions("fish");
     for (const [subcmd, flag] of expectedFishFlags) {
@@ -67,6 +72,10 @@ describe.skipIf(isWindows)("shell completions", () => {
     // pm subcommands.
     expect(fish).toContain("__fish_seen_subcommand_from pm");
     expect(fish).toMatch(/ -a '[^']*\bpack\b[^']*'/);
+    // `complete -n '...'` conditions are evaluated at tab-press time, after
+    // `set -l` variables from the sourced file have gone out of scope. Make
+    // sure no condition string references one.
+    expect(fish).not.toMatch(/complete -c bun[^\n]* -n '[^'\n]*\$bun_builtin_cmds\b/);
   });
 
   test("bash: includes runtime and per-command flags", async () => {
@@ -82,6 +91,11 @@ describe.skipIf(isWindows)("shell completions", () => {
     for (const name of ["audit", "patch", "publish", "exec", "info", "outdated", "test"]) {
       expect(bash).toMatch(new RegExp(`\\bSUBCOMMANDS="[^"]*\\b${name}\\b`));
     }
+    // Every ${BUN_*_OPTIONS_*} referenced in a case arm must have a matching
+    // `local ...=` declaration, otherwise `set -u` users see "unbound variable".
+    const declared = new Set([...bash.matchAll(/^\s*local (BUN_[A-Z_]+_OPTIONS_(?:LONG|SHORT))=/gm)].map(m => m[1]));
+    const referenced = new Set([...bash.matchAll(/\$\{(BUN_[A-Z_]+_OPTIONS_(?:LONG|SHORT))\}/g)].map(m => m[1]));
+    expect([...referenced].filter(name => !declared.has(name))).toEqual([]);
   });
 
   test.skipIf(!fishBin)("fish: script is syntactically valid", async () => {

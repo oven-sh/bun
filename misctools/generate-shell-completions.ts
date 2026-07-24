@@ -128,7 +128,6 @@ function fishFlag(condition: string, flag: FlagInfo): string {
 }
 
 function generateFish(): string {
-  const allCommandNames = Object.keys(data.commands);
   const aliasMap: Record<string, string[]> = {};
   for (const c of Object.values(data.commands)) {
     aliasMap[c.name] = [c.name, ...(c.aliases?.filter(a => a !== "bunx") ?? [])];
@@ -168,7 +167,6 @@ function __fish__get_bun_bun_js_files
     string split ' ' (bun getcompletes j)
 end
 
-set -l bun_builtin_cmds ${allSubTokens}
 set -l bun_builtin_cmds_without_run ${Object.values(aliasMap)
     .filter(a => a[0] !== "run")
     .flat()
@@ -204,7 +202,7 @@ complete -e -c bun
 complete -c bun -f -a "(__bun_complete_bins_scripts)"
 
 complete -c bun -s 'h' -l 'help' -f -d 'Show command help'
-complete -c bun -n "not __fish_seen_subcommand_from \$bun_builtin_cmds" -s 'v' -l 'version' -f -d 'Print version and exit'
+complete -c bun -n "not __fish_seen_subcommand_from ${allSubTokens}" -s 'v' -l 'version' -f -d 'Print version and exit'
 `);
 
   // Subcommand list (first-positional).
@@ -216,9 +214,12 @@ complete -c bun -n "not __fish_seen_subcommand_from \$bun_builtin_cmds" -s 'v' -
   lines.push("");
 
   // Global runtime flags: offered when no subcommand yet, or under run/test/repl/exec.
+  // The subcommand token list is inlined (not a `set -l` variable) because
+  // `complete -n` stores the condition string and evaluates it at tab-press
+  // time, after script-local variables have gone out of scope.
   lines.push("# Global runtime flags (bun / bun run / bun test / bun repl / bun exec)");
   const runtimeCond =
-    `not __fish_seen_subcommand_from $bun_builtin_cmds; ` +
+    `not __fish_seen_subcommand_from ${allSubTokens}; ` +
     `or __fish_seen_subcommand_from ${[...runtimeCommands].join(" ")}`;
   for (const flag of data.globalFlags) {
     if (flag.name === "help" || flag.name === "version") continue;
@@ -302,13 +303,13 @@ function generateBash(): string {
     const aliases = [cmd.name, ...(cmd.aliases?.filter(a => a !== "bunx") ?? [])];
     const cmdFlags = flagsFor(cmd);
     const flags =
-      cmdFlags.length > 0 || !runtimeCommands.has(cmd.name)
-        ? bashFlagList(cmdFlags)
-        : { long: "", short: "" };
+      cmdFlags.length > 0 || !runtimeCommands.has(cmd.name) ? bashFlagList(cmdFlags) : { long: "", short: "" };
     perCommand[cmd.name] = { ...flags, aliases };
   }
 
-  const pmSubcommands = Object.keys(data.commands.pm?.subcommands ?? {}).sort().join(" ");
+  const pmSubcommands = Object.keys(data.commands.pm?.subcommands ?? {})
+    .sort()
+    .join(" ");
 
   // Build the case arms for per-command flag completion.
   const caseArms: string[] = [];
@@ -318,7 +319,7 @@ function generateBash(): string {
     if (cmd.name === "run") {
       caseArms.push(
         `        ${pattern})
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts)?(\$|))";
+            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?(\$|))";
             _long_short_completion "\${GLOBAL_OPTIONS_LONG} \${GLOBAL_OPTIONS_SHORT}" "\${GLOBAL_OPTIONS_SHORT}";
             _read_scripts_in_package_json;
             return;;`,
@@ -331,9 +332,13 @@ function generateBash(): string {
             return;;`,
       );
     } else if (cmd.name === "pm") {
+      const varName = `BUN_${cmd.name.toUpperCase()}_OPTIONS`;
+      const flagLine =
+        entry.long || entry.short
+          ? `\n            _long_short_completion "\${${varName}_LONG} \${${varName}_SHORT}" "\${${varName}_SHORT}";`
+          : "";
       caseArms.push(
-        `        ${pattern})
-            _long_short_completion "\${BUN_${cmd.name.toUpperCase()}_OPTIONS_LONG} \${BUN_${cmd.name.toUpperCase()}_OPTIONS_SHORT}" "\${BUN_${cmd.name.toUpperCase()}_OPTIONS_SHORT}";
+        `        ${pattern})${flagLine}
             COMPREPLY+=( \$(compgen -W "${pmSubcommands}" -- "\${cur_word}") );
             return;;`,
       );
@@ -386,8 +391,8 @@ function generateBash(): string {
 
 _file_arguments() {
     local extensions="\${1}"
-    local reset=\$(shopt -p globstar)
-    shopt -s globstar
+    local reset="\$(shopt -p globstar extglob)"
+    shopt -s globstar extglob
 
     if [[ -z "\${cur_word}" ]]; then
         COMPREPLY+=( \$(compgen -fG -X "\${extensions}" -- "\${cur_word}") );
@@ -395,7 +400,7 @@ _file_arguments() {
         COMPREPLY+=( \$(compgen -f -X "\${extensions}" -- "\${cur_word}") );
     fi
 
-    \$reset
+    eval "\$reset"
 }
 
 _long_short_completion() {
@@ -413,27 +418,14 @@ _long_short_completion() {
 }
 
 _read_scripts_in_package_json() {
-    local package_json;
-    local line=0;
     local working_dir="\${PWD}";
-
+    local line=0;
     for ((; line < \${#COMP_WORDS[@]}; line+=1)); do
         [[ "\${COMP_WORDS[\${line}]}" == "--cwd" ]] && working_dir="\${COMP_WORDS[\$((line + 1))]}";
     done
-
-    [[ -f "\${working_dir}/package.json" ]] && package_json=\$(<"\${working_dir}/package.json");
-
-    [[ "\${package_json}" =~ "\\"scripts\\""[[:space:]]*":"[[:space:]]*\\{(.*)\\} ]] && {
-        local package_json_compreply;
-        local matched="\${BASH_REMATCH[@]:1}";
-        local scripts="\${matched%%\\}*}";
-        scripts="\${scripts//@(\\"|\\')/}";
-        readarray -td, scripts <<<"\${scripts}";
-        for completion in "\${scripts[@]}"; do
-            [[ "\${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "\${BASH_REMATCH[1]}" );
-        done
-        COMPREPLY+=( \$(compgen -W "\${package_json_compreply[*]}" -- "\${cur_word}") );
-    }
+    local scripts
+    scripts=\$(cd "\${working_dir}" 2>/dev/null && SHELL=bash bun getcompletes s 2>/dev/null)
+    COMPREPLY+=( \$(compgen -W "\${scripts}" -- "\${cur_word}") )
 }
 
 _bun_completions() {
@@ -480,7 +472,7 @@ ${caseArms.join("\n")}
             _long_short_completion "\${GLOBAL_OPTIONS_LONG} \${GLOBAL_OPTIONS_SHORT}" "\${GLOBAL_OPTIONS_SHORT}";
             COMPREPLY+=( \$(compgen -W "\${SUBCOMMANDS}" -- "\${cur_word}") );
             _read_scripts_in_package_json;
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts)?(\$|))";
+            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?(\$|))";
             return;;
     esac
 }

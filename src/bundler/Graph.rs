@@ -10,7 +10,7 @@ use enum_map::EnumMap;
 use crate::IndexStringMap::IndexStringMap;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::options;
-use crate::{AdditionalFile, BundleV2, ThreadPool};
+use crate::{AdditionalFile, ThreadPool};
 
 use bun_ast::Index;
 
@@ -211,26 +211,6 @@ impl<'a> Graph<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         &mut self.build_graphs[target]
-    }
-
-    /// Schedule a task to be run on the JS thread which resolves the promise of
-    /// each `.defer()` called in an onLoad plugin.
-    ///
-    /// Returns true if there were more tasks queued.
-    pub fn drain_deferred_tasks(&mut self, transpiler: &mut BundleV2) -> bool {
-        transpiler.thread_lock.assert_locked();
-
-        if self.deferred_pending > 0 {
-            self.pending_items += self.deferred_pending;
-            self.deferred_pending = 0;
-
-            transpiler.drain_defer_task.init();
-            transpiler.drain_defer_task.schedule();
-
-            return true;
-        }
-
-        false
     }
 }
 

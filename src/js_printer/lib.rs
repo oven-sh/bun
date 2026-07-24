@@ -1175,12 +1175,12 @@ pub struct RequireOrImportMeta {
 #[derive(Clone, Copy)]
 pub struct RequireOrImportMetaCallback {
     pub ctx: Option<NonNull<()>>,
-    pub callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
+    pub callback: fn(*const (), u32, bool) -> RequireOrImportMeta,
 }
 
 impl Default for RequireOrImportMetaCallback {
     fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
+        fn noop(_: *const (), _: u32, _: bool) -> RequireOrImportMeta {
             RequireOrImportMeta::default()
         }
         Self {
@@ -1194,7 +1194,7 @@ impl Default for RequireOrImportMetaCallback {
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
@@ -1205,19 +1205,19 @@ impl RequireOrImportMetaCallback {
         (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &T) -> Self {
         fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
+            p: *const (),
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
+            // SAFETY: `p` was constructed from `&T` in `init` below; caller guarantees
             // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
+            // deref is valid.
             unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
+            // Type-erased to `*const ()` and cast back to `*const T` inside the thunk before dereference.
             ctx: Some(NonNull::from(ctx).cast::<()>()),
             callback: thunk::<T>,
         }

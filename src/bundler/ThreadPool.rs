@@ -520,6 +520,15 @@ pub struct WorkerData {
     pub other_transpiler: Option<Box<Transpiler<'static>>>,
 }
 
+impl WorkerData {
+    /// The routing predicate for [`Worker::transpiler_for_target`]: `true` when
+    /// `target` is served by `other_transpiler` instead of `transpiler`.
+    #[inline]
+    pub fn uses_other_transpiler_for(&self, target: Target) -> bool {
+        target == Target::Browser && self.transpiler.options.target != target
+    }
+}
+
 impl Worker {
     // CONCURRENCY: thread-pool callback — runs on the worker's own OS thread
     // during pool drain (scheduled via `deinit_soon`). Writes: own `Worker`
@@ -709,7 +718,7 @@ impl Worker {
     pub fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         // Callers only invoke this after `Worker::get` → `create()`.
         let data = self.data.as_mut().expect("Worker.data set in create()");
-        if target == Target::Browser && data.transpiler.options.target != target {
+        if data.uses_other_transpiler_for(target) {
             if data.other_transpiler.is_none() {
                 // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.

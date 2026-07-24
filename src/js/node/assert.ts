@@ -48,7 +48,6 @@ const kOptions = Symbol("options");
 
 const { isDeepStrictEqual, isDeepEqual } = require("internal/util/comparisons");
 
-
 var _inspect;
 function lazyInspect() {
   if (_inspect === undefined) {

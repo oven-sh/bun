@@ -3370,7 +3370,34 @@ EncodedJSValue constructBufferFromArray(JSC::ThrowScope& throwScope, JSGlobalObj
         }
     }
 
-    // Slow path: array-like objects, iterables
+    // Slow path: array-like objects. Mirrors Node.js buffer.js fromArrayLike()
+    // so user-observable .length getter calls match.
+    auto& vm = lexicalGlobalObject->vm();
+    JSValue lengthValue = arrayValue.get(lexicalGlobalObject, vm.propertyNames->length);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    double length = lengthValue.toNumber(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (length <= 0)
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(createEmptyBuffer(lexicalGlobalObject)));
+
+    JSValue poolSizeValue = globalObject->JSBufferConstructor()->get(lexicalGlobalObject, Identifier::fromString(vm, "poolSize"_s));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    uint32_t halfPoolSize = poolSizeValue.toUInt32(lexicalGlobalObject) >> 1;
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    if (length < halfPoolSize) {
+        // setFromArrayLike re-reads .length; if a getter shrinks between reads
+        // the tail is never written, so allocate zeroed rather than leak heap.
+        auto* uint8Array = allocBuffer(lexicalGlobalObject, static_cast<size_t>(length));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!uint8Array) [[unlikely]]
+            return {};
+        uint8Array->setFromArrayLike(lexicalGlobalObject, 0, arrayValue);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
+    }
+
     auto* constructor = lexicalGlobalObject->m_typedArrayUint8.constructor(lexicalGlobalObject);
     MarkedArgumentBuffer argsBuffer;
     argsBuffer.append(arrayValue);

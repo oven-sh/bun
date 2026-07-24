@@ -83,6 +83,51 @@ describe("Glob.match", () => {
     expect(glob.match("src/foo/nice/bar/baz/lmao.ts")).toBeTrue();
   });
 
+  test("bracket expressions never match a path separator", () => {
+    // A `[...]` class matches exactly one character of a single path component,
+    // same as `?` — POSIX fnmatch(FNM_PATHNAME), git wildmatch, minimatch and
+    // node fs.glob all agree it never matches `/`. Without this, a single-segment
+    // pattern like `a[!b]c` would match the two-segment path `a/c`, and match()
+    // would accept paths that scan() on the same Glob refuses.
+
+    // negated class
+    expect(new Glob("[!a]").match("/")).toBeFalse();
+    expect(new Glob("[^a]").match("/")).toBeFalse();
+    expect(new Glob("a[!b]c").match("a/c")).toBeFalse();
+    expect(new Glob("a[^b]c").match("a/c")).toBeFalse();
+    // negated class after a wildcard (backtracking still refuses the separator)
+    expect(new Glob("*[!b]c").match("d1/c")).toBeFalse();
+    expect(new Glob("*[!x]").match("a/b")).toBeFalse();
+    // positive class whose range spans 0x2F
+    expect(new Glob("a[.-A]c").match("a/c")).toBeFalse();
+    expect(new Glob("a[--0]c").match("a/c")).toBeFalse();
+    // explicit `/` as a class member (git t3070 pathname-mode column)
+    expect(new Glob("foo[/]bar").match("foo/bar")).toBeFalse();
+    expect(new Glob("[/]").match("/")).toBeFalse();
+    // inside a brace branch
+    expect(new Glob("a{[!b],x}c").match("a/c")).toBeFalse();
+    expect(new Glob("a{[!b],x}c").match("axc")).toBeTrue();
+    // `**` still crosses separators as the only multi-segment wildcard
+    expect(new Glob("a/**/[!b]c").match("a/x/zc")).toBeTrue();
+
+    // non-separator characters are unaffected
+    expect(new Glob("[!a]").match("b")).toBeTrue();
+    expect(new Glob("a[!b]c").match("axc")).toBeTrue();
+    expect(new Glob("a[^b]c").match("axc")).toBeTrue();
+    expect(new Glob("a[.-A]c").match("a0c")).toBeTrue();
+    expect(new Glob("*[!b]c").match("d1c")).toBeTrue();
+
+    // On Windows `\` is also a path separator and must be refused the same way.
+    if (isWindows) {
+      expect(new Glob("a[!b]c").match("a\\c")).toBeFalse();
+      expect(new Glob("[!a]").match("\\")).toBeFalse();
+    }
+
+    // sibling wildcards already refuse the separator; kept as regression anchors
+    expect(new Glob("a?c").match("a/c")).toBeFalse();
+    expect(new Glob("a*c").match("a/c")).toBeFalse();
+  });
+
   test("comma inside a bracket class inside braces is not a branch separator", () => {
     // `[,]` is a single-character class containing a literal comma, so the
     // group has three branches: `ts`, `[,]foo`, and nothing after — not a
@@ -745,7 +790,8 @@ describe("Glob.match", () => {
       expect(new Glob("[a-y]*[^c]").match("bd")).toBeTrue();
       expect(new Glob("[a-y]*[^c]").match("bb")).toBeTrue();
       expect(new Glob("[a-y]*[^c]").match("bcd")).toBeTrue();
-      expect(new Glob("[a-y]*[^c]").match("bdir/")).toBeTrue();
+      // git t3070-wildmatch.sh: 0 0 1 1 — pathname mode (column 1) does not match.
+      expect(new Glob("[a-y]*[^c]").match("bdir/")).toBeFalse();
       expect(new Glob("[a-y]*[^c]").match("Beware")).toBeFalse();
       expect(new Glob("[a-y]*[^c]").match("c")).toBeFalse();
       expect(new Glob("[a-y]*[^c]").match("ca")).toBeTrue();
@@ -954,7 +1000,10 @@ describe("Glob.match", () => {
     });
 
     test("bash slashmatch", () => {
-      expect(new Glob("foo[/]bar").match("foo/bar")).toBeTrue();
+      // git t3070-wildmatch.sh: `match 0 0 1 1 'foo/bar' 'foo[/]bar'` — a bracket
+      // expression does not match `/` in pathname mode (column 1).
+      expect(new Glob("foo[/]bar").match("foo/bar")).toBeFalse();
+      expect(new Glob("f[^eiu][^eiu][^eiu][^eiu][^eiu]r").match("foo/bar")).toBeFalse();
       expect(new Glob("f[^eiu][^eiu][^eiu][^eiu][^eiu]r").match("foo-bar")).toBeTrue();
     });
 

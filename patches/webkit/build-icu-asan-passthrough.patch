@@ -1,8 +1,8 @@
 diff --git a/build-icu.ps1 b/build-icu.ps1
-index 750badf91f..1cb9a3e5be 100644
+index 750badf91f..c6a2f29443 100644
 --- a/build-icu.ps1
 +++ b/build-icu.ps1
-@@ -16,11 +16,24 @@ param(
+@@ -16,7 +16,13 @@ param(
      [ValidateSet("Release", "Debug")]
      [string]$BuildType = "Release",
  
@@ -17,23 +17,36 @@ index 750badf91f..1cb9a3e5be 100644
  )
  
  $ErrorActionPreference = "Stop"
- 
-+if ($Sanitizer -eq "address") {
-+    # clang-cl (ClangCL toolset) reads extra options from the CL env var.
-+    $env:CL = "-fsanitize=address"
-+    $env:_CL_ = "-fsanitize=address"
-+    Write-Host ":: ICU with AddressSanitizer (CL=-fsanitize=address)"
-+}
-+
- # Default output directory
- if (-not $OutputDir) {
-     $OutputDir = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "WebKitBuild/icu"
-@@ -126,7 +139,7 @@ function Patch-IcuVcxProj {
+@@ -126,7 +132,7 @@ function Patch-IcuVcxProj {
      $content = $content -replace '<OutputFile>[^<]*\.(dll|DLL)</OutputFile>', ''
      $content = $content -replace '<ImportLibrary>[^<]*</ImportLibrary>', ''
  
 -    # Strip .rc — rc.exe cannot parse clang stddef.h and static libs do not need version resources.
-+    # Strip .rc â€” rc.exe cannot parse clang stddef.h and static libs do not need version resources.
++    # Strip .rc ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â rc.exe cannot parse clang stddef.h and static libs do not need version resources.
      $content = $content -replace "(?s)<ResourceCompile[^>]*>.*?</ResourceCompile>", ""
      $content = $content -replace "<ResourceCompile[^>]*/>", ""
  
+@@ -234,6 +240,16 @@ if ((Test-Path $icupkg) -and $datFile) {
+     Write-Host ":: WARNING: icupkg.exe or icudt*l.dat not found; skipping ICU data filter"
+ }
+ 
++# AddressSanitizer applies to the STAGE 2 static libraries only - those are
++# what a consumer links. STAGE 1 (makedata/stubdata) above is build-time
++# data tooling; instrumenting it breaks the icudt DLL link and buys nothing.
++if ($Sanitizer -eq "address") {
++    # clang-cl (ClangCL toolset) reads extra options from the CL env var.
++    $env:CL = "-fsanitize=address"
++    $env:_CL_ = "-fsanitize=address"
++    Write-Host ":: STAGE 2 ICU libs with AddressSanitizer (CL=-fsanitize=address)"
++}
++
+ # ========================================================================
+ # STAGE 2: Rebuild common and i18n as static libraries with /MT
+ # ========================================================================
+@@ -342,4 +358,4 @@ if (Test-Path $icuDataLibSrc) {
+     throw "ICU data library not found. Expected at: $icuDataLibSrc"
+ }
+ 
+-Write-Host ":: ICU build completed successfully!"
+\ No newline at end of file
++Write-Host ":: ICU build completed successfully!"

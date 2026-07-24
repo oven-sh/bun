@@ -257,8 +257,9 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
       reader.releaseLock();
       const port = Number(portLine.trim());
 
+      const stderrPromise = proc.stderr.text();
+      const results: Array<{ bytes: number; after: number; got: number }> = [];
       try {
-        const results: Array<{ bytes: number; after: number; got: number }> = [];
         for (let i = 0; i < 8; i++) {
           const bytes = 1 + Math.floor(rand() * 64);
           const after = Math.floor(rand() * 4);
@@ -273,11 +274,14 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
           });
           results.push({ bytes, after, got });
         }
-        expect(results).toEqual(results.map(({ bytes, after }) => ({ bytes, after, got: bodyLen })));
       } finally {
         proc.kill("SIGTERM");
         await proc.exited;
       }
+      expect({ results, stderr: await stderrPromise }).toEqual({
+        results: results.map(({ bytes, after }) => ({ bytes, after, got: bodyLen })),
+        stderr: "",
+      });
     },
   );
 });

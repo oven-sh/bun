@@ -748,6 +748,22 @@ test("a tampered Set.prototype[Symbol.iterator] or Date.now does not break conso
   }
 });
 
+test("Object.prototype pollution does not cause Runtime.enable to hook extra console methods", () => {
+  const session = new inspector.Session();
+  session.connect();
+  // @ts-expect-error deliberate prototype pollution
+  Object.prototype.count = "log";
+  const savedCount = console.count;
+  try {
+    session.post("Runtime.enable");
+    expect(console.count).toBe(savedCount);
+  } finally {
+    // @ts-expect-error cleanup
+    delete Object.prototype.count;
+    session.disconnect();
+  }
+});
+
 test("a console argument whose toString throws does not break console.log", async () => {
   const session = new inspector.Session();
   session.connect();

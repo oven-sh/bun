@@ -129,6 +129,7 @@ const runtimeEnabledSessions: Set<Session> = new SafeSet();
 const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
 const CONSOLE_API_TYPES: Record<string, string> = {
+  __proto__: null,
   log: "log",
   info: "info",
   warn: "warning",

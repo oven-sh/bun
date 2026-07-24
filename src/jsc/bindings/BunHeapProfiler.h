@@ -1,6 +1,8 @@
 #pragma once
 
 #include "root.h"
+#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/CallData.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -17,5 +19,9 @@ WTF::String generateHeapProfile(JSC::VM& vm);
 // V8 `--heap-prof`-compatible sampling heap profile JSON ({head, samples}),
 // synthesized from the time-based SamplingProfiler. See BunHeapProfiler.cpp.
 WTF::String generateHeapSamplingProfile(JSC::VM& vm);
+
+// v8.GCProfiler recorder (JSC::HeapObserver-backed); see BunHeapProfiler.cpp.
+JSC_DECLARE_HOST_FUNCTION(jsFunction_startGCProfile);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_stopGCProfile);
 
 } // namespace Bun

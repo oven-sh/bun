@@ -7,6 +7,11 @@
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/DeferGC.h>
 #include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/HeapObserver.h>
+#include <wtf/Lock.h>
+#include <wtf/MonotonicTime.h>
+#include <wtf/WallTime.h>
+#include <memory>
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/JSONObject.h>
@@ -1133,6 +1138,117 @@ WTF::String generateHeapSamplingProfile(JSC::VM& vm)
     }
     sb.append("]}"_s);
     return sb.toString();
+}
+
+// ── v8.GCProfiler ───────────────────────────────────────────────────────────
+//
+// Records one entry per collection via JSC::HeapObserver. The observer
+// callbacks can fire on the collector thread with the world stopped, so they
+// only read cheap Heap fields (sizeAfterLast*Collection,
+// totalBytesAllocatedThisCycle) and never walk the heap; entries are guarded
+// by a lock against stop() on the JS thread.
+
+class BunGCProfiler final : public JSC::HeapObserver {
+public:
+    struct Entry {
+        double startTime; // ms since epoch
+        double cost; // microseconds, node's unit (src/node_v8.cc)
+        bool full;
+        size_t beforeSize;
+        size_t afterSize;
+    };
+
+    explicit BunGCProfiler(JSC::Heap& heap)
+        : m_heap(heap)
+    {
+        m_heap.addObserver(this);
+    }
+
+    ~BunGCProfiler() final
+    {
+        m_heap.removeObserver(this);
+    }
+
+    void willGarbageCollect() final
+    {
+        m_gcStart = WTF::MonotonicTime::now();
+        m_gcStartWall = WTF::WallTime::now().secondsSinceEpoch().value() * 1000.0;
+        // Cheapest safe approximation of the size entering this collection:
+        // the live size after the previous one (allocation since then is not
+        // readable from the collector thread).
+        m_beforeSize = std::max(m_heap.sizeAfterLastEdenCollection(), m_heap.sizeAfterLastFullCollection());
+    }
+
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        Entry entry;
+        entry.startTime = m_gcStartWall;
+        entry.cost = (WTF::MonotonicTime::now() - m_gcStart).microseconds();
+        entry.full = scope == JSC::CollectionScope::Full;
+        entry.beforeSize = m_beforeSize;
+        entry.afterSize = entry.full ? m_heap.sizeAfterLastFullCollection() : m_heap.sizeAfterLastEdenCollection();
+        WTF::Locker locker { m_lock };
+        m_entries.append(entry);
+    }
+
+    WTF::String takeEntriesJSON()
+    {
+        WTF::Vector<Entry> entries;
+        {
+            WTF::Locker locker { m_lock };
+            entries = std::exchange(m_entries, {});
+        }
+        WTF::StringBuilder sb;
+        sb.append('[');
+        for (size_t i = 0; i < entries.size(); i++) {
+            const auto& entry = entries[i];
+            if (i)
+                sb.append(',');
+            sb.append("{\"startTime\":"_s);
+            sb.append(entry.startTime);
+            sb.append(",\"cost\":"_s);
+            sb.append(entry.cost);
+            sb.append(",\"full\":"_s);
+            sb.append(entry.full ? "true"_s : "false"_s);
+            sb.append(",\"beforeSize\":"_s);
+            sb.append(static_cast<uint64_t>(entry.beforeSize));
+            sb.append(",\"afterSize\":"_s);
+            sb.append(static_cast<uint64_t>(entry.afterSize));
+            sb.append('}');
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
+private:
+    JSC::Heap& m_heap;
+    WTF::Lock m_lock;
+    WTF::Vector<Entry> m_entries WTF_GUARDED_BY_LOCK(m_lock);
+    WTF::MonotonicTime m_gcStart;
+    double m_gcStartWall { 0 };
+    size_t m_beforeSize { 0 };
+};
+
+// One profiler per JS thread (= per VM), matching node's per-GCProfiler-object
+// callbacks; a second start() while running is a no-op like node's.
+static thread_local std::unique_ptr<BunGCProfiler> t_gcProfiler;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_startGCProfile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    if (!t_gcProfiler)
+        t_gcProfiler = std::make_unique<BunGCProfiler>(globalObject->vm().heap);
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_stopGCProfile, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = globalObject->vm();
+    WTF::String json = "[]"_s;
+    if (t_gcProfiler) {
+        json = t_gcProfiler->takeEntriesJSON();
+        t_gcProfiler = nullptr;
+    }
+    return JSC::JSValue::encode(JSC::jsString(vm, json));
 }
 
 } // namespace Bun

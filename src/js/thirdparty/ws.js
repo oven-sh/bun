@@ -355,6 +355,11 @@ class BunWebSocket extends EventEmitter {
       opts = undefined;
     }
 
+    const state = this.#ws.readyState;
+    if (state !== ReadyState_OPEN && state !== ReadyState_CONNECTING) {
+      return sendAfterClose(state, cb);
+    }
+
     try {
       this.#ws.send(normalizeData(data, opts), opts?.compress);
     } catch (error) {

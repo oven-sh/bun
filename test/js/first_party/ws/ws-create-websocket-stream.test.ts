@@ -179,6 +179,20 @@ describe("createWebSocketStream", () => {
     expect((err as Error).message).toMatch(/not open/i);
   });
 
+  it("errors the write callback when the client-side WebSocket has closed", async () => {
+    const url = await serve(ws => ws.close());
+    const ws = connect(url);
+    const duplex = createWebSocketStream(ws);
+    duplex.on("error", () => {});
+    duplex.resume();
+    await once(ws, "close");
+
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    duplex.write("too late", err => (err ? resolve(err) : reject(new Error("expected an error"))));
+    const err = await promise;
+    expect((err as Error).message).toMatch(/not open/i);
+  });
+
   it("forces objectMode and writableObjectMode to false", async () => {
     const url = await serve(() => {});
     const ws = connect(url);
@@ -189,6 +203,26 @@ describe("createWebSocketStream", () => {
     duplex.on("error", () => {});
 
     expect((duplex as Duplex & { _writableState: { objectMode: boolean } })._writableState.objectMode).toBe(false);
+  });
+});
+
+describe("BunWebSocket listener entry points register the native forwarder", () => {
+  it("addListener('message') as the only listener receives frames", async () => {
+    const url = await serve(ws => ws.send("via addListener"));
+    const ws = connect(url);
+    const { promise, resolve } = Promise.withResolvers<Buffer>();
+    ws.addListener("message", msg => resolve(msg as Buffer));
+    const msg = await promise;
+    expect(msg.toString()).toBe("via addListener");
+  });
+
+  it("prependListener('message') as the only listener receives frames", async () => {
+    const url = await serve(ws => ws.send("via prependListener"));
+    const ws = connect(url);
+    const { promise, resolve } = Promise.withResolvers<Buffer>();
+    ws.prependListener("message", msg => resolve(msg as Buffer));
+    const msg = await promise;
+    expect(msg.toString()).toBe("via prependListener");
   });
 });
 

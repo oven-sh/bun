@@ -6374,21 +6374,10 @@ impl VirtualMachine {
 
         self.event_loop_mut().ensure_waker();
 
-        // Note: reshaped for borrowck — `rare_data()` borrows `self` and
-        // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
-        // pointers (disjoint fields) per the existing `Bun__RareData__*`
-        // accessors in virtual_machine_exports.rs.
-        #[cfg(not(windows))]
-        let this: *mut VirtualMachine = self;
-
         #[cfg(not(windows))]
         let instance: *mut IPCInstance = {
-            // SAFETY: disjoint borrow — `spawn_ipc_group` only touches the
-            // embedded `SocketGroup` field + `vm.uws_loop()`.
-            let group: *mut uws::SocketGroup = unsafe {
-                let rare = std::ptr::from_mut::<RareData>((*this).rare_data());
-                (*rare).spawn_ipc_group(&*this)
-            };
+            let loop_ = self.uws_loop();
+            let group: *mut uws::SocketGroup = self.rare_data().spawn_ipc_group(loop_);
 
             // Box the instance first so `data.owner` can name its final
             // address.

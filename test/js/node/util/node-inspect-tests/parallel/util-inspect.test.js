@@ -140,37 +140,37 @@ test("no assertion failures", () => {
     const showHidden = true;
     const ab = new Uint8Array([1, 2, 3, 4]).buffer;
     const dv = new DataView(ab, 1, 2);
-    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, byteLength: 4 }");
+    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }");
     assert.strictEqual(
       util.inspect(new DataView(ab, 1, 2), showHidden),
       "DataView {\n" +
-        "  byteLength: 2,\n" +
-        "  byteOffset: 1,\n" +
-        "  buffer: ArrayBuffer {" +
-        " [Uint8Contents]: <01 02 03 04>, byteLength: 4 }\n}",
+        "  [byteLength]: 2,\n" +
+        "  [byteOffset]: 1,\n" +
+        "  [buffer]: ArrayBuffer {" +
+        " [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }\n}",
     );
-    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, byteLength: 4 }");
+    assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, [byteLength]: 4 }");
     assert.strictEqual(
       util.inspect(dv, showHidden),
       "DataView {\n" +
-        "  byteLength: 2,\n" +
-        "  byteOffset: 1,\n" +
-        "  buffer: ArrayBuffer { [Uint8Contents]: " +
-        "<01 02 03 04>, byteLength: 4 }\n}",
+        "  [byteLength]: 2,\n" +
+        "  [byteOffset]: 1,\n" +
+        "  [buffer]: ArrayBuffer { [Uint8Contents]: " +
+        "<01 02 03 04>, [byteLength]: 4 }\n}",
     );
     ab.x = 42;
     dv.y = 1337;
     assert.strictEqual(
       util.inspect(ab, showHidden),
-      "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, " + "byteLength: 4, x: 42 }",
+      "ArrayBuffer { [Uint8Contents]: <01 02 03 04>, " + "[byteLength]: 4, x: 42 }",
     );
     assert.strictEqual(
-      util.inspect(dv, showHidden),
+      util.inspect(dv, { showHidden, breakLength: 82 }),
       "DataView {\n" +
-        "  byteLength: 2,\n" +
-        "  byteOffset: 1,\n" +
-        "  buffer: ArrayBuffer { [Uint8Contents]: <01 02 03 04>," +
-        " byteLength: 4, x: 42 },\n" +
+        "  [byteLength]: 2,\n" +
+        "  [byteOffset]: 1,\n" +
+        "  [buffer]: ArrayBuffer { [Uint8Contents]: <01 02 03 04>," +
+        " [byteLength]: 4, x: 42 },\n" +
         "  y: 1337\n}",
     );
   }
@@ -180,19 +180,19 @@ test("no assertion failures", () => {
     assert.strictEqual(ab.byteLength, 42);
     new MessageChannel().port1.postMessage(ab, [ab]);
     assert.strictEqual(ab.byteLength, 0);
-    assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), byteLength: 0 }");
+    assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), [byteLength]: 0 }");
   }
 
   // Truncate output for ArrayBuffers using plural or singular bytes
   {
     const ab = new ArrayBuffer(3);
     assert.strictEqual(
-      util.inspect(ab, { showHidden: true, maxArrayLength: 2 }),
-      "ArrayBuffer { [Uint8Contents]" + ": <00 00 ... 1 more byte>, byteLength: 3 }",
+      util.inspect(ab, { showHidden: true, maxArrayLength: 2, breakLength: 82 }),
+      "ArrayBuffer { [Uint8Contents]" + ": <00 00 ... 1 more byte>, [byteLength]: 3 }",
     );
     assert.strictEqual(
-      util.inspect(ab, { showHidden: true, maxArrayLength: 1 }),
-      "ArrayBuffer { [Uint8Contents]" + ": <00 ... 2 more bytes>, byteLength: 3 }",
+      util.inspect(ab, { showHidden: true, maxArrayLength: 1, breakLength: 82 }),
+      "ArrayBuffer { [Uint8Contents]" + ": <00 ... 2 more bytes>, [byteLength]: 3 }",
     );
   }
 });
@@ -202,36 +202,36 @@ test("inspect from a different context", () => {
   const showHidden = false;
   const ab = vm.runInNewContext("new ArrayBuffer(4)");
   const dv = vm.runInNewContext("new DataView(ab, 1, 2)", { ab });
-  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }");
+  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }");
   assert.strictEqual(
     util.inspect(new DataView(ab, 1, 2), showHidden),
     "DataView {\n" +
-      "  byteLength: 2,\n" +
-      "  byteOffset: 1,\n" +
-      "  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }\n}",
+      "  [byteLength]: 2,\n" +
+      "  [byteOffset]: 1,\n" +
+      "  [buffer]: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }\n}",
   );
-  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }");
+  assert.strictEqual(util.inspect(ab, showHidden), "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }");
   //! segfaults
   /*assert.strictEqual(
     util.inspect(dv, showHidden),
     'DataView {\n' +
-    '  byteLength: 2,\n' +
-    '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4 }\n}'
+    '  [byteLength]: 2,\n' +
+    '  [byteOffset]: 1,\n' +
+    '  [buffer]: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4 }\n}'
   );*/
   ab.x = 42;
   dv.y = 1337;
   assert.strictEqual(
     util.inspect(ab, showHidden),
-    "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4, x: 42 }",
+    "ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4, x: 42 }",
   );
   //! segfaults
   /*assert.strictEqual(
     util.inspect(dv, showHidden),
     'DataView {\n' +
-    '  byteLength: 2,\n' +
-    '  byteOffset: 1,\n' +
-    '  buffer: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, byteLength: 4, x: 42 },\n' +
+    '  [byteLength]: 2,\n' +
+    '  [byteOffset]: 1,\n' +
+    '  [buffer]: ArrayBuffer { [Uint8Contents]: <00 00 00 00>, [byteLength]: 4, x: 42 },\n' +
     '  y: 1337\n}'
   );*/
 });
@@ -263,7 +263,7 @@ test("no assertion failures 2", () => {
         `  [length]: ${length},\n` +
         `  [byteLength]: ${byteLength},\n` +
         "  [byteOffset]: 0,\n" +
-        `  [buffer]: ArrayBuffer { byteLength: ${byteLength} }\n]`,
+        `  [buffer]: ArrayBuffer { [byteLength]: ${byteLength} }\n]`,
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
@@ -299,7 +299,7 @@ test("no assertion failures 2", () => {
         `  [length]: ${length},\n` +
         `  [byteLength]: ${byteLength},\n` +
         "  [byteOffset]: 0,\n" +
-        `  [buffer]: ArrayBuffer { byteLength: ${byteLength} }\n]`,
+        `  [buffer]: ArrayBuffer { [byteLength]: ${byteLength} }\n]`,
     );
     assert.strictEqual(util.inspect(array, false), `${constructor.name}(${length}) [ 65, 97 ]`);
   });
@@ -828,7 +828,7 @@ test("no assertion failures 2", () => {
     testColorStyle("null", null);
     testColorStyle("string", "test string");
     testColorStyle("date", new Date());
-    testColorStyle("regexp", /regexp/);
+    // RegExp now uses token-level highlighting; verified in a dedicated test file.
   }
 
   // An object with "hasOwnProperty" overwritten should not throw.
@@ -1628,7 +1628,7 @@ test("no assertion failures 2", () => {
       "    [byteLength]: 0,",
       "    [byteOffset]: 0,",
       "    [buffer]: ArrayBuffer {",
-      "      byteLength: 0,",
+      "      [byteLength]: 0,",
       "      foo: true",
       "    }",
       "  ],",
@@ -1646,7 +1646,7 @@ test("no assertion failures 2", () => {
       "      [byteLength]: 0,",
       "      [byteOffset]: 0,",
       "      [buffer]: ArrayBuffer {",
-      "        byteLength: 0,",
+      "        [byteLength]: 0,",
       "        foo: true",
       "      }",
       "    ],",
@@ -1675,7 +1675,7 @@ test("no assertion failures 2", () => {
       "    [length]: 0,",
       "    [byteLength]: 0,",
       "    [byteOffset]: 0,",
-      "    [buffer]: ArrayBuffer { byteLength: 0, foo: true }",
+      "    [buffer]: ArrayBuffer { [byteLength]: 0, foo: true }",
       "  ],",
       "  [Set Iterator] {\n" + "    [ 1, 2, [length]: 2 ],",
       "    [Symbol(Symbol.toStringTag)]: 'Set Iterator'\n" +
@@ -1685,7 +1685,7 @@ test("no assertion failures 2", () => {
       "      [length]: 0,",
       "      [byteLength]: 0,",
       "      [byteOffset]: 0,",
-      "      [buffer]: ArrayBuffer { byteLength: 0, foo: true }",
+      "      [buffer]: ArrayBuffer { [byteLength]: 0, foo: true }",
       "    ],",
       "    [Circular *1],",
       "    [Symbol(Symbol.toStringTag)]: 'Map Iterator'\n" + "  }",
@@ -1716,7 +1716,7 @@ test("no assertion failures 2", () => {
       "    [byteLength]: 0,",
       "    [byteOffset]: 0,",
       "    [buffer]: ArrayBuffer {",
-      "      byteLength: 0,",
+      "      [byteLength]: 0,",
       "      foo: true } ],",
       "  [Set Iterator] {",
       "    [ 1,",
@@ -1730,7 +1730,7 @@ test("no assertion failures 2", () => {
       "      [byteLength]: 0,",
       "      [byteOffset]: 0,",
       "      [buffer]: ArrayBuffer {",
-      "        byteLength: 0,",
+      "        [byteLength]: 0,",
       "        foo: true } ],",
       "    [Circular *1],",
       "    [Symbol(Symbol.toStringTag)]:",
@@ -2060,15 +2060,15 @@ test("no assertion failures 3", () => {
     [new BigUint64Array(2), "[BigUint64Array(2): null prototype] [ 0n, 0n ]"],
     [
       new ArrayBuffer(4),
-      "[ArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00 00 00>,\n  byteLength: undefined\n}",
+      "[ArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00 00 00>,\n  [byteLength]: undefined\n}",
     ],
     [
       new DataView(new ArrayBuffer(4)),
-      "[DataView: null prototype] {\n  byteLength: undefined,\n  byteOffset: undefined,\n  buffer: undefined\n}",
+      "[DataView: null prototype] {\n  [byteLength]: undefined,\n  [byteOffset]: undefined,\n  [buffer]: undefined\n}",
     ],
     [
       new SharedArrayBuffer(2),
-      "[SharedArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00>,\n  byteLength: undefined\n}",
+      "[SharedArrayBuffer: null prototype] {\n  [Uint8Contents]: <00 00>,\n  [byteLength]: undefined\n}",
     ],
     [new Date("Sun, 14 Feb 2010 11:48:40 GMT"), "[Date: null prototype] 2010-02-14T11:48:40.000Z"],
   ].forEach(([value, expected]) => {

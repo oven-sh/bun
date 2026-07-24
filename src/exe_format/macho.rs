@@ -90,9 +90,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        // reshaped for borrowck — capture base ptr as usize before iterating so we can
-        // compute byte offsets without holding a borrow of self.data across the mutable writes below.
-        let base_addr = self.data.as_ptr() as usize;
+        let lc_base = size_of::<macho::mach_header_64>();
         let mut iter = self.iterator();
 
         while let Some(entry) = iter.next() {
@@ -104,7 +102,7 @@ impl MachoFile {
                         .expect("unreachable");
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
-                            let section_offset = entry.data.as_ptr() as usize - base_addr;
+                            let section_offset = lc_base + entry.offset;
                             let sections_base =
                                 section_offset + size_of::<macho::segment_command_64>();
                             let sect_sz = size_of::<macho::section_64>();
@@ -168,11 +166,11 @@ impl MachoFile {
                             }
                         }
                     } else if command.seg_name() == SEG_LINKEDIT {
-                        linkedit_seg_idx = Some(entry.data.as_ptr() as usize - base_addr);
+                        linkedit_seg_idx = Some(lc_base + entry.offset);
                     }
                 }
                 macho::LC::CODE_SIGNATURE => {
-                    code_sign_cmd_idx = Some(entry.data.as_ptr() as usize - base_addr);
+                    code_sign_cmd_idx = Some(lc_base + entry.offset);
                 }
                 _ => {}
             }
@@ -590,7 +588,7 @@ impl MachoSigner {
                 // Store segment info
                 if seg.seg_name() == SEG_LINKEDIT {
                     linkedit_seg = seg;
-                    linkedit_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
+                    linkedit_off = header_size + cmd.offset;
 
                     // Validate linkedit is after text
                     if linkedit_seg.fileoff < text_seg.fileoff + text_seg.filesize {
@@ -617,7 +615,7 @@ impl MachoSigner {
                         .expect("unreachable");
                     sig_off = cs.dataoff as usize;
                     sig_sz = cs.datasize as usize;
-                    cs_cmd_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
+                    cs_cmd_off = header_size + cmd.offset;
                 }
                 _ => {}
             }

@@ -647,35 +647,4 @@ impl<Id> ComptimeClap<Id> {
     pub fn remaining(&self) -> &[&'static [u8]] {
         &self.passthrough_positionals
     }
-
-    /// `const fn` so `const { has_flag(PARAMS, b"--foo") }` folds.
-    pub const fn has_flag(params: &[Param<Id>], name: &[u8]) -> bool {
-        let mut i = 0;
-        while i < params.len() {
-            let n = &params[i].names;
-            if name.len() == 2 && name[0] == b'-' {
-                if let Some(s) = n.short {
-                    if s == name[1] {
-                        return true;
-                    }
-                }
-            } else if name.len() > 2 && name[0] == b'-' && name[1] == b'-' {
-                let (_, key) = name.split_at(2);
-                if let Some(l) = n.long {
-                    if bytes_eq(l, key) {
-                        return true;
-                    }
-                }
-                let mut a = 0;
-                while a < n.long_aliases.len() {
-                    if bytes_eq(n.long_aliases[a], key) {
-                        return true;
-                    }
-                    a += 1;
-                }
-            }
-            i += 1;
-        }
-        false
-    }
 }

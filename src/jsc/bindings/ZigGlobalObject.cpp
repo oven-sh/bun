@@ -2543,6 +2543,12 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(map);
         });
 
+    m_inFlightModuleFetches.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSMap>::Initializer& init) {
+            auto* map = JSC::JSMap::create(init.vm, init.owner->mapStructure());
+            init.set(map);
+        });
+
     m_requireFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
@@ -3535,6 +3541,8 @@ void GlobalObject::reload()
     }
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
+    this->clearInFlightModuleFetches();
+    RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.
@@ -3784,6 +3792,58 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
     return promise;
 }
 
+// Mirrors the module registry key: (specifier, fetch type, host-defined import
+// type). Length-prefixed so no triple can alias another's flattened key. Coarser
+// keying would share one JSSourceCode across two registry entries. The generation
+// scopes the key to one clearInFlightModuleFetches() epoch.
+static String inFlightModuleFetchKey(unsigned generation, const String& moduleKey, ScriptFetchParameters::Type type, const String& typeAttribute)
+{
+    return makeString(generation, ':', static_cast<unsigned>(type), ':', typeAttribute.length(), ':', typeAttribute, moduleKey);
+}
+
+// Passed as both the fulfill and the reject handler, with the flattened fetch
+// key as the reaction's user context (argument 1).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionInFlightModuleFetchSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* thisObject = defaultGlobalObject(globalObject);
+    thisObject->inFlightModuleFetches()->remove(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC::JSPromise* GlobalObject::inFlightModuleFetch(JSC::JSString* fetchKey)
+{
+    // A miss (and a pending exception) yields jsUndefined(), never an empty
+    // JSValue, so the downcast is the miss check. Callers check the exception.
+    return dynamicDowncast<JSC::JSPromise>(inFlightModuleFetches()->get(this, fetchKey));
+}
+
+void GlobalObject::trackInFlightModuleFetch(JSC::JSString* fetchKey, JSC::JSPromise* promise)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm());
+    inFlightModuleFetches()->set(this, fetchKey, promise);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    // Attached before the loader attaches its own reaction, so the entry is gone
+    // before the module registry entry that supersedes it is created.
+    JSFunction* onSettled = thenable(jsFunctionInFlightModuleFetchSettled);
+    scope.release();
+    promise->performPromiseThenWithContext(vm(), this, onSettled, onSettled, jsUndefined(), fetchKey);
+}
+
+void GlobalObject::clearInFlightModuleFetches()
+{
+    // Clearing the map cannot detach the settle reactions already attached to the
+    // promises it held. Retire the generation so a pre-clear fetch that settles
+    // later removes its own (now absent) key instead of a newer fetch's entry.
+    inFlightModuleFetchGeneration++;
+    if (!m_inFlightModuleFetches.isInitialized())
+        return;
+    inFlightModuleFetches()->clear(this);
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     JSModuleLoader* loader, JSValue key,
     RefPtr<JSC::ScriptFetchParameters> parameters, RefPtr<JSC::ScriptFetcher>)
@@ -3845,8 +3905,19 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
         return rejectedInternalPromise(globalObject, result ? result : JSC::jsUndefined());
     }
 
+    // JSC registers the module registry entry (whose fetch promise later
+    // importers share) only once this fetch settles, so coalesce until then:
+    // concurrent dynamic imports of one specifier run the loader exactly once.
+    auto* zigGlobalObject = static_cast<Zig::GlobalObject*>(globalObject);
+    auto fetchType = parameters ? parameters->type() : ScriptFetchParameters::Type::JavaScript;
+    JSString* fetchKey = jsString(vm, inFlightModuleFetchKey(zigGlobalObject->inFlightModuleFetchGeneration, moduleKey, fetchType, typeAttributeString));
+    JSC::JSPromise* inFlight = zigGlobalObject->inFlightModuleFetch(fetchKey);
+    RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
+    if (inFlight)
+        return inFlight;
+
     JSValue result = Bun::fetchESMSourceCodeAsync(
-        static_cast<Zig::GlobalObject*>(globalObject),
+        zigGlobalObject,
         moduleKeyJS,
         &res,
         &moduleKeyBun,
@@ -3856,6 +3927,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
     ASSERT(result);
     if (auto* promise = dynamicDowncast<JSC::JSPromise>(result)) {
+        zigGlobalObject->trackInFlightModuleFetch(fetchKey, promise);
+        RETURN_IF_EXCEPTION(scope, rejectedInternalPromise(globalObject, scope.exception()->value()));
         return promise;
     }
     return rejectedInternalPromise(globalObject, result);
@@ -4080,6 +4153,8 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolve;
     } else if (handler == Bun__HTTPRequestContextDebugH3__onResolveStream) {
         return GlobalObject::PromiseFunctions::Bun__HTTPRequestContextDebugH3__onResolveStream;
+    } else if (handler == jsFunctionInFlightModuleFetchSettled) {
+        return GlobalObject::PromiseFunctions::jsFunctionInFlightModuleFetchSettled;
     } else {
         RELEASE_ASSERT_NOT_REACHED();
     }

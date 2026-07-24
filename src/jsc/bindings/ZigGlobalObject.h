@@ -279,6 +279,19 @@ public:
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
     // clearAll() instead.
 
+    // Embedder module fetches that have not settled yet, keyed by module key +
+    // type attribute. JSC only registers a module registry entry once the first
+    // fetch settles, so without this every concurrent import() of one specifier
+    // re-runs the loader. Entries are dropped when the fetch settles.
+    JSC::JSMap* inFlightModuleFetches() const { return m_inFlightModuleFetches.getInitializedOnMainThread(this); }
+    JSC::JSPromise* inFlightModuleFetch(JSC::JSString* fetchKey);
+    void trackInFlightModuleFetch(JSC::JSString* fetchKey, JSC::JSPromise*);
+    void clearInFlightModuleFetches();
+    // Part of the fetch key, retired by clearInFlightModuleFetches(). A fetch left
+    // in flight across a reload settles into a reaction that removes its own key,
+    // which by then must no longer name a live entry.
+    unsigned inFlightModuleFetchGeneration = 0;
+
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::JSObject* performanceObject() const { return m_performanceObject.getInitializedOnMainThread(this); }
@@ -412,8 +425,9 @@ public:
         Bun__HTTPRequestContextDebugH3__onRejectStream,
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
+        jsFunctionInFlightModuleFetchSettled,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 43;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
@@ -606,6 +620,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
     V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
+    V(private, LazyPropertyOfGlobalObject<JSMap>, m_inFlightModuleFetches)                                   \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSFetchTaskletChunkedRequestControllerPrototype)      \

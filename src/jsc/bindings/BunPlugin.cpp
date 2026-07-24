@@ -384,18 +384,6 @@ void BunPlugin::Base::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSObject* fu
     }
 }
 
-JSC::JSObject* BunPlugin::Group::find(JSC::JSGlobalObject* globalObject, String& path)
-{
-    size_t count = filters.size();
-    for (size_t i = 0; i < count; i++) {
-        if (filters[i].get()->match(globalObject, path, 0)) {
-            return callbacks[i].get();
-        }
-    }
-
-    return nullptr;
-}
-
 void BunPlugin::OnLoad::addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mockObject)
 {
     Zig::GlobalObject* globalObject = defaultGlobalObject(mockObject->globalObject());
@@ -735,48 +723,84 @@ EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunStri
         return JSValue::encode(jsUndefined());
     }
     Group& group = *groupPtr;
+    auto& filters = group.filters;
 
-    auto pathString = path->toWTFString(BunString::ZeroCopy);
-
-    auto* function = group.find(globalObject, pathString);
-    if (!function) {
-        return JSValue::encode(JSC::jsUndefined());
+    if (filters.size() == 0) {
+        return JSValue::encode(jsUndefined());
     }
 
-    JSC::MarkedArgumentBuffer arguments;
+    auto& callbacks = group.callbacks;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     scope.assertNoExceptionExceptTermination();
+    auto pathString = path->toWTFString(BunString::ZeroCopy);
 
-    JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-    const auto& builtinNames = WebCore::builtinNames(vm);
-    paramsObject->putDirect(
-        vm, builtinNames.pathPublicName(),
-        jsString(vm, pathString));
-    arguments.append(paramsObject);
-
-    auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (auto* promise = dynamicDowncast<JSPromise>(result)) {
-        switch (promise->status()) {
-        case JSPromise::Status::Rejected:
-        case JSPromise::Status::Pending: {
-            return JSValue::encode(promise);
-        }
-        case JSPromise::Status::Fulfilled: {
-            result = promise->result();
-            break;
-        }
-        }
+    JSC::MarkedArgumentBuffer matchedCallbacks;
+    matchedCallbacks.ensureCapacity(filters.size());
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
     }
-
-    if (!result.isObject()) {
-        JSC::throwTypeError(globalObject, scope, "onLoad() expects an object returned"_s);
+    for (size_t i = 0; i < filters.size(); i++) {
+        if (!filters[i].get()->match(globalObject, pathString, 0)) {
+            continue;
+        }
+        auto* function = callbacks[i].get();
+        if (!function) [[unlikely]] {
+            continue;
+        }
+        matchedCallbacks.append(function);
+    }
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    const auto& builtinNames = WebCore::builtinNames(vm);
+
+    for (size_t i = 0; i < matchedCallbacks.size(); i++) {
+        auto* function = matchedCallbacks.at(i).getObject();
+
+        JSC::MarkedArgumentBuffer arguments;
+        JSC::JSObject* paramsObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+        paramsObject->putDirect(
+            vm, builtinNames.pathPublicName(),
+            jsString(vm, pathString));
+        arguments.append(paramsObject);
+
+        auto result = AsyncContextFrame::call(globalObject, function, JSC::jsUndefined(), arguments);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (result.isUndefinedOrNull()) {
+            continue;
+        }
+
+        if (auto* promise = dynamicDowncast<JSPromise>(result)) {
+            switch (promise->status()) {
+            case JSPromise::Status::Rejected:
+            case JSPromise::Status::Pending: {
+                return JSValue::encode(promise);
+            }
+            case JSPromise::Status::Fulfilled: {
+                result = promise->result();
+                break;
+            }
+            }
+        }
+
+        if (result.isUndefinedOrNull()) {
+            continue;
+        }
+
+        if (!result.isObject()) {
+            JSC::throwTypeError(globalObject, scope, "onLoad() expects an object returned"_s);
+            return {};
+        }
+
+        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    }
+
+    return JSValue::encode(JSC::jsUndefined());
 }
 
 std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path, const String& from)

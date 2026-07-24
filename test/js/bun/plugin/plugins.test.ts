@@ -722,3 +722,103 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+describe("runtime onLoad returning undefined falls through", () => {
+  // The published OnLoadResult type allows `undefined | void` meaning "not interested, defer".
+  // This mirrors Bun.build's onLoad and runtime onResolve, which already fall through.
+
+  it("sync undefined defers to the next matching onLoad", async () => {
+    const calls: string[] = [];
+    Bun.plugin({
+      name: "onload-fallthrough-sync",
+      setup(b) {
+        b.onResolve({ filter: /.*/, namespace: "ftsync" }, a => ({ path: a.path, namespace: "ftsync-load" }));
+        b.onLoad({ filter: /.*/, namespace: "ftsync-load" }, () => {
+          calls.push("first");
+          return undefined;
+        });
+        b.onLoad({ filter: /.*/, namespace: "ftsync-load" }, () => {
+          calls.push("second");
+          return { contents: "export default 'SECOND'", loader: "js" };
+        });
+      },
+    });
+
+    const mod = await import("ftsync:x");
+    expect({ default: mod.default, calls }).toEqual({ default: "SECOND", calls: ["first", "second"] });
+  });
+
+  it("Promise.resolve(undefined) defers to the next matching onLoad", async () => {
+    const calls: string[] = [];
+    Bun.plugin({
+      name: "onload-fallthrough-promise",
+      setup(b) {
+        b.onResolve({ filter: /.*/, namespace: "ftprom" }, a => ({ path: a.path, namespace: "ftprom-load" }));
+        b.onLoad({ filter: /.*/, namespace: "ftprom-load" }, () => {
+          calls.push("first");
+          return Promise.resolve(undefined);
+        });
+        b.onLoad({ filter: /.*/, namespace: "ftprom-load" }, () => {
+          calls.push("second");
+          return { contents: "export default 'PROMISE-SECOND'", loader: "js" };
+        });
+      },
+    });
+
+    const mod = await import("ftprom:x");
+    expect({ default: mod.default, calls }).toEqual({ default: "PROMISE-SECOND", calls: ["first", "second"] });
+  });
+
+  it("null defers to the next matching onLoad", async () => {
+    Bun.plugin({
+      name: "onload-fallthrough-null",
+      setup(b) {
+        b.onResolve({ filter: /.*/, namespace: "ftnull" }, a => ({ path: a.path, namespace: "ftnull-load" }));
+        b.onLoad({ filter: /.*/, namespace: "ftnull-load" }, () => null as any);
+        b.onLoad({ filter: /.*/, namespace: "ftnull-load" }, () => ({
+          contents: "export default 'NULL-SECOND'",
+          loader: "js",
+        }));
+      },
+    });
+
+    expect((await import("ftnull:x")).default).toBe("NULL-SECOND");
+  });
+
+  it("a non-undefined non-object return still throws TypeError", async () => {
+    Bun.plugin({
+      name: "onload-bad-return",
+      setup(b) {
+        b.onResolve({ filter: /.*/, namespace: "ftbad" }, a => ({ path: a.path, namespace: "ftbad-load" }));
+        b.onLoad({ filter: /.*/, namespace: "ftbad-load" }, () => 42 as any);
+      },
+    });
+
+    await expect(import("ftbad:x")).rejects.toThrow(TypeError);
+  });
+
+  it.concurrent("defers to the default loader in the file namespace", async () => {
+    using dir = tempDir("plugin-onload-fallthrough-file", {
+      "preload.js": `
+        Bun.plugin({
+          name: "noop-onload",
+          setup(b) {
+            b.onLoad({ filter: /\\.js$/ }, () => undefined);
+          },
+        });
+      `,
+      "entry.js": `console.log("default-loader-ran");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim() || stderr).toBe("default-loader-ran");
+    expect(exitCode).toBe(0);
+  });
+});

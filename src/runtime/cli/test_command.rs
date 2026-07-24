@@ -900,14 +900,6 @@ impl JunitReporter {
     }
 }
 
-/// Drain the event loop after a file's tests finish, like a node process
-/// would before exiting; the vendored-node-test runner opts in via
-/// `BUN_TEST_DRAIN_EVENT_LOOP=1` so mustCall()-style exit checks see
-/// completed async work. Off by default: bun suites keep exit-after-tests.
-pub(crate) fn should_drain_event_loop() -> bool {
-    env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
-}
-
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -2250,6 +2242,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
+                node_test_module_used: false,
             },
             last_dot: 0,
             repeat_count: 1,
@@ -3053,18 +3046,23 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Run `process.on('exit')` handlers like `bun run` does. Node's test
-        // harness verifies mustCall() counts from one, so skipping them made
-        // those assertions silently pass. Must precede the GC-root release
-        // below: handlers are user JS and may touch still-live state.
-        {
+        if reporter.jest.node_test_module_used {
+            // Run `process.on('exit')` handlers like `bun run` does. Node's test
+            // harness verifies mustCall() counts from one, so skipping them made
+            // those assertions silently pass. Must precede the GC-root release
+            // below: handlers are user JS and may touch still-live state.
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
             // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+            vm.run_with_api_lock(|| unsafe {
+                (*vm_ptr).global().handle_rejected_promises();
+                (*vm_ptr).on_exit();
+            });
+            // on_exit() already set is_shutting_down; global_exit() asserts it.
+        } else {
+            vm.is_shutting_down = true;
         }
-        // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `destructOnExit()`'s `collectNow()` can reach the closures they pin
         // (preload hooks, per-file describe/test callbacks). Clear `RUNNER`
@@ -3381,8 +3379,9 @@ impl TestCommand {
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // it early-returns when unhandled_error_counter > 0, which is fine
-                // here since such a file already failed. Opt-in; one file per process.
-                if should_drain_event_loop() {
+                // here since such a file already failed. bun:test-only files keep
+                // exit-after-tests.
+                if reporter.jest.node_test_module_used {
                     vm.on_before_exit();
                 }
                 drop(buntest_strong);

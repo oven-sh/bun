@@ -32,6 +32,14 @@ it("process.env defineProperty validates descriptors like node", () => {
     expect(process.env[key]).toBe("after");
     Object.defineProperty(process.env, key, full);
     expect(process.env[key]).toBe("v");
+    // node's EnvDefiner stringifies the value, matching the assignment trap.
+    Object.defineProperty(process.env, key, { value: 42, writable: true, enumerable: true, configurable: true });
+    expect(process.env[key]).toBe("42");
+    // Object.freeze applies {configurable:false, writable:false} per key via
+    // the hook, which is the attribute-only case above.
+    expect(() => Object.freeze(process.env)).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_OBJECT_DEFINE_PROPERTY" }),
+    );
     // Symbol keys: the descriptor is validated first, then node's key
     // coercion throws a plain TypeError with no code.
     let symErr;

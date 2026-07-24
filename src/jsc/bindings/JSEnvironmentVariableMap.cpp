@@ -823,15 +823,24 @@ public:
         if (!validateEnvPropertyDescriptor(globalObject, descriptor, scope))
             return false;
 
+        if (descriptor.isAccessorDescriptor())
+            RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+
         // node coerces the key to a string after validating the descriptor,
         // so a symbol key throws the plain conversion TypeError (no code).
         // Symbol-keyed accessors flow through with the accessor divergence.
-        if (propertyName.isSymbol() && !descriptor.isAccessorDescriptor()) {
+        if (propertyName.isSymbol()) {
             JSC::throwTypeError(globalObject, scope, "Cannot convert a Symbol value to a string"_s);
             return false;
         }
 
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+        // node's EnvDefiner stringifies the value, matching the assignment
+        // trap; storing the raw value would break the string-only contract
+        // the Windows env sync (editWindowsEnvVar) relies on.
+        String stringValue = descriptor.value().toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        JSC::PropertyDescriptor coerced(jsString(vm, stringValue), 0);
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
     }
 
 private:

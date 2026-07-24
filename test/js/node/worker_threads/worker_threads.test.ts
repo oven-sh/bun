@@ -460,18 +460,32 @@ describe("execArgv option", async () => {
   });
 
   it("SHARE_ENV process.env validates descriptors like node", async () => {
-    const w = new Worker(
-      `const { parentPort } = require("worker_threads");
-       const out = {};
-       try { Object.defineProperty(process.env, "BUN_TEST_SHARE_DEFINE", { writable: false }); out.partial = null; }
-       catch (e) { out.partial = e.code; }
-       try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }
-       catch (e) { out.symbol = e.name; }
-       parentPort.postMessage(out);`,
-      { eval: true, env: SHARE_ENV },
-    );
-    const [out] = await once(w, "message");
-    expect(out).toEqual({ partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError" });
+    // Founding a SHARE_ENV tree permanently swaps the founding thread's
+    // process.env; run in a subprocess so the test runner stays untouched.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker, SHARE_ENV } = require("worker_threads");
+         new Worker(
+           'const out = {};' +
+           'try { Object.defineProperty(process.env, "BUN_TEST_SHARE_DEFINE", { writable: false }); out.partial = null; }' +
+           'catch (e) { out.partial = e.code; }' +
+           'try { Object.defineProperty(process.env, Symbol("s"), { value: "v", writable: true, enumerable: true, configurable: true }); out.symbol = null; }' +
+           'catch (e) { out.symbol = e.name; }' +
+           'require("worker_threads").parentPort.postMessage(out);',
+           { eval: true, env: SHARE_ENV },
+         ).on("message", out => { console.log(JSON.stringify(out)); process.exit(0); });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout.trim()), stderr, exitCode }).toEqual({
+      out: { partial: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", symbol: "TypeError" },
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("bun's own glued short flags round-trip through process.execArgv", async () => {

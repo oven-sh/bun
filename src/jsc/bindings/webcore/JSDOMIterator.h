@@ -263,7 +263,7 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, I
 
     auto iterator = dynamicDowncast<JSDOMIteratorBase<JSWrapper, IteratorTraits>>(callFrame->thisValue());
     if (!iterator) {
-        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Cannot call next() on a non-Iterator object"_s);
+        return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Value of \"this\" must be of type "_s, JSWrapper::info()->className, "Iterator"_s));
     }
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(iterator->next(*globalObject)));

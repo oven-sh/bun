@@ -55,7 +55,7 @@ WEBCORE_EXPORT JSC::EncodedJSValue throwRequiredMemberTypeError(JSC::JSGlobalObj
 WEBCORE_EXPORT JSC::EncodedJSValue throwDictionaryMemberTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral memberName, ASCIILiteral dictionaryName, ASCIILiteral expectedType);
 JSC::EncodedJSValue throwConstructorScriptExecutionContextUnavailableError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral interfaceName);
 
-String makeThisTypeErrorMessage(ASCIILiteral interfaceName, ASCIILiteral functionName);
+String makeThisTypeErrorMessage(ASCIILiteral interfaceName);
 String makeUnsupportedIndexedSetterErrorMessage(ASCIILiteral interfaceName);
 
 WEBCORE_EXPORT JSC::EncodedJSValue throwThisTypeError(JSC::JSGlobalObject&, JSC::ThrowScope&, ASCIILiteral interfaceName, ASCIILiteral attributeName);

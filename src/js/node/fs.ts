@@ -8,6 +8,7 @@ const {
   validateEncoding,
   getValidatedPath,
   throwIfNullBytesInFileName,
+  warnOnNonPortableTemplate,
 } = require("internal/validators");
 
 const kEmptyObject = Object.freeze(Object.create(null));
@@ -30,6 +31,9 @@ const { guardCallback } = require("internal/shared");
 function wrapFsCallback(callback) {
   return guardCallback(callback);
 }
+
+// One-shot latch for the DEP0187 warning node:fs emits at most once per process.
+var showExistsDeprecation = true;
 
 // Validates and returns the wrapped callback.
 // Callers must use the return value, not the argument.
@@ -216,6 +220,7 @@ var access = function access(path, mode, callback) {
     }
 
     callback = ensureCallback(callback);
+    warnOnNonPortableTemplate(prefix);
 
     fs.mkdtemp(prefix, options).then(function (folder) {
       callback(null, folder);
@@ -465,8 +470,22 @@ var access = function access(path, mode, callback) {
   closeSync = fs.closeSync.bind(fs),
   copyFileSync = fs.copyFileSync.bind(fs),
   // This behavior - never throwing -- matches Node.js behavior.
-  // https://github.com/nodejs/node/blob/c82f3c9e80f0eeec4ae5b7aedd1183127abda4ad/lib/fs.js#L275C1-L295C1
-  existsSync = function existsSync(_path: string) {
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/fs.js#L273-L287
+  existsSync = function existsSync(path: string) {
+    // Node's getValidatedPath accepts only a string, a Uint8Array, or a URL;
+    // anything else is the ERR_INVALID_ARG_TYPE that DEP0187 warns about once
+    // before existsSync swallows it and answers false.
+    if (typeof path !== "string" && !$isTypedArrayView(path) && !(path instanceof URL)) {
+      if (showExistsDeprecation) {
+        showExistsDeprecation = false;
+        process.emitWarning(
+          "Passing invalid argument types to fs.existsSync is deprecated",
+          "DeprecationWarning",
+          "DEP0187",
+        );
+      }
+      return false;
+    }
     try {
       return fs.existsSync.$apply(fs, arguments);
     } catch {
@@ -486,7 +505,10 @@ var access = function access(path, mode, callback) {
   linkSync = fs.linkSync.bind(fs) as unknown as typeof import("node:fs").linkSync,
   lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
   mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
-  mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  mkdtempSync = function mkdtempSync(prefix, options) {
+    warnOnNonPortableTemplate(prefix);
+    return fs.mkdtempSync(prefix, options);
+  } as unknown as typeof import("node:fs").mkdtempSync,
   mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
     const path = mkdtempSync(prefix, options);
     // Stash the full path in case of process.chdir()

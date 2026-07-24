@@ -493,9 +493,15 @@ describe("execArgv option", async () => {
       // chained boolean short before the value-taking short, glued value
       [[`-br${p}`], ["-b", "-r", p]],
       // chained, value in the next argv token
-      [["-br", p], ["-b", "-r", p]],
+      [
+        ["-br", p],
+        ["-b", "-r", p],
+      ],
       // same round-trip on the `bun run` entry point
-      [["run", `-r${p}`], ["-r", p]],
+      [
+        ["run", `-r${p}`],
+        ["-r", p],
+      ],
     ];
     for (const [launch, normalized] of cases) {
       await using proc = Bun.spawn({

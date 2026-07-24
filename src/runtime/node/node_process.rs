@@ -386,8 +386,7 @@ mod _impl {
                         // bun/node entry points (Arguments::parse scopes them
                         // the same way).
                         MAP.contains(arg)
-                            || (!seen_run
-                                && node_alias_to.is_some_and(|to| MAP.contains(to)))
+                            || (!seen_run && node_alias_to.is_some_and(|to| MAP.contains(to)))
                     }
                 };
                 continue;

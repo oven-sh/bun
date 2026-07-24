@@ -33,7 +33,7 @@ class BunInspectorConnection;
 
 static WebCore::ScriptExecutionContext* debuggerScriptExecutionContext = nullptr;
 static WTF::Lock inspectorConnectionsLock = WTF::Lock();
-static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>* inspectorConnections = nullptr;
+static WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>* inspectorConnections = nullptr;
 
 // When the inspected JS thread is paused at a breakpoint (inside runWhilePaused),
 // it waits on this condition for the debugger thread to deliver new messages or
@@ -53,6 +53,11 @@ static PausedWait& pausedWait()
 
 static bool waitingForConnection = false;
 static bool bunControllerInstalled = false;
+// Tracks whether connectFrontend has ever been called on the Bun-installed
+// inspector controller; once true, the exit path must leak that controller
+// (see Bun__InspectorConnection__disconnectAllOnExit) even if every
+// connection has since disconnected and been removed from inspectorConnections.
+static bool bunControllerHasEverConnected = false;
 extern "C" void Debugger__didConnect();
 
 class BunJSGlobalObjectDebuggable final : public JSC::JSGlobalObjectDebuggable {
@@ -92,7 +97,7 @@ enum class ConnectionStatus : int32_t {
     Disconnected = 3,
 };
 
-class BunInspectorConnection : public Inspector::FrontendChannel {
+class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
 public:
     BunInspectorConnection(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
@@ -107,9 +112,9 @@ public:
     {
     }
 
-    static BunInspectorConnection* create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
+    static Ref<BunInspectorConnection> create(ScriptExecutionContext& scriptExecutionContext, JSC::JSGlobalObject* globalObject, bool shouldRefEventLoop)
     {
-        return new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop);
+        return adoptRef(*new BunInspectorConnection(scriptExecutionContext, globalObject, shouldRefEventLoop));
     }
 
     ConnectionType connectionType() const override
@@ -143,6 +148,7 @@ public:
         }
 
         this->hasEverConnected = true;
+        bunControllerHasEverConnected = true;
         globalObject->inspectorController().connectFrontend(*this, true, false); // waitingForConnection
 
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
@@ -169,7 +175,7 @@ public:
 
         notifyPausedThread();
 
-        ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
+        ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
             switch (connection->status) {
             case ConnectionStatus::Pending: {
                 connection->doConnect(context);
@@ -195,7 +201,7 @@ public:
         }
         }
 
-        ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
+        ScriptExecutionContext::ensureOnContextThread(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
             if (connection->status == ConnectionStatus::Disconnected)
                 return;
 
@@ -203,12 +209,21 @@ public:
 
             // Do not call .disconnect() if we never actually connected.
             if (connection->hasEverConnected) {
-                connection->inspector().disconnect(*connection);
+                connection->inspector().disconnect(connection.get());
             }
 
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
                 Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
+            }
+
+            {
+                Locker<Lock> locker(inspectorConnectionsLock);
+                if (inspectorConnections) {
+                    auto it = inspectorConnections->find(connection->scriptExecutionContextIdentifier);
+                    if (it != inspectorConnections->end())
+                        it->value.removeFirstMatching([&](auto& c) { return c.get() == connection.ptr(); });
+                }
             }
         });
     }
@@ -229,13 +244,13 @@ public:
     static void runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
     {
         Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(&globalObject);
-        Vector<BunInspectorConnection*, 8> connections;
+        Vector<RefPtr<BunInspectorConnection>, 8> connections;
         {
             Locker<Lock> locker(inspectorConnectionsLock);
             connections.appendVector(inspectorConnections->get(global->scriptExecutionContext()->identifier()));
         }
 
-        for (auto* connection : connections) {
+        for (auto& connection : connections) {
             if (connection->status == ConnectionStatus::Pending) {
                 connection->connect();
                 continue;
@@ -248,7 +263,7 @@ public:
 
         while (!isDoneProcessingEvents) {
             size_t closedCount = 0;
-            for (auto* connection : connections) {
+            for (auto& connection : connections) {
                 ConnectionStatus status = connection->status.load();
                 if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
                     closedCount++;
@@ -284,10 +299,10 @@ public:
         }
     }
 
-    static bool anyConnectionHasPendingWork(const Vector<BunInspectorConnection*, 8>& connections, size_t previousClosedCount)
+    static bool anyConnectionHasPendingWork(const Vector<RefPtr<BunInspectorConnection>, 8>& connections, size_t previousClosedCount)
     {
         size_t closedCount = 0;
-        for (auto* connection : connections) {
+        for (auto& connection : connections) {
             ConnectionStatus status = connection->status.load();
             if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
                 closedCount++;
@@ -421,6 +436,9 @@ public:
             this->debuggerThreadMessages.swap(messages);
         }
 
+        if (!jsBunDebuggerOnMessageFunction)
+            return;
+
         JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messages.size());
@@ -443,7 +461,7 @@ public:
         }
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
-            debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
+            debuggerScriptExecutionContext->postTaskConcurrently([connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
             });
         }
@@ -459,7 +477,7 @@ public:
         notifyPausedThread();
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
@@ -475,7 +493,7 @@ public:
         notifyPausedThread();
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
+            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = Ref { *this }](ScriptExecutionContext& context) {
                 connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
@@ -503,17 +521,21 @@ public:
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
 
-class JSBunInspectorConnection final : public JSC::JSNonFinalObject {
+class JSBunInspectorConnection final : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::JSNonFinalObject;
+    using Base = JSC::JSDestructibleObject;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
-    static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
 
-    static JSBunInspectorConnection* create(JSC::VM& vm, JSC::Structure* structure, BunInspectorConnection* connection)
+    static JSBunInspectorConnection* create(JSC::VM& vm, JSC::Structure* structure, RefPtr<BunInspectorConnection>&& connection)
     {
-        JSBunInspectorConnection* ptr = new (NotNull, JSC::allocateCell<JSBunInspectorConnection>(vm)) JSBunInspectorConnection(vm, structure, connection);
+        JSBunInspectorConnection* ptr = new (NotNull, JSC::allocateCell<JSBunInspectorConnection>(vm)) JSBunInspectorConnection(vm, structure, WTF::move(connection));
         ptr->finishCreation(vm);
         return ptr;
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        static_cast<JSBunInspectorConnection*>(cell)->~JSBunInspectorConnection();
     }
 
     DECLARE_EXPORT_INFO;
@@ -536,13 +558,13 @@ public:
 
     BunInspectorConnection* connection()
     {
-        return m_connection;
+        return m_connection.get();
     }
 
 private:
-    JSBunInspectorConnection(JSC::VM& vm, JSC::Structure* structure, BunInspectorConnection* connection)
+    JSBunInspectorConnection(JSC::VM& vm, JSC::Structure* structure, RefPtr<BunInspectorConnection>&& connection)
         : Base(vm, structure)
-        , m_connection(connection)
+        , m_connection(WTF::move(connection))
     {
     }
 
@@ -551,7 +573,7 @@ private:
         Base::finishCreation(vm);
     }
 
-    BunInspectorConnection* m_connection;
+    RefPtr<BunInspectorConnection> m_connection;
 };
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -587,6 +609,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
 
     if (connection.status == ConnectionStatus::Connected || connection.status == ConnectionStatus::Pending) {
         connection.status = ConnectionStatus::Disconnecting;
+        connection.jsBunDebuggerOnMessageFunction.clear();
         connection.disconnect();
     }
 
@@ -600,10 +623,10 @@ extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         if (inspectorConnections == nullptr) {
-            inspectorConnections = new WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<BunInspectorConnection*, 8>>();
+            inspectorConnections = new WTF::UncheckedKeyHashMap<ScriptExecutionContextIdentifier, Vector<RefPtr<BunInspectorConnection>, 8>>();
         }
 
-        inspectorConnections->add(globalObject->scriptExecutionContext()->identifier(), Vector<BunInspectorConnection*, 8>());
+        inspectorConnections->add(globalObject->scriptExecutionContext()->identifier(), Vector<RefPtr<BunInspectorConnection>, 8>());
     }
 
     return static_cast<unsigned int>(globalObject->scriptExecutionContext()->identifier());
@@ -654,7 +677,7 @@ extern "C" void BunDebugger__willHotReload()
     debuggerScriptExecutionContext->postTaskConcurrently([](ScriptExecutionContext& context) {
         Locker<Lock> locker(inspectorConnectionsLock);
         for (auto& connections : *inspectorConnections) {
-            for (auto* connection : connections.value) {
+            for (auto& connection : connections.value) {
                 connection->sendMessageToFrontend("{\"method\":\"Bun.canReload\"}"_s);
             }
         }
@@ -682,13 +705,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     {
         Locker<Lock> locker(inspectorConnectionsLock);
         auto connections = inspectorConnections->get(targetContext->identifier());
-        connections.append(connection);
+        connections.append(connection.ptr());
         inspectorConnections->set(targetContext->identifier(), connections);
     }
     connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
     connection->connect();
 
-    return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
+    return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), WTF::move(connection)));
 }
 
 // State shared between the main thread (node:inspector's open()/close()) and
@@ -1020,27 +1043,25 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
 {
     // Snapshot under the lock, release before calling into the inspector —
     // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.
-    Vector<BunInspectorConnection*, 8> toDisconnect;
-    bool hasEverConnected = false;
+    Vector<RefPtr<BunInspectorConnection>, 8> toDisconnect;
     {
         Locker<Lock> locker(inspectorConnectionsLock);
-        if (!inspectorConnections)
-            return;
-        auto* context = globalObject->scriptExecutionContext();
-        if (!context)
-            return;
-        auto it = inspectorConnections->find(context->identifier());
-        if (it == inspectorConnections->end())
-            return;
-        for (auto* connection : it->value) {
-            hasEverConnected |= connection->hasEverConnected;
-            if (connection->status == ConnectionStatus::Disconnected)
-                continue;
-            connection->status = ConnectionStatus::Disconnected;
-            // Never call `disconnect()` for a connection that never connected —
-            // `disconnectFrontend` would underflow the FrontendRouter.
-            if (connection->hasEverConnected)
-                toDisconnect.append(connection);
+        if (inspectorConnections) {
+            auto* context = globalObject->scriptExecutionContext();
+            if (context) {
+                auto it = inspectorConnections->find(context->identifier());
+                if (it != inspectorConnections->end()) {
+                    for (auto& connection : it->value) {
+                        if (connection->status == ConnectionStatus::Disconnected)
+                            continue;
+                        connection->status = ConnectionStatus::Disconnected;
+                        // Never call `disconnect()` for a connection that never connected —
+                        // `disconnectFrontend` would underflow the FrontendRouter.
+                        if (connection->hasEverConnected)
+                            toDisconnect.append(connection);
+                    }
+                }
+            }
         }
     }
 
@@ -1048,10 +1069,10 @@ extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*
     // to destroy normally. One that did needs the leak workaround below even
     // if every connection has already disconnected (e.g. inspector.close()
     // before exit) — its destructor still trips the CheckedPtr ordering bug.
-    if (!hasEverConnected)
+    if (!bunControllerHasEverConnected)
         return;
 
-    for (auto* connection : toDisconnect)
+    for (auto& connection : toDisconnect)
         globalObject->inspectorDebuggable().disconnect(*connection);
 
     globalObject->m_inspectorController->globalObjectDestroyed();

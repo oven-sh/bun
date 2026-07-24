@@ -1400,6 +1400,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        let drop_flag_before_target_visit = p.method_call_must_be_replaced_with_undefined;
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
@@ -1408,6 +1409,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+
+        // "console.log.bind(x)" => "(() => {}).bind(x)" so the result stays callable.
+        // Gate on is_call_target and a false->true flag transition so drop paths that
+        // themselves end in .bind (`drop: ["Mousetrap.bind"]`) still collapse to undefined.
+        if is_call_target
+            && !drop_flag_before_target_visit
+            && p.method_call_must_be_replaced_with_undefined
+            && e_.name == b"bind"
+        {
+            e_.target = p.new_expr(E::Arrow::NOOP_RETURN_UNDEFINED, e_.target.loc);
+            p.method_call_must_be_replaced_with_undefined = false;
+        }
 
         // 'require.resolve' -> .e_require_resolve_call_target
         if matches!(e_.target.data, Data::ERequireCallTarget) && e_.name == b"resolve" {

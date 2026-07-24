@@ -104,7 +104,12 @@ it.skipIf(!isWindows)("process.env defineProperty enumerates special-accessor ke
   const hadKey = Reflect.ownKeys(process.env).includes(key);
   if (hadKey) return; // only meaningful when the var is not already set
   try {
-    Object.defineProperty(process.env, key, { value: "http://x", writable: true, enumerable: true, configurable: true });
+    Object.defineProperty(process.env, key, {
+      value: "http://x",
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
     expect(Reflect.ownKeys(process.env)).toContain(key);
     expect({ ...process.env }[key]).toBe("http://x");
     // An accessor getter's result reaches the OS sync via the trap; a

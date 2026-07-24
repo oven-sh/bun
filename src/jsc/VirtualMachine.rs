@@ -5934,69 +5934,51 @@ impl VirtualMachine {
             )?;
             let longest_name = iterator.get_longest_property_name().min(10);
             let mut is_first_property = true;
-            while let Some(field) = iterator.next()? {
-                let value = iterator.value;
-                if field.eql_comptime(b"message")
-                    || field.eql_comptime(b"name")
-                    || field.eql_comptime(b"stack")
-                {
-                    continue;
-                }
-                if field.eql_comptime(b"code") && code.is_some() {
-                    continue;
-                }
 
-                let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
-                    if field.eql_comptime(b"cause") {
-                        saw_cause = true;
-                    }
-                    value.protect();
-                    errors_to_append.push(value);
-                } else if kind.is_object()
-                    || kind.is_array()
-                    || value.is_primitive()
-                    || kind.is_string_like()
-                {
-                    let prev_disable_inspect_custom = formatter.disable_inspect_custom;
-                    let prev_quote_strings = formatter.quote_strings;
-                    let prev_max_depth = formatter.max_depth;
-                    let prev_format_buffer_as_text = formatter.format_buffer_as_text;
-                    formatter.depth += 1;
-                    formatter.format_buffer_as_text = true;
-                    formatter.max_depth = 1;
-                    formatter.quote_strings = true;
-                    formatter.disable_inspect_custom = true;
-                    // Hand-rolled drop guard restores the formatter state.
-                    struct RestoreFmt<'a, 'f> {
-                        f: &'a mut crate::console_object::Formatter<'f>,
-                        d: bool,
-                        q: bool,
-                        m: u16,
-                        b: bool,
-                    }
-                    impl Drop for RestoreFmt<'_, '_> {
-                        fn drop(&mut self) {
-                            self.f.depth -= 1;
-                            self.f.max_depth = self.m;
-                            self.f.quote_strings = self.q;
-                            self.f.disable_inspect_custom = self.d;
-                            self.f.format_buffer_as_text = self.b;
-                        }
-                    }
+            struct RestoreFmt<'a, 'f> {
+                f: &'a mut crate::console_object::Formatter<'f>,
+                d: bool,
+                q: bool,
+                m: u16,
+                b: bool,
+            }
+            impl Drop for RestoreFmt<'_, '_> {
+                fn drop(&mut self) {
+                    self.f.depth -= 1;
+                    self.f.max_depth = self.m;
+                    self.f.quote_strings = self.q;
+                    self.f.disable_inspect_custom = self.d;
+                    self.f.format_buffer_as_text = self.b;
+                }
+            }
+
+            // Renders ` <label>: <value>,\n` for an own property, with the
+            // formatter temporarily forced to max_depth=1/quote_strings/etc.
+            // Expands in place so `?` and the early `return Ok(())` propagate
+            // from the enclosing function.
+            macro_rules! write_error_field {
+                ($label:expr, $label_len:expr, $value:expr) => {{
+                    let value: JSValue = $value;
                     let restore = RestoreFmt {
-                        f: formatter,
-                        d: prev_disable_inspect_custom,
-                        q: prev_quote_strings,
-                        m: prev_max_depth,
-                        b: prev_format_buffer_as_text,
+                        d: formatter.disable_inspect_custom,
+                        q: formatter.quote_strings,
+                        m: formatter.max_depth,
+                        b: formatter.format_buffer_as_text,
+                        f: {
+                            formatter.depth += 1;
+                            formatter.format_buffer_as_text = true;
+                            formatter.max_depth = 1;
+                            formatter.quote_strings = true;
+                            formatter.disable_inspect_custom = true;
+                            formatter
+                        },
                     };
                     let formatter = &mut *restore.f;
 
-                    let pad_left = longest_name.saturating_sub(field.length());
+                    let pad_left = longest_name.saturating_sub($label_len);
                     is_first_property = false;
                     splat_space(writer, pad_left as u64)?;
-                    pretty_write!(writer, " {}<r><d>:<r> ", field)?;
+                    pretty_write!(writer, " {}<r><d>:<r> ", $label)?;
 
                     if allow_side_effects && global_ref.has_exception() {
                         global_ref.clear_exception();
@@ -6022,6 +6004,45 @@ impl VirtualMachine {
                     }
 
                     pretty_write!(writer, "<r><d>,<r>\n")?;
+                }};
+            }
+
+            while let Some(field) = iterator.next()? {
+                let value = iterator.value;
+                if field.eql_comptime(b"message")
+                    || field.eql_comptime(b"name")
+                    || field.eql_comptime(b"stack")
+                {
+                    continue;
+                }
+                if field.eql_comptime(b"code") && code.is_some() {
+                    continue;
+                }
+
+                let kind = value.js_type();
+
+                if field.eql_comptime(b"cause") {
+                    saw_cause = true;
+                    // An Error-typed cause always gets a full recursive render
+                    // (stack + its own cause chain), even at depth >= 2 where
+                    // other Error-typed properties fall through to the
+                    // truncated inline path.
+                    if kind == JSType::ErrorInstance {
+                        value.protect();
+                        errors_to_append.push(value);
+                        continue;
+                    }
+                }
+
+                if kind == JSType::ErrorInstance && !prev_had_errors {
+                    value.protect();
+                    errors_to_append.push(value);
+                } else if kind.is_object()
+                    || kind.is_array()
+                    || value.is_primitive()
+                    || kind.is_string_like()
+                {
+                    write_error_field!(field, field.length(), value);
                 }
             }
 
@@ -6036,19 +6057,22 @@ impl VirtualMachine {
                 )?;
             }
 
-            if !is_first_property {
-                writer.write_all(b"\n")?;
-            }
-
-            // "cause" is not enumerable, so the above loop won't see it.
+            // "cause" set via `new Error(msg, { cause })` is non-enumerable, so
+            // the property loop above won't have seen it.
             if !saw_cause {
                 let key = bun_core::String::static_(b"cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
                     if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
                         cause.protect();
                         errors_to_append.push(cause);
+                    } else {
+                        write_error_field!("cause", b"cause".len(), cause);
                     }
                 }
+            }
+
+            if !is_first_property {
+                writer.write_all(b"\n")?;
             }
         } else if error_instance != JSValue::ZERO {
             // If you do `reportError([1,2,3])` we should still show something.

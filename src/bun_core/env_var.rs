@@ -153,6 +153,9 @@ new!(pub NODE_NO_WARNINGS: string, "NODE_NO_WARNINGS", {});
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
+// Non-empty value: load this module in place of the built-in node:repl when
+// entering `--interactive` (Node's lib/internal/main/repl.js branch).
+new!(pub NODE_REPL_EXTERNAL_MODULE: string, "NODE_REPL_EXTERNAL_MODULE", {});
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});
 new!(pub PATH: string, "PATH", {});

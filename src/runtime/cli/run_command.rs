@@ -2956,7 +2956,13 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
-        if ctx.runtime_options.input_type_specified {
+        // Node gates this inside the `else` of the NODE_REPL_EXTERNAL_MODULE
+        // branch (lib/internal/main/repl.js): an external REPL replacement is
+        // loaded regardless of --input-type.
+        if ctx.runtime_options.input_type_specified
+            && bun_core::env_var::NODE_REPL_EXTERNAL_MODULE::get()
+                .is_none_or(|v| v.is_empty())
+        {
             // Match node exactly: bare message on stderr, exit code 9.
             pretty_errorln!("Cannot specify --input-type for REPL");
             Output::flush();

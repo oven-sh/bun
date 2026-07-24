@@ -1661,6 +1661,26 @@ describe.concurrent("--interactive", () => {
     },
     interactiveTimeout,
   );
+
+  // Node places the --input-type rejection inside the else of the
+  // NODE_REPL_EXTERNAL_MODULE branch (lib/internal/main/repl.js), so an
+  // external replacement loads regardless. Bun used to exit 9 first.
+  test(
+    "NODE_REPL_EXTERNAL_MODULE wins over the --input-type rejection",
+    async () => {
+      using dir = tempDir("ext-repl-input-type", { "ext.js": `console.log("external-repl-42")` });
+      const { stdout, stderr, exitCode } = await runInteractive(["--input-type=module"], "", {
+        cwd: String(dir),
+        env: { NODE_REPL_EXTERNAL_MODULE: "./ext.js" },
+      });
+      expect({ stdout, stderr }).toEqual({
+        stdout: expect.stringContaining("external-repl-42"),
+        stderr: expect.not.stringContaining("Cannot specify --input-type for REPL"),
+      });
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
 });
 
 // ts-node does `require("repl")` at import time but only touches

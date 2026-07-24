@@ -557,11 +557,27 @@ describe("decorator metadata", () => {
       export namespace NS { export class Inner { static readonly tag = "Inner" } }
       export default class DefaultClass { static readonly tag = "DefaultClass" }
     `;
+    // Local stand-in for reflect-metadata: the spawned processes have no
+    // node_modules, and importing the real package would auto-install from
+    // the npm registry. Only what __legacyMetadataTS and the tests use.
+    const metadata = `
+      const store = new WeakMap<object, Map<PropertyKey, Map<string, unknown>>>();
+      (Reflect as any).metadata = (k: string, v: unknown) => (target: object, prop?: PropertyKey) => {
+        let props = store.get(target);
+        if (!props) store.set(target, (props = new Map()));
+        let keys = props.get(prop ?? "");
+        if (!keys) props.set(prop ?? "", (keys = new Map()));
+        keys.set(k, v);
+      };
+      (Reflect as any).getMetadata = (k: string, target: object, prop?: PropertyKey) =>
+        store.get(target)?.get(prop ?? "")?.get(k);
+    `;
 
     async function run(files: Record<string, string>) {
       using dir = tempDir("decorator-metadata-imports", {
         "tsconfig.json": tsconfig,
         "mod.ts": mod,
+        "_metadata.ts": metadata,
         ...files,
       });
       await using proc = Bun.spawn({
@@ -577,7 +593,7 @@ describe("decorator metadata", () => {
     test("interface / type alias does not force a failing named import", async () => {
       const { stdout, stderr, exitCode } = await run({
         "index.ts": `
-          import "reflect-metadata";
+          import "./_metadata";
           import { JustInterface, AliasType } from "./mod";
           function dec(...args: any[]) {}
           class Thing {
@@ -596,7 +612,7 @@ describe("decorator metadata", () => {
     test("class import used only in metadata still resolves to the class", async () => {
       const { stdout, stderr, exitCode } = await run({
         "index.ts": `
-          import "reflect-metadata";
+          import "./_metadata";
           import DefaultClass, { RealClass, NS } from "./mod";
           import { RealClass as Aliased } from "./mod";
           function dec(...args: any[]) {}
@@ -618,7 +634,7 @@ describe("decorator metadata", () => {
     test("type-only import alongside a value use from the same module", async () => {
       const { stdout, stderr, exitCode } = await run({
         "index.ts": `
-          import "reflect-metadata";
+          import "./_metadata";
           import { RealClass, JustInterface } from "./mod";
           function dec(...args: any[]) {}
           class Thing {
@@ -640,7 +656,7 @@ describe("decorator metadata", () => {
         "a/mod.ts": `export class Foo { static readonly tag = "A" }`,
         "b/mod.ts": `export class Foo { static readonly tag = "B" }`,
         "index.ts": `
-          import "reflect-metadata";
+          import "./_metadata";
           import { Foo as A } from "./a/mod";
           import { Foo as B } from "./b/mod";
           function dec(...args: any[]) {}
@@ -660,7 +676,7 @@ describe("decorator metadata", () => {
     test("constructor parameter types from another module", async () => {
       const { stdout, stderr, exitCode } = await run({
         "index.ts": `
-          import "reflect-metadata";
+          import "./_metadata";
           import { RealClass, JustInterface } from "./mod";
           function dec(...args: any[]) {}
           @dec

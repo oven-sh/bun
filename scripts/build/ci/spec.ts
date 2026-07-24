@@ -41,7 +41,7 @@ import type { AgeSpec, BunSpec, CrossToolchains, LlvmSpec, NodejsSpec, PinnedRel
  * proven out — the last commit before merge deletes it (which itself
  * rebakes the fleet one final time from the final code).
  */
-export const epoch = 1;
+export const epoch = 2;
 
 /** Packer + provider plugin pins for the Windows bake (azure-arm). */
 export const packer = {

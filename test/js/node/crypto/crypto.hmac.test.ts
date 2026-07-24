@@ -450,3 +450,20 @@ describe("crypto.Hmac", () => {
     );
   });
 });
+
+// The blake2b512 value is Node.js 26's; the blake2b256 value is an RFC 2104
+// reference computed with Python's hmac + hashlib.blake2b(digest_size=32)
+// (blake2b256 is a BoringSSL extension Node.js does not have).
+describe("test HMAC with BLAKE2b", () => {
+  testHmac(
+    "blake2b512",
+    "key",
+    "hello world",
+    "cbca4958498c8ca32da752afa71f345c838071c1f782e431054706fe3c3a1a4d0bb3c17bd4c307a4ece9b0de9d3608ed1eb79851be76b0eee200379092eb874e",
+  );
+  testHmac("blake2b256", "key", "hello world", "5b71493dbbc65fddadd2df8d95cb764c72dae33dc56eabd84bb26b42ee77bee6");
+
+  test("blake2s256 is still rejected (no BLAKE2s EVP_MD in BoringSSL)", () => {
+    expect(() => createHmac("blake2s256", "key")).toThrow("Invalid digest: blake2s256");
+  });
+});

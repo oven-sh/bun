@@ -129,9 +129,9 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         std::optional<int> effective_salt_len = m_saltLength;
 
         // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO
-        // BoringSSL changed the default from AUTO to DIGEST in commit b01d7bbf7 (June 2025)
-        // for FIPS compliance, but Node.js expects the old AUTO behavior
-        if (padding == RSA_PKCS1_PSS_PADDING && !m_saltLength.has_value()) {
+        // (BoringSSL commit b01d7bbf7 changed its default to DIGEST; Node expects
+        // AUTO). An id-RSASSA-PSS key rejects any override; keep its restriction.
+        if (padding == RSA_PKCS1_PSS_PADDING && !m_saltLength.has_value() && key.id() != EVP_PKEY_RSA_PSS) {
             effective_salt_len = RSA_PSS_SALTLEN_AUTO;
         }
 
@@ -433,6 +433,12 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         // don't require a separate digest algorithm.
         if (keyObject.asymmetricKey().isRsaVariant()) {
             digest = Digest::FromName("SHA256"_s);
+            // For an id-RSASSA-PSS key, OpenSSL returns the key's own
+            // restriction instead of SHA256 (the `rsa_type !=
+            // RSA_FLAG_TYPE_RSASSAPSS || ...is_unrestricted` branch above).
+            if (auto pssParams = keyObject.asymmetricKey().getRsaPssParams()) {
+                digest = Digest::FromName(pssParams->digest);
+            }
         }
     }
 

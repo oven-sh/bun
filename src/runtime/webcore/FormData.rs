@@ -116,9 +116,7 @@ impl FormData {
 
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_old::<2>();
-    let input_value = args.ptr[0];
-    let boundary_value = args.ptr[1];
+    let [input_value, boundary_value] = frame.arguments_as_array::<2>();
     let boundary_slice: ZigStringSlice;
 
     let mut encoding = Encoding::URLEncoded;

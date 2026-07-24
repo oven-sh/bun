@@ -3,14 +3,8 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
-// -lto variants built with ThinLTO (per-module summaries for cross-language
-// importing), every x64 at the nehalem floor (no separate -baseline variant),
-// typed-array constructor ClassInfo kept address-unique under LTO, the
-// Windows ICU data table filtered + per-item zstd compressed, and Windows
-// unwind info (RtlAddGrowableFunctionTable) registered for the fixed JIT
-// pool (LLInt pending offlineasm .seh_* emission).
 export const WEBKIT_VERSION = "autobuild-preview-pr-330-6d8df126";
+
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

@@ -78,22 +78,6 @@ mod _impl {
         }
     }
 
-    /// `bun_jsc::SystemError` has no `Default` (see src/jsc/SystemError.rs).
-    /// Local zero-value for the extern-struct fields.
-    #[inline]
-    fn system_error_default() -> SystemError {
-        SystemError {
-            errno: 0,
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-            syscall: BunString::empty(),
-            hostname: BunString::empty(),
-            fd: c_int::MIN,
-            dest: BunString::empty(),
-        }
-    }
-
     /// `bun_core::ZigString` (the `bun_string` crate type) is `repr(C)`-identical
     /// to the JSC-side `ZigString` but lacks `with_encoding`/`to_js`. Provide
     /// them locally.
@@ -288,9 +272,10 @@ mod _impl {
             Ok(v) => Ok(v),
             Err(_) => {
                 let err = SystemError {
-                    message: BunString::static_("Failed to get CPU information"),
-                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR)),
-                    ..system_error_default()
+                    message: BunString::static_("Failed to get CPU information").into(),
+                    code: BunString::static_(<&'static str>::from(ErrorCode::ERR_SYSTEM_ERROR))
+                        .into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance(global)))
             }
@@ -712,14 +697,14 @@ mod _impl {
         let result = get_process_priority(pid);
         if result == i32::MAX {
             let err = SystemError {
-                message: BunString::static_("no such process"),
-                code: BunString::static_("ESRCH"),
+                message: BunString::static_("no such process").into(),
+                code: BunString::static_("ESRCH").into(),
                 #[cfg(not(windows))]
                 errno: -(bun_sys::posix::E::ESRCH as c_int),
                 #[cfg(windows)]
                 errno: libuv::UV_ESRCH,
-                syscall: BunString::static_("uv_os_getpriority"),
-                ..system_error_default()
+                syscall: BunString::static_("uv_os_getpriority").into(),
+                ..Default::default()
             };
             return Err(global.throw_value(err.to_error_instance_with_info_object(global)));
         }
@@ -955,11 +940,12 @@ mod _impl {
             let err = SystemError {
                 message: BunString::static_(
                     "A system error occurred: getifaddrs returned an error",
-                ),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
+                )
+                .into(),
+                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                 errno: errno as c_int,
-                syscall: BunString::static_("getifaddrs"),
-                ..system_error_default()
+                syscall: BunString::static_("getifaddrs").into(),
+                ..Default::default()
             };
 
             return Err(global_this.throw_value(err.to_error_instance(global_this)));
@@ -1237,12 +1223,12 @@ mod _impl {
         let err = unsafe { libuv::uv_interface_addresses(&mut ifaces, &mut count) };
         if err != 0 {
             let sys_err = SystemError {
-                message: BunString::static_("uv_interface_addresses failed"),
-                code: BunString::static_("ERR_SYSTEM_ERROR"),
+                message: BunString::static_("uv_interface_addresses failed").into(),
+                code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                 //.info = info,
                 errno: err,
-                syscall: BunString::static_("uv_interface_addresses"),
-                ..system_error_default()
+                syscall: BunString::static_("uv_interface_addresses").into(),
+                ..Default::default()
             };
             return Err(global_this.throw_value(sys_err.to_error_instance(global_this)));
         }
@@ -1468,40 +1454,40 @@ mod _impl {
         match errcode {
             bun_sys::E::ESRCH => {
                 let err = SystemError {
-                    message: BunString::static_("no such process"),
-                    code: BunString::static_("ESRCH"),
+                    message: BunString::static_("no such process").into(),
+                    code: BunString::static_("ESRCH").into(),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EACCES => {
                 let err = SystemError {
-                    message: BunString::static_("permission denied"),
-                    code: BunString::static_("EACCES"),
+                    message: BunString::static_("permission denied").into(),
+                    code: BunString::static_("EACCES").into(),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::EACCES as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_EACCES,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
             bun_sys::E::EPERM => {
                 let err = SystemError {
-                    message: BunString::static_("operation not permitted"),
-                    code: BunString::static_("EPERM"),
+                    message: BunString::static_("operation not permitted").into(),
+                    code: BunString::static_("EPERM").into(),
                     #[cfg(not(windows))]
                     errno: -(bun_sys::posix::E::ESRCH as c_int),
                     #[cfg(windows)]
                     errno: libuv::UV_ESRCH,
-                    syscall: BunString::static_("uv_os_getpriority"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_os_getpriority").into(),
+                    ..Default::default()
                 };
                 Err(global.throw_value(err.to_error_instance_with_info_object(global)))
             }
@@ -1556,11 +1542,11 @@ mod _impl {
             let err = unsafe { libuv::uv_uptime(&mut uptime_value) };
             if err != 0 {
                 let sys_err = SystemError {
-                    message: BunString::static_("failed to get system uptime"),
-                    code: BunString::static_("ERR_SYSTEM_ERROR"),
+                    message: BunString::static_("failed to get system uptime").into(),
+                    code: BunString::static_("ERR_SYSTEM_ERROR").into(),
                     errno: err,
-                    syscall: BunString::static_("uv_uptime"),
-                    ..system_error_default()
+                    syscall: BunString::static_("uv_uptime").into(),
+                    ..Default::default()
                 };
                 return Err(global.throw_value(sys_err.to_error_instance(global)));
             }

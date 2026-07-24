@@ -976,8 +976,7 @@ impl FFI {
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
         }
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -1514,14 +1513,10 @@ impl FFI {
                             )
                             .ok();
                             let system_error = SystemError {
-                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
-                                message: bun_core::String::clone_utf8(&msg),
-                                syscall: bun_core::String::clone_utf8(b"dlopen"),
-                                errno: 0,
-                                path: bun_core::String::EMPTY,
-                                hostname: bun_core::String::EMPTY,
-                                fd: -1,
-                                dest: bun_core::String::EMPTY,
+                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED").into(),
+                                message: bun_core::String::clone_utf8(&msg).into(),
+                                syscall: bun_core::String::clone_utf8(b"dlopen").into(),
+                                ..Default::default()
                             };
                             return system_error.to_error_instance(global);
                         }

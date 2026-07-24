@@ -4145,6 +4145,7 @@ unsafe fn transpile_file(
     allow_promise: bool,
     is_commonjs_require: bool,
     force_loader: u8,
+    source_code_override: *const bun_core::String,
 ) -> *mut c_void {
     use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
@@ -4171,6 +4172,12 @@ unsafe fn transpile_file(
     // SAFETY: per fn contract — null or a live `bun.String*`.
     let type_attribute_str: Option<&[u8]> =
         unsafe { type_attribute.as_ref() }.and_then(|s| s.as_utf8());
+
+    // Source text supplied by the caller (a monkey-patched `fs.readFileSync`
+    // override, threaded in from `fetchCommonJSModuleNonBuiltin`). When set,
+    // the transpiler parses these bytes instead of reading from disk.
+    // SAFETY: per fn contract — null or a live `bun.String*` valid for the call.
+    let source_code_override_slice = unsafe { source_code_override.as_ref() }.map(|s| s.to_utf8());
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
@@ -4209,6 +4216,25 @@ unsafe fn transpile_file(
             blob.deinit();
         }
     });
+
+    // ── fs.readFileSync override ────────────────────────────────────────────
+    // Own the storage in a separate slot so `lr.virtual_source` (which already
+    // borrows `virtual_source_to_use`) can be repointed without aliasing it.
+    let source_code_override_source: Option<bun_ast::Source>;
+    if let Some(ref slice) = source_code_override_slice {
+        if lr.virtual_source.is_none() {
+            source_code_override_source = Some(bun_ast::Source::init_path_string(
+                lr.path.text,
+                slice.slice(),
+            ));
+            lr.virtual_source = source_code_override_source.as_ref();
+        } else {
+            source_code_override_source = None;
+        }
+    } else {
+        source_code_override_source = None;
+    }
+    let _ = &source_code_override_source;
 
     // ── force_loader / require.extensions override ──────────────────────────
     if let Some(loader_type) = force_loader_type {

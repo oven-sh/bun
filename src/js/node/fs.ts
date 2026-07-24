@@ -1256,6 +1256,16 @@ function globSync(pattern: string | string[], options): string[] {
   return Array.from(lazyGlob().globSync(pattern, options ?? kEmptyObject));
 }
 
+// Node's CJS loader reads module source through `fs.readFileSync`, so
+// replacing it is a de-facto hook (vue-tsc/volar relies on it). The native
+// loader observes the flag and reads through the override instead of natively.
+const notifyFsReadFileSyncOverride = $newCppFunction(
+  "JSCommonJSExtensions.cpp",
+  "jsFunctionNotifyFsReadFileSyncOverride",
+  2,
+);
+var _readFileSync = readFileSync;
+
 var exports = {
   appendFile,
   appendFileSync,
@@ -1310,7 +1320,13 @@ var exports = {
   openSync,
   read,
   readFile,
-  readFileSync,
+  get readFileSync() {
+    return _readFileSync;
+  },
+  set readFileSync(value) {
+    _readFileSync = value;
+    notifyFsReadFileSyncOverride(value, readFileSync);
+  },
   readSync,
   readdir,
   readdirSync,

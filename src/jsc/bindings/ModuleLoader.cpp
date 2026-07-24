@@ -774,7 +774,7 @@ JSValue fetchCommonJSModule(
             if (cached->sourceType() == JSC::SourceProviderSourceType::Program) {
                 // The wrapper override only affects CJS evaluation; if it's
                 // active, fall through and re-transpile so the override can run.
-                if (!globalObject->hasOverriddenModuleWrapper) {
+                if (!globalObject->hasOverriddenModuleWrapper && !globalObject->hasOverriddenFsReadFileSync) {
                     target->evaluate(globalObject, Ref(*cached), cached->m_resolvedSource.tag == ResolvedSourceTagPackageJSONTypeModule);
                     RETURN_IF_EXCEPTION(scope, {});
                     RELEASE_AND_RETURN(scope, target);
@@ -795,6 +795,19 @@ JSValue fetchCommonJSModule(
     return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
 }
 
+static bool shouldReadFileSyncOverrideApply(const WTF::String& specifier, BunLoaderType forceLoaderType)
+{
+    if (forceLoaderType == BunLoaderTypeNAPI)
+        return false;
+    if (!specifier.startsWith('/')
+#if OS(WINDOWS)
+        && !(specifier.length() >= 3 && specifier[1] == ':' && (specifier[2] == '\\' || specifier[2] == '/'))
+#endif
+    )
+        return false;
+    return !specifier.endsWithIgnoringASCIICase(".node"_s);
+}
+
 template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
@@ -810,7 +823,33 @@ JSValue fetchCommonJSModuleNonBuiltin(
     BunLoaderType forceLoaderType,
     JSC::ThrowScope& scope)
 {
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
+    // Node's CJS loader reads module source through the public
+    // `fs.readFileSync` property, so monkey-patching it is a de-facto hook
+    // into require(). When it has been replaced, call the override with
+    // `(filename, 'utf8')` and hand the result to the transpiler as the source
+    // so the native disk read is skipped.
+    BunString sourceCodeOverride {};
+    const BunString* sourceCodeOverridePtr = nullptr;
+    WTF::String sourceCodeOverrideWtf;
+    if (globalObject->hasOverriddenFsReadFileSync) [[unlikely]] {
+        JSC::JSValue override = globalObject->m_overriddenFsReadFileSync.get();
+        if (override && override.isCallable() && shouldReadFileSyncOverrideApply(specifierWtfString, forceLoaderType)) {
+            JSC::CallData callData = JSC::getCallData(override);
+            JSC::MarkedArgumentBuffer args;
+            args.append(specifierValue.isString() ? specifierValue : jsString(vm, specifierWtfString));
+            args.append(jsString(vm, String("utf8"_s)));
+            JSC::JSValue result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, override, callData, jsUndefined(), args);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (result.isString()) {
+                sourceCodeOverrideWtf = result.toWTFString(globalObject);
+                RETURN_IF_EXCEPTION(scope, {});
+                sourceCodeOverride = Bun::toString(sourceCodeOverrideWtf);
+                sourceCodeOverridePtr = &sourceCodeOverride;
+            }
+        }
+    }
+
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType, sourceCodeOverridePtr);
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
             target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
@@ -870,7 +909,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
-    if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
+    if (!sourceCodeOverridePtr && Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
         Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
     // provideFetch() now drives the C++ loader pipeline (parse -> module record)
     // via internal microtasks. We're about to hand this entry to require(esm)'s
@@ -1082,12 +1121,12 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone);
+        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone, nullptr);
         if (pendingCtx) {
             return pendingCtx;
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone, nullptr);
     }
 
     if (res->success && res->result.value.isCommonJSModule) {

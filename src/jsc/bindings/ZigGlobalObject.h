@@ -500,6 +500,9 @@ public:
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
                                                                                                              \
+    /* The current value of require("fs").readFileSync when overridden. */                                   \
+    V(public, WriteBarrier<JSC::Unknown>, m_overriddenFsReadFileSync)                                        \
+                                                                                                             \
     /* When a napi module initializes on dlopen, we need to know what the value is */                        \
     V(public, NapiModuleAndExports, m_pendingNapiModuleAndExports)                                           \
                                                                                                              \
@@ -775,6 +778,11 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+    // De-optimization once `require("fs").readFileSync` is written to.
+    // Node's CJS loader reads module source through `fs.readFileSync`, so
+    // packages such as vue-tsc monkey-patch it to rewrite module source
+    // before evaluation.
+    bool hasOverriddenFsReadFileSync = false;
 
     // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
     // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be

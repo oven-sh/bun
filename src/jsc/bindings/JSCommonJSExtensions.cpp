@@ -201,6 +201,23 @@ bool JSCommonJSExtensions::deleteProperty(JSC::JSCell* cell, JSC::JSGlobalObject
     return deleted;
 }
 
+// Called from the setter of `require("fs").readFileSync` so the CJS loader
+// can read module source through a user-provided override (Node parity).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNotifyFsReadFileSyncOverride, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSC::JSValue value = callFrame->argument(0);
+    JSC::JSValue original = callFrame->argument(1);
+    if (value.isCallable() && value != original) {
+        globalObject->hasOverriddenFsReadFileSync = true;
+        globalObject->m_overriddenFsReadFileSync.set(globalObject->vm(), globalObject, value);
+    } else {
+        globalObject->hasOverriddenFsReadFileSync = false;
+        globalObject->m_overriddenFsReadFileSync.clear();
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 extern "C" uint32_t JSCommonJSExtensions__appendFunction(Zig::GlobalObject* globalObject, JSC::JSValue value)
 {
     JSCommonJSExtensions* extensions = globalObject->lazyRequireExtensionsObject();
@@ -236,7 +253,9 @@ extern "C" uint32_t JSCommonJSExtensions__swapRemove(Zig::GlobalObject* globalOb
 
 // This implements `Module._extensions['.js']`, which
 // - Loads source code from a file
-//     - [not supported] Calls `fs.readFileSync`, which is usually not overridden.
+//     - Calls `fs.readFileSync`. When it has been overridden, the override is
+//       invoked from `fetchCommonJSModuleNonBuiltin` and its result is handed
+//       to the transpiler as the virtual source.
 // - Evaluates the module
 //     - Calls `module._compile(code, filename)`, which is often overridden.
 // - Returns `undefined`

@@ -2870,9 +2870,14 @@ for (const backend of ["api", "cli"] as const) {
       },
       target: "browser",
       backend,
-      capture: ["process.env.ARBITRARY"],
+      // `process` now resolves to the browser polyfill namespace; the point of
+      // this test is that the host env value is *not* inlined into the bundle.
+      capture: ["exports_process.env.ARBITRARY"],
       env: {
         ARBITRARY: "secret environment stuff!",
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("secret environment stuff!");
       },
     });
   });

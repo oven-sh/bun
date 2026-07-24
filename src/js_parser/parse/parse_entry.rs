@@ -189,6 +189,7 @@ impl<'a> Options<'a> {
                 set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
+                auto_polyfill_node_globals: f.auto_polyfill_node_globals,
                 replace_exports: Default::default(),
                 dont_bundle_twice: f.dont_bundle_twice,
                 unwrap_commonjs_packages: f.unwrap_commonjs_packages,
@@ -2141,6 +2142,29 @@ impl<'a> Parser<'a> {
                     },
                 ],
             )?;
+        }
+
+        if p.options.features.auto_polyfill_node_globals {
+            if !p.process_ref.is_empty()
+                && p.symbols.as_slice()[p.process_ref.inner_index() as usize].use_count_estimate > 0
+            {
+                p.generate_node_global_polyfill_import(
+                    &mut before,
+                    p.process_ref,
+                    b"node:process",
+                    None,
+                )?;
+            }
+            if !p.buffer_ref.is_empty()
+                && p.symbols.as_slice()[p.buffer_ref.inner_index() as usize].use_count_estimate > 0
+            {
+                p.generate_node_global_polyfill_import(
+                    &mut before,
+                    p.buffer_ref,
+                    b"node:buffer",
+                    Some(b"Buffer"),
+                )?;
+            }
         }
 
         // Bake: transform global `Response` to use `import { Response } from 'bun:app'`

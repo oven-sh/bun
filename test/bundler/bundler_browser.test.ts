@@ -82,6 +82,116 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  itBundled("browser/NodeGlobalProcess#5894", {
+    files: {
+      "/entry.js": /* js */ `
+        if (typeof process !== "object") throw new Error("typeof process: " + typeof process);
+        if (typeof process.nextTick !== "function") throw new Error("typeof process.nextTick: " + typeof process.nextTick);
+        if (process.browser !== true) throw new Error("process.browser: " + process.browser);
+        if (process.cwd() !== "/") throw new Error("process.cwd(): " + process.cwd());
+        process.nextTick(() => console.log("tick"));
+        console.log("ok " + process.title);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "ok browser\ntick",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("import ");
+      // The polyfill was bundled in: a bare `process` global would be a
+      // ReferenceError in a real browser.
+      expect(out).toInclude("node:process");
+      expect(out).toMatch(/\btitle\s*=\s*"browser"/);
+    },
+  });
+  itBundled("browser/NodeGlobalBuffer", {
+    files: {
+      "/entry.js": /* js */ `
+        if (typeof Buffer !== "function") throw new Error("typeof Buffer: " + typeof Buffer);
+        const buf = Buffer.from("hello");
+        console.log(buf.toString("base64"), Buffer.isBuffer(buf));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "aGVsbG8= true",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("import ");
+      expect(out).toInclude("node:buffer");
+      expect(out).not.toMatch(/\bBuffer\.from\(/);
+    },
+  });
+  itBundled("browser/NodeGlobalProcessNotInjectedForTargetBun", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(typeof process.nextTick);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("node:process");
+      expect(out).not.toInclude("exports_process");
+      expect(out).toInclude("typeof process.nextTick");
+    },
+  });
+  itBundled("browser/NodeGlobalProcessNotInjectedWhenShadowed", {
+    files: {
+      "/entry.js": /* js */ `
+        const process = { nextTick: "shadowed" };
+        const Buffer = { from: "shadowed" };
+        console.log(process.nextTick, Buffer.from);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "shadowed shadowed",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("node:process");
+      expect(out).not.toInclude("node:buffer");
+      expect(out).not.toInclude("browser polyfill");
+    },
+  });
+  itBundled("browser/NodeGlobalProcessNotInjectedForDefinesOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        // Every reference is covered by a default define, so no polyfill is needed.
+        console.log(typeof process.env.NODE_ENV, process.browser);
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "string true",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("node:process");
+      expect(out).not.toInclude("exports_process");
+    },
+  });
+  itBundled("browser/NodeGlobalProcessUserDefineWins", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(process.nextTick);
+      `,
+    },
+    target: "browser",
+    define: { process: '{"nextTick":"fromDefine"}' },
+    run: {
+      stdout: "fromDefine",
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("node:process");
+      expect(out).not.toInclude("exports_process");
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

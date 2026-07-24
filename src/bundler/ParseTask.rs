@@ -2472,6 +2472,8 @@ pub mod parse_worker {
             output_format == options::Format::InternalBakeDev && !task.source_index.is_runtime();
         opts.features.auto_polyfill_require =
             output_format == options::Format::Esm && !opts.features.hot_module_reloading;
+        opts.features.auto_polyfill_node_globals =
+            topts.polyfill_node_globals && !task.source_index.is_runtime();
         opts.features.react_fast_refresh =
             topts.react_fast_refresh && loader.is_jsx() && !source.path.is_node_module();
         opts.features.react_compiler = if topts.react_compiler.is_enabled()

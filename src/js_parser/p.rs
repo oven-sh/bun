@@ -237,6 +237,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub module_ref: Ref,
     pub filename_ref: Ref,
     pub dirname_ref: Ref,
+    pub process_ref: Ref,
+    pub buffer_ref: Ref,
     pub import_meta_ref: Ref,
     pub hmr_api_ref: Ref,
 
@@ -1662,6 +1664,103 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    /// Emit an `import * as <ref> from "<path>"` part for an ambient node
+    /// global (`process`) or, when `alias` is set, `import { <alias> as <ref> } from "<path>"`
+    /// (`Buffer`). The ref was pre-declared by `declare_common_js_symbol` and
+    /// reached by user code, so it already has a non-zero `use_count_estimate`.
+    pub fn generate_node_global_polyfill_import(
+        &mut self,
+        parts: &mut ListManaged<'a, js_ast::Part>,
+        ref_: Ref,
+        import_path: &'static [u8],
+        alias: Option<&'static [u8]>,
+    ) -> Result<(), crate::Error> {
+        let arena = self.arena;
+
+        let import_record_i =
+            self.add_import_record_by_range(ImportKind::Stmt, bun_ast::Range::NONE, import_path);
+
+        let mut declared_symbols = bun_ast::DeclaredSymbolList::default();
+        declared_symbols.ensure_total_capacity(2)?;
+        declared_symbols.append_assume_capacity(DeclaredSymbol {
+            ref_,
+            is_top_level: true,
+        });
+
+        // `declare_common_js_symbol` minted this as `Unbound`; re-kind now that
+        // it is a real binding so later passes don't treat it as a free global.
+        self.symbols[ref_.inner_index() as usize].kind = js_ast::symbol::Kind::Other;
+
+        let import_stmt = if let Some(alias) = alias {
+            let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, import_path);
+            VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
+            declared_symbols.append_assume_capacity(DeclaredSymbol {
+                ref_: namespace_ref,
+                is_top_level: true,
+            });
+            self.is_import_item.insert(ref_, ());
+            self.named_imports.put(
+                ref_,
+                js_ast::NamedImport {
+                    alias: Some(js_ast::StoreStr::new(alias)),
+                    alias_loc: bun_ast::Loc::default(),
+                    namespace_ref,
+                    import_record_index: import_record_i,
+                    local_parts_with_uses: bun_alloc::AstAlloc::vec(),
+                    alias_is_star: false,
+                    is_exported: false,
+                },
+            )?;
+            let clause_items =
+                arena.alloc_slice_fill_with::<js_ast::ClauseItem, _>(1, |_| js_ast::ClauseItem {
+                    alias: js_ast::StoreStr::new(alias),
+                    original_name: js_ast::StoreStr::new(alias),
+                    alias_loc: bun_ast::Loc::default(),
+                    name: LocRef {
+                        ref_,
+                        loc: bun_ast::Loc::default(),
+                    },
+                });
+            self.s(
+                S::Import {
+                    namespace_ref,
+                    items: clause_items.into(),
+                    import_record_index: import_record_i,
+                    is_single_line: true,
+                    default_name: None,
+                    star_name_loc: bun_ast::Loc::EMPTY,
+                    phase_defer: false,
+                },
+                bun_ast::Loc::default(),
+            )
+        } else {
+            self.import_items_for_namespace
+                .insert(ref_, ImportItemForNamespaceMap::default());
+            self.s(
+                S::Import {
+                    namespace_ref: ref_,
+                    items: bun_ast::StoreSlice::EMPTY,
+                    import_record_index: import_record_i,
+                    is_single_line: true,
+                    default_name: None,
+                    star_name_loc: bun_ast::Loc { start: 0 },
+                    phase_defer: false,
+                },
+                bun_ast::Loc::default(),
+            )
+        };
+
+        let stmts = arena.alloc_slice_fill_with::<Stmt, _>(1, |_| import_stmt);
+        parts.push(js_ast::Part {
+            stmts: stmts.into(),
+            declared_symbols,
+            import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
+            tag: bun_ast::PartTag::None,
+            ..Default::default()
+        });
+        Ok(())
+    }
+
     pub fn generate_import_stmt_for_bake_response(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -2824,6 +2923,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__dirname")?;
         self.filename_ref =
             self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"__filename")?;
+
+        if self.options.features.auto_polyfill_node_globals {
+            // `Kind::Unbound` so the `process.env.NODE_ENV` / `process.browser`
+            // dot-defines (which only match unbound roots) keep firing. The
+            // post-visit pass rewrites the kind before emitting the import.
+            self.process_ref =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"process")?;
+            self.buffer_ref =
+                self.declare_common_js_symbol(js_ast::symbol::Kind::Unbound, b"Buffer")?;
+        }
 
         if self.options.features.inject_jest_globals {
             self.jest.test =
@@ -8728,6 +8837,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_ref: Ref::NONE,
             filename_ref: Ref::NONE,
             dirname_ref: Ref::NONE,
+            process_ref: Ref::NONE,
+            buffer_ref: Ref::NONE,
             import_meta_ref: Ref::NONE,
             hmr_api_ref: Ref::NONE,
             response_ref: Ref::NONE,

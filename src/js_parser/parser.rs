@@ -219,6 +219,12 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
+        /// When bundling for the browser, inject `import * as process from "node:process"`
+        /// and `import { Buffer } from "node:buffer"` for any unbound `process` / `Buffer`
+        /// global, the same way `__dirname` / `__filename` are inlined. The resolver maps
+        /// those specifiers to the embedded browser polyfills via `polyfill_node_globals`.
+        pub auto_polyfill_node_globals: bool,
+
         pub replace_exports: ReplaceableExportMap,
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
@@ -300,6 +306,7 @@ pub mod Runtime {
                 set_breakpoint_on_first_line: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
+                auto_polyfill_node_globals: false,
                 replace_exports: ReplaceableExportMap::default(),
                 dont_bundle_twice: false,
                 unwrap_commonjs_packages: &[],

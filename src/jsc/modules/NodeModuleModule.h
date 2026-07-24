@@ -22,6 +22,7 @@ JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*);
 void addNodeModuleConstructorProperties(JSC::VM &vm, Zig::GlobalObject *globalObject);
 
 extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsJSValue(BunString specifier, JSC::JSGlobalObject*, bool use_dirname);
+extern "C" JSC::EncodedJSValue Resolver__globalPathsJSValue(JSC::JSGlobalObject*);
 extern "C" bool ModuleLoader__isBuiltin(const char* data, size_t len);
 
 struct PathResolveModule {

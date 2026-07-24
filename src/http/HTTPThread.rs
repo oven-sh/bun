@@ -86,7 +86,7 @@ use bun_event_loop::MiniEventLoop::MiniEventLoop;
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
     /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
-    pub loop_: *const MiniEventLoop<'static>,
+    pub loop_: *const MiniEventLoop,
     /// The raw uSockets loop inside `loop_.loop` — split out so HTTPContext
     /// can `SocketGroup::init` without naming MiniEventLoop.
     pub uws_loop: *mut uws::Loop,

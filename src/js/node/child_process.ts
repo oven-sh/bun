@@ -153,12 +153,14 @@ function spawn(file, args, options) {
       }
     }, timeout).unref();
 
-    child.once("exit", () => {
+    const clear = () => {
       if (timeoutId) {
         clearTimeout(timeoutId);
         timeoutId = null;
       }
-    });
+    };
+    child.once("exit", clear);
+    child.once("close", clear);
   }
 
   const signal = options.signal;
@@ -167,7 +169,9 @@ function spawn(file, args, options) {
       process.nextTick(onAbortListener);
     } else {
       signal.addEventListener("abort", onAbortListener, { once: true });
-      child.once("exit", () => signal.removeEventListener("abort", onAbortListener));
+      const remove = () => signal.removeEventListener("abort", onAbortListener);
+      child.once("exit", remove);
+      child.once("close", remove);
     }
 
     function onAbortListener() {

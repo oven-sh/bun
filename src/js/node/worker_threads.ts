@@ -1068,7 +1068,7 @@ class Worker extends EventEmitter {
     // threadId is only assigned once the WebWorker exists; register the hub-side
     // control port with the messaging hub now.
     this.#messagingThreadId = this.#worker.threadId;
-    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain);
+    messaging.registerMainThreadPort(this.#messagingThreadId, portToMain, this.#onCouldNotSerializeError.bind(this));
     // The transfer is committed - release fds that were transferred but are
     // not referenced from workerData (nothing will deserialize them).
     options[kFinalizeJSTransferables]?.();
@@ -1291,6 +1291,12 @@ class Worker extends EventEmitter {
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
+  }
+
+  // node's Worker[kOnCouldNotSerializeErr]: the worker reported that
+  // serializing its uncaught exception failed.
+  #onCouldNotSerializeError() {
+    this.emit("error", $ERR_WORKER_UNSERIALIZABLE_ERROR("Serializing an uncaught exception failed"));
   }
 
   #onError(event: ErrorEvent) {

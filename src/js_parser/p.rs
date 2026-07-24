@@ -727,13 +727,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = Expr::init(t, loc);
         if SCAN_ONLY {
             if let js_ast::ExprData::ECall(call) = expr.data {
-                if let js_ast::ExprData::EIdentifier(ident) = call.target.data {
-                    // is this a require("something")
-                    if self.load_name_from_ref(ident.ref_) == b"require" && call.args.len_u32() == 1
+                // is this a require("something") / require.resolve("something")
+                let kind = match call.target.data {
+                    js_ast::ExprData::EIdentifier(ident)
+                        if self.load_name_from_ref(ident.ref_) == b"require" =>
                     {
+                        Some(ImportKind::Require)
+                    }
+                    js_ast::ExprData::EDot(dot) => match dot.target.data {
+                        js_ast::ExprData::EIdentifier(ident)
+                            if dot.name == b"resolve"
+                                && self.load_name_from_ref(ident.ref_) == b"require" =>
+                        {
+                            Some(ImportKind::RequireResolve)
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    if call.args.len_u32() == 1 {
                         if let js_ast::ExprData::EString(s) = call.args.at(0).data {
                             let _ = self.add_import_record(
-                                ImportKind::Require,
+                                kind,
                                 loc,
                                 s.string(self.arena).expect("unreachable"),
                             );

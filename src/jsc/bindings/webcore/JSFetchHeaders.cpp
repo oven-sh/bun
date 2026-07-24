@@ -600,7 +600,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeaders_getRawKeys, (JSC::JSGlobalObject * lexic
     // HTTPHeaderMap's iterator covers only the common and uncommon segments;
     // set-cookie values live in their own segment, so size() (which counts
     // every cookie) used to leave trailing holes in the array. Size for one
-    // entry per unique name and append "set-cookie" explicitly.
+    // entry per unique name and append "set-cookie" explicitly. Extras never
+    // introduce a new name (the primary already holds the joined value).
     JSArray* outArray = JSC::JSArray::create(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), headers.sizeAfterJoiningSetCookieHeader());
 
     unsigned int i = 0;
@@ -675,6 +676,9 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& vec = internal.commonHeaders();
         for (const auto& it : vec) {
             const auto& name = it.key;
+            // The primary already holds the `", "`-joined string for
+            // multi-value headers (see `appendToHeaderMap`), so the `value`
+            // field reflects every occurrence without a second pass.
             const auto& value = it.value;
             obj->putDirect(vm, Identifier::fromString(vm, WTF::httpHeaderNameStringImpl(name)), jsString(vm, value), 0);
         }

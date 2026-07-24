@@ -85,8 +85,7 @@ DOMHighResTimeStamp Performance::now() const
 
 DOMHighResTimeStamp Performance::timeOrigin() const
 {
-    // return reduceTimeResolution(m_timeOrigin.approximateWallTime().secondsSinceEpoch()).milliseconds();
-    return m_timeOrigin.secondsSinceEpoch().milliseconds();
+    return Bun__readOriginTimerStart(bunVM(scriptExecutionContext()->vm()));
 }
 
 // ReducedResolutionSeconds Performance::nowInReducedResolutionSeconds() const

@@ -51,6 +51,12 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
+// HOST_EXPORT(Bun__readOriginTimerRaw, c)
+pub fn read_origin_timer_raw(vm: &VirtualMachine) -> u64 {
+    // Ignores the fake-timers override; used to derive Performance::m_timeOrigin.
+    vm.origin_timer.elapsed().as_nanos() as u64
+}
+
 // HOST_EXPORT(Bun__readOriginTimerStart, c)
 pub fn read_origin_timer_start(vm: &VirtualMachine) -> f64 {
     // timespce to milliseconds

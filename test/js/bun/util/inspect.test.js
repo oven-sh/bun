@@ -692,7 +692,7 @@ it("CloseEvent", () => {
     code: 1000,
     reason: "Normal",
   });
-  expect(Bun.inspect(closeEvent)).toMatchInlineSnapshot(`
+  expect(Bun.inspect(closeEvent).replace(/timeStamp: [\d.]+,/, "timeStamp: 0,")).toMatchInlineSnapshot(`
     "CloseEvent {
       isTrusted: false,
       wasClean: false,
@@ -771,7 +771,7 @@ it("CustomEvent", () => {
     bubbles: true,
     cancelable: true,
   });
-  expect(Bun.inspect(customEvent)).toMatchInlineSnapshot(`
+  expect(Bun.inspect(customEvent).replace(/timeStamp: [\d.]+,/, "timeStamp: 0,")).toMatchInlineSnapshot(`
     "CustomEvent {
       isTrusted: false,
       detail: {

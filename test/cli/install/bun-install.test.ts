@@ -3220,6 +3220,86 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/33834
+  it("should resolve nested npm: alias to its registry target, not a same-named alias", async () => {
+    await withContext(defaultOpts, async ctx => {
+      // root aliases "baz" -> bar@0.0.2, and bar depends on "baz-old": "npm:baz@>=0.0.1".
+      // The nested alias must resolve to the real registry package baz, not back to bar.
+      const urls: string[] = [];
+      const manifests: Record<string, Record<string, object>> = {
+        bar: { "0.0.2": { dependencies: { "baz-old": "npm:baz@>=0.0.1" } } },
+        baz: { "0.0.3": { bin: { "baz-run": "index.js" } } },
+      };
+      setContextHandler(ctx, async request => {
+        urls.push(request.url);
+        const path = new URL(request.url).pathname.replace(`/${ctx.id}/`, "").replaceAll("%2f", "/");
+        if (path.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, path)));
+        }
+        const versions: Record<string, object> = {};
+        let latest = "";
+        for (const [version, fields] of Object.entries(manifests[path] ?? {})) {
+          versions[version] = {
+            name: path,
+            version,
+            dist: { tarball: `${ctx.registry_url}${path}-${version}.tgz` },
+            ...fields,
+          };
+          latest = version;
+        }
+        return new Response(JSON.stringify({ name: path, versions, "dist-tags": { latest } }));
+      });
+      await writeFile(
+        join(ctx.package_dir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "0.0.1",
+          dependencies: {
+            baz: "npm:bar@0.0.2",
+          },
+        }),
+      );
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: ctx.package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await stderr.text();
+      expect(err).toContain("Saved lockfile");
+      const out = await stdout.text();
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun install v1."),
+        "",
+        expect.stringContaining("+ baz@0.0.2"),
+        "",
+        "2 packages installed",
+      ]);
+      expect(await exited).toBe(0);
+      expect(urls.sort()).toEqual([
+        `${ctx.registry_url}bar`,
+        `${ctx.registry_url}bar-0.0.2.tgz`,
+        `${ctx.registry_url}baz`,
+        `${ctx.registry_url}baz-0.0.3.tgz`,
+      ]);
+      expect(await readdirSorted(join(ctx.package_dir, "node_modules"))).toEqual([".bin", ".cache", "baz", "baz-old"]);
+      expect(await file(join(ctx.package_dir, "node_modules", "baz", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      });
+      expect(await file(join(ctx.package_dir, "node_modules", "baz-old", "package.json")).json()).toEqual({
+        name: "baz",
+        version: "0.0.3",
+        bin: {
+          "baz-run": "index.js",
+        },
+      });
+      await access(join(ctx.package_dir, "bun.lockb"));
+    });
+  });
+
   it("should not apply overrides to package name of aliased package", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

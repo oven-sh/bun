@@ -30,3 +30,5 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/plan/**
 !fixtures/test-runner/error-reporter-fail-fast
 !fixtures/test-runner/error-reporter-fail-fast/**
+!fixtures/test-runner/worker-id
+!fixtures/test-runner/worker-id/**

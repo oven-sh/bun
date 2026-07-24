@@ -300,9 +300,14 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
   if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
-  if (opts.only) throwNotImplemented("run({ only: true })", 5090);
-  if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
-  if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
+  // Name/skip patterns and `only` are applied by pruning the merged queue, so
+  // they only reach the tests under isolation 'none'. Process isolation runs
+  // each file through `bun test`, which never sees them.
+  if (opts.isolation !== "none") {
+    if (opts.only) throwNotImplemented("run({ only: true })", 5090);
+    if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
+    if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
+  }
 
   if (opts.isolation === "none") {
     // Set synchronously so an overlapping run() hits the recursion guard
@@ -390,6 +395,15 @@ function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
 }
 
+// node's WorkerIdPool (runner.js): ids are handed out round-robin over the
+// run's concurrency limit, so a child can key per-worker scratch state on
+// NODE_TEST_WORKER_ID and see it reused once the limit is reached.
+function maxWorkerConcurrency(concurrency: unknown): number {
+  if (concurrency === true) return Math.max(require("node:os").availableParallelism() - 1, 1);
+  if (typeof concurrency === "number" && concurrency >= 1) return concurrency;
+  return 1;
+}
+
 // Per-run bookkeeping for SIGINT/SIGTERM: kept as a closure local so two
 // overlapping run() calls cannot clobber each other's child/interrupt state.
 type RunInterruptState = {
@@ -399,6 +413,9 @@ type RunInterruptState = {
   // Cumulative nesting-0 verdict number across every file in the run (node's
   // runner renumbers pass/fail run-wide; test:complete keeps per-file numbers).
   verdictNumber: number;
+  // Round-robin cursor over the run's worker ids (node's WorkerIdPool).
+  nextWorkerId: number;
+  maxWorkerId: number;
 };
 
 // Runs each file in its own `bun test` child and republishes the child's events
@@ -406,7 +423,14 @@ type RunInterruptState = {
 async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
   const started = performance.now();
   const counts = makeRunCounts();
-  const state: RunInterruptState = { interrupted: false, childProc: null, fileNode: null, verdictNumber: 0 };
+  const state: RunInterruptState = {
+    interrupted: false,
+    childProc: null,
+    fileNode: null,
+    verdictNumber: 0,
+    nextWorkerId: 0,
+    maxWorkerId: maxWorkerConcurrency(opts.concurrency),
+  };
 
   // run() returns the stream before any file starts, and callers attach their
   // listeners synchronously on the returned stream. Yield first so the earliest
@@ -564,7 +588,12 @@ async function runOneFile(
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+    env: {
+      ...(opts.env ?? process.env),
+      BUN_TEST_DRAIN_EVENT_LOOP: "1",
+      [kRunChildEnv]: kRunChildEnvValue,
+      NODE_TEST_WORKER_ID: String((state.nextWorkerId++ % state.maxWorkerId) + 1),
+    },
     stdout: "pipe",
     stderr: "pipe",
     signal: opts.signal,
@@ -3471,6 +3500,58 @@ function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): 
   return kept;
 }
 
+// node's testMatchesPattern (test.js): a node matches when its own name, any
+// ancestor's name, or the space-joined ancestor path matches any pattern.
+function nameMatchesPatterns(name: string, ancestors: string[], patterns: RegExp[]): boolean {
+  for (const pattern of patterns) {
+    if (pattern.exec(name) !== null) return true;
+  }
+  for (const ancestor of ancestors) {
+    for (const pattern of patterns) {
+      if (pattern.exec(ancestor) !== null) return true;
+    }
+  }
+  const joined = ancestors.length === 0 ? name : ancestors.join(" ") + " " + name;
+  for (const pattern of patterns) {
+    if (pattern.exec(joined) !== null) return true;
+  }
+  return false;
+}
+
+// Drops the tests --test-name-pattern excludes and the ones --test-skip-pattern
+// selects; a suite survives when it is not itself excluded or when any
+// descendant survives (node unfilters the ancestors of a kept test).
+function pruneByNamePatterns(
+  entries: StandaloneEntry[],
+  namePatterns: RegExp[] | null,
+  skipPatterns: RegExp[] | null,
+  ancestors: string[],
+): StandaloneEntry[] {
+  const kept: StandaloneEntry[] = [];
+  for (const entry of entries) {
+    const name = entry.node.name;
+    const excluded =
+      (namePatterns !== null && !nameMatchesPatterns(name, ancestors, namePatterns)) ||
+      (skipPatterns !== null && nameMatchesPatterns(name, ancestors, skipPatterns));
+    if (!entry.isSuite) {
+      if (!excluded) kept.push(entry);
+      continue;
+    }
+    ancestors.push(name);
+    const keptChildren = pruneByNamePatterns(
+      entry.node.standaloneChildren ?? [],
+      namePatterns,
+      skipPatterns,
+      ancestors,
+    );
+    ancestors.pop();
+    entry.node.standaloneChildren = keptChildren;
+    entry.node.childrenCount = keptChildren.length;
+    if (!excluded || keptChildren.length > 0) kept.push(entry);
+  }
+  return kept;
+}
+
 // run({ isolation: 'none' }): every file imports into this process (all
 // registrations first, like node), then one merged queue executes with shared
 // root hooks. Events flow through the same restructuring as process isolation.
@@ -3491,7 +3572,15 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   const savedRootHooks = callerRoot.hooks;
   const savedRootReportedCount = callerRoot.reportedCount;
   const savedSink = standaloneSink;
-  callerRoot.hooks = { before: [], after: [], beforeEach: [], afterEach: [] };
+  // Root hooks registered before the run (node's --require/--import preloads
+  // land on the same root) stay in effect; the copy keeps the run's own
+  // additions out of the caller's object.
+  callerRoot.hooks = {
+    before: [...savedRootHooks.before],
+    after: [...savedRootHooks.after],
+    beforeEach: [...savedRootHooks.beforeEach],
+    afterEach: [...savedRootHooks.afterEach],
+  };
   callerRoot.reportedCount = 0;
 
   // Callers attach listeners synchronously on the returned stream; yield first.
@@ -3506,6 +3595,13 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // node's root test is already running while files load, so before() hooks
     // registered at a file's top level execute immediately, in file order.
     callerRoot.started = true;
+    process.env.NODE_TEST_WORKER_ID = "1";
+    // Hooks already on the root when it starts run now, ahead of the ones the
+    // files register during import. runBeforeHookOnce memoizes the promise, so
+    // executeStandaloneQueue awaits these same results (and their failures).
+    for (const hook of callerRoot.hooks.before) {
+      runBeforeHookOnce(hook, callerRoot, hookArgFor(callerRoot)).catch(kDefaultFunction);
+    }
     try {
       for (const file of files) {
         if (file === Bun.main) {
@@ -3562,6 +3658,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // Awaited unconditionally: a late it.only() would otherwise be invisible
     // to the only-scan itself, and the helper is near-free with no builds.
     await awaitSuiteBuilds(standaloneQueue);
+    // node evaluates only-ness when each test is constructed, so a queue whose
+    // only-marked tests are later dropped by a name/tag filter still runs in
+    // only mode (and reports nothing) rather than falling back to running all.
+    const queueHasOnly = standaloneQueueHasOnly(standaloneQueue);
     const filters = opts.testTagFilterExpressions as string[] | null;
     if (filters !== null && filters.length > 0) {
       const pruned = pruneStandaloneEntries(standaloneQueue, filters);
@@ -3569,9 +3669,17 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
       standaloneQueue.push(...pruned);
     }
 
+    const namePatterns = (opts.testNamePatterns ?? null) as RegExp[] | null;
+    const skipPatterns = (opts.testSkipPatterns ?? null) as RegExp[] | null;
+    if (namePatterns !== null || skipPatterns !== null) {
+      const pruned = pruneByNamePatterns(standaloneQueue, namePatterns, skipPatterns, []);
+      standaloneQueue.length = 0;
+      standaloneQueue.push(...pruned);
+    }
+
     // node honors `only` in the shared process: when any registration carries
     // it, everything outside the only-marked branches is dropped silently.
-    if (standaloneQueueHasOnly(standaloneQueue)) {
+    if (queueHasOnly) {
       const pruned = pruneToOnly(standaloneQueue);
       standaloneQueue.length = 0;
       standaloneQueue.push(...pruned);
@@ -3892,16 +4000,15 @@ function bunTestOptions(options: TestOptions) {
   // bun:test's own watchdog measures the whole wrapper, so it is only told
   // about timeouts that extend past its 5s default.
   const { timeout } = options;
-  if (timeout === Infinity) {
-    // Node's "no timeout" must override bun:test's default (bun saturates it).
-    return { timeout };
-  }
   if (typeof timeout === "number" && Number.isFinite(timeout)) {
     // Keep bun:test's watchdog at or above both the node-style timeout and
     // bun's default so a lower `--timeout` cannot cut a node timeout short.
     return { timeout: Math.max(timeout, kBunTestDefaultTimeoutMs) };
   }
-  return undefined;
+  // node:test has no default per-test timeout (test.js kDefaultTimeout is
+  // null), so bun:test's 5s watchdog must not apply either; bun saturates
+  // Infinity to its maximum.
+  return { timeout: Infinity };
 }
 
 function currentCollectionParent(): TestNode {

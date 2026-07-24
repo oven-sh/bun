@@ -1236,3 +1236,121 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// ES2024 Evaluate() steps 2/4: for evaluating-async or evaluated, return
+// module.[[TopLevelCapability]].[[Promise]] (same object every call). Bun used
+// to reject the in-flight TLA case and mint a fresh promise per settled call.
+describe.concurrent("node:vm SourceTextModule evaluate() is idempotent", () => {
+  test("TLA in a dependency: second evaluate() returns the same pending promise", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const vm = require("node:vm");
+          const leaf = new vm.SourceTextModule("export const v = await Promise.resolve(7);", { identifier: "leaf" });
+          const root = new vm.SourceTextModule("import {v} from 'l'; export const r = v;", { identifier: "root" });
+          await root.link(() => leaf);
+
+          const p1 = root.evaluate();
+          const p2 = root.evaluate();
+          const out = { same12: p1 === p2, settled: await p2.then(() => "fulfilled", e => "rejected:" + e.code) };
+          await p1;
+          const p3 = root.evaluate(), p4 = root.evaluate();
+          out.same34 = p3 === p4;
+          out.same13 = p1 === p3;
+          out.r = root.namespace.r;
+          console.log(JSON.stringify(out));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ same12: true, settled: "fulfilled", same34: true, same13: true, r: 7 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("TLA in the root module itself: same capability promise each call", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const vm = require("node:vm");
+          const m = new vm.SourceTextModule("export const v = await Promise.resolve(42);");
+          await m.link(() => { throw new Error("no deps"); });
+
+          const p1 = m.evaluate();
+          const p2 = m.evaluate();
+          await p1;
+          const p3 = m.evaluate();
+          console.log(JSON.stringify({ same12: p1 === p2, same13: p1 === p3, v: m.namespace.v }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ same12: true, same13: true, v: 42 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("settled non-TLA module: repeated evaluate() returns the same fulfilled promise", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const vm = require("node:vm");
+          const m = new vm.SourceTextModule("export const x = 1;");
+          await m.link(() => { throw new Error("no deps"); });
+
+          const p1 = m.evaluate();
+          const p2 = m.evaluate();
+          const p3 = m.evaluate();
+          console.log(JSON.stringify({ same12: p1 === p2, same23: p2 === p3, v: await p1 }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ same12: true, same23: true });
+    expect(exitCode).toBe(0);
+  });
+
+  test("synchronously re-entrant evaluate() from inside the module body still rejects", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const vm = require("node:vm");
+          let inner;
+          globalThis.reenter = () => { inner = m.evaluate(); };
+          const m = new vm.SourceTextModule("globalThis.reenter(); export const x = 1;");
+          await m.link(() => { throw new Error("no deps"); });
+          await m.evaluate();
+          await inner.then(
+            () => console.log("FAIL: inner fulfilled"),
+            e => console.log("code=" + e.code),
+          );
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("code=ERR_VM_MODULE_STATUS");
+    expect(exitCode).toBe(0);
+  });
+});

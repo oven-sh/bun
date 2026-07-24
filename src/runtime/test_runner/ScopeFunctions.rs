@@ -330,6 +330,12 @@ impl ScopeFunctions {
     ) -> JsResult<()> {
         let _g = group_log::begin();
 
+        // Snapshot any active AsyncLocalStorage context now that the caller has
+        // finished reading `.length` / `.bind()` from the bare function. This
+        // runs synchronously inside the user's `als.run(...)` body, so the
+        // captured frame is the same one `parse_arguments` would have seen.
+        let callback = callback.map(|cb| cb.with_async_context_if_needed(global));
+
         // only allow in collection phase
         match bun_test.phase {
             bun_test::Phase::Collection => {} // ok
@@ -520,6 +526,9 @@ fn error_in_ci(global: &JSGlobalObject, signature: &[u8]) -> JsResult<()> {
 
 pub struct ParseArgumentsResult {
     pub description: Option<Vec<u8>>,
+    /// The user's callback as passed. Callers read `.length` (done-callback
+    /// detection) and `.bind()` (test.each) from it, then wrap via
+    /// `with_async_context_if_needed` at the storage point.
     pub callback: Option<JSValue>,
     pub options: ParseArgumentsOptions,
 }
@@ -668,7 +677,7 @@ pub fn parse_arguments(
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
-        Some(callback.with_async_context_if_needed(global))
+        Some(callback)
     } else {
         let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));

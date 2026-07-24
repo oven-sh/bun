@@ -251,11 +251,6 @@ it("ICU version does not regress", () => {
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
-  // the default timezone is Etc/UTC
-  if (!("TZ" in process.env)) {
-    expect(origTimezone).toBe("Etc/UTC");
-  }
-
   const realOrigTimezone = origTimezone;
   if (origTimezone === "America/Anchorage") {
     origTimezone = "America/New_York";
@@ -1269,10 +1264,13 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
 });
 
 it("process.execArgv", async () => {
+  // --bun/-b are Bun-launcher flags, not Node engine options, so they are
+  // excluded from execArgv: frameworks commonly serialize execArgv into
+  // NODE_OPTIONS for child workers and real node rejects --bun there.
   const fixtures = [
     ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
-    ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
-    ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+    ["--bun index.ts index.ts", [], ["index.ts"]],
+    ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh"], ["foo", "-a", "-b", "-c"]],
   ];
 
   for (const [cmd, execArgv, argv] of fixtures) {

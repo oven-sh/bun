@@ -2302,6 +2302,249 @@ pub mod environment_variables {
         let value = vm.env_loader().get(sliced.slice())?;
         Some(ZigString::init_utf8(value))
     }
+
+    // ─────────────────── live libc `environ` bridge (POSIX) ───────────────────
+    //
+    // Node's main-thread `process.env` is its RealEnvStore: every get/set/
+    // delete/enumerate is a live getenv/setenv/unsetenv/environ call. Bun's
+    // `process.env` previously sat on the DotEnv snapshot taken at startup, so
+    // a native library's `getenv()` never observed a JS write and a native
+    // `setenv()` never reached `process.env`.
+    //
+    // Bun also auto-loads `.env` files into the DotEnv map. Those keys are NOT
+    // seeded into `environ` — glibc's setenv is O(n) and a large .env turns
+    // seeding into O(n^2) — so `process.env` reads fall back to the DotEnv map
+    // for keys in the overlay set computed below. A JS write promotes the key
+    // into `environ` and removes it from the overlay, so native getenv then
+    // sees it.
+    //
+    // glibc's setenv/unsetenv are not thread-safe and getenv races with them;
+    // Node serializes through `per_process::env_var_mutex`. We do the same so
+    // two JS threads (main + a worker holding a main-rooted SHARE_ENV store)
+    // cannot corrupt `environ`. A user FFI `setenv` that bypasses this lock is
+    // outside our control, same as in Node.
+
+    /// Serialises access to libc `environ` itself. Always taken *inside*
+    /// `vm.proxy_env_storage.lock()` (when both are held) so the DotEnv map
+    /// and `environ` update atomically with respect to a spawning worker's
+    /// `clone_with_allocator`.
+    #[cfg(not(windows))]
+    static ENVIRON_LOCK: bun_core::Mutex<()> = bun_core::Mutex::new(());
+
+    /// DotEnv-map keys that are not in `environ` (i.e. values from `.env`
+    /// files). Populated once when the main-thread `process.env` is created;
+    /// a JS write/delete removes the key. Always accessed under
+    /// `ENVIRON_LOCK`.
+    #[cfg(not(windows))]
+    static DOTENV_OVERLAY: bun_core::Mutex<Option<bun_collections::StringSet>> =
+        bun_core::Mutex::new(None);
+
+    /// NUL-terminate `s` into `buf`, rejecting embedded NULs (libc would
+    /// truncate at them and a later getenv would read back a different value).
+    #[cfg(not(windows))]
+    fn make_cstr(buf: &mut Vec<u8>, s: &[u8]) -> Option<*const core::ffi::c_char> {
+        if bun_core::strings::index_of_char(s, 0).is_some() {
+            return None;
+        }
+        buf.clear();
+        buf.reserve(s.len() + 1);
+        buf.extend_from_slice(s);
+        buf.push(0);
+        Some(buf.as_ptr().cast())
+    }
+
+    /// Live `getenv()` under the environ lock, falling back to the DotEnv map
+    /// for `.env`-only keys (see `DOTENV_OVERLAY`). On success writes an owned
+    /// `BunString` (`clone_utf8`) the C++ side adopts via `transferToWTFString`.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__getOSEnv(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        out: &mut core::mem::MaybeUninit<BunString>,
+    ) -> bool {
+        let name_slice = name.to_utf8();
+        let name_bytes = name_slice.slice();
+        let mut name_buf = Vec::new();
+        let Some(name_c) = make_cstr(&mut name_buf, name_bytes) else {
+            return false;
+        };
+        let in_overlay = {
+            let _guard = ENVIRON_LOCK.lock();
+            // SAFETY: name_c is NUL-terminated; getenv reads until NUL. The
+            // returned pointer borrows the env block and is only valid while
+            // the lock is held.
+            let p = unsafe { libc::getenv(name_c) };
+            if !p.is_null() {
+                // SAFETY: getenv returns a NUL-terminated string.
+                let bytes = unsafe { core::ffi::CStr::from_ptr(p) }.to_bytes();
+                out.write(BunString::clone_utf8(bytes));
+                return true;
+            }
+            DOTENV_OVERLAY
+                .lock()
+                .as_ref()
+                .is_some_and(|s| s.contains(name_bytes))
+        };
+        if !in_overlay {
+            return false;
+        }
+        let Some(bytes) = global_object.bun_vm().env_loader().map.get(name_bytes) else {
+            return false;
+        };
+        out.write(BunString::clone_utf8(bytes));
+        true
+    }
+
+    /// Apply a JS `process.env` write to libc `environ` (so native `getenv`
+    /// observes it) and the DotEnv map (so Bun-internal consumers like
+    /// `Bun.spawn` without `env:` and `Bun.which` observe it). The DotEnv-map
+    /// write is skipped when `setenv` rejects the name (e.g. contains `=`), so
+    /// the two stores cannot diverge. Returns whether `environ` was updated so
+    /// callers can keep their own secondary store (SHARE_ENV) consistent.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__setOSEnv(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+        value: &BunString,
+    ) -> bool {
+        let name_slice = name.to_utf8();
+        let value_slice = value.to_utf8();
+        let name_bytes = name_slice.slice();
+        if name_bytes.is_empty() {
+            return false;
+        }
+        let mut name_buf = Vec::new();
+        let mut value_buf = Vec::new();
+        let (Some(name_c), Some(value_c)) = (
+            make_cstr(&mut name_buf, name_bytes),
+            make_cstr(&mut value_buf, value_slice.slice()),
+        ) else {
+            return false;
+        };
+        let vm = global_object.bun_vm().as_mut();
+        // Serialises env_map.put against a spawning worker's
+        // clone_with_allocator (see rare_data::ProxyEnvStorage).
+        let _slots = vm.proxy_env_storage.lock();
+        let rc = {
+            let _guard = ENVIRON_LOCK.lock();
+            // SAFETY: both pointers are NUL-terminated for the duration of the call.
+            let rc = unsafe { libc::setenv(name_c, value_c, 1) };
+            if rc == 0 {
+                if let Some(overlay) = DOTENV_OVERLAY.lock().as_mut() {
+                    overlay.swap_remove(name_bytes);
+                }
+            }
+            rc
+        };
+        if rc != 0 {
+            return false;
+        }
+        let env_map = &mut *vm.transpiler.env_mut().map;
+        bun_core::handle_oom(env_map.put(name_bytes, value_slice.slice()));
+        true
+    }
+
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__unsetOSEnv(
+        global_object: &JSGlobalObject,
+        name: &BunString,
+    ) {
+        let name_slice = name.to_utf8();
+        let name_bytes = name_slice.slice();
+        let mut name_buf = Vec::new();
+        let Some(name_c) = make_cstr(&mut name_buf, name_bytes) else {
+            return;
+        };
+        let vm = global_object.bun_vm().as_mut();
+        let _slots = vm.proxy_env_storage.lock();
+        {
+            let _guard = ENVIRON_LOCK.lock();
+            // SAFETY: name_c is NUL-terminated for the duration of the call.
+            unsafe { libc::unsetenv(name_c) };
+            if let Some(overlay) = DOTENV_OVERLAY.lock().as_mut() {
+                overlay.swap_remove(name_bytes);
+            }
+        }
+        let env_map = &mut *vm.transpiler.env_mut().map;
+        env_map.remove(name_bytes);
+    }
+
+    /// Walk live `environ` plus the `.env`-only overlay and yield each key to
+    /// `cb`. Keys are copied out under the lock so a concurrent `setenv`
+    /// cannot invalidate a pointer mid-callback.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__enumerateOSEnv(
+        ctx: *mut core::ffi::c_void,
+        cb: extern "C" fn(*mut core::ffi::c_void, *const u8, usize),
+    ) {
+        let keys: Vec<Box<[u8]>> = {
+            let _guard = ENVIRON_LOCK.lock();
+            let overlay = DOTENV_OVERLAY.lock();
+            let overlay_ref = overlay.as_ref().filter(|s| !s.is_empty());
+            // A native setenv of an overlay key (bypassing the JS write path,
+            // which would have removed it) must not yield the key twice.
+            let mut seen = bun_collections::StringSet::new();
+            let mut keys: Vec<Box<[u8]>> = bun_sys::environ()
+                .iter()
+                .filter_map(|&entry| {
+                    // SAFETY: environ entries are NUL-terminated C strings.
+                    let line = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
+                    let eq = bun_core::strings::index_of_char(line, b'=')? as usize;
+                    if eq == 0 {
+                        return None;
+                    }
+                    let key = &line[..eq];
+                    if overlay_ref.is_some_and(|o| o.contains(key)) {
+                        bun_core::handle_oom(seen.insert(key));
+                    }
+                    Some(Box::<[u8]>::from(key))
+                })
+                .collect();
+            if let Some(o) = overlay_ref {
+                for key in o.keys() {
+                    if !seen.contains(key) {
+                        keys.push(key.clone());
+                    }
+                }
+            }
+            keys
+        };
+        for key in &keys {
+            cb(ctx, key.as_ptr(), key.len());
+        }
+    }
+
+    /// Compute the `.env`-only overlay: DotEnv-map keys not present in the
+    /// current `environ`. Called once when the main-thread `process.env` is
+    /// created. Overlay keys read from the DotEnv map until a JS write
+    /// promotes them into `environ`.
+    #[cfg(not(windows))]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__Process__initOSEnvOverlay(global_object: &JSGlobalObject) {
+        let env_map = &global_object.bun_vm().env_loader().map;
+        let _guard = ENVIRON_LOCK.lock();
+        let mut environ_keys = bun_collections::StringSet::new();
+        for &entry in bun_sys::environ() {
+            // SAFETY: environ entries are NUL-terminated C strings.
+            let line = unsafe { core::ffi::CStr::from_ptr(entry) }.to_bytes();
+            if let Some(eq) = bun_core::strings::index_of_char(line, b'=')
+                && eq > 0
+            {
+                bun_core::handle_oom(environ_keys.insert(&line[..eq as usize]));
+            }
+        }
+        let mut overlay = bun_collections::StringSet::new();
+        for key in env_map.map.keys() {
+            if !environ_keys.contains(key) {
+                bun_core::handle_oom(overlay.insert(key));
+            }
+        }
+        *DOTENV_OVERLAY.lock() = Some(overlay);
+    }
 }
 
 #[unsafe(no_mangle)]

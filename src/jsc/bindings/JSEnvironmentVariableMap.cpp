@@ -33,6 +33,14 @@ extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* 
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
 
+#if !OS(WINDOWS)
+extern "C" bool Bun__Process__getOSEnv(JSGlobalObject* globalObject, const BunString* name, BunString* out);
+extern "C" bool Bun__Process__setOSEnv(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" void Bun__Process__unsetOSEnv(JSGlobalObject* globalObject, const BunString* name);
+extern "C" void Bun__Process__enumerateOSEnv(void* ctx, void (*cb)(void*, const unsigned char*, size_t));
+extern "C" void Bun__Process__initOSEnvOverlay(JSGlobalObject* globalObject);
+#endif
+
 namespace Bun {
 
 using namespace WebCore;
@@ -343,24 +351,34 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
-// Founding a SHARE_ENV tree swaps main's process.env off the windowsEnv Proxy that
-// called SetEnvironmentVariableW, so every mutation of a main-rooted shared store has
-// to re-apply that write-through. Gated on the *store*, not the writing thread: node
-// roots a main-founded tree at its RealEnvStore, so a worker writing through that tree
-// reaches the OS env too. `value == nullptr` deletes.
-static ALWAYS_INLINE void syncWindowsEnv(SharedEnvStore* store, const String& key, const String* value)
+// Founding a SHARE_ENV tree swaps main's process.env off the object whose
+// put()/delete() wrote through to the OS environment (the Windows Proxy's
+// SetEnvironmentVariableW or the POSIX JSRealEnvMap's setenv/unsetenv), so
+// every mutation of a main-rooted shared store has to re-apply that write-
+// through. Gated on the *store*, not the writing thread: node roots a
+// main-founded tree at its RealEnvStore, so a worker writing through that tree
+// reaches the OS env too. `value == nullptr` deletes. Returns false when the
+// native write was attempted and rejected (embedded NUL / `=` in name) so the
+// caller can skip updating the SharedEnvStore and avoid a divergence.
+static ALWAYS_INLINE bool syncOSEnv(JSGlobalObject* globalObject, SharedEnvStore* store, const String& key, const String* value)
 {
-#if OS(WINDOWS)
     if (!store || !store->isMainRooted())
-        return;
+        return true;
+#if OS(WINDOWS)
+    UNUSED_PARAM(globalObject);
     if (value)
         Bun__Process__editWindowsEnvVar(Bun::toString(key), Bun::toString(*value));
     else
         Bun__Process__editWindowsEnvVar(Bun::toString(key), { .tag = BunStringTag::Dead });
+    return true;
 #else
-    UNUSED_PARAM(store);
-    UNUSED_PARAM(key);
-    UNUSED_PARAM(value);
+    BunString name = Bun::toString(key);
+    if (value) {
+        BunString val = Bun::toString(*value);
+        return Bun__Process__setOSEnv(globalObject, &name, &val);
+    }
+    Bun__Process__unsetOSEnv(globalObject, &name);
+    return true;
 #endif
 }
 
@@ -565,8 +583,8 @@ bool JSSharedEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(store, keyStr, &stringValue);
-    store->set(keyStr, stringValue);
+    if (syncOSEnv(globalObject, store, keyStr, &stringValue))
+        store->set(keyStr, stringValue);
     return true;
 }
 
@@ -583,7 +601,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    syncWindowsEnv(store, String(uid), nullptr);
+    syncOSEnv(globalObject, store, String(uid), nullptr);
     store->remove(String(uid));
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
@@ -611,11 +629,14 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
         // an enumerable data property first: a partial descriptor then keeps that
         // enumerability, exactly as it does on the regular process.env. (Node rejects
         // accessors on process.env outright — on both maps — so match bun's own map.)
-        if (!propertyName.isSymbol() && uid) {
+        // Only do this for a genuine accessor: Object.freeze/seal pass attribute-only
+        // descriptors ({writable:false, configurable:false}) for every key and must
+        // not wipe the store — for a main-rooted tree that would unsetenv every var.
+        if (!propertyName.isSymbol() && uid && descriptor.isAccessorDescriptor()) {
             if (auto* store = sharedEnvStoreFor(object)) {
                 String existing = store->get(String(uid));
                 if (!existing.isNull()) {
-                    syncWindowsEnv(store, String(uid), nullptr);
+                    syncOSEnv(globalObject, store, String(uid), nullptr);
                     store->remove(String(uid));
                     object->putDirect(vm, propertyName, jsString(vm, existing), 0);
                 }
@@ -635,8 +656,8 @@ bool JSSharedEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
 
     String keyStr = String(uid);
     applySharedEnvSideEffects(globalObject, keyStr, stringValue);
-    syncWindowsEnv(store, keyStr, &stringValue);
-    store->set(keyStr, stringValue);
+    if (syncOSEnv(globalObject, store, keyStr, &stringValue))
+        store->set(keyStr, stringValue);
     return true;
 }
 
@@ -664,10 +685,205 @@ bool JSSharedEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalO
     }
 
     String keyStr = String::number(index);
-    syncWindowsEnv(store, keyStr, nullptr);
+    syncOSEnv(globalObject, store, keyStr, nullptr);
     store->remove(keyStr);
     return Base::deletePropertyByIndex(cell, globalObject, index);
 }
+
+#if !OS(WINDOWS)
+// ============================================================================
+// Main-thread POSIX process.env: a live view of libc `environ`.
+//
+// Node's main-thread process.env is its RealEnvStore: every get/set/delete/
+// enumerate is a live getenv/setenv/unsetenv/environ call. Without this a JS
+// `process.env.X = ...` never reaches a native library's `getenv("X")` and a
+// native `setenv("Y", ...)` never reaches `process.env.Y` — JS and C run on
+// two silently divergent environments for the life of the process.
+//
+// Workers still use a snapshot (the DotEnv-map-backed object below, or
+// SHARE_ENV's JSSharedEnvMap); only the main thread touches `environ`.
+class JSRealEnvMap final : public JSC::JSNonFinalObject {
+public:
+    using Base = JSC::JSNonFinalObject;
+
+    static constexpr unsigned StructureFlags = Base::StructureFlags
+        | JSC::OverridesGetOwnPropertySlot
+        | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero
+        | JSC::OverridesPut
+        | JSC::OverridesGetOwnPropertyNames
+        | JSC::GetOwnPropertySlotMayBeWrongAboutDontEnum
+        | JSC::ProhibitsPropertyCaching;
+
+    template<typename CellType, JSC::SubspaceAccess>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSRealEnvMap, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    DECLARE_INFO;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+    {
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSRealEnvMap* create(JSC::VM& vm, JSC::Structure* structure)
+    {
+        JSRealEnvMap* ptr = new (NotNull, JSC::allocateCell<JSRealEnvMap>(vm)) JSRealEnvMap(vm, structure);
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+
+    static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, JSC::PropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+
+private:
+    JSRealEnvMap(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+
+    void finishCreation(JSC::VM& vm)
+    {
+        Base::finishCreation(vm);
+    }
+};
+
+const JSC::ClassInfo JSRealEnvMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSRealEnvMap) };
+
+bool JSRealEnvMap::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid || uid->isEmpty())
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+
+    String keyStr = String(uid);
+    BunString name = Bun::toString(keyStr);
+    BunString value = { BunStringTag::Dead };
+    if (!Bun__Process__getOSEnv(globalObject, &name, &value))
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+
+    // Bun__Process__getOSEnv writes an owned clone_utf8 (WTFStringImpl at +1);
+    // transferToWTFString adopts it, toWTFString(ZeroCopy) would ref and leak.
+    slot.setValue(object, 0, jsString(vm, value.transferToWTFString()));
+    return true;
+}
+
+bool JSRealEnvMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid)
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+
+    String stringValue = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+
+    String keyStr = String(uid);
+    applySharedEnvSideEffects(globalObject, keyStr, stringValue);
+
+    BunString name = Bun::toString(keyStr);
+    BunString val = Bun::toString(stringValue);
+    Bun__Process__setOSEnv(globalObject, &name, &val);
+    return true;
+}
+
+bool JSRealEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
+{
+    auto* uid = propertyName.uid();
+    if (propertyName.isSymbol() || !uid)
+        return Base::deleteProperty(cell, globalObject, propertyName, slot);
+
+    String keyStr = String(uid);
+    BunString name = Bun::toString(keyStr);
+    Bun__Process__unsetOSEnv(globalObject, &name);
+    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+}
+
+void JSRealEnvMap::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
+{
+    VM& vm = JSC::getVM(globalObject);
+    struct Ctx {
+        VM& vm;
+        PropertyNameArrayBuilder& names;
+    } ctx { vm, propertyNames };
+    Bun__Process__enumerateOSEnv(&ctx, [](void* raw, const unsigned char* ptr, size_t len) {
+        auto& c = *static_cast<Ctx*>(raw);
+        auto key = String::fromUTF8ReplacingInvalidSequences(std::span { ptr, len });
+        c.names.add(JSC::Identifier::fromString(c.vm, key));
+    });
+    Base::getOwnPropertyNames(object, globalObject, propertyNames, mode);
+}
+
+bool JSRealEnvMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    // Node rejects accessors and partial descriptors on process.env via
+    // ERR_INVALID_OBJECT_DEFINE_PROPERTY; matching that is a separate behavior
+    // change with its own tests. Until then:
+    if (propertyName.isSymbol() || !uid) {
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+    if (descriptor.value()) {
+        PutPropertySlot slot(object, shouldThrow);
+        RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
+    }
+
+    if (descriptor.isAccessorDescriptor()) {
+        // A user getter/setter would be shadowed by getOwnPropertySlot's
+        // getenv() read, so move the environ entry onto the base (enumerable
+        // data property, so a partial descriptor keeps enumerability) and
+        // unsetenv the key.
+        String keyStr = String(uid);
+        BunString name = Bun::toString(keyStr);
+        BunString existing = { BunStringTag::Dead };
+        if (Bun__Process__getOSEnv(globalObject, &name, &existing))
+            object->putDirect(vm, propertyName, jsString(vm, existing.transferToWTFString()), 0);
+        Bun__Process__unsetOSEnv(globalObject, &name);
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow));
+    }
+
+    // Attribute-only descriptor (Object.freeze/seal's {writable:false,
+    // configurable:false}). The live environ view has no meaningful
+    // writable/configurable state to change; accept without touching environ.
+    return true;
+}
+
+bool JSRealEnvMap::getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
+{
+    VM& vm = JSC::getVM(globalObject);
+    return getOwnPropertySlot(object, globalObject, Identifier::from(vm, index), slot);
+}
+
+bool JSRealEnvMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = JSC::getVM(globalObject);
+    PutPropertySlot slot(cell, shouldThrow);
+    return put(cell, globalObject, Identifier::from(vm, index), value, slot);
+}
+
+bool JSRealEnvMap::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    String keyStr = String::number(index);
+    BunString name = Bun::toString(keyStr);
+    Bun__Process__unsetOSEnv(globalObject, &name);
+    return Base::deletePropertyByIndex(cell, globalObject, index);
+}
+#endif
 
 JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
@@ -748,6 +964,22 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if !OS(WINDOWS)
+    // Main thread: live `environ` view so JS process.env writes reach native
+    // getenv() and native setenv() reaches process.env. Workers fall through
+    // to the DotEnv-snapshot object below (Node gives workers a MapKVStore
+    // copy, not the RealEnvStore).
+    auto* context = globalObject->scriptExecutionContext();
+    if (context && context->isMainThread()) {
+        // Record which DotEnv-map keys are `.env`-only so reads can fall back
+        // to the map for them without masking a native unsetenv of a real
+        // environ var.
+        Bun__Process__initOSEnvOverlay(globalObject);
+        auto* structure = JSRealEnvMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+        return JSRealEnvMap::create(vm, structure);
+    }
+#endif
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);

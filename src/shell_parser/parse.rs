@@ -2642,6 +2642,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                                 self.tokens.push(Token::CmdSubstEnd);
                                 return Ok(());
                             } else {
+                                self.break_word(false)?;
                                 self.eat_subshell(SubShellKind::Backtick)?;
                             }
                             fell_through = true;

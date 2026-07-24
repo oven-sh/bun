@@ -711,6 +711,33 @@ bar\n`,
       .runAsTest("Double Quote Dollar Paren Single Quote");
   });
 
+  // A backtick command substitution must concatenate with surrounding text in
+  // the same word, exactly like $(...). Regression test for backtick subst
+  // preceded by text erasing both the text and its own output.
+  describe("backtick word concatenation", () => {
+    const BACKTICK = { raw: "`" };
+
+    TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}post`
+      .stdout("prempost\n")
+      .runAsTest("text before and after backtick");
+    TestBuilder.command`echo pre${BACKTICK}echo m${BACKTICK}`.stdout("prem\n").runAsTest("text before backtick");
+    TestBuilder.command`echo "a${BACKTICK}echo m${BACKTICK}b"`
+      .stdout("amb\n")
+      .runAsTest("backtick inside double quotes");
+    TestBuilder.command`echo a${BACKTICK}echo b${BACKTICK}c${BACKTICK}echo d${BACKTICK}e`
+      .stdout("abcde\n")
+      .runAsTest("multiple backticks in one word");
+    TestBuilder.command`V=${BACKTICK}echo new${BACKTICK}; echo =$V=`
+      .stdout("=new=\n")
+      .runAsTest("assignment value from backtick subst");
+    TestBuilder.command`V=x${BACKTICK}echo new${BACKTICK}; echo =$V=`
+      .stdout("=xnew=\n")
+      .runAsTest("assignment value from text plus backtick subst");
+    TestBuilder.command`echo ${BACKTICK}echo m${BACKTICK}post`
+      .stdout("mpost\n")
+      .runAsTest("word-initial backtick still works");
+  });
+
   describe("escaped_newline", () => {
     const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
 

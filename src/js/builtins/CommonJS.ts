@@ -318,10 +318,9 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 
 $visibility = "Private";
 export function requireESM(this, resolved: string) {
-  var exports = $esmNamespaceForCjs(resolved);
-  if (exports === undefined) {
-    exports = $loadEsmIntoCjs(resolved);
-  }
+  // $esmLoadSync has its own already-evaluated fast path; going through it
+  // unconditionally lets a previously-imported TLA graph reject here too.
+  var exports = $loadEsmIntoCjs(resolved);
   if (exports === undefined) {
     throw new TypeError(`require() failed to evaluate module "${resolved}". This is an internal consistentency error.`);
   }

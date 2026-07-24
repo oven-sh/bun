@@ -733,6 +733,39 @@ static bool isModuleEvaluated(JSC::AbstractModuleRecord* record)
     return record->moduleEnvironmentMayBeNull() != nullptr;
 }
 
+// Node.js refuses require(esm) for any graph that contains top-level await
+// (v8::Module::IsGraphAsync), regardless of whether the awaited value would
+// settle on microtasks alone. This is a structural walk over [[HasTLA]]:
+// [[AsyncEvaluationOrder]] is a fast "yes" (set implies this subtree went
+// async) but not a valid "no" for an Evaluated record, because a parent whose
+// TLA dependency already completed in an earlier evaluation pass sees that
+// dependency's order as DONE (not an integer) and keeps its own order Unset.
+static bool moduleGraphHasTLA(JSC::AbstractModuleRecord* root)
+{
+    if (!root)
+        return false;
+    WTF::UncheckedKeyHashSet<JSC::AbstractModuleRecord*> seen;
+    Vector<JSC::AbstractModuleRecord*, 8> stack;
+    stack.append(root);
+    while (!stack.isEmpty()) {
+        JSC::AbstractModuleRecord* module = stack.takeLast();
+        if (!seen.add(module).isNewEntry)
+            continue;
+        if (module->hasTLA())
+            return true;
+        if (!module->asyncEvaluationOrder().isUnset())
+            return true;
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(module);
+        if (!cyclic)
+            continue;
+        for (const auto& [key, loaded] : cyclic->loadedModules()) {
+            if (auto* dep = loaded.m_module.get())
+                stack.append(dep);
+        }
+    }
+    return false;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmNamespaceForCjs, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -800,6 +833,8 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
     if (auto* entry = loader->registryEntry(key)) {
         entryExistedBefore = true;
         if (isModuleEvaluated(entry->record())) {
+            if (moduleGraphHasTLA(entry->record()))
+                return Bun::throwRequireAsyncModuleError(globalObject, scope, keyString);
             auto* ns = entry->record()->getModuleNamespace(globalObject, false);
             RETURN_IF_EXCEPTION(scope, {});
             return JSValue::encode(ns);
@@ -846,7 +881,7 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             WTF::Locker locker { loader->cellLock() };
             loader->removeEntry(key);
         }
-        return throwVMTypeError(globalObject, scope, makeString("require() async module \""_s, keyString, "\" is unsupported. use \"await import()\" instead."_s));
+        return Bun::throwRequireAsyncModuleError(globalObject, scope, keyString);
     }
     }
 
@@ -870,6 +905,13 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
             return {};
         }
     }
+
+    // The synchronous drain diverts AsyncModuleExecutionResume, so a TLA graph
+    // that only awaits already-settled values reaches Evaluated here. Node.js
+    // rejects any TLA graph regardless, so loaders that branch on
+    // ERR_REQUIRE_ASYNC_MODULE see consistent behaviour across runtimes.
+    if (moduleGraphHasTLA(record))
+        return Bun::throwRequireAsyncModuleError(globalObject, scope, keyString);
 
     auto* ns = record->getModuleNamespace(globalObject, false);
     RETURN_IF_EXCEPTION(scope, {});

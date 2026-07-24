@@ -1,4 +1,4 @@
-import { bunRun, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, tempDir, tempDirWithFiles } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 const fixture = (...segs: string[]): string => path.join(import.meta.dirname, "fixtures", "require", ...segs);
@@ -40,6 +40,151 @@ describe("require(specifier)", () => {
     it.todo("require('*.html') synchronously produces a string");
     it.todo("require('*.wasm') produces a WebAssembly.Module");
     it.todo("require('*.db') wraps a sqlite file in a Database object and exports it");
+  });
+
+  describe("when specifier is an ES module whose graph uses top-level await", () => {
+    // Node's require(esm) refuses any graph that contains top-level await with
+    // ERR_REQUIRE_ASYNC_MODULE, regardless of whether the awaited value would
+    // settle on microtasks alone. Loaders catch this code to fall back to
+    // import(). https://nodejs.org/api/errors.html#err_require_async_module
+    const tlaShapes = {
+      "await that needs the event loop": `await new Promise(resolve => setTimeout(resolve, 1));`,
+      "await of an already-settled promise": `await Promise.resolve(0);`,
+      "await of a non-thenable": `await 0;`,
+    };
+
+    it.each(Object.entries(tlaShapes))("throws ERR_REQUIRE_ASYNC_MODULE for %s", (_, awaitExpr) => {
+      using dir = tempDir("require-tla", {
+        "tla.mjs": `${awaitExpr}\nexport const value = 1;\n`,
+      });
+      const specifier = path.join(String(dir), "tla.mjs");
+
+      let error: any;
+      try {
+        require(specifier);
+      } catch (e) {
+        error = e;
+      }
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(TypeError);
+      expect(error.name).toBe("Error");
+      expect(error.code).toBe("ERR_REQUIRE_ASYNC_MODULE");
+      expect(error.message).toContain(require.resolve(specifier));
+    });
+
+    it.each(Object.entries(tlaShapes))(
+      "throws ERR_REQUIRE_ASYNC_MODULE when a transitive dependency has %s",
+      (_, awaitExpr) => {
+        using dir = tempDir("require-transitive-tla", {
+          "leaf.mjs": `${awaitExpr}\nexport const value = 1;\n`,
+          "middle.mjs": `export { value } from "./leaf.mjs";\n`,
+        });
+        const specifier = path.join(String(dir), "middle.mjs");
+
+        let error: any;
+        try {
+          require(specifier);
+        } catch (e) {
+          error = e;
+        }
+
+        expect(error).toBeInstanceOf(Error);
+        expect(error.code).toBe("ERR_REQUIRE_ASYNC_MODULE");
+      },
+    );
+
+    it("throws ERR_REQUIRE_ASYNC_MODULE even when the module was already evaluated via import()", async () => {
+      using dir = tempDir("require-tla-after-import", {
+        "tla.mjs": `await Promise.resolve(0);\nexport const value = 7;\n`,
+        "entry.cjs": `(async () => {
+          const ns = await import("./tla.mjs");
+          if (ns.value !== 7) throw new Error("import failed");
+          try {
+            require("./tla.mjs");
+            console.log("returned");
+          } catch (e) {
+            console.log("threw", e.code ?? e.name);
+          }
+        })();`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("threw ERR_REQUIRE_ASYNC_MODULE");
+      expect(exitCode).toBe(0);
+    });
+
+    it("throws ERR_REQUIRE_ASYNC_MODULE for an intermediate module whose TLA dependency was pre-imported", async () => {
+      // An Evaluated parent whose TLA leaf completed in an earlier pass has
+      // [[AsyncEvaluationOrder]] Unset (the leaf's order is DONE, not an
+      // integer, so PendingAsyncDependencies stays 0); the graph walk must
+      // still reach the leaf's [[HasTLA]].
+      using dir = tempDir("require-tla-preimported-leaf", {
+        "leaf.mjs": `await Promise.resolve(0);\nexport const v = 1;\n`,
+        "middle.mjs": `export { v } from "./leaf.mjs";\n`,
+        "entry.cjs": `(async () => {
+          await import("./leaf.mjs");
+          try {
+            require("./middle.mjs");
+            console.log("returned");
+          } catch (e) {
+            console.log("threw", e.code ?? e.name);
+          }
+        })();`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("threw ERR_REQUIRE_ASYNC_MODULE");
+      expect(exitCode).toBe(0);
+    });
+
+    it("evaluates the graph exactly once across a rejected require() and a subsequent import()", async () => {
+      using dir = tempDir("require-tla-eval-once", {
+        "leaf.mjs": `globalThis.__ticks.push("leaf");\nawait Promise.resolve(0);\nexport const y = 1;\n`,
+        "root.mjs": `import { y } from "./leaf.mjs";\nglobalThis.__ticks.push("root");\nexport const x = y + 6;\n`,
+        "entry.cjs": `globalThis.__ticks = [];
+          let code = "no-throw";
+          try { require("./root.mjs"); } catch (e) { code = e.code ?? e.name; }
+          (async () => {
+            const ns = await import("./root.mjs");
+            console.log(JSON.stringify({ code, ticks: globalThis.__ticks, x: ns.x }));
+          })();`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.cjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        code: "ERR_REQUIRE_ASYNC_MODULE",
+        ticks: ["leaf", "root"],
+        x: 7,
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("still loads an ES module whose graph is entirely synchronous", () => {
+      using dir = tempDir("require-esm-sync", {
+        "sync.mjs": `export const value = 42;\n`,
+      });
+      const ns = require(path.join(String(dir), "sync.mjs"));
+      expect(ns.value).toBe(42);
+    });
   });
 
   describe("require.main", () => {

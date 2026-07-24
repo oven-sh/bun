@@ -91,6 +91,10 @@ public:
     bool wasModuleMock = false;
 };
 
+// Node's ERR_REQUIRE_ASYNC_MODULE: require() cannot finish loading this module
+// synchronously. Loaders detect the code to fall back to import().
+JSC::EncodedJSValue throwRequireAsyncModuleError(JSC::JSGlobalObject*, JSC::ThrowScope&, const WTF::String& specifier);
+
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
     JSString* spceifierJS,

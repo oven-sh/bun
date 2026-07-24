@@ -6820,6 +6820,23 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
 
         return JSC::jsUndefined();
     }
+
+    auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
+
+    // CloneDeserializer reads empty data as WebCore's null-value sentinel
+    // (SerializedScriptValue::nullValue()). Bytes handed to us by a caller carry no such
+    // meaning: zero bytes have no version header, so reject them like any other bad input.
+    if (!size) {
+        if (didFail)
+            *didFail = true;
+
+        if (throwExceptions == SerializationErrorMode::Throwing)
+            maybeThrowExceptionIfSerializationFailed(*globalObject, SerializationReturnCode::ValidationError);
+        RETURN_IF_EXCEPTION(throwScope, {});
+
+        return JSC::jsUndefined();
+    }
+
     auto blobURLs = Vector<String> {};
     auto blobFiles = Vector<String> {};
 
@@ -6829,7 +6846,6 @@ JSC::JSValue SerializedScriptValue::fromArrayBuffer(JSC::JSGlobalObject& domGlob
     }
 
     auto* data = static_cast<uint8_t*>(arrayBuffer->data()) + byteOffset;
-    auto size = std::min(arrayBuffer->byteLength(), maxByteLength);
     auto span = std::span<uint8_t> { data, size };
 
     auto result = CloneDeserializer::deserialize(&domGlobal, globalObject, {}, nullptr, span, blobURLs, blobFiles, nullptr

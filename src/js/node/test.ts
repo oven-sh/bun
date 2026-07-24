@@ -521,20 +521,29 @@ async function runOneFile(
       error = makeTestFailure(`${failed} subtest${failed > 1 ? "s" : ""} failed`, "subtestsFailed");
     }
 
+    // Count the file-node before emitting the per-file summary so a synchronous
+    // test:summary listener sees the same totals the run-level summary will.
     fileCounts.topLevel++;
+    const reportFileNode = reportedChildren === 0 || fileFailed;
+    if (reportFileNode) {
+      fileCounts.tests++;
+      if (fileFailed) fileCounts.failed++;
+      else fileCounts.passed++;
+    }
+
     if (fileFailed) {
       error = makeTestFailure(stderrText.trim() || `Test file failed with exit code ${exitCode}`, "testCodeFailure");
     } else {
       reporter.summary({
         __proto__: null,
         success: fileCounts.failed === 0,
-        counts: fileCounts,
+        counts: { __proto__: null, ...fileCounts },
         duration_ms: fileDuration,
         file: absolute,
       });
     }
 
-    if (reportedChildren === 0 || fileFailed) {
+    if (reportFileNode) {
       reporter.complete({
         __proto__: null,
         ...fileNode,
@@ -549,12 +558,9 @@ async function runOneFile(
         },
       });
       const details = { __proto__: null, duration_ms: fileDuration, type: "test", error };
-      fileCounts.tests++;
       if (fileFailed) {
-        fileCounts.failed++;
         reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
       } else {
-        fileCounts.passed++;
         reporter.pass({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
       }
     }
@@ -2428,6 +2434,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
         duration_ms: 0,
         type: "suite",
         tags: suite.tags,
+        todo: suite.todoFlag ? (suite.message ?? true) : undefined,
         error: suite.passed
           ? undefined
           : serializeRunError(

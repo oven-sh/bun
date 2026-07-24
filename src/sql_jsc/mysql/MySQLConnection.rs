@@ -1,6 +1,9 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
 use bun_collections::{OffsetByteList, StringHashMap, VecExt};
+use bun_jsc::JsCell;
+use bun_ptr::ParentRef;
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
+use core::cell::Cell;
 
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
@@ -53,8 +56,11 @@ pub struct MySQLConnection {
     pub status: ConnectionState,
 
     write_buffer: OffsetByteList,
-    read_buffer: OffsetByteList,
-    last_message_start: u32,
+    // `JsCell`/`Cell` so the buffered `Reader` (which holds a `ParentRef` to
+    // this struct) can advance the read cursor through a shared borrow while
+    // `process_packets` holds `&mut self` over the remaining disjoint fields.
+    read_buffer: JsCell<OffsetByteList>,
+    last_message_start: Cell<u32>,
     sequence_id: u8,
 
     // TODO: move it to JSMySQLConnection
@@ -96,8 +102,8 @@ impl Default for MySQLConnection {
             socket: Socket::SocketTcp(uws::SocketTCP::detached()),
             status: ConnectionState::Disconnected,
             write_buffer: OffsetByteList::default(),
-            read_buffer: OffsetByteList::default(),
-            last_message_start: 0,
+            read_buffer: JsCell::new(OffsetByteList::default()),
+            last_message_start: Cell::new(0),
             sequence_id: 0,
             queue: MySQLRequestQueue::init(),
             statements: PreparedStatementsMap::default(),
@@ -229,20 +235,8 @@ impl MySQLConnection {
         Ok(())
     }
 
-    /// reshaped for borrowck — `self.queue.advance(js_connection)`
-    /// would alias `&mut self.queue` with `&mut JSMySQLConnection` (which
-    /// embeds `self`). Route through a single raw root:
-    /// `MySQLRequestQueue::advance` takes only `*mut JSMySQLConnection` and
-    /// reaches the queue via `ParentRef`/`JsCell` shared borrows (all queue
-    /// fields are interior-mutable), so no `&mut` to the queue bytes is ever
-    /// materialised concurrently with the connection backref.
     fn advance(&mut self) {
-        let js_connection = self.get_js_connection();
-        // `js_connection` is the `@fieldParentPtr` of `self` — non-null, live,
-        // full-allocation provenance. advance() only forms shared borrows of it
-        // (queue mutation goes through `Cell`/`JsCell`); the raw pointer is
-        // wrapped via the safe `ParentRef::from(NonNull)` inside.
-        MySQLRequestQueue::advance(js_connection);
+        MySQLRequestQueue::advance(self.js_connection_ref());
     }
 
     fn flush_data(&mut self) {
@@ -294,7 +288,7 @@ impl MySQLConnection {
         let _queue = core::mem::replace(&mut self.queue, MySQLRequestQueue::init());
         // _queue dropped at scope exit
         let _write_buffer = core::mem::take(&mut self.write_buffer);
-        let _read_buffer = core::mem::take(&mut self.read_buffer);
+        let _read_buffer = self.read_buffer.replace(OffsetByteList::default());
         let statements = core::mem::take(&mut self.statements);
         let _tls_config = core::mem::take(&mut self.tls_config);
         let _options_buf = core::mem::take(&mut self.options_buf);
@@ -483,11 +477,11 @@ impl MySQLConnection {
 
         SocketMonitor::read(data);
 
-        if self.read_buffer.remaining().is_empty() {
+        if self.read_buffer.get().remaining().is_empty() {
             // StackReader takes `&Cell<usize>` (interior mutability)
             // so the post-error read of `offset`/`consumed` doesn't conflict.
-            let consumed = core::cell::Cell::new(0usize);
-            let offset = core::cell::Cell::new(0usize);
+            let consumed = Cell::new(0usize);
+            let offset = Cell::new(0usize);
             let reader = StackReader::init(data, &consumed, &offset);
             match self.process_packets(reader) {
                 Ok(()) => {}
@@ -505,12 +499,13 @@ impl MySQLConnection {
                             data.len()
                         );
 
-                        self.read_buffer.head = 0;
-                        self.last_message_start = 0;
-                        self.read_buffer.byte_list.clear();
-                        self.read_buffer
-                            .write(&data[offset.get()..])
-                            .unwrap_or_else(|_| panic!("failed to write to read buffer"));
+                        self.last_message_start.set(0);
+                        self.read_buffer.with_mut(|rb| {
+                            rb.head = 0;
+                            rb.byte_list.clear();
+                            rb.write(&data[offset.get()..])
+                                .unwrap_or_else(|_| panic!("failed to write to read buffer"));
+                        });
                     } else {
                         bun_core::handle_error_return_trace(err);
                         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
@@ -523,16 +518,12 @@ impl MySQLConnection {
         }
 
         {
-            self.read_buffer.head = self.last_message_start;
-
-            self.read_buffer
-                .write(data)
-                .unwrap_or_else(|_| panic!("failed to write to read buffer"));
-            // reshaped for borrowck — `self.process_packets(self.buffered_reader())`
-            // borrows `&mut self` twice. Construct the reader first; it holds a
-            // `*mut Self` so the second borrow doesn't conflict.
-            let reader = self.buffered_reader();
-            match self.process_packets(reader) {
+            self.read_buffer.with_mut(|rb| {
+                rb.head = self.last_message_start.get();
+                rb.write(data)
+                    .unwrap_or_else(|_| panic!("failed to write to read buffer"));
+            });
+            match self.process_packets(self.buffered_reader()) {
                 Ok(()) => {}
                 Err(err) => {
                     debug!("processPackets with buffer: {}", <&'static str>::from(err));
@@ -543,12 +534,13 @@ impl MySQLConnection {
                     }
 
                     if cfg!(debug_assertions) {
+                        let rb = self.read_buffer.get();
                         bun_core::scoped_log!(
                             MySQLConnection,
                             "Received short read: last_message_start: {}, head: {}, len: {}",
-                            self.last_message_start,
-                            self.read_buffer.head,
-                            self.read_buffer.byte_list.len()
+                            self.last_message_start.get(),
+                            rb.head,
+                            rb.byte_list.len()
                         );
                     }
 
@@ -557,8 +549,8 @@ impl MySQLConnection {
                 }
             }
 
-            self.last_message_start = 0;
-            self.read_buffer.head = 0;
+            self.last_message_start.set(0);
+            self.read_buffer.with_mut(|rb| rb.head = 0);
         }
         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
         Ok(())
@@ -1099,10 +1091,10 @@ impl MySQLConnection {
         }
     }
 
-    pub fn buffered_reader(&mut self) -> NewReader<Reader> {
+    pub fn buffered_reader(&self) -> NewReader<Reader> {
         NewReader {
             wrapped: Reader {
-                connection: std::ptr::from_mut::<Self>(self),
+                connection: ParentRef::new(self),
             },
         }
     }
@@ -1569,8 +1561,8 @@ impl From<FlushQueueError> for crate::Error {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Writer / Reader — protocol-layer adapters wrapping the connection's
-// OffsetByteList buffers. Hold `*mut MySQLConnection` (Copy) so they satisfy
-// `bun_sql::mysql::protocol::new_{reader,writer}::{Reader,Writer}Context: Copy`.
+// OffsetByteList buffers. Both satisfy the `Copy` bound on
+// `bun_sql::mysql::protocol::new_{reader,writer}::{Reader,Writer}Context`.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy)]
@@ -1621,95 +1613,85 @@ impl WriterContext for Writer {
     }
 }
 
+// `Reader.connection` is a back-reference to the protocol connection that
+// strictly outlives the reader (constructed via `buffered_reader(&self)` and
+// never stored). `read_buffer` / `last_message_start` are `JsCell` / `Cell`,
+// so mutation routes through interior mutability and the shared `ParentRef`
+// deref suffices. `process_packets` (and its callees) never touch those two
+// fields through their own `&mut self`; every other connection field they do
+// touch is disjoint.
 #[derive(Clone, Copy)]
 pub struct Reader {
-    pub connection: *mut MySQLConnection,
+    pub connection: ParentRef<MySQLConnection>,
 }
 
-// Aliasing: `Reader` is constructed from `&mut MySQLConnection`
-// and then threaded through `process_packets(&mut self, reader)` — i.e. the
-// raw `*mut` and a live `&mut self` coexist. Materializing a whole-struct
-// `&mut MySQLConnection` here would alias that `&mut self` (Stacked Borrows
-// UB). Instead the accessors below project only the specific field(s) the
-// reader touches via `addr_of_mut!`, matching `Writer` above.
 impl Reader {
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn read_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: `self.connection` points at a live `MySQLConnection` for the
-        // duration of the read call (NewReader is constructed by
-        // `MySQLConnection::buffered_reader(&mut self)` and never stored).
-        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing an
-        // intermediate `&mut MySQLConnection`, which would alias the caller's
-        // live `&mut self` in `process_packets`. `process_packets` never touches
-        // `read_buffer` through its own `&mut self` while a `Reader` is live, so
-        // no two `&mut OffsetByteList` coexist.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
+    fn read_buffer(&self) -> &JsCell<OffsetByteList> {
+        &self.connection.read_buffer
     }
-
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn last_message_start(&self) -> &mut u32 {
-        // SAFETY: same justification as `read_buffer()` — disjoint field
-        // projection from a non-null connection pointer that outlives the
-        // `Reader`; `process_packets` does not access `last_message_start`
-        // through `&mut self` while the reader is live.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
+    fn last_message_start(&self) -> &Cell<u32> {
+        &self.connection.last_message_start
     }
 }
 
 impl ReaderContext for Reader {
     fn mark_message_start(self) {
-        *self.last_message_start() = self.read_buffer().head;
+        self.last_message_start().set(self.read_buffer().get().head);
     }
 
     fn set_offset_from_start(self, offset: usize) {
-        self.read_buffer().head = *self.last_message_start() + (offset as u32);
+        let start = self.last_message_start().get();
+        self.read_buffer()
+            .with_mut(|rb| rb.head = start + (offset as u32));
     }
 
     fn peek(&self) -> &[u8] {
-        self.read_buffer().remaining()
+        self.read_buffer().get().remaining()
     }
 
     fn skip(self, count: isize) {
-        let rb = self.read_buffer();
-        if count < 0 {
-            let abs_count = count.unsigned_abs();
-            if abs_count > rb.head as usize {
-                rb.head = 0;
+        self.read_buffer().with_mut(|rb| {
+            if count < 0 {
+                let abs_count = count.unsigned_abs();
+                if abs_count > rb.head as usize {
+                    rb.head = 0;
+                    return;
+                }
+                rb.head -= u32::try_from(abs_count).expect("int cast");
                 return;
             }
-            rb.head -= u32::try_from(abs_count).expect("int cast");
-            return;
-        }
 
-        let ucount: usize = usize::try_from(count).expect("int cast");
-        if rb.head as usize + ucount > rb.byte_list.len() {
-            rb.head = rb.byte_list.len() as u32;
-            return;
-        }
+            let ucount: usize = usize::try_from(count).expect("int cast");
+            if rb.head as usize + ucount > rb.byte_list.len() {
+                rb.head = rb.byte_list.len() as u32;
+                return;
+            }
 
-        rb.head += u32::try_from(ucount).expect("int cast");
+            rb.head += u32::try_from(ucount).expect("int cast");
+        });
     }
 
     fn ensure_capacity(self, count: usize) -> bool {
-        self.read_buffer().remaining().len() >= count
+        self.read_buffer().get().remaining().len() >= count
     }
 
     fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
+        let remaining = self.read_buffer().get().remaining();
         if remaining.len() < count {
             return Err(AnyMySQLError::ShortRead);
         }
 
-        // reshaped for borrowck — capture detached slice before skip().
+        // `RawSlice` backref into the read buffer; `skip()` only advances
+        // `head` and never reallocates the backing storage.
         let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
     }
 
     fn read_z(self) -> Result<Data, AnyMySQLError> {
-        let remaining = self.read_buffer().remaining();
+        let remaining = self.read_buffer().get().remaining();
         if let Some(zero) = bun_core::strings::index_of_char(remaining, 0) {
             let slice = bun_ptr::RawSlice::new(&remaining[0..zero as usize]);
             self.skip(isize::try_from(zero + 1).expect("int cast"));

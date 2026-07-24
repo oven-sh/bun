@@ -1,97 +1,89 @@
+// Regression test for #22913: every successful net.connect({ path }) retained a
+// ref on the native socket, so RSS grew per connection. The test opens many
+// short-lived IPC (unix-socket / named-pipe) connections and asserts RSS is flat
+// between a warmup sample and a post sample.
 import { expect } from "bun:test";
 import { isASAN, isWindows } from "harness";
+import { rmSync } from "node:fs";
 import * as net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout } from "node:timers/promises";
 
-const listen_path = join(tmpdir(), "test-net-successful-connection-handle-leak.sock");
+// Per-process path so a stale socket from an earlier killed run (or a concurrent
+// test process) can't EADDRINUSE this one.
+const listen_path = join(tmpdir(), `test-net-handle-leak-${process.pid}.sock`);
+rmSync(listen_path, { force: true });
 
-const { promise, resolve } = Promise.withResolvers();
+const { promise: listening, resolve, reject } = Promise.withResolvers<void>();
 const server = net
   .createServer()
   .listen(listen_path)
-  .on("listening", () => resolve());
-await promise;
-const address = server.address();
-console.log("server address", address);
+  .on("listening", () => resolve())
+  .on("error", reject);
+await listening;
+expect(server.address()).toBe(listen_path);
 
-// ASAN is ~8x slower per connection and its RSS margin (256 MB, below) is far
-// wider per connection than the native 15 MB one, so a smaller count still has
-// plenty of sensitivity there while keeping full 150k coverage on other lanes.
-const warmup_total = isASAN ? 10_000 : 50_000;
-const measured_total = isASAN ? 20_000 : 100_000;
+// A per-connection handle leak (#22913) retains >= ~1.5 KB/conn (JS Socket alone,
+// measured), so 40k measured connections produces >= 60 MB of growth and is caught
+// by the 24/40 MB margins below with ~1.5-2x headroom. ASAN is ~90x slower per
+// connection and its 256 MB margin (quarantine-sized) makes it a sanity check
+// rather than a fine-grained detector, so it runs a quarter as many.
+const warmup_total = isASAN ? 5_000 : 20_000;
+const measured_total = isASAN ? 10_000 : 40_000;
 
-let started;
-
-started = 0;
-while (started < warmup_total) {
-  const promises: Promise<void>[] = [];
-  for (let i = 0; i < 100; i++) {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const socket = net
-      .connect({ path: listen_path })
-      .on("connect", () => {
-        socket.on("close", () => resolve());
-        socket.end();
-      })
-      .on("error", e => {
-        reject(e);
-      });
-
-    promises.push(promise);
-    started++;
-  }
-  await Promise.all(promises);
-  await setTimeout(1);
-  if (started % 10_000 === 0) {
-    console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+async function run(total: number) {
+  let done = 0;
+  while (done < total) {
+    const batch = Math.min(100, total - done);
+    const promises: Promise<void>[] = [];
+    for (let i = 0; i < batch; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const socket = net
+        .connect({ path: listen_path })
+        .on("connect", () => {
+          socket.on("close", () => resolve());
+          socket.end();
+        })
+        .on("error", reject);
+      promises.push(promise);
+      done++;
+    }
+    await Promise.all(promises);
+    if (done % 10_000 === 0) {
+      console.log(`Completed ${done} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
+    }
   }
 }
 
+await run(warmup_total);
 Bun.gc(true);
 const warmup_rss = process.memoryUsage.rss();
 
-started = 0;
-while (started < measured_total) {
-  const promises: Promise<void>[] = [];
-  for (let i = 0; i < 100; i++) {
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    const socket = net
-      .connect({ path: listen_path })
-      .on("connect", () => {
-        socket.on("close", () => resolve());
-        socket.end();
-      })
-      .on("error", e => {
-        reject(e);
-      });
-
-    promises.push(promise);
-    started++;
-  }
-  await Promise.all(promises);
-  await setTimeout(1);
-  if (started % 10_000 === 0) {
-    console.log(`Completed ${started} connections. RSS: ${(process.memoryUsage.rss() / 1024 / 1024) | 0} MB`);
-  }
-}
-
-// Mirror the warmup sample: collect before measuring so the assertion compares
-// like-for-like and isn't sensitive to garbage still in flight from the last batch.
+await run(measured_total);
+// Mirror the warmup sample: collect before measuring so the comparison isn't
+// inflated by transient garbage from the last batch. A native handle leak
+// survives GC, so this keeps catching what the test is for.
 Bun.gc(true);
 const post_rss = process.memoryUsage.rss();
 
 server.close();
+rmSync(listen_path, { force: true });
+
+const delta = post_rss - warmup_rss;
+console.log(
+  `RSS delta over ${measured_total} connections: ${(delta / 1024 / 1024).toFixed(1)} MB ` +
+    `(warmup ${(warmup_rss / 1024 / 1024) | 0} MB -> ${(post_rss / 1024 / 1024) | 0} MB)`,
+);
 
 // Per-Socket fields added for onread/tls bookkeeping raise steady-state RSS a
-// few MB across ~30k iterations; a real per-connection leak would blow past 24.
+// few MB across the measured run; a real per-connection leak produces >= 60 MB
+// at 40k connections (verified by retaining the JS Socket on each iteration).
 let margin = 1024 * 1024 * 24;
 if (isWindows) margin = 1024 * 1024 * 40;
 // Under ASAN we use the system allocator so the interceptor sees every
 // allocation. The ASAN free-quarantine (default 256 MB) plus glibc malloc
 // retaining freed pages causes RSS to grow well past the native margin above
-// even with no real leak. Observed ~130 MB on linux x64-asan; allow up to the
-// default quarantine size.
+// even with no real leak. Observed ~30-45 MB on linux x64-asan at 10k measured;
+// allow up to the default quarantine size.
 if (isASAN) margin = 1024 * 1024 * 256;
-expect(post_rss - warmup_rss).toBeLessThan(margin);
+expect(delta).toBeLessThan(margin);

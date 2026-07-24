@@ -155,6 +155,33 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  // These values all exceed the i32 range of the underlying C++ sampling
+  // interval. Previously 2147483648..=4294967295 panicked ("integer overflow"
+  // on Windows ReleaseSafe, "int cast" on Rust builds) during startup.
+  test.each(["2147483648", "3000000000", "4294967295"])("--cpu-prof-interval %s does not crash", async interval => {
+    using dir = tempDir("cpu-prof-interval", {});
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-interval", interval, "-e", "1"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const files = readdirSync(String(dir));
+    const profileFiles = files.filter(f => f.endsWith(".cpuprofile"));
+
+    expect({ stdout, stderr, profileFiles: profileFiles.length, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.any(String),
+      profileFiles: 1,
+      exitCode: 0,
+    });
+  });
+
   test("profile captures function names", async () => {
     using dir = tempDir("cpu-prof-functions", {
       "test.js": `

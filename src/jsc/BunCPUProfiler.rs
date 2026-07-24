@@ -56,7 +56,11 @@ unsafe extern "C" {
 }
 
 pub fn set_sampling_interval(interval: u32) {
-    Bun__setSamplingInterval(c_int::try_from(interval).expect("int cast"));
+    // `--cpu-prof-interval` is parsed as u32 but the C++ side takes a c_int.
+    // Clamp rather than panic on values above i32::MAX (Node.js accepts any
+    // value here). i32::MAX microseconds is ~35 minutes, already far beyond a
+    // useful sampling interval.
+    Bun__setSamplingInterval(interval.min(c_int::MAX as u32) as c_int);
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {

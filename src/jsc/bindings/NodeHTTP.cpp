@@ -852,7 +852,9 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
     for (auto& header : internalHeaders.uncommonHeaders()) {
         const auto& name = header.key;
         const auto& value = header.value;
-
+        if (value.isEmpty()) {
+            continue;
+        }
         writeResponseHeader<isSSL>(res, name, value);
     }
 }
@@ -1560,6 +1562,9 @@ static void writeFetchHeadersToH3Response(WebCore::FetchHeaders& headers, uWS::H
     }
 
     for (auto& header : internalHeaders.uncommonHeaders()) {
+        if (header.value.isEmpty()) {
+            continue;
+        }
         writeOne(header.key, header.value);
     }
 }

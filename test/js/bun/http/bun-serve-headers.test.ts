@@ -146,10 +146,14 @@ describe("empty header value does not duplicate auto-headers", () => {
     expect(lines(head, "date")).toEqual(["Date: Sun, 06 Oct 2024 13:37:01 GMT"]);
   });
 
-  test("uncommon header with empty value is unaffected", async () => {
-    const head = await rawHead(() => new Response("x", { headers: { "x-custom": "", "content-type": "text/html" } }));
-    expect(lines(head, "x-custom")).toEqual(["x-custom: "]);
-    expect(lines(head, "content-type")).toEqual(["Content-Type: text/html"]);
+  test("empty custom header is dropped on both paths", async () => {
+    for (const head of [
+      await rawHead(() => new Response("x", { headers: { "x-custom": "", "content-type": "text/html" } })),
+      await rawHeadStatic(new Response("x", { headers: { "x-custom": "", "content-type": "text/html" } })),
+    ]) {
+      expect(lines(head, "x-custom")).toEqual([]);
+      expect(lines(head, "content-type")).toEqual(["Content-Type: text/html"]);
+    }
   });
 });
 

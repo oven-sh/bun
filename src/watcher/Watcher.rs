@@ -220,13 +220,14 @@ impl Watcher {
         // Watcher must be Send across the spawned thread boundary; we pass a
         // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
-        // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
-        // via `running`/`close_descriptors` and the thread frees the Box.
         let spawn = || {
             std::thread::Builder::new()
                 .name("FileWatcher".into())
-                .spawn(move || unsafe {
-                    let _ = Watcher::thread_main(this as *mut Watcher);
+                .spawn(move || {
+                    // SAFETY: Watcher outlives the thread; shutdown()
+                    // coordinates teardown via `running`/`close_descriptors`
+                    // and the thread frees the Box.
+                    let _ = unsafe { Watcher::thread_main(this as *mut Watcher) };
                 })
         };
         // A --watch reload execve's and immediately re-enters here; under CI

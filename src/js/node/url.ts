@@ -101,42 +101,9 @@ var protocolPattern = /^([a-z0-9.+-]+:)/i,
     "wss:": true,
   };
 
+const { isInsideNodeModules } = require("internal/shared");
+
 let urlParseWarned = false;
-
-const nodeModulesRE = /[\\/]node_modules[\\/]/;
-
-// Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
-// first real user frame (skipping node:/internal/native frames) lives inside
-// a node_modules directory, so url.parse() calls from library code don't
-// spam application stderr. Uses prepareStackTrace CallSites so no stack
-// string is materialized; globals restored in finally.
-function returnStackFrames(_err: unknown, frames: unknown[]) {
-  return frames;
-}
-function isInsideNodeModules(frameLimit: number): boolean {
-  const prevLimit = Error.stackTraceLimit;
-  const prevPrepare = Error.prepareStackTrace;
-  let frames: { getFileName(): string | null }[];
-  try {
-    Error.stackTraceLimit = frameLimit + 2;
-    Error.prepareStackTrace = returnStackFrames;
-    const target: { stack?: unknown } = {};
-    Error.captureStackTrace(target, isInsideNodeModules);
-    frames = target.stack as typeof frames;
-  } finally {
-    Error.stackTraceLimit = prevLimit;
-    Error.prepareStackTrace = prevPrepare;
-  }
-  if (!$isJSArray(frames)) return false;
-  for (const frame of frames) {
-    const filename = frame.getFileName();
-    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
-      continue;
-    }
-    return nodeModulesRE.test(filename);
-  }
-  return false;
-}
 
 function urlParse(
   url: string | URL | typeof Url, // really has unknown type but intellisense is nice

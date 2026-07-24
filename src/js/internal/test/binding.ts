@@ -40,35 +40,10 @@ class TestTCPWrap {
   }
 }
 
-// node's internalBinding('util').isInsideNodeModules: walk the call stack via
-// Error.prepareStackTrace CallSites and test the first frame that carries a
-// real user filename (skipping node:/internal:/native frames).
+const { isInsideNodeModules } = require("internal/shared");
+
 function safeGetenv(name: string) {
   return process.env[name];
-}
-
-function returnStackFrames(_err: unknown, frames: unknown[]) {
-  return frames;
-}
-
-function isInsideNodeModules() {
-  const oldPrepareStackTrace = Error.prepareStackTrace;
-  const oldStackTraceLimit = Error.stackTraceLimit;
-  Error.stackTraceLimit = Infinity;
-  Error.prepareStackTrace = returnStackFrames;
-  const target: { stack?: unknown } = {};
-  Error.captureStackTrace(target, isInsideNodeModules);
-  const frames = target.stack as { getFileName(): string | null }[];
-  Error.prepareStackTrace = oldPrepareStackTrace;
-  Error.stackTraceLimit = oldStackTraceLimit;
-  for (const frame of frames) {
-    const filename = frame.getFileName();
-    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
-      continue;
-    }
-    return /[\\/]node_modules[\\/]/.test(filename);
-  }
-  return false;
 }
 
 let cachedUvBinding: Record<string, unknown> | undefined;

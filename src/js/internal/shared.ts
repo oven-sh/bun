@@ -181,6 +181,40 @@ function guardCallback(callback) {
   };
 }
 
+const nodeModulesRE = /[\\/]node_modules[\\/]/;
+function returnStackFrames(_err: unknown, frames: unknown[]) {
+  return frames;
+}
+
+// Port of node's IsInsideNodeModules (src/node_util.cc): test whether the
+// first real user frame (skipping node:/internal/native frames) lives inside
+// a node_modules directory. Uses prepareStackTrace CallSites so no stack
+// string is materialized; globals restored in finally.
+function isInsideNodeModules(frameLimit: number): boolean {
+  const prevLimit = Error.stackTraceLimit;
+  const prevPrepare = Error.prepareStackTrace;
+  let frames: { getFileName(): string | null }[];
+  try {
+    Error.stackTraceLimit = frameLimit;
+    Error.prepareStackTrace = returnStackFrames;
+    const target: { stack?: unknown } = {};
+    Error.captureStackTrace(target, isInsideNodeModules);
+    frames = target.stack as typeof frames;
+  } finally {
+    Error.stackTraceLimit = prevLimit;
+    Error.prepareStackTrace = prevPrepare;
+  }
+  if (!$isJSArray(frames)) return false;
+  for (const frame of frames) {
+    const filename = frame.getFileName();
+    if (!filename || filename.startsWith("node:") || filename.startsWith("internal:") || filename === "native") {
+      continue;
+    }
+    return nodeModulesRE.test(filename);
+  }
+  return false;
+}
+
 // Marks an addEventListener() options object so that dispatch still invokes the
 // listener after an unrelated listener called event.stopImmediatePropagation().
 // `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
@@ -375,6 +409,7 @@ export default {
   once,
   getLazy,
   guardCallback,
+  isInsideNodeModules,
   reportUncaughtException,
   resistStopPropagation,
 

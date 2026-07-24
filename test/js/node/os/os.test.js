@@ -167,6 +167,77 @@ describe("userInfo", () => {
     });
   });
 
+  // The `docker run --user 12345` / distroless / OpenShift arbitrary-uid case:
+  // a uid with no passwd entry must throw the same `ERR_SYSTEM_ERROR` node does,
+  // not fabricate a record from the environment. Needs Linux `setpriv` + root.
+  const canSetpriv = isLinux && process.geteuid?.() === 0 && Bun.which("setpriv") != null;
+  it.skipIf(!canSetpriv)("throws ERR_SYSTEM_ERROR when the effective uid has no passwd entry", async () => {
+    // A uid that almost certainly has no /etc/passwd row in any CI image.
+    const uid = "54321";
+    await using proc = Bun.spawn({
+      cmd: [
+        "setpriv",
+        `--reuid=${uid}`,
+        `--regid=${uid}`,
+        "--clear-groups",
+        bunExe(),
+        "-e",
+        `const os = require("node:os");
+         const out = {};
+         for (const [name, fn] of [["userInfo", () => os.userInfo()], ["homedir", () => os.homedir()]]) {
+           try {
+             out[name] = { returned: fn() };
+           } catch (e) {
+             out[name] = { threw: { name: e.name, code: e.code, syscall: e.syscall, info: e.info?.code } };
+           }
+         }
+         process.stdout.write(JSON.stringify(out));`,
+      ],
+      env: {
+        ...bunEnv,
+        // Poison $HOME / $USER / $SHELL so a fabricating implementation is
+        // visibly wrong if it returns instead of throwing.
+        HOME: "/not-a-real-home",
+        USER: "not-a-real-user",
+        SHELL: "/not-a-real-shell",
+      },
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      userInfo: { threw: { name: "SystemError", code: "ERR_SYSTEM_ERROR", syscall: "uv_os_get_passwd", info: "ENOENT" } },
+      // os.homedir() checks $HOME first; with $HOME set it returns that verbatim.
+      homedir: { returned: "/not-a-real-home" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.skipIf(!canSetpriv)("homedir() throws ERR_SYSTEM_ERROR when $HOME is unset and no passwd entry", async () => {
+    const uid = "54321";
+    const { HOME, USERPROFILE, ...envWithoutHome } = bunEnv;
+    await using proc = Bun.spawn({
+      cmd: [
+        "setpriv",
+        `--reuid=${uid}`,
+        `--regid=${uid}`,
+        "--clear-groups",
+        bunExe(),
+        "-e",
+        `try { require("node:os").homedir() }
+         catch (e) { process.stdout.write(JSON.stringify({ name: e.name, code: e.code, syscall: e.syscall })) }`,
+      ],
+      env: envWithoutHome,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ name: "SystemError", code: "ERR_SYSTEM_ERROR", syscall: "uv_os_homedir" });
+    expect(exitCode).toBe(0);
+  });
+
   it("has node's shape", () => {
     const info = os.userInfo();
 

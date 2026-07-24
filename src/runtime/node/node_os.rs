@@ -47,7 +47,7 @@ mod _impl {
     use bun_core::strings;
     #[cfg(windows)]
     use bun_jsc::StringJsc as _;
-    use bun_jsc::{CallFrame, JSArray, SysErrorJsc as _, SystemError};
+    use bun_jsc::{CallFrame, JSArray, SystemError};
     #[cfg(windows)]
     use bun_paths::PathBuffer;
     #[cfg(windows)]
@@ -782,6 +782,15 @@ mod _impl {
         unsafe { bun_core::ffi::cstr(field) }.to_bytes().to_vec()
     }
 
+    /// node's `ERR_SYSTEM_ERROR` for a failed libuv call in `os`: a
+    /// `SystemError` with an `info` object, matching `lib/os.js`'s
+    /// `throw new ERR_SYSTEM_ERROR(ctx)` path.
+    fn throw_uv_error(global: &JSGlobalObject, err: bun_sys::Error) -> bun_jsc::JsError {
+        global.throw_value(
+            SystemError::from(err.to_system_error()).to_error_instance_with_info_object(global),
+        )
+    }
+
     pub(crate) fn homedir(global: &JSGlobalObject) -> JsResult<BunString> {
         // In Node.js, this is a wrapper around uv_os_homedir.
         #[cfg(windows)]
@@ -792,7 +801,7 @@ mod _impl {
             if let Some(err) = unsafe { libuv::uv_os_homedir(out.as_mut_ptr(), &mut size) }
                 .to_error(bun_sys::Tag::uv_os_homedir)
             {
-                return Err(global.throw_value(err.to_js(global)));
+                return Err(throw_uv_error(global, err));
             }
             return Ok(BunString::clone_utf8(&out[0..size]));
         }
@@ -817,14 +826,15 @@ mod _impl {
                     }
                     // in uv__getpwuid_r, null result throws UV_ENOENT.
                     #[cfg(not(target_os = "android"))]
-                    return Err(global.throw_value(
-                        bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir)
-                            .to_js(global),
+                    return Err(throw_uv_error(
+                        global,
+                        bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_homedir),
                     ));
                 }
                 Err(errno) => {
-                    return Err(global.throw_value(
-                        bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_homedir).to_js(global),
+                    return Err(throw_uv_error(
+                        global,
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_homedir),
                     ));
                 }
             };
@@ -1615,7 +1625,7 @@ mod _impl {
             if let Some(err) = unsafe { libuv::uv_os_get_passwd(&mut pwd) }
                 .to_error(bun_sys::Tag::uv_os_get_passwd)
             {
-                return Err(global_this.throw_value(err.to_js(global_this)));
+                return Err(throw_uv_error(global_this, err));
             }
             // SAFETY: `uv_os_get_passwd` succeeded, so `pwd` owns one allocation
             // reachable from `pwd.username`; `uv_os_free_passwd` releases it.
@@ -1643,15 +1653,15 @@ mod _impl {
             Ok(Some(info)) => info,
             // in uv__getpwuid_r, null result throws UV_ENOENT.
             Ok(None) => {
-                return Err(global_this.throw_value(
-                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_get_passwd)
-                        .to_js(global_this),
+                return Err(throw_uv_error(
+                    global_this,
+                    bun_sys::Error::from_code(bun_sys::E::ENOENT, bun_sys::Tag::uv_os_get_passwd),
                 ));
             }
             Err(errno) => {
-                return Err(global_this.throw_value(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_get_passwd)
-                        .to_js(global_this),
+                return Err(throw_uv_error(
+                    global_this,
+                    bun_sys::Error::from_code(errno, bun_sys::Tag::uv_os_get_passwd),
                 ));
             }
         };

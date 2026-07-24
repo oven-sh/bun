@@ -815,7 +815,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInter
     uint64_t reqId = worker.registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([reqId, parentId, protectedWorker = Ref { worker }](ScriptExecutionContext& workerCtx) mutable {
-        if (!Bun::isCPUProfilerRunning())
+        if (!Bun::isCPUProfilerRunning(workerCtx.vm()))
             Bun::startCPUProfiler(workerCtx.vm());
         ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedWorker = WTF::move(protectedWorker)](ScriptExecutionContext& parentCtx) {
             resolveCrossVMRequest(protectedWorker.get(), reqId, parentCtx, jsUndefined());
@@ -840,7 +840,7 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileIntern
     auto parentId = globalObject->scriptExecutionContext()->identifier();
     bool accepted = worker.postTaskToWorkerGlobalScope([reqId, parentId, protectedWorker = Ref { worker }](ScriptExecutionContext& workerCtx) mutable {
         WTF::String result;
-        if (Bun::isCPUProfilerRunning())
+        if (Bun::isCPUProfilerRunning(workerCtx.vm()))
             Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
         if (result.isEmpty())
             result = kEmptyCpuProfileJSON;

@@ -39,12 +39,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval, (JSGlobalObject * gl
     Bun::V::validateInteger(scope, globalObject, callFrame->uncheckedArgument(0), "interval"_s, jsNumber(1), jsUndefined(), &interval);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Bun::setSamplingInterval(interval);
+    Bun::setSamplingInterval(vm, interval);
     return JSValue::encode(jsUndefined());
 }
 
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, CallFrame*))
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject * globalObject, CallFrame*))
 {
-    return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning()));
+    return JSValue::encode(jsBoolean(Bun::isCPUProfilerRunning(globalObject->vm())));
 }

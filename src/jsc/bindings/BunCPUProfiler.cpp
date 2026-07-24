@@ -1,5 +1,6 @@
 #include "root.h"
 #include "BunCPUProfiler.h"
+#include "BunClientData.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
@@ -20,46 +21,42 @@
 
 extern "C" void Bun__startCPUProfiler(JSC::VM* vm);
 extern "C" void Bun__stopCPUProfiler(JSC::VM* vm, BunString* outJSON, BunString* outText);
-extern "C" void Bun__setSamplingInterval(int intervalMicroseconds);
+extern "C" void Bun__setSamplingInterval(JSC::VM* vm, int intervalMicroseconds);
 
-void Bun__setSamplingInterval(int intervalMicroseconds)
+void Bun__setSamplingInterval(JSC::VM* vm, int intervalMicroseconds)
 {
-    Bun::setSamplingInterval(intervalMicroseconds);
+    Bun::setSamplingInterval(*vm, intervalMicroseconds);
 }
 
 namespace Bun {
 
-// Store the profiling start time in microseconds since Unix epoch
-static thread_local double s_profilingStartTime = 0.0;
-// Set sampling interval to 1ms (1000 microseconds) to match Node.js
-static thread_local int s_samplingInterval = 1000;
-static thread_local bool s_isProfilerRunning = false;
-
-void setSamplingInterval(int intervalMicroseconds)
+void setSamplingInterval(JSC::VM& vm, int intervalMicroseconds)
 {
-    s_samplingInterval = intervalMicroseconds;
+    WebCore::clientData(vm)->cpuSamplingInterval = intervalMicroseconds;
 }
 
-bool isCPUProfilerRunning()
+bool isCPUProfilerRunning(JSC::VM& vm)
 {
-    return s_isProfilerRunning;
+    return WebCore::clientData(vm)->cpuProfilerRunning;
 }
 
 void startCPUProfiler(JSC::VM& vm)
 {
+    auto* clientData = WebCore::clientData(vm);
+
     // Capture the wall clock time when profiling starts (before creating stopwatch)
     // This will be used as the profile's startTime
-    s_profilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
+    clientData->cpuProfilingStartTime = MonotonicTime::now().approximate<WTF::WallTime>().secondsSinceEpoch().value() * 1000000.0;
 
     // Create a stopwatch and start it
     auto stopwatch = WTF::Stopwatch::create();
     stopwatch->start();
 
     JSC::SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::move(stopwatch));
-    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(s_samplingInterval));
+    samplingProfiler.setTimingInterval(WTF::Seconds::fromMicroseconds(clientData->cpuSamplingInterval));
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    s_isProfilerRunning = true;
+    clientData->cpuProfilerRunning = true;
 }
 
 struct ProfileNode {
@@ -270,13 +267,13 @@ static WTF::String formatCodeSpan(const WTF::String& str)
 }
 
 // Helper to generate a minimal valid cpuprofile JSON with no samples
-static WTF::String generateEmptyProfileJSON()
+static WTF::String generateEmptyProfileJSON(double profilingStartTime)
 {
     // Return a minimal valid Chrome DevTools CPU profile format
-    // Use s_profilingStartTime if available, otherwise fall back to current time
+    // Use the recorded start time if available, otherwise fall back to current time
     long long timestamp;
-    if (s_profilingStartTime > 0)
-        timestamp = static_cast<long long>(s_profilingStartTime);
+    if (profilingStartTime > 0)
+        timestamp = static_cast<long long>(profilingStartTime);
     else
         timestamp = static_cast<long long>(WTF::WallTime::now().secondsSinceEpoch().value() * 1000000.0);
 
@@ -292,7 +289,10 @@ static WTF::String generateEmptyProfileJSON()
 // Unified function that stops the profiler and generates requested output formats
 void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 {
-    s_isProfilerRunning = false;
+    auto* clientData = WebCore::clientData(vm);
+    clientData->cpuProfilerRunning = false;
+    double profilingStartTime = clientData->cpuProfilingStartTime;
+    int samplingInterval = clientData->cpuSamplingInterval;
 
     JSC::SamplingProfiler* profiler = vm.samplingProfiler();
     if (!profiler) {
@@ -321,7 +321,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         return;
 
     if (stackTraces.isEmpty()) {
-        if (outJSON) *outJSON = generateEmptyProfileJSON();
+        if (outJSON) *outJSON = generateEmptyProfileJSON(profilingStartTime);
         if (outText) *outText = "No samples collected.\n"_s;
         return;
     }
@@ -357,8 +357,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         WTF::Vector<int> samples;
         WTF::Vector<long long> timeDeltas;
 
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double startTime = profilingStartTime;
+        double lastTime = profilingStartTime;
 
         for (size_t idx : sortedIndices) {
             auto& stackTrace = stackTraces[idx];
@@ -617,8 +617,8 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
 
     // Generate text format if requested
     if (outText) {
-        double startTime = s_profilingStartTime;
-        double lastTime = s_profilingStartTime;
+        double startTime = profilingStartTime;
+        double lastTime = profilingStartTime;
         double endTime = startTime;
 
         WTF::HashMap<WTF::String, FunctionStats> functionStatsMap;
@@ -746,7 +746,7 @@ void stopCPUProfiler(JSC::VM& vm, WTF::String* outJSON, WTF::String* outText)
         output.append(" | "_s);
         output.append(totalSamples);
         output.append(" | "_s);
-        output.append(formatTime(s_samplingInterval));
+        output.append(formatTime(samplingInterval));
         output.append(" | "_s);
         output.append(numFunctions);
         output.append(" |\n\n"_s);

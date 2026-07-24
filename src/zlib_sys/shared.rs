@@ -103,6 +103,12 @@ pub struct struct_internal_state {
 //
 //   (S1) `internal_state` is null, or points to a live state allocated by
 //        zlib for *this* stream (only zlib itself ever writes this field).
+//        The inflate/deflate kind is not encoded in the type; the vendored
+//        zlib-ng's StateCheck rejects a cross-kind call at runtime via
+//        disjoint mode/status ranges (inflate `HEAD = 16180` onward, deflate
+//        `INIT_STATE = 42`..`FINISH_STATE = 666`; deliberate since zlib
+//        1.2.9), so `deflate_init2` then `inflate_end` returns
+//        `Z_STREAM_ERROR` rather than corrupting.
 //   (S2) `alloc_func`/`free_func` are both `None` (= null → zlib installs
 //        its paired defaults) or a matched pair where `free_func` can free
 //        what `alloc_func` allocates. Established by [`with_allocator`].
@@ -367,11 +373,13 @@ const Z_STREAM_SIZE: c_int = core::mem::size_of::<zStream_struct>() as c_int;
 ///
 /// Every `safe fn` below is total given `z_stream`'s type invariants
 /// (S1)/(S2): zlib-ng's `inflateStateCheck`/`deflateStateCheck` null-check
-/// `strm`, `zalloc`/`zfree`, and `state` before dereferencing, so a stream
-/// whose `internal_state` is null-or-zlib-owned cannot fault there. `&mut
-/// z_stream` is ABI-identical to a non-null `z_streamp`. Functions that read
-/// `next_in`/`next_out` (invariant (B)) stay `unsafe fn` and are fronted by
-/// the safe methods above.
+/// `strm`/`zalloc`/`zfree`/`state`, then read `state->strm` and
+/// `state->mode`/`status` (disjoint ranges between inflate and deflate, see
+/// (S1)), so a stream whose `internal_state` is null-or-zlib-owned returns
+/// `Z_STREAM_ERROR` for a null or wrong-kind state rather than faulting.
+/// `&mut z_stream` is ABI-identical to a non-null `z_streamp`. Functions that
+/// read `next_in`/`next_out` (invariant (B)) stay `unsafe fn` and are fronted
+/// by the safe methods above.
 pub mod raw {
     use super::*;
 

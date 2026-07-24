@@ -299,8 +299,16 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
   }
 
   if (os === "windows") {
-    // Prefer standalone LLVM over VS-bundled
+    // Prefer standalone LLVM over VS-bundled: Visual Studio's optional
+    // ClangCL component ships its own (older) clang-cl under
+    // VC\Tools\Llvm, which lands on PATH via the dev shell and would win a
+    // bare PATH search. List the standalone installs explicitly, in order:
+    // the official installer's default, then scoop's per-user location.
     paths.push("C:\\Program Files\\LLVM\\bin");
+    const userProfile = process.env.USERPROFILE;
+    if (userProfile) {
+      paths.push(`${userProfile}\\scoop\\apps\\llvm\\current\\bin`);
+    }
   }
 
   if (os === "linux" || os === "darwin") {

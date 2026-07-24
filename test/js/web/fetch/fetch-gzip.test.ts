@@ -1,6 +1,7 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gcTick } from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { createServer as createNetServer } from "node:net";
@@ -905,4 +906,52 @@ describe("empty compressed responses", () => {
       }
     });
   }
+});
+
+// The <=16 KiB chunked-body dispatcher routes identity bodies through the
+// append + decode-in-tail path and compressed bodies through the scratch
+// decode path. These pin both paths for a body that fits in one read.
+describe("small chunked body decode", () => {
+  function chunked(buf: Buffer): Buffer {
+    return Buffer.concat([Buffer.from(buf.length.toString(16) + "\r\n"), buf, Buffer.from("\r\n0\r\n\r\n")]);
+  }
+
+  async function serve(extraHeader: string, body: Buffer, expected: Buffer): Promise<void> {
+    const reply = Buffer.concat([
+      Buffer.from("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n" + extraHeader + "\r\n"),
+      chunked(body),
+    ]);
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createNetServer(sock => {
+      sockets.add(sock);
+      sock.on("close", () => sockets.delete(sock));
+      sock.on("error", () => {});
+      sock.once("data", () => sock.write(reply));
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      expect(Buffer.from(await res.arrayBuffer()).equals(expected)).toBe(true);
+    } finally {
+      for (const s of sockets) s.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  for (const n of [1, 4096, 15 * 1024]) {
+    const body = Buffer.alloc(n, "x");
+    it.concurrent(`identity ${n}B`, () => serve("", body, body));
+  }
+
+  // One compressed case as the unchanged-path control; randomBytes keeps the
+  // compressed size near the input size so the test exercises the 16 KiB gate
+  // with a multi-KiB payload rather than a ~50 B gzipped run of 'x'.
+  const raw = randomBytes(4096);
+  const gz = gzipSync(raw, { level: 6 });
+  it.concurrent(`gzip ${gz.length}B compressed`, () => serve("Content-Encoding: gzip\r\n", gz, raw));
 });

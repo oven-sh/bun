@@ -24,10 +24,9 @@ const binding = {
   streamBaseState: new Int32Array(kNumStreamBaseStateFields),
 };
 
-const constantAttr = { writable: false, enumerable: true, configurable: false };
-ObjectDefineProperty(binding, "kReadBytesOrError", { value: 0, ...constantAttr });
-ObjectDefineProperty(binding, "kArrayBufferOffset", { value: 1, ...constantAttr });
-ObjectDefineProperty(binding, "kBytesWritten", { value: 2, ...constantAttr });
-ObjectDefineProperty(binding, "kLastWriteWasAsync", { value: 3, ...constantAttr });
+ObjectDefineProperty(binding, "kReadBytesOrError", { __proto__: null, value: 0, writable: false, enumerable: true, configurable: false });
+ObjectDefineProperty(binding, "kArrayBufferOffset", { __proto__: null, value: 1, writable: false, enumerable: true, configurable: false });
+ObjectDefineProperty(binding, "kBytesWritten", { __proto__: null, value: 2, writable: false, enumerable: true, configurable: false });
+ObjectDefineProperty(binding, "kLastWriteWasAsync", { __proto__: null, value: 3, writable: false, enumerable: true, configurable: false });
 
 export default binding;

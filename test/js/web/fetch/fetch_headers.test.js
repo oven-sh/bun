@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import net from "node:net";
 import { once } from "node:events";
+import net from "node:net";
 let url = `http://localhost:0`;
 let server;
 

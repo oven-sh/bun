@@ -4,7 +4,7 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    CallFrame, JSGlobalObject, JSType, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -2756,6 +2756,13 @@ impl ExpectMatcherContext {
         JSValue::FALSE
     }
 
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_custom_testers(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+        // `expect.addEqualityTesters` is not implemented, so there is never a
+        // registered tester to surface; Jest also returns [] when there are none.
+        JSValue::create_empty_array(global_this, 0)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub fn equals(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let args = callframe.arguments();
@@ -2841,6 +2848,86 @@ impl ExpectMatcherUtils {
         let arguments = callframe.arguments();
         let value = if arguments.is_empty() { JSValue::UNDEFINED } else { arguments[0] };
         Ok(Self::print_value_catched(global_this, value, Some("<red>")))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn diff(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let args = arguments.slice();
+        let a = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
+        let b = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        let formatter = DiffFormatter {
+            received_string: None,
+            expected_string: None,
+            received: Some(b),
+            expected: Some(a),
+            global_this: Some(global_this),
+            not: false,
+        };
+        let buf = format!("{}", formatter);
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
+    }
+
+    /// `typeof value === "object"` for a non-null value. JSC's `is_object()`
+    /// is `type >= ObjectType`, which also admits callables; Jest's domain
+    /// guards are written in terms of `typeof`, which reports them as "function".
+    fn is_typeof_object(value: JSValue) -> bool {
+        value.is_cell() && value.js_type().is_object() && !value.is_callable()
+    }
+
+    /// Jest's `iterableEquality` "out of domain" guard: not `typeof "object"`,
+    /// an Array, an `ArrayBuffer.isView`, or not iterable.
+    fn is_iterable_equality_operand(value: JSValue, global_this: &JSGlobalObject) -> JsResult<bool> {
+        if !Self::is_typeof_object(value) {
+            return Ok(false);
+        }
+        let ty = value.js_type();
+        Ok(!ty.is_array() && !ty.is_typed_array_or_array_buffer() && value.is_iterable(global_this)?)
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn iterable_equality(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let args = arguments.slice();
+        let a = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
+        let b = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        if !Self::is_iterable_equality_operand(a, global_this)?
+            || !Self::is_iterable_equality_operand(b, global_this)?
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        Ok(JSValue::from(a.jest_deep_equals(b, global_this)?))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub fn subset_equality(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        let arguments = callframe.arguments_old::<2>();
+        let args = arguments.slice();
+        let object = if args.is_empty() { JSValue::UNDEFINED } else { args[0] };
+        let subset = if args.len() > 1 { args[1] } else { JSValue::UNDEFINED };
+        // Jest's `isObjectWithKeys`: `typeof "object"`, and not an Array, Error,
+        // Date, Set, or Map. Its `instanceof Set`/`Map` does not match
+        // WeakSet/WeakMap, so only the strong variants are out of domain.
+        if !Self::is_typeof_object(subset) {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let subset_ty = subset.js_type();
+        if subset_ty.is_array()
+            || matches!(subset_ty, JSType::Set | JSType::Map)
+            || subset.is_error()
+            || subset.is_date()
+        {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // Jest never gates `object`: no subset key can match a non-object, so a
+        // stand-in with a null prototype (the engine's key lookup walks the
+        // prototype chain) reproduces that and both branches share one engine.
+        let object = if Self::is_typeof_object(object) {
+            object
+        } else {
+            JSValue::create_empty_object_with_null_prototype(global_this)
+        };
+        Ok(JSValue::from(object.jest_deep_match(subset, global_this, false)?))
     }
 
     #[bun_jsc::host_fn(method)]

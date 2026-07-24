@@ -1400,15 +1400,80 @@ pub mod command {
             ctx.debug.global_cache = GlobalCache::disable;
         }
 
+        let (entry_name, passthrough_start) =
+            match resolve_standalone_fork_entry(graph, offset_for_passthrough) {
+                Some((entry, module_argv_idx)) => (entry, module_argv_idx + 1),
+                None => (
+                    graph.entry_point().name.to_vec().into_boxed_slice(),
+                    offset_for_passthrough,
+                ),
+            };
+
         ctx.passthrough = bun::argv()
             .iter()
-            .skip(offset_for_passthrough)
+            .skip(passthrough_start)
             .map(|a| a.to_vec().into_boxed_slice())
             .collect();
 
-        let entry_name = graph.entry_point().name.to_vec().into_boxed_slice();
         super::run_command::RunCommand::boot_standalone(ctx, entry_name, graph)?;
         Ok(())
+    }
+
+    /// `child_process.fork()` inside a compiled executable spawns this same
+    /// binary with `BUN_INTERNAL_FORK_ENTRY` naming the module to run in place
+    /// of the baked entry point. Returns the resolved entry path and the argv
+    /// index of the module-path argument so everything after it becomes
+    /// `process.argv[2..]`.
+    #[cold]
+    fn resolve_standalone_fork_entry(
+        graph: &bun_standalone_graph::Graph,
+        offset_for_passthrough: usize,
+    ) -> Option<(Box<[u8]>, usize)> {
+        use bun_resolver::StandaloneModuleGraph as _;
+
+        let raw = bun_core::env_var::BUN_INTERNAL_FORK_ENTRY::get()?;
+        if raw.is_empty() {
+            return None;
+        }
+        // SAFETY: single-threaded startup, before `bun_jsc::initialize`.
+        unsafe { std::env::remove_var("BUN_INTERNAL_FORK_ENTRY") };
+
+        // fork() writes "<execArgv.length>:<modulePath>" so modulePath sits at
+        // offset_for_passthrough + execArgv_len in argv(); no value scan
+        // needed. `offset_for_passthrough` already accounts for
+        // compile_exec_argv / BUN_OPTIONS tokens spliced at index 1.
+        let digits = raw.iter().take_while(|b| b.is_ascii_digit()).count();
+        let (exec_argv_len, module_path) = match raw.get(digits) {
+            Some(b':') if digits > 0 => (
+                bun_core::parse_int::<usize>(&raw[..digits], 10).unwrap_or(0),
+                &raw[digits + 1..],
+            ),
+            _ => (0, raw),
+        };
+        if module_path.is_empty() {
+            return None;
+        }
+        let idx = (offset_for_passthrough + exec_argv_len).min(bun::argv().len());
+
+        let entry = match graph.resolve_embedded_entry(module_path) {
+            Some(name) => name.to_vec().into_boxed_slice(),
+            None => {
+                let mut cwd_buf = bun_paths::PathBuffer::uninit();
+                let cwd = bun_core::getcwd(&mut cwd_buf)
+                    .map(|z| z.as_bytes())
+                    .unwrap_or(b".");
+                let mut out = bun_paths::path_buffer_pool::get();
+                bun_paths::resolve_path::join_abs_string_buf::<bun_paths::platform::Auto>(
+                    cwd,
+                    &mut out[..],
+                    &[module_path],
+                )
+                .to_vec()
+                .into_boxed_slice()
+            }
+        };
+
+        Some((entry, idx))
     }
 
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag

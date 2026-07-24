@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -690,6 +690,74 @@ it.concurrent("onResolve can redirect a specifier to a real file in the file nam
     resolveSync: target,
     importMetaResolve: Bun.pathToFileURL(target).href,
   });
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("onResolve namespaces of any length reach onLoad", async () => {
+  using dir = tempDir("plugin-onresolve-short-namespace", {
+    "entry.js": `
+      const namespaces = ["q", "A", "qq"];
+
+      Bun.plugin({
+        name: "short-namespaces",
+        setup(build) {
+          for (const ns of namespaces) {
+            build.onResolve({ filter: new RegExp("^bare-" + ns + "\\\\.mod$") }, () => ({ path: "pp", namespace: ns }));
+            build.onResolve({ filter: new RegExp("^nested-" + ns + "\\\\.mod$") }, () => ({ path: "sub/pp", namespace: ns }));
+            build.onResolve({ filter: new RegExp("^rooted-" + ns + "\\\\.mod$") }, () => ({ path: "/pp", namespace: ns }));
+            build.onLoad({ filter: /.*/, namespace: ns }, ({ path }) => ({
+              contents: "export const value = " + JSON.stringify(ns + "|" + path) + ";",
+              loader: "js",
+            }));
+          }
+        },
+      });
+
+      async function attempt(specifier) {
+        try {
+          return (await import(specifier)).value;
+        } catch (error) {
+          return "threw: " + error.message;
+        }
+      }
+
+      console.log(
+        JSON.stringify({
+          bare: await attempt("bare-q.mod"),
+          bareUpper: await attempt("bare-A.mod"),
+          bareTwoLetter: await attempt("bare-qq.mod"),
+          nested: await attempt("nested-q.mod"),
+          rootedTwoLetter: await attempt("rooted-qq.mod"),
+          rooted: await attempt("rooted-q.mod"),
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The fixture catches its own failures, so empty stdout means it crashed.
+  const { rooted, ...rest } = stdout.trim() ? JSON.parse(stdout) : { crashed: stderr };
+  expect(rest).toEqual({
+    bare: "q|pp",
+    bareUpper: "A|pp",
+    bareTwoLetter: "qq|pp",
+    nested: "q|sub/pp",
+    rootedTwoLetter: "qq|/pp",
+  });
+  // "q:/pp" is the one shape a single-letter namespace cannot have on Windows:
+  // it is a drive root there, so it goes to the filesystem resolver instead.
+  if (isWindows) {
+    expect(rooted).toStartWith("threw: ");
+  } else {
+    expect(rooted).toBe("q|/pp");
+  }
   expect(exitCode).toBe(0);
 });
 

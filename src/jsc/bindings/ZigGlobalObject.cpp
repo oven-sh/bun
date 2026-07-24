@@ -3565,6 +3565,22 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
+// A module key only hides a plugin namespace behind a Windows drive root:
+// "C:\\..." or "C:/...", and only when running on Windows. Anywhere else,
+// "q:pp" names the namespace "q". Keep this in lockstep with
+// `PluginRunner::extract_namespace` (src/bundler/transpiler.rs), which decides
+// the namespace everywhere past this point.
+static bool isWindowsDriveRoot(const WTF::String& key, size_t colon)
+{
+#if OS(WINDOWS)
+    return colon == 1 && key.length() > 2 && isASCIIAlpha(key[0]) && (key[2] == '/' || key[2] == '\\');
+#else
+    UNUSED_PARAM(key);
+    UNUSED_PARAM(colon);
+    return false;
+#endif
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
@@ -3613,9 +3629,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     // to mark keys it already resolved so we can skip only those.
     if (!globalObject->onLoadPlugins.namespaces.isEmpty()) {
         auto keyStr = keyZ.toWTFString();
-        if (auto colon = keyStr.find(':'); colon != WTF::notFound && !(colon == 1 && isASCIIAlpha(keyStr[0]))) {
-            // colon == 1 with a leading ASCII letter is a Windows drive
-            // ("C:\\..."), never a plugin namespace.
+        if (auto colon = keyStr.find(':'); colon != WTF::notFound && !isWindowsDriveRoot(keyStr, colon)) {
             auto ns = keyStr.left(colon);
             for (const auto& registered : globalObject->onLoadPlugins.namespaces) {
                 if (registered == ns) {

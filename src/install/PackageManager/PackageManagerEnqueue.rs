@@ -1919,7 +1919,8 @@ fn update_name_and_name_hash_from_version_replacement(
     new_version: &dependency::Version,
 ) -> (SemverString, PackageNameHash) {
     match new_version.tag {
-        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+        // npm and dist_tag carry their name up front; git/github/tarball only
+        // learn it post-extract (see name_and_hash_from_extracted_package_name).
         dependency::version::Tag::DistTag => (
             new_version.dist_tag().name,
             Semver::string::Builder::string_hash(lockfile.str(&new_version.dist_tag().name)),
@@ -1928,12 +1929,40 @@ fn update_name_and_name_hash_from_version_replacement(
             new_version.npm().name,
             Semver::string::Builder::string_hash(lockfile.str(&new_version.npm().name)),
         ),
-        dependency::version::Tag::Git => (new_version.git().package_name, original_name_hash),
-        dependency::version::Tag::Github => (new_version.github().package_name, original_name_hash),
-        dependency::version::Tag::Tarball => {
-            (new_version.tarball().package_name, original_name_hash)
-        }
+        dependency::version::Tag::Git => name_and_hash_from_extracted_package_name(
+            lockfile,
+            new_version.git().package_name,
+            original_name_hash,
+        ),
+        dependency::version::Tag::Github => name_and_hash_from_extracted_package_name(
+            lockfile,
+            new_version.github().package_name,
+            original_name_hash,
+        ),
+        dependency::version::Tag::Tarball => name_and_hash_from_extracted_package_name(
+            lockfile,
+            new_version.tarball().package_name,
+            original_name_hash,
+        ),
         _ => (original_name, original_name_hash),
+    }
+}
+
+/// A git/github/tarball replacement (e.g. from `overrides`) has no package name
+/// until its tarball is extracted; until then keep the original name hash so the
+/// override stays keyed by its original name. Once the extracted name has been
+/// recorded on the version, hash it so resolution finds the package the index
+/// stored under the tarball's own name.
+fn name_and_hash_from_extracted_package_name(
+    lockfile: &Lockfile::Lockfile,
+    package_name: SemverString,
+    original_name_hash: PackageNameHash,
+) -> (SemverString, PackageNameHash) {
+    if package_name.is_empty() {
+        (package_name, original_name_hash)
+    } else {
+        let name_hash = Semver::string::Builder::string_hash(lockfile.str(&package_name));
+        (package_name, name_hash)
     }
 }
 

@@ -1183,23 +1183,45 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             match dep {
                                 bun_install::TaskCallbackContext::Dependency(id)
                                 | bun_install::TaskCallbackContext::RootDependency(id) => {
-                                    let version = &mut manager.lockfile.buffers.dependencies
-                                        [id as usize]
-                                        .version;
-                                    match version.tag {
-                                        bun_install::DependencyVersionTag::Git => {
-                                            version.git_mut().package_name = pkg.name;
+                                    // Record the extracted package's real name so the
+                                    // re-enqueue below computes a matching name hash
+                                    // (tarball/git/github names are only known post-extract).
+                                    // When the dependency was redirected here by
+                                    // `overrides`/`resolutions`, its stored version keeps the
+                                    // original tag, so the name is recorded on the override
+                                    // entry instead (keyed by the original name hash).
+                                    let (dep_tag, dep_name_hash) = {
+                                        let dep_row =
+                                            &manager.lockfile.buffers.dependencies[id as usize];
+                                        (dep_row.version.tag, dep_row.name_hash)
+                                    };
+                                    let target = match dep_tag {
+                                        bun_install::DependencyVersionTag::Git
+                                        | bun_install::DependencyVersionTag::Github
+                                        | bun_install::DependencyVersionTag::Tarball => Some(
+                                            &mut manager.lockfile.buffers.dependencies[id as usize]
+                                                .version,
+                                        ),
+                                        _ => manager
+                                            .lockfile
+                                            .overrides
+                                            .map
+                                            .get_mut(&dep_name_hash)
+                                            .map(|over| &mut over.version),
+                                    };
+                                    if let Some(version) = target {
+                                        match version.tag {
+                                            bun_install::DependencyVersionTag::Git => {
+                                                version.git_mut().package_name = pkg.name;
+                                            }
+                                            bun_install::DependencyVersionTag::Github => {
+                                                version.github_mut().package_name = pkg.name;
+                                            }
+                                            bun_install::DependencyVersionTag::Tarball => {
+                                                version.tarball_mut().package_name = pkg.name;
+                                            }
+                                            _ => {}
                                         }
-                                        bun_install::DependencyVersionTag::Github => {
-                                            version.github_mut().package_name = pkg.name;
-                                        }
-                                        bun_install::DependencyVersionTag::Tarball => {
-                                            version.tarball_mut().package_name = pkg.name;
-                                        }
-
-                                        // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
-                                        // will still have the original.
-                                        _ => {}
                                     }
                                     manager.process_dependency_list_item(
                                         &dep,

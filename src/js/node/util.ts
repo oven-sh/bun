@@ -20,6 +20,7 @@ const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
+var Error = globalThis.Error;
 const { uncurryThis, SafeMap } = require("internal/primordials");
 const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 
@@ -245,6 +246,17 @@ function getHexStyleCache() {
   return hexStyleCache;
 }
 
+function buildStyleEntry(codes) {
+  const openNum = codes[0];
+  const closeNum = codes[1];
+  return {
+    __proto__: null,
+    openSeq: kEscape + openNum + kEscapeEnd,
+    closeSeq: kEscape + closeNum + kEscapeEnd,
+    keepClose: openNum === kDimCode || openNum === kBoldCode,
+  };
+}
+
 function getStyleCache() {
   if (styleCache === undefined) {
     styleCache = { __proto__: null };
@@ -252,14 +264,7 @@ function getStyleCache() {
     for (const key of ObjectGetOwnPropertyNames(colors)) {
       const codes = colors[key];
       if (codes) {
-        const openNum = codes[0];
-        const closeNum = codes[1];
-        styleCache[key] = {
-          __proto__: null,
-          openSeq: kEscape + openNum + kEscapeEnd,
-          closeSeq: kEscape + closeNum + kEscapeEnd,
-          keepClose: openNum === kDimCode || openNum === kBoldCode,
-        };
+        styleCache[key] = buildStyleEntry(codes);
       }
     }
   }
@@ -388,9 +393,16 @@ function styleText(format, text, options) {
       continue;
     }
 
-    const style = cache[key];
+    let style = cache[key];
     if (style === undefined) {
-      validateOneOf(key, "format", ObjectGetOwnPropertyNames(inspect.colors));
+      // inspect.colors is user-mutable; a key added after the cache was
+      // populated is looked up live and cached on first use.
+      const codes = inspect.colors[key];
+      if (codes == null) {
+        validateOneOf(key, "format", ObjectGetOwnPropertyNames(inspect.colors));
+      }
+      style = buildStyleEntry(codes);
+      cache[key] = style;
     }
     openCodes += style.openSeq;
     closeCodes = style.closeSeq + closeCodes;

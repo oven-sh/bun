@@ -724,7 +724,13 @@ declare module "bun" {
         | BunFile
         | S3File
         | Blob
-        | Archive,
+        | Archive
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        // must be an `async function*` value; an ordinary function returning
+        // an AsyncGenerator is not converted (same as Response/BodyInit)
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: S3Options,
     ): Promise<number>;
 
@@ -1058,7 +1064,13 @@ declare module "bun" {
         | S3File
         | Blob
         | File
-        | Archive,
+        | Archive
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        // must be an `async function*` value; an ordinary function returning
+        // an AsyncGenerator is not converted (same as Response/BodyInit)
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: S3Options,
     ): Promise<number>;
 
@@ -1111,7 +1123,13 @@ declare module "bun" {
         | S3File
         | Blob
         | File
-        | Archive,
+        | Archive
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        // must be an `async function*` value; an ordinary function returning
+        // an AsyncGenerator is not converted (same as Response/BodyInit)
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: S3Options,
     ): Promise<number>;
 

@@ -1604,7 +1604,19 @@ declare module "bun" {
    */
   function write(
     destination: BunFile | S3File | PathLike,
-    input: Blob | NodeJS.TypedArray | ArrayBufferLike | string | BlobPart[] | Archive,
+    input:
+      | Blob
+      | NodeJS.TypedArray
+      | ArrayBufferLike
+      | string
+      | BlobPart[]
+      | Archive
+      | ReadableStream
+      | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+      | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+      // must be an `async function*` value; an ordinary function returning
+      // an AsyncGenerator is not converted (same as Response/BodyInit)
+      | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
     options?: {
       /**
        * If writing to a PathLike, set the permissions of the file.
@@ -2210,7 +2222,20 @@ declare module "bun" {
      * @param options - The options to use for the write.
      */
     write(
-      data: string | ArrayBufferView | ArrayBuffer | SharedArrayBuffer | Request | Response | BunFile,
+      data:
+        | string
+        | ArrayBufferView
+        | ArrayBuffer
+        | SharedArrayBuffer
+        | Request
+        | Response
+        | BunFile
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        // must be an `async function*` value; an ordinary function returning
+        // an AsyncGenerator is not converted (same as Response/BodyInit)
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: { highWaterMark?: number },
     ): Promise<number>;
 

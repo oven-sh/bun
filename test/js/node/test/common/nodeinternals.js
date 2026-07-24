@@ -14,6 +14,9 @@ const VENDORED = new Set([
   'internal/crypto/util',
   'internal/crypto/webidl',
   'internal/crypto/hashnames',
+  'internal/assert',
+  'internal/fs/sync_write_stream',
+  'internal/net',
 ]);
 
 // ---------------- primordials emulator ----------------

@@ -2526,12 +2526,7 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
+                                self.print_percent_s(writer_, next_value, global)?;
                                 writer = WrappedWriter {
                                     ctx: writer_,
                                     failed: false,
@@ -3290,6 +3285,108 @@ pub mod formatter {
         }
     }
 
+    /// Approximates `!hasBuiltInToString` from Node's `util.format` `%s`:
+    /// walk the prototype chain to whichever object owns `toString` and treat
+    /// it as user-provided unless that object's own `constructor` names a core
+    /// ECMAScript built-in.
+    fn percent_s_has_user_to_string(value: JSValue, global: &JSGlobalObject) -> JsResult<bool> {
+        if !value.is_cell() || !value.is_object() {
+            return Ok(false);
+        }
+        let mut pointer = value;
+        while pointer.js_type() == jsc::JSType::ProxyObject {
+            let target = pointer.get_proxy_internal_field(jsc::ProxyField::Target);
+            if !target.is_cell() || !target.is_object() {
+                return Ok(false);
+            }
+            pointer = target;
+        }
+        let owns_callable = |obj: JSValue, key: jsc::BuiltinName| -> JsResult<bool> {
+            Ok(obj
+                .fast_get_own(global, key)?
+                .is_some_and(|v| v.is_callable()))
+        };
+        // Own `toString` / `Symbol.toPrimitive` on the value itself is always
+        // user-provided.
+        if owns_callable(pointer, jsc::BuiltinName::toString)?
+            || owns_callable(pointer, jsc::BuiltinName::toPrimitive)?
+        {
+            return Ok(true);
+        }
+        for _ in 0..64 {
+            let proto = pointer.get_prototype(global);
+            if global.has_exception() {
+                return Err(jsc::JsError::Thrown);
+            }
+            if proto.is_empty_or_undefined_or_null() || !proto.is_object() {
+                return Ok(false);
+            }
+            pointer = proto;
+            if !owns_callable(pointer, jsc::BuiltinName::toString)?
+                && !owns_callable(pointer, jsc::BuiltinName::toPrimitive)?
+            {
+                continue;
+            }
+            let Some(ctor) = pointer.fast_get_direct(global, jsc::BuiltinName::constructor) else {
+                return Ok(true);
+            };
+            if !ctor.is_callable() {
+                return Ok(true);
+            }
+            let name = OwnedString::new(ctor.get_name(global)?);
+            return Ok(!percent_s_is_builtin_ctor_name(&*name));
+        }
+        Ok(false)
+    }
+
+    fn percent_s_is_builtin_ctor_name(name: &bun_core::String) -> bool {
+        for builtin in [
+            "Object",
+            "Array",
+            "Function",
+            "Boolean",
+            "Number",
+            "String",
+            "Symbol",
+            "BigInt",
+            "Date",
+            "RegExp",
+            "Error",
+            "AggregateError",
+            "EvalError",
+            "RangeError",
+            "ReferenceError",
+            "SyntaxError",
+            "TypeError",
+            "URIError",
+            "Map",
+            "Set",
+            "WeakMap",
+            "WeakSet",
+            "Promise",
+            "ArrayBuffer",
+            "SharedArrayBuffer",
+            "DataView",
+            "Int8Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Int16Array",
+            "Uint16Array",
+            "Int32Array",
+            "Uint32Array",
+            "Float16Array",
+            "Float32Array",
+            "Float64Array",
+            "BigInt64Array",
+            "BigUint64Array",
+        ] {
+            if name.eql_comptime(builtin) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -3752,6 +3849,106 @@ pub mod formatter {
                 self.failed = true;
             }
             Ok(())
+        }
+
+        /// Node's `util.format` `%s` semantics: numbers/bigints keep their sign
+        /// and suffix, other primitives go through `String()`, objects are
+        /// inspected with `{ depth: 0, compact: 3, colors: false }`.
+        #[inline(never)]
+        fn print_percent_s(
+            &mut self,
+            writer_: &mut dyn bun_io::Write,
+            value: JSValue,
+            global: &'a JSGlobalObject,
+        ) -> JsResult<()> {
+            if value.is_string() || (value.is_cell() && value.is_callable()) {
+                return self.print_as::<false>(Tag::String, writer_, value, value.js_type());
+            }
+
+            let mut writer = WrappedWriter {
+                ctx: writer_,
+                failed: false,
+                estimated_line_length: &mut self.estimated_line_length,
+            };
+            macro_rules! done {
+                () => {{
+                    if writer.failed {
+                        self.failed = true;
+                    }
+                    return Ok(());
+                }};
+            }
+            macro_rules! write_lit {
+                ($bytes:expr) => {{
+                    writer.add_for_new_line($bytes.len());
+                    writer.write_all($bytes);
+                    done!();
+                }};
+            }
+
+            if value.is_undefined() {
+                write_lit!(b"undefined");
+            }
+            if value.is_null() {
+                write_lit!(b"null");
+            }
+            if value.is_boolean() {
+                if value.as_boolean() {
+                    write_lit!(b"true");
+                } else {
+                    write_lit!(b"false");
+                }
+            }
+            if value.is_int32() {
+                let int = value.as_int32();
+                writer.add_for_new_line(bun_core::fmt::digit_count(int));
+                writer.print(format_args!("{int}"));
+                done!();
+            }
+            if value.is_number() {
+                let num = value.as_number();
+                if num.is_nan() {
+                    write_lit!(b"NaN");
+                }
+                if num.is_infinite() {
+                    if num > 0.0 {
+                        write_lit!(b"Infinity");
+                    } else {
+                        write_lit!(b"-Infinity");
+                    }
+                }
+                let mut buf = [0u8; 124];
+                let s = bun_core::fmt::FormatDouble::dtoa_with_negative_zero(&mut buf, num);
+                writer.add_for_new_line(s.len());
+                writer.write_all(s);
+                done!();
+            }
+            if value.is_big_int() {
+                drop(writer);
+                return self.print_bigint::<false>(writer_, value);
+            }
+            if value.is_symbol() {
+                drop(writer);
+                return self.print_symbol::<false>(writer_, value);
+            }
+
+            drop(writer);
+            if percent_s_has_user_to_string(value, global)? {
+                return self.print_as::<false>(Tag::String, writer_, value, value.js_type());
+            }
+
+            let prev_quote = self.quote_strings;
+            let prev_single = self.single_line;
+            let prev_max_depth = self.max_depth;
+            let prev_indent = self.indent;
+            let _r1 = defer_restore!(self.quote_strings, prev_quote);
+            let _r2 = defer_restore!(self.single_line, prev_single);
+            let _r3 = defer_restore!(self.max_depth, prev_max_depth);
+            let _r4 = defer_restore!(self.indent, prev_indent);
+            self.quote_strings = true;
+            self.single_line = true;
+            self.max_depth = self.depth;
+            self.format::<false>(Tag::get(value, global)?, writer_, value, global)
         }
 
         #[inline(never)]

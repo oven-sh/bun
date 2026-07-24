@@ -143,6 +143,79 @@ NamedError: console.error a named error
 `);
 });
 
+it("console.log %s uses Node's format semantics, not engine ToString", async () => {
+  const src = `
+    try { console.log("%s", Symbol("q")); } catch (e) { console.log("THREW:" + e.constructor.name); }
+    console.log("%s", Symbol());
+    console.log("%s", { a: 1 });
+    console.log("%s", [1, 2]);
+    console.log("%s", -0);
+    console.log("%s", 0);
+    console.log("%s", 1.5);
+    console.log("%s", NaN);
+    console.log("%s", Infinity);
+    console.log("%s", -Infinity);
+    console.log("%s", 42n);
+    console.log("%s", null);
+    console.log("%s", undefined);
+    console.log("%s", true);
+    console.log("%s", false);
+    console.log("%s", "plain");
+    console.log("%s", new Date(1700000000000));
+    console.log("%s %s", Symbol("a"), { x: 1 });
+    console.log("%s %s %O", { a: 1 }, { b: 2 }, { c: 3 });
+    console.log("%s", { toString() { return "custom"; } });
+    class X { toString() { return "X!"; } }
+    console.log("%s", new X());
+    class P { a = 1 }
+    console.log("%s", new P());
+    class M { [Symbol.toPrimitive]() { return "$12.34"; } }
+    console.log("%s", new M());
+    console.log("%s", { [Symbol.toPrimitive]() { return "prim"; } });
+    console.log("%s", { toString() { return "own"; }, constructor: Object });
+    console.log("%s", RegExp.prototype);
+  `;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    env: { ...bunEnv, TZ: "UTC" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = [
+    "Symbol(q)",
+    "Symbol()",
+    "{ a: 1 }",
+    "[ 1, 2 ]",
+    "-0",
+    "0",
+    "1.5",
+    "NaN",
+    "Infinity",
+    "-Infinity",
+    "42n",
+    "null",
+    "undefined",
+    "true",
+    "false",
+    "plain",
+    "2023-11-14T22:13:20.000Z",
+    "Symbol(a) { x: 1 }",
+    "{ a: 1 } { b: 2 } {",
+    "  c: 3,",
+    "}",
+    "custom",
+    "X!",
+    "P { a: 1 }",
+    "$12.34",
+    "prim",
+    "own",
+    "/(?:)/",
+    "",
+  ].join("\n");
+  expect({ out: out.replaceAll("\r\n", "\n"), err, exitCode }).toEqual({ out: expected, err: "", exitCode: 0 });
+});
+
 it("console.log with SharedArrayBuffer", () => {
   // console.log(x) === Bun.inspect(x) + "\n" written to stdout.
   expect(Bun.inspect(new ArrayBuffer(0))).toBe("ArrayBuffer(0) []");

@@ -675,6 +675,22 @@ impl Value {
             _ => false,
         }
     }
+
+    /// `Content-Type` value the fetch spec's "extract a body" assigns to this
+    /// body, for appending to the header list when none was explicitly set.
+    /// `None` for body kinds that carry no implicit type (ArrayBuffer,
+    /// ReadableStream, null).
+    pub fn content_type(&self) -> Option<&[u8]> {
+        match self {
+            Value::Blob(blob) => {
+                let ct = blob.content_type_slice();
+                (!ct.is_empty()).then_some(ct)
+            }
+            Value::WTFStringImpl(_) => Some(b"text/plain;charset=utf-8"),
+            Value::InternalBlob(ib) if ib.was_string => Some(ib.content_type()),
+            _ => None,
+        }
+    }
 }
 
 impl Value {
@@ -1531,6 +1547,16 @@ impl Value {
         self.to_blob_if_possible();
 
         if let Value::InternalBlob(internal_blob) = self {
+            // String bodies stay `InternalBlob` so `was_string` survives on
+            // both the original and the clone; converting to `Blob` here would
+            // either lose `Value::content_type()`'s `text/plain` or (if
+            // stamped on the Blob) shadow an explicit header in `.blob().type`.
+            if internal_blob.was_string {
+                return Ok(Value::InternalBlob(InternalBlob {
+                    bytes: internal_blob.bytes.clone(),
+                    was_string: true,
+                }));
+            }
             let owned = internal_blob.to_owned_slice();
             *self = Value::Blob(Blob::init(owned, global_this));
         }

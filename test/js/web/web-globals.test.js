@@ -383,28 +383,28 @@ test.skipIf(isWindows)("alert/confirm/prompt work while readline has stdin in ra
       if (out.includes(waiters[i].marker)) waiters.splice(i, 1)[0].resolve();
     }
   };
-  const exited = Promise.withResolvers();
-  const waitFor = marker =>
-    Promise.race([
-      new Promise(resolve => {
-        waiters.push({ marker, resolve });
-        pump();
-      }),
-      exited.promise.then(() =>
-        Promise.reject(new Error("child exited before " + JSON.stringify(marker) + "; out=" + JSON.stringify(out))),
-      ),
-    ]);
-
   await using terminal = new Bun.Terminal({
     data(_t, chunk) {
       out += decoder.decode(chunk, { stream: true });
       pump();
     },
-    exit() {
-      exited.resolve();
-    },
   });
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", childSrc], env: bunEnv, terminal });
+  // A child that dies early must reject the pending waitFor rather than hang
+  // it. A pre-constructed Bun.Terminal does not fire its exit() callback on
+  // child exit, so key this off the process itself.
+  proc.exited.then(code => {
+    for (const w of waiters.splice(0)) {
+      w.reject(
+        new Error("child exited (" + code + ") before " + JSON.stringify(w.marker) + "; out=" + JSON.stringify(out)),
+      );
+    }
+  });
+  const waitFor = marker =>
+    new Promise((resolve, reject) => {
+      waiters.push({ marker, resolve, reject });
+      pump();
+    });
 
   await waitFor("rl1? ");
   terminal.write("first\r");

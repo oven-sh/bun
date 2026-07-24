@@ -400,6 +400,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         // users see the process as hung; surface each retry so
                         // the 6x wait isn't silent.
                         if is_idle_timeout && log_level != Options::LogLevel::Silent {
+                            if log_level.show_progress() {
+                                manager.end_progress_bar();
+                            }
                             bun_core::warn!(
                                 "Timeout downloading package manifest <b>{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(name),
@@ -685,6 +688,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         // See the manifest arm above re: surfacing idle-timeouts.
                         if is_idle_timeout && log_level != Options::LogLevel::Silent {
+                            if log_level.show_progress() {
+                                manager.end_progress_bar();
+                            }
                             bun_core::warn!(
                                 "Timeout downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(extract.name.slice()),

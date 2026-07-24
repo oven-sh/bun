@@ -1650,7 +1650,7 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text).to_js(global);
+        let path = JscZigString::from_utf8(record.path.text).to_js(global);
         let kind = JscZigString::init(record.kind.label()).to_js(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;

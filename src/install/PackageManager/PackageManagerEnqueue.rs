@@ -2047,12 +2047,14 @@ fn get_or_put_resolved_package_with_find_result(
 
     if !find_result.package.deprecated.is_empty()
         && this.options.log_level != crate::package_manager_real::options::LogLevel::Silent
+        && find_result.package.cpu.is_match(this.options.cpu)
+        && find_result.package.os.is_match(this.options.os)
     {
         this.log_mut().add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
             format_args!(
-                "{}@{}: {}",
+                "deprecated {}@{}: {}",
                 bstr::BStr::new(this.lockfile.str(&name)),
                 find_result.version.fmt(&manifest.string_buf),
                 bstr::BStr::new(manifest.str(&find_result.package.deprecated)),

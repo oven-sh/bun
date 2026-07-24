@@ -20,7 +20,9 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
+#include "ZigGeneratedClasses.h"
 #include "ZigGlobalObject.h"
+#include "blob.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/ConstructData.h>
@@ -1290,7 +1292,7 @@ JSValue readableStreamToJSON(JSGlobalObject* globalObject, WebCore::JSReadableSt
     return derived;
 }
 
-JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream)
+JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableStream* stream, JSValue contentType)
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1298,10 +1300,14 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
     if (stream->m_disturbed)
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
-    JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
-    RETURN_IF_EXCEPTION(scope, {});
-    if (fastPath)
-        return fastPath;
+    // The fast path returns the native source's own blob, with its own type;
+    // the caller's contentType wins, so take the assembling path instead.
+    if (!contentType.isString()) {
+        JSValue fastPath = tryUseReadableStreamBufferedFastPath(globalObject, stream, builtinNames(vm).blobPublicName());
+        RETURN_IF_EXCEPTION(scope, {});
+        if (fastPath)
+            return fastPath;
+    }
     JSValue arrayResult = readableStreamToArray(globalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* arrayPromise = dynamicDowncast<JSPromise>(arrayResult);
@@ -1311,7 +1317,7 @@ JSValue readableStreamToBlob(JSGlobalObject* globalObject, WebCore::JSReadableSt
     }
     auto* runtime = JSStreamsRuntime::from(globalObject);
     auto* derived = JSPromise::create(vm, globalObject->promiseStructure());
-    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, jsUndefined());
+    arrayPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadableStreamToBlobFulfilled(), jsUndefined(), derived, contentType);
     return derived;
 }
 
@@ -1323,7 +1329,7 @@ JSValue readableStreamToFormData(JSGlobalObject* globalObject, WebCore::JSReadab
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createLockedError(globalObject)));
     if (stream->m_disturbed)
         RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createAlreadyUsedError(globalObject)));
-    JSValue blobResult = readableStreamToBlob(globalObject, stream);
+    JSValue blobResult = readableStreamToBlob(globalObject, stream, jsUndefined());
     RETURN_IF_EXCEPTION(scope, {});
     auto* blobPromise = dynamicDowncast<JSPromise>(blobResult);
     if (!blobPromise) [[unlikely]] {
@@ -1409,7 +1415,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToBlob, (JSGlobalObject * globa
     auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "stream"_s, "ReadableStream"_s, streamValue);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToBlob(globalObject, stream)));
+    JSValue contentType = callFrame->argument(1);
+    if (!contentType.isUndefined() && !contentType.isString()) [[unlikely]]
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "contentType"_s, "string"_s, contentType);
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::WebStreams::readableStreamToBlob(globalObject, stream, contentType)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionReadableStreamToFormData, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -1517,6 +1526,18 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onReadableStreamToBlobFulfilled, (J
     RETURN_IF_EXCEPTION(scope, {});
     Bun::WebStreams::releaseInternalChunkArray(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, {});
+    // The type is stamped after construction: the Blob constructor runs its
+    // input through the interned MIME table, which would rewrite e.g.
+    // "application/json" to "application/json;charset=utf-8".
+    JSValue contentType = callFrame->argument(1);
+    if (contentType.isString()) {
+        if (auto* jsBlob = dynamicDowncast<WebCore::JSBlob>(blob)) {
+            auto contentTypeStr = contentType.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto utf8 = contentTypeStr.utf8();
+            WebCore::Blob__setType(jsBlob->wrapped(), reinterpret_cast<const unsigned char*>(utf8.data()), utf8.length());
+        }
+    }
     return JSValue::encode(blob);
 }
 

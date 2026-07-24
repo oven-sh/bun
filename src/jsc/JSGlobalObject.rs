@@ -1181,8 +1181,8 @@ impl JSGlobalObject {
         ZigGlobalObject__readableStreamToJSON(self, value)
     }
 
-    pub fn readable_stream_to_blob(&self, value: JSValue) -> JSValue {
-        ZigGlobalObject__readableStreamToBlob(self, value)
+    pub fn readable_stream_to_blob(&self, value: JSValue, content_type: JSValue) -> JSValue {
+        ZigGlobalObject__readableStreamToBlob(self, value, content_type)
     }
 
     pub fn readable_stream_to_form_data(&self, value: JSValue, content_type: JSValue) -> JSValue {
@@ -1642,8 +1642,11 @@ unsafe extern "C" {
         value: JSValue,
         content_type: JSValue,
     ) -> JSValue;
-    safe fn ZigGlobalObject__readableStreamToBlob(this: &JSGlobalObject, value: JSValue)
-    -> JSValue;
+    safe fn ZigGlobalObject__readableStreamToBlob(
+        this: &JSGlobalObject,
+        value: JSValue,
+        content_type: JSValue,
+    ) -> JSValue;
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 

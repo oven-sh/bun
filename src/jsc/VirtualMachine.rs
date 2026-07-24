@@ -301,6 +301,12 @@ pub struct VirtualMachine {
     pub on_print_error_zig_exception_ctx: *mut c_void,
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
+    /// Set by `bun repl`: a Node-compat uncaught throw (nextTick/timer drain)
+    /// would otherwise take the fatal path and terminate the interactive
+    /// session. Node's own REPL wraps evaluation in a domain for the same
+    /// reason; here the flag keeps the `uncaught_exception_fatal` branch at
+    /// print-and-continue so the prompt redraws.
+    pub suppress_fatal_uncaught: bool,
 
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
@@ -1479,6 +1485,7 @@ impl VirtualMachine {
             // keeps the process alive for reload, and a worker falls through
             // to route the error to its parent.
             if fatal_exit
+                && !self.suppress_fatal_uncaught
                 && self.is_main_thread()
                 && self.hot_reload == 0
                 && origin != UncaughtExceptionOrigin::EntryPointRejection

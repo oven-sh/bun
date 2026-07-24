@@ -344,6 +344,27 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("an async throw from nextTick/setTimeout keeps the session alive", async () => {
+      // The nextTick/timer drain routes through Bun__reportUnhandledError, which
+      // opts into Node's fatal exit under `bun run`. The REPL sets
+      // suppress_fatal_uncaught so the prompt redraws (Node's REPL wraps
+      // evaluation in a domain for the same effect).
+      const { stdout, stderr, exitCode } = await runRepl([
+        "process.nextTick(() => { throw new Error('from-tick') })",
+        "setTimeout(() => { throw new Error('from-timer') }, 0)",
+        "1 + 1",
+        ".exit",
+      ]);
+      const allOutput = stripAnsi(stdout + stderr);
+      expect(allOutput).toContain("from-tick");
+      expect(allOutput).toContain("from-timer");
+      // The session reached `1 + 1` after both throws: it did not hard-exit.
+      expect(allOutput).toContain("2");
+      // The unhandled error was reported, so the eventual `.exit` leaves
+      // with code 1 (pre-existing behavior).
+      expect(exitCode).toBe(1);
+    });
+
     test("shows system error properties", async () => {
       const { stdout, stderr, exitCode } = await runRepl(["fs.readFileSync('/nonexistent/path/file.txt')", ".exit"]);
       const allOutput = stripAnsi(stdout + stderr);

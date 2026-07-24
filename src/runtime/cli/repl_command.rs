@@ -135,6 +135,10 @@ impl ReplCommand {
             .load_extra_env_and_source_code_printer();
 
         VirtualMachine::get().as_mut().is_main_thread = true;
+        // An async throw at the prompt (nextTick/timer drain) would otherwise
+        // take the fatal path and terminate the session; keep the REPL at
+        // print-and-continue like Node's domain-wrapped REPL.
+        VirtualMachine::get().as_mut().suppress_fatal_uncaught = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         // Store VM reference in REPL (safe - no JS allocation)

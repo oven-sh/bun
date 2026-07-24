@@ -1316,7 +1316,9 @@ impl Run {
         unsafe extern "C" {
             fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
             fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
-            fn JSC__JSGlobalObject__disallowCodeGenerationFromStrings(global: *const JSGlobalObject);
+            fn JSC__JSGlobalObject__disallowCodeGenerationFromStrings(
+                global: *const JSGlobalObject,
+            );
         }
         // SAFETY: `self.vm`/`self.ctx` are process-lifetime; written by
         // `boot()` before the API-lock trampoline runs.

@@ -310,6 +310,44 @@ describe("dotenv priority", () => {
     });
     expect(result.stdout.toString("utf8").trim()).toBe("true");
   });
+
+  test("auto-loaded .env values survive founding a SHARE_ENV worker tree", () => {
+    const dir = tempDirWithFiles("dotenv-share-env", {
+      ".env": "AUTO_FROM_FILE=secret\n",
+      "worker.js": `process.exit(0);`,
+      "index.ts": `
+        const { Worker, SHARE_ENV } = require("worker_threads");
+        console.log(process.env.AUTO_FROM_FILE);
+        const w = new Worker("./worker.js", { env: SHARE_ENV });
+        w.on("exit", () => {
+          console.log(process.env.AUTO_FROM_FILE);
+          process.exit(0);
+        });
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("secret\nsecret");
+  });
+
+  test("auto-loaded special-cased env keys are not enumerable", () => {
+    const dir = tempDirWithFiles("dotenv-special", {
+      ".env": "HTTP_PROXY=http://p:1\nTZ=UTC\n123=num\n",
+      "index.ts": `
+        const keys = Object.keys(process.env);
+        console.log(JSON.stringify({
+          proxy: { read: process.env.HTTP_PROXY, listed: keys.includes("HTTP_PROXY") },
+          tz: { read: process.env.TZ, listed: keys.includes("TZ") },
+          num: { read: process.env[123], listed: keys.includes("123") },
+        }));
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`, { HTTP_PROXY: undefined, TZ: undefined });
+    expect(JSON.parse(stdout)).toEqual({
+      proxy: { read: "http://p:1", listed: false },
+      tz: { read: "UTC", listed: false },
+      num: { read: "num", listed: false },
+    });
+  });
 });
 
 test(".env colon assign", () => {
@@ -730,7 +768,12 @@ describe("--env-file", () => {
   });
 
   test("empty string disables default dotenv behavior", () => {
-    expect(bunRun(["--env-file=''"]).stdout).toBe("");
+    // auto-loaded .env values are non-enumerable (see #6338), so check via direct access rather than Object.entries.
+    const result = Bun.spawnSync([bunExe(), "--env-file=''", "-e", "console.log(process.env.BUNTEST_DOTENV)"], {
+      cwd: dir,
+      env: { ...bunEnv, NODE_ENV: undefined },
+    });
+    expect(result.stdout.toString("utf8").trim()).toBe("undefined");
   });
 
   test("should correctly ignore invalid values and parse the rest", () => {
@@ -739,8 +782,12 @@ describe("--env-file", () => {
   });
 
   test("should ignore a file that doesn't exist", () => {
-    const res = bunRun(["--env-file=.env.nonexisting"]);
-    expect(res.stdout).toBe("");
+    // auto-loaded .env values are non-enumerable (see #6338), so check via direct access rather than Object.entries.
+    const result = Bun.spawnSync(
+      [bunExe(), "--env-file=.env.nonexisting", "-e", "console.log(process.env.BUNTEST_DOTENV)"],
+      { cwd: dir, env: { ...bunEnv, NODE_ENV: undefined } },
+    );
+    expect(result.stdout.toString("utf8").trim()).toBe("undefined");
   });
 });
 

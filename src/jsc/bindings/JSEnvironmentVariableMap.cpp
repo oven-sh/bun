@@ -721,8 +721,11 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
+    // Include DontEnum so auto-loaded .env values (conditional CustomAccessors)
+    // and the always-present TZ/TLS/proxy accessors are seeded; values that read
+    // as undefined or callable are filtered below.
     JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-    envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+    envObject->methodTable()->getOwnPropertyNames(envObject, globalObject, keys, JSC::DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // Seed unconditionally: this thread's env is the new tree's initial contents.
@@ -730,6 +733,9 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     for (const auto& key : keys) {
         JSValue value = envObject->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, nullptr);
+        // DontEnum accessors for unset special vars (TZ, TLS, proxy) read undefined.
+        if (value.isUndefined())
+            continue;
         // Windows' process.env Proxy owns an enumerable `toJSON`; it is not an env var.
         if (value.isCallable())
             continue;
@@ -839,20 +845,23 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             RETURN_IF_EXCEPTION(scope, {});
         }
 #endif
+        // hasXXX gates whether the post-loop CustomAccessor is installed
+        // enumerable; a .env-only value (conditional) stays DontEnum by leaving
+        // hasXXX false.
         if (name == TZ) {
-            hasTZ = true;
+            if (!conditional) hasTZ = true;
             continue;
         }
         if (name == NODE_TLS_REJECT_UNAUTHORIZED) {
-            hasNodeTLSRejectUnauthorized = true;
+            if (!conditional) hasNodeTLSRejectUnauthorized = true;
             continue;
         }
         if (name == BUN_CONFIG_VERBOSE_FETCH) {
-            hasBunConfigVerboseFetch = true;
+            if (!conditional) hasBunConfigVerboseFetch = true;
             continue;
         }
         if (auto idx = isProxyVar(name)) {
-            hasProxyVar[*idx] = true;
+            if (!conditional) hasProxyVar[*idx] = true;
             continue;
         }
         ASSERT(len > 0);
@@ -872,7 +881,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
                     JSValue value = jsString(vm, Zig::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
-                    object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
+                    unsigned indexAttrs = conditional ? static_cast<unsigned>(JSC::PropertyAttribute::DontEnum) : 0;
+                    object->putDirectIndex(globalObject, *index, value, indexAttrs, PutDirectIndexLikePutDirect);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 continue;

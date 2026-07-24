@@ -1332,13 +1332,13 @@ describe("deprecated dependencies", () => {
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--silent"],
       cwd: packageDir,
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
       env,
     });
-    const err = await stderr.text();
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
     expect(err).not.toContain("no-deps-deprecated");
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 });
 

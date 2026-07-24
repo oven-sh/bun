@@ -2031,7 +2031,7 @@ export default <>hi</>
   });
 
   // https://github.com/oven-sh/bun/issues/3528
-  describe('tsconfig jsxImportSource uses the automatic runtime for any package', () => {
+  describe("tsconfig jsxImportSource uses the automatic runtime for any package", () => {
     for (const pkg of ["solid-js", "preact", "@emotion/react"]) {
       it(`"${pkg}"`, async () => {
         for (const tsconfig of [

@@ -3565,12 +3565,33 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
-JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
-    JSModuleLoader* loader, JSValue key,
-    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+// A plugin's onLoad is user code that can succeed on a later import, but JSC
+// caches a failed fetch forever and re-materializes the stored error through
+// JSModuleLoader::duplicateError(), which keeps only the message: `code`,
+// `cause`, the prototype and the identity of the object the plugin threw are all
+// lost. Drop the entry so the next import re-runs the plugin, which is already
+// what a synchronous onLoad throw does.
+static void dropFailedPluginModuleEntry(Zig::GlobalObject* globalObject, const JSC::Identifier& moduleKey)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+    if (moduleKey.isNull() || moduleKey.isEmpty() || moduleKey.isSymbol())
+        return;
 
+    if (!globalObject->onLoadPlugins.takeLoadFailure(moduleKey.string()))
+        return;
+
+    auto* loader = globalObject->moduleLoader();
+    auto* entry = loader->registryEntry(moduleKey);
+    if (!entry || entry->status() != JSC::ModuleRegistryEntry::Status::FetchFailed)
+        return;
+
+    // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+    // under cellLock(); take the same lock so the removal can't race it.
+    WTF::Locker locker { loader->cellLock() };
+    loader->removeEntry(moduleKey);
+}
+
+static JSC::Identifier resolveModuleSpecifier(Zig::GlobalObject* globalObject, JSValue key, JSValue referrer)
+{
     ErrorableString res;
     res.success = false;
 
@@ -3648,6 +3669,23 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         throwException(scope, res.result.err, globalObject);
         return globalObject->vm().propertyNames->emptyIdentifier;
     }
+}
+
+JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
+    JSModuleLoader* loader, JSValue key,
+    JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
+{
+    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
+
+    JSC::Identifier resolved = resolveModuleSpecifier(globalObject, key, referrer);
+
+    // Static and dynamic imports both resolve before they consult the module
+    // registry, so this is the one hook that runs ahead of JSC's cached-failure
+    // short-circuit in JSModuleLoader::loadModule / hostLoadImportedModule.
+    if (!globalObject->onLoadPlugins.failedModuleKeys.isEmpty())
+        dropFailedPluginModuleEntry(globalObject, resolved);
+
+    return resolved;
 }
 
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,

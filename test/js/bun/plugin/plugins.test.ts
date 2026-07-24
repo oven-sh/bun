@@ -1,7 +1,7 @@
 /// <reference types="./plugins" />
 import { plugin } from "bun";
 import { describe, expect, it } from "bun:test";
-import { resolve } from "path";
+import { join, resolve } from "path";
 
 declare global {
   var failingObject: any;
@@ -542,6 +542,172 @@ describe("errors", () => {
       sleep(2_500),
     ]);
     expect(text).toBe(result);
+  });
+});
+
+describe.concurrent("a failing onLoad", () => {
+  // Plugins and the module registry are process-global, so each case needs its
+  // own process.
+  async function runFixture(source: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(stdout);
+    } catch {
+      throw new Error(`expected JSON on stdout.\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
+    }
+    expect(exitCode).toBe(0);
+    return parsed;
+  }
+
+  // Imports `failing:mod` three times and reports what each importer received.
+  function importThrice(onLoad: string) {
+    return `
+      const sent = new Error("cfg missing");
+      sent.code = "E_SENT";
+      let calls = 0;
+      Bun.plugin({
+        name: "failing-loader",
+        setup(builder) {
+          builder.onResolve({ filter: /.*/, namespace: "failing" }, ({ path }) => ({ path, namespace: "failing" }));
+          builder.onLoad({ filter: /.*/, namespace: "failing" }, ${onLoad});
+        },
+      });
+      const errors = [];
+      for (let i = 0; i < 3; i++) errors.push(await import("failing:mod").then(() => null, e => e));
+      console.log(
+        JSON.stringify({
+          calls,
+          sameErrorObject: errors.map(e => e === sent),
+          codes: errors.map(e => (e == null ? null : (e.code ?? null))),
+          messages: errors.map(e => (e == null ? null : e.message)),
+        }),
+      );
+    `;
+  }
+
+  // Every way an onLoad can fail has to agree: the loader runs again on the
+  // next import, and importers get the exact error object the loader produced
+  // rather than a copy the module registry rebuilt from its message.
+  const throwingLoaders = {
+    "throws synchronously": `() => { calls++; throw sent; }`,
+    "rejects asynchronously": `async () => { calls++; throw sent; }`,
+    "returns an already-rejected promise": `() => { calls++; return Promise.reject(sent); }`,
+  };
+
+  for (const [how, onLoad] of Object.entries(throwingLoaders)) {
+    it(`is retried and preserves the error object when it ${how}`, async () => {
+      expect(await runFixture(importThrice(onLoad))).toEqual({
+        calls: 3,
+        sameErrorObject: [true, true, true],
+        codes: ["E_SENT", "E_SENT", "E_SENT"],
+        messages: ["cfg missing", "cfg missing", "cfg missing"],
+      });
+    });
+  }
+
+  const invalidLoaders = {
+    "synchronously": `() => { calls++; return { contents: "", loader: "nope" }; }`,
+    "asynchronously": `async () => { calls++; return { contents: "", loader: "nope" }; }`,
+  };
+
+  for (const [how, onLoad] of Object.entries(invalidLoaders)) {
+    it(`is retried when it ${how} returns an invalid loader`, async () => {
+      const expectedMessage = expect.stringContaining("loader");
+      expect(await runFixture(importThrice(onLoad))).toEqual({
+        calls: 3,
+        sameErrorObject: [false, false, false],
+        codes: [null, null, null],
+        messages: [expectedMessage, expectedMessage, expectedMessage],
+      });
+    });
+  }
+
+  it("stops failing once the loader succeeds", async () => {
+    expect(
+      await runFixture(`
+        let calls = 0;
+        Bun.plugin({
+          name: "transient",
+          setup(builder) {
+            builder.onResolve({ filter: /.*/, namespace: "transient" }, ({ path }) => ({ path, namespace: "transient" }));
+            builder.onLoad({ filter: /.*/, namespace: "transient" }, async () => {
+              if (++calls < 3) throw new Error("not ready yet");
+              return { contents: "export default 'recovered';", loader: "js" };
+            });
+          },
+        });
+        const results = [];
+        for (let i = 0; i < 3; i++) results.push(await import("transient:mod").then(m => m.default, e => e.message));
+        console.log(JSON.stringify({ calls, results }));
+      `),
+    ).toEqual({
+      calls: 3,
+      results: ["not ready yet", "not ready yet", "recovered"],
+    });
+  });
+
+  it("is retried for a plugin that loads real files", async () => {
+    using dir = tempDir("plugin-failing-file-loader", { "config.weird": "" });
+    const entry = JSON.stringify(join(String(dir), "config.weird"));
+
+    expect(
+      await runFixture(`
+        const sent = new Error("cfg missing");
+        sent.code = "E_SENT";
+        let calls = 0;
+        Bun.plugin({
+          name: "failing-file-loader",
+          setup(builder) {
+            builder.onLoad({ filter: /\\.weird$/ }, async () => { calls++; throw sent; });
+          },
+        });
+        const errors = [];
+        for (let i = 0; i < 3; i++) errors.push(await import(${entry}).then(() => null, e => e));
+        console.log(
+          JSON.stringify({
+            calls,
+            sameErrorObject: errors.map(e => e === sent),
+            codes: errors.map(e => (e == null ? null : (e.code ?? null))),
+          }),
+        );
+      `),
+    ).toEqual({
+      calls: 3,
+      sameErrorObject: [true, true, true],
+      codes: ["E_SENT", "E_SENT", "E_SENT"],
+    });
+  });
+
+  it("does not make a successful onLoad re-run on every import", async () => {
+    expect(
+      await runFixture(`
+        let calls = 0;
+        Bun.plugin({
+          name: "succeeding",
+          setup(builder) {
+            builder.onResolve({ filter: /.*/, namespace: "ok" }, ({ path }) => ({ path, namespace: "ok" }));
+            builder.onLoad({ filter: /.*/, namespace: "ok" }, async () => {
+              calls++;
+              return { contents: "export default 42;", loader: "js" };
+            });
+          },
+        });
+        const values = [];
+        for (let i = 0; i < 3; i++) values.push((await import("ok:mod")).default);
+        console.log(JSON.stringify({ calls, values }));
+      `),
+    ).toEqual({
+      calls: 1,
+      values: [42, 42, 42],
+    });
   });
 });
 

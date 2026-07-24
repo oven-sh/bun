@@ -446,6 +446,31 @@ for (let [gcTick, label] of [
         await proc.exited;
       });
 
+      it("stdin.end() rejects with EPIPE when the child exits before consuming the write", async () => {
+        // Child reads a single byte and exits; the parent queues 16MB on stdin
+        // (comfortably larger than kern.ipc.maxsockbuf on macOS and the 64KB
+        // named-pipe buffer on Windows) so end() is still draining when the
+        // read end closes. On Windows libuv previously surfaced that as code
+        // "EOF" because uv__process_pipe_write_req used the read-side error
+        // translator.
+        await using proc = spawn({
+          cmd: [bunExe(), "-e", `const b = Buffer.alloc(1); require("fs").readSync(0, b); process.exit(0);`],
+          env: bunEnv,
+          stdin: "pipe",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        proc.stdin!.write(Buffer.alloc(16 * 1024 * 1024, 0x41));
+        let caught: any;
+        try {
+          await proc.stdin!.end();
+        } catch (e) {
+          caught = e;
+        }
+        expect(caught?.code).toBe("EPIPE");
+        await proc.exited;
+      });
+
       describe("pipe", () => {
         function huge() {
           return spawn({
@@ -630,8 +655,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      // TODO: on Windows
-      if (!isWindows) proc.unref();
+      proc.unref();
       await proc.exited;
     }
 
@@ -647,7 +671,7 @@ describe("spawn unref and kill should not hang", () => {
       });
 
       proc.kill();
-      if (!isWindows) proc.unref();
+      proc.unref();
 
       await proc.exited;
       console.count("Finished");
@@ -663,8 +687,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      // TODO: on Windows
-      if (!isWindows) proc.unref();
+      proc.unref();
       proc.kill();
       await proc.exited;
     }
@@ -672,7 +695,6 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
-  // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
@@ -777,6 +799,43 @@ describe("should not hang", () => {
       },
       128_000,
     );
+  }
+});
+
+describe("unref() + .exited with nothing else ref'd (Windows)", () => {
+  // Windows: with only an unref'd uv_process_t left, uv_run() used to skip its
+  // body and never dequeue the IOCP exit packet, so these children busy-spun
+  // forever. us_loop_pump now forces one non-blocking iteration (POSIX parity).
+  for (const [name, body] of [
+    ["unref() then await .exited", `const p = Bun.spawn(opts); p.unref(); await p.exited;`],
+    [".exited then unref() then await", `const p = Bun.spawn(opts); const done = p.exited; p.unref(); await done;`],
+    [
+      "onExit then unref()",
+      `const { promise, resolve } = Promise.withResolvers();
+       const p = Bun.spawn({ ...opts, onExit: resolve }); p.unref(); await promise;`,
+    ],
+  ] as const) {
+    it(name, async () => {
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const opts = { cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] };
+           ${body}
+           console.log("resolved");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
+        stdout: "resolved\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   }
 });
 

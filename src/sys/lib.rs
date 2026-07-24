@@ -31,58 +31,36 @@ impl From<Error> for bun_errno::SystemErrno {
 /// The JS-facing rich error
 /// (path/dest/syscall as `bun.String`). The data side has no JSC dependency:
 /// the `*JSGlobalObject`-taking conversion methods (`toErrorInstance` etc.)
-/// live in `bun_jsc` as inherent extensions. `#[repr(C)]` and field order
-/// are fixed so the C++ `SystemError__*` externs
-/// (BunObject.cpp) read the same layout.
-#[repr(C)]
+/// live in `bun_jsc` as inherent extensions. The `#[repr(C)]` layout C++ reads
+/// is `bun_jsc::SystemError`; this struct is the Rust-side data shape and is
+/// marshalled field-by-field via `From<bun_sys::SystemError>` at the seam.
+#[derive(Default)]
 pub struct SystemError {
     pub errno: core::ffi::c_int,
     /// label for errno
-    pub code: bun_core::String,
+    pub code: bun_core::OwnedString,
     /// it is illegal to have an empty message
-    pub message: bun_core::String,
-    pub path: bun_core::String,
-    pub syscall: bun_core::String,
-    pub hostname: bun_core::String,
-    /// MinInt = no file descriptor
-    pub fd: core::ffi::c_int,
-    pub dest: bun_core::String,
-}
-impl Default for SystemError {
-    fn default() -> Self {
-        Self {
-            errno: 0,
-            code: bun_core::String::empty(),
-            message: bun_core::String::empty(),
-            path: bun_core::String::empty(),
-            syscall: bun_core::String::empty(),
-            hostname: bun_core::String::empty(),
-            fd: core::ffi::c_int::MIN,
-            dest: bun_core::String::empty(),
-        }
-    }
+    pub message: bun_core::OwnedString,
+    pub path: bun_core::OwnedString,
+    pub syscall: bun_core::OwnedString,
+    pub hostname: bun_core::OwnedString,
+    pub fd: Option<core::ffi::c_int>,
+    pub dest: bun_core::OwnedString,
 }
 impl SystemError {
     /// (`Error::to_system_error` stores `errno` negated to match Node.)
     #[inline]
     pub fn get_errno(&self) -> E {
+        // On Windows `self.errno` is a libuv code (e.g. UV_EBUSY = -4082);
+        // canonicalize to the small `E` discriminant so Rust-side callers that
+        // compare against `E::BUSY`/`E::BADF` keep matching.
+        #[cfg(windows)]
+        if let Some(d) = crate::windows::libuv::uv_err_to_e_discriminant(self.errno) {
+            if let Some(e) = E::try_from_raw(d) {
+                return e;
+            }
+        }
         e_from_negated(self.errno)
-    }
-    pub fn deref(&self) {
-        self.path.deref();
-        self.code.deref();
-        self.message.deref();
-        self.syscall.deref();
-        self.hostname.deref();
-        self.dest.deref();
-    }
-    pub fn ref_(&self) {
-        self.path.ref_();
-        self.code.ref_();
-        self.message.ref_();
-        self.syscall.ref_();
-        self.hostname.ref_();
-        self.dest.ref_();
     }
 }
 impl core::fmt::Display for SystemError {
@@ -1226,12 +1204,14 @@ pub mod O {
     pub const NOFOLLOW: i32 = 0o400000;
     #[cfg(unix)]
     pub const SYNC: i32 = libc::O_SYNC;
+    // Windows has no O_SYNC/O_DSYNC; node's stringToFlags() ORs in `undefined`
+    // (→ 0) there, so the 's' flag-string modifier is a no-op. Match that.
     #[cfg(windows)]
-    pub const SYNC: i32 = 0o4010000;
+    pub const SYNC: i32 = 0;
     #[cfg(unix)]
     pub const DSYNC: i32 = libc::O_DSYNC;
     #[cfg(windows)]
-    pub const DSYNC: i32 = 0o10000;
+    pub const DSYNC: i32 = 0;
     #[cfg(unix)]
     pub const NOCTTY: i32 = libc::O_NOCTTY;
     #[cfg(windows)]
@@ -6021,6 +6001,9 @@ pub mod macho {
     pub struct LoadCommand {
         pub hdr: load_command,
         pub data: RawSlice,
+        /// Byte offset of this command within the buffer passed to
+        /// `LoadCommandIterator::new`.
+        pub offset: usize,
     }
     impl LoadCommand {
         #[inline]
@@ -6055,6 +6038,7 @@ pub mod macho {
         index: u32,
         buf_ptr: *const u8,
         buf_len: usize,
+        offset: usize,
     }
     impl LoadCommandIterator {
         /// `buffer` must remain live (no realloc/free) for the lifetime of the
@@ -6066,6 +6050,7 @@ pub mod macho {
                 index: 0,
                 buf_ptr: buffer.as_ptr(),
                 buf_len: buffer.len(),
+                offset: 0,
             }
         }
 
@@ -6090,10 +6075,12 @@ pub mod macho {
                     ptr: self.buf_ptr,
                     len: cmdsize,
                 },
+                offset: self.offset,
             };
             // SAFETY: advancing within the original buffer; bounds checked above.
             self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
             self.buf_len -= cmdsize;
+            self.offset += cmdsize;
             self.index += 1;
             Some(lc)
         }

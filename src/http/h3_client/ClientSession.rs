@@ -297,7 +297,9 @@ impl ClientSession {
 
         if st.status_code != 0 && !st.headers_delivered {
             st.headers_delivered = true;
-            let result = match apply_headers(st, client) {
+            let (result, response) = match client
+                .apply_multiplexed_headers(u32::from(st.status_code), &st.decoded_headers)
+            {
                 Ok(r) => r,
                 Err(e) => return self.fail(stream, e),
             };
@@ -308,7 +310,7 @@ impl ClientSession {
                     let client = client_mut(client_ptr);
                     return client.do_redirect_h3();
                 }
-                client.clone_metadata();
+                client.clone_metadata(&response);
                 client.state.flags.received_last_chunk = true;
                 if result == HeaderResult::Finished {
                     client.state.content_length = Some(0);
@@ -318,7 +320,7 @@ impl ClientSession {
                 let client = client_mut(client_ptr);
                 return finish(client);
             }
-            client.clone_metadata();
+            client.clone_metadata(&response);
             if client.signals.get(Signal::HeaderProgress) {
                 client.progress_update_h3();
             }
@@ -463,13 +465,6 @@ pub(super) fn stream_ref(p: *mut Stream) -> bun_ptr::ParentRef<Stream> {
 pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *p }
-}
-
-fn apply_headers(stream: &mut Stream, client: &mut HTTPClient) -> crate::Result<HeaderResult> {
-    // SAFETY: decoded_headers borrow the lsquic hset, which is deep-copied by
-    // `clone_metadata` inside the same lsquic callback before lsquic frees it
-    // — see `HTTPClient::apply_multiplexed_headers` contract.
-    client.apply_multiplexed_headers(u32::from(stream.status_code), &stream.decoded_headers)
 }
 
 fn finish(client: &mut HTTPClient) {

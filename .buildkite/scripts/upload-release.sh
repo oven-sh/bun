@@ -58,7 +58,8 @@ function assert_sentry() {
 function run_command() {
   set -x
   "$@"
-  { set +x; } 2>/dev/null
+  { local status=$?; set +x; } 2>/dev/null
+  return "$status"
 }
 
 # Zips are read with unzip and written with cmake. Not one tool for both:
@@ -224,43 +225,43 @@ function download_buildkite_artifact() {
   fi
 }
 
-function upload_github_asset() {
-  local version="$1"
-  local tag="$(release_tag "$version")"
-  local file="$2"
-  run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-
-  # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
-  # Bounded: `gh release view` failing prints nothing, which reads the same as
-  # "asset missing", so an API outage would otherwise spin here until Buildkite
-  # times the job out with no error line.
-  local attempt
-  for attempt in {1..5}; do
-    if [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -ne 0 ]; then
-      return 0
-    fi
-    echo "warn: Uploading $file to $tag failed, retrying ($attempt/5)..."
-    sleep "$((RANDOM % 5 + 1))"
-    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-  done
-  echo "error: Uploaded $file to $tag but it never showed up in the release"
-  exit 1
+function upload_github_assets() {
+  local tag="$(release_tag "$1")"
+  run_command gh release upload "$tag" "${@:2}" --clobber --repo "$BUILDKITE_REPO"
 }
 
 function update_github_release() {
   local version="$1"
   local tag="$(release_tag "$version")"
   if [ "$tag" == "canary" ]; then
-    sleep 5 # There is possibly a race condition where this overwrites artifacts?
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
       --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
   fi
 }
 
-function upload_s3_file() {
-  local folder="$1"
-  local file="$2"
-  run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
+# S3 is a mirror; `bun upgrade` and install.sh read the GitHub release. A
+# canary that made it to GitHub but not S3 has shipped, so don't fail it.
+function upload_s3_files() {
+  local version="$1"
+  local files=("${@:2}")
+  local commit_folder="releases/$BUILDKITE_COMMIT"
+  if [ "$version" == "canary" ]; then
+    commit_folder="$commit_folder-canary"
+  fi
+  local status=0 file
+  for file in "${files[@]}"; do
+    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$commit_folder/$file" || status=1
+    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/releases/$version/$file" || status=1
+  done
+  if [ "$status" -eq 0 ]; then
+    return 0
+  fi
+  if [ "$version" == "canary" ]; then
+    echo "warn: Some S3 uploads failed, ignoring since this is a canary release"
+    return 0
+  fi
+  echo "error: Some S3 uploads failed"
+  exit 1
 }
 
 function send_discord_announcement() {
@@ -366,43 +367,35 @@ function create_release() {
     run_command rm -rf "$work"
   }
 
-  function upload_one() {
-    local artifact="$1"
-    local commit_folder="releases/$BUILDKITE_COMMIT"
-    if [ "$tag" == "canary" ]; then
-      commit_folder="$commit_folder-canary"
-    fi
-    local pids=()
-    upload_s3_file "$commit_folder" "$artifact" & pids+=("$!")
-    upload_s3_file "releases/$tag" "$artifact" & pids+=("$!")
-    upload_github_asset "$tag" "$artifact" & pids+=("$!")
-    # Per-pid: a bare `wait` returns 0 however the children exited, passing a
-    # failed upload off as a successful release.
-    local status=0
-    for pid in "${pids[@]}"; do
-      wait "$pid" || status=1
-    done
-    return "$status"
-  }
-
-  function upload_artifact() {
-    local artifact="$1"
-    download_buildkite_artifact "$artifact"
-    upload_one "$artifact"
+  # Fetch everything up front so the GitHub release can take all assets in one
+  # `gh release upload`; per-file uploads raced on the same release.
+  local files=() pids=() artifact
+  for artifact in "${artifacts[@]}"; do
+    download_buildkite_artifact "$artifact" & pids+=("$!")
+    files+=("$artifact")
+  done
+  # Per-pid: a bare `wait` returns 0 however the children exited.
+  local pid status=0
+  for pid in "${pids[@]}"; do
+    wait "$pid" || status=1
+  done
+  if [ "$status" -ne 0 ]; then
+    echo "error: Failed to download one or more Buildkite artifacts"
+    exit 1
+  fi
+  for artifact in "${artifacts[@]}"; do
     local alias="$(alias_baseline_artifact "$artifact")"
     if [ -n "$alias" ]; then
       rezip_as "$artifact" "$alias"
-      upload_one "$alias"
+      files+=("$alias")
     fi
-  }
-
-  for artifact in "${artifacts[@]}"; do
-    upload_artifact "$artifact"
   done
 
+  upload_github_assets "$tag" "${files[@]}"
   update_github_release "$tag"
   create_sentry_release "$tag"
   send_discord_announcement "$tag"
+  upload_s3_files "$tag" "${files[@]}"
 }
 
 function assert_canary() {

@@ -403,13 +403,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             using_proxy
         );
 
-        // Reshaped for borrowck — `rare_data()` borrows `vm` mutably and
-        // `ws_upgrade_group` also wants a `vm` reference. See websocket_client.rs.
-        let group = {
-            // SAFETY: `rare_data()` returns `&mut RareData` reached through a
-            // separate Box; the `&*vm_ptr` argument does not overlap.
-            unsafe { (*vm_ptr).rare_data().ws_upgrade_group::<SSL>(&*vm_ptr) }
-        };
+        let loop_ = global.bun_vm().uws_loop();
+        let group = global
+            .bun_vm()
+            .as_mut()
+            .rare_data()
+            .ws_upgrade_group::<SSL>(loop_);
         let kind: SocketKind = if SSL {
             SocketKind::WsClientUpgradeTls
         } else {

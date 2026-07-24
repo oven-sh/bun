@@ -1615,20 +1615,9 @@ impl<const SSL: bool> WebSocket<SSL> {
         let ws = Self::new_raw(outgoing, global_this, deflate_params, secure, None);
 
         // `adopt_group` takes a closure to write the new socket.
-        let group = {
-            // reshaped for borrowck — `rare_data()` borrows `vm`
-            // mutably and `ws_client_group` also wants a `vm` reference.
-            let vm_ptr: *mut _ = global_this.bun_vm().as_mut();
-            // SAFETY: `rare_data()` returns `&mut RareData` reached through
-            // `vm.rare_data: Option<Box<RareData>>`, i.e. a SEPARATE heap
-            // allocation behind a `Box` — the returned `&mut` does not cover
-            // any byte of `*vm_ptr` itself, so forming `&*vm_ptr` alongside
-            // it is non-overlapping under Stacked Borrows. `lazy_group` only
-            // reads `vm.uws_loop()` / `vm.event_loop_handle` and never touches
-            // `vm.rare_data`, so the shared `&VirtualMachine` argument cannot
-            // observe or invalidate the `&mut RareData` receiver.
-            unsafe { (*vm_ptr).rare_data().ws_client_group::<SSL>(&*vm_ptr) }
-        };
+        let vm = global_this.bun_vm().as_mut();
+        let loop_ = vm.uws_loop();
+        let group = vm.rare_data().ws_client_group::<SSL>(loop_);
         if !Socket::<SSL>::adopt_group(
             tcp,
             group,

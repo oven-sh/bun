@@ -390,6 +390,10 @@ JSModuleNamespaceObject* NodeVMModule::namespaceObject(JSC::JSGlobalObject* glob
     object = amr->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (object) {
+        // The shared module namespace structure carries an __esModule accessor for
+        // CJS interop, but a Module Namespace Exotic Object is specified to have a
+        // null [[Prototype]], which is what vm modules must expose.
+        object->setPrototypeDirect(vm, jsNull());
         namespaceObject(vm, object);
     }
     RETURN_IF_EXCEPTION(scope, {});

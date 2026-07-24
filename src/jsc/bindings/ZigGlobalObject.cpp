@@ -280,6 +280,11 @@ extern "C" unsigned getJSCBytecodeCacheVersion()
 extern "C" void Bun__REPRL__registerFuzzilliFunctions(Zig::GlobalObject*);
 #endif
 
+#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+#include <JavaScriptCore/ExecutableAllocator.h>
+extern "C" long Bun__crashHandlerFromJSCFrame(void*, void*, void*, void*);
+#endif
+
 extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode, bool oneShotStartup)
 {
     static std::once_flag jsc_init_flag;
@@ -359,6 +364,15 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             }
             JSC::Options::assertOptionsAreCoherent();
         }); // end JSC::initialize lambda
+
+#if OS(WINDOWS) && (CPU(X86_64) || CPU(ARM64))
+        // JSC::initialize() registered unwind info + a language-specific SEH
+        // handler for the JIT pool. Route that handler to the crash reporter
+        // so a hardware fault under a JIT frame is reported deterministically
+        // at the JSC boundary. LLInt is not yet covered (needs build-time
+        // offlineasm .seh_* emission).
+        JSC::setJITExceptionHandlerWin(&Bun__crashHandlerFromJSCFrame);
+#endif
     }); // end std::call_once lambda
 
     // NOLINTEND
@@ -1661,7 +1675,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDispatchEvent, (JSGlobalObject * lexicalGloba
 
 JSC_DEFINE_CUSTOM_GETTER(getterSubtleCrypto, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->subtleCrypto());
+    // Node brand-checks the receiver: Crypto.prototype.subtle on anything but
+    // the crypto global throws ERR_INVALID_THIS. Resolve through
+    // defaultGlobalObject so vm-context lexical globals still find the singleton.
+    auto* global = defaultGlobalObject(lexicalGlobalObject);
+    if (JSValue::decode(thisValue) != global->cryptoObject()) [[unlikely]] {
+        auto& vm = JSC::getVM(lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Value of \"this\" must be of type Crypto"_s);
+    }
+    return JSValue::encode(global->subtleCrypto());
 }
 
 extern "C" JSC::EncodedJSValue ExpectMatcherUtils_createSigleton(JSC::JSGlobalObject* lexicalGlobalObject);
@@ -2101,11 +2124,14 @@ void GlobalObject::finishCreation(VM& vm)
         [](const Initializer<JSObject>& init) {
             JSC::JSGlobalObject* globalObject = init.owner;
             JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();
-            crypto->putDirectCustomAccessor(
+            // Node defines `subtle` on Crypto.prototype with a brand check, not on
+            // the instance; the getter above enforces the brand.
+            JSObject* prototype = crypto->getPrototypeDirect().getObject();
+            prototype->putDirectCustomAccessor(
                 init.vm,
                 Identifier::fromString(init.vm, "subtle"_s),
                 JSC::CustomGetterSetter::create(init.vm, getterSubtleCrypto, setterSubtleCrypto),
-                PropertyAttribute::DontDelete | 0);
+                PropertyAttribute::DontDelete | PropertyAttribute::CustomAccessor);
 
             init.set(crypto);
         });

@@ -112,8 +112,11 @@ platform_specific_new!(pub C_INCLUDE_PATH: string, posix = "C_INCLUDE_PATH", win
 // Standard C compiler environment variable for library paths (colon-separated).
 // Used by bun:ffi's TinyCC integration for systems like NixOS.
 platform_specific_new!(pub LIBRARY_PATH: string, posix = "LIBRARY_PATH", windows = None, {});
+// Drain the event loop after a file's tests finish so node-style
+// `process.on('exit')` checks (e.g. common.mustCall) see completed async work.
+// Opt-in for the vendored node:test suite and run() children.
+new!(pub BUN_TEST_DRAIN_EVENT_LOOP: boolean, "BUN_TEST_DRAIN_EVENT_LOOP", { default: false });
 new!(pub BUN_TMPDIR: string, "BUN_TMPDIR", {});
-new!(pub BUN_TRACY_PATH: string, "BUN_TRACY_PATH", {});
 new!(pub BUN_WATCHER_TRACE: string, "BUN_WATCHER_TRACE", {});
 new!(pub CI: boolean, "CI", {});
 new!(pub CI_COMMIT_SHA: string, "CI_COMMIT_SHA", {});
@@ -247,6 +250,8 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS, "BUN_FEATURE_FLAG_FORCE_WINDOWS_JUNCTIONS", {});
     new_feature_flag!(pub BUN_INSTRUMENTS, "BUN_INSTRUMENTS", {});
     new_feature_flag!(pub BUN_INTERNAL_BUNX_INSTALL, "BUN_INTERNAL_BUNX_INSTALL", {});
+    // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts.
+    new_feature_flag!(pub BUN_INTERNAL_FAIL_PIPE_READER_START, "BUN_INTERNAL_FAIL_PIPE_READER_START", {});
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
     // tests can drive the multi-select by writing keystrokes to a pipe.
     new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});

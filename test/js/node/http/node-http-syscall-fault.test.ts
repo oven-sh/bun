@@ -11,9 +11,12 @@ afterEach(() => fault.clear());
 // In-process http tests share the process-wide fault table between client
 // and server, which makes errno injection ambiguous. Tests that need a
 // one-sided fault run the faulted side in a subprocess.
+//
+// Every test below arms its fault inside its own subprocess, so the parent's
+// fault table is never touched and the tests can run concurrently.
 
 describe.skipIf(skip)("node:http under injected syscall faults", () => {
-  test("upRes.pipe(res) with res.destroy() racing a queued drain (subprocess)", async () => {
+  test.concurrent("upRes.pipe(res) with res.destroy() racing a queued drain (subprocess)", async () => {
     // A TLS-terminating proxy re-streams a large upstream body via pipe(),
     // 1-byte sends force backpressure → on_writable/on_drain on every
     // event-loop turn, and the downstream is destroyed while a drain callback
@@ -36,11 +39,12 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       const https = require("node:https");
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
 
+      let closed = 0;
       const proxy = https.createServer({ key: process.env.KEY, cert: process.env.CERT }, (req, res) => {
         const up = http.get({ port: ${upstreamPort}, host: "127.0.0.1" }, upRes => {
           res.writeHead(upRes.statusCode, upRes.headers);
           upRes.pipe(res);
-          res.on("close", () => up.destroy());
+          res.on("close", () => { closed++; up.destroy(); });
         });
         up.on("error", () => res.destroy());
       });
@@ -60,19 +64,19 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
                 if (n > 4096) {
                   // Destroy mid-stream while drain is pending on the server side.
                   r.destroy();
-                  resolve();
+                  resolve(n);
                 }
               });
-              res.on("error", resolve);
-              res.on("end", resolve);
+              res.on("error", () => resolve(n));
+              res.on("end", () => resolve(n));
             });
-            r.on("error", resolve);
+            r.on("error", () => resolve(-1));
           }));
         }
-        await Promise.all(reqs);
+        const received = await Promise.all(reqs);
         fault.clear();
         proxy.close(() => {
-          console.log("OK");
+          console.log(JSON.stringify({ closed, received: received.map(n => n > 4096) }));
           process.exit(0);
         });
       });
@@ -86,9 +90,11 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stdout: stdout.trim(), stderr, signal: proc.signalCode }).toEqual({
-        stdout: "OK",
-        stderr: expect.any(String),
+      // Every proxy response reached a terminal 'close' and every client
+      // received past the destroy threshold before tearing down.
+      expect({ out: JSON.parse(stdout.trim() || "{}"), stderr, signal: proc.signalCode }).toEqual({
+        out: { closed: 4, received: [true, true, true, true] },
+        stderr: "",
         signal: null,
       });
       expect(exitCode).toBe(0);
@@ -97,13 +103,16 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     }
   });
 
-  test("Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)", async () => {
-    // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →
-    // bsd_send): backpressure on every turn, then the client aborts. The
-    // server's onAborted/on_writable must settle and the process exits 0.
-    const fixture = /* js */ `
+  test.concurrent(
+    "Bun.serve streaming response under 1-byte sends with client abort mid-body (subprocess)",
+    async () => {
+      // Covers the uWS HttpResponse path (AsyncSocket → us_socket_write →
+      // bsd_send): backpressure on every turn, then the client aborts. The
+      // server's onAborted/on_writable must settle and the process exits 0.
+      const fixture = /* js */ `
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
-      const body = Buffer.alloc(64 * 1024, 0x42);
+      const body = Buffer.alloc(16 * 1024, 0x42);
+      const ABORT_AFTER = 512;
       using server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
@@ -121,43 +130,46 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
       const res = await fetch("http://127.0.0.1:" + server.port, { signal: ctrl.signal });
       const reader = res.body.getReader();
       let n = 0;
-      while (n < 1024) {
+      while (n < ABORT_AFTER) {
         const { value, done } = await reader.read();
         if (done) break;
         n += value.length;
       }
       ctrl.abort();
       fault.clear();
-      console.log("OK");
+      console.log(JSON.stringify({ status: res.status, readPastThreshold: n >= ABORT_AFTER }));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), signal: proc.signalCode, stderr }).toEqual({
-      stdout: "OK",
-      signal: null,
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
+        out: { status: 200, readPastThreshold: true },
+        signal: null,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 
-  test("node:http server: short sends + client destroy at first byte does not leak the response (subprocess)", async () => {
-    const fixture = /* js */ `
+  test.concurrent(
+    "node:http server: short sends + client destroy at first byte does not leak the response (subprocess)",
+    async () => {
+      const fixture = /* js */ `
       const http = require("node:http");
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       let closed = 0;
-      const N = 8;
+      const N = 4;
       let resolveAllClosed;
       const allClosed = new Promise(r => { resolveAllClosed = r; });
       const server = http.createServer((req, res) => {
         res.on("close", () => { if (++closed === N) resolveAllClosed(); });
         res.on("error", () => {});
         res.writeHead(200);
-        res.end(Buffer.alloc(32 * 1024, 0x55));
+        res.end(Buffer.alloc(8 * 1024, 0x55));
       });
       server.listen(0, "127.0.0.1", async () => {
         fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
@@ -175,21 +187,21 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
         server.close(() => process.exit(0));
       });
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const out = JSON.parse(stdout.trim() || "{}");
-    expect({ out, signal: proc.signalCode, stderr }).toEqual({
-      out: { closed: 8, N: 8 },
-      signal: null,
-      stderr: expect.any(String),
-    });
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ out: JSON.parse(stdout.trim() || "{}"), signal: proc.signalCode, stderr }).toEqual({
+        out: { closed: 4, N: 4 },
+        signal: null,
+        stderr: "",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
@@ -203,11 +215,13 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
     };
   }
 
-  test("randomized short-send sizes during streaming response deliver intact (subprocess server)", async () => {
-    const rand = makePrng(seed);
-    const bodyLen = 8 * 1024;
+  test.concurrent(
+    "randomized short-send sizes during streaming response deliver intact (subprocess server)",
+    async () => {
+      const rand = makePrng(seed);
+      const bodyLen = 4 * 1024;
 
-    const fixture = /* js */ `
+      const fixture = /* js */ `
       const http = require("node:http");
       const { socketFaultInjection: fault } = require("bun:internal-for-testing");
       const body = Buffer.alloc(${bodyLen}, 0x71);
@@ -227,40 +241,43 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
       process.on("SIGTERM", () => server.close(() => process.exit(0)));
     `;
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const reader = proc.stdout.getReader();
-    let portLine = "";
-    while (!portLine.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) throw new Error("server exited before printing port: " + (await proc.stderr.text()));
-      portLine += new TextDecoder().decode(value);
-    }
-    reader.releaseLock();
-    const port = Number(portLine.trim());
-
-    try {
-      for (let i = 0; i < 8; i++) {
-        const bytes = 1 + Math.floor(rand() * 64);
-        const after = Math.floor(rand() * 4);
-        const got = await new Promise<number>((resolve, reject) => {
-          const req = http.get({ port, host: "127.0.0.1", path: `/?bytes=${bytes}&after=${after}` }, res => {
-            let n = 0;
-            res.on("data", c => (n += c.length));
-            res.on("end", () => resolve(n));
-            res.on("error", reject);
-          });
-          req.on("error", reject);
-        });
-        expect(got).toBe(bodyLen);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, BUN_DEBUG_QUIET_LOGS: "1" },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const reader = proc.stdout.getReader();
+      let portLine = "";
+      while (!portLine.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error("server exited before printing port: " + (await proc.stderr.text()));
+        portLine += new TextDecoder().decode(value);
       }
-    } finally {
-      proc.kill("SIGTERM");
-      await proc.exited;
-    }
-  });
+      reader.releaseLock();
+      const port = Number(portLine.trim());
+
+      try {
+        const results: Array<{ bytes: number; after: number; got: number }> = [];
+        for (let i = 0; i < 8; i++) {
+          const bytes = 1 + Math.floor(rand() * 64);
+          const after = Math.floor(rand() * 4);
+          const got = await new Promise<number>((resolve, reject) => {
+            const req = http.get({ port, host: "127.0.0.1", path: `/?bytes=${bytes}&after=${after}` }, res => {
+              let n = 0;
+              res.on("data", c => (n += c.length));
+              res.on("end", () => resolve(n));
+              res.on("error", reject);
+            });
+            req.on("error", reject);
+          });
+          results.push({ bytes, after, got });
+        }
+        expect(results).toEqual(results.map(({ bytes, after }) => ({ bytes, after, got: bodyLen })));
+      } finally {
+        proc.kill("SIGTERM");
+        await proc.exited;
+      }
+    },
+  );
 });

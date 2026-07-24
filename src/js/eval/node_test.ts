@@ -291,16 +291,25 @@ async function main() {
   runOptions.only = hasFlag("--test-only");
   runOptions.forceExit = hasFlag("--test-force-exit");
 
-  // run() validates these but does not yet apply them to its child processes;
-  // failing loudly beats silently running every test.
-  if (getFlagList("--test-name-pattern").length > 0) {
-    fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
-  }
-  if (getFlagList("--test-skip-pattern").length > 0) {
-    fatal(new Error("--test-skip-pattern is not yet implemented in Bun's node:test CLI mode"));
-  }
-  if (hasFlag("--test-only")) {
-    fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
+  // run() applies these by pruning the merged queue, which only exists under
+  // isolation 'none'; under process isolation it would silently run every test,
+  // so keep failing loudly there.
+  const namePatterns = getFlagList("--test-name-pattern");
+  const skipPatterns = getFlagList("--test-skip-pattern");
+  const onlyFlag = hasFlag("--test-only");
+  if (isolation === "none") {
+    if (namePatterns.length > 0) runOptions.testNamePatterns = namePatterns;
+    if (skipPatterns.length > 0) runOptions.testSkipPatterns = skipPatterns;
+  } else {
+    if (namePatterns.length > 0) {
+      fatal(new Error("--test-name-pattern is not yet implemented in Bun's node:test CLI mode"));
+    }
+    if (skipPatterns.length > 0) {
+      fatal(new Error("--test-skip-pattern is not yet implemented in Bun's node:test CLI mode"));
+    }
+    if (onlyFlag) {
+      fatal(new Error("--test-only is not yet implemented in Bun's node:test CLI mode"));
+    }
   }
   const tagFilters = getFlagList("--experimental-test-tag-filter");
   if (tagFilters.length > 0) runOptions.testTagFilters = tagFilters;

@@ -383,6 +383,149 @@ test.concurrent("rejects a RESP simple-string reply whose line terminator never 
   }
 });
 
+// A stale auto-reconnect timer must not start a competing socket while an
+// explicit connect() is in flight: the orphaned socket's late callbacks drove
+// a client whose JS wrapper was already weak ("assertion failed:
+// self.this_value.get().is_strong()" in on_valkey_connect). Timing-sensitive,
+// so this one is not concurrent.
+test("explicit connect() while the auto-reconnect timer is armed does not orphan the in-flight socket", async () => {
+  const src = `
+    const ATTEMPTS = 3;
+
+    async function attempt() {
+      const helloHeld = Promise.withResolvers();
+      let srvFirst = null;
+      let srvHeld = null;
+      let ctrlSrv = null;
+      let accepted = 0;
+
+      // Connections, in accept order:
+      //   #1 control (never speaks RESP)
+      //   #2 first RedisClient connection: HELLO answered immediately
+      //   #3 explicit reconnect: HELLO held until the control channel releases it
+      //   #4 only exists if a stale reconnect timer started a competing connect
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(s) {
+            accepted += 1;
+            s.data = { id: accepted };
+            if (accepted === 1) ctrlSrv = s;
+            else if (accepted === 2) srvFirst = s;
+            else if (accepted === 3) srvHeld = s;
+          },
+          data(s, chunk) {
+            const id = s.data.id;
+            if (id === 1) return;
+            const text = chunk.toString();
+            if (!/HELLO/.test(text)) {
+              s.write("+OK\\r\\n");
+              return;
+            }
+            if (id === 2) {
+              s.write("%0\\r\\n");
+              return;
+            }
+            if (id === 3) {
+              helloHeld.resolve();
+              return;
+            }
+            s.write("%0\\r\\n");
+          },
+          close() {},
+          error() {},
+          drain() {},
+        },
+      });
+
+      // The control connection's client-side data callback releases the held
+      // HELLO reply and then blocks the event loop, so the reply and the stale
+      // reconnect timer are both pending when this iteration's timers drain
+      // (socket I/O dispatches before timers).
+      const ctrl = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        socket: {
+          open() {},
+          data(_s, chunk) {
+            if (chunk.toString().includes("go")) {
+              try {
+                srvHeld.write("%0\\r\\n");
+              } catch {}
+              Bun.sleepSync(60);
+            }
+          },
+          error() {},
+          close() {},
+          drain() {},
+        },
+      });
+
+      const c = new Bun.RedisClient("redis://127.0.0.1:" + listener.port, { maxRetries: 20 });
+      await c.connect();
+
+      // Closing the first connection from the server arms the client's
+      // auto-reconnect timer (50ms).
+      const tClose = performance.now();
+      srvFirst.end();
+      while (c.connected) await Bun.sleep(1);
+
+      // Explicit connect() while that timer is still armed.
+      const reconnected = c.connect();
+      await helloHeld.promise;
+
+      // Release the held reply just before the reconnect timer deadline.
+      const lead = Math.max(0, tClose + 40 - performance.now());
+      setTimeout(() => {
+        try {
+          ctrlSrv.write("go");
+        } catch {}
+      }, lead);
+
+      // The reconnect must succeed. Close right after it resolves, in the
+      // same microtask turn as the HELLO reply that completed it.
+      await reconnected;
+      c.close();
+
+      await Bun.sleep(150);
+      // If an orphan is still attached in place of a closed socket, poke it.
+      try {
+        srvHeld.write("%0\\r\\n");
+      } catch {}
+      await Bun.sleep(100);
+
+      ctrl.end();
+      listener.stop(true);
+      return accepted;
+    }
+
+    for (let i = 0; i < ATTEMPTS; i++) {
+      const accepted = await attempt();
+      // Exactly three: control, the first connection, the explicit reconnect.
+      // A fourth means a stale reconnect timer opened a competing socket and
+      // orphaned one of them.
+      if (accepted !== 3) {
+        throw new Error("attempt " + i + ": expected 3 accepted connections, got " + accepted);
+      }
+    }
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 // Buffer-mode replies (`getBuffer` and friends) adopt the RESP parser's
 // payload allocation as the Buffer backing store instead of copying it. The
 // pointer is handed to JSC and freed by the ArrayBuffer deallocator when the

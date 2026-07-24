@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
-import { chmodSync } from "node:fs";
+import { chmodSync, copyFileSync } from "node:fs";
 import { join } from "path";
 
 describe("Bun.build compile", () => {
@@ -576,6 +576,97 @@ describe("compiled binary in a deleted cwd", () => {
     },
     60_000,
   );
+});
+
+// `bun build --compile --target=<other>` resolves its base runtime from the
+// install cache (or cwd) by filename and embeds it verbatim. A file planted
+// under the wrong key (wrong arch, wrong OS) must be rejected instead of
+// shipped as the runtime of every produced executable.
+describe("Bun.build compile base binary validation", () => {
+  const hostOs = isMacOS ? "darwin" : isWindows ? "windows" : "linux";
+  const hostArch = isArm64 ? "aarch64" : "x64";
+  const otherArch = isArm64 ? "x64" : "aarch64";
+  const targetOtherArch = isArm64 ? "x64" : "arm64";
+  const libc = isMusl ? "-musl" : "";
+
+  async function bunVersion(): Promise<string> {
+    await using p = Bun.spawn({ cmd: [bunExe(), "--version"], env: bunEnv, stdout: "pipe" });
+    // CompileTarget::Display formats only major.minor.patch (no pre-release tag),
+    // so strip anything after a '-' (e.g. "1.4.0-debug" -> "1.4.0").
+    return (await p.stdout.text()).trim().split("-")[0];
+  }
+
+  test("rejects cached base binary with wrong architecture", async () => {
+    const version = await bunVersion();
+    // Cache-key filename as formatted by CompileTarget::Display for the
+    // *other* arch on the same OS.
+    const plantedName = `bun-${hostOs}-${otherArch}${libc}-v${version}`;
+
+    using dir = tempDir("compile-base-wrong-arch", {
+      "app.ts": `console.log("tenant B app; claims arch =", process.arch)`,
+    });
+    const cwd = String(dir);
+    // Plant the host's own binary under the other-arch key. exe_path() finds
+    // a file with this exact name in cwd and treats it as a cache hit.
+    copyFileSync(bunExe(), join(cwd, plantedName));
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "build",
+        "--compile",
+        `--target=bun-${hostOs}-${targetOtherArch}${isMusl ? "-musl" : ""}`,
+        "app.ts",
+        "--outfile",
+        "app",
+      ],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const output = stdout + stderr;
+    expect(output).toContain(plantedName);
+    expect(output).toContain(`expected ${targetOtherArch}`);
+    expect(output.toLowerCase()).toContain("tampered");
+    expect(exitCode).not.toBe(0);
+
+    // The wrong-arch artifact must not have been produced.
+    expect(await Bun.file(join(cwd, "app")).exists()).toBe(false);
+    expect(await Bun.file(join(cwd, "app.exe")).exists()).toBe(false);
+  });
+
+  test("rejects cached base binary with wrong format", async () => {
+    const version = await bunVersion();
+    // Ask for a different OS so the expected container format differs from the
+    // host binary's (ELF vs Mach-O vs PE). Keep the host arch so only the
+    // format check fires.
+    const crossOs = isMacOS ? "linux" : "darwin";
+    const targetArch = isArm64 ? "arm64" : "x64";
+    const plantedName = `bun-${crossOs}-${hostArch}-v${version}`;
+
+    using dir = tempDir("compile-base-wrong-os", {
+      "app.ts": `console.log("hi")`,
+    });
+    const cwd = String(dir);
+    copyFileSync(bunExe(), join(cwd, plantedName));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", `--target=bun-${crossOs}-${targetArch}`, "app.ts", "--outfile", "app"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const output = stdout + stderr;
+    expect(output).toContain(plantedName);
+    expect(output.toLowerCase()).toContain("tampered");
+    expect(exitCode).not.toBe(0);
+  });
 });
 
 // file command test works well

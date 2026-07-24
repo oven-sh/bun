@@ -4805,4 +4805,50 @@ describe("read*/write* after JIT tier-up", () => {
       expect(() => Buffer.prototype.readInt32LE.call({}, 0)).toThrow(TypeError);
     }
   });
+
+  it("variable-width readers/writers match across widths after tier-up", () => {
+    const uint = (o, l, le) => {
+      let value = 0;
+      for (let i = 0; i < l; ++i) value = le ? value + buf[o + i] * 2 ** (8 * i) : value * 256 + buf[o + i];
+      return value;
+    };
+    const sint = (o, l, le) => {
+      const value = uint(o, l, le);
+      return value >= 2 ** (8 * l - 1) ? value - 2 ** (8 * l) : value;
+    };
+    // A constant byteLength (JIT-inlined for 1/2/4) and a varying one (host path).
+    const readConst3 = (b, o) => b.readUIntBE(o, 3);
+    const readConst4 = (b, o) => b.readIntLE(o, 4);
+    let mismatches = 0;
+    for (let i = 0; i < 5000; i++) {
+      const o = i & 15;
+      const l = 1 + (i % 6);
+      if (buf.readIntLE(o, l) !== sint(o, l, true)) mismatches++;
+      if (buf.readIntBE(o, l) !== sint(o, l, false)) mismatches++;
+      if (buf.readUIntLE(o, l) !== uint(o, l, true)) mismatches++;
+      if (buf.readUIntBE(o, l) !== uint(o, l, false)) mismatches++;
+      if (readConst3(buf, o) !== uint(o, 3, false)) mismatches++;
+      if (readConst4(buf, o) !== dv.getInt32(o, true)) mismatches++;
+    }
+    expect(mismatches).toBe(0);
+    const scratch = Buffer.alloc(16);
+    for (let i = 0; i < 5000; i++) {
+      const l = 1 + (i % 6);
+      const v = i % 100;
+      expect(scratch.writeUIntLE(v, 0, l)).toBe(l);
+      expect(scratch.readUIntLE(0, l)).toBe(v);
+      expect(scratch.writeIntBE(-v, 8, l)).toBe(8 + l);
+      expect(scratch.readIntBE(8, l)).toBe(-v | 0);
+    }
+    let codes = [];
+    for (let i = 0; i < 1000; i++) {
+      codes = [
+        codeOf(() => buf.readIntLE(0, 7)),
+        codeOf(() => buf.readIntLE(undefined, 4)),
+        codeOf(() => readConst4(buf, 61)),
+        codeOf(() => scratch.writeIntLE(2 ** 24, 0, 3)),
+      ];
+    }
+    expect(codes).toEqual(["ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE"]);
+  });
 });

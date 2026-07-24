@@ -20,7 +20,7 @@
 
 use core::ffi::c_int;
 
-use bun_core::{Timespec, TimespecMockMode};
+use bun_core::{Timespec, TimespecMockMode, ZStr};
 use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
 
@@ -28,6 +28,29 @@ use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
+
+/// Default absolute floor on heap growth (in bytes) since the last baseline
+/// before the one-shot timer re-arms. Matches the order of JSC's own eden
+/// allocation limit (`Heap::updateAllocationLimits` opens the next cycle at
+/// roughly 32 MB of new bytes), so below this volume eden pacing is left to
+/// `GCActivityCallback::didAllocate` and the controller only contributes the
+/// 1 s / 30 s repeating timer. Overridable via `BUN_GC_TIMER_THRESHOLD`.
+///
+/// The sampled heap size is `blockBytesAllocated + extraMemorySize`, which
+/// moves on every block allocation and every `reportExtraMemory` call, so an
+/// exact-inequality check re-armed on the collection's own perturbation and
+/// looped at ~60 collections/sec whenever the event loop was active.
+const DEFAULT_GROWTH_THRESHOLD_BYTES: usize = 32 * 1024 * 1024;
+
+/// Proportional component of the growth threshold: `prev >> GROWTH_THRESHOLD_SHIFT`.
+/// The effective threshold is `max(DEFAULT_GROWTH_THRESHOLD_BYTES, prev / 4)`.
+/// Eden-pause cost scales with the live set, so a fixed floor would leave large
+/// heaps spending a constant fraction of wall time in the controller's
+/// collections; the proportional term keeps the controller a bounded
+/// opportunistic backstop behind JSC's own allocation-rate-budgeted
+/// `GCActivityCallback`. `BUN_GC_TIMER_THRESHOLD` replaces the whole
+/// computation (not just the floor) so tests and tuning can pin an exact value.
+const GROWTH_THRESHOLD_SHIFT: u32 = 2;
 
 pub struct GarbageCollectionController {
     pub gc_timer: EventLoopTimer,
@@ -37,6 +60,10 @@ pub struct GarbageCollectionController {
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
     pub gc_timer_interval: i32,
+    /// `BUN_GC_TIMER_THRESHOLD` override: when `Some`, replaces the whole
+    /// `max(floor, prev/4)` computation so the knob means what it says. `None`
+    /// uses the adaptive default (see `DEFAULT_GROWTH_THRESHOLD_BYTES`).
+    pub growth_threshold_bytes: Option<usize>,
     pub gc_repeating_timer_fast: bool,
     pub disabled: bool,
     /// A finished HTTP transaction wants the heap looked at; see `request_hint`.
@@ -59,6 +86,7 @@ impl Default for GarbageCollectionController {
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
             gc_timer_state: GCTimerState::Pending,
             gc_timer_interval: 0,
+            growth_threshold_bytes: None,
             gc_repeating_timer_fast: true,
             disabled: false,
             hint_pending: false,
@@ -102,10 +130,18 @@ impl GarbageCollectionController {
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
+        // The dotenv loader may not be populated yet when this runs (init ordering
+        // varies by entry path); fall back to the process environment so the
+        // tuning/debug knobs below are always honoured. `ZStr` derefs to the
+        // non-NUL bytes, so one literal per name feeds both lookups.
         let env = vm.env_loader_opt();
+        let get_env = |zkey: &'static ZStr| -> Option<&'static [u8]> {
+            env.and_then(|e| e.get(zkey))
+                .or_else(|| bun_core::getenv_z(zkey))
+        };
 
         let mut gc_timer_interval: i32 = 1000;
-        if let Some(timer) = env.and_then(|e| e.get(b"BUN_GC_TIMER_INTERVAL")) {
+        if let Some(timer) = get_env(ZStr::from_static(b"BUN_GC_TIMER_INTERVAL\0")) {
             if let Some(parsed) = bun_core::fmt::parse_decimal::<i32>(timer) {
                 if parsed > 0 {
                     gc_timer_interval = parsed;
@@ -114,7 +150,15 @@ impl GarbageCollectionController {
         }
         self.gc_timer_interval = gc_timer_interval;
 
-        if let Some(val) = env.and_then(|e| e.get(b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS")) {
+        if let Some(val) = get_env(ZStr::from_static(b"BUN_GC_TIMER_THRESHOLD\0")) {
+            if let Some(parsed) = bun_core::fmt::parse_decimal::<usize>(val) {
+                self.growth_threshold_bytes = Some(parsed);
+            }
+        }
+
+        if let Some(val) = get_env(ZStr::from_static(
+            b"BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS\0",
+        )) {
             if let Some(parsed) = bun_core::fmt::parse_decimal::<c_int>(val) {
                 if parsed >= 0 {
                     crate::virtual_machine::Bun__defaultRemainingRunsUntilSkipReleaseAccess
@@ -123,7 +167,8 @@ impl GarbageCollectionController {
             }
         }
 
-        self.disabled = env.is_some_and(|e| e.has(b"BUN_GC_TIMER_DISABLE"));
+        self.disabled = get_env(ZStr::from_static(b"BUN_GC_TIMER_DISABLE\0"))
+            .is_some_and(bun_dotenv::Loader::is_truthy);
     }
 
     /// A completed HTTP transaction asked us to look at the heap. We do not act here: the
@@ -215,13 +260,28 @@ impl GarbageCollectionController {
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
+    #[inline]
+    fn growth_threshold(&self, prev: usize) -> usize {
+        self.growth_threshold_bytes.unwrap_or_else(|| {
+            core::cmp::max(
+                DEFAULT_GROWTH_THRESHOLD_BYTES,
+                prev >> GROWTH_THRESHOLD_SHIFT,
+            )
+        })
+    }
+
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
+        let grew = this_heap_size > prev.saturating_add(self.growth_threshold(prev));
 
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {
-                // When memory usage is not stable, run the GC more.
-                if this_heap_size != prev {
+                // Re-arm only on meaningful growth since the last baseline. The
+                // previous `!= prev` test re-armed on any byte delta (including the
+                // collection's own perturbation of `blockBytesAllocated`/`extraMemorySize`)
+                // and self-perpetuated into an eden collection every ~16 ms whenever
+                // the event loop was active.
+                if grew {
                     self.schedule_gc_timer();
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
                 } else {
@@ -231,10 +291,10 @@ impl GarbageCollectionController {
                 self.gc_last_heap_size = this_heap_size;
             }
             GCTimerState::Pending => {
-                if this_heap_size != prev {
+                if grew {
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
 
-                    if this_heap_size > prev * 2 {
+                    if this_heap_size > prev.saturating_mul(2) {
                         self.perform_gc();
                     } else {
                         self.schedule_gc_timer();
@@ -242,7 +302,7 @@ impl GarbageCollectionController {
                 }
             }
             GCTimerState::Scheduled => {
-                if this_heap_size > prev * 2 {
+                if this_heap_size > prev.saturating_mul(2) {
                     self.update_gc_repeat_timer(GcRepeatSetting::Fast);
                     self.perform_gc();
                 }

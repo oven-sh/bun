@@ -125,6 +125,33 @@ test("Bun.JSONC.parse throws on invalid JSON", () => {
   }).toThrow();
 });
 
+test("Bun.JSONC.parse throws a SyntaxError on invalid input", () => {
+  for (const input of ["{ not valid", '{"a": }', "[1, 2", '"abc', "   ", ""]) {
+    let thrown: unknown;
+    try {
+      Bun.JSONC.parse(input);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown, `input: ${JSON.stringify(input)}`).toBeInstanceOf(SyntaxError);
+    expect(thrown, `input: ${JSON.stringify(input)}`).toBeInstanceOf(Error);
+    expect((thrown as Error).name).toBe("SyntaxError");
+    expect((thrown as Error).message).toContain("JSONC Parse error");
+  }
+});
+
+test("Bun.JSONC.parse SyntaxError names the actual error, not a preceding warning", () => {
+  let thrown: unknown;
+  try {
+    Bun.JSONC.parse('{"a":1,"a":2,');
+  } catch (e) {
+    thrown = e;
+  }
+  expect(thrown).toBeInstanceOf(SyntaxError);
+  expect((thrown as Error).message).toMatchInlineSnapshot(`"JSONC Parse error: Expected string but found end of file"`);
+  expect((thrown as Error).message).not.toContain("Duplicate key");
+});
+
 test("Bun.JSONC.parse handles empty object", () => {
   const result = Bun.JSONC.parse("{}");
   expect(result).toEqual({});

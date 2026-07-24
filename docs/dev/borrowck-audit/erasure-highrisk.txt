@@ -1,0 +1,14 @@
+src/crash_handler/lib.rs:1874
+src/install/lockfile.rs:1170
+src/install/lockfile.rs:2004
+src/install/lockfile.rs:2013
+src/install/lockfile.rs:2015
+src/install/lockfile.rs:2016
+src/install/PackageManager/PopulateManifestCache.rs:241
+src/install/PackageManager/runTasks.rs:1356
+src/install/PackageManager/PackageManagerEnqueue.rs:1568
+src/install/lockfile/Package.rs:1667
+src/install/lockfile/OverrideMap.rs:443
+src/jsc/AsyncModule.rs:985
+src/jsc/AsyncModule.rs:1205
+src/jsc/AsyncModule.rs:1208

@@ -9,7 +9,7 @@ use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
-use bun_s3_signing::error::S3Error;
+use bun_s3_signing::error::{S3Error, get_error_code_and_message_for_status};
 use bun_threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);
@@ -110,15 +110,20 @@ impl S3HttpDownloadStreamingTask {
         let chunk: MutableString = 'brk: {
             if failed {
                 if !has_more {
-                    let mut _has_body_code = false;
-                    let mut _has_body_message = false;
-
                     let mut code: &[u8] = b"UnknownError";
                     let mut message: &[u8] = b"an unexpected error has occurred";
                     if let Some(req_err) = self.request_error {
                         code = req_err.name().as_bytes();
-                        _has_body_code = true;
                     } else {
+                        // Seed code/message from the HTTP status (a body-less
+                        // error response carries no XML error document). The
+                        // body, when present, wins below.
+                        if let Some(status_err) =
+                            get_error_code_and_message_for_status(state.status_code())
+                        {
+                            code = status_err.code;
+                            message = status_err.message;
+                        }
                         let bytes = self.reported_response_buffer.list.as_slice();
                         if !bytes.is_empty() {
                             message = bytes;
@@ -129,7 +134,6 @@ impl S3HttpDownloadStreamingTask {
                                     strings::index_of(&bytes[value_start..], b"</Code>")
                                 {
                                     code = &bytes[value_start..value_start + end];
-                                    _has_body_code = true;
                                 }
                             }
                             if let Some(start) = strings::index_of(bytes, b"<Message>") {
@@ -138,7 +142,6 @@ impl S3HttpDownloadStreamingTask {
                                     strings::index_of(&bytes[value_start..], b"</Message>")
                                 {
                                     message = &bytes[value_start..value_start + end];
-                                    _has_body_message = true;
                                 }
                             }
                         }

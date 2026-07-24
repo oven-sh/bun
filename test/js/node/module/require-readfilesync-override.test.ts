@@ -7,7 +7,7 @@
 // source natively and bypassed the patched function, so the unmodified source
 // was evaluated and vue-tsc fell back to plain tsc behavior.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 async function run(files: Record<string, string>, entry: string) {

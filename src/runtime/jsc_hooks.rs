@@ -4281,8 +4281,7 @@ unsafe fn transpile_file(
                 let exc = global_ref.take_error(bun_jsc::JsError::Thrown);
                 // SAFETY: `ret` is a valid out-param per fn contract.
                 unsafe {
-                    *ret =
-                        ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
+                    *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
                 }
                 return ptr::null_mut();
             }

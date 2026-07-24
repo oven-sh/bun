@@ -472,7 +472,8 @@ pub mod stdin_tty {
 pub(crate) extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
     let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
-        bun_sys::Result::Err(e) => return e.errno as c_int,
+        // Negative so the JS tty layer's `ErrnoException` accepts it.
+        bun_sys::Result::Err(e) => return -(e.errno as c_int),
     };
     // UV_TTY_MODE_RAW_VT is a variant of UV_TTY_MODE_RAW that enables control
     // sequence processing on the TTY implementer side, rather than having libuv
@@ -483,15 +484,13 @@ pub(crate) extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bo
     // `tty` is the static stdin tty (fd 0 → `get_stdin_tty`), live for the
     // process — same invariant the `Source::Tty` arm relies on, so reuse the
     // shared `tty_mut` accessor.
-    if let Some(err) = Source::tty_mut(&mut tty)
+    // Return the raw signed libuv error code (e.g. UV_EINVAL = -4071) so the
+    // JS tty layer can build a Node ErrnoException with the correct `code`.
+    Source::tty_mut(&mut tty)
         .set_mode(if raw {
             uv::TtyMode::Vt
         } else {
             uv::TtyMode::Normal
         })
-        .to_error(bun_sys::Tag::uv_tty_set_mode)
-    {
-        return err.errno as c_int;
-    }
-    0
+        .int()
 }

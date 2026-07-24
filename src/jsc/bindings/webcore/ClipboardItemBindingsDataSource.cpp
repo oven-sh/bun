@@ -101,8 +101,17 @@ void ClipboardItemBindingsDataSource::getType(const String& type, Ref<DeferredPr
         return;
     }
 
-    Ref itemPromise = m_itemPromises[matchIndex].value;
-    itemPromise->whenSettled([promise = WTF::move(promise), itemPromise, type]() mutable {
+    // The lambda must not hold a strong Ref<DOMPromise>: that closes the same
+    // native<->GC cycle the write path's reaction avoids (guardedObjects roots
+    // the JSPromise whose reaction owns the lambda). Re-read it from
+    // m_itemPromises once the item is proven alive.
+    m_itemPromises[matchIndex].value->whenSettled([this, weakItem = WeakPtr { m_item.get() }, matchIndex, promise = WTF::move(promise), type]() mutable {
+        RefPtr protectedItem = weakItem.get();
+        if (!protectedItem) {
+            promise->reject(ExceptionCode::InvalidStateError);
+            return;
+        }
+        Ref itemPromise = m_itemPromises[matchIndex].value;
         if (itemPromise->status() != DOMPromise::Status::Fulfilled) {
             // Forward the caller's own rejection reason, as the write path does
             // with the same failure, rather than flattening it to an AbortError.

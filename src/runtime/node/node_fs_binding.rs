@@ -416,6 +416,11 @@ pub(crate) fn create_binding(global: &JSGlobalObject) -> JSValue {
     // trivially un-aliased (sole owner of the fresh `Box`).
     module.node_fs.with_mut(|nfs| nfs.vm = NonNull::new(vm));
 
+    // Per-VM singleton: freed at `~VM` in workers, process-lifetime on the
+    // main thread. After `to_js_boxed` the only pointer lives in the GC
+    // wrapper's `m_ctx` inside the JSC heap, which LSan does not scan.
+    bun_core::asan::ignore_object::<Binding>(&module);
+
     // `module` was `Box::new`-allocated; ownership transfers to the GC
     // wrapper, which calls `Binding::finalize` to reclaim it.
     Binding::to_js_boxed(module, global)

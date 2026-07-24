@@ -161,20 +161,11 @@ impl GarbageCollectionController {
         self.gc_last_heap_size = vm.block_bytes_allocated();
     }
 
-    // We want to always run GC once in awhile
-    // But if you have a long-running instance of Bun, you don't want the
-    // program constantly using CPU doing GC for no reason
-    //
-    // So we have two settings for this GC timer:
-    //
-    //    - Fast: GC runs every 1 second
-    //    - Slow: GC runs every 30 seconds
-    //
-    // When the heap size is increasing, we always switch to fast mode
-    // When the heap size has been the same or less for 30 seconds, we switch
-    // to slow mode.
-    ///
-    /// `Tag::GcRepeating` fire body.
+    /// `Tag::GcRepeating` fire body. Runs every second in fast mode or every
+    /// 30 seconds in slow mode: when the heap size is increasing we stay in
+    /// fast mode; after 30 consecutive fast-mode fires with no heap growth we
+    /// drop to slow mode so an idle long-running process is not constantly
+    /// using CPU doing GC for no reason.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.

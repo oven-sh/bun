@@ -2058,6 +2058,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         };
         async function drain(target) {
           for (let i = 0; i < 30 && live() > target; i++) {
+            Bun.gc(false);
+            await new Promise(r => setImmediate(r));
             Bun.gc(true);
             fullGC();
             await new Promise(r => setImmediate(r));
@@ -2121,6 +2123,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         };
         async function drain(target) {
           for (let i = 0; i < 30 && live() > target; i++) {
+            Bun.gc(false);
+            await new Promise(r => setImmediate(r));
             Bun.gc(true); fullGC();
             await new Promise(r => setImmediate(r));
             await Bun.sleep(10);

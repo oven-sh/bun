@@ -1465,8 +1465,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // same crate, separate file, alongside `on_reload`/`reload_static_routes`.
 
     pub fn on_static_request_complete(&mut self) {
-        self.pending_requests -= 1;
-        self.deinit_if_we_can();
+        self.on_request_complete();
     }
 
     #[inline]

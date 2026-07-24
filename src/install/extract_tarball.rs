@@ -258,6 +258,11 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
+        // Delete the temp dir if extraction fails before it's renamed into the
+        // cache; defused on success.
+        let tmpdir_cleanup = scopeguard::guard((), |()| {
+            let _ = Dir::borrow(&self.temp_dir).delete_tree(tmpname.as_bytes());
+        });
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -468,7 +473,11 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        let result = self.move_to_cache_directory(log, tmpname, name, basename, resolved);
+        if result.is_ok() {
+            scopeguard::ScopeGuard::into_inner(tmpdir_cleanup);
+        }
+        result
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
@@ -544,6 +553,27 @@ impl ExtractTarball {
             }
             let cache_dir = Dir::borrow(&self.cache_dir);
 
+            // An existing npm cache entry without package.json is invalid (the
+            // same check `package_missing_from_cache` uses), so no concurrent
+            // install reads from it. Delete it so the fresh copy below replaces
+            // it instead of being kept as an equivalent existing destination.
+            if self.resolution.tag == ResolutionTag::Npm {
+                let mut folder_name_z_buf = PathBuffer::uninit();
+                folder_name_z_buf[..folder_name.len()].copy_from_slice(folder_name);
+                folder_name_z_buf[folder_name.len()] = 0;
+                let folder_name_z = ZStr::from_buf(&folder_name_z_buf, folder_name.len());
+                if sys::directory_exists_at(cache_dir.fd(), folder_name_z).unwrap_or(false) {
+                    let mut json_buf = PathBuffer::uninit();
+                    let json_z = path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut json_buf.0,
+                        &[folder_name, b"package.json"],
+                    );
+                    if !sys::exists_at(cache_dir.fd(), json_z) {
+                        let _ = cache_dir.delete_tree(folder_name);
+                    }
+                }
+            }
+
             // e.g. @next
             // if it's a namespace package, we need to make sure the @name folder exists
             let create_subdir = basename.len() != name.len() && !self.resolution.tag.is_git();
@@ -608,39 +638,22 @@ impl ExtractTarball {
                                     | sys::Errno::PERM
                                     | sys::Errno::BUSY
                                     | sys::Errno::EXIST => {
-                                        // before we attempt to delete the destination, let's close the source dir.
                                         let _ = sys::close(dir_to_move);
 
-                                        // We tried to move the folder over
-                                        // but it didn't work!
-                                        // so instead of just simply deleting the folder
-                                        // we rename it back into the temp dir
-                                        // and then delete that temp dir
-                                        // The goal is to make it more difficult for an application to reach this folder
-                                        let mut tempdest_buf = PathBuffer::uninit();
-                                        tempdest_buf[0..tmpname.len()]
-                                            .copy_from_slice(tmpname.as_bytes());
-                                        tempdest_buf[tmpname.len()..][0..4]
-                                            .copy_from_slice(&[b't', b'm', b'p', 0]);
-                                        let tempdest =
-                                            ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
-                                        match sys::renameat(
+                                        // A concurrent install sharing the cache published
+                                        // this entry first. Keep it (it may already have
+                                        // readers) and drop our equivalent copy instead of
+                                        // renaming it out from under them.
+                                        if sys::directory_exists_at_w(
                                             Fd::from_std_dir(cache_dir),
-                                            folder_name_z,
-                                            Fd::from_std_dir(tmpdir),
-                                            tempdest,
-                                        ) {
-                                            bun_sys::Result::Err(_) => {}
-                                            bun_sys::Result::Ok(_) => {
-                                                let _ = tmpdir.delete_tree(tempdest.as_bytes());
-                                            }
+                                            path_to_use,
+                                        )
+                                        .unwrap_or(false)
+                                        {
+                                            let _ = tmpdir.delete_tree(tmpname.as_bytes());
+                                            break;
                                         }
+
                                         retries += 1;
                                         // 10ms, 20ms, 40ms, 80ms — long enough
                                         // for a concurrent close to land,
@@ -682,9 +695,9 @@ impl ExtractTarball {
                 //
                 // By:
                 // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2a. If the rename fails, swap the cache directory with the temporary directory version
-                // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
-                // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
+                // 2. If the rename fails because the destination exists, a concurrent install
+                //    published an equivalent copy first: keep it and delete the temporary
+                //    directory version (`keep_existing_destination`).
                 //
 
                 if create_subdir {
@@ -700,6 +713,7 @@ impl ExtractTarball {
                     folder_name,
                     sys::RenameatConcurrentlyOptions {
                         move_fallback: true,
+                        keep_existing_destination: true,
                     },
                 ) {
                     log.add_error_fmt(

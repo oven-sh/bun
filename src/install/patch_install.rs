@@ -452,6 +452,12 @@ impl PatchTask {
 
         let system_tmpdir = self.tempdir;
 
+        // Delete the temp dir on failure; after a successful rename into the
+        // cache this is a no-op.
+        scopeguard::defer! {
+            let _ = sys::Dir::borrow(&system_tmpdir).delete_tree(tempdir_name.as_bytes());
+        }
+
         let pkg_name = patch.pkgname;
 
         let dummy_node_modules = crate::package_installer::NodeModulesFolder {
@@ -606,7 +612,7 @@ impl PatchTask {
             cache_dir_subpath_z,
             sys::RenameOptions {
                 move_fallback: true,
-                ..Default::default()
+                keep_existing_destination: true,
             },
         ) {
             log.add_error_fmt_opts(

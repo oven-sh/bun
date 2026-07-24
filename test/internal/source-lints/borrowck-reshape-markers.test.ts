@@ -16,6 +16,7 @@
 
 import { file } from "bun";
 import { expect, test } from "bun:test";
+import { realpathSync } from "node:fs";
 import path from "node:path";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
 
@@ -28,6 +29,9 @@ let count = 0;
 const sample: string[] = [];
 for (const abs of rustSources) {
   const rel = path.relative(root, abs).replaceAll(path.sep, "/");
+  // `src/cli` is a symlink into `src/runtime/cli`; count each file once
+  // under its canonical path.
+  if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== rel) continue;
   const content = await file(abs).text();
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i++) {

@@ -923,12 +923,12 @@ var require_wasi = __commonJS({
           if (!stats.path) {
             throw new types_1.WASIError(constants_1.WASI_EINVAL);
           }
-          // WASI paths are always interpreted relative to the directory fd.
-          // Re-root absolute guest paths under the preopen instead of letting
-          // them name an arbitrary host path.
-          let rel = String(guestPath);
-          while (rel.length !== 0 && (rel.charCodeAt(0) === 47 /* "/" */ || rel.charCodeAt(0) === 92) /* "\\" */) {
-            rel = rel.slice(1);
+          // WASI paths are always interpreted relative to the directory fd; an
+          // absolute guest path names something outside the capability and is
+          // rejected outright (matching Node.js / uvwasi).
+          const rel = String(guestPath);
+          if (rel.length !== 0 && (rel.charCodeAt(0) === 47 /* "/" */ || rel.charCodeAt(0) === 92) /* "\\" */) {
+            throw new types_1.WASIError(constants_1.WASI_ENOTCAPABLE);
           }
           const base = path.resolve(stats.path);
           const resolved = path.resolve(base, rel);
@@ -1558,14 +1558,7 @@ var require_wasi = __commonJS({
                 }
                 this.refreshMemory();
                 const p = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
-                if (p == "dev/tty") {
-                  this.view.setUint32(fdPtr, constants_1.WASI_STDIN_FILENO, true);
-                  return constants_1.WASI_ESUCCESS;
-                }
                 logOpen("path_open", p);
-                if (p.startsWith("proc/")) {
-                  throw new types_1.WASIError(constants_1.WASI_EBADF);
-                }
                 const fullUnresolved = RESOLVE_PATH(stats, p);
                 let full;
                 try {

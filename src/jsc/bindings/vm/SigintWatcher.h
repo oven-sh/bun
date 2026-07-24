@@ -30,6 +30,8 @@ public:
     void deref();
 
     static SigintWatcher& get();
+    /** True while install() owns the SIGINT disposition. Does not construct the singleton. */
+    static bool isActive();
 
     class GlobalObjectHolder {
     public:

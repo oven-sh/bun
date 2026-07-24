@@ -12,6 +12,7 @@
 
 #include "NodeVMScriptFetcher.h"
 #include "../vm/SigintWatcher.h"
+#include "BunProcess.h"
 
 #include <bit>
 
@@ -328,6 +329,64 @@ void setupWatchdog(VM& vm, double timeout, double* oldTimeout, double* newTimeou
     }
 }
 
+// Node's sigintHandlersWrap (lib/vm.js): a breakOnSigint run detaches the
+// caller's SIGINT listeners beforehand and re-attaches them in `finally`, so
+// they do not fire on the interrupting signal and cannot be removed by the
+// script. Bun's process keeps the once flag in C++ (rawListeners() cannot
+// surface it), so snapshot { callback, isOnce } directly from the listener map
+// instead of round-tripping through JS. Neither side emits 'removeListener'
+// nor 'newListener' (node's wrapper does): the destructor runs while the
+// script's exception or termination is still pending, so re-entering user JS
+// there is not safe, and the native JSEventEmitter has no removeListener emit
+// on any path anyway.
+class SigintHandlersScope {
+    WTF_MAKE_NONCOPYABLE(SigintHandlersScope);
+
+public:
+    explicit SigintHandlersScope(Zig::GlobalObject* zigGlobalObject)
+    {
+        if (!zigGlobalObject || !zigGlobalObject->hasProcessObject())
+            return;
+        auto& vm = zigGlobalObject->vm();
+        m_sigint = JSC::Identifier::fromString(vm, "SIGINT"_s);
+        auto& emitter = zigGlobalObject->processObject()->wrapped();
+        auto* listeners = emitter.eventListenerMap().find(m_sigint);
+        if (!listeners)
+            return;
+        for (auto& registered : *listeners) {
+            if (registered->wasRemoved()) [[unlikely]]
+                continue;
+            // The listener map is what marks the JSEventListener's weak
+            // m_jsFunction; root each callback ourselves while it is detached.
+            m_roots.append(registered->callback().jsFunction());
+            m_saved.append({ registered->callback(), registered->isOnce() });
+        }
+        if (m_saved.isEmpty())
+            return;
+        m_emitter = &emitter;
+        // Remove from the map directly so onDidChangeListeners does not fire:
+        // the scope is constructed before SigintWatcher::install(), so the
+        // removal path would otherwise swap SIGINT to SIG_DFL for the gap.
+        // Mid-run process.on("SIGINT") calls are handled separately by the
+        // SigintWatcher::isActive() guard in onDidChangeListeners.
+        m_emitter->eventListenerMap().removeAll(m_sigint);
+    }
+
+    ~SigintHandlersScope()
+    {
+        if (!m_emitter)
+            return;
+        for (auto& entry : m_saved)
+            m_emitter->addListener(m_sigint, WTF::move(entry.first), entry.second, false);
+    }
+
+private:
+    WebCore::EventEmitter* m_emitter { nullptr };
+    JSC::Identifier m_sigint;
+    JSC::MarkedArgumentBuffer m_roots;
+    Vector<std::pair<Ref<WebCore::EventListener>, bool>, 2> m_saved;
+};
+
 static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     VM& vm = JSC::getVM(globalObject);
@@ -371,6 +430,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     };
 
     if (options.breakOnSigint) {
+        SigintHandlersScope sigintScope(defaultGlobalObject(globalObject));
         auto holder = SigintWatcher::hold(globalObject, script);
         run();
         drainAfterEvaluate();
@@ -437,6 +497,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     script->setSigintReceived(false);
 
     if (options.breakOnSigint) {
+        SigintHandlersScope sigintScope(defaultGlobalObject(globalObject));
         auto holder = SigintWatcher::hold(globalObject, script);
         vm.ensureTerminationException();
         run();

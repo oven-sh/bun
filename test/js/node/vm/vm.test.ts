@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1234,5 +1234,186 @@ describe("node:vm SourceTextModule cyclic graph linking", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("ab=B ba=A");
     expect(exitCode).toBe(0);
+  });
+});
+
+// Node's sigintHandlersWrap (lib/vm.js): a breakOnSigint run detaches the
+// caller's SIGINT listeners beforehand and re-attaches them afterwards, so the
+// script cannot observe or remove them and they do not fire on the interrupting
+// signal. The delivered-signal case is covered by
+// test/js/node/test/parallel/test-vm-sigint-existing-handler.js.
+describe.concurrent("breakOnSigint saves and restores process SIGINT listeners", () => {
+  async function run(code: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  const variants: [string, string][] = [
+    ["vm.runInThisContext", `vm.runInThisContext(code, { breakOnSigint: true })`],
+    ["Script#runInThisContext", `new vm.Script(code).runInThisContext({ breakOnSigint: true })`],
+    ["vm.runInContext", `vm.runInContext(code, vm.createContext({ process }), { breakOnSigint: true })`],
+    ["Script#runInContext", `new vm.Script(code).runInContext(vm.createContext({ process }), { breakOnSigint: true })`],
+    ["vm.runInNewContext", `vm.runInNewContext(code, { process }, { breakOnSigint: true })`],
+    ["Script#runInNewContext", `new vm.Script(code).runInNewContext({ process }, { breakOnSigint: true })`],
+  ];
+
+  test.each(variants)("%s: listeners are detached during the run and re-attached after", async (_, call) => {
+    const result = await run(`
+      const vm = require("vm");
+      const before = () => {};
+      process.on("SIGINT", before);
+      const code = 'process.removeAllListeners("SIGINT"); process.listenerCount("SIGINT");';
+      const during = ${call};
+      const after = process.listeners("SIGINT");
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify({ during, restored: after.length === 1 && after[0] === before }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ during: 0, restored: true }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a once() listener keeps its once-ness across the run", async () => {
+    // The anonymous listener's only root while detached is the scope's
+    // MarkedArgumentBuffer; force GC during the run so a missing root would
+    // clear the JSEventListener's weak m_jsFunction and the re-added listener
+    // would never fire.
+    const result = await run(`
+      let called = 0;
+      process.once("SIGINT", () => called++);
+      require("vm").runInThisContext("for (let i = 0; i < 50; i++) Bun.gc(true);", { breakOnSigint: true });
+      process.emit("SIGINT");
+      process.emit("SIGINT");
+      console.log(JSON.stringify({ called, remaining: process.listenerCount("SIGINT") }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ called: 1, remaining: 0 }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("listeners added inside the run precede the restored ones", async () => {
+    const result = await run(`
+      process.on("SIGINT", function before() {});
+      require("vm").runInThisContext('process.on("SIGINT", function mid() {})', { breakOnSigint: true });
+      const names = process.listeners("SIGINT").map(l => l.name);
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify(names));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify(["mid", "before"]));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("listeners are restored when the script throws", async () => {
+    const result = await run(`
+      const h = () => {};
+      process.on("SIGINT", h);
+      try { require("vm").runInThisContext('throw new Error("boom")', { breakOnSigint: true }); } catch {}
+      const ok = process.listeners("SIGINT").length === 1 && process.listeners("SIGINT")[0] === h;
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify({ restored: ok }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ restored: true }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("no detaching without breakOnSigint", async () => {
+    const result = await run(`
+      const h = () => {};
+      process.on("SIGINT", h);
+      const during = require("vm").runInThisContext('process.listenerCount("SIGINT")');
+      process.removeAllListeners("SIGINT");
+      console.log(JSON.stringify({ during }));
+    `);
+    expect(result.stderr).toBe("");
+    expect(result.stdout.trim()).toBe(JSON.stringify({ during: 1 }));
+    expect(result.exitCode).toBe(0);
+  });
+
+  // A mid-run process.on("SIGINT") must not reinstall the process-level SIGINT
+  // sigaction over SigintWatcher's: the script's own for(;;) must still be
+  // interruptible. onDidChangeListeners skips the sigaction while
+  // SigintWatcher::isActive(), so every add/remove permutation is covered.
+  const midRunVariants: [string, { before: string; inside: string }][] = [
+    [
+      "pre-run listener + mid-run add",
+      { before: `process.on("SIGINT", () => {});`, inside: `process.on("SIGINT", () => {});` },
+    ],
+    [
+      "pre-run listener + mid-run add, remove, add",
+      {
+        before: `process.on("SIGINT", () => {});`,
+        inside: `const g = () => {}; process.on("SIGINT", g); process.removeListener("SIGINT", g); process.on("SIGINT", () => {});`,
+      },
+    ],
+    ["no pre-run listener + mid-run add", { before: ``, inside: `process.on("SIGINT", () => {});` }],
+  ];
+  test.skipIf(isWindows).each(midRunVariants)(
+    "a mid-run process.on('SIGINT') does not stop the run being interruptible (%s)",
+    async (_, { before, inside }) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            ${before}
+            try {
+              require("vm").runInThisContext(
+                ${JSON.stringify(inside + ` process.send("ready"); for (;;);`)},
+                { breakOnSigint: true },
+              );
+            } catch (e) {
+              process.stdout.write(e.code + "\\n");
+              process.exit(0);
+            }
+            process.stdout.write("survived\\n");
+            process.exit(7);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        ipc() {
+          proc.kill("SIGINT");
+          // Hang guard: if the watcher's handler has been overwritten, SIGINT
+          // is queued on the event loop and the child spins forever. Bound the
+          // wait so the assertion below reports a clear failure instead of a
+          // test-level timeout.
+          guard = setTimeout(() => proc.kill("SIGKILL"), 5000);
+        },
+      });
+      let guard: ReturnType<typeof setTimeout> | undefined;
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      clearTimeout(guard);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+        stdout: "ERR_SCRIPT_EXECUTION_INTERRUPTED\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    },
+    10000,
+  );
+
+  // No way to send CTRL_C_EVENT to a child from JS on Windows.
+  test.skipIf(isWindows)("a delivered SIGINT after the run reaches the restored listener", async () => {
+    const result = await run(`
+      process.on("SIGINT", () => { process.stdout.write("listener\\n"); process.exit(0); });
+      require("vm").runInThisContext('process.removeAllListeners("SIGINT")', { breakOnSigint: true });
+      process.kill(process.pid, "SIGINT");
+      setTimeout(() => { process.stdout.write("survived\\n"); process.exit(7); }, 1500);
+    `);
+    expect({ stdout: result.stdout, exitCode: result.exitCode, signalCode: result.signalCode }).toEqual({
+      stdout: "listener\n",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });

@@ -597,7 +597,6 @@ public:
     void clear() { m_buffered.clear(); }
 
     bool connected = false;
-    bool everConnected = false;
     // Set while a JS Session no longer wants messages but the frontend is
     // kept attached because a remote debugger shares the backend agents.
     bool discarding = false;
@@ -1257,7 +1256,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_dispatchInProcessInspectorMessage, (JSGlobal
         channel.onMessages = JSC::Weak<JSC::JSObject>(callback);
     if (!channel.connected) {
         channel.connected = true;
-        channel.everConnected = true;
         channel.scriptExecutionContextIdentifier = context->identifier();
         ensureBunInspectorController(globalObject);
         globalObject->setInspectable(true);

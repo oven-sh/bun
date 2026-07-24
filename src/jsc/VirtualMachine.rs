@@ -1417,8 +1417,17 @@ impl VirtualMachine {
     /// Web `reportError()` (and the debug/bootstrap logging that shares it):
     /// print like an uncaught exception — listeners and exit code included —
     /// but keep the process running.
-    pub fn report_error_keep_alive(&mut self, global_object: &JSGlobalObject, err: JSValue) -> bool {
-        self.uncaught_exception_impl(global_object, err, UncaughtExceptionOrigin::Exception, false)
+    pub fn report_error_keep_alive(
+        &mut self,
+        global_object: &JSGlobalObject,
+        err: JSValue,
+    ) -> bool {
+        self.uncaught_exception_impl(
+            global_object,
+            err,
+            UncaughtExceptionOrigin::Exception,
+            false,
+        )
     }
 
     fn uncaught_exception_impl(

@@ -1,6 +1,4 @@
 #![feature(allocator_api)]
-// `#[thread_local]` for the `DebugOnlyDisabler` debug-assert slot.
-#![feature(thread_local)]
 //! Diagnostics (`Location`/`Data`/`Msg`/`Log`) own their byte-slice fields
 //! (`Box<[u8]>`), so a `Msg` is self-contained: it may be moved across threads
 //! or outlive the `Source.contents` / parse arena it was built from without a

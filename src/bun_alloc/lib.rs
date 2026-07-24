@@ -4,8 +4,6 @@
 #![allow(clippy::disallowed_types)]
 #![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
-// `#[thread_local]` is used by `stack_fallback` for its per-thread slab.
-#![feature(thread_local)]
 
 use core::fmt::Write as _;
 use core::mem::{MaybeUninit, size_of};

@@ -63,11 +63,11 @@ impl PartialEq<crate::Error> for ScanError {
 #[repr(transparent)]
 struct ScannerDirIter<'a>(*mut Scanner<'a>);
 impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next(&self, entry: &mut fs::Entry, fd: Fd) {
+    fn next(&self, entry: &mut fs::Entry, _fd: Fd) {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
         // while the resolver walks entries.
-        unsafe { (*self.0).next(entry, fd) }
+        unsafe { (*self.0).next(entry) }
     }
 }
 
@@ -180,7 +180,7 @@ impl<'a> Scanner<'a> {
                 for entry_ptr in entry_ptrs {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr }, Fd::INVALID);
+                    self.next(unsafe { &mut *entry_ptr });
                 }
             }
         }
@@ -307,7 +307,7 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub fn next(&mut self, entry: &mut fs::Entry, _fd: Fd) {
+    pub fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
         self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.

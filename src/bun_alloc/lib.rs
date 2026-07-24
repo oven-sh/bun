@@ -506,11 +506,11 @@ pub mod default_alloc {
 mod win_crt {
     use core::ffi::c_void;
     unsafe extern "C" {
-        pub fn _msize(ptr: *mut c_void) -> usize;
-        pub fn _aligned_malloc(size: usize, alignment: usize) -> *mut c_void;
-        pub fn _aligned_realloc(ptr: *mut c_void, size: usize, alignment: usize) -> *mut c_void;
-        pub fn _aligned_free(ptr: *mut c_void);
-        pub fn _aligned_msize(ptr: *mut c_void, alignment: usize, offset: usize) -> usize;
+        pub(crate) fn _msize(ptr: *mut c_void) -> usize;
+        pub(crate) fn _aligned_malloc(size: usize, alignment: usize) -> *mut c_void;
+        pub(crate) fn _aligned_realloc(ptr: *mut c_void, size: usize, alignment: usize) -> *mut c_void;
+        pub(crate) fn _aligned_free(ptr: *mut c_void);
+        pub(crate) fn _aligned_msize(ptr: *mut c_void, alignment: usize, offset: usize) -> usize;
     }
 }
 

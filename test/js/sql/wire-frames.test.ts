@@ -11,6 +11,7 @@ import {
   mysqlLenencInt,
   mysqlOkPacket,
   mysqlReadPackets,
+  mysqlTextResultSet,
   pgAuthenticationOk,
   pgCommandComplete,
   pgCopyData,
@@ -130,4 +131,65 @@ test("mysql: mysqlHandshakeV10 + mysqlOkPacket are accepted by Bun's parser", as
     await db.close({ timeout: 0 });
     server.close();
   }
+});
+
+// Every server->client frame trickles out one byte per event-loop turn, so the
+// client's `on_data()` sees a partial packet, stashes the tail in
+// `read_buffer`, and resumes through the buffered reader on the next chunk.
+// Reaching the final row means `mark_message_start` / `set_offset_from_start` /
+// `skip` kept the buffered reader's cursor consistent across every packet
+// boundary (handshake, auth OK, column count, column defs, rows, terminator).
+test("mysql: byte-at-a-time framing drives the buffered-reader resume path through a full result set", async () => {
+  const COM_QUERY = 0x03;
+  const MYSQL_TYPE_VAR_STRING = 0xfd;
+  // One byte per event-loop turn so the kernel cannot coalesce consecutive
+  // writes into a single TCP segment before the client's on_data fires.
+  const trickle = async (socket: import("node:net").Socket, frame: Buffer) => {
+    for (let i = 0; i < frame.length; i++) {
+      socket.write(frame.subarray(i, i + 1));
+      await new Promise<void>(r => setImmediate(r));
+    }
+  };
+  const { port, server } = await listeningServer(socket => {
+    socket.setNoDelay(true);
+    let buffered = Buffer.alloc(0);
+    let authed = false;
+    void trickle(socket, mysqlHandshakeV10());
+    socket.on("data", chunk => {
+      buffered = mysqlReadPackets(Buffer.concat([buffered, chunk]), (seq, payload) => {
+        if (!authed) {
+          authed = true;
+          void trickle(socket, mysqlOkPacket(seq + 1));
+          return;
+        }
+        if (payload[0] === COM_QUERY) {
+          void trickle(
+            socket,
+            mysqlTextResultSet(
+              1,
+              [
+                { name: "a", type: MYSQL_TYPE_VAR_STRING },
+                { name: "b", type: MYSQL_TYPE_VAR_STRING },
+              ],
+              [
+                ["one", "1"],
+                ["two", "2"],
+              ],
+            ),
+          );
+        } else {
+          socket.end();
+        }
+      });
+    });
+    socket.on("error", () => {});
+  });
+
+  await using db = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+  const rows = await db`SELECT a, b`.simple();
+  expect(rows).toEqual([
+    { a: "one", b: "1" },
+    { a: "two", b: "2" },
+  ]);
+  server.close();
 });

@@ -419,7 +419,12 @@ export const webkit: Dependency = {
       // postExtract.
       if (!cfg.darwin) includes.push("include/wtf/unicode");
 
-      return { libs, includes };
+      // Windows -asan: the runtime DLL the tarball ships in bin/ (see
+      // prebuiltAsanRuntimeDll). Declared so the fetch edge produces it and
+      // the copy-beside-exe edge has a real input.
+      const runtimeFiles = cfg.windows && cfg.asan ? ["bin/clang_rt.asan_dynamic-x86_64.dll"] : [];
+
+      return { libs, includes, runtimeFiles };
     }
 
     // Local: paths relative to BUILD dir (headers generated during build).

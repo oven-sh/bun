@@ -6,6 +6,10 @@ namespace Bun {
 NapiExternal::~NapiExternal()
 {
     auto* env = m_env.get();
+    if (m_boundCleanup) {
+        m_boundCleanup->deactivate(*env);
+        m_boundCleanup = nullptr;
+    }
     m_finalizer.call(env, m_value, env && !env->mustDeferFinalizers());
 }
 

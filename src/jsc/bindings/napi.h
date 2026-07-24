@@ -241,18 +241,35 @@ public:
         // Reverse insertion order so children are torn down before parents (Node.js LIFO).
         // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
         // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.
-        for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
-            Bun::NapiHandleScope handle_scope(m_globalObject);
-            it->call(this);
-            // Each finalizer starts from a clean exception state: Node.js
-            // never propagates one finalizer's throw into the next (there
-            // is no JS frame to catch in between). Leaving a pending
-            // exception also breaks later finalizers in subtle ways --
-            // napi_is_exception_pending skips the VM check during cleanup
-            // for safety, so user code thinks there is no exception, but
-            // the next napi call with a throw scope sees it. See #30286.
-            clearExceptionsBetweenFinalizers();
-        }
+        //
+        // A finalizer may register new finalizers, appended past where this pass already is.
+        // Repeat until a pass runs nothing new: clear() after one pass would free entries a
+        // still-live NapiRef or NapiExternal points at through boundCleanup.
+        bool ranAny;
+        do {
+            ranAny = false;
+            for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
+                if (!it->active) {
+                    continue;
+                }
+                // Deactivate before calling so an entry can never run on a later pass;
+                // the callback's own deactivate() is then an idempotent no-op.
+                it->active = false;
+                ranAny = true;
+                Bun::NapiHandleScope handle_scope(m_globalObject);
+                if (it->callback) {
+                    it->callback(this, it->data, it->hint);
+                }
+                // Each finalizer starts from a clean exception state: Node.js
+                // never propagates one finalizer's throw into the next (there
+                // is no JS frame to catch in between). Leaving a pending
+                // exception also breaks later finalizers in subtle ways --
+                // napi_is_exception_pending skips the VM check during cleanup
+                // for safety, so user code thinks there is no exception, but
+                // the next napi call with a throw scope sees it. See #30286.
+                clearExceptionsBetweenFinalizers();
+            }
+        } while (ranAny);
         m_finalizers.clear();
         m_isFinishingFinalizers = false;
 
@@ -309,7 +326,12 @@ public:
 
     const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
     {
-        return *m_finalizers.add({ callback, hint, data }).iterator;
+        // add() dedups on (callback, hint, data), so during cleanup() a new registration
+        // whose freed-and-reused address matches a tombstoned entry gets that entry back.
+        // Reactivate it so the drain runs it before clear() frees it under its new owner.
+        const auto& bound = *m_finalizers.add({ callback, hint, data }).iterator;
+        bound.active = true;
+        return bound;
     }
 
     bool hasFinalizers() const
@@ -542,13 +564,6 @@ public:
             , hint(hint)
             , data(data)
         {
-        }
-
-        void call(napi_env env) const
-        {
-            if (callback && active) {
-                callback(env, data, hint);
-            }
         }
 
         void deactivate(NapiEnv& env) const

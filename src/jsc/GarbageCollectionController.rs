@@ -26,6 +26,12 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: EventLoopTimer,
+    /// Written by every `perform_gc()` caller (not just the repeating timer), so
+    /// the fast/slow comparison in `on_gc_repeating_timer` sees the heap size at
+    /// the last `perform_gc()` call rather than strictly the last fire. External
+    /// callers are one-shot (serve/listen, entry-point load, hot reload); worst
+    /// case is one extra 30 s slow-mode interval before the next fire picks up
+    /// the drift.
     pub gc_last_heap_size: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_interval: i32,

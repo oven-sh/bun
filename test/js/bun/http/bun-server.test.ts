@@ -898,6 +898,8 @@ test("server wrapper survives GC while a websocket is connected after stop()", a
 
         async function drain(target) {
           for (let i = 0; i < 30 && serverCount() > target; i++) {
+            Bun.gc(false);
+            await new Promise(r => setImmediate(r));
             Bun.gc(true);
             fullGC();
             await new Promise(r => setImmediate(r));
@@ -2176,6 +2178,8 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
 
         async function gcUntilCountAtMost(max) {
           for (let i = 0; i < 30; i++) {
+            Bun.gc(false);
+            await new Promise(r => setImmediate(r));
             Bun.gc(true);
             fullGC();
             if (liveServer() <= max) return liveServer();

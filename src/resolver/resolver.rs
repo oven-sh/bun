@@ -990,6 +990,7 @@ impl<'a> Resolver<'a> {
         let Some(tsconfig) = dir_info.enclosing_tsconfig_json else {
             return MatchStatus::NotFound;
         };
+        let tsconfig = tsconfig.for_source_dir(source_dir);
         if tsconfig.paths.count() == 0 {
             return MatchStatus::NotFound;
         }
@@ -1642,6 +1643,7 @@ impl<'a> Resolver<'a> {
             }
 
             if let Some(tsconfig) = dir.enclosing_tsconfig_json {
+                let tsconfig = tsconfig.for_source_dir(dir.abs_path);
                 result.jsx = tsconfig.merge_jsx(core::mem::take(&mut result.jsx));
                 result.flags.set_emit_decorator_metadata(
                     result.flags.emit_decorator_metadata() || tsconfig.emit_decorator_metadata,
@@ -1832,7 +1834,17 @@ impl<'a> Resolver<'a> {
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
             if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
-                if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
+                if let Some(enclosing) = dir_info.enclosing_tsconfig_json {
+                    let tsconfig = enclosing.for_source_dir(source_dir);
+                    if !core::ptr::eq(tsconfig, enclosing) {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Using referenced tsconfig \"{}\" for directory \"{}\"",
+                                bstr::BStr::new(&tsconfig.abs_path),
+                                bstr::BStr::new(source_dir)
+                            ));
+                        }
+                    }
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
                         if self
@@ -2517,7 +2529,17 @@ impl<'a> Resolver<'a> {
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
-        if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
+        if let Some(enclosing) = dir_info.enclosing_tsconfig_json {
+            let tsconfig = enclosing.for_source_dir(dir_info.abs_path);
+            if !core::ptr::eq(tsconfig, enclosing) {
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "Using referenced tsconfig \"{}\" for directory \"{}\"",
+                        bstr::BStr::new(&tsconfig.abs_path),
+                        bstr::BStr::new(dir_info.abs_path)
+                    ));
+                }
+            }
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if self
@@ -3855,10 +3877,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// `quiet` parses into a scratch log, keeping syntax errors and content
+    /// warnings from a referenced project's config out of the resolver Log
+    /// (where they would surface in unrelated resolution errors).
     pub fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
+        quiet: bool,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
@@ -3901,14 +3927,17 @@ impl<'a> Resolver<'a> {
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
-        // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
-        // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let mut scratch_log = quiet.then(bun_ast::Log::init);
+        let log: &mut bun_ast::Log = match scratch_log.as_mut() {
+            Some(scratch) => scratch,
+            // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from
+            // `self.caches`, narrow `&mut` for this call only.
+            None => unsafe { &mut *self.log() },
+        };
+        let mut result = match TSConfigJSON::parse(log, &source, &mut self.caches.json)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         if result.has_base_url() {
             // this might leak
@@ -3934,10 +3963,254 @@ impl<'a> Resolver<'a> {
             result.base_url_for_paths = Box::from(abs);
         }
 
+        // Make "references" paths and the "files"/"include" coverage dirs
+        // absolute (relative to the declaring config file) so project
+        // selection can compare them against source directories directly.
+        for reference in result.references.iter_mut() {
+            if !bun_paths::is_absolute(reference) {
+                let abs = self
+                    .fs_ref()
+                    .abs_buf(&[file_dir, &reference[..]], bufs!(tsconfig_base_url));
+                *reference = Box::from(abs);
+            }
+        }
+        for dirs in [result.files_dirs.as_mut(), result.include_dirs.as_mut()]
+            .into_iter()
+            .flatten()
+        {
+            for dir in dirs.iter_mut() {
+                if !bun_paths::is_absolute(dir) {
+                    let abs = self
+                        .fs_ref()
+                        .abs_buf(&[file_dir, &dir[..]], bufs!(tsconfig_base_url));
+                    *dir = Box::from(abs);
+                }
+            }
+        }
+
         // NOTE: return the `Box` so the caller (`dir_info_uncached`) takes
         // ownership — intermediate configs in an extends-chain are dropped via
         // `heap::take`, the final one is interned into the DirInfo cache.
         Ok(Some(result))
+    }
+
+    /// Chain-walk diagnostics: the resolver Log for direct config loads,
+    /// only the scoped debug logger when `quiet` (referenced projects, where
+    /// log entries would surface in unrelated resolution errors).
+    fn log_tsconfig_chain_debug(&mut self, quiet: bool, args: core::fmt::Arguments<'_>) {
+        if quiet {
+            debuglog!("{}", args);
+        } else {
+            let _ = self
+                .log_mut()
+                .add_debug_fmt(None, bun_ast::Loc::EMPTY, args);
+        }
+    }
+
+    /// Walks the `extends` chain of an already-parsed tsconfig and merges the
+    /// chain into a single config. Takes ownership of `tsconfig_json` and
+    /// returns the merged config (heap::alloc; the caller interns or frees it).
+    ///
+    /// `quiet` keeps chain-walk failures out of the resolver Log (used for
+    /// referenced projects); see `log_tsconfig_chain_debug`.
+    fn merge_tsconfig_extends_chain(
+        &mut self,
+        tsconfig_json: *mut TSConfigJSON,
+        quiet: bool,
+    ) -> crate::CrateResult<*mut TSConfigJSON> {
+        let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
+        parent_configs.append(tsconfig_json)?;
+        // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
+        // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
+        // this extends-chain walk and freed via heap::take below. Hold as
+        // `BackRef` (pointee outlives holder) so the loop body reads via safe
+        // `Deref` instead of three open-coded raw-ptr derefs.
+        let mut current =
+            bun_ptr::BackRef::from(core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"));
+        while !current.extends.is_empty() {
+            let ts_dir_name = Dirname::dirname(&current.abs_path);
+            let abs_path = ResolvePath::join_abs_string_buf(
+                ts_dir_name,
+                bufs!(tsconfig_path_abs),
+                &[ts_dir_name, &current.extends],
+                bun_paths::Platform::AUTO,
+            );
+            let parent_config_maybe: Option<*mut TSConfigJSON> =
+                match self.parse_tsconfig(abs_path, FD::INVALID, quiet) {
+                    Ok(v) => v.map(bun_core::heap::into_raw),
+                    Err(err) => {
+                        self.log_tsconfig_chain_debug(
+                            quiet,
+                            format_args!(
+                                "{} loading tsconfig.json extends {}",
+                                bstr::BStr::new(err.name()),
+                                bun_core::fmt::quote(abs_path)
+                            ),
+                        );
+                        break;
+                    }
+                };
+            if let Some(parent_config) = parent_config_maybe {
+                if parent_configs.append(parent_config).is_err() {
+                    // Oversized (or cyclic) extends chain: stop walking and
+                    // merge what was collected instead of leaking the parsed
+                    // config and failing the whole resolution.
+                    // SAFETY: `parent_config` came from heap::into_raw above
+                    // and was not stored anywhere.
+                    TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config) });
+                    self.log_tsconfig_chain_debug(
+                        quiet,
+                        format_args!(
+                            "tsconfig.json extends chain too long at {}",
+                            bun_core::fmt::quote(abs_path)
+                        ),
+                    );
+                    break;
+                }
+                current = bun_ptr::BackRef::from(
+                    core::ptr::NonNull::new(parent_config).expect("heap alloc"),
+                );
+            } else {
+                break;
+            }
+        }
+
+        let merged_config = parent_configs.pop().unwrap();
+        // starting from the base config (end of the list)
+        // successively apply the inheritable attributes to the next config
+        while let Some(parent_config_ptr) = parent_configs.pop() {
+            // SAFETY: see loop-wide note above.
+            let parent_config = unsafe { &mut *parent_config_ptr };
+            // SAFETY: see loop-wide note above.
+            let mc = unsafe { &mut *merged_config };
+            mc.emit_decorator_metadata =
+                mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
+            if !parent_config.base_url.is_empty() {
+                mc.base_url = core::mem::take(&mut parent_config.base_url);
+            }
+            mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
+            mc.jsx_flags.insert_all(parent_config.jsx_flags);
+
+            if let Some(value) = parent_config.preserve_imports_not_used_as_values {
+                mc.preserve_imports_not_used_as_values = Some(value);
+            }
+
+            // The merged config should read as the config file that was found
+            // on disk, not the base of its extends chain: `abs_path` feeds the
+            // default project coverage in `covers_dir` and debug output.
+            mc.abs_path = core::mem::take(&mut parent_config.abs_path);
+            // "references" is the one top-level key excluded from `extends`
+            // inheritance, so the outermost config always wins (even if empty).
+            mc.references = core::mem::take(&mut parent_config.references);
+            if parent_config.files_dirs.is_some() {
+                mc.files_dirs = core::mem::take(&mut parent_config.files_dirs);
+            }
+            if parent_config.include_dirs.is_some() {
+                mc.include_dirs = core::mem::take(&mut parent_config.include_dirs);
+            }
+
+            // TypeScript replaces paths across extends (child overrides parent
+            // entirely), so when a more-specific config defines paths, replace
+            // rather than merge. base_url_for_paths is set whenever the paths
+            // key is present in the JSON (even if empty), so it discriminates
+            // "not defined" from "defined as {}" — the latter clears inherited
+            // paths per TypeScript semantics.
+            if !parent_config.base_url_for_paths.is_empty() {
+                // The previous merged_config.paths is being replaced;
+                // dropping the map frees the values automatically, so the
+                // PathsMap from the deeper config doesn't leak.
+                mc.paths = core::mem::take(&mut parent_config.paths);
+                mc.base_url_for_paths = core::mem::take(&mut parent_config.base_url_for_paths);
+            } else {
+                // paths were not moved to merged_config, so they're still owned
+                // by parent_config. base_url_for_paths.len == 0 implies the map
+                // is empty (it's only set when the `paths` key is present in the
+                // JSON), so this is a no-op but documents the ownership.
+                // (Drop handles parent_config.paths.)
+            }
+            // Every scalar/reference we need has been copied into merged_config
+            // (strings live in dirname_store or default_allocator and outlive the
+            // struct). The heap-allocated TSConfigJSON itself is no longer needed;
+            // without this, every intermediate config in an extends chain leaks on
+            // each dirInfoUncached() call, which is especially bad under HMR where
+            // bustDirCache triggers a re-parse of the whole chain on every reload.
+            // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
+            TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
+        }
+        Ok(merged_config)
+    }
+
+    /// Loads the projects referenced by a solution-style tsconfig (one with
+    /// "references") so path resolution can pick the referenced config that
+    /// covers a given source directory (see `TSConfigJSON::for_source_dir`).
+    /// Transitive references are followed with a visited set; configs that
+    /// fail to load are debug-logged and skipped.
+    fn load_tsconfig_references(&mut self, root: *mut TSConfigJSON) {
+        // SAFETY: `root` is the uniquely-owned result of
+        // `merge_tsconfig_extends_chain`, not yet interned.
+        let root_ref = unsafe { &*root };
+        // A config without "files"/"include" covers everything under its own
+        // directory, so a referenced project could never be selected.
+        if root_ref.references.is_empty()
+            || (root_ref.files_dirs.is_none() && root_ref.include_dirs.is_none())
+        {
+            return;
+        }
+
+        // Bounds *attempted* loads, not successes, so a config full of broken
+        // references can't trigger unbounded filesystem reads.
+        const MAX_REFERENCES: usize = 64;
+        let mut visited: Vec<Box<[u8]>> = vec![Box::from(&root_ref.abs_path[..])];
+        let mut queue: Vec<Box<[u8]>> = root_ref.references.to_vec();
+        let mut configs: Vec<Box<TSConfigJSON>> = Vec::new();
+        let mut cursor = 0;
+        while cursor < queue.len() && visited.len() <= MAX_REFERENCES {
+            let reference = core::mem::take(&mut queue[cursor]);
+            cursor += 1;
+            // A "references[].path" not naming a .json file points at a
+            // project directory whose config is <path>/tsconfig.json.
+            let config_path: &[u8] = if strings::ends_with(&reference, b".json") {
+                &reference
+            } else {
+                self.fs_ref()
+                    .abs_buf(&[&reference, b"tsconfig.json"], bufs!(tsconfig_path_abs))
+            };
+            if visited.iter().any(|seen| &seen[..] == config_path) {
+                continue;
+            }
+            visited.push(Box::from(config_path));
+
+            // A load failure must not touch the resolver Log: a missing
+            // referenced project is normal, and extra log entries make
+            // unrelated resolution failures surface as AggregateError.
+            let parsed: *mut TSConfigJSON =
+                match self.parse_tsconfig(config_path, FD::INVALID, true) {
+                    Ok(Some(v)) => bun_core::heap::into_raw(v),
+                    Ok(None) => continue,
+                    Err(err) => {
+                        debuglog!(
+                            "{} loading tsconfig.json reference {}",
+                            bstr::BStr::new(err.name()),
+                            bun_core::fmt::quote(&visited[visited.len() - 1])
+                        );
+                        continue;
+                    }
+                };
+            let Ok(merged_ptr) = self.merge_tsconfig_extends_chain(parsed, true) else {
+                continue;
+            };
+            // SAFETY: `merged_ptr` came from heap::alloc in
+            // `merge_tsconfig_extends_chain` and is uniquely owned here; the
+            // Box hands ownership to the root config below.
+            let merged: Box<TSConfigJSON> = unsafe { bun_core::heap::take(merged_ptr) };
+            if visited.len() <= MAX_REFERENCES {
+                queue.extend(merged.references.iter().cloned());
+            }
+            configs.push(merged);
+        }
+
+        // SAFETY: `root` is still uniquely owned here (see above).
+        unsafe { (*root).reference_configs = configs.into_boxed_slice() };
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
@@ -6313,6 +6586,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         FD::ZERO
                     },
+                    false,
                 ) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
@@ -6350,100 +6624,8 @@ impl<'a> Resolver<'a> {
                 // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
-                    let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> =
-                        BoundedArray::default();
-                    parent_configs.append(tsconfig_json)?;
-                    // `current`/`parent_config_ptr`/`merged_config` are heap TSConfigJSON
-                    // allocations from `parse_tsconfig` (heap::alloc); uniquely owned by
-                    // this extends-chain walk and freed via heap::take below. Hold as
-                    // `BackRef` (pointee outlives holder) so the loop body reads via safe
-                    // `Deref` instead of three open-coded raw-ptr derefs.
-                    let mut current = bun_ptr::BackRef::from(
-                        core::ptr::NonNull::new(tsconfig_json).expect("heap alloc"),
-                    );
-                    while !current.extends.is_empty() {
-                        let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
-                        );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
-                        if let Some(parent_config) = parent_config_maybe {
-                            parent_configs.append(parent_config)?;
-                            current = bun_ptr::BackRef::from(
-                                core::ptr::NonNull::new(parent_config).expect("heap alloc"),
-                            );
-                        } else {
-                            break;
-                        }
-                    }
-
-                    let merged_config = parent_configs.pop().unwrap();
-                    // starting from the base config (end of the list)
-                    // successively apply the inheritable attributes to the next config
-                    while let Some(parent_config_ptr) = parent_configs.pop() {
-                        // SAFETY: see loop-wide note above.
-                        let parent_config = unsafe { &mut *parent_config_ptr };
-                        // SAFETY: see loop-wide note above.
-                        let mc = unsafe { &mut *merged_config };
-                        mc.emit_decorator_metadata =
-                            mc.emit_decorator_metadata || parent_config.emit_decorator_metadata;
-                        if !parent_config.base_url.is_empty() {
-                            mc.base_url = core::mem::take(&mut parent_config.base_url);
-                        }
-                        mc.jsx = parent_config.merge_jsx(mc.jsx.clone());
-                        mc.jsx_flags.insert_all(parent_config.jsx_flags);
-
-                        if let Some(value) = parent_config.preserve_imports_not_used_as_values {
-                            mc.preserve_imports_not_used_as_values = Some(value);
-                        }
-
-                        // TypeScript replaces paths across extends (child overrides parent
-                        // entirely), so when a more-specific config defines paths, replace
-                        // rather than merge. base_url_for_paths is set whenever the paths
-                        // key is present in the JSON (even if empty), so it discriminates
-                        // "not defined" from "defined as {}" — the latter clears inherited
-                        // paths per TypeScript semantics.
-                        if !parent_config.base_url_for_paths.is_empty() {
-                            // The previous merged_config.paths is being replaced;
-                            // dropping the map frees the values automatically, so the
-                            // PathsMap from the deeper config doesn't leak.
-                            mc.paths = core::mem::take(&mut parent_config.paths);
-                            mc.base_url_for_paths =
-                                core::mem::take(&mut parent_config.base_url_for_paths);
-                        } else {
-                            // paths were not moved to merged_config, so they're still owned
-                            // by parent_config. base_url_for_paths.len == 0 implies the map
-                            // is empty (it's only set when the `paths` key is present in the
-                            // JSON), so this is a no-op but documents the ownership.
-                            // (Drop handles parent_config.paths.)
-                        }
-                        // Every scalar/reference we need has been copied into merged_config
-                        // (strings live in dirname_store or default_allocator and outlive the
-                        // struct). The heap-allocated TSConfigJSON itself is no longer needed;
-                        // without this, every intermediate config in an extends chain leaks on
-                        // each dirInfoUncached() call, which is especially bad under HMR where
-                        // bustDirCache triggers a re-parse of the whole chain on every reload.
-                        // SAFETY: parent_config_ptr came from TSConfigJSON::new (heap::alloc)
-                        TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config_ptr) });
-                    }
+                    let merged_config = self.merge_tsconfig_extends_chain(tsconfig_json, false)?;
+                    self.load_tsconfig_references(merged_config);
                     // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
                     info.tsconfig_json = Some(
                         core::ptr::NonNull::new(merged_config).expect("heap::alloc is non-null"),

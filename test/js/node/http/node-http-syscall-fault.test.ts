@@ -26,6 +26,9 @@ describe.skipIf(skip)("node:http under injected syscall faults", () => {
     // Runs in a subprocess so the outcome is observable as exitCode/signal.
     const upstream = http.createServer((req, res) => {
       res.writeHead(200, { "content-type": "application/octet-stream" });
+      // 256 KB is a swept lower bound: at smaller bodies the proxy finishes
+      // draining before the client's destroy lands and the queued-drain race
+      // this test targets is not exercised.
       res.write(Buffer.alloc(256 * 1024, "U"));
       res.end();
     });
@@ -259,6 +262,7 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
 
       const stderrPromise = proc.stderr.text();
       const results: Array<{ bytes: number; after: number; got: number }> = [];
+      let loopError: unknown;
       try {
         for (let i = 0; i < 8; i++) {
           const bytes = 1 + Math.floor(rand() * 64);
@@ -274,11 +278,14 @@ describe.skipIf(skip)("node:http seeded backpressure fuzz", () => {
           });
           results.push({ bytes, after, got });
         }
-      } finally {
-        proc.kill("SIGTERM");
-        await proc.exited;
+      } catch (e) {
+        loopError = e;
       }
-      expect({ results, stderr: await stderrPromise }).toEqual({
+      proc.kill("SIGTERM");
+      await proc.exited;
+      const stderr = await stderrPromise;
+      if (loopError) throw new Error(`${loopError}\nserver stderr:\n${stderr}`);
+      expect({ results, stderr }).toEqual({
         results: results.map(({ bytes, after }) => ({ bytes, after, got: bodyLen })),
         stderr: "",
       });

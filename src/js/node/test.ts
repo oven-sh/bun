@@ -429,13 +429,20 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     const signal = opts.signal as AbortSignal | undefined;
     if (signal?.aborted) onInterrupt();
     signal?.addEventListener("abort", onInterrupt, { once: true });
+    let nextFile = 0;
     try {
-      for (let i = 0; i < files.length; i++) {
+      for (; nextFile < files.length; nextFile++) {
         if (state.interrupted) break;
-        await runOneFile(files[i], opts, reporter, counts, state, i + 1);
+        await runOneFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
       }
     } finally {
       signal?.removeEventListener("abort", onInterrupt);
+    }
+    // node reports each file the abort skipped as testAborted rather than
+    // silently dropping it (observed on v26.3.0: complete carries the ordinal
+    // and passed:false, the verdict counts as cancelled, success goes false).
+    for (; nextFile < files.length; nextFile++) {
+      reportAbortedFile(files[nextFile], opts, reporter, counts, state, nextFile + 1);
     }
 
     if (state.interrupted) {
@@ -463,6 +470,52 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     return;
   }
   reporter.endStream();
+}
+
+function reportAbortedFile(
+  file: string,
+  opts: ReturnType<typeof validateRunOptions>,
+  reporter: TestsStream,
+  counts: Record<string, number>,
+  state: RunInterruptState,
+  ordinal: number,
+) {
+  const path = require("node:path");
+  const absolute = path.resolve(opts.cwd as string, file);
+  const fileNode = {
+    nesting: 0,
+    name: file,
+    type: "test",
+    testId: ++runTestIdCounter,
+    parentId: 0,
+    tags: [],
+    line: 1,
+    column: 1,
+    file: absolute,
+  };
+  // node's shape for an abort-skipped file (v26.3.0): 'This operation was
+  // aborted' with failureType testAborted, counted as cancelled.
+  const error = makeTestFailure("This operation was aborted", "testAborted");
+  const details = { __proto__: null, duration_ms: 0, type: "test", error };
+  reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
+  reporter.emitMessage("test:complete", {
+    __proto__: null,
+    ...fileNode,
+    type: undefined,
+    testNumber: ordinal,
+    details: { ...details, passed: false },
+  });
+  reporter.emitMessage("test:fail", {
+    __proto__: null,
+    ...fileNode,
+    type: undefined,
+    testNumber: ++state.verdictNumber,
+    details,
+  });
+  counts.tests++;
+  counts.cancelled++;
+  counts.topLevel++;
 }
 
 async function runOneFile(

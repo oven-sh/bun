@@ -164,6 +164,147 @@ test.if(isWindows && isDebug)("Windows: segfault inside a system DLL captures th
   expect(span).toBeLessThan(2n ** 31n);
 });
 
+// The Windows crash handler is a Vectored Exception Handler, which sees every
+// first-chance exception process-wide before frame-based SEH does. Third-party
+// DLLs injected into the process (AV/EDR agents such as BeyondTrust's
+// PGHook.dll, virtualization guest tools, shell extensions) routinely raise
+// and then handle access violations under SEH as part of normal operation.
+// The VEH must let those through rather than treating them as a fatal crash.
+// `IsBadReadPtr` is the canonical example: it probes its argument inside a
+// `__try`/`__except` in kernel32, so the AV it raises is inside a system DLL
+// and is immediately swallowed by that DLL's own SEH.
+//
+// See https://github.com/oven-sh/bun/issues/10056 (Carbon Black),
+// https://github.com/oven-sh/bun/issues/11898 (Trend Micro).
+describe.if(isWindows)("Windows VEH handler and first-chance faults in external DLLs", () => {
+  test("SEH-guarded probe survives", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const lib = dlopen("kernel32.dll", {
+           IsBadReadPtr: { args: ["usize", "usize"], returns: "i32" },
+         });
+         const rc = lib.symbols.IsBadReadPtr(0xE8, 8);
+         console.log("SURVIVED rc=" + rc);`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Segmentation fault");
+    // rc=1: kernel32's SEH caught the AV and reported the pointer as bad.
+    expect(stdout.trim()).toBe("SURVIVED rc=1");
+    expect(exitCode).toBe(0);
+  });
+
+  // `RtlFillMemory` has no `__try`/`__except` around its store. With the VEH
+  // now returning CONTINUE_SEARCH for out-of-image PCs, the catch point is
+  // JSC's jscJITSEHHandler (registered for JIT frames), which routes to
+  // Bun__crashHandlerFromJSCFrame, or UEF. This exercises that the crash is
+  // still reported and the report carries the fault address.
+  test("unguarded fault still crash-reports", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const lib = dlopen("ntdll.dll", {
+           RtlFillMemory: { args: ["usize", "usize", "i32"], returns: "void" },
+         });
+         lib.symbols.RtlFillMemory(0xE8, 8, 0);
+         console.log("SHOULD NOT REACH");`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xE8");
+    expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
+  });
+
+  // Validate WebKit's registerJITUnwindInfo against the actual unwinder:
+  // RtlLookupFunctionEntry must return a RUNTIME_FUNCTION for a JIT pool PC.
+  // This is the smoke test for the hand-encoded UNWIND_INFO / .xdata bytes.
+  // LLInt PCs are not covered here: LLInt lives in image .text and Windows
+  // only consults static .pdata for in-module PCs; that needs build-time
+  // .seh_* emission in offlineasm (follow-up).
+  test("RtlLookupFunctionEntry resolves JSC JIT pool PCs", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { dlopen, FFIType, ptr } = require("bun:ffi");
+         const { symbols } = dlopen("ntdll.dll", {
+           RtlLookupFunctionEntry: {
+             args: [FFIType.u64, FFIType.pointer, FFIType.pointer],
+             returns: FFIType.pointer,
+           },
+         });
+         const { jscInternals } = require("bun:internal-for-testing");
+         const pool = jscInternals.startOfFixedExecutableMemoryPool();
+         const imageBase = new BigUint64Array(1);
+         const jitEntry = symbols.RtlLookupFunctionEntry(pool + 0x100n, ptr(imageBase), null);
+         console.log(JSON.stringify({
+           pool: pool.toString(16),
+           jitEntry: jitEntry === null ? "null" : "ok",
+         }));`,
+      ],
+      env: noReportEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect(out.jitEntry).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+
+  // End-to-end: warm a JS function into the JIT, then fault from inside it
+  // via FFI. The crash report must fire via jscJITSEHHandler at the JIT
+  // boundary. Clears the UEF backstop first so the assertion isolates the JSC
+  // handler (deleting setJITExceptionHandlerWin would break this test, not
+  // just fall through to UEF). Disables the concurrent JIT so warm-up is
+  // deterministic.
+  test("unguarded fault from inside a JIT-compiled frame still crash-reports via the JSC handler", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--debug-crash-handler-use-trace-string",
+        "-e",
+        `const { dlopen } = require("bun:ffi");
+         const ntdll = dlopen("ntdll.dll", {
+           RtlFillMemory: { args: ["usize", "usize", "i32"], returns: "void" },
+         });
+         const k32 = dlopen("kernel32.dll", {
+           SetUnhandledExceptionFilter: { args: ["usize"], returns: "usize" },
+         });
+         function hot(i) {
+           if (i === 10000) ntdll.symbols.RtlFillMemory(0xE8, 8, 0);
+           return i;
+         }
+         for (let i = 0; i < 10000; i++) hot(i);
+         k32.symbols.SetUnhandledExceptionFilter(0);
+         hot(10000);
+         console.log("SHOULD NOT REACH");`,
+      ],
+      env: { ...noReportEnv, BUN_JSC_jitPolicyScale: "0", BUN_JSC_useConcurrentJIT: "0" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("Segmentation fault at address 0xE8");
+    expect(stdout).not.toContain("SHOULD NOT REACH");
+    expect(exitCode).not.toBe(0);
+  });
+});
+
 test.if(process.platform === "darwin")("macOS has the assumed image offset", () => {
   // If this fails, then https://bun.report will be incorrect and the stack
   // trace remappings will stop working.

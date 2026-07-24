@@ -1054,6 +1054,20 @@ impl FileSink {
             }
             WriteResult::Err(e) => {
                 self.done.set(true);
+                if self.pending.get().state == streams::PendingState::Pending {
+                    // A backpressured `write()` left its promise outstanding.
+                    // `js_close` can't hand that promise back the way
+                    // `end_from_js` does, but the error still goes to it
+                    // exactly once: latch, tear down, schedule `run_pending`,
+                    // return `Ok` so `close()` doesn't also throw. Latch before
+                    // `writer.end()`; its `on_close` re-entry runs with the
+                    // slot already holding the error.
+                    self.pending
+                        .with_mut(|p| p.result = streams::Writable::Err(e));
+                    self.writer.with_mut(|w| w.end());
+                    self.run_pending_later();
+                    return sys::Result::Ok(());
+                }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(e)
             }

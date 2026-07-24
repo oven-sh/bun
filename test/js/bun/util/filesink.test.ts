@@ -318,6 +318,45 @@ it.skipIf(!isPosix)(
   },
 );
 
+// Sibling of the test above for sink.close() (js_close -> FileSink::end()).
+// close()'s flush() sees EPIPE synchronously; before the fix end()'s Err arm
+// set done=true, tore down the writer, and returned Err without touching the
+// pending write()'s promise, so that promise was left pending forever. close()
+// can't hand the promise back, but it latches the error into it and returns
+// normally so the failure is reported once, via the promise.
+it.skipIf(!isPosix)(
+  "close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE",
+  async () => {
+    const [readFd, writeFd] = createSocketPair();
+    let readFdOpen = true;
+    const sink = Bun.file(writeFd).writer();
+    try {
+      const writePromise = sink.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+      expect(writePromise).toBeInstanceOf(Promise);
+
+      fs.closeSync(readFd);
+      readFdOpen = false;
+
+      // close()'s flush hits EPIPE. The error is routed to writePromise; the
+      // close() call itself doesn't throw (no double reporting).
+      expect(sink.close()).toBeUndefined();
+
+      let caught: any;
+      try {
+        await writePromise;
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught?.code).toBe("EPIPE");
+    } finally {
+      try {
+        fs.closeSync(writeFd);
+      } catch {}
+      if (readFdOpen) fs.closeSync(readFd);
+    }
+  },
+);
+
 // The deferred auto-flush microtask runs at the first microtask checkpoint
 // after write() backpressures. If its flush() hit EPIPE, it discarded the
 // error and then let `run_pending_later()` resolve the pending write() promise

@@ -4183,29 +4183,67 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is the
+            // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
+            let promise: &mut JSPromise = JSPromise::opaque_mut(value.encoded() as *mut JSPromise);
+            let status = promise.status();
+
+            // node (util.inspect formatPromise): `Promise { <pending> }`,
+            // `Promise { 42 }`, `Promise { <rejected> reason }`.
+            {
+                let mut writer = WrappedWriter {
+                    ctx: writer_,
+                    failed: false,
+                    estimated_line_length: &mut self.estimated_line_length,
+                };
+                if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
+                    writer.write_all(b"\n");
+                    writer.write_indent(self.indent);
+                }
+
+                writer.write_all(b"Promise { ");
+                match status {
+                    jsc::js_promise::Status::Pending => {
+                        writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
+                        writer.write_all(b"<pending>");
+                        writer.write_all(pfmt!("<r>", C).as_bytes());
+                    }
+                    jsc::js_promise::Status::Fulfilled => {}
+                    jsc::js_promise::Status::Rejected => {
+                        writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
+                        writer.write_all(b"<rejected>");
+                        writer.write_all(pfmt!("<r>", C).as_bytes());
+                        writer.write_all(b" ");
+                    }
+                }
+                if writer.failed {
+                    self.failed = true;
+                    return Ok(());
+                }
+            }
+
+            if !matches!(status, jsc::js_promise::Status::Pending) {
+                let result = promise.result(self.global_this.vm());
+
+                let prev_quote_strings = self.quote_strings;
+                self.quote_strings = true;
+                let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
+                self.depth = self.depth.saturating_add(1);
+                let _d = defer_decrement!(self.depth);
+
+                let mut opts = TagOptions::HIDE_GLOBAL;
+                if self.disable_inspect_custom {
+                    opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
+                }
+                let tag = Tag::get_advanced(result, self.global_this, opts)?;
+                self.format::<C>(tag, writer_, result, self.global_this)?;
+            }
+
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            if !self.single_line && writer.good_time_for_a_new_line(self.indent) {
-                writer.write_all(b"\n");
-                writer.write_indent(self.indent);
-            }
-
-            writer.write_all(b"Promise { ");
-            writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
-
-            // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
-            let promise: &JSPromise = JSPromise::opaque_ref(value.encoded() as *const JSPromise);
-            match promise.status() {
-                jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
-                jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),
-                jsc::js_promise::Status::Rejected => writer.write_all(b"<rejected>"),
-            }
-
-            writer.write_all(pfmt!("<r>", C).as_bytes());
             writer.write_all(b" }");
             if writer.failed {
                 self.failed = true;

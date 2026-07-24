@@ -213,7 +213,6 @@ declare function $code(): TODO;
 declare function $createFIFO(): TODO;
 declare function $createUninitializedArrayBuffer(size: number): ArrayBuffer;
 declare function $data(): TODO;
-declare function $dataView(): TODO;
 declare function $decode(): TODO;
 declare function $dirname(): TODO;
 declare function $encoding(): TODO;

@@ -32,7 +32,7 @@ if (process.argv[2] === 'child') {
 
   let serverScope;
 
-  // Note(@jasnell): The message event is not called consistently
+  // TODO(@jasnell): The message event is not called consistently
   // across platforms. Need to investigate if it can be made
   // more consistent.
   const onServer = (msg, server) => {
@@ -41,7 +41,7 @@ if (process.argv[2] === 'child') {
 
     serverScope = server;
 
-    // Note(@jasnell): This is apparently not called consistently
+    // TODO(@jasnell): This is apparently not called consistently
     // across platforms. Need to investigate if it can be made
     // more consistent.
     server.on('connection', (socket) => {
@@ -57,7 +57,7 @@ if (process.argv[2] === 'child') {
 
   process.on('message', onServer);
 
-  // Note(@jasnell): The close event is not called consistently
+  // TODO(@jasnell): The close event is not called consistently
   // across platforms. Need to investigate if it can be made
   // more consistent.
   const onClose = common.mustCallAtLeast((msg) => {
@@ -101,7 +101,7 @@ if (process.argv[2] === 'child') {
     // Create server and send it to child.
     const server = net.createServer();
 
-    // Note(@jasnell): The specific number of times the connection
+    // TODO(@jasnell): The specific number of times the connection
     // event is emitted appears to be variable across platforms.
     // Need to investigate why and whether it can be made
     // more consistent.
@@ -118,7 +118,7 @@ if (process.argv[2] === 'child') {
     server.listen(0);
 
     // Handle client messages.
-    // Note(@jasnell): The specific number of times the message
+    // TODO(@jasnell): The specific number of times the message
     // event is emitted appears to be variable across platforms.
     // Need to investigate why and whether it can be made
     // more consistent.

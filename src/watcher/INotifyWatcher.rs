@@ -441,11 +441,23 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             }
 
+            // WatchItemIndex is u16 with u16::MAX reserved as NO_WATCH_ITEM;
+            // nothing caps watchlist length, so drop unrepresentable positions
+            // instead of aborting from the watcher thread (panic = "abort").
             let idx = match eventlist_index
                 .iter()
                 .position(|&x| x == event.watch_descriptor)
             {
-                Some(idx) => WatchItemIndex::try_from(idx).unwrap(),
+                Some(idx) if idx < WatchItemIndex::MAX as usize => idx as WatchItemIndex,
+                Some(idx) => {
+                    bun_core::scoped_log!(
+                        watcher,
+                        "watchlist index {} >= WatchItemIndex::MAX, dropping event",
+                        idx
+                    );
+                    events_processed += 1;
+                    continue;
+                }
                 None => {
                     events_processed += 1;
                     continue;
@@ -491,7 +503,9 @@ fn process_inotify_event_batch(
     watch_events.sort_unstable_by(|a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
-    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
+    // The sentinel must be wider than WatchItemIndex (u16) so it can never
+    // collide with a real index (incl. NO_WATCH_ITEM = 65535).
+    let mut last_event_id: u32 = u32::MAX;
 
     for i in 0..watch_events.len() {
         if watch_events[i].name_len > 0 {
@@ -506,14 +520,14 @@ fn process_inotify_event_batch(
             }
         }
 
-        if watch_events[i].index == last_event_id {
+        if u32::from(watch_events[i].index) == last_event_id {
             // reshaped for borrowck — split_at_mut to get two disjoint &mut.
             let (head, tail) = watch_events.split_at_mut(i);
             head[last_event_index].merge(tail[0]);
             continue;
         }
         last_event_index = i;
-        last_event_id = watch_events[i].index;
+        last_event_id = u32::from(watch_events[i].index);
     }
     if watch_events.is_empty() {
         return Ok(());

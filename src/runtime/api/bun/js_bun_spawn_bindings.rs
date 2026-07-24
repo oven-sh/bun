@@ -959,8 +959,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     if global_this.has_exception() {
                         return Err(JsError::Thrown);
                     }
-                    match promise
-                        .unwrap(global_this.vm(), jsc::js_promise::UnwrapMode::MarkHandled)
+                    match promise.unwrap(global_this.vm(), jsc::js_promise::UnwrapMode::MarkHandled)
                     {
                         jsc::js_promise::Unwrapped::Fulfilled(v) => v,
                         jsc::js_promise::Unwrapped::Rejected(err) => {

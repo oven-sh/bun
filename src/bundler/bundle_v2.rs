@@ -165,6 +165,13 @@ impl<'a> BundleV2<'a> {
         &*self.transpiler
     }
 
+    /// The linker-owned [`bun_alloc::AstAlloc`] handle for main-thread AST
+    /// allocations (empty placeholder ASTs, synthetic boundary modules).
+    #[inline]
+    pub fn alloc(&self) -> bun_alloc::AstAlloc {
+        self.linker.graph.ast_alloc
+    }
+
     #[inline]
     pub fn r#loop(&mut self) -> &mut EventLoop {
         &mut self.linker.r#loop
@@ -1982,7 +1989,7 @@ pub mod bv2_impl {
                         && !additional_files_imported_by_js_and_inlined_in_css.is_set(index)
                     {
                         additional_files[index].clear_retaining_capacity();
-                        unique_keys[index] = bun_alloc::AstAlloc::vec().into_boxed_slice();
+                        unique_keys[index] = self.alloc().vec().into_boxed_slice();
                         content_hashes[index] = 0;
                     }
                 }
@@ -2427,7 +2434,7 @@ pub mod bv2_impl {
                     if !secondary.is_disabled && !strings::eql_long(secondary.text, path.text, true)
                     {
                         self.graph.input_files.items_secondary_path_mut()[idx as usize] =
-                            bun_alloc::AstAlloc::vec_from_slice(secondary.text);
+                            self.alloc().vec_from_slice(secondary.text);
                         // Ensure the determinism pass runs.
                         self.graph.has_any_secondary_paths = true;
                     }
@@ -2511,7 +2518,7 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target)
                 .put(path_slice, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
@@ -2522,7 +2529,7 @@ pub mod bv2_impl {
                 },
                 loader,
                 side_effects: result.primary_side_effects_data,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             })?;
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(&result, source_index, self);
@@ -2619,7 +2626,7 @@ pub mod bv2_impl {
             self.path_to_source_index_map(target)
                 .put(path.text, source_index.get())
                 .expect("oom");
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             let side_effects = result.primary_side_effects_data;
             self.graph.input_files.append(crate::Graph::InputFile {
@@ -2631,7 +2638,7 @@ pub mod bv2_impl {
                 },
                 loader,
                 side_effects,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             })?;
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(result, source_index, self);
@@ -3134,11 +3141,11 @@ pub mod bv2_impl {
                 source: rt.source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             })?;
 
             // try this.graph.entry_points.append(arena, Index.runtime);
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
@@ -3206,10 +3213,11 @@ pub mod bv2_impl {
             // the `self.graph.ast.set(...)` calls at the end of this function.
             let alloc: &'static bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
+            let ast_alloc = self.alloc();
 
             let hmr = self.transpiler.options.hot_module_reloading;
-            let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
-            let mut client = AstBuilder::init(alloc, &bake::CLIENT_VIRTUAL_SOURCE, hmr)?;
+            let mut server = AstBuilder::init(alloc, ast_alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
+            let mut client = AstBuilder::init(alloc, ast_alloc, &bake::CLIENT_VIRTUAL_SOURCE, hmr)?;
 
             let mut server_manifest_props: Vec<G::Property> = Vec::new();
             let mut client_manifest_props: Vec<G::Property> = Vec::new();
@@ -3233,7 +3241,7 @@ pub mod bv2_impl {
                 data: b"specifier".into(),
                 ..Default::default()
             });
-            let empty_array = server.new_expr(E::Array::default());
+            let empty_array = server.new_expr(E::Array::empty(ast_alloc));
 
             for ((r#use, source_id), ssr_index) in scbs
                 .items_use_directive()
@@ -3256,8 +3264,8 @@ pub mod bv2_impl {
 
                     let keys = named_exports_array[*source_id as usize].keys();
                     // `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
-                    let mut client_manifest_items: Box<[G::Property]> =
-                        (0..keys.len()).map(|_| G::Property::default()).collect();
+                    let mut client_manifest_items: bun_ast::g::PropertyList =
+                        ast_alloc.vec_from_iter((0..keys.len()).map(|_| G::Property::empty(ast_alloc)));
 
                     if !sc.separate_ssr_graph {
                         bun_core::todo_panic!("separate_ssr_graph=false");
@@ -3332,57 +3340,55 @@ pub mod bv2_impl {
                                 ..Default::default()
                             })),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
+                                properties: ast_alloc.vec_from_iter([
                                     G::Property {
                                         key: Some(id_string),
                                         value: Some(client_path),
-                                        ..Default::default()
+                                        ..G::Property::empty(ast_alloc)
                                     },
                                     G::Property {
                                         key: Some(name_string),
                                         value: Some(export_name),
-                                        ..Default::default()
+                                        ..G::Property::empty(ast_alloc)
                                     },
                                     G::Property {
                                         key: Some(chunks_string),
                                         value: Some(empty_array),
-                                        ..Default::default()
+                                        ..G::Property::empty(ast_alloc)
                                     },
-                                ])),
-                                ..Default::default()
+                                ]),
+                                ..E::Object::empty(ast_alloc)
                             })),
-                            ..Default::default()
+                            ..G::Property::empty(ast_alloc)
                         });
                         *client_item = G::Property {
                             key: Some(export_name),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
+                                properties: ast_alloc.vec_from_iter([
                                     G::Property {
                                         key: Some(name_string),
                                         value: Some(export_name),
-                                        ..Default::default()
+                                        ..G::Property::empty(ast_alloc)
                                     },
                                     G::Property {
                                         key: Some(specifier_string),
                                         value: Some(ssr_path),
-                                        ..Default::default()
+                                        ..G::Property::empty(ast_alloc)
                                     },
-                                ])),
-                                ..Default::default()
+                                ]),
+                                ..E::Object::empty(ast_alloc)
                             })),
-                            ..Default::default()
+                            ..G::Property::empty(ast_alloc)
                         };
                     }
 
                     client_manifest_props.push(G::Property {
                         key: Some(client_path),
                         value: Some(server.new_expr(E::Object {
-                            properties: bun_ast::g::PropertyList::from_owned_slice(
-                                client_manifest_items,
-                            ),
-                            ..Default::default()
+                            properties: client_manifest_items,
+                            ..E::Object::empty(ast_alloc)
                         })),
-                        ..Default::default()
+                        ..G::Property::empty(ast_alloc)
                     });
                 } else {
                     bun_core::todo_panic!("\"use server\"");
@@ -3392,12 +3398,12 @@ pub mod bv2_impl {
             let server_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"serverManifest")?;
             let server_manifest_value = server.new_expr(E::Object {
-                properties: bun_ast::g::PropertyList::move_from_list(server_manifest_props),
-                ..Default::default()
+                properties: ast_alloc.vec_from_iter(server_manifest_props),
+                ..E::Object::empty(ast_alloc)
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                decls: ast_alloc.vec_from_iter([G::Decl {
                     binding: Binding::alloc(
                         alloc,
                         bun_ast::b::Identifier {
@@ -3406,19 +3412,19 @@ pub mod bv2_impl {
                         bun_ast::Loc::EMPTY,
                     ),
                     value: Some(server_manifest_value),
-                }])),
+                }]),
                 is_export: true,
-                ..Default::default()
+                ..S::Local::empty(ast_alloc)
             })?;
             let ssr_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"ssrManifest")?;
             let ssr_manifest_value = server.new_expr(E::Object {
-                properties: bun_ast::g::PropertyList::move_from_list(client_manifest_props),
-                ..Default::default()
+                properties: ast_alloc.vec_from_iter(client_manifest_props),
+                ..E::Object::empty(ast_alloc)
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                decls: ast_alloc.vec_from_iter([G::Decl {
                     binding: Binding::alloc(
                         alloc,
                         bun_ast::b::Identifier {
@@ -3427,9 +3433,9 @@ pub mod bv2_impl {
                         bun_ast::Loc::EMPTY,
                     ),
                     value: Some(ssr_manifest_value),
-                }])),
+                }]),
                 is_export: true,
-                ..Default::default()
+                ..S::Local::empty(ast_alloc)
             })?;
 
             let server_ast: JSAst = server.to_bundled_ast(Target::Bun)?;
@@ -3451,13 +3457,13 @@ pub mod bv2_impl {
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
                 side_effects: loader.side_effects(),
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             })?;
             // `ParseTask::init` takes `bun_ast::Index`; both Index newtypes
             // are `repr(transparent)` u32 so reconstruct via `.get()`.
@@ -3504,13 +3510,13 @@ pub mod bv2_impl {
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
             let source_index = Index::init(u32::try_from(self.graph.ast.len()).expect("int cast"));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: core::mem::take(source),
                 loader,
                 side_effects: loader.side_effects(),
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             })?;
             // `core::mem::take` moved the real `Source` into `graph.input_files`,
             // leaving `*source` as `Default`. Read path/contents back from the
@@ -3616,9 +3622,9 @@ pub mod bv2_impl {
                 source: new_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             })?;
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
             // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
             // worker pool; freed via `bun.destroy` in `on_complete` after the
@@ -4609,7 +4615,7 @@ pub mod bv2_impl {
                             // SAFETY: map slot from `get_or_put` above; map not mutated since.
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
-                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
+                            let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap, this.alloc())); // OOM/capacity: fire-and-forget
                             let loader = path
                                 .loader(&this.transpiler.options.loaders)
                                 .unwrap_or(Loader::File);
@@ -4626,7 +4632,7 @@ pub mod bv2_impl {
                                     },
                                     loader,
                                     side_effects: bun_ast::SideEffects::HasSideEffects,
-                                    ..Default::default()
+                                    ..crate::Graph::InputFile::empty(this.alloc())
                                 })
                                 .expect("unreachable");
                             let task_val = ParseTask {
@@ -5637,14 +5643,14 @@ pub mod bv2_impl {
                 source: server_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             });
             // OOM/capacity: fire-and-forget
             let _ = self.graph.input_files.append(crate::Graph::InputFile {
                 source: client_source,
                 loader: Loader::Js,
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             });
 
             debug_assert!(
@@ -5660,8 +5666,8 @@ pub mod bv2_impl {
                     == Index::BAKE_CLIENT_DATA.get()
             );
 
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap));
-            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap));
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc()));
+            let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc()));
             Ok(())
         }
 
@@ -6497,11 +6503,11 @@ pub mod bv2_impl {
                         secondary_path: if let Some(secondary_path) =
                             &new_task.secondary_path_for_commonjs_interop
                         {
-                            bun_alloc::AstAlloc::vec_from_slice(secondary_path.text)
+                            self.alloc().vec_from_slice(secondary_path.text)
                         } else {
-                            bun_alloc::AstAlloc::vec()
+                            self.alloc().vec()
                         },
-                        ..Default::default()
+                        ..crate::Graph::InputFile::empty(self.alloc())
                     };
 
                     self.graph.has_any_secondary_paths = self.graph.has_any_secondary_paths
@@ -6526,7 +6532,7 @@ pub mod bv2_impl {
                         .input_files
                         .append(new_input_file)
                         .expect("unreachable");
-                    let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
+                    let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap, self.alloc())); // OOM/capacity: fire-and-forget
 
                     if is_html_entrypoint {
                         self.ensure_client_transpiler();
@@ -6672,6 +6678,7 @@ pub mod bv2_impl {
             // Re-borrow `self.graph`
             // at each use so the `self.*` method calls below don't conflict.
             let heap = self.graph.heap;
+            let alloc = self.alloc();
             let empty_html_file_source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
                 path: path_as_static(path),
                 index: bun_ast::Index(self.graph.input_files.len() as u32),
@@ -6714,12 +6721,14 @@ pub mod bv2_impl {
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
+                    alloc,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *define_ptr },
                     js_parser_options,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *log_ptr },
                     Expr::init(
+                        alloc,
                         E::EString {
                             data: unique_key.into(),
                             ..Default::default()
@@ -6736,7 +6745,7 @@ pub mod bv2_impl {
             let fake_input_file = crate::Graph::InputFile {
                 source: empty_html_file_source.clone(),
                 side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
-                ..Default::default()
+                ..crate::Graph::InputFile::empty(self.alloc())
             };
 
             let fake_source_index = fake_input_file.source.index;
@@ -6900,7 +6909,7 @@ pub mod bv2_impl {
                     this.graph
                         .input_files
                         .items_unique_key_for_additional_file_mut()[result_source_index] =
-                        bun_alloc::AstAlloc::vec_from_slice(
+                        this.alloc().vec_from_slice(
                             result.unique_key_for_additional_file.slice(),
                         )
                         .into_boxed_slice();
@@ -7018,7 +7027,10 @@ pub mod bv2_impl {
                     let result_heap = *result.ast.parts.allocator();
                     this.graph.ast.set(
                         result_source_index,
-                        core::mem::replace(&mut result.ast, JSAst::empty_in(result_heap)),
+                        core::mem::replace(
+                            &mut result.ast,
+                            JSAst::empty_in(result_heap, this.alloc()),
+                        ),
                     );
 
                     // Barrel optimization: eagerly record import requests and

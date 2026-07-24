@@ -47,10 +47,29 @@ void emitImmediateAsyncHook(JSC::JSGlobalObject* globalObject, JSC::JSValue time
         return;
     }
 
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Every call site emits either before any exception can be pending or right
+    // after the pending one has been taken; entering JS otherwise is illegal.
+    scope.assertNoExceptionExceptTermination();
+
+    auto callData = JSC::getCallData(emitter);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]] {
+        return;
+    }
+
     JSC::MarkedArgumentBuffer args;
     args.append(JSC::jsNumber(static_cast<unsigned>(kind)));
     args.append(timer);
-    JSC::call(globalObject, emitter, JSC::getCallData(emitter), JSC::jsUndefined(), args);
+
+    // internal/async_hooks catches a throwing user hook itself and exits the way
+    // node's fatalError does, so anything still pending after this call is a
+    // VM-level failure (OOM, termination). Hand it to the caller rather than
+    // swallowing it: functionSetImmediate/functionClearImmediate propagate it
+    // with RETURN_IF_EXCEPTION, and the timer dispatcher routes it through the
+    // unhandled-error path.
+    scope.release();
+    JSC::call(globalObject, emitter, callData, JSC::jsUndefined(), args);
 }
 
 // This is called when AsyncLocalStorage is constructed.

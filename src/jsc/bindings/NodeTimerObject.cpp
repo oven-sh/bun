@@ -79,7 +79,10 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 
     bool hadException = reportPendingException(globalObject, scope);
 
+    // Take any pending exception between the two: entering JS again with one
+    // still set is illegal.
     emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::After);
+    hadException |= reportPendingException(globalObject, scope);
     emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Destroy);
     hadException |= reportPendingException(globalObject, scope);
 

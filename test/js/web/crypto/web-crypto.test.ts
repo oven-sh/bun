@@ -1087,7 +1087,9 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
   const fromHex = (hex: string) => Uint8Array.from(Buffer.from(hex, "hex"));
   const der = (...parts: string[]) => {
     const body = parts.join("");
-    return fromHex("30" + (body.length / 2).toString(16).padStart(2, "0") + body);
+    const length = body.length / 2;
+    const lengthHex = length < 0x80 ? length.toString(16).padStart(2, "0") : "81" + length.toString(16);
+    return fromHex("30" + lengthHex + body);
   };
 
   // RFC 8032 section 7.1 test vector 1
@@ -1166,6 +1168,22 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
 
   it("rejects publicKey [1] before attributes [0]", async () => {
     await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub), emptyAttributes));
+  });
+
+  it("rejects duplicate attributes [0]", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), emptyAttributes, emptyAttributes));
+  });
+
+  it("rejects duplicate publicKey [1]", async () => {
+    await expectRejected(der(version2, edAlgorithm, wrapSeed(edSeed), publicKeyField(edPub), publicKeyField(edPub)));
+  });
+
+  it("accepts long-form lengths on the SEQUENCE and attributes [0]", async () => {
+    // 0x90 bytes of attributes push both lengths into two-byte form
+    const bigAttributes = "a08190" + Buffer.alloc(0x90).toString("hex");
+    const pkcs8 = der(version2, edAlgorithm, wrapSeed(edSeed), bigAttributes, publicKeyField(edPub));
+    expect(pkcs8[1]).toBe(0x81); // outer SEQUENCE length is long-form
+    expect(await signsAndVerifies(pkcs8)).toBe(true);
   });
 });
 

@@ -1984,6 +1984,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"import_",
                     true,
+                    js_ast::PartTag::Runtime,
                 )
                 .expect("unreachable");
             }
@@ -2016,6 +2017,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }
@@ -2030,6 +2032,7 @@ impl<'a> Parser<'a> {
                     None,
                     b"",
                     false,
+                    js_ast::PartTag::JsxImport,
                 )
                 .expect("unreachable");
             }

@@ -923,4 +923,162 @@ describe("bundler", () => {
       },
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/6858
+  // The automatic JSX runtime import is synthesized by the bundler. When every
+  // JSX expression in a file is tree-shaken, nothing references the generated
+  // `jsx`/`jsxDEV`/`Fragment` bindings and the import itself should disappear
+  // instead of being kept "for side effects" and dragging React into the bundle.
+  describe("autoImportTreeShaking", () => {
+    itBundledDevAndProd("jsx/AutoImportDroppedWhenJsxUnusedExternal", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export default 'hi';
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("react/jsx-runtime");
+        expect(file).not.toContain("react/jsx-dev-runtime");
+        expect(file).not.toContain("jsxDEV");
+        expect(file).not.toContain("jsx(");
+        expect(file).not.toContain("unused");
+      },
+    });
+
+    itBundledDevAndProd("jsx/AutoImportKeptWhenJsxUsedExternal", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export const live = <span>live</span>;
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(file).toContain("live");
+        expect(file).not.toContain("unused");
+      },
+    });
+
+    itBundledDevAndProd("jsx/AutoImportDroppedFragUnusedExternal", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <><a/><b/></>;
+          export default 1;
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("react");
+        expect(file).not.toContain("Fragment");
+        expect(file).not.toContain("unused");
+      },
+    });
+
+    // CommonJS JSX source with no "sideEffects" field: previously the
+    // auto-import forced the whole module into the bundle even though the JSX
+    // was dead code.
+    itBundled("jsx/AutoImportDroppedWhenJsxUnusedBundledCjs", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          console.log('only-this');
+        `,
+        "/node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          exports: {
+            "./jsx-runtime": "./jsx-runtime.js",
+            "./jsx-dev-runtime": "./jsx-dev-runtime.js",
+          },
+        }),
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsx = function (type, props) { return { type, props }; };
+          exports.jsxs = exports.jsx;
+          exports.Fragment = 'F';
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsxDEV = function (type, props) { return { type, props }; };
+          exports.Fragment = 'F';
+        `,
+      },
+      target: "bun",
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).not.toContain("JSX_RUNTIME_SIDE_EFFECT");
+        expect(file).not.toContain("jsx-runtime");
+        expect(file).not.toContain("unused");
+      },
+      run: { stdout: "only-this" },
+    });
+
+    // Same CJS source, but the JSX is actually used: the JSX source must still
+    // be bundled and its top-level code must still run.
+    itBundled("jsx/AutoImportKeptWhenJsxUsedBundledCjs", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const el = <div>live</div>;
+          console.log(JSON.stringify(el));
+        `,
+        "/node_modules/react/package.json": JSON.stringify({
+          name: "react",
+          exports: {
+            "./jsx-runtime": "./jsx-runtime.js",
+            "./jsx-dev-runtime": "./jsx-dev-runtime.js",
+          },
+        }),
+        "/node_modules/react/jsx-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsx = function (type, props) { return { type: type, props: props }; };
+          exports.jsxs = exports.jsx;
+          exports.Fragment = 'F';
+        `,
+        "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+          console.log('JSX_RUNTIME_SIDE_EFFECT');
+          exports.jsxDEV = function (type, props) { return { type: type, props: props }; };
+          exports.Fragment = 'F';
+        `,
+      },
+      target: "bun",
+      jsx: { runtime: "automatic" },
+      run: {
+        stdout: `JSX_RUNTIME_SIDE_EFFECT\n{"type":"div","props":{"children":"live"}}`,
+      },
+    });
+
+    // Two entry modules: one where JSX survives, one where it is all dead.
+    // The JSX source must be bundled (for the live entry) without leaking an
+    // extra import into the dead entry's chunk.
+    itBundled("jsx/AutoImportMixedEntries", {
+      files: {
+        "/live.tsx": /* tsx */ `
+          export const el = <div>live</div>;
+        `,
+        "/dead.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export default 'dead-entry';
+        `,
+      },
+      entryPoints: ["/live.tsx", "/dead.tsx"],
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic" },
+      onAfterBundle(api) {
+        const live = api.readFile("out/live.js");
+        const dead = api.readFile("out/dead.js");
+        expect(live).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(dead).not.toContain("react");
+        expect(dead).not.toContain("unused");
+      },
+    });
+  });
 });

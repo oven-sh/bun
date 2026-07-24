@@ -2844,6 +2844,32 @@ impl<'a> LinkerContext<'a> {
                 }
             }
 
+            // The automatic JSX runtime import is synthesized by the parser; it
+            // exists only so lowered JSX can reference `jsx`/`jsxDEV`/etc. If no
+            // live part references those symbols the import must not be kept
+            // "for its side effects": the user never wrote it, and keeping it
+            // would bundle (or externally import) React for JSX that was
+            // entirely dead code. Liveness of the JSX import source, when it is
+            // actually needed, is established via part.dependencies (step 6
+            // wires the wrapper_ref/__toESM dependency onto this part), so
+            // skipping the side-effect scan here is safe.
+            if part.tag == bun_ast::PartTag::JsxImport {
+                if !can_be_removed_if_unused
+                    || (!part.force_tree_shaking
+                        && !self.options.tree_shaking
+                        && ctx.entry_point_kinds[source_index as usize].is_entry_point())
+                {
+                    let part_index = u32::try_from(part_index).expect("int cast");
+                    if !ctx.parts_live[source_index as usize].is_set(part_index as usize) {
+                        ctx.worklist.push(TreeShakeWork::Part {
+                            part_index,
+                            source_index,
+                        });
+                    }
+                }
+                continue;
+            }
+
             // Also include any statement-level imports
             for &import_index in part.import_record_indices.iter() {
                 let record = &ctx.import_records[source_index as usize][import_index as usize];

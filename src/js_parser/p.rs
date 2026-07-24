@@ -1760,6 +1760,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         additional_stmt: Option<Stmt>,
         prefix: &'static [u8],
         is_internal: bool,
+        tag: bun_ast::PartTag,
     ) -> Result<(), crate::Error>
     where
         I: AsRef<[<Sym as GenerateImportSymbols>::Key]>,
@@ -1883,11 +1884,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // This import is placed in a part before the main code, however
         // the bundler ends up re-ordering this to be after... The order
         // does not matter as ESM imports are always hoisted.
+        //
+        // The JSX auto-import only exists to provide `jsx`/`jsxs`/`jsxDEV`/
+        // `Fragment`/`createElement` to lowered JSX. When every JSX call is
+        // tree-shaken, nothing references this part's declared symbols and the
+        // import itself should disappear: the user never wrote it, so keeping
+        // it "for side effects" pulls in React for code the user never asked
+        // to run. See mark_file_live_step for the matching JsxImport skip.
+        let is_jsx = tag == bun_ast::PartTag::JsxImport;
         parts.push(js_ast::Part {
             stmts: stmts.into(),
             declared_symbols,
             import_record_indices: js_ast::PartImportRecordIndices::init_one(import_record_i),
-            tag: bun_ast::PartTag::Runtime,
+            tag,
+            can_be_removed_if_unused: is_jsx,
+            force_tree_shaking: is_jsx,
             ..Default::default()
         });
         Ok(())

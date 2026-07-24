@@ -39,6 +39,7 @@ const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
 var debugs = {};
+const ObjectDefineProperty = Object.defineProperty;
 var debugEnvRegex = /^$/;
 const NODE_DEBUG = process.env.NODE_DEBUG;
 if (NODE_DEBUG) {
@@ -66,21 +67,68 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
+function debuglogImpl(enabled, set) {
   if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+      debugs[set] = function debug() {
+        const msg = format.$apply(cjs_exports, arguments);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
-      debugs[set] = function () {};
+      debugs[set] = function debug() {};
     }
   }
   return debugs[set];
+}
+
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/debuglog.js#L86-L138
+function debuglog(set, cb) {
+  let enabled;
+  function init() {
+    set = set.toUpperCase();
+    enabled = debugEnvRegex.test(set);
+  }
+
+  // The section is resolved on the first call, not here, so that a `debuglog`
+  // taken at module load still sees a later `process.pid`.
+  let debug = function (...args) {
+    init();
+    debug = debuglogImpl(enabled, set);
+    if (typeof cb === "function") {
+      ObjectDefineProperty(debug, "enabled", {
+        __proto__: null,
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+      cb(debug);
+    }
+    return debug(...args);
+  };
+
+  let test = function () {
+    init();
+    test = () => enabled;
+    return enabled;
+  };
+
+  const logger = function (...args) {
+    if (enabled === false) return;
+    return debug(...args);
+  };
+  ObjectDefineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return test();
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {

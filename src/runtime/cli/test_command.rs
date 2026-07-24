@@ -1508,12 +1508,14 @@ impl CommandLineReporter {
 
                 if this.summary().fail == this.jest.bail {
                     this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
+                    if !is_node_test_child() {
+                        pretty_error!(
+                            "\nBailed out after {} failure{}<r>\n",
+                            this.jest.bail,
+                            if this.jest.bail == 1 { "" } else { "s" }
+                        );
+                        Output::flush();
+                    }
                     this.write_junit_report_if_needed();
                     Global::exit(1);
                 }

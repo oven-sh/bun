@@ -323,6 +323,59 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  test("should run a top-level test() registered from a macrotask after module evaluation", async () => {
+    // Node keeps the root alive while a ref'd timer is pending and accepts late
+    // registrations; without the event-loop drain the setTimeout never fires and
+    // the late failing tests are silently dropped (run would be 1 pass / exit 0).
+    const { exitCode, stderr } = await runTests(["30-late-top-level.js"]);
+    expect(stderr).toContain("(pass) sync-registered");
+    expect(stderr).toContain("(fail) late failing");
+    expect(stderr).toContain("(pass) late passing");
+    expect(stderr).toContain("(pass) late async passing");
+    expect(stderr).toContain("(fail) late suite");
+    expect(stderr).toContain("late test is red");
+    expect(stderr).toContain("(skip) late skipped");
+    expect(stderr).toContain("(todo) late todo");
+    expect(stderr).toContain("(skip) late runtime skip");
+    // Late tests run in registration order; a late describe()'s children queue
+    // behind earlier late tests (Node's root serializes subtests). Node runs
+    // todo bodies and never runs a declared skip's body.
+    expect(stderr).toContain("ORDER=fail,pass,async-start,async-end,suite-child,todo-body,runtime-skip");
+    expect(stderr).toContain("4 pass");
+    expect(stderr).toContain("2 skip");
+    expect(stderr).toContain("1 todo");
+    expect(stderr).toContain("2 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("should drain for a late test after a collection-phase test already failed", async () => {
+    const { exitCode, stderr } = await runTests(["30b-late-after-sync-failure.js"]);
+    expect(stderr).toContain("(fail) sync failing");
+    expect(stderr).toContain("(fail) late failing");
+    expect(stderr).toContain("late is red");
+    expect(stderr).toContain("2 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("should drain for a late test when no test was registered synchronously", async () => {
+    const { exitCode, stderr } = await runTests(["30c-late-no-sync-registration.js"]);
+    expect(stderr).toContain("(fail) late only");
+    expect(stderr).toContain("late is red");
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
+  test("should queue a late test registered during Phase::Execution behind the running test", async () => {
+    const { exitCode, stderr } = await runTests(["30d-late-during-execution.js"]);
+    expect(stderr).toContain("(pass) slow");
+    expect(stderr).toContain("(pass) late");
+    // The late body must not run until the collection-phase tests finish; the
+    // slow test would otherwise fail because beforeEach re-fired under it.
+    expect(stderr).toContain("ORDER=slow-start,slow-end,late");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
 });
 
 async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {

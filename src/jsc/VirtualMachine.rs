@@ -1027,23 +1027,38 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    fn has_pending_work_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
         let active = self
             .platform_loop_opt()
             .map(|h| h.is_active())
             .unwrap_or(false);
-        self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + (el.has_pending_refs() as usize)
-                > 0)
+        (active as usize)
+            + self.active_tasks
+            + el.tasks.readable_length()
+            + (el.has_pending_refs() as usize)
+            > 0
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+        self.unhandled_error_counter == 0 && self.has_pending_work_excluding_immediates()
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
         let el = self.event_loop_shared();
         self.is_event_loop_alive_excluding_immediates()
+            || !el.immediate_tasks.is_empty()
+            || !el.next_immediate_tasks.is_empty()
+    }
+
+    /// `is_event_loop_alive` without the `unhandled_error_counter == 0` gate:
+    /// whether there is any ref'd handle, queued task, or immediate left to
+    /// run. `is_event_loop_alive` is the `bun run` exit condition (stop once an
+    /// error surfaced); the test runner's per-file node:test drain needs to
+    /// keep spinning on a ref'd timer even when an earlier test already failed.
+    pub fn has_pending_event_loop_work(&self) -> bool {
+        let el = self.event_loop_shared();
+        self.has_pending_work_excluding_immediates()
             || !el.immediate_tasks.is_empty()
             || !el.next_immediate_tasks.is_empty()
     }

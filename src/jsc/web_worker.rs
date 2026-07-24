@@ -167,15 +167,13 @@ pub struct WebWorker {
     // `JsCell` (not `Cell`) because `Arena` is non-`Copy`; worker-thread-only
     // so the single-owner-thread invariant `JsCell` documents is upheld.
     arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Heap-owned cloned env (Map + Loader) for the worker VM. The worker
-    /// `Arena` (`bumpalo::Bump`) does not run `Drop` (so the inner
-    /// `HashTable` would leak), and `clone_with_allocator()` does not route
-    /// through the arena allocator anyway — own them as `Box`es
-    /// here instead. `start_vm()` `heap::alloc`s and stores the pointers;
-    /// `shutdown()` step 5 `heap::take`s after `vm.destroy()` (loader
-    /// first, then map — `Loader<'static>` borrows `*map`).
-    worker_env_map: Cell<*mut bun_dotenv::Map>,
-    worker_env_loader: Cell<*mut bun_dotenv::Loader<'static>>,
+    /// Heap-owned cloned env for the worker VM. The worker `Arena`
+    /// (`bumpalo::Bump`) does not run `Drop` (so the inner `HashTable` would
+    /// leak), and `clone_with_allocator()` does not route through the arena
+    /// allocator anyway — own it as a `Box` here instead. `start_vm()`
+    /// `heap::alloc`s and stores the pointer; `shutdown()` step 5
+    /// `heap::take`s after `vm.destroy()`.
+    worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// Set by `exit()` so that `spin()`'s error paths don't clobber an explicit
     /// `process.exit(code)`. Atomic so `exit()` can take `&self` (the struct is
     /// observed concurrently by `terminate_all_and_wait` / parent-thread FFI;
@@ -571,7 +569,6 @@ impl WebWorker {
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
-            worker_env_map: Cell::new(core::ptr::null_mut()),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
         }));
@@ -889,29 +886,23 @@ impl WebWorker {
         // state.
         let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
-        // Box Map/Loader on the global heap and hand ownership to the VM via
+        // Box the Loader on the global heap and hand ownership to the VM via
         // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
-        let mut map = Box::new(bun_dotenv::Map::default());
-        {
+        let mut map = {
             let parent_slots = parent.proxy_env_storage.lock();
             temp_proxy_slots.clone_from(&parent_slots);
             // SAFETY: `parent.transpiler.env` is the parent-owned `DotEnv::Loader`
             // set in `Transpiler::init`; valid while `parent` lives. Read-only.
-            *map = parent.env_loader().map.clone_with_allocator()?;
-        }
+            parent.env_loader().map.clone_with_allocator()?
+        };
         // Ensure map entries point at the exact bytes we hold refs on.
         temp_proxy_slots.sync_into(&mut map);
 
-        // `Loader<'static>` borrows `map` for its lifetime. Both are `heap::alloc`'d
-        // and stashed on `self` so `shutdown()` step 5 reclaims them on every
-        // path — including the early-terminate checkpoint below, which calls
-        // `shutdown()` before the VM exists.
-        let map_ptr: *mut bun_dotenv::Map = bun_core::heap::into_raw(map);
-        // SAFETY: `map_ptr` heap-allocated above; `'static` is the lifetime
-        // erasure for the worker-VM-lifetime borrow.
-        let loader = Box::new(bun_dotenv::Loader::init(unsafe { &mut *map_ptr }));
-        let loader_ptr: *mut bun_dotenv::Loader<'static> = bun_core::heap::into_raw(loader);
-        self.worker_env_map.set(map_ptr);
+        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
+        // it on every path — including the early-terminate checkpoint below,
+        // which calls `shutdown()` before the VM exists.
+        let loader_ptr: *mut bun_dotenv::Loader =
+            bun_core::heap::into_raw(Box::new(bun_dotenv::Loader::init_with_map(map)));
         self.worker_env_loader.set(loader_ptr);
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
@@ -1233,7 +1224,6 @@ impl WebWorker {
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
-        let env_map = self.worker_env_map.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
         self.vm_lock.lock();
@@ -1393,16 +1383,11 @@ impl WebWorker {
                 );
             }
         }
-        // Reclaim the cloned env (loader borrows `*map` — drop loader first).
-        // Both were `heap::alloc`'d in `start_vm()` (see field doc).
+        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
         if !env_loader.is_null() {
             // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
             // gone so its raw `transpiler.env` borrow is dead.
             drop(unsafe { bun_core::heap::take(env_loader) });
-        }
-        if !env_map.is_null() {
-            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner.
-            drop(unsafe { bun_core::heap::take(env_map) });
         }
         // Same reason as the uWS loop below: this thread's C++ thread_local destructors are not
         // guaranteed to run before the process exits, so free the HPACK scratch buffer that any

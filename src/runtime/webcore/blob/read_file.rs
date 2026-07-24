@@ -549,8 +549,9 @@ impl ReadFile {
                                         BunString::clone_utf8(
                                             self.file_store.pathlike.path().slice(),
                                         )
+                                        .into()
                                     } else {
-                                        BunString::EMPTY
+                                        BunString::EMPTY.into()
                                     };
                             }
                             return false;
@@ -582,9 +583,10 @@ impl ReadFile {
             cb(
                 cb_ctx,
                 ReadFileResultType::Err(SystemError {
-                    code: BunString::static_("INTERNAL_ERROR"),
-                    message: BunString::static_("assertion failure - store should not be null"),
-                    syscall: BunString::static_("read"),
+                    code: BunString::static_("INTERNAL_ERROR").into(),
+                    message: BunString::static_("assertion failure - store should not be null")
+                        .into(),
+                    syscall: BunString::static_("read").into(),
                     ..Default::default()
                 }),
             );
@@ -686,14 +688,14 @@ impl ReadFile {
         if bun_sys::S::ISDIR(stat.st_mode as _) {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
-                code: BunString::static_("EISDIR"),
+                code: BunString::static_("EISDIR").into(),
                 path: if self.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
+                    BunString::clone_utf8(self.file_store.pathlike.path().slice()).into()
                 } else {
-                    BunString::EMPTY
+                    BunString::EMPTY.into()
                 },
-                message: BunString::static_("Directories cannot be read like files"),
-                syscall: BunString::static_("read"),
+                message: BunString::static_("Directories cannot be read like files").into(),
+                syscall: BunString::static_("read").into(),
                 ..Default::default()
             });
             return;
@@ -1214,14 +1216,15 @@ impl<'a> ReadFileUV<'a> {
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
             this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             this.system_error = Some(SystemError {
-                code: BunString::static_("EISDIR"),
+                code: BunString::static_("EISDIR").into(),
                 path: if this.file_store.pathlike.is_path() {
                     BunString::clone_utf8(this.file_store.pathlike.path().slice())
                 } else {
                     BunString::EMPTY
-                },
-                message: BunString::static_("Directories cannot be read like files"),
-                syscall: BunString::static_("read"),
+                }
+                .into(),
+                message: BunString::static_("Directories cannot be read like files").into(),
+                syscall: BunString::static_("read").into(),
                 ..Default::default()
             });
             this.on_finish();

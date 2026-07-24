@@ -397,9 +397,7 @@ impl Rm {
                 }
             }
         };
-        if let Some(err) = e {
-            err.deref();
-        }
+        drop(e);
         match outcome {
             Some(code) => Builtin::done(interp, cmd, code),
             None => Yield::suspended(),

@@ -3600,10 +3600,6 @@ Server.prototype.getConnections = function getConnections(callback) {
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
-  if (typeof port === "string") {
-    const numPort = Number(port);
-    if (!Number.isNaN(numPort)) port = numPort;
-  }
   let backlog;
   let path;
   let exclusive = false;
@@ -3612,8 +3608,10 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
   let readableAll = false;
   let writableAll = false;
   let fd;
-  //port is actually path
-  if (typeof port === "string") {
+  // Match Node's normalizeArgs: a positional string argument is a pipe path
+  // only when isPipeName() is true; otherwise (including "" and "  ") it is
+  // treated as a port and flows to validatePort which rejects empty strings.
+  if (isPipeName(port)) {
     if (Number.isSafeInteger(hostname)) {
       if (hostname > 0) {
         //hostname is backlog

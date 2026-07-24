@@ -325,6 +325,14 @@ pub(crate) fn do_send(
         }
     }
     if zig_handle.is_none() {
+        if !handle.is_undefined_or_null() {
+            // serialize() returned a native handle but its fd is gone; its
+            // side effects (socket_list, _connections--) already ran, so fail
+            // the send instead of silently dropping the NODE_HANDLE envelope.
+            use bun_jsc::SysErrorJsc as _;
+            let e = bun_sys::Error::new(bun_sys::E::EBADF, bun_sys::Tag::send);
+            return do_send_err(global_object, callback, e.to_js(global_object), from);
+        }
         message = original_message;
         pause_target = JSValue::UNDEFINED;
     }

@@ -362,9 +362,13 @@ describe("bun --check", () => {
     expect(exitCode).toBe(1);
   });
 
-  test("--check together with --eval exits 9, like Node", async () => {
+  test.each([
+    ["--eval", "foo"],
+    // An empty program still counts as --eval being present.
+    ["--eval", ""],
+  ])("--check together with %s %p exits 9, like Node", async (flag, script) => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--check", "--eval", "foo"],
+      cmd: [bunExe(), "--check", flag, script],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -378,22 +382,21 @@ describe("bun --check", () => {
 });
 
 describe("node-style CLI errors", () => {
-  test.each(["--eval", "-e", "--print", "-p", "--inspect-port", "--debug-port"])(
-    "%s without a value exits 9",
-    async flag => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), flag],
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // -p / --print are deliberately absent: upstream registers --print as a
+  // boolean, so bare `node -p` prints undefined instead of erroring.
+  test.each(["--eval", "-e", "--inspect-port", "--debug-port"])("%s without a value exits 9", async flag => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stdout).toBe("");
-      expect(stderr.split(/\r?\n/)[0]).toEndWith(`: ${flag} requires an argument`);
-      expect(exitCode).toBe(9);
-    },
-  );
+    expect(stdout).toBe("");
+    expect(stderr.split(/\r?\n/)[0]).toEndWith(`: ${flag} requires an argument`);
+    expect(exitCode).toBe(9);
+  });
 
   test.each(["--inspect-port=", "--debug-port="])("%s with an empty value exits 9", async flag => {
     await using proc = Bun.spawn({
@@ -482,6 +485,143 @@ describe("NODE_OPTIONS", () => {
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("-e / -p value binding", () => {
+  // Node models -p as a boolean plus a `--print <arg>` alias for `--print --eval <arg>`,
+  // so print mode and the script can arrive together or separately.
+  const shapes: [string[], string][] = [
+    [["--print", "42"], "42\n"],
+    [["-p", "42"], "42\n"],
+    [["-pe", "42"], "42\n"],
+    [["-p", "-e", "42"], "42\n"],
+    [["-p", "[]"], "[]\n"],
+    [["--print", "--eval=-42"], "-42\n"],
+    [["--print", "--eval=-0"], "-0\n"],
+    // A separate argument may escape the leading-dash rule with a backslash.
+    [["-p", "\\-42"], "-42\n"],
+  ];
+  for (const [args, expected] of shapes) {
+    test(`bun ${args.join(" ")}`, async () => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+  }
+
+  test("an empty -e program runs and produces no output", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+
+  test("bare -p prints undefined", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-p"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an option-looking argument is not taken as -e's value", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", "-p"], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr.trim()).toEndWith(": -e requires an argument");
+    expect(exitCode).toBe(9);
+  });
+
+  test("--eval= echoes the argument as written", async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "--eval="], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr.split(/\r?\n/)[0]).toEndWith(": --eval= requires an argument");
+    expect(exitCode).toBe(9);
+  });
+});
+
+describe("--no-<flag> negation", () => {
+  // Bun ignores unrecognized flags on purpose, so the many Node options it does
+  // not implement stay harmless. Node errors on these; matching it would break
+  // every script that passes a Node-only flag to Bun.
+  test.each(["--no-i-dont-exist", "--no-warnings", "--no-extra-info-on-fatal-exception", "--no-global-search-paths"])(
+    "%s is tolerated",
+    async flag => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), flag, "-e", "console.log('ok')"],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+    },
+  );
+
+  test("--no-warnings suppresses process warnings", async () => {
+    const code = "process.emitWarning('nope'); console.log('ok')";
+    await using warned = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [, warnedErr] = await Promise.all([warned.stdout.text(), warned.stderr.text(), warned.exited]);
+    expect(warnedErr).toContain("nope");
+
+    await using quiet = Bun.spawn({
+      cmd: [bunExe(), "--no-warnings", "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([quiet.stdout.text(), quiet.stderr.text(), quiet.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+
+  test("negating an option that takes a value is rejected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-max-http-header-size", "-e", "1"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr.split(/\r?\n/)[0]).toEndWith(
+      ": --no-max-http-header-size is an invalid negation because it is not a boolean option",
+    );
+    expect(exitCode).toBe(9);
+  });
+
+  test("a declared --no-<flag> still works", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-install", "-e", "console.log('ok')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  });
+
+  test("other subcommands keep ignoring unknown flags", async () => {
+    using dir = tempDir("negation-subcommand", { "package.json": JSON.stringify({ name: "x", version: "0.0.0" }) });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "--no-i-dont-exist", "bin"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const exitCode = await proc.exited;
+
     expect(exitCode).toBe(0);
   });
 });

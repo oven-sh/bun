@@ -974,7 +974,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_entry() {
             // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
@@ -1322,7 +1322,7 @@ impl Run {
         let vm = unsafe { &*self.vm };
         // SAFETY: `self.ctx` is process-lifetime; see comment on `vm` above.
         let ro = unsafe { &(*self.ctx).runtime_options };
-        if !ro.eval.script.is_empty() {
+        if ro.eval.has_entry() {
             // SAFETY: FFI; `vm.global` is live for the VM lifetime.
             unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
         }
@@ -3072,7 +3072,7 @@ impl RunCommand {
             return Self::exec_check(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_entry() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();

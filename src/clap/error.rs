@@ -6,6 +6,10 @@ pub enum Error {
     MissingValue,
     #[error("InvalidArgument")]
     InvalidArgument,
+    /// `--no-<x>` where `<x>` is known but carries a value, so there is
+    /// nothing to negate.
+    #[error("InvalidNegation")]
+    InvalidNegation,
     #[error("WriteFailed")]
     WriteFailed,
 }
@@ -17,6 +21,7 @@ impl Error {
             Self::DoesntTakeValue => "DoesntTakeValue",
             Self::MissingValue => "MissingValue",
             Self::InvalidArgument => "InvalidArgument",
+            Self::InvalidNegation => "InvalidNegation",
             Self::WriteFailed => "WriteFailed",
         }
     }
@@ -40,6 +45,7 @@ impl From<crate::streaming::ArgError> for Error {
             crate::streaming::ArgError::DoesntTakeValue => Self::DoesntTakeValue,
             crate::streaming::ArgError::MissingValue => Self::MissingValue,
             crate::streaming::ArgError::InvalidArgument => Self::InvalidArgument,
+            crate::streaming::ArgError::InvalidNegation => Self::InvalidNegation,
         }
     }
 }

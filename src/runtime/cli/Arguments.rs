@@ -254,9 +254,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "-i                                Auto-install dependencies during execution. Equivalent to --install=fallback."
     ),
-    parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
+    parse_param!("-e, --eval <STR>!                 Evaluate argument as a script"),
     parse_param!(
-        "-p, --print <STR>                 Evaluate argument as a script and print the result"
+        "-p, --print <STR>?!               Evaluate argument as a script and print the result"
     ),
     parse_param!(
         "--input-type <STR>                Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
@@ -292,6 +292,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--no-deprecation                  Suppress all reporting of the custom deprecation."
     ),
+    parse_param!("--no-warnings                     Suppress all process warnings."),
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
@@ -893,6 +894,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
             },
+            reject_bad_negations: matches!(
+                cmd,
+                CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+            ),
             // Only the paths standing in for `node` get node's aliases.
             short_aliases: match cmd {
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,
@@ -911,19 +916,36 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                let node_flag: Option<&[u8]> = match (diag.short, diag.long.as_deref()) {
-                    (Some(b'e'), _) => Some(b"-e"),
-                    (Some(b'p'), _) => Some(b"-p"),
-                    (_, Some(b"eval")) => Some(b"--eval"),
-                    (_, Some(b"print")) => Some(b"--print"),
-                    (_, Some(b"inspect-port")) => Some(b"--inspect-port"),
-                    (_, Some(b"debug-port")) => Some(b"--debug-port"),
+                // `diag.arg` is the argument as written with its leading
+                // dashes stripped. Node echoes it verbatim, so the long form
+                // keeps a trailing '=' (`node --eval=` reports
+                // "--eval= requires an argument"); the short form reports the
+                // single flag that wanted the value, not the cluster it
+                // arrived in.
+                let node_flag: Option<Vec<u8>> = match (diag.short, diag.long.as_deref()) {
+                    (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
+                    (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
+                        let mut flag = b"--".to_vec();
+                        flag.extend_from_slice(&diag.arg);
+                        Some(flag)
+                    }
                     _ => None,
                 };
                 if let Some(flag) = node_flag {
-                    exit_node_requires_argument(flag);
+                    exit_node_requires_argument(&flag);
                 }
             }
+            if err == clap::Error::InvalidNegation {
+                // https://github.com/nodejs/node/blob/v26.3.0/src/node_options-inl.h
+                bun_core::pretty_errorln!(
+                    "{}: --{} is an invalid negation because it is not a boolean option",
+                    BStr::new(node_error_prefix()),
+                    BStr::new(&diag.arg)
+                );
+                Output::flush();
+                Global::exit(9);
+            }
+
             // Report useful error and exit
             let _ = diag.report(Output::error_writer(), err);
             command::tag_print_help(cmd, false);
@@ -1254,6 +1276,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 // TODO: prevent `node --port <script>` from working
                 ctx.runtime_options.eval.script = port_str.into();
                 ctx.runtime_options.eval.eval_and_print = true;
+                ctx.runtime_options.eval.provided = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
                     Ok(v) => Some(v),
@@ -1322,10 +1345,27 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             }
         }
 
-        if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script.into();
-            ctx.runtime_options.eval.eval_and_print = true;
-        } else if let Some(script) = args.option(b"--eval") {
+        // Node registers `--print` as a boolean and `--print <arg>` as an alias
+        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
+        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
+        //
+        // Divergence: because both spellings feed one upstream `--eval` string,
+        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
+        // parser keeps the two options in separate slots with no relative
+        // order, so a script on -p wins and it prints 7.
+        let print_arg = args.option(b"--print");
+        let eval_arg = args.option(b"--eval");
+        if print_arg.is_some() || eval_arg.is_some() {
+            // `provided` (not a non-empty script) is what selects eval mode, so
+            // `bun -e ""` runs an empty program and bare `bun -p` prints
+            // undefined instead of falling through to help.
+            ctx.runtime_options.eval.provided = true;
+            ctx.runtime_options.eval.eval_and_print = print_arg.is_some();
+            let script: &[u8] = match (print_arg, eval_arg) {
+                (Some(print_script), _) if !print_script.is_empty() => print_script,
+                (_, Some(eval_script)) => eval_script,
+                (print_script, None) => print_script.unwrap_or_default(),
+            };
             ctx.runtime_options.eval.script = script.into();
         }
         if let Some(input_type) = args.option(b"--input-type") {
@@ -1343,7 +1383,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             }
 
             ctx.runtime_options.check_syntax = args.flag(b"--check");
-            if ctx.runtime_options.check_syntax && !ctx.runtime_options.eval.script.is_empty() {
+            if ctx.runtime_options.check_syntax && ctx.runtime_options.eval.provided {
                 // Node prints this (and exits 9) for `node -c -e foo`.
                 bun_core::pretty_errorln!(
                     "{}: either --check or --eval can be used, not both",
@@ -1615,6 +1655,11 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         if args.flag(b"--experimental-stream-iter") {
             bun_resolve_builtins::set_stream_iter_enabled(true);
         }
+        if args.flag(b"--no-warnings") {
+            crate::node::process::NO_WARNINGS_FLAG
+                .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+
         if args.flag(b"--no-deprecation") {
             Bun__Node__ProcessNoDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }

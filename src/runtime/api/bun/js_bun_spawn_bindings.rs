@@ -1520,11 +1520,12 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     if !IS_SYNC {
         if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
-            // `vm` arg while `rare_data()` holds the outer &mut.
-            let raw_socket = unsafe { &mut *jsc_vm_ptr }
+            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
+            let vm = unsafe { &mut *jsc_vm_ptr };
+            let loop_ = vm.uws_loop();
+            let raw_socket = vm
                 .rare_data()
-                .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
+                .spawn_ipc_group(loop_)
                 .from_fd(
                     bun_uws::SocketKind::SpawnIpc,
                     None,

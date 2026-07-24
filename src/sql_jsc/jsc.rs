@@ -324,20 +324,13 @@ impl VirtualMachineSqlExt for VirtualMachine {
     }
     #[inline]
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
-        // `rare_data()` returns the boxed `&mut RareData` (disjoint allocation);
-        // `*_group` only reads `vm.uws_loop()`. Route the read-only `vm`
-        // argument through the JS-thread singleton accessor instead of a
-        // raw-pointer split-borrow — `VirtualMachine::get()` is `&'static`
-        // and doesn't borrow `self`, so borrowck is satisfied without a
-        // per-site raw-pointer deref.
-        self.rare_data()
-            .postgres_group::<SSL>(VirtualMachine::get())
+        let loop_ = self.uws_loop();
+        self.rare_data().postgres_group::<SSL>(loop_)
     }
     #[inline]
     fn mysql_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
-        // See `postgres_socket_group` — singleton `&'static` for the read-only
-        // `vm` argument avoids the raw-pointer split-borrow.
-        self.rare_data().mysql_group::<SSL>(VirtualMachine::get())
+        let loop_ = self.uws_loop();
+        self.rare_data().mysql_group::<SSL>(loop_)
     }
 }
 

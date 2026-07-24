@@ -1570,25 +1570,10 @@ impl<'a> HTTPClient<'a> {
     }
     /// Common tail of `fail` / `fail_from_h2` / `complete_connecting_process`:
     /// build the result, reset request state, and dispatch the callback.
-    /// Factored out so the borrowck reshape (`to_result()` borrows `&mut self`
-    /// while the post-reset callback wants `&mut self.state` again) lives in
-    /// one place instead of being open-coded with raw `(*this_ptr).field` at
-    /// every fail site.
     fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
         let callback = self.result_callback;
-        // reshaped for borrowck — `to_result()`'s `body` field is a
-        // `&mut MutableString` derived from a NonNull (caller-owned, disjoint
-        // from `self`'s storage), but its lifetime is tied to `&mut self`.
-        // Detach so the `state.reset()` reborrow below compiles.
-        // SAFETY: `body_out_str` points at the caller-owned MutableString that
-        // outlives this client. NOTE: `state.reset()` below DOES write through
-        // that same allocation (`(*body_out_str).reset()`, InternalState.rs)
-        // while `result.body` is a live `&'static mut` to it — this overlap is
-        // pre-existing (the old open-coded `(*this_ptr).state.reset()` did the
-        // same); the callback observes the
-        // post-reset (empty) buffer. Do not read this comment as asserting
-        // `result.body` and `state.reset()` are disjoint.
-        let result = unsafe { self.to_result().detach_lifetime() };
+        let body = self.state.body_out_str;
+        let mut result = self.to_result();
         self.state.reset();
         // `state.reset()` returns every stage field to Pending, which makes
         // this finished client indistinguishable from a fresh one. Every
@@ -1606,6 +1591,9 @@ impl<'a> HTTPClient<'a> {
         if clear_proxy_tunneling {
             self.flags.proxy_tunneling = false;
         }
+        // `state.reset()` cleared the caller-owned body buffer; attach it now
+        // so the callback sees the (empty) post-reset buffer.
+        result.body = body_out::opt_mut(body);
         callback.run(self.parent_async_http(), result);
     }
     #[inline]
@@ -3631,24 +3619,6 @@ impl<'a> HTTPClient<'a> {
         drop(envelope_buf);
     }
 
-    #[inline]
-    fn handle_short_read<const IS_SSL: bool>(
-        &mut self,
-        incoming_data: &[u8],
-        socket: HttpSocket<IS_SSL>,
-        needs_move: bool,
-    ) {
-        if needs_move {
-            let to_copy = incoming_data;
-            if !to_copy.is_empty() {
-                // this one will probably be another chunk, so we leave a little extra room
-                let _ = self.state.response_message_buffer.append(to_copy); // OOM/capacity: fire-and-forget
-            }
-        }
-
-        self.set_timeout(&socket);
-    }
-
     pub fn handle_on_data_headers<const IS_SSL: bool>(
         &mut self,
         incoming_data: &[u8],
@@ -3660,25 +3630,44 @@ impl<'a> HTTPClient<'a> {
             "handleOnDataHeader data: {}",
             BStr::new(incoming_data)
         );
-        // reshaped for borrowck — `to_read` aliases either
-        // `incoming_data` or `self.state.response_message_buffer`; hold it as a
-        // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
-        // so subsequent `&mut self` calls don't trip the checker.
-        let mut to_read = bun_ptr::RawSlice::new(incoming_data);
-        macro_rules! to_read {
-            () => {
-                to_read.slice()
-            };
-        }
-        let mut needs_move = true;
-        if !self.state.response_message_buffer.list.is_empty() {
+        // Move the accumulation buffer out of `self` so `to_read` can be a
+        // plain `&[u8]` borrow of either `incoming_data` or the local `buffer`,
+        // both disjoint from `&mut self`. The short-read paths move it back;
+        // every other path either drops it (terminal / reset) or lets it drop
+        // here once `clone_metadata()` has deep-copied the parsed headers.
+        let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
+        let needs_move = buffer.list.is_empty();
+        let mut to_read: &[u8] = if needs_move {
+            incoming_data
+        } else {
             // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-            let _ = self
-                .state
-                .response_message_buffer
-                .append_slice_exact(incoming_data);
-            to_read = bun_ptr::RawSlice::new(self.state.response_message_buffer.list.as_slice());
-            needs_move = false;
+            let _ = buffer.append_slice_exact(incoming_data);
+            buffer.list.as_slice()
+        };
+
+        // Persist the unparsed tail for the next `on_data` and re-arm the
+        // receive timeout. When `needs_move`, `to_read` is a suffix of
+        // `incoming_data` and is copied into the (currently empty) accumulation
+        // buffer; otherwise `to_read` is a suffix of `buffer`, so the consumed
+        // prefix is drained and `buffer` is moved back into state.
+        macro_rules! short_read {
+            () => {{
+                bun_core::scoped_log!(fetch, "handleShortRead");
+                if needs_move {
+                    if !to_read.is_empty() {
+                        // this one will probably be another chunk, so we leave a little extra room
+                        let _ = self.state.response_message_buffer.append(to_read);
+                    }
+                } else {
+                    let keep = to_read.len();
+                    buffer
+                        .list
+                        .drain_front(buffer.list.len().saturating_sub(keep));
+                    self.state.response_message_buffer = buffer;
+                }
+                self.set_timeout(&socket);
+                return;
+            }};
         }
 
         loop {
@@ -3689,21 +3678,13 @@ impl<'a> HTTPClient<'a> {
 
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
-            if to_read!().len() < 16 {
-                bun_core::scoped_log!(fetch, "handleShortRead");
-                if !needs_move {
-                    let remaining = to_read!().len();
-                    let buffer = &mut self.state.response_message_buffer.list;
-                    buffer.drain_front(buffer.len().saturating_sub(remaining));
-                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                }
-                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
-                return;
+            if to_read.len() < 16 {
+                short_read!();
             }
 
             let shared_resp = scratch::response_headers();
             let response = match picohttp::Response::parse_parts(
-                to_read!(),
+                to_read,
                 shared_resp,
                 Some(&mut amount_read),
             ) {
@@ -3716,21 +3697,14 @@ impl<'a> HTTPClient<'a> {
                     // `response_message_buffer` growth, so use a generous fixed
                     // cap independent of that knob.
                     const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
-                    if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
+                    if to_read.len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(
                             crate::Error::ResponseHeadersTooLarge,
                             socket,
                         );
                         return;
                     }
-                    if !needs_move {
-                        let remaining = to_read!().len();
-                        let buffer = &mut self.state.response_message_buffer.list;
-                        buffer.drain_front(buffer.len().saturating_sub(remaining));
-                        to_read = bun_ptr::RawSlice::new(buffer.as_slice());
-                    }
-                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
-                    return;
+                    short_read!();
                 }
                 Err(e) => {
                     self.close_and_fail::<IS_SSL>(e.into(), socket);
@@ -3739,17 +3713,17 @@ impl<'a> HTTPClient<'a> {
             };
 
             // we save the successful parsed response
-            // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
-            // both of which outlive this fn; widen to 'static for storage.
-            // Rebind `response` to the detached `'static` copy so it no longer
-            // borrows `to_read` (lets the `to_read` reassignment below pass
-            // borrowck — `RawSlice::slice` ties output to `&to_read`).
+            // SAFETY: header name/value slices borrow `to_read` (→ `buffer` /
+            // `incoming_data`) and the thread-local scratch header array, both
+            // of which outlive every read of `pending_response` below;
+            // `clone_metadata()` deep-copies before `buffer` drops. Widen to
+            // `'static` so it can be stored in `self.state`.
             let response = unsafe { response.detach_lifetime() };
             self.state.pending_response = Some(response);
 
             let bytes_read =
                 (usize::try_from(response.bytes_read).expect("int cast")).min(to_read.len());
-            to_read = bun_ptr::RawSlice::new(&to_read.slice()[bytes_read..]);
+            to_read = &to_read[bytes_read..];
 
             if response.status_code == 101 {
                 if self.flags.upgrade_state == HTTPUpgradeState::None
@@ -3771,10 +3745,10 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
-                if to_read!().is_empty() {
+                if to_read.is_empty() {
                     if !needs_move {
-                        let buffer = &mut self.state.response_message_buffer.list;
-                        buffer.drain_front(buffer.len());
+                        buffer.list.clear();
+                        self.state.response_message_buffer = buffer;
                     }
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
@@ -3829,14 +3803,14 @@ impl<'a> HTTPClient<'a> {
 
         if self.flags.proxy_tunneling && self.proxy_tunnel.is_none() {
             // we are proxing we dont need to cloneMetadata yet
-            self.start_proxy_handshake::<IS_SSL>(socket, to_read!());
+            self.start_proxy_handshake::<IS_SSL>(socket, to_read);
             return;
         }
 
         // we have body data incoming so we clone metadata and keep going
         self.clone_metadata();
 
-        if to_read!().is_empty() {
+        if to_read.is_empty() {
             // no body data yet, but we can report the headers
             if self.signals.get(signals::Field::HeaderProgress) {
                 self.progress_update::<IS_SSL>(ctx, socket);
@@ -3845,7 +3819,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.state.response_stage == ResponseStage::Body {
-            let report_progress = match self.handle_response_body(to_read!(), true) {
+            let report_progress = match self.handle_response_body(to_read, true) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -3859,7 +3833,7 @@ impl<'a> HTTPClient<'a> {
             }
         } else if self.state.response_stage == ResponseStage::BodyChunk {
             self.set_timeout(&socket);
-            let report_progress = match self.handle_response_body_chunked_encoding(to_read!()) {
+            let report_progress = match self.handle_response_body_chunked_encoding(to_read) {
                 Ok(b) => b,
                 Err(err) => {
                     self.close_and_fail::<IS_SSL>(err, socket);
@@ -4176,14 +4150,6 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        // reshaped for borrowck — `to_result()` returns an
-        // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
-        // `body: &mut MutableString` borrow). Holding that result across the
-        // `is_done` mutations below would require a second live `&mut Self`,
-        // which PORTING.md §Forbidden flags as aliased `&mut`. Instead:
-        // snapshot every owned/Copy field out of the result, drop it, mutate
-        // `self` directly, then rebuild a fresh `HTTPClientResult` for the
-        // callback from the snapshotted fields + the restored body.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value so that `state.reset()`
         // — which calls `body.reset()` and clears the list — doesn't deliver
@@ -4191,32 +4157,8 @@ impl<'a> HTTPClient<'a> {
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.dns_error,
-                r.dns_hostname,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
+        let mut result = self.to_result();
+        let has_more = result.has_more;
         let is_done = !has_more;
 
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
@@ -4343,23 +4285,8 @@ impl<'a> HTTPClient<'a> {
 
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
+        result.body = body_out::opt_mut(body);
+        callback.run(self.parent_async_http(), result);
 
         if has_more {
             self.maybe_pause_receive(socket);
@@ -4381,44 +4308,13 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // reshaped for borrowck — `to_result()` ties `result`'s
-        // lifetime to `&mut self`, so holding it across the `is_done` mutations
-        // would require a second live `&mut Self` (aliased UB). Instead snapshot
-        // every owned/Copy field out of the result, drop it, mutate `self`
-        // directly, then rebuild a fresh `HTTPClientResult` for the callback.
-        // See send_progress_update_without_stage_check for the same pattern.
         let body = self.state.body_out_str;
         // Snapshot the body buffer's CONTENTS by value; restored below.
         let body_snapshot = body_out::take_list(body);
         let callback = self.result_callback;
 
-        let (
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        ) = {
-            let r = self.to_result();
-            (
-                r.has_more,
-                r.redirected,
-                r.can_stream,
-                r.is_http2,
-                r.fail,
-                r.dns_error,
-                r.dns_hostname,
-                r.metadata,
-                r.body_size,
-                r.certificate_info,
-            )
-        }; // r (and its &mut borrow of self) dropped here
-        let is_done = !has_more;
+        let mut result = self.to_result();
+        let is_done = !result.has_more;
         bun_core::scoped_log!(fetch, "progressUpdate {}", is_done);
         if is_done {
             self.unregister_abort_tracker();
@@ -4430,23 +4326,8 @@ impl<'a> HTTPClient<'a> {
         }
         // Restore the body bytes that `state.reset()` cleared.
         body_out::restore_list(body, body_snapshot);
-        let async_http = self.parent_async_http();
-        // Rebuild the result from snapshotted fields now that all `&mut self`
-        // mutations are finished — no aliased borrows remain.
-        let result = HTTPClientResult {
-            body: body_out::opt_mut(body),
-            has_more,
-            redirected,
-            can_stream,
-            is_http2,
-            fail,
-            dns_error,
-            dns_hostname,
-            metadata,
-            body_size,
-            certificate_info,
-        };
-        callback.run(async_http, result);
+        result.body = body_out::opt_mut(body);
+        callback.run(self.parent_async_http(), result);
     }
 
     /// `do_redirect` minus the per-request socket release/close. The session
@@ -4591,7 +4472,14 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    pub fn to_result(&mut self) -> HTTPClientResult<'_> {
+    /// Build the result payload for the progress/completion callback.
+    ///
+    /// `body` is left `None`: every caller attaches it from `state.body_out_str`
+    /// *after* the `state.reset()` that follows this call (reset writes through
+    /// the same allocation). With `body` absent the result is fully owned, so
+    /// it can be held across the caller's `&mut self` mutations without a
+    /// lifetime widen.
+    pub fn to_result(&mut self) -> HTTPClientResult<'static> {
         let body_size: BodySize = if self.state.is_chunked_encoding() {
             BodySize::TotalReceived(self.state.total_body_received)
         } else if let Some(content_length) = self.state.content_length {
@@ -4612,7 +4500,7 @@ impl<'a> HTTPClient<'a> {
                 // transfer ownership of the metadata here
                 return HTTPClientResult {
                     metadata: Some(metadata),
-                    body: body_out::opt_mut(self.state.body_out_str),
+                    body: None,
                     redirected: self.flags.redirected,
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
@@ -4628,7 +4516,7 @@ impl<'a> HTTPClient<'a> {
             }
         }
         HTTPClientResult {
-            body: body_out::opt_mut(self.state.body_out_str),
+            body: None,
             metadata: None,
             redirected: self.flags.redirected,
             fail: self.state.fail,

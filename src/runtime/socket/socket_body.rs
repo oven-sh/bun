@@ -551,12 +551,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         // SAFETY: per-thread VM singleton; `VirtualMachine::get()` yields the
         // canonical `*mut` (write provenance) — never derive `&mut` from the
         // `&'static` borrow stored on Handlers (that's `invalid_reference_casting`).
-        // No aliasing `&mut` held across the `rare_data()` borrow — `vm`
-        // reborrowed immutably for the 2nd arg.
         let group = VirtualMachine::get()
             .as_mut()
             .rare_data()
-            .bun_connect_group::<SSL>(vm);
+            .bun_connect_group::<SSL>(vm.uws_loop());
         let kind: uws::SocketKind = if SSL {
             uws::SocketKind::BunSocketTls
         } else {
@@ -3497,7 +3495,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let group = VirtualMachine::get()
             .as_mut()
             .rare_data()
-            .bun_connect_group::<true>(vm);
+            .bun_connect_group::<true>(vm.uws_loop());
         // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
         // `InternalSocket::Connected` above; `owned_ssl_ctx` is the +1 ref
         // taken from SecureContext/ssl_ctx_cache and never null here.

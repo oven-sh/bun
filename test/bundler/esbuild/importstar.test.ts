@@ -212,7 +212,7 @@ describe("bundler", () => {
       "/foo.js": `exports.foo = 123`,
     },
     run: {
-      stdout: '{"foo":123} 123 234',
+      stdout: '{"default":{"foo":123},"foo":123} 123 234',
     },
   });
   itBundled("importstar/ImportStarCommonJSNoCapture", {

@@ -104,7 +104,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      stdout: 'hello\n{"foo":123}',
+      stdout: 'hello\n{"default":{"foo":123},"foo":123}',
     },
   });
   itBundled("dce/PackageJsonSideEffectsTrueKeepES6", {

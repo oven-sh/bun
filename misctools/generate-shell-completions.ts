@@ -391,8 +391,9 @@ function generateBash(): string {
 
 _file_arguments() {
     local extensions="\${1}"
-    local reset="\$(shopt -p globstar extglob)"
-    shopt -s globstar extglob
+    local reset
+    reset="\$(shopt -p globstar extglob 2>/dev/null)"
+    shopt -s globstar extglob 2>/dev/null
 
     if [[ -z "\${cur_word}" ]]; then
         COMPREPLY+=( \$(compgen -fG -X "\${extensions}" -- "\${cur_word}") );
@@ -400,7 +401,7 @@ _file_arguments() {
         COMPREPLY+=( \$(compgen -f -X "\${extensions}" -- "\${cur_word}") );
     fi
 
-    eval "\$reset"
+    eval "\$reset" 2>/dev/null
 }
 
 _long_short_completion() {
@@ -465,14 +466,22 @@ ${optionVars.join("\n")}
             return;;
     esac
 
-    case "\${COMP_WORDS[1]}" in
-        help|completions|--help|-h|-v|--version) return;;
+    local first_word="" i
+    for (( i=1; i < COMP_CWORD; i++ )); do
+        [[ "\${COMP_WORDS[i]}" != -* ]] && { first_word="\${COMP_WORDS[i]}"; break; }
+    done
+
+    case "\${first_word}" in
+        help|completions) return;;
 ${caseArms.join("\n")}
-        *)
+        "")
             _long_short_completion "\${GLOBAL_OPTIONS_LONG} \${GLOBAL_OPTIONS_SHORT}" "\${GLOBAL_OPTIONS_SHORT}";
             COMPREPLY+=( \$(compgen -W "\${SUBCOMMANDS}" -- "\${cur_word}") );
             _read_scripts_in_package_json;
             _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts|html)?(\$|))";
+            return;;
+        *)
+            COMPREPLY+=( \$(compgen -f -- "\${cur_word}") );
             return;;
     esac
 }

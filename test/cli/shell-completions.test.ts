@@ -13,6 +13,12 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const fishBin = Bun.which("fish");
+const bashBin = Bun.which("bash");
+// macOS ships /bin/bash 3.2; the functional driver exercises `_file_arguments`
+// (globstar/extglob) so only run it against bash 4+.
+const bashMajor = bashBin
+  ? parseInt(Bun.spawnSync([bashBin, "-c", "echo ${BASH_VERSINFO[0]}"]).stdout.toString().trim(), 10)
+  : 0;
 
 async function embeddedCompletions(shell: "fish" | "bash" | "zsh"): Promise<string> {
   // `bun completions` first tries to install a bunx symlink relative to the
@@ -114,11 +120,11 @@ describe.concurrent.skipIf(isWindows)("shell completions", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bash: script is syntactically valid", async () => {
+  test.skipIf(!bashBin)("bash: script is syntactically valid", async () => {
     const bash = await embeddedCompletions("bash");
     using dir = tempDir("bun-bash-completion", { "bun.bash": bash });
     await using proc = Bun.spawn({
-      cmd: ["bash", "-n", "bun.bash"],
+      cmd: [bashBin!, "-n", "bun.bash"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -130,36 +136,52 @@ describe.concurrent.skipIf(isWindows)("shell completions", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("bash: functionally completes the #2503 cases", async () => {
+  test.skipIf(!bashBin || bashMajor < 4)("bash: functionally completes the #2503 cases", async () => {
     const bash = await embeddedCompletions("bash");
     const driver = `
-test_complete() {
+test_has() {
   local line="$1"; local expect="$2"
   COMP_WORDS=($line ""); COMP_CWORD=$(( \${#COMP_WORDS[@]} - 1 ))
   COMP_LINE="$line "; COMP_POINT=\${#COMP_LINE}; COMPREPLY=()
   _bun_completions
   if [[ " \${COMPREPLY[*]} " == *" $expect "* ]]; then
-    echo "ok $line : $expect"
+    echo "ok $line : has $expect"
   else
-    echo "MISSING $line : $expect"
+    echo "MISSING $line : has $expect"
   fi
 }
-test_complete "bun" "--watch"
-test_complete "bun run" "--watch"
-test_complete "bun test" "--watch"
-test_complete "bun test" "--update-snapshots"
-test_complete "bun install" "--frozen-lockfile"
-test_complete "bun update" "--latest"
-test_complete "bun" "run"
-test_complete "bun" "test"
-test_complete "bun pm" "pack"
+test_not() {
+  local line="$1"; local expect="$2"
+  COMP_WORDS=($line ""); COMP_CWORD=$(( \${#COMP_WORDS[@]} - 1 ))
+  COMP_LINE="$line "; COMP_POINT=\${#COMP_LINE}; COMPREPLY=()
+  _bun_completions
+  if [[ " \${COMPREPLY[*]} " != *" $expect "* ]]; then
+    echo "ok $line : not $expect"
+  else
+    echo "LEAKED $line : not $expect"
+  fi
+}
+test_has "bun" "--watch"
+test_has "bun run" "--watch"
+test_has "bun test" "--watch"
+test_has "bun test" "--update-snapshots"
+test_has "bun install" "--frozen-lockfile"
+test_has "bun update" "--latest"
+test_has "bun" "run"
+test_has "bun" "test"
+test_has "bun pm" "pack"
+test_has "bun --watch" "run"
+test_not "bun dev" "install"
+test_not "bun dev" "--watch"
+test_not "bun install" "--watch"
 `;
     using dir = tempDir("bun-bash-completion-run", {
       "bun.bash": bash,
+      "package.json": JSON.stringify({ scripts: { dev: "echo dev" } }),
       "driver.sh": `#!/bin/bash\nsource ./bun.bash\n${driver}`,
     });
     await using proc = Bun.spawn({
-      cmd: ["bash", "driver.sh"],
+      cmd: [bashBin!, "driver.sh"],
       cwd: String(dir),
       env: bunEnv,
       stdout: "pipe",
@@ -168,7 +190,8 @@ test_complete "bun pm" "pack"
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).not.toContain("MISSING");
-    expect(stdout.split("\n").filter(l => l.startsWith("ok ")).length).toBe(9);
+    expect(stdout).not.toContain("LEAKED");
+    expect(stdout.split("\n").filter(l => l.startsWith("ok ")).length).toBe(13);
     expect(exitCode).toBe(0);
   });
 

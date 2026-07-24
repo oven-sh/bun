@@ -143,7 +143,7 @@ extern "C" fn select_alpn_callback(
             // routing state, and this handshake's next flight would land on
             // that other socket's fd. Snapshot and restore it around every
             // JS-running region.
-            let mut saved_loop_state: [*mut c_void; 5] = [core::ptr::null_mut(); 5];
+            let mut saved_loop_state: [*mut c_void; 6] = [core::ptr::null_mut(); 6];
             tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
                 boringssl_sys::SSL::opaque_ref(ssl),
                 saved_loop_state.as_mut_ptr(),

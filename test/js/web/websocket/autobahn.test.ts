@@ -126,10 +126,14 @@ describe.skipIf(!isDockerEnabled())("autobahn", () => {
     // waits for the client echo or a closeAfter/killAfter timer, so a bounded
     // fan-out overlaps those waits instead of paying them serially.
     const concurrency = 16;
+    // A broad protocol regression fails every case via the server's
+    // killAfter/closeAfter fallback (seconds each); bailing once we have
+    // plenty to report keeps that path seconds, not minutes.
+    const maxFailures = 20;
     const failures: { case: number; behavior: string }[] = [];
     let cursor = 0;
     async function worker() {
-      while (true) {
+      while (failures.length < maxFailures) {
         const idx = cursor++;
         if (idx >= testCases.length) return;
         const i = testCases[idx];

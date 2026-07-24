@@ -29,9 +29,9 @@
 // fetch client's HTTP thread consumes it before the second segment lands.
 
 import { describe, expect, test } from "bun:test";
-import net from "node:net";
-import { once } from "node:events";
 import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 
 // Give the subprocess headroom on slow ASAN CI machines — the combined
 // setup (Bun.serve TLS + net.createServer + fetch TLS handshake) runs

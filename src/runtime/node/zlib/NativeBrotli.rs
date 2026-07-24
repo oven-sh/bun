@@ -523,7 +523,9 @@ mod _impl {
             self.state = None;
         }
 
-        pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+        /// # Safety
+        /// See [`CompressionContext::set_buffers`](crate::node::node_zlib_binding::CompressionContext::set_buffers).
+        pub unsafe fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
             self.next_in = in_.map_or(ptr::null(), |p| p.as_ptr());
             self.avail_in = in_.map_or(0, |p| p.len());
             // Reshaped for borrowck — compute ptr/len before consuming `out`.

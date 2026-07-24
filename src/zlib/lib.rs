@@ -91,7 +91,7 @@ pub fn compress2_into(
 
 pub struct ZlibReaderArrayList<'a> {
     pub input: &'a [u8],
-    pub list_ptr: &'a mut Vec<u8>,
+    list_ptr: &'a mut Vec<u8>,
     zlib: zStream_struct,
     pub state: ZlibReaderArrayListState,
     /// Decompression-bomb guard: `read_all` errors instead of growing the
@@ -315,7 +315,7 @@ impl NodeMode {
 /// Not for streaming!
 pub struct ZlibCompressorArrayList<'a> {
     pub input: &'a [u8],
-    pub list_ptr: &'a mut Vec<u8>,
+    list_ptr: &'a mut Vec<u8>,
     zlib: zStream_struct,
     pub state: ZlibCompressorArrayListState,
 }

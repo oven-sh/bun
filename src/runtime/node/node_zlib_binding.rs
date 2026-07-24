@@ -190,7 +190,13 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
 /// Backing-stream surface used by [`CompressionStream`] (zlib / brotli / zstd
 /// `Context` types).
 pub(crate) trait CompressionContext {
-    fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
+    /// # Safety
+    /// The stored raw pointers persist past the slice borrows. Callers must
+    /// guarantee the backing memory of `in_`/`out` remains valid and
+    /// unmoved until the next `do_work()` completes; see the
+    /// `CompressionStream::write[_sync]` call sites below for the pinned
+    /// `ArrayBuffer` contract that discharges this.
+    unsafe fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>);
     fn set_flush(&mut self, flush: i32);
     fn do_work(&mut self);
     fn reset(&mut self) -> Error;
@@ -433,7 +439,10 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         T::pending_output_set_cached(this_value, global_this, arguments[4]);
 
         this.stream().with_mut(|s| {
-            s.set_buffers(in_, out);
+            // SAFETY: `in_`/`out` are slices into pinned JS `ArrayBuffer`s,
+            // rooted by `pending_input`/`pending_output` above until
+            // `run_from_js_thread` unpins them after `do_work` completes.
+            unsafe { s.set_buffers(in_, out) };
             s.set_flush(i32::try_from(flush).expect("int cast"));
         });
 
@@ -683,7 +692,9 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         this.ref_();
 
         this.stream().with_mut(|s| {
-            s.set_buffers(in_, out);
+            // SAFETY: `in_`/`out` are slices into pinned JS `ArrayBuffer`s;
+            // `do_work` runs synchronously below before either is unpinned.
+            unsafe { s.set_buffers(in_, out) };
             s.set_flush(i32::try_from(flush).expect("int cast"));
         });
         let this_value = callframe.this();
@@ -985,7 +996,8 @@ macro_rules! __impl_compression_stream {
         }
 
         impl $crate::node::node_zlib_binding::CompressionContext for $ctx {
-            #[inline] fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { Self::set_buffers(self, in_, out) }
+            // SAFETY: forwarded to the inherent `unsafe fn` with the same contract.
+            #[inline] unsafe fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) { unsafe { Self::set_buffers(self, in_, out) } }
             #[inline] fn set_flush(&mut self, flush: i32) { Self::set_flush(self, flush) }
             #[inline] fn do_work(&mut self) { Self::do_work(self) }
             #[inline] fn reset(&mut self) -> $crate::node::node_zlib_binding::Error { Self::reset(self) }

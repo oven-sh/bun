@@ -422,7 +422,9 @@ impl Context {
         self.set_dictionary()
     }
 
-    pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
+    /// # Safety
+    /// See [`CompressionContext::set_buffers`](crate::node::node_zlib_binding::CompressionContext::set_buffers).
+    pub unsafe fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
         let (in_ptr, in_len) = match in_ {
             Some(p) => (p.as_ptr(), u32::try_from(p.len()).expect("int cast")),
             None => (core::ptr::null(), 0),
@@ -431,13 +433,9 @@ impl Context {
             Some(p) => (p.as_mut_ptr(), u32::try_from(p.len()).expect("int cast")),
             None => (core::ptr::null_mut(), 0),
         };
-        // SAFETY: z_stream invariant (B) — the sole caller,
-        // `CompressionStream::write[_sync]` in `node_zlib_binding.rs`, passes
-        // slices into pinned JS `ArrayBuffer`s rooted by
-        // `pending_input`/`pending_output`. Those backing stores cannot move
-        // or be freed until `run_from_js_thread` unpins them after `do_work`
-        // completes, so the pointers stored here remain valid across the
-        // worker-thread call.
+        // SAFETY: z_stream invariant (B) — forwarded from this fn's own
+        // `# Safety` contract; the caller guarantees `in_`/`out` outlive the
+        // next `do_work`.
         unsafe {
             self.state.set_input(in_ptr, in_len);
             self.state.set_output(out_ptr, out_len);

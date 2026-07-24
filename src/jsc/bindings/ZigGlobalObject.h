@@ -494,6 +494,10 @@ public:
                                                                                                              \
     V(public, WriteBarrier<Bun::JSNextTickQueue>, m_nextTickQueue)                                           \
                                                                                                              \
+    /* internal/async_hooks' setImmediate event sink. Null unless async_hooks   */                           \
+    /* tracking is on, which is what keeps the timer paths free of hook work.   */                           \
+    V(public, WriteBarrier<JSC::JSObject>, m_asyncHooksImmediateEmitter)                                     \
+                                                                                                             \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
                                                                                                              \

@@ -194,3 +194,33 @@ test("async_hooks AsyncResource.asyncId is stable and matches executionAsyncId i
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
+
+test("async_hooks delivers hooks in init/before/after/destroy order", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { createHook } = require("async_hooks");
+      const fs = require("fs");
+      const seq = [];
+      createHook({
+        init(id, type) { seq.push("init:" + type); },
+        before(id) { seq.push("before"); },
+        after(id) { seq.push("after"); },
+        destroy(id) { seq.push("destroy"); },
+      }).enable();
+      fs.access(__filename, () => { seq.push("callback"); });
+      setTimeout(() => console.log(seq.join(",")), 20);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: "init:FSREQCALLBACK,before,callback,after,destroy",
+    stderr: "",
+    exitCode: 0,
+  });
+});

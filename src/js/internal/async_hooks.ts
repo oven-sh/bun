@@ -1,10 +1,10 @@
 // Port of the parts of node's lib/internal/async_hooks.js that Bun can honour.
 //
-// Bun tracks async ids for the resources it owns at the JS layer:
-// process.nextTick (TickObject) and AsyncResource. Promises and native handles
-// (sockets, fs requests, HTTP parsers) are NOT tracked, so `init`/`before`/
-// `after`/`destroy` never fire for them and `promiseResolve` never fires at
-// all.
+// Bun tracks async ids for process.nextTick (TickObject), setImmediate
+// (Immediate), callback-style fs requests (FSREQCALLBACK) and AsyncResource.
+// Promises and the remaining native handles (sockets, HTTP parsers) are NOT
+// tracked, so `init`/`before`/`after`/`destroy` never fire for them and
+// `promiseResolve` never fires at all.
 //
 // Everything here is behind `state.active`, a latch flipped the first time a
 // hook is enabled or a caller asks for an async id. While it is false the
@@ -12,9 +12,20 @@
 // cleared: disabling a hook between a resource's `before` and `after` must not
 // leave the id stack unbalanced.
 
+const setImmediateAsyncHooksEmitter = $newCppFunction("NodeAsyncHooks.cpp", "jsSetImmediateAsyncHooksEmitter", 1);
+
 const state = {
   active: false,
 };
+
+function activate() {
+  if (state.active) return;
+  state.active = true;
+  immediateIds = new (require("internal/primordials").SafeWeakMap)();
+  // Hands the native setImmediate/clearImmediate paths their event sink. While
+  // it is unset those paths do a single null check.
+  setImmediateAsyncHooksEmitter(emitImmediateEvent);
+}
 
 const fields = {
   init: 0,
@@ -48,17 +59,17 @@ function newAsyncId() {
 }
 
 function executionAsyncId() {
-  state.active = true;
+  activate();
   return currentExecutionAsyncId;
 }
 
 function triggerAsyncId() {
-  state.active = true;
+  activate();
   return currentTriggerAsyncId;
 }
 
 function executionAsyncResource() {
-  state.active = true;
+  activate();
   const { length } = resourceStack;
   if (length === 0) return topLevelResource;
   return resourceStack[length - 1];
@@ -213,7 +224,7 @@ function addHook(hook) {
   hookFields.totals += hookFields.destroy += hook.destroy !== undefined ? 1 : 0;
   hookFields.totals += hookFields.promiseResolve += hook.promiseResolve !== undefined ? 1 : 0;
   array.push(hook);
-  if (prevTotals === 0 && hookFields.totals > 0) state.active = true;
+  if (prevTotals === 0 && hookFields.totals > 0) activate();
 }
 
 function removeHook(hook) {
@@ -226,6 +237,38 @@ function removeHook(hook) {
   hookFields.totals += hookFields.destroy -= hook.destroy !== undefined ? 1 : 0;
   hookFields.totals += hookFields.promiseResolve -= hook.promiseResolve !== undefined ? 1 : 0;
   array.splice(index, 1);
+}
+
+// Must stay in sync with Bun::ImmediateAsyncHook in
+// src/jsc/bindings/NodeAsyncHooks.h.
+const kImmediateInit = 0;
+const kImmediateBefore = 1;
+const kImmediateAfter = 2;
+
+// setImmediate hands back an opaque native object, so its ids live beside it.
+let immediateIds;
+
+function emitImmediateEvent(kind, timer) {
+  if (kind === kImmediateInit) {
+    const asyncId = newAsyncId();
+    immediateIds.set(timer, { asyncId, triggerAsyncId: currentExecutionAsyncId });
+    emitInit(asyncId, "Immediate", currentExecutionAsyncId, timer);
+    return;
+  }
+  const record = immediateIds.get(timer);
+  // Timeouts and Bun.sleep() promises reach here too; they were never init'd.
+  if (record === undefined) return;
+  if (kind === kImmediateBefore) {
+    emitBefore(record.asyncId, record.triggerAsyncId, timer);
+  } else if (kind === kImmediateAfter) {
+    emitAfter(record.asyncId);
+  } else {
+    // Destroy: the immediate can never run again, so drop the record. This is
+    // what makes clearImmediate() after a fire a no-op instead of a second
+    // destroy event.
+    immediateIds.delete(timer);
+    emitDestroy(record.asyncId);
+  }
 }
 
 function enabledHooksExist() {

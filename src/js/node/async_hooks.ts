@@ -370,8 +370,7 @@ class AsyncResource {
     } else if (opts === undefined) {
       triggerAsyncId = asyncHooks.getDefaultTriggerAsyncId();
     } else {
-      triggerAsyncId =
-        opts.triggerAsyncId === undefined ? asyncHooks.getDefaultTriggerAsyncId() : opts.triggerAsyncId;
+      triggerAsyncId = opts.triggerAsyncId === undefined ? asyncHooks.getDefaultTriggerAsyncId() : opts.triggerAsyncId;
       requireManualDestroy = !!opts.requireManualDestroy;
     }
     if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {

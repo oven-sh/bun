@@ -50,6 +50,9 @@ function trackFsRequest(guarded) {
           return guarded.$apply(undefined, arguments);
       }
     } finally {
+      // emitDestroy only queues; the delivered order stays init/before/after/
+      // destroy, matching node's own tick dispatcher.
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/task_queues.js#L96-L100
       asyncHooks.emitDestroy(asyncId);
       asyncHooks.emitAfter(asyncId);
     }

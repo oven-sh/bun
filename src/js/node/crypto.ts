@@ -48,6 +48,8 @@ const {
   generateKeyPairSync,
 
   X509Certificate,
+
+  nativeWebCrypto,
 } = $cpp("node_crypto_binding.cpp", "createNodeCryptoBinding");
 
 const {
@@ -130,7 +132,10 @@ function getArrayBufferOrView(buffer, name, encoding?) {
   return buffer;
 }
 
-const crypto = globalThis.crypto;
+// The native WebCrypto object, NOT `globalThis.crypto`: the global is
+// user-replaceable, and in `-e`/`-p` mode it resolves to this very module
+// (node's eval semantics), which would recurse into this initializer.
+const crypto = nativeWebCrypto;
 
 var crypto_exports: any = {};
 

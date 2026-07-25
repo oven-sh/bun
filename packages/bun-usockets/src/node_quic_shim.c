@@ -326,10 +326,12 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
         if (i >= len) break;
         i++;
         unsigned char flags = (i < len) ? (unsigned char) buf[i++] : 0;
-        if (name_len > LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
+        if (name_len >= LSXPACK_MAX_STRLEN || val_len > LSXPACK_MAX_STRLEN)
             goto done;
-        lsxpack_header_set_offset2(&hdrs[count], buf, name_off, name_len,
-                                   val_off, val_len);
+        /* Per-entry base keeps val_offset (= name_len+1) under the setter's
+         * LSXPACK_MAX_STRLEN assert no matter how large the joined buffer is. */
+        lsxpack_header_set_offset2(&hdrs[count], buf + name_off, 0, name_len,
+                                   val_off - name_off, val_len);
         if (flags & 1) {
             hdrs[count].flags = LSXPACK_NEVER_INDEX;
             hdrs[count].indexed_type = 2;

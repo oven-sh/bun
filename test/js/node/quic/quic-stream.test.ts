@@ -186,8 +186,12 @@ describe("HTTP/3 header encoding", () => {
   // idle timeout tore down the whole connection.
   test("encodes a HEADERS block with more than 128 field lines", async () => {
     const CUSTOM = 200;
+    // Long enough that the NUL-joined encode buffer runs well past 64KB,
+    // exercising the per-entry lsxpack_header base (not just the count path).
+    const VAL = Buffer.alloc(400, "a").toString();
     const app = { maxHeaderPairs: 1024, maxHeaderLength: 1 << 20 };
     const serverSaw = Promise.withResolvers<Record<string, string>>();
+    const serverSendOk = Promise.withResolvers<boolean>();
     await using server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
@@ -203,8 +207,7 @@ describe("HTTP/3 header encoding", () => {
           serverSaw.resolve(headers);
           const resp: Record<string, string> = { ":status": "200" };
           for (let i = 0; i < CUSTOM; i++) resp["x-resp-" + i] = String(i);
-          // Server direction too: more than 128 response headers.
-          expect(this.sendHeaders(resp)).toBe(true);
+          serverSendOk.resolve(this.sendHeaders(resp));
           this.writer.endSync();
         },
       },
@@ -227,7 +230,7 @@ describe("HTTP/3 header encoding", () => {
       ":scheme": "https",
       ":authority": "localhost",
     };
-    for (let i = 0; i < CUSTOM; i++) req["x-req-" + i] = String(i);
+    for (let i = 0; i < CUSTOM; i++) req["x-req-" + i] = VAL;
 
     const gotHeaders = Promise.withResolvers<Record<string, string>>();
     const stream = await client.createBidirectionalStream({
@@ -235,12 +238,15 @@ describe("HTTP/3 header encoding", () => {
         gotHeaders.resolve(headers);
       },
     });
+    stream.closed.catch(gotHeaders.reject);
     expect(stream.sendHeaders(req, { terminal: true })).toBe(true);
 
     const seen = await serverSaw.promise;
     expect(Object.keys(seen)).toHaveLength(CUSTOM + 4);
-    expect(seen["x-req-0"]).toBe("0");
-    expect(seen["x-req-" + (CUSTOM - 1)]).toBe(String(CUSTOM - 1));
+    expect(seen["x-req-0"]).toBe(VAL);
+    expect(seen["x-req-" + (CUSTOM - 1)]).toBe(VAL);
+    // Server direction too: more than 128 response headers.
+    expect(await serverSendOk.promise).toBe(true);
 
     const resp = await gotHeaders.promise;
     expect(resp[":status"]).toBe("200");

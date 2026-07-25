@@ -827,9 +827,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetWorkerData, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    // node:worker_threads unwraps/transforms the raw deserialized value
-    // (stdio/messaging wrapper, unpackJSTransferables); push that back into the
-    // global cache so Worker.data stays identical to the exported workerData.
     defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerData(callFrame->argument(0));
     return JSC::JSValue::encode(jsUndefined());
 }
@@ -842,8 +839,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSValue threadName = jsEmptyString(vm);
-    // Both the `Worker.data` getter and `$cpp("Worker.cpp", ...)` in
-    // node:worker_threads call this; re-entry must not clobber or re-deserialize.
+    // Re-entrant (Worker.data getter + node:worker_threads both call this): reuse the first run's cache.
     JSMap* environmentData = globalObject->nodeWorkerEnvironmentData();
     if (JSValue cached = globalObject->nodeWorkerData())
         workerData = cached;

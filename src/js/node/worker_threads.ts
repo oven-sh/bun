@@ -746,8 +746,7 @@ if (
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
 }
-// The native cache behind `Worker.data` was seeded from the raw deserialized
-// value; write back the unpacked/unwrapped result so both surfaces agree.
+// Keep the native Worker.data cache in sync with the unpacked/unwrapped value above.
 if (workerData !== _workerData) _setWorkerData(workerData);
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);

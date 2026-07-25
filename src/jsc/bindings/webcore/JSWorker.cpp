@@ -411,10 +411,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorkerConstructor_data, (JSGlobalObject * lexicalGlob
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    // The serialized workerData lives on WorkerOptions and is deserialized once by
-    // createNodeWorkerThreadsBinding (which also caches it on the global). If
-    // `Worker.data` is read before `node:worker_threads` is loaded, run that
-    // deserialization now so both surfaces see the same value.
+    // nodeWorkerData is seeded by createNodeWorkerThreadsBinding; force that once if node:worker_threads hasn't run.
     if (!globalObject->nodeWorkerEnvironmentData()) {
         createNodeWorkerThreadsBinding(globalObject);
         RETURN_IF_EXCEPTION(throwScope, {});

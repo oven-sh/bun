@@ -1,21 +1,23 @@
-const { connect } = require("tls");
+const net = require("node:net");
 
-const socket = connect(
-  {
-    host: "www.example.com",
-    port: 443,
-    rejectUnauthorized: false,
-  },
-  () => {
+// A local server that accepts the connection and sends nothing keeps the
+// socket connected without racing data delivery against process exit. Unref it
+// so only the client socket's ref state decides whether the process stays alive.
+const server = net.createServer(() => {});
+server.listen(0, () => {
+  server.unref();
+  const { port } = server.address();
+  const socket = net.connect(port, "localhost", () => {
     socket.on("data", () => {
       console.error("Received data. FAIL");
       process.exit(1);
     });
-    socket.write("GET / HTTP/1.1\r\nHost: www.example.com\r\n\r\n\r\n");
-  },
-);
-socket.unref();
-socket.ref();
-socket.ref();
-socket.ref();
-socket.unref();
+  });
+  // The final unref must win: the process has no other pending work, so it
+  // should exit cleanly instead of being kept alive by the connected socket.
+  socket.unref();
+  socket.ref();
+  socket.ref();
+  socket.ref();
+  socket.unref();
+});

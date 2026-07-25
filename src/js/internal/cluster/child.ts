@@ -60,12 +60,28 @@ cluster._setupWorker = function () {
 cluster._bunServeUnix = function (path) {
   return new Promise(resolve => {
     if (!process.connected) return resolve(-1);
-    send({ act: "bunServeUnix", path }, (reply, handle) => {
-      if (handle && typeof handle.fd === "number" && handle.fd >= 0) {
-        resolve(handle.fd);
-      } else {
-        resolve(typeof reply?.errno === "number" && reply.errno < 0 ? reply.errno : -1);
+    let settled = false;
+    const settle = v => {
+      if (settled) {
+        // The primary replied after the deadline; its dup of the listen fd
+        // would otherwise sit in this process's table forever.
+        if (typeof v === "number" && v >= 0) require("node:fs").closeSync(v);
+        return;
       }
+      settled = true;
+      clearTimeout(timer);
+      process.removeListener("disconnect", onDisconnect);
+      resolve(v);
+    };
+    const onDisconnect = () => settle(-1);
+    process.once("disconnect", onDisconnect);
+    // A non-cluster primary (Node.js, older Bun, or plain child_process.fork
+    // with NODE_UNIQUE_ID in env) silently drops the unknown act; bound the
+    // wait so Bun.serve falls through to a direct bind instead of hanging.
+    const timer = setTimeout(() => settle(-1), 5000);
+    send({ act: "bunServeUnix", path }, (reply, handle) => {
+      if (handle && typeof handle.fd === "number" && handle.fd >= 0) settle(handle.fd);
+      else settle(typeof reply?.errno === "number" && reply.errno < 0 ? reply.errno : -1);
     });
   });
 };

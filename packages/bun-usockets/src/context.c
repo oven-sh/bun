@@ -399,6 +399,8 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
+/* Adopt an already-bound fd as a listen socket. The fd is consumed: closed
+ * here on failure, owned by the listen socket on success. */
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
@@ -406,6 +408,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     bsd_set_nonblocking(fd);
     if (listen(fd, backlog > 0 ? backlog : 512)) {
         *error = LIBUS_ERR;
+        bsd_close_socket(fd);
         return 0;
     }
 
@@ -413,6 +416,7 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
     if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
         int saved_errno = errno;
+        bsd_close_socket(fd);
         us_poll_free(p, group->loop);
         *error = saved_errno;
         errno = saved_errno;

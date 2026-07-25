@@ -171,7 +171,17 @@ test.skipIf(isWindows)("Bun.serve({ unix }) shares one listen socket across clus
       import net from "node:net";
       import path from "node:path";
       const SOCK = path.join(process.cwd(), "serve.sock");
-      const WORKERS = 4;
+      const WORKERS = 3;
+      async function request(): Promise<string> {
+        return new Promise(r => {
+          const c = net.connect(SOCK);
+          let b = "";
+          c.on("data", d => b += d);
+          c.on("close", () => r(b.split("\\r\\n\\r\\n")[1] ?? ""));
+          c.on("error", () => r(""));
+          c.write("GET / HTTP/1.0\\r\\nHost: x\\r\\n\\r\\n");
+        });
+      }
       if (cluster.isPrimary) {
         let ready = 0;
         const workers: any[] = [];
@@ -196,26 +206,33 @@ test.skipIf(isWindows)("Bun.serve({ unix }) shares one listen socket across clus
           // answered. Without the fix this never passes because only one
           // worker ever bound.
           const seen = new Set<string>();
-          for (let i = 0; i < 100 && seen.size < 2; i++) {
-            await new Promise<void>(r => {
-              const c = net.connect(SOCK);
-              let b = "";
-              c.on("data", d => b += d);
-              c.on("close", () => { seen.add(b.split("\\r\\n\\r\\n")[1] ?? ""); r(); });
-              c.on("error", () => r());
-              c.write("GET / HTTP/1.0\\r\\nHost: x\\r\\n\\r\\n");
-            });
-          }
+          for (let i = 0; i < 100 && seen.size < 2; i++) seen.add(await request());
           console.log("distinct=" + seen.size);
+          // One worker stopping must not unlink the primary-owned socket file
+          // or break the remaining workers' accepts.
+          const stopped = await new Promise<string>(r => {
+            workers[0].once("message", r);
+            workers[0].send("stop");
+          });
+          console.log("sock-after-stop=" + require("fs").existsSync(SOCK));
+          let responder = "";
+          for (let i = 0; i < 100 && (!responder || responder === stopped); i++)
+            responder = await request();
+          console.log("after-stop-responder=" + (responder && responder !== stopped));
           for (const w of workers) w.kill();
           process.exit(seen.size >= 2 ? 0 : 1);
         }
       } else {
         const id = process.env.WORKER_NUM;
-        Bun.serve({
+        const server = Bun.serve({
           unix: SOCK,
           reusePort: true,
           fetch() { return new Response("worker-" + id); },
+        });
+        process.on("message", m => {
+          if (m !== "stop") return;
+          server.stop(true);
+          process.send!("worker-" + id);
         });
         process.send!("ready");
       }
@@ -229,10 +246,12 @@ test.skipIf(isWindows)("Bun.serve({ unix }) shares one listen socket across clus
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).not.toContain("EADDRINUSE");
-  expect(stdout).toContain("listening=4");
+  expect(stdout).toContain("listening=3");
   expect(stdout).toContain("distinct=2");
+  expect(stdout).toContain("sock-after-stop=true");
+  expect(stdout).toContain("after-stop-responder=true");
   expect(exitCode).toBe(0);
-});
+}, 20_000);
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a

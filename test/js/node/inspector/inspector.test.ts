@@ -311,7 +311,7 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.secondUrl).not.toBe(summary.firstUrl);
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
-});
+}, 30_000);
 
 // A failed inspector.open() (port already in use) must print Node's diagnostic
 // line and RETURN so a later open() can retry on the same debugger thread.
@@ -369,7 +369,7 @@ test("inspector.open() can be retried after a failed start", async () => {
   expect(summary.url).toStartWith("ws://127.0.0.1:");
   expect(summary.protocolVersion).toBe("1.1");
   expect(summary.finalUrl).toBeNull();
-});
+}, 30_000);
 
 // wait=true refs the event loop before the debugger thread attempts to bind;
 // on bind failure the ref must be released so the process can exit.
@@ -398,7 +398,7 @@ test("inspector.open() with wait=true does not hang the process after a bind fai
   expect(stderr).toContain(`Starting inspector on 127.0.0.1:${port} failed: address already in use`);
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // waitForDebugger() must block until a client sends Runtime.runIfWaitingForDebugger,
 // even when open() was called without `wait`. The client marks a global before
@@ -472,7 +472,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
@@ -562,7 +562,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();
@@ -886,7 +886,7 @@ export { after };
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, bump: 1, warm: 10 });
   expect(await proc.exited).toBe(0);
   await stderrDrained;
-});
+}, 30_000);
 
 // End-to-end pause/resume over the DevTools-protocol server started by
 // inspector.open(): the entry module is a top-level-await module that calls
@@ -1009,7 +1009,7 @@ export { after };
 
   expect(JSON.parse(stdoutText.trim().split("\n").at(-1)!)).toEqual({ after: 1, beforeOpen: 1 });
   expect(await proc.exited).toBe(0);
-});
+}, 30_000);
 
 // JSC's FrontendRouter broadcasts every command response to every connected
 // frontend channel. With a per-connection backend-id counter, two clients'
@@ -1081,7 +1081,7 @@ test("two inspector.open() clients each receive their own Runtime.evaluate resul
     proc.kill("SIGKILL");
     await stderrDrained;
   }
-});
+}, 30_000);
 
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();

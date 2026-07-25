@@ -98,8 +98,6 @@ function setImmediate(value, options = {}) {
 }
 
 async function* setInterval(after = 1, value, options = {}) {
-  // If after is a number, but an invalid one (too big, Infinity, NaN), we only want to emit a
-  // warning, not throw an error, so only validate non-number inputs here.
   if (typeof after !== "number") {
     validateNumber(after, "delay");
   }

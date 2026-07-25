@@ -1,0 +1,167 @@
+name: Comment Cop
+
+# Flags multi-line code comments added in src/ by claude-labeled PRs that
+# don't carry a SAFETY: marker, and asks for them to be deleted. Runs
+# entirely against the GitHub API (no checkout of PR code).
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled]
+    paths:
+      - "src/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  comment-cop:
+    if: >
+      github.repository == 'oven-sh/bun' &&
+      contains(github.event.pull_request.labels.*.name, 'claude') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'claude')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: comment-cop-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Scan diff for added multi-line comments
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const crypto = require('crypto');
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.payload.pull_request.number;
+            const headSha = context.payload.pull_request.head.sha;
+
+            const SRC_EXT = /\.(rs|c|cc|cpp|h|hpp|m|mm|ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
+            const MIN_LINES = 2;
+            const MAX_COMMENTS = 25;
+
+            function isCommentLine(line) {
+              const t = line.trimStart();
+              // Rust doc comments are API documentation, not the target here.
+              if (t.startsWith('///') || t.startsWith('//!')) return false;
+              if (t.startsWith('//')) return true;
+              if (t.startsWith('/*')) return true;
+              if (t === '*' || t === '*/' || t.startsWith('* ')) return true;
+              return false;
+            }
+
+            function groupsFromPatch(path, patch) {
+              const out = [];
+              let newLine = 0;
+              let cur = null;
+              const flush = () => {
+                if (cur && cur.lines.length >= MIN_LINES) {
+                  const text = cur.lines.join('\n');
+                  if (!/SAFETY:/.test(text)) out.push({ path, start: cur.start, end: cur.end, text });
+                }
+                cur = null;
+              };
+              for (const raw of patch.split('\n')) {
+                if (raw.startsWith('@@')) {
+                  flush();
+                  const m = /\+(\d+)/.exec(raw);
+                  newLine = m ? parseInt(m[1], 10) : 1;
+                  continue;
+                }
+                if (raw.startsWith('+') && !raw.startsWith('+++')) {
+                  const content = raw.slice(1);
+                  if (isCommentLine(content)) {
+                    if (cur) {
+                      cur.end = newLine;
+                      cur.lines.push(content);
+                    } else {
+                      cur = { start: newLine, end: newLine, lines: [content] };
+                    }
+                  } else {
+                    flush();
+                  }
+                  newLine++;
+                } else if (raw.startsWith('-') && !raw.startsWith('---')) {
+                  flush();
+                } else if (raw.startsWith('\\')) {
+                  // "\ No newline at end of file"
+                } else {
+                  // context line (leading space, or blank)
+                  flush();
+                  newLine++;
+                }
+              }
+              flush();
+              return out;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number, per_page: 100,
+            });
+
+            const groups = [];
+            for (const f of files) {
+              if (f.status === 'removed') continue;
+              if (!f.filename.startsWith('src/')) continue;
+              if (!SRC_EXT.test(f.filename)) continue;
+              if (!f.patch) continue; // too large to include a patch
+              for (const g of groupsFromPatch(f.filename, f.patch)) groups.push(g);
+            }
+
+            if (groups.length === 0) {
+              core.info('No multi-line comment groups found.');
+              return;
+            }
+
+            const existing = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner, repo, pull_number, per_page: 100,
+            });
+            const seen = new Set();
+            for (const c of existing) {
+              const m = /<!-- comment-cop:([^>\s]+) -->/.exec(c.body || '');
+              if (m) seen.add(m[1]);
+            }
+
+            const keyFor = g => `${g.path}:${crypto.createHash('sha256').update(g.text).digest('hex').slice(0, 12)}`;
+
+            const fresh = groups.filter(g => !seen.has(keyFor(g)));
+            if (fresh.length === 0) {
+              core.info(`All ${groups.length} group(s) already have a comment-cop marker.`);
+              return;
+            }
+
+            const capped = fresh.slice(0, MAX_COMMENTS);
+            const bodyFor = g => {
+              const key = keyFor(g);
+              return (
+                `<!-- comment-cop:${key} -->\n` +
+                `Delete this added comment block (no \`SAFETY:\` marker).\n\n` +
+                `Once removed, resolve this review thread.`
+              );
+            };
+
+            const comments = capped.map(g => {
+              const c = { path: g.path, line: g.end, side: 'RIGHT', body: bodyFor(g) };
+              if (g.start < g.end) {
+                c.start_line = g.start;
+                c.start_side = 'RIGHT';
+              }
+              return c;
+            });
+
+            const overflow = fresh.length > capped.length
+              ? ` (${fresh.length - capped.length} more not shown; will surface on the next push once these are addressed)`
+              : '';
+
+            await github.rest.pulls.createReview({
+              owner, repo, pull_number,
+              commit_id: headSha,
+              event: 'COMMENT',
+              body:
+                `**comment-cop**: ${capped.length} multi-line comment block(s) were added in \`src/\` ` +
+                `without a \`SAFETY:\` marker${overflow}. See inline.`,
+              comments,
+            });
+
+            core.info(`Posted ${comments.length} review comment(s).`);

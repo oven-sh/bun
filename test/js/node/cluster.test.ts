@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, joinP, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, joinP, tempDir, tempDirWithFiles } from "harness";
 
 test("cloneable and transferable equals", () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -159,6 +159,87 @@ process.send("regular message");
   });
   const { stdout } = bunRun(joinP(dir, "parent.ts"), bunEnv);
   expect(stdout).toContain("P received regular message");
+});
+
+test("primary does not root the worker object graph per live worker", async () => {
+  using dir = tempDir("cluster-internal-msg-roots", {
+    "primary.ts": `
+import cluster from "node:cluster";
+import { heapStats } from "bun:jsc";
+
+if (!cluster.isPrimary) {
+  process.on("message", () => {});
+  await new Promise(() => {});
+}
+
+const N = 6;
+
+function protectedCounts() {
+  Bun.gc(true);
+  const p = heapStats().protectedObjectTypeCounts;
+  return { Function: p.Function ?? 0, Object: p.Object ?? 0 };
+}
+
+const before = protectedCounts();
+
+const workers: import("node:cluster").Worker[] = [];
+for (let i = 0; i < N; i++) workers.push(cluster.fork());
+await Promise.all(workers.map(w => new Promise<void>(r => w.once("online", () => r()))));
+
+const during = protectedCounts();
+
+// Kill every worker, wait for the channel to close, then drop user references.
+for (const w of workers) w.process.kill();
+await Promise.all(
+  workers.map(w => new Promise<void>(r => {
+    let n = 0;
+    const step = () => { if (++n === 2) r(); };
+    w.once("exit", step);
+    w.once("disconnect", step);
+  })),
+);
+workers.length = 0;
+
+// Bounded poll: finalization may need a few real event-loop idles, while a
+// Strong-rooted Subprocess never goes away no matter how long we wait.
+let liveSubprocess = Infinity;
+for (let i = 0; i < 60; i++) {
+  await Bun.sleep(25);
+  Bun.gc(true);
+  liveSubprocess = heapStats().objectTypeCounts.Subprocess ?? 0;
+  if (liveSubprocess <= 1) break;
+}
+
+console.log(JSON.stringify({ N, before, during, liveSubprocess }));
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "primary.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const { N, before, during, liveSubprocess } = JSON.parse(stdout.trim());
+  // No per-worker protected roots while the workers are alive. Strict equality
+  // against the baseline: a regression shows up as `before + N`.
+  expect({
+    protectedFunctionDelta: during.Function - before.Function,
+    protectedObjectDelta: during.Object - before.Object,
+    exitCode,
+  }).toEqual({
+    protectedFunctionDelta: 0,
+    protectedObjectDelta: 0,
+    exitCode: 0,
+  });
+  // After every worker exits and user code holds no reference, the Subprocess
+  // wrappers are collectable. A root-cycle leak retains every one of the N;
+  // allow one straggler for a conservatively rooted async frame.
+  expect(liveSubprocess).toBeLessThan(N);
+  expect(liveSubprocess).toBeLessThanOrEqual(1);
 });
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {

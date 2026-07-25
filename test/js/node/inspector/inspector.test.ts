@@ -307,7 +307,7 @@ const countTexts = consoleEvents
   .map(event => event.args[0].value);
 const timingArgs = consoleEvents
   .filter(event => event.type === "timeEnd")
-  .map(event => event.args?.[0]?.value ?? "");
+  .map(event => (event.args ?? []).map(arg => arg.value));
 process.stdout.write(
   JSON.stringify({ types, firstTimestamp, beforeMs, afterMs, countTexts, timingArgs }) + "\\n",
 );
@@ -343,9 +343,11 @@ test("Runtime.consoleAPICalled over the DevTools WebSocket reports a millisecond
   // the inspector agent.
   expect(summary.types).toEqual(["log", "debug", "debug", "debug", "timeEnd", "timeEnd", "log"]);
   expect(summary.countTexts).toEqual(["cnt: 1", "cnt: 2", "cnt: 1"]);
-  // JSC's timeLog forwards the caller's extra arguments as parameters while
-  // timeEnd has none, so the adapter falls back to the formatted text there.
-  expect(summary.timingArgs).toEqual(["mid", expect.stringMatching(/^tm: \d+(\.\d+)?ms$/)]);
+  // JSC's timeLog puts the elapsed-time string in `text` and only the caller's
+  // extra data in `parameters`; the adapter prepends the text so the timing is
+  // args[0] for both timeLog and timeEnd, matching Node.
+  const timingText = expect.stringMatching(/^tm: \d+(\.\d+)?ms$/);
+  expect(summary.timingArgs).toEqual([[timingText, "mid"], [timingText]]);
 }, 30_000);
 
 // Node supports close() followed by open() again; a second open() while one is

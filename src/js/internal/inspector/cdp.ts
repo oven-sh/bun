@@ -665,7 +665,13 @@ class InspectorCDPAdapter {
 
   #translateConsoleMessage(message: AnyObject): void {
     const level = message.level ?? "log";
-    const args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
+    let args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
+    // JSC's timeLog puts the elapsed-time string in `text` and only the
+    // caller's extra data in `parameters`; Node emits the timing string as
+    // args[0] followed by the extras.
+    if (message.type === "timing" && message.parameters?.length && message.text) {
+      args = [{ type: "string", value: message.text }, ...args];
+    }
     // JSC's Console.messageAdded timestamp is WallTime::secondsSinceEpoch();
     // CDP Runtime.Timestamp is milliseconds since epoch.
     const timestamp = typeof message.timestamp === "number" ? message.timestamp * 1000 : Date.now();

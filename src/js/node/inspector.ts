@@ -175,23 +175,16 @@ const CONSOLE_API_TYPES: Record<string, string> = {
   groupEnd: "endGroup",
 };
 
-// Methods whose CDP semantics differ from "emit the JS arguments as-is":
-// assert is conditional, count/time* carry derived strings rather than the
-// raw args, and time/countReset emit nothing. These get bespoke hooks.
+// Methods whose event args are derived (not the raw JS args) and so need bespoke hooks below.
 const CONSOLE_API_SPECIAL = ["assert", "count", "countReset", "time", "timeLog", "timeEnd"];
 
 const PREVIEW_MAX_PROPERTIES = 5;
 const MAX_DESCRIPTION_LENGTH = 100;
 
-// Synthetic RemoteObject.objectId so the shape matches V8. The in-process
-// Session has no Runtime.getProperties backend to dereference these, but
-// consumers commonly test for the field's presence to distinguish primitives
-// from objects.
+// Synthetic objectId for shape parity with V8; there is no Runtime.getProperties backend to dereference it.
 let nextRemoteObjectId = 1;
 
 function constructorName(value: object): string | undefined {
-  // Every property read on a user value can throw (Proxy traps, hostile
-  // getters). A failure here falls back to the subtype-derived name.
   try {
     let proto: object | null = value;
     while (proto !== null) {
@@ -218,8 +211,6 @@ function truncate(text: string): string {
 }
 
 function classifyObject(value: object): { subtype?: string; className: string; description: string } {
-  // util.types predicates read internal slots and do not invoke user code, so
-  // the classification itself cannot throw even on hostile Proxies / getters.
   if ($isProxyObject(value)) {
     const className = constructorName(value) ?? "Object";
     return { subtype: "proxy", className, description: `Proxy(${className})` };
@@ -410,10 +401,7 @@ function buildPreview(value: object, subtype: string | undefined, description: s
       }
       if (keys.length > shown) preview.overflow = true;
     }
-  } catch {
-    // A hostile getter or Proxy trap threw mid-enumeration; keep whatever was
-    // collected so far.
-  }
+  } catch {}
   return preview;
 }
 
@@ -500,9 +488,7 @@ function prepareCDPCallFrames(_err: unknown, callSites: any[]): object[] {
 const CONSOLE_STACK_TRACE_LIMIT = 30;
 
 function captureCDPStackTrace(skipAbove: Function): object[] | undefined {
-  // User code can install throwing getters/setters or make these non-writable
-  // in strict mode; best-effort at every touch so console.* itself never
-  // throws from the hook.
+  // Every Error.* touch is guarded so hostile getters/setters/freeze cannot make console.* itself throw.
   const target: { stack?: object[] } = {};
   let savedPrepare: unknown;
   let savedLimit: unknown;
@@ -581,10 +567,7 @@ function emitConsoleAPICalled(type: string, args: unknown[], hook: Function) {
   }
 }
 
-// Shadow state for count()/time*(): Bun's native console keeps its own
-// counters and timers, but those live in C++ and are not readable from here,
-// so the hook maintains a parallel map to synthesize the formatted string V8
-// puts in the event args.
+// Shadow counters/timers parallel to Bun's native C++ console state, which is not readable from JS.
 const consoleCounts: Map<string, number> = new SafeMap();
 const consoleTimers: Map<string, number> = new SafeMap();
 

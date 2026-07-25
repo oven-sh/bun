@@ -31,33 +31,34 @@ int unlinkat(int dirfd, const char *path, int flags) {
 }
 `;
 
-// The child builds a small tree, calls all three rm entry points (sync / promise /
-// callback) with { recursive: true, force: true }, and prints each error code.
+// The child builds a small tree under $TREE_ROOT (inside the parent test's
+// tempDir, so afterAll cleans up whatever the failing rm leaves behind), calls
+// all three rm entry points with { recursive: true, force: true }, and prints
+// each result as `<label> <code> <errno>`.
 const FIXTURE = /* js */ `
 import fs from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const make = () => {
-  const root = fs.mkdtempSync(join(tmpdir(), "rm-errno-"));
-  fs.mkdirSync(join(root, "sub"));
+const make = name => {
+  const root = join(process.env.TREE_ROOT, name);
+  fs.mkdirSync(join(root, "sub"), { recursive: true });
   fs.writeFileSync(join(root, "sub", "POISON_FILE"), "x");
   fs.writeFileSync(join(root, "sub", "ok.txt"), "x");
   return root;
 };
-const report = e => JSON.stringify({ code: e?.code ?? null, errno: e?.errno ?? null });
+const report = (label, e) => console.log(label, e ? e.code + " " + e.errno : "ok");
 
-let root = make();
-try { fs.rmSync(root, { recursive: true, force: true }); console.log("sync", report(null)); }
-catch (e) { console.log("sync", report(e)); }
+let root = make("sync");
+try { fs.rmSync(root, { recursive: true, force: true }); report("sync", null); }
+catch (e) { report("sync", e); }
 
-root = make();
+root = make("promise");
 await fs.promises.rm(root, { recursive: true, force: true })
-  .then(() => console.log("promise", report(null)), e => console.log("promise", report(e)));
+  .then(() => report("promise", null), e => report("promise", e));
 
-root = make();
+root = make("callback");
 await new Promise(done => fs.rm(root, { recursive: true, force: true },
-  e => { console.log("callback", report(e)); done(); }));
+  e => { report("callback", e); done(); }));
 `;
 
 let dir: ReturnType<typeof tempDir>;
@@ -94,54 +95,36 @@ const run = async (errno: number) => {
       LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
       FAIL_UNLINKAT_NEEDLE: "POISON_FILE",
       FAIL_UNLINKAT_ERRNO: String(errno),
+      TREE_ROOT: join(String(dir), `trees-${errno}`),
     },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const lines: Record<string, { code: string | null; errno: number | null }> = {};
-  for (const line of stdout.trim().split("\n")) {
-    const [label, json] = line.split(" ", 2);
-    lines[label] = JSON.parse(json);
-  }
-  return { lines, stderr, exitCode };
+  return { stdout, stderr, exitCode };
 };
 
 describe.skipIf(!isLinux || !cc)("rm({recursive:true}) reports the kernel errno, not EFAULT", () => {
-  // ENOSPC / ETXTBSY are defined on every Linux; EDQUOT / ESTALE are present on
-  // every glibc/musl target CI runs but guarded for completeness.
+  // First five were collapsed to EFAULT on main; EACCES/EBUSY/EROFS already
+  // worked and are here as a regression guard. Defined on every Linux target
+  // CI runs; the filter is defensive.
   const cases = (
     [
       ["ENOSPC", osConstants.errno.ENOSPC],
       ["ETXTBSY", osConstants.errno.ETXTBSY],
       ["EDQUOT", osConstants.errno.EDQUOT],
       ["ESTALE", osConstants.errno.ESTALE],
+      ["ENODEV", osConstants.errno.ENODEV],
+      ["EACCES", osConstants.errno.EACCES],
+      ["EBUSY", osConstants.errno.EBUSY],
+      ["EROFS", osConstants.errno.EROFS],
     ] as const
   ).filter(([, n]) => typeof n === "number");
 
   test.concurrent.each(cases)("%s", async (name, errno) => {
-    const { lines, stderr, exitCode } = await run(errno);
-    const want = { code: name, errno: -errno };
-    expect({ lines, stderr, exitCode }).toEqual({
-      lines: { sync: want, promise: want, callback: want },
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
-  // Errnos that already had a named variant must keep round-tripping unchanged.
-  const namedCases = [
-    ["ENOENT", osConstants.errno.ENOENT, null], // force:true swallows ENOENT
-    ["EACCES", osConstants.errno.EACCES, "EACCES"],
-    ["EBUSY", osConstants.errno.EBUSY, "EBUSY"],
-    ["EROFS", osConstants.errno.EROFS, "EROFS"],
-  ] as const;
-
-  test.concurrent.each(namedCases)("%s (named variant still round-trips)", async (_name, errno, wantCode) => {
-    const { lines, stderr, exitCode } = await run(errno);
-    const want = wantCode === null ? { code: null, errno: null } : { code: wantCode, errno: -errno };
-    expect({ lines, stderr, exitCode }).toEqual({
-      lines: { sync: want, promise: want, callback: want },
+    const line = `${name} ${-errno}`;
+    expect(await run(errno)).toEqual({
+      stdout: `sync ${line}\npromise ${line}\ncallback ${line}\n`,
       stderr: "",
       exitCode: 0,
     });

@@ -193,6 +193,25 @@ error: Hello World`,
       run: { stdout: "intercepted\nPASS" },
     });
   }
+  // The printer emits `throw new Error(...)` as raw text for an unresolvable
+  // try/catch'd require. A user local named `Error` must be renamed.
+  itBundled("bun/InlinedRequireErrorWithShadowedError", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        {
+          let Error = function (this: any, msg: string) { this.intercepted = true; this.message = msg; };
+          let caught: any;
+          try { require("does-not-exist-pkg") } catch (e) { caught = e; }
+          console.log(typeof Error);
+          if (caught.intercepted) throw new globalThis.Error("require shim captured local Error");
+          if (!(caught instanceof globalThis.Error)) throw new globalThis.Error("not a real Error");
+        }
+        console.log("PASS");
+      `,
+    },
+    run: { stdout: "function\nPASS" },
+  });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {
       itBundled("bun/ExportsConditionsDevelopment" + backend.toUpperCase(), {

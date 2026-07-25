@@ -228,8 +228,7 @@ impl Scripts {
                             if first_script_index == -1
                                 || first_script_index > i8::try_from(PREPREPARE).expect("int cast")
                             {
-                                first_script_index =
-                                    i8::try_from(PREPREPARE).expect("int cast");
+                                first_script_index = i8::try_from(PREPREPARE).expect("int cast");
                             }
                             install_cmd
                         }

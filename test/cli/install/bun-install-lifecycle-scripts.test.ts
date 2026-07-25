@@ -1916,7 +1916,11 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         GIT_COMMITTER_EMAIL: "bun@example.com",
         GIT_CONFIG_NOSYSTEM: "1",
       };
-      for (const args of [["init", "-b", "main"], ["add", "."], ["commit", "-m", "init"]]) {
+      for (const args of [
+        ["init", "-b", "main"],
+        ["add", "."],
+        ["commit", "-m", "init"],
+      ]) {
         const r = Bun.spawnSync({ cmd: ["git", ...args], cwd: repoDir, env: gitEnv, stdout: "ignore", stderr: "pipe" });
         if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
       }

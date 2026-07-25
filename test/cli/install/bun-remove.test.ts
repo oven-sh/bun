@@ -345,8 +345,14 @@ it.concurrent("should remove peerDependencies", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/11970
-for (const global of [false, true]) {
-  it.concurrent(`should delete bins of the removed package${global ? " (global)" : ""}`, async () => {
+// The "global, disjoint bin dir" variant places the bin dir two levels deep
+// outside $BUN_INSTALL so the encoded .bunx target carries a residual `..`.
+for (const [global, binDirParts, label] of [
+  [false, ["node_modules", ".bin"], ""],
+  [true, ["bun-home", "bin"], " (global)"],
+  [true, ["nested", "separate-bin"], " (global, disjoint bin dir)"],
+] as const) {
+  it.concurrent(`should delete bins of the removed package${label}`, async () => {
     const dir = tmpdirSync();
     await Promise.all([
       write(join(dir, "package.json"), JSON.stringify({ name: "foo" })),
@@ -367,7 +373,7 @@ for (const global of [false, true]) {
       write(join(dir, "has-one-bin", "bin-c.js"), `#!/usr/bin/env node\nconsole.log("c")`),
     ]);
 
-    const binDir = global ? join(dir, "bun-home", "bin") : join(dir, "node_modules", ".bin");
+    const binDir = join(dir, ...binDirParts);
     const installEnv = {
       ...env,
       ...(global && {

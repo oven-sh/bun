@@ -289,6 +289,11 @@ describe("fake npm/npx cli", () => {
       const r = await fakePmRun(String(dir), "npx", ["--loglevel", "error", "--version"]);
       expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
       expect(r.exitCode).toBe(0);
+      // `--package <pkg>` is bunx's own value flag; config flags after it
+      // must still be stripped so their value is not taken for the binary
+      // name, which makes bunx ask for one.
+      const pkg = await fakePmRun(String(dir), "npx", ["--package", "some-pkg", "--loglevel", "error"]);
+      expect(pkg.stdout + pkg.stderr).toContain("you must specify the binary");
     });
 
     test.concurrent("npm init <x> / npm create <x> dispatch as bun create, not bun init", async () => {

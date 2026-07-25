@@ -1210,15 +1210,23 @@ pub mod command {
             if ab.first() != Some(&b'-') || ab == b"--" {
                 break;
             }
+            let consumes_next = !strings::contains_char(ab, b'=')
+                && argv
+                    .get(i + 1)
+                    .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+            if ab == b"-p" || ab == b"--package" || ab.starts_with(b"--package=") {
+                out.push(a);
+                if consumes_next {
+                    out.push(argv[i + 1]);
+                }
+                i += if consumes_next { 2 } else { 1 };
+                continue;
+            }
             if ab == b"-c"
                 || ab == b"--call"
                 || ab.starts_with(b"--call=")
                 || translate_npm_value_flag(ab, &[], &[]).is_some()
             {
-                let consumes_next = !strings::contains_char(ab, b'=')
-                    && argv
-                        .get(i + 1)
-                        .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
                 i += if consumes_next { 2 } else { 1 };
                 continue;
             }

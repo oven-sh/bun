@@ -860,9 +860,9 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
             RETURN_IF_EXCEPTION(scope, {});
         }
 #endif
-        // hasXXX gates whether the post-loop CustomAccessor is installed
+        // The has* flags gate whether the post-loop CustomAccessor is installed
         // enumerable; a .env-only value (conditional) stays DontEnum by leaving
-        // hasXXX false.
+        // the flag false.
         if (name == TZ) {
             if (!conditional) hasTZ = true;
             continue;

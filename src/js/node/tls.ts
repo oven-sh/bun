@@ -1432,16 +1432,14 @@ function Server(options, secureConnectionListener): void {
       const keys = _getTicketKeys(_handle);
       if (keys !== undefined) {
         if (this._ticketKeys === undefined) {
-          // BoringSSL auto-rotates its default key until one is set; pin what
-          // we read so future calls are stable like Node/OpenSSL.
+          // Pin so BoringSSL's default-key auto-rotation doesn't change later reads.
           this._ticketKeys = Buffer.from(keys);
           _setTicketKeys(_handle, keys);
         }
         return keys;
       }
     }
-    // Pre-listen: the SSL_CTX does not exist yet, so return the stored key
-    // material (generated lazily); kRealListen/buildSharedCreds apply it.
+    // Pre-listen: return the stored keys (generated lazily); applied at listen().
     let stored = this._ticketKeys;
     if (stored === undefined) {
       stored = (_randomBytes ??= require("node:crypto").randomBytes)(48);
@@ -1465,8 +1463,7 @@ function Server(options, secureConnectionListener): void {
     const copy = (this._ticketKeys = Buffer.from(new Uint8Array(keys.buffer, keys.byteOffset, keys.byteLength)));
     const { _handle } = this;
     if (_handle) _setTicketKeys(_handle, copy);
-    // emit('connection') path: drop cached creds so the next injected socket
-    // rebuilds them with the new keys (on an unshared SSL_CTX).
+    // Drop cached creds so the next injected socket rebuilds with the new keys.
     if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
       this._sharedCreds = null;
     }

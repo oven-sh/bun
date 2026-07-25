@@ -1678,8 +1678,7 @@ fn set_ticket_keys_for_ctx(
     Ok(JSValue::UNDEFINED)
 }
 
-/// Accepts a `Listener` (listen() path) or a `SecureContext` (the
-/// `server.emit('connection')` path's `_sharedCreds.context`).
+/// Accepts a `Listener` or a `SecureContext` (`_sharedCreds.context`).
 #[bun_jsc::host_fn]
 pub(crate) fn js_get_ticket_keys(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();

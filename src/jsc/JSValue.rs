@@ -361,8 +361,7 @@ impl JSValue {
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
-    /// `ErrorInstance`, or an object whose `[[Prototype]]` chain (read via
-    /// `getPrototypeDirect`, no traps) reaches `Error.prototype`.
+    /// `ErrorInstance`, or `Error.prototype` is on its `getPrototypeDirect` chain.
     #[inline]
     pub fn is_error_like(self) -> bool {
         if !self.is_cell() {

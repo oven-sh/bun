@@ -6082,9 +6082,7 @@ impl VirtualMachine {
 
         let mut printed_stack_string = false;
         if exception.stack.frames().is_empty() && is_error_instance && !error_instance.is_error() {
-            // `toZigException` only populates frames for a native
-            // `ErrorInstance` or a `JSC::Exception` wrapper; an error-like
-            // plain object's only trace is its own `.stack` string.
+            // `toZigException` leaves `frames` empty for a non-ErrorInstance.
             if let Ok(Some(stack)) = error_instance.get_own_truthy(global_ref, "stack") {
                 if stack.is_string() {
                     let stack = bun_core::OwnedString::new(stack.to_bun_string(global_ref)?);

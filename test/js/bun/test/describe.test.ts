@@ -342,4 +342,39 @@ describe("beforeAll/afterAll are pruned when a describe has no non-skipped tests
     expect(log).toEqual(["bA-allfailing", "aA-allfailing", "bA-skipPlusTodo", "aA-skipPlusTodo", "BODY-keep"]);
     expect(exitCode).toBe(0);
   });
+
+  test("a -t-filtered test inside describe.todo does not trigger hooks", () => {
+    const test_dir = tempDirWithFiles("describe-skip-hooks-filter-todo", {
+      "filter.test.js": `
+        import { describe, test, beforeAll, afterAll } from "bun:test";
+        const L = [];
+        afterAll(() => console.log("HOOKLOG " + JSON.stringify(L)));
+
+        describe.todo("dtodo", () => {
+          beforeAll(() => void L.push("bA-dtodo"));
+          afterAll(() => void L.push("aA-dtodo"));
+          test("unmatched", () => {});
+          test.skip("also-unmatched", () => {});
+        });
+
+        test("keep", () => void L.push("BODY-keep"));
+      `,
+    });
+
+    const { stdout, exitCode } = spawnSync({
+      cmd: [bunExe(), "test", "--todo", "-t", "keep", "filter.test.js"],
+      cwd: test_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const out = stdout.toString();
+    const hookLine = out.split("\n").find(l => l.startsWith("HOOKLOG "));
+    expect(hookLine).toBeDefined();
+    const log = JSON.parse(hookLine!.slice("HOOKLOG ".length));
+
+    expect(log).toEqual(["BODY-keep"]);
+    expect(exitCode).toBe(0);
+  });
 });

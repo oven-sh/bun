@@ -1829,7 +1829,11 @@ impl DescribeScope {
         let has_cb = entry.callback.is_some();
         // jest-circus runs a describe's beforeAll/afterAll iff it contains at least one
         // test that isn't skipped. `test.todo` counts; `test.skip` and filtered-out don't.
-        let triggers_all_hooks = !matches!(entry.base.mode, ScopeMode::Skip | ScopeMode::FilteredOut);
+        // `entry.base.mode` is post-inheritance (a non-Normal parent overrides `self_mode`),
+        // so also check `base.self_mode` to keep a `-t`-filtered or `.skip` test inside a
+        // `describe.todo` from triggering hooks.
+        let triggers_all_hooks = !matches!(base.self_mode, ScopeMode::Skip | ScopeMode::FilteredOut)
+            && !matches!(entry.base.mode, ScopeMode::Skip | ScopeMode::FilteredOut);
         entry.base.propagate(has_cb, triggers_all_hooks);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
         match self.entries.last_mut().unwrap() {

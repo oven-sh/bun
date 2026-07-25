@@ -1254,8 +1254,6 @@ test("captureStackTrace on a non-Error object keeps captured frames when a name 
   expect(calls).toBe(2);
 });
 
-
-
 test("captureStackTrace lazy .stack resolves when reached via the prototype chain", () => {
   const parent = {};
   Error.captureStackTrace(parent);

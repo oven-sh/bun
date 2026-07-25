@@ -72,6 +72,7 @@ pub struct WriteFile {
     pub could_block: bool,
     pub close_after_io: bool,
     pub mkdirp_if_not_exists: bool,
+    pub mode: Option<sys::Mode>,
 }
 
 bun_threading::intrusive_work_task!(WriteFile, task);
@@ -85,6 +86,9 @@ impl FileOpener for WriteFile {
     const OPEN_FLAGS: i32 =
         bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
+    fn open_mode(&self) -> sys::Mode {
+        self.mode.unwrap_or(crate::node::fs::DEFAULT_PERMISSION)
+    }
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -279,6 +283,7 @@ impl WriteFile {
         on_write_file_context: *mut c_void,
         on_complete_callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
+        mode: Option<sys::Mode>,
     ) -> Result<*mut WriteFile, Error> {
         let write_file = bun_core::heap::into_raw(Box::new(WriteFile {
             file_blob,
@@ -300,6 +305,7 @@ impl WriteFile {
             could_block: false,
             close_after_io: false,
             mkdirp_if_not_exists,
+            mode,
         }));
         // No explicit store ref bump: the caller passes a `+1` Blob (via
         // `borrowed_view()`'s `StoreRef::clone`) and `heap::take(this)` in
@@ -314,6 +320,7 @@ impl WriteFile {
         context: *mut C,
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
+        mode: Option<sys::Mode>,
     ) -> Result<*mut WriteFile, Error> {
         // The caller supplies a
         // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`),
@@ -324,6 +331,7 @@ impl WriteFile {
             context.cast::<c_void>(),
             callback,
             mkdirp_if_not_exists,
+            mode,
         )
     }
 
@@ -449,6 +457,18 @@ impl WriteFile {
         }
 
         let fd = self.opened_fd;
+
+        if let Some(mode) = self.mode {
+            if self.is_allowed_to_close() {
+                if let bun_sys::Result::Err(err) = bun_sys::fchmod(fd, mode) {
+                    let err = err.with_path(self.pathlike().path().slice());
+                    self.errno = Some(bun_core::errno_to_zig_err(err.errno as i32));
+                    self.system_error = Some(err.to_system_error().into());
+                    self.on_finish();
+                    return;
+                }
+            }
+        }
 
         self.could_block = 'brk: {
             if let Some(store) = self.file_blob.store.get().as_ref() {
@@ -615,6 +635,7 @@ mod windows_impl {
         pub on_complete_callback: WriteFileOnWriteFileCallback,
         pub on_complete_ctx: *mut c_void,
         pub mkdirp_if_not_exists: bool,
+        pub mode: Option<sys::Mode>,
         pub uv_bufs: [uv::uv_buf_t; 1],
 
         pub fd: uv::uv_file,
@@ -656,6 +677,7 @@ mod windows_impl {
             on_write_file_context: *mut c_void,
             on_complete_callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
+            mode: Option<sys::Mode>,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
                 && file_blob
@@ -673,6 +695,7 @@ mod windows_impl {
                 on_complete_ctx: on_write_file_context,
                 on_complete_callback,
                 mkdirp_if_not_exists: mkdirp,
+                mode,
                 io_request: bun_core::ffi::zeroed::<uv::fs_t>(),
                 uv_bufs: [uv::uv_buf_t {
                     base: null_mut(),
@@ -814,7 +837,7 @@ mod windows_impl {
                         | uv::O::NONBLOCK
                         | uv::O::SEQUENTIAL
                         | uv::O::TRUNC,
-                    0o644,
+                    (*this).mode.unwrap_or(0o644) as i32,
                     Some(Self::on_open),
                 )
             };
@@ -922,6 +945,22 @@ mod windows_impl {
 
             // SAFETY: `this` is live.
             unsafe { (*this).fd = i32::try_from(rc.int()).expect("int cast") };
+
+            // open()'s mode is only applied on creation; fchmod so an explicit
+            // `mode` is authoritative for existing files too (see CopyFileWindows).
+            // SAFETY: `this` is live.
+            if let Some(mode) = unsafe { (*this).mode } {
+                // SAFETY: `this` is live; `fd` was just opened above.
+                if let sys::Result::Err(err) = sys::fchmod(Fd::from_uv(unsafe { (*this).fd }), mode)
+                {
+                    // SAFETY: `this` is live; `throw` consumes it.
+                    match unsafe { Self::throw(this, err) } {
+                        WriteFileWindowsError::WriteFileWindowsDeinitialized
+                        | WriteFileWindowsError::JSTerminated => {}
+                    }
+                    return;
+                }
+            }
 
             // the loop must be copied
             // SAFETY: `this` is live; on `Err`, `*this` has been freed and is not accessed again.
@@ -1249,6 +1288,7 @@ mod windows_impl {
             context: *mut C,
             callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
+            mode: Option<sys::Mode>,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             // see `WriteFile::create` — caller supplies an erased
             // `*mut c_void` callback directly; `context` is just `.cast()`ed.
@@ -1259,6 +1299,7 @@ mod windows_impl {
                 context.cast::<c_void>(),
                 callback,
                 mkdirp_if_not_exists,
+                mode,
             )
         }
     }
@@ -1314,6 +1355,7 @@ pub struct WriteFileWaitFromLockedValueTask {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
     pub mkdirp_if_not_exists: bool,
+    pub mode: Option<sys::Mode>,
 }
 
 impl WriteFileWaitFromLockedValueTask {
@@ -1383,6 +1425,7 @@ impl WriteFileWaitFromLockedValueTask {
                     &mut file_blob,
                     &blob::WriteFileOptions {
                         mkdirp_if_not_exists: Some(this_ref.mkdirp_if_not_exists),
+                        mode: this_ref.mode,
                         ..Default::default()
                     },
                 ) {

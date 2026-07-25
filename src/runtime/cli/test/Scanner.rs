@@ -7,7 +7,7 @@ use bun_bundler::options::BundleOptions;
 use bun_core::ZStr;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{join_abs_string_buf, join_abs_string_buf_checked, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
@@ -130,7 +130,16 @@ impl<'a> Scanner<'a> {
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = PathBuffer::uninit();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
-        let path: &[u8] = Self::abs_buf_projected(self.top_level_dir(), &parts, &mut scan_dir_buf);
+        // `path_literal` comes from argv, so use the checked join: a path that
+        // normalizes to longer than PATH_MAX cannot exist.
+        let path: &[u8] = match join_abs_string_buf_checked::<platform::Loose>(
+            self.top_level_dir(),
+            &mut scan_dir_buf,
+            &parts,
+        ) {
+            Some(path) => path,
+            None => return Err(ScanError::DoesNotExist),
+        };
 
         let root = self
             .read_dir_with_name(path, None)

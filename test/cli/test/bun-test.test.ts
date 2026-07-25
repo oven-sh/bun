@@ -15,6 +15,19 @@ describe("bun test", () => {
     });
     expect(spawn.exitCode).toBe(1);
   });
+  // https://github.com/oven-sh/bun/issues/35728
+  test("a positional path longer than PATH_MAX is a no-match, not a panic", async () => {
+    const longArg = "./x" + Buffer.alloc(5000, "a").toString() + ".test.ts";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", longArg],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("had no matches");
+    expect(exitCode).toBe(1);
+  });
   test("can provide no arguments", () => {
     const stderr = runTest({
       args: [],

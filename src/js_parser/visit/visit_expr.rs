@@ -1890,10 +1890,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // Pessimistically assume that if this looks like a CommonJS module
                     // (e.g. no "export" keywords), a direct call to "eval" means that
-                    // code could potentially access "module" or "exports".
+                    // code could potentially access "module", "exports", "__dirname",
+                    // or "__filename".
                     if p.options.bundle && !p.is_file_considered_to_have_esm_exports {
                         p.record_usage(p.module_ref);
                         p.record_usage(p.exports_ref);
+                        p.record_usage(p.dirname_ref);
+                        p.record_usage(p.filename_ref);
                     }
 
                     // Walk `Scope.parent` (`Option<StoreRef<Scope>>`) via the safe

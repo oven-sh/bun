@@ -1217,77 +1217,57 @@ export async function run() { await inner(); }
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
   };
 
-  {
-    const { stdout, exitCode } = await run("direct.mjs");
-    const lines = stdout.trim().split("\n");
-    expect(lines[0]).toBe("Error: boom");
-    expect(lines[1]).toMatch(/^ {4}at inner \(.*direct\.mjs:3:\d+\)$/);
-    expect(lines[2]).toMatch(/^ {4}at async .*direct\.mjs:5:\d+$/);
-    expect(lines).toHaveLength(3);
-    expect(exitCode).toBe(0);
-  }
+  const [direct, chain, entry, anon, race, als, native, callsites] = await Promise.all([
+    run("direct.mjs"),
+    run("chain.mjs"),
+    run("entry.mjs"),
+    run("anon.mjs"),
+    run("race.mjs"),
+    run("als.mjs"),
+    run("native.mjs"),
+    run("callsites.mjs"),
+  ]);
 
-  {
-    const { stdout, exitCode } = await run("chain.mjs");
-    const lines = stdout.trim().split("\n");
-    expect(lines[1]).toMatch(/^ {4}at inner \(.*chain\.mjs:3:\d+\)$/);
-    expect(lines[2]).toMatch(/^ {4}at async mid \(.*chain\.mjs:5:\d+\)$/);
-    expect(lines[3]).toMatch(/^ {4}at async outer \(.*chain\.mjs:6:\d+\)$/);
-    expect(lines[4]).toMatch(/^ {4}at async .*chain\.mjs:7:\d+$/);
-    expect(lines).toHaveLength(5);
-    expect(exitCode).toBe(0);
-  }
+  expect(direct.stdout[0]).toBe("Error: boom");
+  expect(direct.stdout[1]).toMatch(/^ {4}at inner \(.*direct\.mjs:3:\d+\)$/);
+  expect(direct.stdout[2]).toMatch(/^ {4}at async .*direct\.mjs:5:\d+$/);
+  expect(direct.stdout).toHaveLength(3);
+  expect(direct.exitCode).toBe(0);
 
-  {
-    const { stdout, exitCode } = await run("entry.mjs");
-    const lines = stdout.trim().split("\n");
-    expect(lines[1]).toMatch(/^ {4}at inner \(.*lib\.mjs:3:\d+\)$/);
-    expect(lines[2]).toMatch(/^ {4}at async run \(.*lib\.mjs:5:\d+\)$/);
-    expect(lines[3]).toMatch(/^ {4}at async .*entry\.mjs:2:\d+$/);
-    expect(lines).toHaveLength(4);
-    expect(exitCode).toBe(0);
-  }
+  expect(chain.stdout[1]).toMatch(/^ {4}at inner \(.*chain\.mjs:3:\d+\)$/);
+  expect(chain.stdout[2]).toMatch(/^ {4}at async mid \(.*chain\.mjs:5:\d+\)$/);
+  expect(chain.stdout[3]).toMatch(/^ {4}at async outer \(.*chain\.mjs:6:\d+\)$/);
+  expect(chain.stdout[4]).toMatch(/^ {4}at async .*chain\.mjs:7:\d+$/);
+  expect(chain.stdout).toHaveLength(5);
+  expect(chain.exitCode).toBe(0);
 
-  {
-    const { stderr, exitCode } = await run("anon.mjs");
-    expect(stderr).toMatch(/anon\.mjs:4:\d+/);
-    expect(stderr).toMatch(/async \(.*anon\.mjs:8:\d+\)/);
-    expect(exitCode).toBe(1);
-  }
+  expect(entry.stdout[1]).toMatch(/^ {4}at inner \(.*lib\.mjs:3:\d+\)$/);
+  expect(entry.stdout[2]).toMatch(/^ {4}at async run \(.*lib\.mjs:5:\d+\)$/);
+  expect(entry.stdout[3]).toMatch(/^ {4}at async .*entry\.mjs:2:\d+$/);
+  expect(entry.stdout).toHaveLength(4);
+  expect(entry.exitCode).toBe(0);
 
-  {
-    const { stdout, exitCode } = await run("race.mjs");
-    const lines = stdout.trim().split("\n");
-    expect(lines[1]).toMatch(/^ {4}at inner \(.*race\.mjs:3:\d+\)$/);
-    expect(lines).toHaveLength(2);
-    expect(exitCode).toBe(0);
-  }
+  expect(anon.stderr).toMatch(/anon\.mjs:4:\d+/);
+  expect(anon.stderr).toMatch(/async \(.*anon\.mjs:8:\d+\)/);
+  expect(anon.exitCode).toBe(1);
 
-  {
-    const { stdout, exitCode } = await run("als.mjs");
-    const lines = stdout.trim().split("\n");
-    expect(lines[1]).toMatch(/^ {4}at inner \(.*als\.mjs:5:\d+\)$/);
-    expect(lines[lines.length - 1]).toMatch(/^ {4}at async .*als\.mjs:7:\d+$/);
-    expect(exitCode).toBe(0);
-  }
+  expect(race.stdout[1]).toMatch(/^ {4}at inner \(.*race\.mjs:3:\d+\)$/);
+  expect(race.stdout).toHaveLength(2);
+  expect(race.exitCode).toBe(0);
 
-  {
-    const { stdout, exitCode } = await run("native.mjs");
-    const lines = stdout.trim().split("\n");
-    expect(lines[lines.length - 1]).toMatch(/^ {4}at async .*native\.mjs:3:\d+$/);
-    expect(exitCode).toBe(0);
-  }
+  expect(als.stdout[1]).toMatch(/^ {4}at inner \(.*als\.mjs:5:\d+\)$/);
+  expect(als.stdout.at(-1)).toMatch(/^ {4}at async .*als\.mjs:7:\d+$/);
+  expect(als.exitCode).toBe(0);
 
-  {
-    const { stdout, exitCode } = await run("callsites.mjs");
-    const sites = JSON.parse(stdout.trim());
-    expect(sites).toEqual([
-      { fn: "inner", async: false, line: 8 },
-      { fn: null, async: true, line: 10 },
-    ]);
-    expect(exitCode).toBe(0);
-  }
+  expect(native.stdout.at(-1)).toMatch(/^ {4}at async .*native\.mjs:3:\d+$/);
+  expect(native.exitCode).toBe(0);
+
+  expect(JSON.parse(callsites.stdout[0])).toEqual([
+    { fn: "inner", async: false, line: 8 },
+    { fn: null, async: true, line: 10 },
+  ]);
+  expect(callsites.exitCode).toBe(0);
 });

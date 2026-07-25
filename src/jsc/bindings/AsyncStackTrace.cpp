@@ -23,10 +23,7 @@
 
 using namespace JSC;
 
-// dynamicDowncast(JSValue)'s isCell() check is true for the empty value on
-// JSVALUE64, so it would read through a null cell. asyncStackTraceContext()
-// and reaction getters return the empty value in several paths, so every
-// JSValue downcast in this file goes through this helper.
+// dynamicDowncast(JSValue) reads through a null cell for the empty value (isCell() is true for 0 on JSVALUE64); asyncStackTraceContext() can return empty, so all JSValue downcasts here go through this.
 template<typename T>
 static inline T* cellAs(JSValue v)
 {
@@ -40,9 +37,7 @@ static inline bool dynamicCastValue(JSValue v, T** out)
     return *out != nullptr;
 }
 
-// With AsyncLocalStorage active, JSPromise::resolveWithInternalMicrotaskForAsyncAwait
-// wraps the await context in InternalFieldTuple(context, asyncContext). Unwrap
-// to field 0 so both the generator and module-record probes see the real cell.
+// Under AsyncLocalStorage the await context is wrapped in InternalFieldTuple(context, asyncContext); field 0 is the real cell.
 static inline JSValue unwrapAsyncContextTuple(JSValue v)
 {
     if (auto* tuple = cellAs<InternalFieldTuple>(v))
@@ -224,15 +219,7 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     instance->setStackFrames(vm, WTF::move(frames));
 }
 
-// Installed as VM::onAppendStackTrace. Interpreter::getAsyncStackTrace walks
-// the await chain in terms of JSAsyncFunctionGenerator only, so when the
-// outermost awaiter is a module's top-level await the reaction context is a
-// JSModuleRecord and the walk stops one frame short of the
-// `at async file.mjs:N:M` frame Node shows. getStackTrace calls this hook
-// after the sync walk and before inserting its async frames, so a frame
-// appended here lands at the bottom of the result. We locate the same origin
-// generator getStackTrace will use, follow the same chain, and if it ends at
-// a suspended module record append one frame for that await.
+// VM::onAppendStackTrace hook. Interpreter::getAsyncStackTrace only follows JSAsyncFunctionGenerator links, so a top-level-await module (JSModuleRecord reaction context) is dropped; we locate the same origin generator and append one frame for that module's await. getStackTrace calls this after its sync walk and before inserting async frames, so the frame lands at the bottom.
 void Bun::appendTopLevelAwaitStackFrame(VM& vm, JSCell* owner, Vector<StackFrame>& results, size_t maxToAppend)
 {
     if (!maxToAppend || !Options::useAsyncStackTrace())
@@ -240,11 +227,7 @@ void Bun::appendTopLevelAwaitStackFrame(VM& vm, JSCell* owner, Vector<StackFrame
 
     AssertNoGC assertNoGC;
 
-    // getStackTrace only inspects entry frames that contributed visible
-    // (non-private) frames; the innermost entry frame with a generator context
-    // is the microtask resume behind the current sync stack and is what it
-    // picks. Deeper entry frames belong to the embedder's scheduler and would
-    // walk into internal modules.
+    // getStackTrace only inspects entry frames that contributed visible frames; the innermost one with a generator context is the microtask resume behind the current sync stack. Deeper entry frames belong to the embedder's scheduler and would walk into internal modules.
     JSAsyncFunctionGenerator* origin = nullptr;
     for (EntryFrame* entryFrame = vm.topEntryFrame; entryFrame;) {
         VMEntryRecord* record = vmEntryRecord(entryFrame);

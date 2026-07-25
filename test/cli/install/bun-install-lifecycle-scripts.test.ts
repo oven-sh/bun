@@ -1913,6 +1913,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         }),
       );
 
+      const emptyGitConfig = join(packageDir, "empty.gitconfig");
+      await writeFile(emptyGitConfig, "");
       const gitEnv = {
         ...baseEnv,
         GIT_AUTHOR_NAME: "bun",
@@ -1920,6 +1922,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         GIT_COMMITTER_NAME: "bun",
         GIT_COMMITTER_EMAIL: "bun@example.com",
         GIT_CONFIG_NOSYSTEM: "1",
+        GIT_CONFIG_GLOBAL: emptyGitConfig,
       };
       for (const args of [
         ["init", "-b", "main"],

@@ -20,7 +20,7 @@ test("new Module() instances inherit load() (#29253)", () => {
   expect(Module.prototype.load.name).toBe("load");
 });
 
-test.concurrent("new Module().load(filename) reads and evaluates the file (#29253)", { timeout: 30000 }, async () => {
+test.concurrent("new Module().load(filename) reads and evaluates the file (#29253)", async () => {
   // Spawn a separate Bun so the test doesn't pollute its own
   // require cache or Module.wrap state.
   using dir = tempDir("issue-29253-load", {
@@ -57,6 +57,8 @@ test.concurrent("new Module().load(filename) reads and evaluates the file (#2925
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
+
   const result = JSON.parse(stdout.trim());
   expect(result.loaded).toBe(true);
   expect(result.filename).toMatch(/target\.js$/);
@@ -65,7 +67,7 @@ test.concurrent("new Module().load(filename) reads and evaluates the file (#2925
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("Module.prototype.load honors an overridden Module.wrapper (#29253)", { timeout: 30000 }, async () => {
+test.concurrent("Module.prototype.load honors an overridden Module.wrapper (#29253)", async () => {
   // `load()` must compile the file through the CURRENT module
   // wrapper (`Module.wrapper[0] + source + Module.wrapper[1]`)
   // — not a hard-coded one. Mutating the wrapper array is how
@@ -103,11 +105,13 @@ test.concurrent("Module.prototype.load honors an overridden Module.wrapper (#292
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
+
   expect(stdout.trim()).toBe("number");
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("new Module().load populates filename/paths/loaded (#29253)", { timeout: 30000 }, async () => {
+test.concurrent("new Module().load populates filename/paths/loaded (#29253)", async () => {
   // Node's `Module.prototype.load` writes `filename`, `paths`,
   // and `loaded` before returning. `requizzle` and any other
   // package that reads those fields after `.load()` depends on
@@ -165,6 +169,8 @@ test.concurrent("new Module().load populates filename/paths/loaded (#29253)", { 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
+
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
@@ -173,7 +179,7 @@ test.concurrent("new Module().load populates filename/paths/loaded (#29253)", { 
 // permanently marked `loaded`, otherwise the next `.load(...)` call on
 // the same instance would hit the "Module already loaded" assert and
 // make failure recovery impossible.
-test.concurrent("failed load() clears loaded so the instance can be retried (#29253)", { timeout: 30000 }, async () => {
+test.concurrent("failed load() clears loaded so the instance can be retried (#29253)", async () => {
   using dir = tempDir("issue-29253-retry", {
     "broken.js": `throw new Error("boom");`,
     "good.js": `module.exports = 'good-exports';`,
@@ -213,6 +219,8 @@ test.concurrent("failed load() clears loaded so the instance can be retried (#29
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
+
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
@@ -221,7 +229,7 @@ test.concurrent("failed load() clears loaded so the instance can be retried (#29
 // over `Module._extensions['.js']` when `.load()` is called on a file
 // ending in `.test.js`. `path.extname` alone would return `.js` and
 // silently bypass the compound handler.
-test.concurrent("load() picks the longest registered extension handler (#29253)", { timeout: 30000 }, async () => {
+test.concurrent("load() picks the longest registered extension handler (#29253)", async () => {
   using dir = tempDir("issue-29253-ext", {
     "foo.test.js": `module.exports = 'raw-source-never-loaded';`,
     "driver.js": `
@@ -256,6 +264,8 @@ test.concurrent("load() picks the longest registered extension handler (#29253)"
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
+
   expect(stdout.trim()).toBe("ok");
   expect(exitCode).toBe(0);
 });
@@ -268,11 +278,18 @@ test("module.isPreloading is a boolean getter on the prototype", () => {
   expect(typeof m.isPreloading).toBe("boolean");
   expect(Object.prototype.hasOwnProperty.call(m, "isPreloading")).toBe(false);
 
+  // Node defines the accessor with enumerable/configurable both false.
   const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(m), "isPreloading");
   expect(typeof desc?.get).toBe("function");
+  expect(desc?.enumerable).toBe(false);
+  expect(desc?.configurable).toBe(false);
 
   // Also present on the disposable `require("module").prototype` object.
   expect(Module.prototype.isPreloading).toBe(false);
+  const protoDesc = Object.getOwnPropertyDescriptor(Module.prototype, "isPreloading");
+  expect(typeof protoDesc?.get).toBe("function");
+  expect(protoDesc?.enumerable).toBe(false);
+  expect(protoDesc?.configurable).toBe(false);
 });
 
 test.concurrent("module.isPreloading is true during --preload and false afterwards", async () => {

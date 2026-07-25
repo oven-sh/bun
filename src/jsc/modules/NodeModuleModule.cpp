@@ -800,7 +800,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     prototype->putDirectCustomAccessor(
         vm, Identifier::fromString(vm, "isPreloading"_s),
         JSC::CustomGetterSetter::create(vm, nodeModuleIsPreloading, nullptr),
-        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum);
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 
     return prototype;
 }

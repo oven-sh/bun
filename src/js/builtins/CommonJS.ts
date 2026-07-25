@@ -450,7 +450,7 @@ export function modulePrototypeLoad(this: JSCommonJSModule, filename: string) {
   const extensions = Module._extensions;
   let handler: any;
   let startDot = basename.indexOf(".");
-  while (startDot !== -1 && startDot !== basename.length - 1) {
+  while (startDot !== -1) {
     if (startDot === 0) {
       // Skip a leading dot so dotfiles don't match a handler named after them.
       startDot = basename.indexOf(".", 1);

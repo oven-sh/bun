@@ -2312,7 +2312,11 @@ pub mod bv2_impl {
                                             ),
                                             path_to_use,
                                             import_record.kind,
-                                            could_not_resolve_note(path_to_use, import_record.kind),
+                                            could_not_resolve_note(
+                                                path_to_use,
+                                                import_record.kind,
+                                                self.dev_server.is_some(),
+                                            ),
                                         );
                                     }
                                 } else {
@@ -6185,6 +6189,7 @@ pub mod bv2_impl {
                                                 could_not_resolve_note(
                                                     import_record.path.text,
                                                     import_record.kind,
+                                                    self.dev_server.is_some(),
                                                 ),
                                             );
                                         }
@@ -7464,7 +7469,17 @@ pub mod bv2_impl {
     /// specifier, explaining how to keep the path out of the bundle and (for
     /// `require()` / dynamic `import()`) how to defer the failure to run-time.
     /// Mirrors the guidance esbuild emits for the same error.
-    pub fn could_not_resolve_note(path: &[u8], kind: ImportKind) -> Box<[bun_ast::Data]> {
+    ///
+    /// Returns an empty slice under the dev server, which has no `external`
+    /// option for the note to point at.
+    pub fn could_not_resolve_note(
+        path: &[u8],
+        kind: ImportKind,
+        is_dev_server: bool,
+    ) -> Box<[bun_ast::Data]> {
+        if is_dev_server {
+            return Box::default();
+        }
         let runtime_hint: &[u8] = match kind {
             ImportKind::Require | ImportKind::RequireResolve => {
                 b" You can also surround this \"require\" call with a try/catch block to handle this failure at run-time instead of bundle-time."
@@ -7479,7 +7494,8 @@ pub mod bv2_impl {
                 format!(
                     "You can mark the path \"{}\" as external to exclude it from the bundle, \
                      which will remove this error and leave the unresolved path in the bundle \
-                     (pass \"--external {0}\" to the CLI, or add it to \"external\" in Bun.build).{}",
+                     (pass \"--external {0}\" or \"--packages external\" to the CLI, \
+                     or add it to \"external\" in Bun.build).{}",
                     bstr::BStr::new(path),
                     bstr::BStr::new(runtime_hint),
                 )

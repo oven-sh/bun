@@ -537,12 +537,13 @@ describe("CLI argument error messages", () => {
       return { stderr, exitCode };
     };
 
-    // require(): suggests --external and try/catch.
+    // require(): suggests --external, --packages external, and try/catch.
     {
       const { stderr, exitCode } = await build("require.js");
       expect(stderr).toContain('error: Could not resolve: "not-a-real-pkg-a"');
       expect(stderr).toContain('note: You can mark the path "not-a-real-pkg-a" as external');
       expect(stderr).toContain('pass "--external not-a-real-pkg-a"');
+      expect(stderr).toContain('"--packages external"');
       expect(stderr).toContain('surround this "require" call with a try/catch block');
       expect(exitCode).toBe(1);
     }

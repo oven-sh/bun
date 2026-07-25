@@ -1438,6 +1438,7 @@ impl GetAddrInfoRequest {
             }
 
             if let Some(resolver) = (*this).resolver_for_caching {
+                scopeguard::defer! { (*resolver).request_completed() };
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_native(
                         (*this).cache.pos_in_pending(),
@@ -1494,6 +1495,7 @@ impl GetAddrInfoRequest {
                     // at the end of whichever callee receives `any`.
                     let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching {
+                        scopeguard::defer! { (*resolver).request_completed() };
                         if (*this).cache.pending_cache() {
                             (*resolver).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),

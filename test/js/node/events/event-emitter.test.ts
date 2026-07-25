@@ -1093,3 +1093,41 @@ test("once() wrapper releases its target after firing", async () => {
     exitCode: 0,
   });
 });
+
+// on() must be amortized O(1). A copy-on-write append pays N per add, so N
+// adds cost N^2: under debug+ASAN that put 12k adds well over a second, versus
+// tens of ms for an in-place push. 500ms sits between the two with room on
+// both sides.
+test("on() is amortized O(1), not O(N) per add", () => {
+  const fn = () => {};
+  function timeAdds(n: number) {
+    const ee = new EventEmitter();
+    ee.setMaxListeners(0);
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) ee.on("x", fn);
+    return performance.now() - t0;
+  }
+  timeAdds(2000); // warm up
+  const ms = timeAdds(12000);
+  expect(ms).toBeLessThan(500);
+});
+
+// on() during emit must not run the new listener in that same emit round
+// (matches Node). This is the invariant the in-place append relies on: emit
+// latches `length` before iterating, so the pushed slot is never visited.
+test("listener appended during emit is not called in that emit", () => {
+  const ee = new EventEmitter();
+  const calls: string[] = [];
+  ee.on("x", () => {
+    calls.push("a");
+    ee.on("x", () => calls.push("late"));
+  });
+  ee.on("x", () => calls.push("b"));
+  ee.emit("x");
+  expect(calls).toEqual(["a", "b"]);
+  expect(ee.listenerCount("x")).toBe(3);
+
+  calls.length = 0;
+  ee.emit("x");
+  expect(calls).toEqual(["a", "b", "late"]);
+});

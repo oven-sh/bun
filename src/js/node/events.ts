@@ -142,8 +142,9 @@ function emitError(emitter, args) {
 }
 
 // A listener list is a bare function for a single listener, else an array
-// (like node). Arrays are never mutated in place - mutators install a copy -
-// so a stored list can be iterated with no defensive clone.
+// (like node). Index-shifting mutations (prepend, remove) install a copy;
+// append pushes past the latched `length` below. Either way a stored list is
+// safe to iterate with no defensive clone.
 function applyHandlers(handlers, emitter, args) {
   if (typeof handlers === "function") {
     handlers.$apply(emitter, args);
@@ -208,9 +209,9 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
     }
     return true;
   }
-  // No defensive clone: stored arrays are never mutated in place (mutators
-  // install a copy), so this list stays stable for the whole loop even if a
-  // listener adds/removes listeners.
+  // No defensive clone: prepend/remove install a fresh array and append lands
+  // past the `length` latched here, so `handler[0..length)` is stable for the
+  // whole loop even if a listener adds/removes listeners.
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     switch (args.length) {
@@ -268,9 +269,9 @@ const emitWithRejectionCapture = function emit(type, ...args) {
     }
     return true;
   }
-  // No defensive clone: stored arrays are never mutated in place (mutators
-  // install a copy), so this list stays stable for the whole loop even if a
-  // listener adds/removes listeners.
+  // No defensive clone: prepend/remove install a fresh array and append lands
+  // past the `length` latched here, so `handler[0..length)` is stable for the
+  // whole loop even if a listener adds/removes listeners.
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     let result;
@@ -322,8 +323,14 @@ function _addListener(target, type, fn, prepend) {
   var handlers;
   if (typeof existing === "function") {
     handlers = events[type] = prepend ? [fn, existing] : [existing, fn];
+  } else if (prepend) {
+    handlers = events[type] = copyWithPrepended(existing, fn);
   } else {
-    handlers = events[type] = copyWithInserted(existing, fn, prepend);
+    // Append in place. emit() latches `length` before iterating, so a listener
+    // appended mid-emit sits past the latched length and is not visited; only
+    // prepend/remove (which shift indices) install a fresh array.
+    $arrayPush(existing, fn);
+    handlers = existing;
   }
   var m = _getMaxListeners(target);
   if (m > 0 && handlers.length > m && !handlers.warned) {
@@ -343,20 +350,14 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   return this;
 };
 
-// Copy-on-write: emit iterates stored arrays with no clone, so new listeners
-// land in a fresh array; `warned` carries over so the leak warning fires once.
-// An inline loop beats concat/slice here ~10x (host-call boundary).
-function copyWithInserted(list, fn, prepend) {
+// emit() iterates the stored array with no clone, so a prepend (which shifts
+// indices) lands in a fresh array; `warned` carries over so the leak warning
+// fires once. An inline loop beats concat/slice here ~10x (host-call boundary).
+function copyWithPrepended(list, fn) {
   const n = list.length;
   const copy = $newArrayWithSize(n + 1);
-  // Two straight copies, not a per-element ternary (measured ~25% slower).
-  if (prepend) {
-    copy[0] = fn;
-    for (let i = 0; i < n; i++) copy[i + 1] = list[i];
-  } else {
-    for (let i = 0; i < n; i++) copy[i] = list[i];
-    copy[n] = fn;
-  }
+  copy[0] = fn;
+  for (let i = 0; i < n; i++) copy[i + 1] = list[i];
   if (list.warned) copy.warned = true;
   return copy;
 }

@@ -129,6 +129,17 @@ pub struct Watcher {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub eventlist_index_scratch: Vec<platform::EventListIndex>,
 
+    /// Scratch snapshot of `watchlist.file_path` taken under `mutex` in
+    /// `watch_loop_cycle` so the path scan does not race `add_file`'s
+    /// realloc; owned by the watcher thread.
+    #[cfg(windows)]
+    pub platform_scratch: Vec<Box<[u8]>>,
+
+    /// Directories outside every watch root whose `add_root` failed. Checked
+    /// before retrying so the warning prints once, not per file per reload.
+    #[cfg(windows)]
+    pub unwatchable_roots: Vec<Box<[u8]>>,
+
     pub ctx: *mut (),
     pub on_file_update: fn(*mut (), &mut [WatchEvent], &[ChangedFilePath], &WatchList),
     pub on_error: fn(*mut (), sys::Error),
@@ -205,6 +216,10 @@ impl Watcher {
             evict_list_i: 0,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             eventlist_index_scratch: Vec::new(),
+            #[cfg(windows)]
+            platform_scratch: Vec::new(),
+            #[cfg(windows)]
+            unwatchable_roots: Vec::new(),
             thread_lock: ThreadLock::init_unlocked(),
         });
 
@@ -497,13 +512,9 @@ impl Watcher {
     ) -> sys::Result<()> {
         #[cfg(windows)]
         {
-            // on windows we can only watch items that are in the directory tree of the top level dir
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
-                bun_core::warn!(
-                    "File {} is not in the project directory and will not be watched\n",
-                    bstr::BStr::new(file_path)
-                );
+            let pathname = bun_paths::fs::PathName::init(file_path);
+            let parent_dir = pathname.dir_with_trailing_slash();
+            if !self.ensure_watch_root_covers(parent_dir) {
                 return Ok(());
             }
         }
@@ -568,12 +579,7 @@ impl Watcher {
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
         {
-            let rel = bun_paths::resolve_path::is_parent_or_equal(self.top_level_dir(), file_path);
-            if rel == bun_paths::resolve_path::ParentEqual::Unrelated {
-                bun_core::warn!(
-                    "Directory {} is not in the project directory and will not be watched\n",
-                    bstr::BStr::new(file_path)
-                );
+            if !self.ensure_watch_root_covers(file_path) {
                 return Ok(NO_WATCH_ITEM);
             }
         }
@@ -755,6 +761,35 @@ impl Watcher {
     #[inline]
     fn top_level_dir(&self) -> &[u8] {
         self.cwd
+    }
+
+    /// Ensure `dir` (absolute, trailing separator) is inside a Windows watch
+    /// root, registering a new recursive `ReadDirectoryChangesW` on it if not.
+    /// Returns false only when opening the directory failed (the file is then
+    /// skipped, as before). Caller holds `self.mutex`.
+    #[cfg(windows)]
+    fn ensure_watch_root_covers(&mut self, dir: &[u8]) -> bool {
+        if self.platform.covers(dir) {
+            return true;
+        }
+        if self
+            .unwatchable_roots
+            .iter()
+            .any(|r| r.as_ref() == dir)
+        {
+            return false;
+        }
+        match self.platform.add_root(dir) {
+            Ok(()) => true,
+            Err(_) => {
+                bun_core::warn!(
+                    "Directory {} could not be opened for watching; changes under it will not be watched\n",
+                    bstr::BStr::new(dir)
+                );
+                self.unwatchable_roots.push(dir.to_vec().into_boxed_slice());
+                false
+            }
+        }
     }
 
     pub fn add_directory<const CLONE_FILE_PATH: bool>(

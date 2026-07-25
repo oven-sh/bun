@@ -1,4 +1,12 @@
 //! Bun's filesystem watcher implementation for windows using kernel32
+//!
+//! Each watch root is a recursive `ReadDirectoryChangesW` on one directory,
+//! so files resolved outside the initial root (workspace packages reached
+//! through a `node_modules` symlink, `bun link`ed packages, `file:` deps)
+//! need an additional root. All `DirWatcher`s share one IOCP; a completion's
+//! `lpOverlapped` is the address of the `DirWatcher` that fired (it is the
+//! first field), so `next()` identifies the source without touching the
+//! `watchers` Vec and therefore without the mutex.
 
 use core::mem::size_of;
 use core::ptr;
@@ -18,22 +26,31 @@ pub(crate) type Platform = WindowsWatcher;
 
 pub struct WindowsWatcher {
     pub iocp: HANDLE,
-    pub watcher: DirWatcher,
+    /// One entry per watch root. `Box` keeps each `DirWatcher` at a stable
+    /// address so its `OVERLAPPED` / event buffer remain valid across Vec
+    /// growth while the async `ReadDirectoryChangesW` is pending. Appended
+    /// under `Watcher.mutex`; never shrunk.
+    pub watchers: Vec<Box<DirWatcher>>,
+    /// Scratch for `root + event filename` during `watch_loop_cycle`. Owned
+    /// by the watch thread.
     pub buf: PathBuffer,
-    pub base_idx: usize,
+    /// The `DirWatcher` whose buffer was just returned by `next()` and must be
+    /// re-armed on the next `next()` call. Watch-thread-only.
+    needs_rearm: Option<ptr::NonNull<DirWatcher>>,
 }
+
+// SAFETY: the raw HANDLE and `needs_rearm` pointer are sent to the watch
+// thread once at `Watcher::start`; `needs_rearm` is only set/read on that
+// thread thereafter.
+unsafe impl Send for WindowsWatcher {}
 
 impl Default for WindowsWatcher {
     fn default() -> Self {
         Self {
             iocp: w::INVALID_HANDLE_VALUE,
-            watcher: DirWatcher {
-                overlapped: bun_core::ffi::zeroed(),
-                buf: [0u8; 64 * 1024],
-                dir_handle: w::INVALID_HANDLE_VALUE,
-            },
+            watchers: Vec::new(),
             buf: PathBuffer::uninit(),
-            base_idx: 0,
+            needs_rearm: None,
         }
     }
 }
@@ -76,14 +93,19 @@ pub struct DirWatcher {
     /// `EventIterator::next`).
     pub buf: [u8; 64 * 1024],
     pub dir_handle: HANDLE,
+    /// Absolute path of the watched root with a trailing separator. Prefixed
+    /// to the relative filename each event carries to rebuild the full path.
+    pub root: Box<[u8]>,
 }
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
 // the `*FILE_NOTIFY_INFORMATION` cast. Asserting the offset (not just the
-// total size) is what proves that alignment requirement.
+// total size) is what proves that alignment requirement. `overlapped` at
+// offset 0 is load-bearing: `next()` recovers `*mut DirWatcher` from the
+// `lpOverlapped` out-param.
 bun_core::assert_ffi_layout!(
     DirWatcher,
-    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>(),
+    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>() + ::core::mem::size_of::<Box<[u8]>>(),
     ::core::mem::align_of::<w::OVERLAPPED>();
     overlapped @ 0, buf @ 32, dir_handle @ 32 + 64 * 1024,
 );
@@ -211,16 +233,24 @@ impl EventIterator {
 }
 
 impl WindowsWatcher {
-    // `Self` carries the 64 KiB `DirWatcher` buffer inline; it is moved once
-    // into `Box::new(Watcher { .. })` in `Watcher::init`.
-    #[allow(clippy::large_stack_frames)]
     pub(crate) fn new(root: &[u8]) -> crate::Result<Self> {
         let mut this = Self::default();
-        this.init(root)?;
+        this.iocp = w::CreateIoCompletionPort(w::INVALID_HANDLE_VALUE, ptr::null_mut(), 0, 1)
+            .map_err(|_| crate::Error::from(Error::IocpFailed))?;
+        if let Err(e) = this.add_root(root) {
+            // SAFETY: iocp was just created above.
+            unsafe {
+                let _ = w::CloseHandle(this.iocp);
+            }
+            return Err(e);
+        }
         Ok(this)
     }
 
-    fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
+    /// Open `root` for recursive change notification, associate it with the
+    /// shared IOCP, arm it, and append to `self.watchers`. Caller holds
+    /// `Watcher.mutex` when this is called after the watch thread has started.
+    pub(crate) fn add_root(&mut self, root: &[u8]) -> Result<(), crate::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -267,42 +297,57 @@ impl WindowsWatcher {
             let _ = w::CloseHandle(h);
         });
 
-        self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
+        let key = self.watchers.len() as w::ULONG_PTR;
+        w::CreateIoCompletionPort(*handle_guard, self.iocp, key, 0)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
-        let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
-            // SAFETY: iocp handle was successfully created above.
-            let _ = w::CloseHandle(h);
-        });
 
-        // Materializing an uninit `[u8; N]` by value is immediate UB, and constructing a 64KiB
-        // `DirWatcher` temporary on the stack defeats the in-place-init intent. Assign fields in
-        // place instead — `buf` was already zero-initialised by `Default` and is an output buffer
-        // filled by ReadDirectoryChangesW before any read.
-        self.watcher.overlapped = bun_core::ffi::zeroed::<w::OVERLAPPED>();
-        self.watcher.dir_handle = *handle_guard;
-
-        self.buf[..root.len()].copy_from_slice(root);
         let needs_slash = root.is_empty() || !paths::char_is_any_slash(root[root.len() - 1]);
+        let mut root_buf = Vec::with_capacity(root.len() + usize::from(needs_slash));
+        root_buf.extend_from_slice(root);
         if needs_slash {
-            self.buf[root.len()] = b'\\';
+            root_buf.push(b'\\');
         }
-        self.base_idx = if needs_slash {
-            root.len() + 1
-        } else {
-            root.len()
-        };
 
-        // disarm the cleanup scopeguards on success
-        scopeguard::ScopeGuard::into_inner(iocp_guard);
+        // Box first so `overlapped`/`buf` land at their final address before
+        // the first `ReadDirectoryChangesW`.
+        let mut dw = Box::new(DirWatcher {
+            overlapped: bun_core::ffi::zeroed(),
+            buf: [0u8; 64 * 1024],
+            dir_handle: *handle_guard,
+            root: root_buf.into_boxed_slice(),
+        });
+        dw.prepare().map_err(crate::Error::from)?;
+        self.watchers.push(dw);
+
+        bun_core::scoped_log!(
+            watcher,
+            "watching root[{}]: {}",
+            key,
+            bstr::BStr::new(root)
+        );
+
         scopeguard::ScopeGuard::into_inner(handle_guard);
         Ok(())
     }
 
+    /// True if `dir` (absolute, with trailing separator) is already inside one
+    /// of the watched roots. Caller holds `Watcher.mutex`.
+    pub(crate) fn covers(&self, dir: &[u8]) -> bool {
+        for dw in &self.watchers {
+            if is_parent_or_equal(&dw.root, dir) != ParentEqual::Unrelated {
+                return true;
+            }
+        }
+        false
+    }
+
     /// wait until new events are available
     pub(crate) fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
-        if let Err(err) = self.watcher.prepare() {
-            bun_core::scoped_log!(watcher, "prepare() returned error");
-            return Err(err);
+        if let Some(dw) = self.needs_rearm.take() {
+            // SAFETY: `dw` was the `lpOverlapped` of the previous completion,
+            // pointing at offset 0 of a `Box<DirWatcher>` in `self.watchers`
+            // (append-only, never dropped before `stop()`), so it is live.
+            unsafe { dw.as_ptr().as_mut().unwrap_unchecked() }.prepare()?;
         }
 
         let mut nbytes: w::DWORD = 0;
@@ -336,36 +381,7 @@ impl WindowsWatcher {
                 }
             }
 
-            if !overlapped.is_null() {
-                // ignore possible spurious events
-                if overlapped != &mut self.watcher.overlapped as *mut w::OVERLAPPED {
-                    continue;
-                }
-                if nbytes == 0 {
-                    // ReadDirectoryChangesW internal change-buffer overflow — too many
-                    // events arrived between drain and re-arm. This is NOT a shutdown
-                    // signal: stop() closes the dir handle, which surfaces as rc==0 /
-                    // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
-                    // MSDN, the function returns zero bytes when its internal buffer
-                    // overflows. Drop the lost events, re-arm, and keep watching so
-                    // --hot picks up the next change. Returning ESHUTDOWN here kills
-                    // the watcher thread and the --hot child silently exits
-                    // (hot.test.ts "should work with sourcemap generation" flake).
-                    bun_core::scoped_log!(
-                        watcher,
-                        "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
-                    );
-                    if let Err(err) = self.watcher.prepare() {
-                        return Err(err);
-                    }
-                    continue;
-                }
-                return Ok(Some(EventIterator {
-                    watcher: BackRef::new(&self.watcher),
-                    offset: 0,
-                    has_next: true,
-                }));
-            } else {
+            let Some(overlapped) = ptr::NonNull::new(overlapped) else {
                 bun_core::scoped_log!(
                     watcher,
                     "GetQueuedCompletionStatus returned no overlapped event"
@@ -375,14 +391,48 @@ impl WindowsWatcher {
                     syscall: bun_sys::Tag::watch,
                     ..Default::default()
                 });
+            };
+            // `overlapped` is the address we passed to `ReadDirectoryChangesW`:
+            // offset 0 of a boxed `DirWatcher` in `self.watchers`.
+            let dw: ptr::NonNull<DirWatcher> = overlapped.cast();
+
+            if nbytes == 0 {
+                // ReadDirectoryChangesW internal change-buffer overflow — too many
+                // events arrived between drain and re-arm. This is NOT a shutdown
+                // signal: stop() closes the dir handle, which surfaces as rc==0 /
+                // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
+                // MSDN, the function returns zero bytes when its internal buffer
+                // overflows. Drop the lost events, re-arm, and keep watching so
+                // --hot picks up the next change. Returning ESHUTDOWN here kills
+                // the watcher thread and the --hot child silently exits
+                // (hot.test.ts "should work with sourcemap generation" flake).
+                bun_core::scoped_log!(
+                    watcher,
+                    "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
+                );
+                // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
+                unsafe { dw.as_ptr().as_mut().unwrap_unchecked() }.prepare()?;
+                continue;
             }
+            self.needs_rearm = Some(dw);
+            return Ok(Some(EventIterator {
+                // SAFETY: `dw` is a live boxed DirWatcher (see above); its
+                // buffer stays valid until the matching `prepare()` on the
+                // next `next()` call.
+                watcher: unsafe { BackRef::from_raw(dw.as_ptr()) },
+                offset: 0,
+                has_next: true,
+            }));
         }
     }
 
     pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
+        // SAFETY: handles were opened in add_root()/new() and are valid until
+        // stop() is called once.
         unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
+            for dw in &self.watchers {
+                w::CloseHandle(dw.dir_handle);
+            }
             w::CloseHandle(self.iocp);
         }
     }
@@ -396,10 +446,6 @@ pub(crate) enum Timeout {
 }
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
-    // We re-borrow buf inside the inner loop instead of holding `&this.platform.buf`
-    // across calls to `this.platform.next()`.
-    let base_idx = this.platform.base_idx;
-
     let mut event_id: usize = 0;
 
     // first wait has infinite timeout - we're waiting for the next event and don't want to spin
@@ -413,15 +459,30 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         // NOTE: using a 1ms timeout would be ideal, but that actually makes the thread wait for at least 10ms more than it should
         // Instead we use a 0ms timeout, which may not do as much coalescing but is more responsive.
         timeout = Timeout::None;
-        bun_core::scoped_log!(
-            watcher,
-            "number of watched items: {}",
-            this.watchlist.items_file_path().len()
-        );
+
+        let base_idx = {
+            let root = &iter.watcher.root;
+            this.platform.buf[..root.len()].copy_from_slice(root);
+            root.len()
+        };
+
+        // `add_file` on other threads may realloc `watchlist` mid-iteration;
+        // snapshot the path column under the same mutex it takes (same pattern
+        // as `INotifyWatcher`'s `eventlist_index_scratch`).
+        {
+            let _guard = this.mutex.lock_guard();
+            this.platform_scratch.clear();
+            for p in this.watchlist.items_file_path() {
+                this.platform_scratch.push(p.as_ref().to_vec().into_boxed_slice());
+            }
+        }
+        let n_items = this.platform_scratch.len();
+
+        bun_core::scoped_log!(watcher, "number of watched items: {}", n_items);
         while let Some(event) = iter.next() {
-            // `event.filename` is a `RawSlice<u16>` into `this.platform.watcher.buf`,
-            // live for the duration of this iteration (no `prepare()` until the
-            // outer loop reiterates) — encapsulated by the `RawSlice` invariant.
+            // `event.filename` is a `RawSlice<u16>` into the firing
+            // `DirWatcher`'s buf, live for the duration of this iteration (no
+            // `prepare()` until the next `next()` call).
             let filename: &[u16] = event.filename.slice();
             let convert_res =
                 strings::copy_utf16_into_utf8(&mut this.platform.buf[base_idx..], filename);
@@ -442,15 +503,15 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            let n_items = this.watchlist.items_file_path().len();
             for item_idx in 0..n_items {
                 // reshaped for borrowck — `rel` is computed in a scoped
-                // block so the borrows of `this.watchlist` / `this.platform.buf`
-                // are released before we touch `this.watch_events` or hand the
-                // whole `&mut Watcher` to `process_watch_event_batch`.
+                // block so the borrows of `this.platform_scratch` /
+                // `this.platform.buf` are released before we touch
+                // `this.watch_events` or hand the whole `&mut Watcher` to
+                // `process_watch_event_batch`.
                 let rel = {
                     let eventpath = &this.platform.buf[..eventpath_len];
-                    let path = &this.watchlist.items_file_path()[item_idx];
+                    let path = &this.platform_scratch[item_idx];
                     let rel = is_parent_or_equal(path.as_ref(), eventpath);
                     bun_core::scoped_log!(
                         watcher,
@@ -477,11 +538,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     // passing `this: &mut Watcher` above materialises a fresh Unique
                     // borrow over the whole `Watcher`, which under Stacked Borrows pops the
                     // SharedReadOnly tag that `iter.watcher` (a `*const DirWatcher` derived from
-                    // an earlier `&this.platform.watcher`) carries. The next `iter.next()` would
+                    // an earlier shared borrow) carries. The next `iter.next()` would
                     // then dereference a pointer with invalidated provenance — UB that MIRI flags.
-                    // The callee never touches `platform.watcher`, so re-deriving the pointer
-                    // here from the now-current `&mut Watcher` restores valid provenance.
-                    iter.watcher = BackRef::new(&this.platform.watcher);
+                    // The callee never touches the `DirWatcher` buffer, so re-deriving the
+                    // pointer here from the now-current `&mut Watcher` restores valid provenance.
+                    if let Some(dw) = this.platform.needs_rearm {
+                        // SAFETY: `dw` is the live boxed DirWatcher that produced `iter`.
+                        iter.watcher = unsafe { BackRef::from_raw(dw.as_ptr()) };
+                    }
                     // Reset event_id to start a new batch
                     event_id = 0;
                 }

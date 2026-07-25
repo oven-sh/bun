@@ -110,14 +110,6 @@ for (const [asymmetricKeyType, pubLen] of [
         code: hasOpenSSL(3) ? 'ERR_OSSL_UNSUPPORTED' : 'ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM',
       });
     }
-  } else if (process.features.openssl_is_boringssl && asymmetricKeyType === 'ml-kem-512') {
-    // BoringSSL does not support ML-KEM-512.
-    assert.throws(() => createPublicKey(keys.public),
-                  { code: 'ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM' });
-    for (const pem of [keys.private, keys.private_seed_only, keys.private_priv_only]) {
-      assert.throws(() => createPrivateKey(pem),
-                    { code: 'ERR_OSSL_EVP_UNSUPPORTED_ALGORITHM' });
-    }
   } else {
     const publicKey = createPublicKey(keys.public);
     assertPublicKey(publicKey);

@@ -56,6 +56,7 @@ bool CryptoKeyAKP::isMlDsa(CryptoAlgorithmIdentifier identifier)
 bool CryptoKeyAKP::isMlKem(CryptoAlgorithmIdentifier identifier)
 {
     switch (identifier) {
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
     case CryptoAlgorithmIdentifier::ML_KEM_768:
     case CryptoAlgorithmIdentifier::ML_KEM_1024:
         return true;
@@ -73,6 +74,8 @@ const EVP_PKEY_ALG* CryptoKeyAKP::algForIdentifier(CryptoAlgorithmIdentifier ide
         return EVP_pkey_ml_dsa_65();
     case CryptoAlgorithmIdentifier::ML_DSA_87:
         return EVP_pkey_ml_dsa_87();
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
+        return EVP_pkey_ml_kem_512();
     case CryptoAlgorithmIdentifier::ML_KEM_768:
         return EVP_pkey_ml_kem_768();
     case CryptoAlgorithmIdentifier::ML_KEM_1024:
@@ -91,6 +94,8 @@ int CryptoKeyAKP::nidForIdentifier(CryptoAlgorithmIdentifier identifier)
         return EVP_PKEY_ML_DSA_65;
     case CryptoAlgorithmIdentifier::ML_DSA_87:
         return EVP_PKEY_ML_DSA_87;
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
+        return EVP_PKEY_ML_KEM_512;
     case CryptoAlgorithmIdentifier::ML_KEM_768:
         return EVP_PKEY_ML_KEM_768;
     case CryptoAlgorithmIdentifier::ML_KEM_1024:

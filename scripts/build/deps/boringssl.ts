@@ -36,10 +36,17 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
+  patches: [
+    // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
+    // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc
+    // goes straight to libc. Declare them as plain externs so lib.rs binds
+    // everywhere.
+    "patches/boringssl/require-memory-hooks.patch",
+    // Upstream omits ML-KEM-512 (no MLKEM512_*, no EVP_PKEY_ML_KEM_512, no
+    // eta1=3 CBD sampler). Node v26 and the WebCrypto Modern-Algorithms draft
+    // require all three FIPS 203 parameter sets, so add it.
+    "patches/boringssl/ml-kem-512.patch",
+  ],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

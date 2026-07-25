@@ -545,9 +545,10 @@ enum class CryptoAlgorithmIdentifierTag {
     ML_DSA_87 = 30,
     ML_KEM_768 = 31,
     ML_KEM_1024 = 32,
+    ML_KEM_512 = 33,
 };
 
-const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 32;
+const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 33;
 
 static unsigned countUsages(CryptoKeyUsageBitmap usages)
 {
@@ -2580,6 +2581,9 @@ private:
         case CryptoAlgorithmIdentifier::ML_KEM_1024:
             write(CryptoAlgorithmIdentifierTag::ML_KEM_1024);
             break;
+        case CryptoAlgorithmIdentifier::ML_KEM_512:
+            write(CryptoAlgorithmIdentifierTag::ML_KEM_512);
+            break;
         case CryptoAlgorithmIdentifier::None: {
             RELEASE_ASSERT_NOT_REACHED();
             break;
@@ -4161,6 +4165,9 @@ private:
             break;
         case CryptoAlgorithmIdentifierTag::ML_KEM_1024:
             result = CryptoAlgorithmIdentifier::ML_KEM_1024;
+            break;
+        case CryptoAlgorithmIdentifierTag::ML_KEM_512:
+            result = CryptoAlgorithmIdentifier::ML_KEM_512;
             break;
         }
         return true;

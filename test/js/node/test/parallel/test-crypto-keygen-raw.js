@@ -232,10 +232,6 @@ if (hasOpenSSL(3, 5) || process.features.openssl_is_boringssl) {
   // Test raw encoding for ML-KEM key types (raw-public + raw-seed only).
   {
     for (const type of ['ml-kem-512', 'ml-kem-768', 'ml-kem-1024']) {
-      if (process.features.openssl_is_boringssl && type === 'ml-kem-512') {
-        common.printSkipMessage(`Skipping unsupported ${type} test case`);
-        continue;
-      }
       const { publicKey, privateKey } = generateKeyPairSync(type, {
         publicKeyEncoding: { format: 'raw-public' },
         privateKeyEncoding: { format: 'raw-seed' },

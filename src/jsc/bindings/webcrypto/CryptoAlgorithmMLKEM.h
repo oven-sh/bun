@@ -33,9 +33,8 @@ namespace WebCore {
 
 class CryptoKeyAKP;
 
-// One implementation backs ML-KEM-768/1024; the registered subclasses below
-// only pin the name and identifier, mirroring Node's ml_kem.js. ML-KEM-512
-// is not registered because the vendored BoringSSL has no EVP support for it.
+// One implementation backs ML-KEM-512/768/1024; the registered subclasses below
+// only pin the name and identifier, mirroring Node's ml_kem.js.
 class CryptoAlgorithmMLKEM : public CryptoAlgorithm {
 public:
     void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;
@@ -54,6 +53,19 @@ protected:
 
 private:
     CryptoAlgorithmIdentifier m_identifier;
+};
+
+class CryptoAlgorithmMLKEM512 final : public CryptoAlgorithmMLKEM {
+public:
+    static constexpr ASCIILiteral s_name = "ML-KEM-512"_s;
+    static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::ML_KEM_512;
+    static Ref<CryptoAlgorithm> create() { return adoptRef(*new CryptoAlgorithmMLKEM512); }
+
+private:
+    CryptoAlgorithmMLKEM512()
+        : CryptoAlgorithmMLKEM(s_identifier)
+    {
+    }
 };
 
 class CryptoAlgorithmMLKEM768 final : public CryptoAlgorithmMLKEM {

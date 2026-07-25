@@ -20,10 +20,6 @@ const algorithms = new Set([
   'ml-dsa-44', 'ml-dsa-65', 'ml-dsa-87',
   'ml-kem-512', 'ml-kem-768', 'ml-kem-1024',
 ]);
-// BoringSSL does not support ML-KEM-512.
-if (process.features.openssl_is_boringssl) {
-  algorithms.delete('ml-kem-512');
-}
 
 // Exercise each CBC cipher that PBES2 may use. This covers multiple
 // EVP_CIPHER_key_length values (16 / 24 / 32) and, for variable-key

@@ -53,6 +53,8 @@ static String mlKemName(CryptoAlgorithmIdentifier identifier)
 static std::optional<size_t> mlKemPrivOnlyPkcs8Length(CryptoAlgorithmIdentifier identifier)
 {
     switch (identifier) {
+    case CryptoAlgorithmIdentifier::ML_KEM_512:
+        return 1660;
     case CryptoAlgorithmIdentifier::ML_KEM_768:
         return 2428;
     case CryptoAlgorithmIdentifier::ML_KEM_1024:

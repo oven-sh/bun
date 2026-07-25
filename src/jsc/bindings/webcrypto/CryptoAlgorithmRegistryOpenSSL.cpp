@@ -86,6 +86,7 @@ void CryptoAlgorithmRegistry::platformRegisterAlgorithms()
     registerAlgorithm<CryptoAlgorithmMLDSA44>();
     registerAlgorithm<CryptoAlgorithmMLDSA65>();
     registerAlgorithm<CryptoAlgorithmMLDSA87>();
+    registerAlgorithm<CryptoAlgorithmMLKEM512>();
     registerAlgorithm<CryptoAlgorithmMLKEM768>();
     registerAlgorithm<CryptoAlgorithmMLKEM1024>();
 }

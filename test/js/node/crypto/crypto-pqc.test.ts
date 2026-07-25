@@ -18,8 +18,8 @@ const mlDsa = [
   { type: "ml-dsa-87", pubLen: 2592, sigLen: 4627 },
 ] as const;
 
-// BoringSSL ships ML-KEM 768 and 1024 only; 512 is gated out upstream too.
 const mlKem = [
+  { type: "ml-kem-512", pubLen: 800 },
   { type: "ml-kem-768", pubLen: 1184 },
   { type: "ml-kem-1024", pubLen: 1568 },
 ] as const;

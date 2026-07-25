@@ -93,7 +93,7 @@ test("Bun.serve new Response(S3File): HEAD redirects to a HEAD-signed URL (not G
   expect(seen).toEqual(["GET", "HEAD"]);
 });
 
-test("Bun.serve new Response(S3File): HEAD redirect (manual) carries a distinct signature", async () => {
+test("Bun.serve new Response(S3File): HEAD redirect Location is signed for HEAD", async () => {
   const s3 = new S3Client({
     endpoint: "http://127.0.0.1:1",
     accessKeyId: "testkey",
@@ -114,13 +114,15 @@ test("Bun.serve new Response(S3File): HEAD redirect (manual) carries a distinct 
   expect(getRes.status).toBe(302);
   expect(headRes.status).toBe(302);
 
-  const getLoc = new URL(getRes.headers.get("location")!);
-  const headLoc = new URL(headRes.headers.get("location")!);
-  // Same object, same credentials, same X-Amz-Date window; only the signed
-  // method differs, so the signatures must differ too.
-  if (getLoc.searchParams.get("X-Amz-Date") === headLoc.searchParams.get("X-Amz-Date")) {
-    expect(headLoc.searchParams.get("X-Amz-Signature")).not.toBe(getLoc.searchParams.get("X-Amz-Signature"));
-  }
+  const asReq = (loc: string, method: string) => new Request(loc, { method, headers: { host: new URL(loc).host } });
+
+  const getLoc = getRes.headers.get("location")!;
+  expect(verifySigV4(asReq(getLoc, "GET"), "testsecret")).toBe(true);
+  expect(verifySigV4(asReq(getLoc, "HEAD"), "testsecret")).toBe(false);
+
+  const headLoc = headRes.headers.get("location")!;
+  expect(verifySigV4(asReq(headLoc, "HEAD"), "testsecret")).toBe(true);
+  expect(verifySigV4(asReq(headLoc, "GET"), "testsecret")).toBe(false);
 });
 
 test("Bun.serve new Response(S3File): async handler HEAD redirects to a HEAD-signed URL", async () => {

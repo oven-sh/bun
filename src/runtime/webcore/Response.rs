@@ -179,9 +179,7 @@ pub struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     pub weak_ptr_data: WeakPtrData,
-    /// `new Response(s3file)` presigns a GET URL into `Location`. Bun.serve
-    /// re-signs that URL with the request's actual method (HEAD) at render
-    /// time, so it needs the backing S3 store (credentials + path) here.
+    /// Backing S3 store for a `new Response(s3file)` 302; see [`Self::resign_s3_location`].
     s3_presign_store: JsCell<Option<super::blob::store::StoreRef>>,
     js_ref: JsCell<JsRef>,
 
@@ -634,14 +632,7 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
-    /// If this Response was built by `new Response(s3file)`, re-sign the
-    /// `Location` header's presigned URL for `method`. The constructor signs
-    /// for GET; a client following the 302 with HEAD would otherwise present a
-    /// GET-signed URL to S3 and receive 403 SignatureDoesNotMatch.
-    ///
-    /// A sign failure leaves the existing (GET-signed) Location unchanged
-    /// rather than throwing: the constructor already signed these same
-    /// credentials+path for GET, so HEAD signing cannot fail differently.
+    /// Re-sign a `new Response(s3file)` 302 `Location` for `method` (the constructor presigns for GET only).
     pub(crate) fn resign_s3_location(
         &self,
         method: Method,

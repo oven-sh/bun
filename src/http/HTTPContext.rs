@@ -181,8 +181,7 @@ pub struct PooledSocket<const SSL: bool> {
     /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
     /// this socket negotiated "h2". Owned by the pool while parked.
     pub h2_session: Option<NonNull<h2::ClientSession>>,
-    /// Reuse deadline from `Keep-Alive: timeout=N` (ns since
-    /// `http_thread().timer`); `0` = no server hint.
+    /// `Keep-Alive: timeout=N` reuse deadline (ns since `http_thread().timer`); `0` = no hint.
     pub idle_deadline_ns: u64,
 }
 
@@ -590,8 +589,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(!hostname.is_empty());
         debug_assert!(port > 0);
 
-        // `Keep-Alive: timeout=N` minus a 1 s margin; 0 ⇒ too short to
-        // safely reuse, close instead of pooling (matches Node's http.Agent).
+        // `Keep-Alive: timeout=N` minus a 1 s margin; 0 ⇒ close instead of pooling (Node-compat).
         let idle_seconds = keepalive_hint_seconds
             .map(|n| n.saturating_sub(crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS));
         let reusable = hostname.len() <= MAX_KEEPALIVE_HOSTNAME
@@ -808,8 +806,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
 
-                // Past the server's advertised `Keep-Alive: timeout=N` ⇒ the
-                // peer is about to (or already did) close it; don't dispatch.
+                // Past the server's `Keep-Alive: timeout=N`: the peer is about to close it.
                 if socket.idle_deadline_ns != 0 && now_ns >= socket.idle_deadline_ns {
                     Self::close_socket(http_socket);
                     continue;

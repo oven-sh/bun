@@ -991,12 +991,10 @@ fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
 }
 
-/// Margin subtracted from the server's `Keep-Alive: timeout=N` hint; matches
-/// Node's `agentKeepAliveTimeoutBuffer` default.
+/// Margin subtracted from a `Keep-Alive: timeout=N` hint (Node's `agentKeepAliveTimeoutBuffer`).
 pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 1;
 
-/// `timeout=` parameter from a `Keep-Alive` header value such as
-/// `timeout=5, max=100`. Case-insensitive, any parameter order.
+/// `timeout=` parameter from a `Keep-Alive` header value (`timeout=5, max=100`). Case-insensitive.
 pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
     for param in value.split(|&b| b == b',') {
         let param = param.trim_ascii();

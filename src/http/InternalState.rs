@@ -31,8 +31,7 @@ pub struct InternalState<'a> {
     pub body_out_str: Option<NonNull<MutableString>>,
     pub compressed_body: MutableString,
     pub content_length: Option<usize>,
-    /// `timeout=N` from the response's `Keep-Alive` header; bounds the pooled
-    /// socket's idle lifetime on release.
+    /// `timeout=N` from the response's `Keep-Alive` header; bounds pooled-socket idle lifetime.
     pub keepalive_timeout_seconds: Option<u32>,
     pub total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the

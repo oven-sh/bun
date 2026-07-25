@@ -3102,6 +3102,13 @@ describe("FORCE_COLOR", () => {
     expect(probeResult(output)).toEqual({ fc: "", nc: "" });
   });
 
+  test.skipIf(!isWindows)("defaults to truecolor when TERM is unset on Windows", async () => {
+    // Stock Windows consoles set none of the color env vars; supports-color
+    // treats a numeric FORCE_COLOR as an override, so 1 would downgrade them.
+    const output = await runInTerminal(fixture(`await $\`PROBE\`;`), { ...colorEnv, TERM: undefined });
+    expect(probeResult(output).fc).toBe("3");
+  });
+
   test("is not set when the script's own stdout is not a terminal", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture(`await $\`PROBE\`;`)],

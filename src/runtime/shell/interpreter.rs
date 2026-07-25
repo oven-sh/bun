@@ -1264,7 +1264,11 @@ impl Interpreter {
                 .set(Some(match bun_core::output::Source::color_depth() {
                     ColorDepth::C16m => b"FORCE_COLOR=3\0",
                     ColorDepth::C256 => b"FORCE_COLOR=2\0",
-                    _ => b"FORCE_COLOR=1\0",
+                    ColorDepth::C16 => b"FORCE_COLOR=1\0",
+                    // Only reachable on Windows, where `is_color_terminal()` is
+                    // unconditional and `color_depth()` reads env vars stock
+                    // consoles do not set; Win10+ consoles are truecolor.
+                    ColorDepth::None => b"FORCE_COLOR=3\0",
                 }));
         }
 

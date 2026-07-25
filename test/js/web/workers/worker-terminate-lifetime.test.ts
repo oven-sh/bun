@@ -121,45 +121,34 @@ test(
   timeout,
 );
 
-// Regression: a nested worker whose grandchild's module fails to load reports
-// its uncaught MODULE_NOT_FOUND via flush_logs → report_uncaught_exception →
-// Bun__handleUncaughtException. When worker.terminate() and process.exit()
-// land mid-dispatch, that handler would still lazily create `process` and do
-// `process->get("_fatalException")` on a VM already asked to terminate, which
-// tripped ASSERT(object->structure() == this) in Structure::storedPrototype.
-// Debug-assert-only; the race is non-deterministic (~2/14 on
-// release-asan-cov), so loop it.
+// Regression: a worker whose module fails to load reports its uncaught
+// MODULE_NOT_FOUND via flush_logs → report_uncaught_exception →
+// Bun__handleUncaughtException. When worker.terminate() + process.exit() land
+// mid-dispatch, flush_logs panicked on JsError::Terminated, and the handler
+// would still lazily create `process` and do `process->get("_fatalException")`
+// on a VM already asked to terminate, which tripped
+// ASSERT(object->structure() == this) in Structure::storedPrototype. The race
+// is non-deterministic (~2/14 on release-asan-cov), so loop it.
 test.skipIf(!isASAN)(
-  "terminating a worker while its grandchildren are reporting load errors does not assert",
+  "terminate() + process.exit() while workers are reporting load errors does not crash",
   async () => {
-    // Each subprocess run spawns a middle worker that creates grandchildren
-    // whose module load fails, then main terminates the middle worker and
-    // exits. The race window is between the grandchild's error dispatch and
-    // terminate_all_and_wait arming TerminationException. The grandchild path
-    // is an absolute nonexistent file so MODULE_NOT_FOUND is independent of
-    // import.meta.url's value inside the data-URL middle worker.
+    // Each subprocess run spawns workers whose module load fails, then main
+    // terminates them and exits. The race window is between a worker's error
+    // dispatch and terminate_all_and_wait arming TerminationException. Two
+    // levels only (no middle worker) to avoid also tripping the unrelated
+    // nested-worker parent-VM UAF that #31951 addresses.
     const code = `
       const { Worker } = require("node:worker_threads");
       const bad = require("node:path").join(process.cwd(), "does-not-exist-xyzzy.mjs");
-      const middleSrc = \`
-        const { Worker, parentPort } = require("node:worker_threads");
-        for (let j = 0; j < 4; j++) {
-          const w = new Worker(\${JSON.stringify(bad)});
-          w.on("error", () => {});
-        }
-        parentPort.postMessage("spawned");
-        setInterval(() => {}, 1000);
-      \`;
-      const middle = new Worker(new URL(
-        "data:text/javascript;base64," + Buffer.from(middleSrc).toString("base64"),
-      ));
-      middle.on("error", e => { console.error("middle error:", e.message); process.exit(1); });
-      middle.on("message", () => {
-        middle.terminate();
-        console.log("ok");
-        process.exit(0);
-      });
-      setTimeout(() => { console.error("timeout"); process.exit(1); }, 5000);
+      const workers = [];
+      for (let j = 0; j < 4; j++) {
+        const w = new Worker(bad);
+        w.on("error", () => {});
+        workers.push(w);
+      }
+      for (const w of workers) w.terminate();
+      console.log("ok");
+      process.exit(0);
     `;
 
     for (let i = 0; i < 20; i++) {

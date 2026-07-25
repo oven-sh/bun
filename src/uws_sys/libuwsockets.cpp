@@ -1158,12 +1158,14 @@ extern "C"
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->clearOnWritableAndAborted();
       uwsRes->end(stringViewFromC(data, length), close_connection);
+      uwsRes->replayPipelinedRequests();
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->clearOnWritableAndAborted();
       uwsRes->end(stringViewFromC(data, length), close_connection);
+      uwsRes->replayPipelinedRequests();
     }
   }
 
@@ -1174,12 +1176,14 @@ extern "C"
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->clearOnWritableAndAborted();
       uwsRes->sendTerminatingChunk(close_connection);
+      uwsRes->replayPipelinedRequests();
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->clearOnWritableAndAborted();
       uwsRes->sendTerminatingChunk(close_connection);
+      uwsRes->replayPipelinedRequests();
     }
   }
 
@@ -1841,7 +1845,9 @@ __attribute__((callback (corker, ctx)))
       if (pair.first) {
         uwsRes->clearOnWritableAndAborted();
       }
-
+      if (pair.second) {
+        uwsRes->replayPipelinedRequests();
+      }
       return pair.first;
     }
     else
@@ -1851,7 +1857,9 @@ __attribute__((callback (corker, ctx)))
       if (pair.first) {
           uwsRes->clearOnWritableAndAborted();
       }
-
+      if (pair.second) {
+        uwsRes->replayPipelinedRequests();
+      }
       return pair.first;
     }
   }

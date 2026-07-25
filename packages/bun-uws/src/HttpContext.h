@@ -731,8 +731,9 @@ private:
             /* The writable callback may have completed the response and replayed
              * a buffered pipelined request whose dispatch closed or adopted this
              * socket (parse error, Connection: close, WebSocket upgrade); every
-             * httpResponseData read below would then be on a destructed object. */
-            if (us_socket_is_closed(s)) {
+             * httpResponseData read below would then be on a destructed object.
+             * An in-place adopt leaves is_closed false, so also check kind. */
+            if (reinterpret_cast<HttpResponse<SSL> *>(s)->isNoLongerHttp()) {
                 return s;
             }
 

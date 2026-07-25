@@ -3088,6 +3088,7 @@ describe("dispatches a pipelined request after the previous async response compl
           resolve({ responses: wireResponses(raw) });
         }
       });
+      s.on("error", () => {});
       s.on("close", () => resolve({ responses: wireResponses(raw) }));
     });
 
@@ -3189,6 +3190,7 @@ describe("dispatches a pipelined request after the previous async response compl
           resolve(got);
         }
       });
+      s.on("error", () => {});
       s.on("close", () => resolve(got));
       inflight.promise.then(async () => {
         // /a's handler is parked; /b arrives now in its own TCP segment and must
@@ -3233,9 +3235,11 @@ describe("dispatches a pipelined request after the previous async response compl
     });
 
     const first = wireResponses(raw);
+    const headEnd = raw.indexOf("\r\n\r\n");
+    const afterFirst = raw.slice(headEnd + 4 + (first[0]?.body.length ?? 0));
     expect({
       first: first[0],
-      followedBy505: raw.slice(raw.indexOf(first[0].body) + first[0].body.length).startsWith("HTTP/1.1 505 "),
+      followedBy505: afterFirst.startsWith("HTTP/1.1 505 "),
     }).toEqual({
       first: { status: "HTTP/1.1 200 OK", body: "A" },
       followedBy505: true,

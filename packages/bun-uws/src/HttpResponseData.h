@@ -86,6 +86,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* Run borrowed onWritable */
         bool ret = borrowedOnWritable(response, offset, writableUserData);
 
+        /* The callback may have completed the response and replayed a buffered
+         * pipelined request whose dispatch closed or adopted this socket,
+         * destructing us; every field access below would then be on a dead
+         * object (or on WebSocketData after an in-place adopt). */
+        if (response->isNoLongerHttp()) {
+            return ret;
+        }
+
         /* Only restore if onWritable is still OUR placeholder; anything else
          * (null from markDone, or a new callback from a replayed request)
          * belongs to whoever set it. */

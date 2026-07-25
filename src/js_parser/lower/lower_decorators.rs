@@ -173,16 +173,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ref_
     }
 
-    /// File-unique name for a lowering temporary.
-    ///
-    /// The runtime transpiler prints symbols with their original names (no
-    /// rename pass), and lowering chains both nest (a decorated class
-    /// expression inside another decorated class's relocated static
-    /// initializer) and outlive their own evaluation (constructors read
-    /// `_init`, private method calls read `_m_fn`), so two chains that share
-    /// spellings clobber each other's temps. First use of a base name keeps
-    /// it as-is; later uses get a numeric suffix (`_dec`, `_dec2`, ...),
-    /// matching `NumberScope::find_unused_name`.
+    /// File-unique name for a lowering temporary: first use keeps `base`,
+    /// later uses get a numeric suffix (`_dec`, `_dec2`, ...), matching
+    /// `NumberScope::find_unused_name`. Chains read their temps after later
+    /// chains evaluate, and the runtime transpiler prints original names
+    /// with no rename pass, so shared spellings alias at runtime.
     fn temp_name(&mut self, base: &'a [u8]) -> &'a [u8] {
         // Key-derived bases (`_` + private name or string key) can contain
         // arbitrary bytes; sanitize them like the renamer does.
@@ -207,11 +202,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         name
     }
 
-    /// Fresh lowering temporary: file-unique spelling (see `temp_name`) plus
-    /// a `DeclaredSymbol` entry so the bundler's chunk renamer can see it.
-    /// Symbols that only live in a module scope's `generated` list are never
-    /// assigned a name by the renamer and would collide across files in a
-    /// chunk.
+    /// `temp_name` + symbol creation + a `DeclaredSymbol` entry; without the
+    /// entry the chunk renamer never sees module-scope generated symbols and
+    /// temps collide across bundled files.
     fn temp_sym(&mut self, base: &'a [u8]) -> Ref {
         let name = self.temp_name(base);
         let ref_ = self.new_sym(js_ast::symbol::Kind::Other, name);
@@ -1285,10 +1278,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
             if prop.ts_decorators.len_u32() > 0 {
-                // In expression mode the `var` binding for this temp is added
-                // when the pre-eval statements are folded into
-                // `expr_var_decls` during output assembly; declaring it here
-                // too would emit `var _dec, _dec`.
+                // The `var` binding is added when pre-eval statements fold
+                // into `expr_var_decls`; declaring it here too emitted
+                // `var _dec, _dec`.
                 let dec_ref = p.temp_sym(b"_dec");
                 prop_dec_refs.insert(prop_idx, dec_ref);
                 // SAFETY: shallow-reborrow arena Vec.

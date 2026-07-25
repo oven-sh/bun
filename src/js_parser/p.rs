@@ -536,11 +536,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub temp_refs_to_declare: List<'a, TempRef>,
     pub temp_ref_count: i32,
 
-    // Names already handed out to decorator-lowering temporaries in this
-    // file, mapped to the highest numeric suffix used for that base name.
-    // The runtime transpiler prints symbols by original name without a
-    // rename pass, so every lowering chain needs file-unique spellings.
-    // See `temp_name` in lower/lower_decorators.rs.
+    // Decorator-lowering temp names used in this file, mapped to the highest
+    // numeric suffix handed out. See `temp_name` in lower/lower_decorators.rs.
     pub decorator_temp_names: StringHashMap<u32>,
 
     // When bundling, hoisted top-level local variables declared with "var" in

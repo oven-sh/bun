@@ -334,7 +334,12 @@ function bunServeUnix(worker, message) {
     type: "bun.ServeUnixFd",
     message: { errno: 0, key, ack: message.seq, cmd: "NODE_CLUSTER" },
   };
-  sendHelper(worker.process[kHandle], reply, { fd: entry.fd }, null);
+  const sent = sendHelper(worker.process[kHandle], reply, { fd: entry.fd }, null);
+  if (sent === false) {
+    // Transfer failed: drop this worker's claim so a sole worker can fall back to a direct bind.
+    const handle = handles.get(key);
+    if (handle && handle.remove(worker)) handles.delete(key);
+  }
 }
 
 function listening(worker, message) {

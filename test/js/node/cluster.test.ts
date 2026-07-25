@@ -192,8 +192,8 @@ test.skipIf(isWindows)(
           workers.push(w);
           w.on("message", m => { if (m === "ready" && ++ready === WORKERS) go(); });
           w.on("exit", (code, sig) => {
-            if ((code ?? 0) !== 0 && sig !== "SIGTERM") {
-              console.error("worker " + i + " exited " + code);
+            if (code !== 0 && sig !== "SIGTERM") {
+              console.error("worker " + i + " exited " + code + " signal " + sig);
               process.exit(1);
             }
           });

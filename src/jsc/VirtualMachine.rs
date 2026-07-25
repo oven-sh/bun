@@ -4097,8 +4097,7 @@ impl VirtualMachine {
             normalize_specifier_for_resolution(specifier, &mut query_string);
         if is_esm
             && bun_core::strings::contains_char(normalized_specifier, b'%')
-            && (normalized_specifier.starts_with(b"./")
-                || normalized_specifier.starts_with(b"../"))
+            && (normalized_specifier.starts_with(b"./") || normalized_specifier.starts_with(b"../"))
         {
             normalized_specifier = decode_esm_specifier(normalized_specifier)
                 .ok_or(crate::CrateError::ModuleNotFound)?;

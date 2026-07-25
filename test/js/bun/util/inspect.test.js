@@ -875,7 +875,7 @@ describe("DOM nodes", () => {
       [new Text("hello"), new Comment("note")],
     );
     expect(Bun.inspect(div)).toBe(
-      ['<div', '  data-x="1"', '  id="outer"', ">", "  hello", "  <!--note-->", "</div>"].join("\n"),
+      ["<div", '  data-x="1"', '  id="outer"', ">", "  hello", "  <!--note-->", "</div>"].join("\n"),
     );
   });
 

@@ -722,3 +722,120 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/9373
+describe("preloaded plugins do not intercept other preload files", () => {
+  function makePlugin(tag: string) {
+    return `
+      import { plugin } from "bun";
+      plugin({
+        name: ${JSON.stringify(tag)},
+        setup(build) {
+          console.log("setup " + ${JSON.stringify(tag)});
+          build.onLoad({ filter: /\\.ts$/ }, async (args) => {
+            console.log("onLoad " + ${JSON.stringify(tag)} + " " + require("path").basename(args.path));
+            return { contents: await Bun.file(args.path).text() };
+          });
+          build.onResolve({ filter: /\\.ts$/ }, (args) => {
+            console.log("onResolve " + ${JSON.stringify(tag)} + " " + require("path").basename(args.path));
+            return undefined;
+          });
+        },
+      });
+    `;
+  }
+
+  function summarize(stdout: string, stderr: string) {
+    const lines = stdout.trim() ? stdout.trim().split("\n") : ["(no stdout)", stderr];
+    return {
+      // onLoad/onResolve lines whose target is one of the preload files themselves.
+      hooksOnPreloadFiles: lines.filter(l => /^on(Load|Resolve) .* plugin-\d\.ts$/.test(l)),
+      setups: lines.filter(l => l.startsWith("setup ")),
+      loadsForUserFiles: lines.filter(l => l.startsWith("onLoad ") && !/plugin-\d\.ts$/.test(l)),
+      output: lines.filter(l => !/^(setup|onLoad|onResolve) /.test(l)),
+    };
+  }
+
+  it.concurrent("with bunfig preload", async () => {
+    using dir = tempDir("plugin-preload-no-intercept-bunfig", {
+      "plugin-1.ts": makePlugin("p1"),
+      "plugin-2.ts": makePlugin("p2"),
+      "plugin-3.ts": makePlugin("p3"),
+      "bunfig.toml": `preload = ["./plugin-1.ts", "./plugin-2.ts", "./plugin-3.ts"]`,
+      "dep.ts": `export const foo = () => console.log("Foo!");`,
+      "entry.ts": `import { foo } from "./dep.ts"; console.log("Hello, world!"); foo();`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(summarize(stdout, stderr)).toEqual({
+      hooksOnPreloadFiles: [],
+      setups: ["setup p1", "setup p2", "setup p3"],
+      loadsForUserFiles: ["onLoad p1 entry.ts", "onLoad p1 dep.ts"],
+      output: ["Hello, world!", "Foo!"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("with --preload flags", async () => {
+    using dir = tempDir("plugin-preload-no-intercept-flag", {
+      "plugin-1.ts": makePlugin("p1"),
+      "plugin-2.ts": makePlugin("p2"),
+      "entry.ts": `console.log("done");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin-1.ts", "--preload", "./plugin-2.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(summarize(stdout, stderr)).toEqual({
+      hooksOnPreloadFiles: [],
+      setups: ["setup p1", "setup p2"],
+      loadsForUserFiles: ["onLoad p1 entry.ts"],
+      output: ["done"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("build.module virtual modules still work across preloads", async () => {
+    using dir = tempDir("plugin-preload-virtual-module", {
+      "plugin-1.ts": `
+        Bun.plugin({
+          name: "virtual",
+          setup(build) {
+            build.module("shared-config", () => ({
+              exports: { value: 42 },
+              loader: "object",
+            }));
+          },
+        });
+      `,
+      "plugin-2.ts": `
+        const { value } = require("shared-config");
+        console.log("plugin-2 read config:", value);
+      `,
+      "entry.ts": `console.log("done");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin-1.ts", "--preload", "./plugin-2.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim() || stderr).toBe("plugin-2 read config: 42\ndone");
+    expect(exitCode).toBe(0);
+  });
+});

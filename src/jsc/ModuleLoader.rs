@@ -592,7 +592,10 @@ unsafe extern "C" fn Bun__runVirtualModule(
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    let vm = global.bun_vm();
+    // Skip onLoad while loading `preload` entries so a plugin registered in an
+    // earlier preload cannot intercept a later preload file.
+    if vm.plugin_runner.is_none() || vm.is_in_preload {
         return JSValue::ZERO;
     }
 

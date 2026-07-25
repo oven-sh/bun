@@ -973,11 +973,15 @@ impl TranspilerJob {
         }
 
         // SAFETY: leaf scalar field read; see `vm` note above. Inlined
-        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
+        // `VirtualMachine::use_module_info_for_esm` to avoid forming
         // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
-            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
-                .unwrap_or(false);
+        let test_isolation_enabled = unsafe { (*vm).test_isolation_enabled };
+        let use_module_info_for_esm =
+            !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
+                .unwrap_or(false)
+                || (test_isolation_enabled
+                    && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                        .unwrap_or(false));
 
         if let Some(entry_ptr) = cache.entry.take() {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
@@ -1000,7 +1004,7 @@ impl TranspilerJob {
                 dump_source_string(vm, specifier, entry.output_code.byte_slice());
             }
 
-            let module_info: *mut c_void = if use_isolation_source_provider_cache
+            let module_info: *mut c_void = if use_module_info_for_esm
                 && entry.metadata.module_type != CacheModuleType::Cjs
                 && !entry.esm_record.is_empty()
             {
@@ -1117,10 +1121,7 @@ impl TranspilerJob {
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
-            if use_isolation_source_provider_cache
-                && !is_commonjs_module
-                && loader.is_java_script_like()
-            {
+            if use_module_info_for_esm && !is_commonjs_module && loader.is_java_script_like() {
                 Some(analyze_transpiled_module::ModuleInfo::create(
                     loader.is_type_script(),
                 ))

@@ -4801,6 +4801,24 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// Whether to attach `ModuleInfo` to runtime-transpiled ESM so JSC builds
+    /// the `JSModuleRecord` from Bun's printer output instead of re-parsing.
+    /// Always on (opt-out via `BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO`)
+    /// because a TypeScript re-export of a type-only name is only resolvable
+    /// through the `m_isTypeScript` / `SingleTypeScript` entries this record
+    /// carries; JSC's own analyze of the transpiled text has no way to know the
+    /// missing binding was a type.
+    pub fn use_module_info_for_esm(&self) -> bool {
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
+            .unwrap_or(false)
+        {
+            // Still honored under --isolate so the isolation source-provider
+            // cache keeps working when the flag is set.
+            return self.use_isolation_source_provider_cache();
+        }
+        true
+    }
+
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,

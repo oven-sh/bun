@@ -19,10 +19,8 @@ function makeStubServer() {
       data(s, raw) {
         const t = raw.toString();
         if (t.includes("HELLO")) s.write(HELLO);
-        else if (t.includes("\r\nSUBSCRIBE\r\n"))
-          s.write(`>3${CRLF}${blk("subscribe")}${blk("news")}:1${CRLF}`);
-        else if (t.includes("\r\nUNSUBSCRIBE\r\n"))
-          s.write(`>3${CRLF}${blk("unsubscribe")}${blk("news")}:0${CRLF}`);
+        else if (t.includes("\r\nSUBSCRIBE\r\n")) s.write(`>3${CRLF}${blk("subscribe")}${blk("news")}:1${CRLF}`);
+        else if (t.includes("\r\nUNSUBSCRIBE\r\n")) s.write(`>3${CRLF}${blk("unsubscribe")}${blk("news")}:0${CRLF}`);
         else if (t.includes("\r\nGET\r\n")) s.write(`+from-server${CRLF}`);
         else if (t.includes("\r\nPING\r\n")) s.write(`+PONG${CRLF}`);
         else s.write(`+OK${CRLF}`);

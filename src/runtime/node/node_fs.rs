@@ -9791,7 +9791,10 @@ pub fn zig_delete_tree(
             let entry = match stack[top_idx].iter.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
-                Err(err) => return Err(dt_err(err.get_errno())),
+                Err(err) => match err.get_errno() {
+                    E::ENOENT => break,
+                    e => return Err(dt_err(e)),
+                },
             };
             // `entry.name` borrows the iterator's internal buffer and
             // is invalidated by the next `next()` call. Copy it once here so
@@ -10057,7 +10060,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
-                    Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
+                    Err(err) => match err.get_errno() {
+                        E::ENOENT => break 'dir_it,
+                        e => break 'scan_dir Err(dt_err(e)),
+                    },
                 };
                 let entry_name: Vec<u8> = entry.name.slice().to_vec();
                 let mut treat_as_dir = entry.kind == sys::FileKind::Directory;

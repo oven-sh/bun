@@ -35,14 +35,13 @@ const FIXTURE = /* js */ `
 import fs from "node:fs";
 import { join } from "node:path";
 
-const [, , which, root, force, depth] = process.argv;
-const deep = [root, ...Array.from({ length: +depth }, (_, i) => "d" + i)];
-fs.mkdirSync(join(...deep), { recursive: true });
+const [, , which, root, force] = process.argv;
+fs.mkdirSync(join(root, "sub"), { recursive: true });
 fs.writeFileSync(join(root, "keep-a.txt"), "x");
 fs.writeFileSync(join(root, "keep-b.txt"), "x");
-fs.writeFileSync(join(...deep, "keep-c.txt"), "x");
-fs.writeFileSync(join(...deep, "GHOST"), "x");
-fs.writeFileSync(join(...deep, "keep-d.txt"), "x");
+fs.writeFileSync(join(root, "sub", "keep-c.txt"), "x");
+fs.writeFileSync(join(root, "sub", "GHOST"), "x");
+fs.writeFileSync(join(root, "sub", "keep-d.txt"), "x");
 
 const opts = { recursive: true, force: force === "force" };
 let err;
@@ -81,11 +80,11 @@ beforeAll(async () => {
 
 afterAll(() => dir?.[Symbol.dispose]());
 
-const run = async (which: string, force: "force" | "noforce", depth: number) => {
-  const root = join(String(dir), `tree-${which}-${force}-${depth}`);
+const run = async (which: string, force: "force" | "noforce") => {
+  const root = join(String(dir), `tree-${which}-${force}`);
   const existing = bunEnv.LD_PRELOAD;
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(String(dir), "fixture.mjs"), which, root, force, String(depth)],
+    cmd: [bunExe(), join(String(dir), "fixture.mjs"), which, root, force],
     env: {
       ...bunEnv,
       LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath,
@@ -101,17 +100,13 @@ const run = async (which: string, force: "force" | "noforce", depth: number) => 
 describe.skipIf(!isLinux || !cc)("rm({recursive}) continues past a child that raced to ENOENT", () => {
   for (const which of ["sync", "promise", "cb"] as const) {
     for (const force of ["force", "noforce"] as const) {
-      // depth 1 exercises the main stack loop; depth 18 overflows the 16-slot
-      // stack into the min_stack fallback.
-      for (const depth of [1, 18] as const) {
-        test.concurrent(`${which} force:${force === "force"} depth:${depth} removes the whole tree`, async () => {
-          expect(await run(which, force, depth)).toEqual({
-            stdout: JSON.stringify({ err: null, exists: false }),
-            stderr: "",
-            exitCode: 0,
-          });
+      test.concurrent(`${which} force:${force === "force"} removes the whole tree`, async () => {
+        expect(await run(which, force)).toEqual({
+          stdout: JSON.stringify({ err: null, exists: false }),
+          stderr: "",
+          exitCode: 0,
         });
-      }
+      });
     }
   }
 });

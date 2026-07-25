@@ -532,9 +532,9 @@ export function windowsEnv(
     defineProperty(_, p, attributes) {
       const k = String(p).toUpperCase();
       $assert(typeof p === "string"); // proxy is only string and symbol. the symbol would have thrown by now
-      // Gate on envMapList membership, not `k in internalEnv`: DontEnum
-      // auto-loaded .env keys and the always-present TZ/proxy accessors are
-      // own properties of internalEnv while correctly absent from envMapList.
+      // Gate on envMapList membership, not `k in internalEnv`: the
+      // always-present TZ/proxy accessors are own properties of internalEnv
+      // while correctly absent from envMapList.
       if (!envMapList.includes(p) && !envMapList.some(x => x.toUpperCase() === k)) {
         envMapList.push(p);
       }

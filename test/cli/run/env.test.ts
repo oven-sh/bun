@@ -332,12 +332,30 @@ describe("dotenv priority", () => {
   test("auto-loaded .env values survive child_process default env inheritance", () => {
     const dir = tempDirWithFiles("dotenv-cp", {
       ".env": "AUTO_FROM_FILE=secret\n",
-      "child.js": `console.log(process.env.AUTO_FROM_FILE, process.env.USER_MUTATION);`,
+      "sub/child.js": `
+        // enumerable=true iff the value arrived via the OS env block; false if
+        // the child re-auto-loaded it from a .env file in cwd.
+        const d = Object.getOwnPropertyDescriptor(process.env, "AUTO_FROM_FILE");
+        console.log(process.env.AUTO_FROM_FILE, d?.enumerable, process.env.USER_MUTATION);
+      `,
       "index.ts": `
         process.env.USER_MUTATION = "from-js";
         const { execFileSync } = require("child_process");
-        const out = execFileSync(process.execPath, ["child.js"], { encoding: "utf8" });
+        const out = execFileSync(process.execPath, ["child.js"], { cwd: "sub", encoding: "utf8" });
         console.log(out.trim());
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("secret true from-js");
+  });
+
+  test("auto-loaded .env values survive Bun.$ default env inheritance", () => {
+    const dir = tempDirWithFiles("dotenv-shell", {
+      ".env": "AUTO_FROM_FILE=secret\n",
+      "index.ts": `
+        process.env.USER_MUTATION = "from-js";
+        const echo = await Bun.$\`echo \${{raw: "$AUTO_FROM_FILE $USER_MUTATION"}}\`.text();
+        console.log(echo.trim());
       `,
     });
     const { stdout } = bunRun(`${dir}/index.ts`);

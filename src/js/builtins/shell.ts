@@ -253,6 +253,18 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   const originalDefaultEnv = defaultEnv;
   var defaultCwd: string | undefined = undefined;
 
+  // Auto-loaded .env values are DontEnum on process.env; setEnv iterates
+  // enumerable-only. Snapshot via getOwnPropertyNames so $`cmd` keeps
+  // inheriting both .env values and runtime process.env mutations.
+  function snapshotProcessEnv(env) {
+    const out = {};
+    for (const key of $Object.getOwnPropertyNames(env)) {
+      const v = env[key];
+      if (v !== undefined && typeof v !== "function") out[key] = v;
+    }
+    return out;
+  }
+
   const cwdSymbol = Symbol("cwd");
   const envSymbol = Symbol("env");
   const throwsSymbol = Symbol("throws");
@@ -309,7 +321,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
     // cwd must be set before env or else it will be injected into env as "PWD=/"
     if (cwd) parsed_shell_script.setCwd(cwd);
-    if (env) parsed_shell_script.setEnv(env);
+    if (env) parsed_shell_script.setEnv(env === originalDefaultEnv ? snapshotProcessEnv(env) : env);
 
     return new ShellPromise(parsed_shell_script, throws);
   };
@@ -329,7 +341,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
 
       // cwd must be set before env or else it will be injected into env as "PWD=/"
       if (cwd) parsed_shell_script.setCwd(cwd);
-      if (env) parsed_shell_script.setEnv(env);
+      if (env) parsed_shell_script.setEnv(env === originalDefaultEnv ? snapshotProcessEnv(env) : env);
 
       return new ShellPromise(parsed_shell_script, throws);
     };

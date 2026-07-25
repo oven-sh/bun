@@ -9,13 +9,10 @@ const blk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
 const HELLO = `%3${CRLF}${blk("server")}${blk("redis")}${blk("proto")}:3${CRLF}${blk("version")}${blk("7.4.0")}`;
 
 function makeStubServer() {
-  return Bun.listen<{ buf: string }>({
+  return Bun.listen({
     hostname: "127.0.0.1",
     port: 0,
     socket: {
-      open(s) {
-        s.data = { buf: "" };
-      },
       data(s, raw) {
         const t = raw.toString();
         if (t.includes("HELLO")) s.write(HELLO);

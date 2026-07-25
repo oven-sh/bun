@@ -6535,7 +6535,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         await subscriber.subscribe(channel, () => {});
 
-        expect(async () => subscriber.publish(channel, "self-published")).toThrow(
+        await expect(subscriber.publish(channel, "self-published")).rejects.toThrow(
           "RedisClient.prototype.publish cannot be called while in subscriber mode.",
         );
       });
@@ -6547,7 +6547,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const subscriber = await ctx.newSubscriberClient(connectionType);
         await subscriber.subscribe(channel, () => {});
 
-        expect(() => subscriber.set(testKey, testValue())).toThrow(
+        await expect(subscriber.set(testKey, testValue())).rejects.toThrow(
           "RedisClient.prototype.set cannot be called while in subscriber mode.",
         );
 
@@ -6569,7 +6569,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
       test("unsubscribing from non-subscribed channels", async () => {
         const channel = "never-subscribed-channel";
 
-        expect(() => ctx.redis.unsubscribe(channel)).toThrow(
+        await expect(ctx.redis.unsubscribe(channel)).rejects.toThrow(
           "RedisClient.prototype.unsubscribe can only be called while in subscriber mode.",
         );
       });
@@ -6831,7 +6831,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const duplicate = await subscriber.duplicate();
 
-        expect(() => duplicate.set("test-key", "test-value")).not.toThrow();
+        await expect(duplicate.set("test-key", "test-value")).resolves.toBe("OK");
 
         await subscriber.unsubscribe(testChannel);
       });

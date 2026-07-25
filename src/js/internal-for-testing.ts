@@ -225,10 +225,7 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
-// Exercise the link-time-constant primordials (runtime/JSCPrimordials.h) so the
-// test can verify they are captured, callable via `.@call`, and tamper-proof.
-// One entry per holder kind (eager prototype, LUT-backed constructor, lazy class
-// structure, PropertyCallback, LazyProperty) plus one getter and one symbol key.
+// Link-time-constant primordials probe; one entry per holder kind in JSCPrimordials.h.
 export const primordials = {
   run(arrayLike: unknown[], string: string, mapLike: Map<unknown, unknown>, u8: Uint8Array, regexp: RegExp) {
     return {

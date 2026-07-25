@@ -737,10 +737,7 @@ declare type $ReadableStreamDefaultReader = ReadableStreamDefaultReader;
 declare type $ReadableStreamDefaultController = ReadableStreamDefaultController;
 declare type $ReadableStreamDirectController = ReadableStreamDirectController;
 
-// Link-time constant primordials. See vendor/WebKit/Source/JavaScriptCore/runtime/JSCPrimordials.h.
-// Prototype methods and accessor getters are invoked with .$call(receiver, ...args); statics are
-// called directly. This block is generated from JSC_FOREACH_PRIMORDIAL_NAME; regenerate when the
-// macro table changes.
+// Link-time constant primordials; generated from JSC_FOREACH_PRIMORDIAL_NAME in JSCPrimordials.h.
 declare const $ArrayBufferIsView: Function;
 declare const $ArrayBufferPrototypeGetByteLength: Function;
 declare const $ArrayBufferPrototypeGetDetached: Function;

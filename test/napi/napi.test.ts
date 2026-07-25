@@ -72,6 +72,7 @@ beforeAll(async () => {
 describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   describe.each(["esm", "cjs"])("bundle .node files to %s via", format => {
     describe.each(["node", "bun"])("target %s", target => {
+      const mainOut = target === "node" && format === "esm" ? "main.mjs" : "main.js";
       it("Bun.build", async () => {
         const dir = tempDirWithFiles("node-file-cli", {
           "package.json": JSON.stringify({
@@ -100,7 +101,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
         for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
-            cmd: [exec, join(dir, "main.js"), "self"],
+            cmd: [exec, join(dir, mainOut), "self"],
             env: bunEnv,
             stdin: "inherit",
             stderr: "inherit",
@@ -184,7 +185,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
         for (let exec of target === "bun" ? [bunExe()] : [bunExe(), await nodeExeMatchingAbi()]) {
           const result = spawnSync({
-            cmd: [exec, join(dir, "main.js"), "self"],
+            cmd: [exec, join(dir, mainOut), "self"],
             env: bunEnv,
             stdin: "inherit",
             stderr: "inherit",

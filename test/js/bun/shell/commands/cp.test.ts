@@ -1,7 +1,8 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -59,6 +60,19 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
     .exitCode(1)
     .testMini()
     .runAsTest("dir -> ? fails without -R");
+
+  describe("combined short flags", () => {
+    for (const flag of ["-Rv", "-vR"]) {
+      TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
+        .ensureTempDir()
+        .exitCode(0)
+        .stderr("")
+        .stdout(out => expect(out).toContain("a.txt"))
+        .fileEquals("dest/a.txt", "hi\n")
+        .testMini()
+        .runAsTest(`cp ${flag} dir -> dir copies and prints each file`);
+    }
+  });
 
   describe("EBUSY windows", () => {
     TestBuilder.command /* sh */ `
@@ -179,3 +193,54 @@ function expectSortedOutput(expected: string) {
       sortedShellOutput(expected).join("\n").replaceAll("$TEMP_DIR", tempdir),
     );
 }
+
+// The cp builtin is disabled on POSIX by default; force-enable it so the flag
+// parser is covered on every platform.
+describe("bunshell cp combined short flags (builtin)", () => {
+  const env = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  for (const flag of ["-Rv", "-vR"]) {
+    test.concurrent(`cp ${flag} dir -> dir copies and prints each file`, async () => {
+      using dir = tempDir("cp-cluster-flags", {
+        "src/a.txt": "hello a",
+        "src/b.txt": "hello b",
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `await Bun.$\`cp ${flag} src dest\``],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // -v should print a line per copied entry; subtasks run concurrently so
+      // order is not guaranteed.
+      const lines = sortedShellOutput(stdout);
+      expect(lines.filter(l => l.includes("a.txt"))).toHaveLength(1);
+      expect(lines.filter(l => l.includes("b.txt"))).toHaveLength(1);
+      // -R should actually copy the tree.
+      expect(await Bun.file(join(String(dir), "dest", "a.txt")).text()).toBe("hello a");
+      expect(await Bun.file(join(String(dir), "dest", "b.txt")).text()).toBe("hello b");
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("cp -Rvn parses every flag in the cluster", async () => {
+    using dir = tempDir("cp-cluster-flags-n", {
+      "src/a.txt": "hi",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `await Bun.$\`cp -Rvn src dest\``],
+      env,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("a.txt");
+    expect(await Bun.file(join(String(dir), "dest", "a.txt")).text()).toBe("hi");
+    expect(exitCode).toBe(0);
+  });
+});

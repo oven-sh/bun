@@ -1173,6 +1173,15 @@ impl VirtualMachine {
         let _ = self.event_loop_mut().drain_microtasks();
     }
 
+    /// Set [`Self::suppress_microtask_drain`] = `true`, restore the prior value
+    /// on drop. Makes `drain_microtasks_with_global()` a no-op for the guard's
+    /// lifetime.
+    #[inline]
+    pub fn suppress_microtask_drain_scope(&'static self) -> SuppressMicrotaskDrain {
+        let prev = self.suppress_microtask_drain.replace(true);
+        SuppressMicrotaskDrain { vm: self, prev }
+    }
+
     /// Acquires the JSC API lock for the duration of `f()`.
     ///
     /// Routes `f` through `JSC__VM__holdAPILock` via an `OpaqueWrap`-style C
@@ -1863,6 +1872,19 @@ bun_io::link_impl_EventLoopCtx! {
         pipe_read_buffer() => {
             core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
         },
+    }
+}
+
+/// RAII guard returned by [`VirtualMachine::suppress_microtask_drain_scope`].
+pub struct SuppressMicrotaskDrain {
+    vm: &'static VirtualMachine,
+    prev: bool,
+}
+
+impl Drop for SuppressMicrotaskDrain {
+    #[inline]
+    fn drop(&mut self) {
+        self.vm.suppress_microtask_drain.set(self.prev);
     }
 }
 

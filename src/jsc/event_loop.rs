@@ -669,14 +669,11 @@ impl EventLoop {
         let vm = self.vm();
         // `Cell` swap through `&VirtualMachine` — no `&mut VM` formed (would
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
-        let prev = self.vm_ref().suppress_microtask_drain.replace(true);
+        let _suppress = self.vm_ref().suppress_microtask_drain_scope();
 
         while self.tick_with_count(vm) > 0 {
             self.tick_concurrent();
         }
-
-        self.vm_ref().suppress_microtask_drain.set(prev);
-        // Note: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
     pub fn enqueue_task(&mut self, task: Task) {

@@ -9,20 +9,18 @@
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
-#include <unicode/uloc.h>
+#include <unicode/utypes.h>
+
+// Apple's SDK has no <unicode/uloc.h>; utypes.h supplies U_CAPI + renaming.
+U_CAPI const char* U_EXPORT2 uloc_getDefault(void);
 
 namespace Bun {
 
 using namespace JSC;
 
-// GlobalObjectMethodTable::defaultLanguage hook. Matches V8's
-// Isolate::DefaultLocale(): ask ICU for its process default (LC_ALL /
-// LC_MESSAGES / LANG on POSIX, GetUserDefaultLocaleName on Windows), map the
-// C/POSIX sentinel to "en-US", and hand JSC a BCP-47 tag. Without this hook
-// JSC::defaultLocale() falls through to WTF::platformUserPreferredLanguages(),
-// which on Unix reads setlocale(LC_CTYPE, nullptr) and sees "C" because Bun
-// never calls setlocale(LC_ALL, ""), so the ICU fallback in defaultLocale() is
-// never reached and every Intl constructor resolves to "en-US".
+// Ports V8's Isolate::DefaultLocale(). Leaving this hook null makes
+// JSC::defaultLocale() consult WTF::platformUserPreferredLanguages(), which
+// short-circuits to "en-US" before JSC's own uloc_getDefault() fallback runs.
 String GlobalScope::defaultLanguage()
 {
     const char* localeID = uloc_getDefault();

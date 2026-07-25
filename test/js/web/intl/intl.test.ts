@@ -308,20 +308,9 @@ describe("exhaustive locale sweep (every compressed item)", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// DefaultLocale — https://tc39.es/ecma402/#sec-defaultlocale
-// https://github.com/oven-sh/bun/issues/8480
-// https://github.com/oven-sh/bun/issues/24851
-//
-// ICU's uloc_getDefault() consults LC_ALL > LC_MESSAGES > LANG on POSIX and
-// GetUserDefaultLocaleName on Windows. Node/V8 use it verbatim (mapping the
-// C/POSIX sentinel to "en-US"); Bun previously hardcoded "en-US" because WTF's
-// platformUserPreferredLanguages() reads setlocale(LC_CTYPE, nullptr), which
-// stays at "C" unless the process calls setlocale(LC_ALL, "").
-// ---------------------------------------------------------------------------
-
-// On Windows ICU ignores LC_*/LANG and reads the system locale, so a fixed
-// expectation against env vars would be wrong there (Node behaves the same).
+// DefaultLocale (https://tc39.es/ecma402/#sec-defaultlocale)
+// https://github.com/oven-sh/bun/issues/8480, https://github.com/oven-sh/bun/issues/24851
+// On Windows ICU ignores LC_*/LANG and reads the system locale (Node behaves the same).
 describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () => {
   const resolveDefaultLocale = async (localeEnv: Record<string, string>) => {
     const env = { ...bunEnv };
@@ -384,16 +373,17 @@ describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () 
     expect(await resolveDefaultLocale({})).toEqual(["en-US", "en-US", "en-US", "en-US"]);
   });
 
-  test.concurrent("default locale drives toLocaleString() output", async () => {
+  // `-p` runs under Zig::EvalGlobalObject (the third method table wired up).
+  test.concurrent("default locale drives toLocaleString() output (bun -p)", async () => {
     const env = { ...bunEnv, LC_ALL: "de_DE.UTF-8" };
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `process.stdout.write((1234567.89).toLocaleString());`],
+      cmd: [bunExe(), "-p", `Intl.DateTimeFormat().resolvedOptions().locale + " " + (1234567.89).toLocaleString()`],
       env,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout).toBe("1.234.567,89");
+    expect(stdout).toBe("de-DE 1.234.567,89\n");
     expect(exitCode).toBe(0);
   });
 });

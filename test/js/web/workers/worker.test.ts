@@ -390,6 +390,34 @@ describe("web worker", () => {
       expect(stdout).toContain("worker closed 1");
       expect(exitCode).toBe(0);
     });
+
+    test("with no listener is not reported after terminate()", async () => {
+      // Spawn many workers that each throw, then terminate() each one
+      // immediately. Whether the in-flight error task lands before or after
+      // terminate() sets m_terminateRequested, it must never surface as an
+      // unhandled exception on the parent.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.on("uncaughtException", err => { console.error("UNHANDLED", err.message); process.exitCode = 2; });
+           const src = "data:text/javascript," + encodeURIComponent('throw new Error("POST-TERMINATE")');
+           for (let i = 0; i < 64; i++) {
+             const w = new Worker(src);
+             w.terminate();
+           }
+           await new Promise(r => setTimeout(r, 100));
+           console.log("done");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("POST-TERMINATE");
+      expect(stdout).toContain("done");
+      expect(exitCode).toBe(0);
+    });
   });
 });
 

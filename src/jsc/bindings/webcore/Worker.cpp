@@ -523,6 +523,11 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 void Worker::dispatchErrorWithMessage(WTF::String message, RefPtr<SerializedScriptValue>&& serializedError)
 {
     postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(), serializedError = WTF::move(serializedError)](ScriptExecutionContext& context) {
+        // Same gate Worker::dispatchEvent applies: an error that arrives after
+        // terminate() or close is dropped on both branches.
+        if (protectedThis->m_terminateRequested.load() || protectedThis->m_state.load() == State::Closed)
+            return;
+
         if (protectedThis->m_options.kind != WorkerOptions::Kind::Web
             || protectedThis->hasEventListeners(eventNames().errorEvent)) {
             ErrorEvent::Init init;

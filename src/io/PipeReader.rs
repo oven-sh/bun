@@ -670,6 +670,9 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
+                            if parent.is_done() {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer
@@ -886,15 +889,18 @@ impl PosixBufferedReader {
                                 // Once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_reading = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // `on_read_chunk` may close the reader
+                                // (sliced window satisfied); `fd` is stale
+                                // after that even on HUP.
+                                if parent.is_done() || (!keep_reading && !received_hup) {
                                     return;
                                 }
                                 head_start = 0;
@@ -935,15 +941,15 @@ impl PosixBufferedReader {
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
+                    let keep_reading = parent.vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    if parent.is_done() || (!keep_reading && !received_hup) {
                         return;
                     }
                 }

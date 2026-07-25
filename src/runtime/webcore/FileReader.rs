@@ -609,6 +609,13 @@ impl FileReader {
             if let Some(max_size) = self.max_size {
                 let total_readed = self.total_readed.get();
                 if total_readed >= max_size {
+                    if !self.reader().is_done() {
+                        // Clear first: on Windows the chunk lives in the
+                        // reader buffer and would otherwise reach
+                        // `consume_reader_buffer` via `on_reader_done`.
+                        self.reader().buffer().clear();
+                        self.reader().close();
+                    }
                     return false;
                 }
                 let len = (max_size - total_readed).min(buf.len());
@@ -617,7 +624,10 @@ impl FileReader {
                 }
                 self.total_readed.set(total_readed + len);
 
-                if buf.is_empty() {
+                // Reaching `max_size` is this stream's EOF: close so a
+                // chardev / file past the window doesn't keep the consumer
+                // pending on a read that is never re-armed.
+                if total_readed + len >= max_size {
                     close = true;
                     has_more = false;
                 }
@@ -713,7 +723,7 @@ impl FileReader {
                     break 'pending false;
                 }
 
-                let was_done = self.reader().is_done();
+                let was_done = self.reader().is_done() || close;
 
                 if pending_buf.len() >= buf.len() {
                     pending_buf[0..buf.len()].copy_from_slice(buf);
@@ -738,7 +748,7 @@ impl FileReader {
 
                 // SAFETY: see `reader_buffer` decl — tight deref.
                 if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
-                    if self.reader().is_done() {
+                    if was_done {
                         // SAFETY: see `reader_buffer` decl.
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
                         // SAFETY: see `reader_buffer` decl — tight deref, no `&mut` held across.
@@ -760,7 +770,7 @@ impl FileReader {
 
                 if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                     self.pending.with_mut(|p| {
-                        p.result = if self.reader().is_done() {
+                        p.result = if was_done {
                             streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
                         } else {
                             streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
@@ -774,7 +784,7 @@ impl FileReader {
                 buffered.truncate(buf.len()); // shrinkRetainingCapacity
 
                 self.pending.with_mut(|p| {
-                    p.result = if self.reader().is_done() {
+                    p.result = if was_done {
                         streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
                     } else {
                         streams::Result::Owned(Vec::<u8>::move_from_list(buffered))
@@ -812,11 +822,13 @@ impl FileReader {
         // For pipes, we have to keep pulling or the other process will block.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
-            && !self.reader_is_pollable());
+        let ret = !close
+            && !matches!(
+                self.read_inside_on_pull.get(),
+                ReadDuringJSOnPullResult::Temporary(_)
+            )
+            && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
+                && !self.reader_is_pollable());
         close_if_needed!();
         ret
     }

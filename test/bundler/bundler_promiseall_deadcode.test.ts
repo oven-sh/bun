@@ -164,7 +164,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=42062903F19477CF64756E2164756E21
+        //# debugId=7141FE02CB0F22E264756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);
@@ -410,7 +410,7 @@ describe("bundler", () => {
         var { AsyncEntryPoint: AsyncEntryPoint2 } = await Promise.resolve().then(() => exports_AsyncEntryPoint);
         AsyncEntryPoint2();
 
-        //# debugId=BF876FBF618133C264756E2164756E21
+        //# debugId=02B60B4FF92A818164756E2164756E21
         //# sourceMappingURL=out.js.map
         "
       `);

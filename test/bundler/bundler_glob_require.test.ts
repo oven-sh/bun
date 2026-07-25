@@ -42,14 +42,15 @@ describe("bundler", () => {
         try {
           require(\`./mods/\${which}.js\`);
         } catch (e) {
-          console.log(e.message);
+          console.log(e.code, e.message);
         }
       `,
       "/mods/a.js": `module.exports = 1;`,
       "/mods/b.js": `module.exports = 2;`,
     },
     run: {
-      stdout: "Cannot find module './mods/c.js' in glob import map. Available: ./mods/a.js, ./mods/b.js",
+      stdout:
+        "MODULE_NOT_FOUND Cannot find module './mods/c.js' in glob import map. Available: ./mods/a.js, ./mods/b.js",
     },
   });
 
@@ -66,6 +67,64 @@ describe("bundler", () => {
     run: { env: { WHICH: "b" }, stdout: "concat-b" },
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("__glob");
+    },
+  });
+
+  // Adjacent string literals are folded into a rope EString before the glob
+  // check; the shape extractor must read every segment.
+  itBundled("glob-require/StringConcatenationAdjacentLiterals", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.js": /* js */ `
+        const which = process.env.WHICH;
+        console.log(require("./mods" + "/" + which + ".js"));
+      `,
+      "/mods/a.js": `module.exports = "rope-a";`,
+      "/mods/b.js": `module.exports = "rope-b";`,
+    },
+    run: { env: { WHICH: "a" }, stdout: "rope-a" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('"./mods/a.js"');
+    },
+  });
+
+  // A self-referential const must not send the bundler into unbounded
+  // recursion; it falls through to runtime require.
+  itBundled("glob-require/SelfReferentialConst", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          const a = \`./mods/\${a}.js\`;
+          require(a);
+        } catch (e) {
+          console.log("caught");
+        }
+      `,
+      "/mods/x.js": `module.exports = 1;`,
+    },
+    run: { stdout: "caught" },
+  });
+
+  // import() with a second argument (import attributes) is not glob-resolved;
+  // it falls through to the runtime import so the attributes are preserved.
+  itBundled("glob-require/DynamicImportWithOptionsNotGlobbed", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const which = process.env.WHICH || "a";
+        const m = await import(\`./mods/\${which}.json\`, { with: { type: "json" } });
+        void m;
+        console.log("ok");
+      `,
+      "/mods/a.json": `{"a":1}`,
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (out.includes("__glob")) {
+        throw new Error("import() with attributes must not be glob-resolved");
+      }
     },
   });
 
@@ -197,6 +256,41 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("__glob");
       api.expectFile("/out.js").toContain('"./bin/x64-linux-gnu/client.js"');
+    },
+  });
+
+  // The #9951 scenario end to end: a platform-specific .node addon required
+  // via a const template specifier is embedded in a --compile binary. We use
+  // dummy addon bytes so the test does not need node-gyp; loading is expected
+  // to fail at dlopen time, which is past the point the glob resolution and
+  // asset embedding this PR adds have both succeeded.
+  itBundled("glob-require/CompileEmbedsNodeAddon", {
+    compile: true,
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        const binding = (() => {
+          const plat = process.env.PLAT || "x64-linux";
+          const filename = \`./bin/\${plat}/client.node\`;
+          try {
+            return require(filename);
+          } catch (e) {
+            // Embedding worked when we got as far as trying to dlopen the
+            // dummy bytes; a resolver miss would be MODULE_NOT_FOUND instead.
+            if (e.code === "ERR_DLOPEN_FAILED") return "dlopen-attempted";
+            throw e;
+          }
+        })();
+        const names = Bun.embeddedFiles.map(f => f.name).sort();
+        console.log(JSON.stringify({ binding, count: names.length }));
+      `,
+      "/bin/x64-linux/client.node": Buffer.from("not a real addon"),
+      "/bin/arm64-darwin/client.node": Buffer.from("not a real addon either"),
+    },
+    run: {
+      setCwd: true,
+      env: { PLAT: "x64-linux" },
+      stdout: JSON.stringify({ binding: "dlopen-attempted", count: 2 }),
     },
   });
 

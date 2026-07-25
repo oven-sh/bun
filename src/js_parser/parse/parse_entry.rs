@@ -84,9 +84,8 @@ pub struct Options<'a> {
 
     pub allow_unresolved: &'a options::AllowUnresolved,
 
-    /// When set, the parser turns `require()` / `import()` whose argument is a
-    /// relative-path template literal into a `__glob({...})(arg)` lookup map
-    /// keyed by each match this function returns.
+    /// Enables the `__glob({...})(arg)` rewrite for template-literal
+    /// `require()`/`import()`.
     pub glob_resolver: Option<options::GlobResolver>,
 
     pub module_type: options::ModuleType,

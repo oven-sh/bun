@@ -77,22 +77,18 @@ pub fn validate_path(
 // `&transpiler.options.allow_unresolved` straight through.
 pub use bun_js_parser::options::AllowUnresolved;
 
-/// `glob_resolver` for the parser's esbuild-style template-literal
-/// `require()` / `import()` support. Walks `source_dir` for files matching
-/// `pattern` and returns each match as a relative specifier with the same
-/// `./` / `../` prefix as `pattern`, so the string the bundler records as
-/// an import path is also the string the emitted `__glob({...})` map is
-/// keyed on.
+/// `glob_resolver` for the parser's template-literal `require()` / `import()`
+/// support: returns each match as a `./`- or `../`-prefixed relative specifier.
 pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>> {
     let mut out: Vec<Box<[u8]>> = Vec::new();
     if !(pattern.starts_with(b"./") || pattern.starts_with(b"../")) {
         return out;
     }
 
+    // dot=true so `.cjs`-style names match; follow_symlinks=false matches
+    // esbuild and avoids cycles through e.g. pnpm's symlink farms.
     let walker = match bun_glob::BunGlobWalker::init_with_cwd(
-        pattern, source_dir, /* dot */ true, /* absolute */ false,
-        /* follow_symlinks */ true, /* error_on_broken_symlinks */ false,
-        /* only_files */ true, None,
+        pattern, source_dir, true, false, false, false, true, None,
     ) {
         Ok(Ok(w)) => w,
         _ => return out,
@@ -104,12 +100,9 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
     }
     while let Ok(Ok(Some(m))) = iter.next() {
         let p: &[u8] = &m;
-        // The walker is free to return either separator; normalise to `/` so
-        // map keys match the template literal's runtime value on every
-        // platform.
         let mut s: Vec<u8> = p
             .iter()
-            .map(|&b| if b == b'\\' { b'/' } else { b })
+            .map(|&b| if cfg!(windows) && b == b'\\' { b'/' } else { b })
             .collect();
         if !(s.starts_with(b"./") || s.starts_with(b"../")) {
             s.splice(0..0, b"./".iter().copied());

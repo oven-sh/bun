@@ -563,11 +563,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub const_values: bun_ast::ast_result::ConstValuesMap,
 
-    /// Side-map for esbuild-style glob requires: when the bundler's
-    /// `glob_resolver` is set and a `const`/`let` binding is initialized with a
-    /// template literal (or string-concat chain) whose shape starts with `./`
-    /// or `../`, the initializer is recorded here so a subsequent
-    /// `require(ident)` can extract the glob pattern without inlining.
+    /// `const x = <relative-path template>` initializers, consulted by
+    /// `append_dynamic_specifier_shape` so `require(x)` can glob.
     pub glob_specifier_values: bun_ast::ast_result::ConstValuesMap,
 
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
@@ -808,7 +805,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         arg: Expr,
         buf: &'b mut BumpVec<'a, u8>,
     ) -> Result<&'b [u8], crate::Error> {
-        if self.append_dynamic_specifier_shape(arg, buf)? {
+        if self.append_dynamic_specifier_shape(arg, buf, 0)? {
             Ok(buf.as_slice())
         } else {
             buf.clear();
@@ -816,37 +813,40 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Append `arg`'s static shape to `buf`, returning `false` if any piece is
-    /// opaque. Separate from `extract_dynamic_specifier_shape` so that string-
-    /// concatenation chains can recurse without each level resetting `buf`.
+    /// Appends `arg`'s static shape to `buf`; `false` means opaque.
     fn append_dynamic_specifier_shape(
         &mut self,
         arg: Expr,
         buf: &mut BumpVec<'a, u8>,
+        depth: u32,
     ) -> Result<bool, crate::Error> {
-        match &arg.data {
-            js_ast::ExprData::EString(s) => {
+        if depth >= 32 {
+            return Ok(false);
+        }
+        match arg.data {
+            js_ast::ExprData::EString(mut s) => {
+                s.resolve_rope_if_needed(self.arena);
                 buf.extend_from_slice(s.string(self.arena)?);
                 Ok(true)
             }
-            js_ast::ExprData::ETemplate(tmpl) => {
+            js_ast::ExprData::ETemplate(mut tmpl) => {
                 if tmpl.tag.is_some() {
                     return Ok(false);
                 }
-                match &tmpl.head {
+                match &mut tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
+                        head.resolve_rope_if_needed(self.arena);
                         buf.extend_from_slice(head.string(self.arena)?);
                     }
                     js_ast::e::TemplateContents::Raw(_) => return Ok(false),
                 }
-                for part in tmpl.parts().iter() {
-                    // Nest into the interpolation so `${"a" + x}` yields "a\x00"
-                    // rather than a bare placeholder.
-                    if !self.append_dynamic_specifier_shape(part.value, buf)? {
+                for part in tmpl.parts_mut().iter_mut() {
+                    if !self.append_dynamic_specifier_shape(part.value, buf, depth + 1)? {
                         buf.push(0);
                     }
-                    match &part.tail {
+                    match &mut part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
+                            tail.resolve_rope_if_needed(self.arena);
                             buf.extend_from_slice(tail.string(self.arena)?);
                         }
                         js_ast::e::TemplateContents::Raw(_) => return Ok(false),
@@ -856,17 +856,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EBinary(bin) if bin.op == js_ast::Op::Code::BinAdd => {
                 let (l, r) = (bin.left, bin.right);
-                let ok_l = self.append_dynamic_specifier_shape(l, buf)?;
+                let ok_l = self.append_dynamic_specifier_shape(l, buf, depth + 1)?;
                 if !ok_l {
                     buf.push(0);
                 }
-                let ok_r = self.append_dynamic_specifier_shape(r, buf)?;
+                let ok_r = self.append_dynamic_specifier_shape(r, buf, depth + 1)?;
                 if !ok_r {
                     buf.push(0);
                 }
-                // A concat is a valid shape as long as at least one side
-                // contributed something literal (prevents bare `a + b`
-                // from matching, same as esbuild).
                 Ok(ok_l || ok_r)
             }
             js_ast::ExprData::EIdentifier(id) => {
@@ -877,7 +874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     if let Some(init) = self.glob_specifier_values.get(&ref_) {
                         let init = *init;
-                        return self.append_dynamic_specifier_shape(init, buf);
+                        return self.append_dynamic_specifier_shape(init, buf, depth + 1);
                     }
                 }
                 Ok(false)
@@ -886,11 +883,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// A shape is eligible for glob resolution when it starts with `./` or
-    /// `../`, contains at least one dynamic placeholder, and has a non-empty
-    /// literal suffix (so the walker has a fixed extension to match against).
-    /// Also rejects shapes whose literal parts already contain glob
-    /// metacharacters, which would otherwise be misread by the walker.
     fn glob_shape_is_eligible(shape: &[u8]) -> bool {
         if !(shape.starts_with(b"./") || shape.starts_with(b"../")) {
             return false;
@@ -910,11 +902,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         true
     }
 
-    /// Translate a `\x00`-delimited shape into a glob pattern for the
-    /// filesystem walker. A run of placeholders collapses to a single
-    /// wildcard: `**/*` when the run is bounded by `/` on both sides, `*`
-    /// otherwise. This matches esbuild's `handleGlobPattern` and keeps
-    /// `./mods/${x}.js` bounded to one directory instead of recursing.
+    /// `\x00` placeholders become `**/*` between slashes, `*` otherwise
+    /// (matches esbuild; keeps `./mods/${x}.js` bounded to one directory).
     fn glob_shape_to_pattern(shape: &[u8], out: &mut Vec<u8>) {
         out.clear();
         let mut i = 0;
@@ -938,11 +927,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Record `const x = <template>` initializers so a later `require(x)` can
-    /// extract the glob shape. Only identifiers that are never reassigned are
-    /// tracked (guaranteed for `const`; for `let`/`var` the symbol table's
-    /// reassignment bit is checked at lookup time in
-    /// `append_dynamic_specifier_shape`).
+    /// Record `const x = <template>` so `require(x)` can glob. Lookup gates on
+    /// `Kind::Constant`, so non-const entries stored here are simply ignored.
     pub fn maybe_track_glob_specifier(&mut self, ref_: Ref, value: Option<Expr>) {
         if self.options.glob_resolver.is_none() {
             return;
@@ -963,12 +949,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// When `arg` is a template-literal (or concat / tracked identifier) whose
-    /// shape is a relative path, walk the filesystem for matches and rewrite
-    /// `require(arg)` into `__glob({ "./a.js": () => require("./a.js"), ... })(arg)`.
-    /// Returns `None` when glob resolution is disabled, the shape is
-    /// ineligible, or no files match.
-    pub fn try_glob_dynamic_require(&mut self, arg: Expr, kind: ImportKind) -> Option<Expr> {
+    /// Rewrite `require(arg)` with a relative-path template/concat arg into
+    /// `__glob({ "./a.js": () => require("./a.js"), ... })(arg)`.
+    pub fn try_glob_dynamic_require(
+        &mut self,
+        arg: Expr,
+        kind: ImportKind,
+        handles_import_errors: bool,
+    ) -> Option<Expr> {
         if !self.options.bundle || self.is_control_flow_dead {
             return None;
         }
@@ -982,18 +970,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return None;
         }
 
+        let source_dir = self.source.path.source_dir();
+        if source_dir.is_empty() {
+            return None;
+        }
+
         let mut pattern = Vec::with_capacity(shape.len() + 4);
         Self::glob_shape_to_pattern(shape, &mut pattern);
 
-        let source_dir = self.source.path.source_dir();
         let mut matches = resolver(source_dir, &pattern);
         if matches.is_empty() {
             return None;
         }
-        // Bail out (fall through to runtime require) rather than silently
-        // bundling an unbounded file set. 256 is well above any
-        // platform-matrix use case while keeping a pathological
-        // `./${x}.js` in a huge directory from exploding the bundle.
         const GLOB_MATCH_CAP: usize = 256;
         if matches.len() > GLOB_MATCH_CAP {
             return None;
@@ -1002,7 +990,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         matches.dedup();
 
         let loc = arg.loc;
-        let handles_import_errors = self.fn_or_arrow_data_visit.try_body_count != 0;
 
         let mut properties: BumpVec<'_, G::Property> =
             BumpVec::with_capacity_in(matches.len(), self.arena);
@@ -1284,8 +1271,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        if let Some(glob) = self.try_glob_dynamic_require(arg, ImportKind::Dynamic) {
-            return glob;
+        if matches!(state.import_options.data, js_ast::ExprData::EMissing(..)) {
+            let handles = (state.is_await_target
+                && self.fn_or_arrow_data_visit.try_body_count != 0)
+                || state.is_then_catch_target;
+            if let Some(glob) = self.try_glob_dynamic_require(arg, ImportKind::Dynamic, handles) {
+                return glob;
+            }
         }
 
         if self.options.warn_about_unbundled_modules {
@@ -1508,7 +1500,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
-                if let Some(glob) = self.try_glob_dynamic_require(arg, ImportKind::Require) {
+                let handles = self.fn_or_arrow_data_visit.try_body_count != 0;
+                if let Some(glob) = self.try_glob_dynamic_require(arg, ImportKind::Require, handles)
+                {
                     return glob;
                 }
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");

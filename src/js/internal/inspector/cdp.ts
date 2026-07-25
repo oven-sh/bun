@@ -803,14 +803,15 @@ class InspectorCDPAdapter {
         return;
 
       // The deprecated CDP Console domain is fully managed via Runtime.enable/
-      // disable above; forwarding disable here would let one client tear the
-      // shared ConsoleAgent down under another.
+      // disable above; forwarding disable or clearMessages here would let one
+      // client tear the shared ConsoleAgent (and its "console" objectGroup)
+      // down under another.
       case "Console.enable":
       case "Console.disable":
+      case "Console.clearMessages":
         this.#replyToClient(id, {});
         return;
 
-      case "Console.clearMessages":
       case "Inspector.enable":
         this.#sendToBackend(method, undefined, id, method);
         return;
@@ -860,7 +861,16 @@ class InspectorCDPAdapter {
       return;
     }
     const { breakpointId } = result;
-    if (typeof breakpointId === "string") breakpointOwner.$set(breakpointId, this.#sessionId);
+    if (typeof breakpointId === "string") {
+      if (!this.#flags.debuggerEnabled || !liveAdapters.$has(this.#sessionId)) {
+        // Session tore down while this setBreakpoint was in flight and the
+        // shared backend stayed enabled for another session: remove the armed
+        // breakpoint instead of orphaning it under a dead owner.
+        this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
+        return;
+      }
+      breakpointOwner.$set(breakpointId, this.#sessionId);
+    }
     this.#replyToClient(id, this.#translateResult(method, result));
   }
 

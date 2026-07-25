@@ -6603,15 +6603,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                     }
 
-                    // Decorated public fields stay in the class body so they keep native
-                    // [[Define]] semantics (matching tsc and esbuild under
-                    // `useDefineForClassFields: true`, which Bun assumes). The decorator
-                    // call was already recorded above via `__legacyDecorateClassTS`.
-                    //
-                    // `declare`/`abstract` fields only reach here when decorated (the
-                    // undecorated case is dropped at parse time); they are type-only and
-                    // must not be printed, so skip them once the decorator call has been
-                    // emitted.
+                    // `declare`/`abstract` fields only reach this loop when decorated (the
+                    // undecorated case is dropped in `parse_property`); drop the type-only
+                    // body entry now that the decorator call has been recorded above.
                     if matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract) {
                         continue;
                     }

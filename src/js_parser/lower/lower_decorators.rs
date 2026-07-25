@@ -2141,9 +2141,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 &[cn_e, wm_ref_expr, run_init_call],
                             ));
                         } else {
-                            // [[Define]] semantics: a decorated public static field must shadow
-                            // any inherited accessor on the superclass, matching native class
-                            // fields and the output of tsc and esbuild.
                             let cn_e = p.use_ref(class_name_ref, class_name_loc);
                             let key_e = entry.prop.key.expect("infallible: prop has key");
                             suffix_exprs.push(p.call_rt(
@@ -2234,9 +2231,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                     ));
                 } else {
-                    // [[Define]] semantics: a decorated public instance field must create an
-                    // own data property rather than invoke an inherited setter, matching
-                    // native class fields and the output of tsc and esbuild.
                     let t_e = p.new_expr(E::This {}, loc);
                     let key_e = entry.prop.key.expect("infallible: prop has key");
                     let call = p.call_rt(loc, b"__publicField", &[t_e, key_e, run_init_call]);

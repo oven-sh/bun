@@ -2106,17 +2106,11 @@ pub mod bv2_impl {
             }
         }
 
-        /// Returns true when a `RequireResolve` import record should stop at
-        /// resolution and not be added to the bundle graph. `require.resolve()`
-        /// returns a filesystem path string at runtime, so bundling its target
-        /// is never useful: the caller needs a real path to read/spawn/stat,
-        /// not the module's exports. esbuild resolves the specifier (so the
-        /// caller still sees module-not-found errors) and then leaves the
-        /// original text in place, emitting the `require-resolve-not-external`
-        /// warning. The dev server is excluded: its `hmr.requireResolve`
-        /// runtime is a pass-through that expects the bundler to have written
-        /// the resolved module id into the record, and build machine == run
-        /// machine so the absolute path is the correct answer there.
+        /// esbuild's `require-resolve-not-external` handling: a `RequireResolve`
+        /// record is resolved for diagnostics only, its path text stays as the
+        /// original specifier, and the target is not pulled into the graph.
+        /// Skipped for the dev server, whose `hmr.requireResolve` pass-through
+        /// relies on the bundler writing the resolved module id.
         fn should_skip_require_resolve_enqueue(
             &mut self,
             kind: ImportKind,

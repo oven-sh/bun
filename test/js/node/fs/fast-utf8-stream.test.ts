@@ -50,12 +50,13 @@ describe("fs.Utf8Stream reopen", () => {
     const readyHandled = Promise.withResolvers<void>();
     const drained = Promise.withResolvers<void>();
     let writeCallbackDelivered = false;
+    let writingAfterReadyWrite: boolean | undefined;
 
     stream.once("ready", () => {
       events.push("ready");
       holding = true;
       stream.write("after reopen\n");
-      expect(stream.writing).toBe(true);
+      writingAfterReadyWrite = stream.writing;
       stream.once("drain", () => {
         events.push("drain");
         drained.resolve();
@@ -65,6 +66,7 @@ describe("fs.Utf8Stream reopen", () => {
     stream.reopen();
 
     await readyHandled.promise;
+    expect(writingAfterReadyWrite).toBe(true);
     // After 'ready' returns, fileOpened may schedule process.nextTick(emit('drain')).
     // Give any such nextTick a chance to run before we assert.
     await new Promise<void>(r => process.nextTick(r));

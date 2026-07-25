@@ -940,7 +940,8 @@ describe("DOM nodes", () => {
   hi
   <!--c-->
 </div>`);
-    expect(new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])])).toMatchInlineSnapshot(`<DocumentFragment>
+    expect(new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])]))
+      .toMatchInlineSnapshot(`<DocumentFragment>
   <button />
 </DocumentFragment>`);
   });

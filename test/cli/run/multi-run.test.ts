@@ -73,6 +73,32 @@ describe.concurrent("parallel: basic", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("stdin is inherited by the spawned script", async () => {
+    using dir = tempDir("mr-par-stdin", {
+      "read.js": `
+        let data = "";
+        process.stdin.setEncoding("utf8");
+        process.stdin.on("data", c => data += c);
+        process.stdin.on("end", () => console.log("STDIN=" + data.trim()));
+      `,
+      "package.json": JSON.stringify({
+        scripts: { readstdin: `${bunExe()} run read.js` },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--parallel", "readstdin"],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: String(dir),
+      stdin: new Blob(["hello-from-parent\n"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Done");
+    expectPrefixed(stdout, "readstdin", "STDIN=hello-from-parent");
+    expect(exitCode).toBe(0);
+  });
+
   test("runs many scripts (10+)", async () => {
     const scripts: Record<string, string> = {};
     for (let i = 0; i < 12; i++) {

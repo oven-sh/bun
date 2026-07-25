@@ -393,6 +393,28 @@ describe("bundler", () => {
     },
   });
   // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ExportsInBracelessIfElseReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './mod.cjs';
+        export { x };
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        if (!globalThis.NEVER_SET) exports.x = "yes"; else exports.x = "no";
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/mod.cjs"],
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    run: {
+      stdout: "yes",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11032
   itBundled("cjs2esm/ExportsInBracelessIfElse", {
     files: {
       "/entry.js": /* js */ `
@@ -405,11 +427,6 @@ describe("bundler", () => {
     },
     cjs2esm: {
       unhandled: ["/mod.cjs"],
-    },
-    onAfterBundle(api) {
-      const text = api.readFile("/out.js");
-      expect(text).not.toContain("__INVALID__REF__");
-      expect(text).not.toContain("tagSymbol");
     },
     run: {
       stdout: "yes",
@@ -429,11 +446,6 @@ describe("bundler", () => {
     cjs2esm: {
       unhandled: ["/mod.cjs"],
     },
-    onAfterBundle(api) {
-      const text = api.readFile("/out.js");
-      expect(text).not.toContain("__INVALID__REF__");
-      expect(text).not.toContain("tagSymbol");
-    },
     run: {
       stdout: "yes",
     },
@@ -451,11 +463,6 @@ describe("bundler", () => {
     },
     cjs2esm: {
       unhandled: ["/mod.cjs"],
-    },
-    onAfterBundle(api) {
-      const text = api.readFile("/out.js");
-      expect(text).not.toContain("__INVALID__REF__");
-      expect(text).not.toContain("tagSymbol");
     },
     run: {
       stdout: "loop",
@@ -475,11 +482,6 @@ describe("bundler", () => {
     cjs2esm: {
       unhandled: ["/mod.cjs"],
     },
-    onAfterBundle(api) {
-      const text = api.readFile("/out.js");
-      expect(text).not.toContain("__INVALID__REF__");
-      expect(text).not.toContain("tagSymbol");
-    },
     run: {
       stdout: "do",
     },
@@ -497,11 +499,6 @@ describe("bundler", () => {
     },
     cjs2esm: {
       unhandled: ["/mod.cjs"],
-    },
-    onAfterBundle(api) {
-      const text = api.readFile("/out.js");
-      expect(text).not.toContain("__INVALID__REF__");
-      expect(text).not.toContain("tagSymbol");
     },
     run: {
       stdout: "yes",

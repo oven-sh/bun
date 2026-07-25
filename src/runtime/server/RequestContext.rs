@@ -1229,10 +1229,6 @@ where
         }
     }
 
-    /// uWS drained its send buffer while a `ByteStream` pipe is mid-stream.
-    /// Resume the upstream producer (the fetch HTTP client) so the next chunk
-    /// is delivered; `on_pipe` will re-arm us on the next backpressured write.
-    ///
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
     pub(crate) fn on_writable_byte_stream(

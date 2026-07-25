@@ -191,10 +191,6 @@ impl ByteStream {
             (p.ctx, p.on_pipe)
         };
         if let Some(ctx) = pipe_ctx {
-            // The pipe decides whether the producer may resume. A backpressured
-            // consumer returns `false` and owes us a `signal_drained()` once it
-            // has room again; resuming here unconditionally would let a slow
-            // downstream client buffer the entire upstream body.
             if (pipe_fn.unwrap())(ctx, stream) {
                 self.signal_drained();
             }

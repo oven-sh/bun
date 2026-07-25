@@ -372,9 +372,6 @@ impl Pipe {
     }
 }
 
-/// Returns `true` when the consumer accepted the chunk without backpressure
-/// (the producer may be resumed), `false` when the consumer is backpressured
-/// and will call `ByteStream::signal_drained` itself once it drains.
 pub type Function = fn(ctx: NonNull<()>, stream: streams::Result) -> bool;
 
 // Callers implement `PipeHandler` for their type instead of passing a free fn

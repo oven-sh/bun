@@ -660,17 +660,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            // Load the default .env files so package.json scripts that spawn a
-            // non-bun tool (vite, node, cypress, psql, ...) see them (#9877),
-            // then move the `.env` / `.env.local` entries into `script_forward`
-            // and restore the map to the process-env prefix. Entries that came
-            // from a NODE_ENV-specific file (`.env.{development,production,
-            // test}[.local]`), or whose expansion resolved against one, are
-            // dropped so a script that sets its own NODE_ENV
-            // ("NODE_ENV=production bun ...") re-derives them under the right
-            // suffix (#9635). The map returning to process-env state keeps the
-            // slow `bun run <file>` path (which boots a VM on this singleton)
-            // observationally identical to the fast path.
+            // Load the default .env files and lift the `.env`/`.env.local`
+            // entries into `script_forward` for the subprocess (#9877);
+            // `.env.{NODE_ENV}[.local]` entries are dropped so a script
+            // re-derives them under its own NODE_ENV (#9635). The map returns
+            // to the process-env prefix so the `bun run <file>` slow path
+            // (which boots a VM on this singleton) matches the fast path.
             let process_env_count = env_loader.map.map.count();
             let disable_default = this_transpiler.options.env.disable_default_env_files;
             let _ = this_transpiler.run_env_loader(disable_default);

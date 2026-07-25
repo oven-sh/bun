@@ -119,10 +119,8 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub custom_files_loaded: StringArrayHashMap<bun_ast::Source>,
 
-    /// `.env` / `.env.local` entries the `bun run <script>` dispatcher moved
-    /// out of `map` via [`Self::take_script_dotenv`]; merged back into the
-    /// subprocess env by [`Self::create_null_delimited_env_map`] / the
-    /// bun-shell's export copy. Empty outside that path.
+    /// `.env`/`.env.local` entries [`Self::take_script_dotenv`] lifted out of
+    /// `map` for the `bun run <script>` subprocess env; empty elsewhere.
     pub script_forward: Vec<(Box<[u8]>, Box<[u8]>)>,
 
     pub quiet: bool,
@@ -750,18 +748,9 @@ impl Loader {
         Ok(())
     }
 
-    /// After `load_default_files`, move the `.env` / `.env.local`-sourced
-    /// entries (every non-conditional entry past `process_env_count`) into
-    /// `script_forward` and truncate the map back to the process-env prefix.
-    /// Clears every default-file slot.
-    ///
-    /// `bun run <script>` calls this so the script's subprocess environment
-    /// carries `.env` / `.env.local` values (no NODE_ENV dependency, #9877)
-    /// while leaving `.env.{NODE_ENV}[.local]` keys for the script's own
-    /// `bun` instance to re-derive under whatever NODE_ENV it sets (#9635).
-    /// The map is restored to exactly the process-env state so the
-    /// `bun run <file>` slow path, which boots a VM on this same singleton,
-    /// observes what it would on a fresh loader.
+    /// Move non-conditional dotenv entries (indices `process_env_count..`)
+    /// into `script_forward`, truncate `map` to the process-env prefix, and
+    /// clear every default-file slot. See #9877 / #9635.
     pub fn take_script_dotenv(&mut self, process_env_count: usize) {
         self.script_forward.clear();
         {
@@ -790,9 +779,7 @@ impl Loader {
         self.env_test_local = None;
     }
 
-    /// `Map::create_null_delimited_env_map` plus the `.env` / `.env.local`
-    /// entries captured by [`Self::take_script_dotenv`]. Used by the
-    /// `bun run <script>` / `bunx` / `--filter` spawn sites.
+    /// `Map::create_null_delimited_env_map` plus [`Self::script_forward`].
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
         self.map
             .create_null_delimited_env_map_with_extra(&self.script_forward)
@@ -1383,11 +1370,8 @@ pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
-    /// Set for keys whose value came from a NODE_ENV-dependent default file
-    /// (`.env.development`, `.env.production`, `.env.test`, or their `.local`
-    /// variants). The `bun run <script>` dispatcher drops these before
-    /// spawning so a script that sets its own NODE_ENV can re-derive them;
-    /// keys that exist in `.env` / `.env.local` stay. See #9635 / #9877.
+    /// Set for values from a NODE_ENV-specific default file
+    /// (`.env.{development,production,test}[.local]`) or expanded from one.
     pub conditional: bool,
 }
 
@@ -1417,10 +1401,8 @@ impl Map {
         self.create_null_delimited_env_map_with_extra(&[])
     }
 
-    /// [`Self::create_null_delimited_env_map`] plus an `extra` tail of
-    /// `K`/`V` pairs appended after the map's own entries. Entries in `extra`
-    /// whose key already appears in `self` are skipped so process env keeps
-    /// winning.
+    /// [`Self::create_null_delimited_env_map`] plus an `extra` tail appended
+    /// after the map's own entries; keys already in `self` are skipped.
     pub fn create_null_delimited_env_map_with_extra(
         &mut self,
         extra: &[(Box<[u8]>, Box<[u8]>)],

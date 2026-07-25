@@ -277,6 +277,8 @@ pub struct RareData {
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
+    /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
+    pub node_quic_callbacks: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
@@ -328,6 +330,7 @@ impl Default for RareData {
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
+            node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
@@ -614,6 +617,11 @@ macro_rules! for_each_socket_group {
 }
 
 impl RareData {
+    pub fn release_js_handles(&mut self) {
+        self.s3_default_client.deinit();
+        self.node_quic_callbacks.deinit();
+    }
+
     // ── trivial field accessors ────────────────────────────────────────────
 
     /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`

@@ -2582,6 +2582,30 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_ILLEGAL_CONSTRUCTOR, "Illegal constructor"_s));
     case ErrorCode::ERR_DIR_CLOSED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_DIR_CLOSED, "Directory handle was closed"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED: {
+        auto arg0 = callFrame->argument(1);
+        if (arg0.isString()) {
+            auto message = arg0.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, message));
+        }
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_ACTIVATED, "Inspector is already activated. Close it with inspector.close() before activating it again."_s));
+    }
+    case ErrorCode::ERR_INSPECTOR_NOT_ACTIVE:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_ACTIVE, "Inspector is not active"_s));
+    case ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_ALREADY_CONNECTED, "The inspector session is already connected"_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_CONNECTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_CONNECTED, "Session is not connected"_s));
+    case ErrorCode::ERR_INSPECTOR_NOT_WORKER:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_NOT_WORKER, "Current thread is not a worker"_s));
+    case Bun::ErrorCode::ERR_INSPECTOR_COMMAND: {
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto message = makeString("Inspector error "_s, str0);
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_INSPECTOR_COMMAND, message));
+    }
     case ErrorCode::ERR_SERVER_ALREADY_LISTEN:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SERVER_ALREADY_LISTEN, "Listen method has been called more than once without closing."_s));
     case ErrorCode::ERR_SOCKET_CLOSED:

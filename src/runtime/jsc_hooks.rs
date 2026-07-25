@@ -3440,8 +3440,7 @@ fn transpile_source_code_inner(
     }
 }
 
-/// Register a non-virtual asset path with the watcher (if enabled, absolute,
-/// and not in `node_modules`). Opens its own watch fd on kqueue platforms.
+/// Register a non-virtual asset path with the watcher. Opens its own watch fd on kqueue platforms.
 fn auto_watch_asset(jsc_vm: *mut VirtualMachine, path: &Fs::Path, loader: Loader) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {

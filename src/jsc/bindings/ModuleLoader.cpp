@@ -69,8 +69,7 @@ public:
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
 #if ENABLE(WEBASSEMBLY)
-// Rust packed raw wasm bytes into source_code as Latin-1; rebuild them into a
-// WebAssemblySourceProvider so JSModuleLoader routes to JSWebAssembly::instantiate.
+// Rebuild the raw wasm bytes packed into source_code (Latin-1) into a WebAssemblySourceProvider.
 static JSC::SourceCode sourceCodeForWasm(ResolvedSource& resolved, BunString* specifier)
 {
     WTF::String wasmSource = resolved.source_code.toWTFString(BunString::NonNull);

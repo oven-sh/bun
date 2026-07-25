@@ -453,7 +453,11 @@ impl PosixBufferedReader {
 
     // Exists for consistently with Windows.
     pub fn has_pending_read(&self) -> bool {
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_registered())
+        // `is_watching()` (not `is_registered()`): a one-shot poll that has
+        // fired and not been re-armed will not deliver again, so callers that
+        // gate on this to decide between "wait for the poll" and "read now"
+        // must see it as no pending read.
+        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
     }
 
     pub fn watch(&mut self) {
@@ -842,7 +846,7 @@ impl PosixBufferedReader {
             // `EventLoopCtx::pipe_read_buffer_mut`).
             let event_loop = parent.vtable.event_loop();
             let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
-            while parent._buffer.capacity() == 0 {
+            if parent._buffer.capacity() == 0 {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
@@ -872,32 +876,39 @@ impl PosixBufferedReader {
                                 return;
                             }
 
-                            // Keep reading as much as we can
                             if (stack_buffer_len - head_start) < stack_buffer_cutoff {
-                                // `&& !received_hup` mirrors the
-                                // after-inner-loop flush below (line ~855).
-                                // Without it, a peer close (HUP) with >cutoff
-                                // bytes still buffered makes a parent that
-                                // returns `false` on `.eof` (e.g. shell
-                                // `PipeReader::on_read_chunk`) early-return
-                                // here with data left in the kernel and no
-                                // `register_poll`/`done()` → 90s hang in
-                                // shell-blocking-pipe.test.ts.
-                                // Once HUP is set the kernel
-                                // returns the remaining bytes then 0, so
-                                // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_going = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
-                                    return;
+                                );
+                                // Once HUP is set the kernel returns the
+                                // remaining bytes then 0, so draining to
+                                // `bytes_read == 0` is bounded; keep going
+                                // even if the consumer said stop (e.g. the
+                                // shell `PipeReader::on_read_chunk` returns
+                                // false on `.eof`) so we reach `done()`
+                                // instead of leaving data in the kernel
+                                // with no poll armed.
+                                if received_hup {
+                                    head_start = 0;
+                                    continue;
                                 }
-                                head_start = 0;
+                                // No HUP: deliver at most one stack-buffer
+                                // chunk per call and hand control back to
+                                // the event loop. An always-ready source
+                                // that never EAGAINs (/dev/urandom,
+                                // /dev/zero) would otherwise spin here
+                                // forever. Re-arm only when the consumer
+                                // wants more; a `false` return is
+                                // backpressure and the next pull re-arms.
+                                if keep_going && file_type != FileType::File {
+                                    parent.register_poll();
+                                }
+                                return;
                             }
                         }
                         sys::Result::Err(err) => {
@@ -948,9 +959,11 @@ impl PosixBufferedReader {
                     }
                 }
 
-                if !parent.vtable.is_streaming_enabled() {
-                    break;
+                // One stack-buffer pass per call; yield to the event loop.
+                if file_type != FileType::File {
+                    parent.register_poll();
                 }
+                return;
             }
         } else if parent._buffer.capacity() == 0 && parent._offset == 0 {
             // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.

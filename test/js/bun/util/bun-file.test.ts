@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fsPromises from "fs/promises";
-import { bunEnv, bunExe, isPosix, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isPosix, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 test("delete() and stat() should work with unicode paths", async () => {
@@ -156,12 +156,19 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   expect(exitCode).toBe(0);
 });
 
-// Before the fix, Bun.file("/dev/urandom").stream() classified the fd as a
-// nonblocking pipe and the read loop spun preadv2(RWF_NOWAIT) forever on the
-// JS thread (the device never EAGAINs and never EOFs), wedging the event loop
-// and growing RSS unbounded. Verify that a single read() resolves with a
-// bounded chunk and that a timer scheduled across the read still fires.
+// Before the fix the pollable read loop spun preadv2(RWF_NOWAIT) forever on
+// the JS thread for /dev/urandom and /dev/zero (they never EAGAIN and never
+// EOF), wedging the event loop and growing RSS without bound. Verify that a
+// single read() resolves with a bounded chunk, that a timer scheduled across
+// the read still fires, and that RSS stays flat while the stream sits idle.
+//
+// Sequential on purpose: on a regressed build each child grows RSS ~1 GB/s, so
+// running them concurrently risks OOMing the fail-before step.
 describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the event loop", () => {
+  // Generous on debug/ASAN (subprocess startup dominates); the release lane
+  // keeps the tight 4 s cap so a regressed build is killed quickly.
+  const hangGuard = isASAN || isDebug ? 20_000 : 4_000;
+
   for (const [label, source] of [
     ["Bun.file(dev).stream() on /dev/urandom", `Bun.file("/dev/urandom").stream()`],
     ["new Response(Bun.file(dev)).body on /dev/zero", `new Response(Bun.file("/dev/zero")).body`],
@@ -172,32 +179,43 @@ describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the e
           bunExe(),
           "-e",
           `
+            const rss0 = process.memoryUsage.rss();
             let tickedAfterRead = false;
             setTimeout(() => { tickedAfterRead = true; }, 1).unref();
             const reader = (${source}).getReader();
             const first = await reader.read();
             await new Promise(r => setTimeout(r, 10));
             const second = await reader.read();
+            const rssGrowthMB = (process.memoryUsage.rss() - rss0) / 1024 / 1024;
             await reader.cancel();
             process.stdout.write(JSON.stringify({
               firstLen: first.value?.length ?? -1,
               secondLen: second.value?.length ?? -1,
               tickedAfterRead,
+              rssGrowthMB,
             }));
           `,
         ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
-        signal: AbortSignal.timeout(4_000),
+        signal: AbortSignal.timeout(hangGuard),
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stderr, exitCode, signalCode: proc.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
       const out = JSON.parse(stdout);
       expect(out.tickedAfterRead).toBe(true);
       expect(out.firstLen).toBeGreaterThan(0);
+      expect(out.firstLen).toBeLessThanOrEqual(1024 * 1024);
       expect(out.secondLen).toBeGreaterThan(0);
+      expect(out.secondLen).toBeLessThanOrEqual(1024 * 1024);
+      expect(out.rssGrowthMB).toBeLessThan(128);
     });
   }
+
+  test("Bun.file('/dev/null').stream() EOFs immediately", async () => {
+    const r = await Bun.file("/dev/null").stream().getReader().read();
+    expect(r).toEqual({ done: true, value: undefined });
+  });
 });

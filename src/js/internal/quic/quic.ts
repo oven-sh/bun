@@ -1324,6 +1324,11 @@ function parseHeaderPairs(pairs) {
   return block;
 }
 
+function syncWantsHeaders(inner) {
+  inner.state.wantsHeaders =
+    inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+}
+
 /**
  * Applies session and stream callbacks from an options object to a session.
  * @param {QuicSession} session
@@ -1809,8 +1814,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
     }
-    inner.state.wantsHeaders =
-      inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+    syncWantsHeaders(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1829,8 +1833,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
-    inner.state.wantsHeaders =
-      inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+    syncWantsHeaders(inner);
   }
 
   /** @type {Function|undefined} */
@@ -1849,8 +1852,7 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
-    inner.state.wantsHeaders =
-      inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+    syncWantsHeaders(inner);
   }
 
   /** @type {Function|undefined} */
@@ -2539,8 +2541,6 @@ class QuicStream {
           });
         }
         {
-          // wantsHeaders is shared with ontrailers/oninfo, so the initial
-          // block can arrive with only one of those set.
           const { onheaders } = inner;
           if (onheaders) safeCallbackInvoke(onheaders, this, block);
         }

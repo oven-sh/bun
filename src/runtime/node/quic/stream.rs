@@ -1024,9 +1024,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
     let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-    // `stream->uh` is a linked list (1xx*, final, trailers): drain it, not
-    // pop once. The HQ filter can decode a trailing block while we read DATA
-    // below, so re-drain on -1 too.
+    // `stream->uh` is a list (1xx*, final, trailers): drain, don't pop once.
     enum Claimed {
         None,
         Some,
@@ -1109,10 +1107,9 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
                 break;
             }
             _ => {
-                // `stream_readf` returns -1 for EWOULDBLOCK and for "header
-                // set not claimed" alike; the HQ filter decodes trailers as
-                // it drains past DATA, so an unclaimed set here is the
-                // trailing block — claim and re-read for the FIN behind it.
+                // -1 is EWOULDBLOCK or "header set not claimed": the HQ
+                // filter decodes trailers while draining DATA, so claim and
+                // re-read for the FIN behind them.
                 if matches!(claim_hsets(qs), Claimed::Some) {
                     continue;
                 }

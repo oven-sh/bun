@@ -111,6 +111,48 @@ describe("HTTP/3 response trailers", () => {
   });
 });
 
+// Same gate: `oninfo` alone must enable HEADERS dispatch for 1xx interim
+// responses (RFC 9114 §4.1).
+test("HTTP/3 1xx interim responses are delivered when only oninfo is set", async () => {
+  await using server = await listen(
+    async serverSession => {
+      serverSession.onstream = (stream: any) => {
+        stream.closed.catch(() => {});
+      };
+      await serverSession.closed.catch(() => {});
+    },
+    {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      transportParams: { maxIdleTimeout: 2 },
+      onheaders(this: any) {
+        this.sendInformationalHeaders({ ":status": "103", "link": "</a>; rel=preload" });
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    },
+  );
+
+  const client = await connect(server.address, {
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 2 },
+  });
+  await client.opened;
+
+  const hints = Promise.withResolvers<Record<string, string>>();
+  const stream = await client.createBidirectionalStream({
+    headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+  });
+  stream.oninfo = (h: Record<string, string>) => hints.resolve(h);
+
+  for await (const _ of stream) {
+  }
+  const result = await Promise.race([hints.promise, stream.closed.then(() => "dropped")]);
+
+  client.close();
+  expect(result).toEqual({ ":status": "103", "link": "</a>; rel=preload" });
+  expect(stream.headers?.[":status"]).toBe("200");
+});
+
 // `destroy()` after the app committed AND ended a response (which, under
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.

@@ -5,8 +5,8 @@
 // errnos the errno→name table did not list) deterministically.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { join } from "node:path";
 import { constants as osConstants } from "node:os";
+import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 

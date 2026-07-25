@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { once } from "node:events";
-import { createServer, request } from "node:http";
+import { createServer, get, request } from "node:http";
+import net from "node:net";
 
 describe("node:http client timeout", () => {
   it("should emit timeout event when timeout is reached", async () => {
@@ -89,5 +90,84 @@ describe("node:http client timeout", () => {
     } finally {
       server.close();
     }
+  });
+
+  // The socket stays in the `connecting` state while the lookup callback is
+  // withheld, which is observationally equivalent to a SYN that is never
+  // acknowledged. Node.js arms the idle timer at socket creation, so the
+  // 'timeout' event fires mid-connect; it must not be swallowed just because
+  // the request headers are queued in _pendingData waiting for the handle.
+  describe("fires while the socket is still connecting", () => {
+    type Finish = (err: NodeJS.ErrnoException | null, address: string, family: number) => void;
+
+    function stallingLookup(deferred: { finish?: Finish }) {
+      return function lookup(_hostname: string, opts: unknown, cb?: Finish) {
+        deferred.finish = typeof opts === "function" ? (opts as Finish) : cb!;
+      };
+    }
+
+    it("options.timeout emits req 'timeout' before connect", async () => {
+      const deferred: { finish?: Finish } = {};
+      const req = get({
+        host: "stalled.invalid",
+        port: 1,
+        path: "/",
+        timeout: 100,
+        agent: false,
+        autoSelectFamily: false,
+        lookup: stallingLookup(deferred),
+      });
+      req.on("error", () => {});
+      try {
+        await once(req, "timeout");
+        expect(req.socket?.connecting).toBe(true);
+      } finally {
+        req.destroy();
+        deferred.finish?.(new Error("aborted"), "", 0);
+      }
+    });
+
+    it("socket.setTimeout() emits socket 'timeout' before connect", async () => {
+      const deferred: { finish?: Finish } = {};
+      const req = get({
+        host: "stalled.invalid",
+        port: 1,
+        path: "/",
+        agent: false,
+        autoSelectFamily: false,
+        lookup: stallingLookup(deferred),
+      });
+      req.on("error", () => {});
+      const [socket] = await once(req, "socket");
+      const { promise, resolve } = Promise.withResolvers<void>();
+      socket.setTimeout(100, resolve);
+      try {
+        await promise;
+        expect(socket.connecting).toBe(true);
+      } finally {
+        req.destroy();
+        deferred.finish?.(new Error("aborted"), "", 0);
+      }
+    });
+
+    it("net.Socket 'timeout' fires with a write buffered pre-connect", async () => {
+      const deferred: { finish?: Finish } = {};
+      const socket = net.connect({
+        host: "stalled.invalid",
+        port: 1,
+        autoSelectFamily: false,
+        lookup: stallingLookup(deferred),
+      });
+      socket.on("error", () => {});
+      socket.write("GET / HTTP/1.1\r\n\r\n");
+      socket.setTimeout(100);
+      try {
+        await once(socket, "timeout");
+        expect(socket.connecting).toBe(true);
+      } finally {
+        socket.destroy();
+        deferred.finish?.(new Error("aborted"), "", 0);
+      }
+    });
   });
 });

@@ -2367,8 +2367,8 @@ impl TestCommand {
                     || strings::contains(a, b"_spec.")
             }) {
                 pretty_errorln!(
-                    "<blue>note<r><d>:<r> \"{}\" after <d>--<r> is placed in process.argv, not used as a test filter. Put it before <d>--<r> to use it as a filter.",
-                    bstr::BStr::new(arg),
+                    "<blue>note<r><d>:<r> {} after <d>--<r> is placed in process.argv, not used as a test filter. Put it before <d>--<r> to use it as a filter.",
+                    bun_fmt::quote(arg),
                 );
             }
         }

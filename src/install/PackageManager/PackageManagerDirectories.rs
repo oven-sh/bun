@@ -1123,7 +1123,6 @@ pub fn save_lockfile(
     let mut save_node: *mut ProgressNode = core::ptr::null_mut();
 
     if log_level.show_progress() {
-        this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         save_node = this.progress.start(ProgressStrings::save(), 0);
         // SAFETY: `save_node` was just set by `progress.start()` and is non-null.
         unsafe { (*save_node).activate() };

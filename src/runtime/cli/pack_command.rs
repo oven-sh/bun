@@ -2590,8 +2590,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let mut progress = Progress::Progress::default();
         let mut node: Option<&mut Progress::Node> = None;
         if log_level.show_progress() {
-            progress.supports_ansi_escape_codes =
-                Output::stderr_descriptor_type() == Output::DescriptorType::Terminal;
             node = Some(progress.start(b"", pack_queue.count() + bundled_pack_queue.count() + 1));
             node.as_mut().expect("infallible: progress active").unit = Progress::Unit::Files;
         }

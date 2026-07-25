@@ -2404,7 +2404,6 @@ pub(crate) fn init_with_runtime_once(
 
     if Output::stderr_descriptor_type() == Output::DescriptorType::Terminal {
         manager.progress = Progress::default();
-        manager.progress.supports_ansi_escape_codes = true;
         // `Progress::start` returns `&mut Node` borrowing `manager.progress.root`.
         // Coerce to a raw pointer immediately so the borrow doesn't outlive the
         // statement; `root_progress_node` is BORROW_FIELD into `self.progress`.

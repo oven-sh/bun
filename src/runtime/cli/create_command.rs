@@ -297,11 +297,7 @@ impl CreateCommand {
                     bun_paths::platform::Loose,
                 >(filesystem.top_level_dir, dirname))?;
 
-        let mut progress = Progress {
-            supports_ansi_escape_codes: Output::stderr_descriptor_type()
-                == Output::DescriptorType::Terminal,
-            ..Default::default()
-        };
+        let mut progress = Progress::default();
         // `Progress::start` returns
         // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
         // Convert to `*mut` immediately so `progress` and `node` can be used
@@ -2340,11 +2336,7 @@ impl CreateListExamplesCommand {
 
         env_loader.load_process()?;
 
-        let mut progress = Progress {
-            supports_ansi_escape_codes: Output::stderr_descriptor_type()
-                == Output::DescriptorType::Terminal,
-            ..Default::default()
-        };
+        let mut progress = Progress::default();
         // `Progress::start` returns `&mut Node` borrowing `progress`; detach
         // via raw pointer so `progress.refresh()` can re-borrow below.
         let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);

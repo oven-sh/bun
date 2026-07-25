@@ -1784,7 +1784,6 @@ fn write_yarn_lock_with_progress(
     // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
     let mut node_started = false;
     if log_level.show_progress() {
-        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         let _ = manager.progress.start(b"Saving yarn.lock", 0);
         manager.progress.refresh();
         node_started = true;

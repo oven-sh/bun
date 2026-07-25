@@ -136,7 +136,6 @@ pub(crate) fn install_hoisted_packages(
         // `this.lockfile` read doesn't overlap the live `root_node` reborrow.
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
         let progress = &mut this.progress;
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         // `Progress::start` returns `&mut Node` (points into `progress.root`);
         // keep it as a safe reborrow — it's only used to spawn the three
         // children below and is dead before any other `this.*` write.

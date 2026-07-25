@@ -275,7 +275,7 @@ impl MinifyRenamer {
     pub fn init(
         symbols: symbol::Map,
         first_top_level_slots: &js_ast::SlotCounts,
-        reserved_names: StringHashMap<u32>,
+        mut reserved_names: StringHashMap<u32>,
     ) -> Result<Box<MinifyRenamer>, bun_alloc::AllocError> {
         let mut slots = SymbolSlotList::default();
 
@@ -285,6 +285,9 @@ impl MinifyRenamer {
             v.resize(count, SymbolSlot::default());
             slots[ns] = v;
         }
+
+        // #14586: here, not in `compute_initial_reserved_names`, so `NumberRenamer` keeps user `$` verbatim.
+        reserved_names.put(b"$", 1).expect("unreachable");
 
         Ok(Box::new(MinifyRenamer {
             symbols: ManuallyDrop::new(symbols),

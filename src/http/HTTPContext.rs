@@ -598,8 +598,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // `agentKeepAliveTimeoutBuffer` default); if that leaves 0, the
         // server's idle window is too short to safely reuse at all, so close
         // instead of pooling. Matches undici / Node's http.Agent.
-        let idle_seconds =
-            keepalive_hint_seconds.map(|n| n.saturating_sub(crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS));
+        let idle_seconds = keepalive_hint_seconds
+            .map(|n| n.saturating_sub(crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS));
         let reusable = hostname.len() <= MAX_KEEPALIVE_HOSTNAME
             && idle_seconds != Some(0)
             && !(socket.is_closed() || socket.is_shutdown() || socket.get_error() != 0)

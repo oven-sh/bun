@@ -1003,9 +1003,7 @@ pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 1;
 pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
     for param in value.split(|&b| b == b',') {
         let param = param.trim_ascii();
-        if param.len() > 8
-            && strings::eql_case_insensitive_ascii(&param[..8], b"timeout=", false)
-        {
+        if param.len() > 8 && strings::eql_case_insensitive_ascii(&param[..8], b"timeout=", false) {
             let digits = param[8..].trim_ascii();
             if let Ok(n) = bun_core::parse_unsigned::<u32>(digits, 10) {
                 return Some(n);

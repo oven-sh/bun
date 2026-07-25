@@ -721,4 +721,51 @@ describe("bundler", () => {
       api.expectFile("/out.cjs").not.toContain("var Generator");
     },
   });
+
+  itBundled("cjs/ImplicitGlobalAssignKnownGlobal", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(typeof lib.orig, lib.orig === Promise);
+      `,
+      "/lib.cjs": /* js */ `
+        var orig = Promise;
+        Promise = function Patched() {};
+        module.exports = { orig: orig };
+        Promise = orig;
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "function true",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("var Promise");
+    },
+  });
+
+  itBundled("cjs/ImplicitGlobalAssignMJS", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import './lib.mjs';
+      `,
+      "/lib.mjs": /* js */ `
+        try {
+          Foo = 1;
+          console.log("no throw");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "ReferenceError",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("var Foo");
+    },
+  });
 });

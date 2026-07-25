@@ -255,14 +255,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     == js_ast::symbol::Kind::Unbound
                 && !result.is_inside_with_scope
                 && !p.is_strict_mode()
+                && p.options.module_type != crate::parser::options::ModuleType::Esm
                 && p.is_strict_mode_output_format()
+                && p.define.for_identifier(name).is_none()
             {
-                // Sloppy-mode code can assign to an undeclared identifier to create a
-                // property on the global object. Bundling into an ES module forces strict
-                // mode, which would turn that into a ReferenceError at runtime. Hoist a
-                // `var` declaration so the bundled output keeps working. Compound
-                // assignments (`Update`) read the value first and already throw in sloppy
-                // mode, so they are excluded.
+                // `X = ...` with no declaration creates a global in sloppy mode but
+                // throws ReferenceError in strict-mode ESM output; hoist a `var` so the
+                // bundle runs. Known globals are skipped so `var X` does not shadow them.
                 p.symbols[result.r#ref.inner_index() as usize].kind = js_ast::symbol::Kind::Hoisted;
                 p.relocated_top_level_vars.push(js_ast::LocRef {
                     loc: expr.loc,

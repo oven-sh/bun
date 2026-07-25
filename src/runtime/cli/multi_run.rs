@@ -509,7 +509,7 @@ impl<'a> State<'a> {
         }
     }
 
-    pub(crate) fn finalize(&self) -> u8 {
+    pub(crate) fn finalize(&self) -> u32 {
         for handle in self.handles.iter() {
             if let Some(proc) = &handle.process {
                 match &proc.status {
@@ -519,7 +519,10 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                        return bun_sys::SignalCode(*signal)
+                            .to_exit_code()
+                            .unwrap_or(1)
+                            .into();
                     }
                     _ => return 1,
                 }
@@ -1220,7 +1223,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     let status = state.finalize();
-    Global::exit(status as u32);
+    Global::exit(status);
 }
 
 fn has_runnable_extension(name: &[u8]) -> bool {

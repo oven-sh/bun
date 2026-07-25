@@ -839,9 +839,9 @@ impl ShellSubprocess {
 
     pub fn on_process_exit(&mut self, _: &Process, status: &Status, _: &Rusage) {
         log!("onProcessExit({:x})", std::ptr::from_mut(self) as usize);
-        let exit_code: Option<u8> = 'brk: {
+        let exit_code: Option<sh::ExitCode> = 'brk: {
             if let Status::Exited(exited) = &status {
-                break 'brk Some(exited.code);
+                break 'brk Some(exited.code as sh::ExitCode);
             }
 
             if matches!(status, Status::Err(_)) {
@@ -850,7 +850,7 @@ impl ShellSubprocess {
 
             if matches!(status, Status::Signaled(_)) {
                 if let Some(code) = status.signal_code() {
-                    break 'brk Some(code.to_exit_code().unwrap());
+                    break 'brk Some(code.to_exit_code().unwrap().into());
                 }
             }
 
@@ -864,7 +864,7 @@ impl ShellSubprocess {
             // `&mut self` is dead by NLL before `on_exit` re-enters interp.
             let cmd = unsafe { handle.cmd_mut() };
             if cmd.exit_code.is_none() {
-                cmd.on_exit(code.into());
+                cmd.on_exit(code);
             }
         }
     }

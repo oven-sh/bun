@@ -338,11 +338,7 @@ describe("web worker", () => {
     for (const body of [`throw new Error("WEB-WORKER-UNCAUGHT")`, `Promise.reject(new Error("WEB-WORKER-UNCAUGHT"))`]) {
       test(`with no listener is reported to the parent (${body.split("(")[0]})`, async () => {
         await using proc = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "-e",
-            `new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(body)}));`,
-          ],
+          cmd: [bunExe(), "-e", `new Worker("data:text/javascript," + encodeURIComponent(${JSON.stringify(body)}));`],
           env: bunEnv,
           stdout: "pipe",
           stderr: "pipe",

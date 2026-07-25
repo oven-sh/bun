@@ -849,7 +849,7 @@ class Debugger {
     backend?.close();
     if (this.#nodeInspector || data.isCDP) {
       // 1003 (unsupported data) only fits the binary-frame case; anything
-      // else is an internal error (1011) with the error's own message.
+      // else is an internal error (1011).
       const binary = error?.message === "Unexpected binary message";
       connection.close?.(binary ? 1003 : 1011, binary ? "Unexpected binary message" : "Internal error");
     }

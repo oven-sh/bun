@@ -86,13 +86,12 @@ pub struct SubscriptionCtx {
 pub use crate::generated_classes::js_RedisClient as Js;
 
 impl SubscriptionCtx {
-    /// `valkey_parent` must be the `heap::into_raw` pointer for the owning
-    /// `JSValkeyClient` (full-allocation provenance), not a pointer derived
-    /// from a narrower borrow.
-    pub fn init(valkey_parent: *mut JSValkeyClient) -> JsResult<Self> {
-        // SAFETY: freshly heap-allocated by `JSValkeyClient::new`; caller
-        // owns the +1 and has not yet handed it to any path that could free
-        // it.
+    /// # Safety
+    /// `valkey_parent` must be the live `heap::into_raw` pointer for the
+    /// owning `JSValkeyClient` (full-allocation provenance), not a pointer
+    /// derived from a narrower borrow, and must outlive the returned context.
+    pub unsafe fn init(valkey_parent: *mut JSValkeyClient) -> JsResult<Self> {
+        // SAFETY: caller contract.
         let parent = unsafe { BackRef::from_raw(valkey_parent) };
         let callback_map = JSMap::create(&parent.global_object);
         let parent_this = parent.this_value.get().try_get().expect("unreachable");
@@ -841,9 +840,11 @@ impl JSValkeyClient {
         new_client.this_value.set(JsRef::init_weak(js_this));
 
         // Need to associate the subscription context, after the JS ref has been populated.
+        // SAFETY: `new_client_ptr` is the fresh `heap::into_raw` pointer from
+        // `create_no_js_no_pubsub` above.
         new_client
             ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client_ptr)?);
+            .set(unsafe { SubscriptionCtx::init(new_client_ptr) }?);
 
         Ok(new_client_ptr)
     }

@@ -1910,9 +1910,11 @@ impl JSValkeyClient {
 
         let new_client_js = JSValkeyClient::ptr_to_js(new_client_ptr, global);
         new_client.this_value.set(JsRef::init_weak(new_client_js));
+        // SAFETY: `new_client_ptr` is the fresh `heap::into_raw` pointer from
+        // `clone_without_connecting` above.
         new_client
             ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client_ptr)?);
+            .set(unsafe { SubscriptionCtx::init(new_client_ptr) }?);
         // If the original client is already connected and not manually closed, start connecting the new client.
         if this.client.get().status == valkey::Status::Connected
             && !this.client.get().flags.is_manually_closed

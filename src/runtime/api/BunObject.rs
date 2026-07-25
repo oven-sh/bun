@@ -1958,7 +1958,9 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
     // hold the only reference for field init below.
     let valkey_ref = unsafe { &*valkey };
     valkey_ref.this_value.set(jsc::JsRef::init_weak(as_js));
-    match SubscriptionCtx::init(valkey) {
+    // SAFETY: `valkey` is the fresh `heap::into_raw` pointer from
+    // `create_no_js_no_pubsub` above.
+    match unsafe { SubscriptionCtx::init(valkey) } {
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {

@@ -362,9 +362,9 @@ describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () 
   });
 
   test.concurrent("LC_ALL overrides LC_MESSAGES and LANG", async () => {
-    expect(await resolveDefaultLocale({ LC_ALL: "de_DE.UTF-8", LC_MESSAGES: "fr_FR.UTF-8", LANG: "ja_JP.UTF-8" })).toEqual(
-      ["de-DE", "de-DE", "de-DE", "de-DE"],
-    );
+    expect(
+      await resolveDefaultLocale({ LC_ALL: "de_DE.UTF-8", LC_MESSAGES: "fr_FR.UTF-8", LANG: "ja_JP.UTF-8" }),
+    ).toEqual(["de-DE", "de-DE", "de-DE", "de-DE"]);
   });
 
   test.concurrent("LC_MESSAGES overrides LANG", async () => {

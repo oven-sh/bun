@@ -55,6 +55,24 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #undef IS_LETTER
 #undef IS_SLASH
 
+/// Index of the last path separator, or WTF::notFound. On Windows both `\` and
+/// `/` count: standalone-executable module keys are forward-slashed
+/// (e.g. "B:/~BUN/root/app.js"), and mixed-separator paths are legal.
+ALWAYS_INLINE size_t lastPathSeparatorIndex(const WTF::String& path)
+{
+#if OS(WINDOWS)
+    size_t slash = path.reverseFind(POSIX_PATH_SEP, path.length());
+    size_t backslash = path.reverseFind(WINDOWS_PATH_SEP, path.length());
+    if (slash == WTF::notFound)
+        return backslash;
+    if (backslash == WTF::notFound)
+        return slash;
+    return std::max(slash, backslash);
+#else
+    return path.reverseFind(POSIX_PATH_SEP, path.length());
+#endif
+}
+
 extern "C" BunString ResolvePath__joinAbsStringBufCurrentPlatformBunString(JSC::JSGlobalObject*, BunString);
 
 /// CWD is determined by the global object's current cwd.

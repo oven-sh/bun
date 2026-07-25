@@ -188,10 +188,11 @@ console.log(utils());`,
 
       // `--compile` bundles for Bun's runtime, so `__dirname`/`__filename`
       // resolve to the compiled executable's virtual `$bunfs` path at runtime
-      // instead of the build machine's source path (#4216). `--bytecode`
-      // additionally covers the module-record import.meta flag: the injected
-      // `import.meta.dir` is the only import.meta reference here, and cached
-      // bytecode only links it when the parser marks the module accordingly.
+      // instead of the build machine's source path (#4216). `--bytecode
+      // --format=esm` additionally covers the module-record import.meta flag:
+      // the injected `import.meta.dir` is the only import.meta reference here,
+      // and cached bytecode only links it when the parser marks the module
+      // accordingly. (`--bytecode` alone would imply CJS and skip that path.)
       const { exited } = Bun.spawn({
         cmd: [
           bunExe(),
@@ -199,6 +200,7 @@ console.log(utils());`,
           path.join(baseDir, "我/我.ts"),
           "--compile",
           "--bytecode",
+          "--format=esm",
           "--outfile",
           path.join(baseDir, "exe.exe"),
         ],
@@ -240,6 +242,48 @@ console.log(utils());`,
       expect(browserOut).toContain(JSON.stringify(path.join(baseDir, "我")));
       expect(browserOut).toContain(JSON.stringify(path.join(baseDir, "我", "我.ts")));
       expect(browserExit).toBe(0);
+    });
+
+    test("__dirname and __filename from the CJS wrapper in compiled executables", async () => {
+      using dir = tempDir("bun-build-dirname-cjs", {
+        "entry.ts": "console.log(__dirname); console.log(__filename);",
+      });
+      const base = String(dir);
+
+      // `--bytecode` without `--format` implies CJS output: no declaration is
+      // injected, so `__dirname`/`__filename` come from the module wrapper.
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          path.join(base, "entry.ts"),
+          "--compile",
+          "--bytecode",
+          "--outfile",
+          path.join(base, "exe.exe"),
+        ],
+        env: bunEnv,
+        cwd: base,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildErr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildErr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [path.join(base, "exe.exe")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // The wrapper params equal the standalone graph key, which is
+      // forward-slashed on every platform (`B:/~BUN/root`, not `B:\~BUN\root`).
+      const bunfsRoot = isWindows ? "B:/~BUN/root" : "/$bunfs/root";
+      expect(stdout).toBe(bunfsRoot + "\n" + bunfsRoot + "/exe.exe\n");
+      expect(exitCode).toBe(0);
     });
 
     test.skipIf(!isWindows)("should be able to handle pretty path when using pnpm +  #14685", async () => {

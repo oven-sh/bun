@@ -684,10 +684,23 @@ describe.concurrent("WebSocket client rejects masked server frames", () => {
   });
 
   it.each([
+    ["Text", 0x1],
+    ["Binary", 0x2],
     ["Ping", 0x9],
     ["Pong", 0xa],
   ])("fails a masked %s frame", async (_name, opcode) => {
     const frame = maskedFrame(opcode, Buffer.from("hi"), Buffer.from("aabbccdd", "hex"));
+    expect(await run(frame)).toEqual(EXPECTED_CLOSE);
+  });
+
+  it("fails a masked Continue frame mid-message", async () => {
+    // An unmasked FIN=0 Text frame first so receiving_is_final is false when the
+    // masked Continue header is parsed; otherwise the UnexpectedOpcode check
+    // fires before the NeedMask dispatch.
+    const frame = Buffer.concat([
+      Buffer.from([0x01, 0x02, 0x68, 0x69]),
+      maskedFrame(0x0, Buffer.from("there"), Buffer.from("aabbccdd", "hex")),
+    ]);
     expect(await run(frame)).toEqual(EXPECTED_CLOSE);
   });
 

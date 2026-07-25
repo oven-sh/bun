@@ -274,9 +274,6 @@ function removeConsoleHooks() {
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
 // into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage.
-// Each surviving function gets an entry whose first range spans the function
-// source with its call count, followed by the basic-block sub-ranges inside it
-// whose count differs from the call count.
 function buildScriptCoverageList(
   rawScripts: Array<{
     url: string;
@@ -301,26 +298,21 @@ function buildScriptCoverageList(
       url = pathToFileURL(url).href;
     }
 
-    // Index FunctionExecutable metadata by JSC's (functionStart, functionEnd),
-    // which is the same key FunctionHasExecutedCache uses.
+    // Keyed by (functionStart, functionEnd): the same key FunctionHasExecutedCache uses.
     const execByRange = new Map<number, { end: number; sourceEnd: number; name: string; skip: boolean }>();
     for (const [start, end, sourceEnd, name, skip] of script.executables) {
       const key = start * 0x100000000 + end;
       const prev = execByRange.$get(key);
-      // Recompilation can yield multiple FunctionExecutables for one range;
-      // one non-skip instance is enough to keep the range.
       if (prev === undefined || (prev.skip && !skip)) {
         execByRange.$set(key, { end, sourceEnd, name, skip });
       }
     }
 
-    // Build the V8 function list from FunctionHasExecutedCache (which records
-    // every inner function of every compiled CodeBlock). Drop synthetic
-    // entries that have no user-visible source: the program/module range, any
-    // range marked skip by its executable (generator/async bodies, class
-    // field initializers), and ranges with no executable under this sourceID
-    // at all (JSC's builtin default class constructors register their offsets
-    // against the enclosing script but link against the builtin provider).
+    // Drop FunctionHasExecutedCache ranges with no user-visible source: the
+    // program/module range, skip-marked executables (generator/async bodies,
+    // class-field initializers), and ranges with no executable on this
+    // sourceID (builtin default class constructors link against their own
+    // provider but register offsets under the enclosing script's sourceID).
     type Fn = { start: number; end: number; sourceEnd: number; name: string; executed: boolean };
     const seenFns = new Set<number>();
     const functions: Fn[] = [];
@@ -340,9 +332,8 @@ function buildScriptCoverageList(
 
     const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
 
-    // Assign each basic block to the innermost surviving function range that
-    // contains it. Blocks from skipped inner executables (generator/async
-    // bodies) naturally fall through to the enclosing wrapper.
+    // Assign each basic block to the innermost surviving function; blocks from
+    // skipped generator/async bodies fall through to the enclosing wrapper.
     const blocksPerFunction: Array<Array<[number, number, number, boolean]>> = functions.map(() => []);
     const topLevelBlocks: Array<[number, number, number, boolean]> = [];
     const stack: number[] = [];
@@ -376,14 +367,9 @@ function buildScriptCoverageList(
 
     const clampCount = (c: number) => (callCount ? c : c > 0 ? 1 : 0);
 
-    // V8 emits sub-ranges as deltas from the enclosing range's count, so a
-    // block whose count equals the owner's call count is redundant. This also
-    // removes the function entry block (count == call count). JSC inserts a
-    // profile point after every return/throw; when that is the last statement
-    // the resulting count-0 block either spans only whitespace and the closing
-    // brace, or collapses to a single position at the owner's last source
-    // character (arrow expression bodies). V8 never emits that block, and
-    // coverage tools render it as a spurious uncovered line.
+    // V8 sub-ranges are deltas from the owner's count, so skip blocks with that
+    // count. Also skip JSC's post-return/throw block when it spans no code or
+    // collapses onto the owner's last character (arrow-body case).
     const subRanges = (ownBlocks: Array<[number, number, number, boolean]>, ownerCount: number, ownerEnd: number) => {
       const ranges: object[] = [];
       for (const [start, end, count, hasCode] of ownBlocks) {
@@ -400,13 +386,10 @@ function buildScriptCoverageList(
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
-    // The script's entry block is the first piece of the program/module code
-    // block after gap splitting. JSC keys BasicBlockLocations by (sourceID,
-    // start, end), so a class-field-initializer function (whose source JSC
-    // sets to the enclosing scope) aliases and increments the same counter.
-    // Treat that possibly-inflated count as the top-level baseline so the
-    // entry-block pieces are filtered out while real top-level branches
-    // (whose counts differ) survive.
+    // JSC keys BasicBlockLocations by (sourceID, start, end), so a class-field
+    // initializer (whose source is the enclosing scope) aliases the script
+    // entry block and inflates its counter; use that counter as the top-level
+    // baseline so only real branches survive.
     let scriptEntryCount = scriptExecuted;
     if (topLevelBlocks.length > 0) {
       let entry = topLevelBlocks[0];
@@ -436,10 +419,9 @@ function buildScriptCoverageList(
       }
 
       const ownBlocks = blocksPerFunction[i];
-      // The block with the smallest start offset is the function's entry
-      // block; it runs exactly once per invocation, so its execution count is
-      // the call count. Generator/async bodies were filtered above, so the
-      // wrapper's entry block (which counts user-visible calls) is selected.
+      // The smallest-start block is the function's entry block; its count is
+      // the call count (the wrapper's, since generator/async bodies were
+      // filtered above).
       let count = 1;
       if (ownBlocks.length > 0) {
         let entryBlock = ownBlocks[0];

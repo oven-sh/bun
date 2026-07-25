@@ -91,10 +91,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     // (not the whole heap). Providers whose executables were all GC'd are not
     // reported, and offsets index the transpiled source for Bun-loaded modules;
     // Bun appends an inline //# sourceMappingURL, so consumers that read the
-    // script source (v8-to-istanbul) can remap. FunctionExecutable metadata
-    // (name, source span, parse mode) is collected alongside so the JS layer
-    // can drop JSC-internal synthetic functions that would otherwise surface
-    // as phantom V8 FunctionCoverage entries.
+    // script source (v8-to-istanbul) can remap. FunctionExecutable metadata is
+    // collected alongside so the JS layer can drop JSC-internal synthetics.
     struct ExecutableInfo {
         unsigned functionStart;
         unsigned functionEnd;
@@ -121,12 +119,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
                 auto* fn = static_cast<FunctionExecutable*>(executable);
                 SourceParseMode mode = fn->parseMode();
-                // These compile as inner FunctionExecutables but have no direct
-                // source representation a V8 consumer would recognise. Their
-                // ranges either alias the wrapper (generator/async bodies) or
-                // carry offsets into a different SourceProvider (default
-                // constructors, class-field initializers), so emit them only
-                // as a skip marker.
+                // These have no distinct user-visible source: generator/async
+                // bodies alias the wrapper, and default constructors and
+                // class-field initializers carry offsets into a different
+                // provider. Emit them only as a skip marker.
                 bool skip = fn->isBuiltinFunction()
                     || fn->implementationVisibility() != ImplementationVisibility::Public
                     || mode == SourceParseMode::ClassFieldInitializerMode
@@ -161,10 +157,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
         StringView source = provider->source();
         unsigned providerLen = source.length();
-        // JSC emits a profile point after every return/throw; when that's the
-        // function's last statement the resulting block spans only whitespace
-        // and the closing brace. Tag each block so the JS layer can drop those
-        // without shipping full source text over the wire.
+        // Tag each block so the JS layer can drop JSC's post-return/throw
+        // block when it spans only whitespace and the closing brace.
         auto rangeHasCode = [&](int start, int end) -> bool {
             unsigned s = start < 0 ? 0 : static_cast<unsigned>(start);
             unsigned e = end < 0 ? 0 : static_cast<unsigned>(end);

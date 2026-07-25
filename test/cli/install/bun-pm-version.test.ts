@@ -526,6 +526,48 @@ describe.concurrent("bun pm version", () => {
         },
       });
     });
+
+    it("indents single-line nested objects correctly when expanding", async () => {
+      // A single-line nested object (`"scripts": { "test": "true" }`) used to be
+      // reprinted with the inner property and closing brace at column 0, and that
+      // bad unindent cascaded to every following sibling key.
+      const originalJson = `{
+  "name": "test",
+  "version": "1.0.0",
+  "scripts": { "test": "true" },
+  "keywords": ["a", "b"],
+  "repository": { "type": "git", "url": "https://example.com" }
+}
+`;
+
+      const testDir = tempDirWithFiles(`version-${i++}`, {
+        "package.json": originalJson,
+      });
+
+      const { output, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        testDir,
+      );
+
+      expect(output.trim()).toBe("v1.0.1");
+      expect(code).toBe(0);
+
+      const updated = await Bun.file(`${testDir}/package.json`).text();
+
+      expect(updated).toBe(`{
+  "name": "test",
+  "version": "1.0.1",
+  "scripts": {
+    "test": "true"
+  },
+  "keywords": ["a", "b"],
+  "repository": {
+    "type": "git",
+    "url": "https://example.com"
+  }
+}
+`);
+    });
   });
 
   describe("prerelease handling", () => {

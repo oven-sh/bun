@@ -4822,6 +4822,14 @@ describe("read*/write* after JIT tier-up", () => {
     expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0)).toThrow(
       'The value of "value" is out of range',
     );
+    // The offset's type is validated before the receiver's length is consulted, matching the
+    // fixed-width writers, so a non-number offset still wins over the DataView receiver.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, "bad"))).toBe(
+      "ERR_INVALID_ARG_TYPE",
+    );
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 5n, 1.5))).toBe(
+      "ERR_OUT_OF_RANGE",
+    );
     // A DataView has no `length`, so as in lib/internal/buffer.js every accessor reports `<= NaN`.
     const dv = new DataView(new ArrayBuffer(8));
     for (const f of [

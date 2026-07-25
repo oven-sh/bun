@@ -1096,7 +1096,7 @@ where
         };
         if try_end_ok {
             drop(bb);
-            self.detach_response();
+            self.detach_response_after_end();
             self.end_request_streaming_and_drain();
             self.finalize_without_deinit();
             self.deref();
@@ -1638,7 +1638,7 @@ where
         let bytes = &bytes_[bytes_.len().min(write_offset)..];
         // SAFETY: FFI handle
         if resp.try_end(bytes, bytes_.len(), self.should_close_connection()) {
-            self.detach_response();
+            self.detach_response_after_end();
             self.end_request_streaming_and_drain();
             self.deref();
             true
@@ -1673,7 +1673,7 @@ where
         let done = resp.try_end(bytes, total_len, close_connection);
         if done {
             self.response_buf_owned.clear();
-            self.detach_response();
+            self.detach_response_after_end();
             self.end_request_streaming_and_drain();
             self.deref();
         } else {
@@ -2387,6 +2387,22 @@ where
                 self.flags.set_has_timeout_handler(false);
             }
         }
+    }
+
+    /// Release our handle after a `uws_res_end*` wrapper has already run
+    /// `markDone()` (and, for `try_end`, `clearOnWritableAndAborted()`): those
+    /// nulled `onAborted` / `inStream` / `onTimeout` / `onWritable`, and the
+    /// wrapper then replayed any buffered pipelined request, so the socket's
+    /// per-request callbacks now belong to the NEXT request. Calling
+    /// `resp.clear_*()` here would null that request's handlers (its
+    /// `req.signal` would never fire on disconnect; a backpressured body
+    /// would stall). Just drop the local handle and flags.
+    fn detach_response_after_end(&mut self) {
+        self.request_body_buf = Vec::new();
+        self.resp.take();
+        self.flags.set_is_waiting_for_request_body(false);
+        self.flags.set_has_abort_handler(false);
+        self.flags.set_has_timeout_handler(false);
     }
 
     pub fn is_aborted_or_ended(&self) -> bool {
@@ -3807,7 +3823,7 @@ where
                 return;
             }
         }
-        self.detach_response();
+        self.detach_response_after_end();
         self.end_request_streaming_and_drain();
         self.deref();
     }

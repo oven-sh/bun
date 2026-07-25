@@ -473,12 +473,14 @@ public:
      * buffers here (it dispatches immediately and queues responses), so replay
      * is always the IsNodeHttp=false onData. */
     void replayPipelinedRequests() {
-        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (httpResponseData->pipelinedBuffer.empty()) {
+        /* The caller's own close gate (internalEnd's shouldCloseConnection
+         * branch) may have already destructed HttpResponseData before we run;
+         * isNoLongerHttp reads only us_socket_t flags, so check it first. */
+        if (isNoLongerHttp()) {
             return;
         }
-        if (isNoLongerHttp()) {
-            httpResponseData->pipelinedBuffer.clear();
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (httpResponseData->pipelinedBuffer.empty()) {
             return;
         }
         /* Re-entering onData from inside onData would stomp the per-context

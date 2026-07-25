@@ -603,10 +603,10 @@ impl FileRoute {
         });
     }
 
-    fn on_response_complete(this: *mut FileRoute, resp: AnyResponse) {
-        resp.clear_aborted();
-        resp.clear_on_writable();
-        resp.clear_timeout();
+    fn on_response_complete(this: *mut FileRoute, _resp: AnyResponse) {
+        // See StaticRoute::on_response_complete: markDone already nulled these,
+        // and uws_res_end_sendfile then replayed any buffered pipelined request
+        // whose handler installed its own; clearing here would null those.
         // SAFETY: `this` is live (ref held by caller); `deref()` may free it.
         unsafe {
             if let Some(mut server) = (*this).server.get() {

@@ -954,7 +954,8 @@ const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
 const CHUNKED_ENCODED_HEADER: picohttp::Header =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
 const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
-const CONNECTION_UPGRADE_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"Upgrade");
+const CONNECTION_UPGRADE_HEADER: picohttp::Header =
+    picohttp::Header::new(b"Connection", b"Upgrade");
 const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
@@ -2499,7 +2500,9 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length.filter(|_| !enforce_fetch_forbidden) {
+                if let Some(content_length) =
+                    original_content_length.filter(|_| !enforce_fetch_forbidden)
+                {
                     if add_transfer_encoding {
                         // User explicitly set Content-Length and did not set Transfer-Encoding;
                         // preserve Content-Length instead of using chunked encoding.

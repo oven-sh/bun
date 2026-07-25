@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import net from "node:net";
 import http from "node:http";
+import net from "node:net";
 
 // Raw-socket origin that records the exact request head bytes fetch() put on
 // the wire, so we can assert which hop-by-hop / framing headers were dropped.

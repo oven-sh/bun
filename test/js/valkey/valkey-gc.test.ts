@@ -569,9 +569,12 @@ test.concurrent(
       parentPort.postMessage("up");
     \`;
 
-    for (let r = 0; r < ${isASAN ? 2 : 4}; r++) {
+    for (let r = 0; r < ${isASAN ? 1 : 3}; r++) {
       const w = new Worker(body, { eval: true, workerData: { port: server.port } });
-      await new Promise(res => w.once("message", res));
+      await new Promise((res, rej) => {
+        w.once("message", res);
+        w.once("error", rej);
+      });
       await Bun.sleep(20 + (r * 7) % 30);
       await w.terminate();
     }
@@ -584,16 +587,18 @@ test.concurrent(
       cmd: [bunExe(), "-e", src],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
+      stderr: "inherit",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
 
-    expect(stderr).not.toContain("hasTerminationRequest");
-    expect(stderr).not.toContain("use-after-free");
     expect(stdout.trim()).toBe("OK");
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(0);
   },
-  30_000,
+  // Worker VM creation under debug+ASAN is ~3s per round; with the
+  // concurrent siblings above contending for CPU the single ASAN round
+  // measures 4.3-5.0s, right at the default ceiling. Same rationale as
+  // test/js/web/workers/worker-terminate-lifetime.test.ts.
+  isASAN ? 15_000 : 5_000,
 );

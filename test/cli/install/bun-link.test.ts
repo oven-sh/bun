@@ -532,21 +532,8 @@ it("should warn when linked package has peerDependencies", async () => {
     expect(err).toContain("peer-two@* (optional)");
     expect(err).not.toContain("peer-three");
     expect(err).toContain("resolve modules from their real location on disk");
-    expect(err).toContain("--preserve-symlinks");
+    expect(err).toContain("Install these peers in the linked package's own node_modules");
     expect(out).toContain(`installed ${link_name}@link:${link_name}`);
-    expect(exitCode).toBe(0);
-  }
-
-  // Under the isolated linker, --preserve-symlinks would break the store
-  // layout, so the warning should not recommend it.
-  {
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    await rm(join(package_dir, "bun.lock"), { force: true });
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    const { err, exitCode } = await run([bunExe(), "link", link_name, "--linker", "isolated"], package_dir);
-    expect(err.split(header).length - 1).toBe(1);
-    expect(err).not.toContain("--preserve-symlinks");
-    expect(err).toContain("own node_modules");
     expect(exitCode).toBe(0);
   }
 
@@ -557,7 +544,6 @@ it("should warn when linked package has peerDependencies", async () => {
     await rm(join(package_dir, "bun.lockb"), { force: true });
     const { err, exitCode } = await run([bunExe(), "link", link_name, "--silent"], package_dir);
     expect(err).not.toContain("peerDependencies");
-    expect(err).not.toContain("--preserve-symlinks");
     expect(exitCode).toBe(0);
   }
 
@@ -580,6 +566,23 @@ it("should warn when linked package has peerDependencies", async () => {
     expect(err.split(header).length - 1).toBe(1);
     expect(err).toContain("peer-one@^1.0.0");
     expect(err).not.toContain("peer-three");
-    expect(err).toContain("--preserve-symlinks");
+  }
+
+  // With every peer installed under the linked package, nothing is left to
+  // warn about.
+  {
+    for (const name of ["peer-one", "peer-two"]) {
+      await mkdir(join(link_dir, "node_modules", name), { recursive: true });
+      await writeFile(
+        join(link_dir, "node_modules", name, "package.json"),
+        JSON.stringify({ name, version: "1.0.0" }),
+      );
+    }
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lock"), { force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    const { err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
+    expect(err).not.toContain("peerDependencies");
+    expect(exitCode).toBe(0);
   }
 });

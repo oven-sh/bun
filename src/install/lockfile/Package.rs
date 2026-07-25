@@ -1541,12 +1541,7 @@ impl Diff {
 
 #[cold]
 #[inline(never)]
-fn warn_linked_peer_dependencies(
-    pm: &PackageManager,
-    source: &bun_ast::Source,
-    json: &Expr,
-    bump: &bun_alloc::Arena,
-) {
+fn warn_linked_peer_dependencies(source: &bun_ast::Source, json: &Expr, bump: &bun_alloc::Arena) {
     let Some(peer_deps) = json.as_property(b"peerDependencies") else {
         return;
     };
@@ -1563,7 +1558,7 @@ fn warn_linked_peer_dependencies(
             linked_dir,
             &[b"node_modules", key, b"package.json"],
         );
-        if bun_sys::exists(installed.as_bytes()) {
+        if bun_sys::exists_z(installed) {
             return;
         }
         let ver = value.as_utf8(bump).unwrap_or(b"");
@@ -1595,15 +1590,9 @@ fn warn_linked_peer_dependencies(
             if *is_optional { " (optional)" } else { "" },
         );
     }
-    if pm.options.node_linker == crate::package_manager::Options::NodeLinker::Isolated {
-        bun_core::pretty_errorln!(
-            "  Linked packages resolve modules from their real location on disk. Install these peers in the linked package's own node_modules.",
-        );
-    } else {
-        bun_core::pretty_errorln!(
-            "  Linked packages resolve modules from their real location on disk.\n  Install these peers in the linked package's own node_modules, or run bun with <cyan>--preserve-symlinks<r>.",
-        );
-    }
+    bun_core::pretty_errorln!(
+        "  Linked packages resolve modules from their real location on disk. Install these peers in the linked package's own node_modules.",
+    );
     Output::flush();
 }
 
@@ -2237,7 +2226,7 @@ impl Package<u64> {
         if FEATURES == Features::LINK
             && pm.options.log_level != crate::package_manager::LogLevel::Silent
         {
-            warn_linked_peer_dependencies(pm, source, &json, &bump);
+            warn_linked_peer_dependencies(source, &json, &bump);
         }
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();

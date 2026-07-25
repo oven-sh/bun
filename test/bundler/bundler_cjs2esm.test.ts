@@ -99,8 +99,8 @@ describe("bundler", () => {
     },
     runtimeFiles: {
       "/test.mjs": /* js */ `
-        import * as mod from './out.js';
-        if (mod.bad !== undefined) throw new Error("expected undefined, got " + mod.bad);
+        import { bad } from './out.js';
+        if (bad !== undefined) throw new Error("expected undefined, got " + bad);
       `,
     },
     run: [{ stdout: "undefined" }, { file: "/test.mjs" }],
@@ -119,8 +119,8 @@ describe("bundler", () => {
     },
     runtimeFiles: {
       "/test.mjs": /* js */ `
-        import * as mod from './out.js';
-        if (mod.bad !== undefined) throw new Error("expected undefined, got " + mod.bad);
+        import { bad } from './out.js';
+        if (bad !== undefined) throw new Error("expected undefined, got " + bad);
       `,
     },
     run: { file: "/test.mjs" },
@@ -144,11 +144,30 @@ describe("bundler", () => {
     },
     runtimeFiles: {
       "/test.mjs": /* js */ `
-        import * as mod from './out.js';
-        if (mod.bad !== undefined) throw new Error("expected undefined, got " + mod.bad);
+        import { bad } from './out.js';
+        if (bad !== undefined) throw new Error("expected undefined, got " + bad);
       `,
     },
     run: [{ stdout: "undefined" }, { file: "/test.mjs" }],
+  });
+  itBundled("cjs2esm/BadNamedImportReExportedFromWrappedModuleCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const mod = await import('./sub.js');
+        console.log(mod.bad);
+      `,
+      "/sub.js": /* js */ `
+        import {bad} from './bar.cjs';
+        export {bad};
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    run: { stdout: "undefined" },
   });
   itBundled("cjs2esm/ExportsFunction", {
     files: {

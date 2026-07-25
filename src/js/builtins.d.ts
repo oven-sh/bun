@@ -431,12 +431,9 @@ declare function $evictIsolationSourceProviderCache(key?: string): void;
 
 declare function $overridableRequire(this: JSCommonJSModule, id: string): any;
 declare function $requireCommonJSModule(this: JSCommonJSModule, id: string, options?: { paths?: string[] }): any;
-/** `require("node:module")`, for invoking a user-supplied `Module._load` with the `this` Node uses. */
+/** `require("node:module")`, the `this` a user-supplied `Module._load` is invoked with. */
 declare const $nodeModuleConstructor: any;
-/**
- * The function assigned to `Module._load` by user code, or `undefined` when it has not been replaced.
- * `options` is Bun's `require(id, options)` extension, absent on a Node-shaped call.
- */
+/** User-installed `Module._load`, else `undefined`; `options` is Bun's `require(id, options)` extension. */
 declare const $overriddenModuleLoad:
   | ((request: string, parent: JSCommonJSModule, isMain: boolean, options?: { paths?: string[] }) => any)
   | undefined;

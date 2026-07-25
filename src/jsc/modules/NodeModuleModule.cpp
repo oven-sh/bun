@@ -772,11 +772,7 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
     return prototype;
 }
 
-// `Module._load(request, parent, isMain)`: the default implementation. It
-// performs the resolve + cache check + load a `require()` does, anchored at
-// `parent`. `Module.prototype.require` dispatches through `Module._load` once
-// user code has replaced it, so interception tools (proxyquire, mock-require,
-// APM agents) see every `require()`; this is the original they forward to.
+// `Module._load(request, parent, isMain)`: the default a patched `_load` forwards to.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -788,8 +784,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
 
     auto* parentModule = dynamicDowncast<Bun::JSCommonJSModule>(parent);
     if (!parentModule) [[unlikely]] {
-        // Node accepts a plain `{ filename }` / `{ id }` object or no parent at
-        // all, in which case resolution is anchored at the working directory.
+        // Node accepts a plain `{ filename }` / `{ id }` object or no parent at all.
         WTF::String from;
         if (parent.isObject()) {
             auto* parentObject = parent.getObject();
@@ -812,8 +807,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionLoad, (JSGlobalObject * lexicalGlobalObject, 
     ASSERT(requireFunction.isCallable());
     JSC::MarkedArgumentBuffer args;
     args.append(request);
-    // Bun's `require(id, options)` extension rides through the `Module._load`
-    // dispatch as a 4th argument; forward it so { type } / { paths } survive.
     if (callFrame->argumentCount() > 3) {
         args.append(callFrame->uncheckedArgument(3));
     }
@@ -854,8 +847,6 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleUnderscoreLoad,
             }
         }
         globalObject->m_moduleUnderscoreLoadFunction.set(vm, globalObject, value.asCell());
-        // `require()`'s fast path only consults `@overriddenModuleLoad`; keep it
-        // `undefined` unless user code actually installed a replacement function.
         globalObject->putDirect(vm,
             builtinNames(vm).overriddenModuleLoadPrivateName(),
             (isOriginal || !value.isCallable()) ? JSC::jsUndefined() : value, 0);

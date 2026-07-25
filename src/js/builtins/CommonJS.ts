@@ -16,15 +16,11 @@ export function require(this: JSCommonJSModule, _: string) {
 $overriddenName = "require";
 $visibility = "Private";
 export function overridableRequire(this: JSCommonJSModule, originalId: string) {
-  // Like Node, dispatch through `Module._load` once user code has replaced it
-  // (proxyquire, mock-require and APM agents all patch it to intercept
-  // require). $overriddenModuleLoad stays `undefined` on the unpatched path.
+  // Dispatch through Module._load only once user code has replaced it.
   const customLoad = $overriddenModuleLoad;
   if (customLoad !== undefined) {
     if ($argumentCount() > 1) {
-      // Bun's `require(id, options)` extension ({ type }, { paths }) rides as
-      // a 4th argument so `originalLoad.apply(this, arguments)` inside a patch
-      // preserves it. 1-argument requires keep Node's 3-argument shape.
+      // Bun-only `require(id, options)` rides as a 4th arg so `originalLoad.apply(this, arguments)` preserves it.
       return customLoad.$call($nodeModuleConstructor, originalId, this, false, $argument(1));
     }
     return customLoad.$call($nodeModuleConstructor, originalId, this, false);
@@ -32,9 +28,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string) {
   return $requireCommonJSModule.$apply(this, arguments);
 }
 
-// `require()` past the `Module._load` dispatch: resolve, consult the cache,
-// create + evaluate. The default `Module._load(request, parent, isMain)` calls
-// this with `parent` as `this`, so `originalLoad.apply()` performs a real load.
+// The default `Module._load(request, parent, isMain)` calls this with `parent` as `this`.
 $overriddenName = "require";
 $visibility = "Private";
 export function requireCommonJSModule(this: JSCommonJSModule, originalId: string, options: { paths?: string[] } = {}) {

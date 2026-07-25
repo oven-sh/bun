@@ -197,9 +197,6 @@ RefPtr<CryptoKeyAKP> CryptoKeyAKP::importPkcs8(CryptoAlgorithmIdentifier identif
     CBS_init(&cbs, keyData.begin(), keyData.size());
     EvpPKeyPtr key(EVP_parse_private_key(&cbs));
     if (!key) {
-        // BoringSSL's decoder only accepts the `seed [0]` arm of the RFC 9881
-        // / 9935 private-key CHOICE. The `both` SEQUENCE (OpenSSL 3.5's
-        // default output) carries a seed too; recover it so those keys load.
         int err = ERR_peek_last_error();
         if (ERR_GET_LIB(err) == ERR_LIB_EVP && ERR_GET_REASON(err) == EVP_R_PRIVATE_KEY_WAS_NOT_SEED) {
             ncrypto::Buffer<const unsigned char> der { .data = keyData.begin(), .len = keyData.size() };

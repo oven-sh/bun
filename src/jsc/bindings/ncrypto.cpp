@@ -2589,8 +2589,6 @@ EVPKeyPointer EVPKeyPointer::TryParsePqcBothFormPkcs8(
     }
     if (!params) return {};
 
-    // The "both" arm is a SEQUENCE of two OCTET STRINGs: seed then
-    // expandedKey. BoringSSL only needs the seed; it re-derives the rest.
     CBS both, seed, expanded;
     if (!CBS_get_asn1(&privateKey, &both, CBS_ASN1_SEQUENCE)
         || CBS_len(&privateKey) != 0
@@ -2606,8 +2604,6 @@ EVPKeyPointer EVPKeyPointer::TryParsePqcBothFormPkcs8(
     EVPKeyPointer key(EVP_PKEY_from_private_seed(params->alg(), CBS_data(&seed), CBS_len(&seed)));
     if (!key) return {};
 
-    // Reject a seed that does not re-derive the expanded key, matching
-    // OpenSSL's consistency check for this form.
     size_t pubLen = 0;
     if (!EVP_PKEY_get_raw_public_key(key.get(), nullptr, &pubLen)
         || pubLen < params->pubCompareLen) {
@@ -2648,7 +2644,6 @@ bool isPrivateKeyWasNotSeedError(int err)
 EVPKeyPointer tryRecoverPqcBothFormEncrypted(
     const Buffer<const unsigned char>& der, const Buffer<char>& pass)
 {
-    // EncryptedPrivateKeyInfo ::= SEQUENCE { algorithm, encryptedData }
     CBS cbs, epki, algorithm, ciphertext;
     CBS_init(&cbs, der.data, der.len);
     if (!CBS_get_asn1(&cbs, &epki, CBS_ASN1_SEQUENCE)
@@ -2699,13 +2694,8 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
             PasswordCallback,
             config.passphrase.has_value() ? &passphrase : nullptr);
         if (!key && isPrivateKeyWasNotSeedError(ERR_peek_error())) {
-            // The PEM could have been either PRIVATE KEY (plaintext
-            // PrivateKeyInfo) or ENCRYPTED PRIVATE KEY (EncryptedPrivateKeyInfo
-            // wrapping one). Either way BoringSSL decrypted successfully and
-            // then rejected the inner encoding; re-read whichever block it was
-            // to recover the plaintext PrivateKeyInfo for the "both"-form
-            // retry. PEM_read_bio_PrivateKey skips leading non-key blocks, so
-            // this scan does too.
+            // PEM_read_bio_PrivateKey skips leading non-key blocks, so this
+            // scan does too.
             auto pemBio = BIOPointer::New(buffer);
             uint8_t* der = nullptr;
             long derLen = 0;

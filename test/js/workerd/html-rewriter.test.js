@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { bunEnv, bunExe, gcTick, tls, tmpdirSync } from "harness";
 import { createServer as createTcpServer } from "net";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
@@ -361,6 +361,35 @@ describe("HTMLRewriter", () => {
     await Bun.write(filePath, "<div>hello</div>");
     var output = rewriter.transform(new Response(Bun.file(filePath)));
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+  });
+
+  it("(from Bun.file().stream()) supports element handlers", async () => {
+    // Regression: a Response whose body is Bun.file(path).stream() reached
+    // ValueBufferer::buffer_locked_body_value with a Source::File stream and
+    // hit `unreachable!()`, aborting the process.
+    const filePath = join(tmpdirSync(), "html-rewriter-file-stream.html");
+    await Bun.write(filePath, "<p>a</p><p>b</p>");
+    const src = `
+      const rewriter = new HTMLRewriter().on("p", {
+        element(el) { el.setAttribute("v", "1"); },
+      });
+      const out = rewriter.transform(new Response(Bun.file(${JSON.stringify(filePath)}).stream()));
+      process.stdout.write(await out.text());
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('<p v="1">a</p><p v="1">b</p>');
+    expect(exitCode).toBe(0);
   });
 
   it("supports attribute iterator", async () => {

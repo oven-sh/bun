@@ -2411,7 +2411,7 @@ impl<'a> ValueBufferer<'a> {
             }
             None
         };
-        if let Some(stream) = readable_stream {
+        if let Some(mut stream) = readable_stream {
             *value = Value::Used;
 
             if stream.is_locked(self.global) {
@@ -2422,9 +2422,24 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Invalid => {
                     return Err(crate::Error::InvalidStream);
                 }
-                // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
-                | webcore::readable_stream::Source::File(_) => unreachable!(),
+                | webcore::readable_stream::Source::File(_) => {
+                    // `to_blob_if_possible` only inspects `locked.readable`, which
+                    // `check_body_stream_ref` clears when the stream is migrated to
+                    // the JS-side cache slot. The stream then arrives here via
+                    // `owned_readable_stream` with its Blob store still intact, so
+                    // recover it and route through the `Value::Blob` path in `run`.
+                    if let Some(any_blob) = stream.to_any_blob(self.global) {
+                        self.readable_stream_ref.deinit();
+                        *value = match any_blob {
+                            AnyBlob::Blob(b) => Value::Blob(b),
+                            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
+                            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+                        };
+                        return self.run(value, None);
+                    }
+                    return Err(crate::Error::UnsupportedStreamType);
+                }
                 webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now

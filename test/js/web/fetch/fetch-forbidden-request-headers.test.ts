@@ -2,31 +2,37 @@ import { describe, expect, test } from "bun:test";
 import http from "node:http";
 import net from "node:net";
 
-// Raw-socket origin that records the exact request head bytes fetch() put on
-// the wire, so we can assert which hop-by-hop / framing headers were dropped.
-async function recordedRequest(opts: RequestInit): Promise<{ head: string; lines: string[]; names: Set<string> }> {
-  let captured = "";
-  const origin = net.createServer(s => {
+// Raw-socket origin that records the exact request head bytes and replies once
+// `done(acc)` returns true. The returned server is disposable (`await using`).
+function rawOrigin(done: (acc: Buffer) => boolean) {
+  const state = { head: "" };
+  const server = net.createServer(s => {
+    s.on("error", () => {});
     let acc = Buffer.alloc(0);
     s.on("data", d => {
       acc = Buffer.concat([acc, d]);
       const i = acc.indexOf("\r\n\r\n");
       if (i < 0) return;
-      captured = acc.subarray(0, i).toString();
-      s.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+      if (!state.head) state.head = acc.subarray(0, i).toString();
+      if (done(acc)) s.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
     });
   });
-  await new Promise<void>(r => origin.listen(0, "127.0.0.1", r));
-  const { port } = origin.address() as net.AddressInfo;
-  try {
-    const res = await fetch(`http://127.0.0.1:${port}/x`, opts);
-    await res.text();
-  } finally {
-    await new Promise<void>(r => origin.close(() => r()));
-  }
-  const lines = captured.split("\r\n");
+  return {
+    state,
+    listen: () =>
+      new Promise<number>(r => server.listen(0, "127.0.0.1", () => r((server.address() as net.AddressInfo).port))),
+    [Symbol.asyncDispose]: () => new Promise<void>(r => server.close(() => r())),
+  };
+}
+
+async function recordedRequest(opts: RequestInit): Promise<{ lines: string[]; names: Set<string> }> {
+  await using origin = rawOrigin(() => true);
+  const port = await origin.listen();
+  const res = await fetch(`http://127.0.0.1:${port}/x`, opts);
+  await res.text();
+  const lines = origin.state.head.split("\r\n");
   const names = new Set(lines.slice(1).map(l => l.split(":")[0].trim().toLowerCase()));
-  return { head: captured, lines, names };
+  return { lines, names };
 }
 
 function headerValue(lines: string[], name: string): string | undefined {
@@ -77,8 +83,7 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
 
     for (const [label, init] of paths) {
       const { names, lines } = await recordedRequest(init);
-      // Connection defaults to keep-alive; the user's arbitrary directive must not appear.
-      expect(headerValue(lines, "connection"), `${label}: Connection value`).not.toContain("x-forwarded-for");
+      expect(headerValue(lines, "connection"), `${label}: Connection value`).toBe("keep-alive");
       expect(names.has("keep-alive"), `${label}: Keep-Alive on wire`).toBe(false);
       expect(names.has("expect"), `${label}: Expect on wire`).toBe(false);
       expect(names.has("http2-settings"), `${label}: HTTP2-Settings on wire`).toBe(false);
@@ -89,11 +94,15 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
     // A relay forwarding untrusted inbound headers into fetch() and appending its own X-Forwarded-For.
     // If the caller's Connection directive reaches the upstream wire, an RFC 9110 §7.6.1 intermediary
     // strips the named header before forwarding, defeating the relay's own X-Forwarded-For.
-    for (const value of ["x-forwarded-for", "close, x-forwarded-for", "Upgrade, HTTP2-Settings"]) {
+    const cases: Array<[string, string | undefined]> = [
+      ["x-forwarded-for", "keep-alive"],
+      ["close, x-forwarded-for", "keep-alive"],
+      ["Upgrade, HTTP2-Settings", "keep-alive"],
+      ["close", undefined],
+    ];
+    for (const [value, expected] of cases) {
       const { lines } = await recordedRequest({ headers: { Connection: value } });
-      const wire = headerValue(lines, "connection");
-      expect(wire).not.toBe(value);
-      expect(wire === undefined || wire === "keep-alive").toBe(true);
+      expect(headerValue(lines, "connection")).toBe(expected);
     }
   });
 
@@ -116,20 +125,8 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
     // Bun's fetch() supports protocol upgrade (PR #22390). The Upgrade token passes through,
     // but the Connection header is rewritten to exactly "Upgrade" so a caller cannot smuggle
     // extra hop-by-hop directives alongside the upgrade opt-in.
-    let captured = "";
-    const origin = net.createServer(s => {
-      let acc = Buffer.alloc(0);
-      s.on("data", d => {
-        acc = Buffer.concat([acc, d]);
-        const i = acc.indexOf("\r\n\r\n");
-        if (i < 0) return;
-        captured = acc.subarray(0, i).toString();
-        // Deliberately return 200, not 101: we only care what hit the wire.
-        s.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
-      });
-    });
-    await new Promise<void>(r => origin.listen(0, "127.0.0.1", r));
-    const { port } = origin.address() as net.AddressInfo;
+    await using origin = rawOrigin(() => true);
+    const port = await origin.listen();
     const res = await fetch(`http://127.0.0.1:${port}/`, {
       headers: {
         "Connection": "Upgrade, x-forwarded-for",
@@ -139,36 +136,16 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
       },
     });
     await res.text();
-    await new Promise<void>(r => origin.close(() => r()));
-
-    const lines = captured.split("\r\n");
-    const conn = headerValue(lines, "connection");
-    const upgrade = headerValue(lines, "upgrade");
-    expect(upgrade).toBe("websocket");
-    expect(conn).toBe("Upgrade");
+    const lines = origin.state.head.split("\r\n");
+    expect(headerValue(lines, "upgrade")).toBe("websocket");
+    expect(headerValue(lines, "connection")).toBe("Upgrade");
   });
 
   test("stream body: user Content-Length and Transfer-Encoding are ignored", async () => {
-    // #3610 face: a stream body with a user-supplied Content-Length desynchronizes framing.
+    // A stream body with a user-supplied Content-Length desynchronizes framing.
     // fetch() must own framing for stream bodies regardless of what the headers say.
-    let captured = "";
-    const origin = net.createServer(s => {
-      let acc = Buffer.alloc(0);
-      s.on("data", d => {
-        acc = Buffer.concat([acc, d]);
-        const i = acc.indexOf("\r\n\r\n");
-        if (i < 0) return;
-        if (!captured) captured = acc.subarray(0, i).toString();
-      });
-      // Wait for the chunked terminator before replying so the client finishes writing.
-      s.on("data", d => {
-        if (acc.includes("0\r\n\r\n")) {
-          s.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
-        }
-      });
-    });
-    await new Promise<void>(r => origin.listen(0, "127.0.0.1", r));
-    const { port } = origin.address() as net.AddressInfo;
+    await using origin = rawOrigin(acc => acc.includes("0\r\n\r\n"));
+    const port = await origin.listen();
 
     async function* body() {
       yield new TextEncoder().encode("hello");
@@ -185,9 +162,8 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
       duplex: "half",
     });
     await res.text();
-    await new Promise<void>(r => origin.close(() => r()));
 
-    const lines = captured.split("\r\n");
+    const lines = origin.state.head.split("\r\n");
     expect(headerValue(lines, "content-length")).toBeUndefined();
     expect(headerValue(lines, "transfer-encoding")).toBe("chunked");
   });
@@ -198,25 +174,14 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
     const derived = new Request(req, {});
     for (const r of [req, cloned, derived]) {
       const { lines } = await recordedRequest({ headers: r.headers });
-      expect(headerValue(lines, "connection")).not.toContain("x-forwarded-for");
+      expect(headerValue(lines, "connection")).toBe("keep-alive");
     }
   });
 
   test("node:http client still owns Connection (control lane)", async () => {
     // The drop is fetch()-only; node:http writes its own request line and must keep full control.
-    let head = "";
-    const origin = net.createServer(s => {
-      let acc = Buffer.alloc(0);
-      s.on("data", d => {
-        acc = Buffer.concat([acc, d]);
-        const i = acc.indexOf("\r\n\r\n");
-        if (i < 0) return;
-        head = acc.subarray(0, i).toString();
-        s.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
-      });
-    });
-    await new Promise<void>(r => origin.listen(0, "127.0.0.1", r));
-    const { port } = origin.address() as net.AddressInfo;
+    await using origin = rawOrigin(() => true);
+    const port = await origin.listen();
     await new Promise<void>((resolve, reject) => {
       const req = http.request({ host: "127.0.0.1", port, path: "/", headers: { Connection: "x-custom-token" } });
       req.on("response", res => {
@@ -226,7 +191,6 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
       req.on("error", reject);
       req.end();
     });
-    await new Promise<void>(r => origin.close(() => r()));
-    expect(/^connection:\s*x-custom-token/im.test(head)).toBe(true);
+    expect(/^connection:\s*x-custom-token/im.test(origin.state.head)).toBe(true);
   });
 });

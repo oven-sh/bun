@@ -41,15 +41,18 @@ describe("fetch Connection header", () => {
   // forwarded verbatim (it could name arbitrary headers for an RFC 9110
   // §7.6.1 hop to strip). `close` still disables keep-alive on the client
   // side; anything else falls back to the default `keep-alive`.
-  test.each(["close", "keep-alive", "upgrade", "Upgrade", "x-forwarded-for"])(
-    "Connection: %s is not forwarded verbatim",
-    async inputValue => {
-      const headers = await captureHeadersFromRequest({
-        headers: { Connection: inputValue },
-      });
-      expect(headers.connection === undefined || headers.connection === "keep-alive").toBe(true);
-    },
-  );
+  test.each([
+    ["close", undefined],
+    ["keep-alive", "keep-alive"],
+    ["upgrade", "keep-alive"],
+    ["Upgrade", "keep-alive"],
+    ["x-forwarded-for", "keep-alive"],
+  ] as const)("Connection: %s is not forwarded verbatim", async (inputValue, expected) => {
+    const headers = await captureHeadersFromRequest({
+      headers: { Connection: inputValue },
+    });
+    expect(headers.connection).toBe(expected);
+  });
 
   it("should default to keep-alive when no Connection header provided", async () => {
     const headers = await captureHeadersFromRequest({});
@@ -68,7 +71,7 @@ describe("fetch Connection header", () => {
       },
     });
 
-    expect(headers.connection === undefined || headers.connection === "keep-alive").toBe(true);
+    expect(headers.connection).toBeUndefined();
     expect(headers.accept).toBe("application/json");
     expect(headers["x-test-header"]).toBe("test-value");
   });

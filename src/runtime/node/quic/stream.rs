@@ -358,10 +358,8 @@ impl QuicStream {
             return;
         }
         let enqueued = self.inbound.with_mut(|inbound| {
-            // `on_reset` can fire from inside the same `lsquic_stream_read`
-            // that produced `data` (a locally-detected malformed message
-            // resets mid-read); once `mark_reset` has errored the queue the
-            // bytes belong to the reset and never reach the reader.
+            // A locally-detected malformed message fires `on_reset` from
+            // inside the `lsquic_stream_read` that produced `data`.
             if inbound.errored {
                 return false;
             }

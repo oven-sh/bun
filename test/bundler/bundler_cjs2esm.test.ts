@@ -550,4 +550,88 @@ describe("bundler", () => {
     cjs2esm: true,
     run: { stdout: "[1,2]" },
   });
+  // https://github.com/oven-sh/bun/issues/7709
+  // A .js file with import/export syntax that is not inside a "type": "module"
+  // package should use Babel-style __esModule interop when importing CJS (i.e.
+  // __toESM is called without the isNodeMode flag), matching esbuild and
+  // webpack. Passing isNodeMode=1 here made `default` resolve to the whole
+  // module.exports object instead of `exports.default`.
+  itBundled("cjs2esm/ToESMDoesNotSetNodeModeForUntypedESM", {
+    files: {
+      "/entry.js": /* js */ `
+        import mod from 'fake-esm';
+        console.log(JSON.stringify(mod.Base));
+      `,
+      "/package.json": `{ "type": "module" }`,
+      "/node_modules/fake-esm/package.json": `{ "name": "fake-esm", "module": "esm/index.js", "main": "esm/index.js" }`,
+      "/node_modules/fake-esm/esm/index.js": /* js */ `
+        import Base from 'cjs-dep';
+        export default { Base: Base };
+      `,
+      "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+      "/node_modules/cjs-dep/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "THE_DEFAULT";
+        exports.named = "NAMED";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      // fake-esm/esm/index.js is not in a "type": "module" scope, so the
+      // __toESM call it generates must not pass the second arg.
+      expect(code).toContain("__toESM(require_cjs_dep())");
+    },
+    run: { stdout: `"THE_DEFAULT"` },
+  });
+  itBundled("cjs2esm/ToESMSetsNodeModeForTypeModule", {
+    files: {
+      "/entry.js": /* js */ `
+        import mod from 'real-esm';
+        console.log(JSON.stringify(mod.Base));
+      `,
+      "/package.json": `{ "type": "module" }`,
+      "/node_modules/real-esm/package.json": `{ "name": "real-esm", "type": "module", "main": "index.js" }`,
+      "/node_modules/real-esm/index.js": /* js */ `
+        import Base from 'cjs-dep';
+        export default { Base: Base };
+      `,
+      "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+      "/node_modules/cjs-dep/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "THE_DEFAULT";
+        exports.named = "NAMED";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("__toESM(require_cjs_dep(), 1)");
+    },
+    run: { stdout: `{"__esModule":true,"default":"THE_DEFAULT","named":"NAMED"}` },
+  });
+  itBundled("cjs2esm/ToESMSetsNodeModeForMJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import mod from './mid.mjs';
+        console.log(JSON.stringify(mod.Base));
+      `,
+      "/mid.mjs": /* js */ `
+        import Base from 'cjs-dep';
+        export default { Base: Base };
+      `,
+      "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+      "/node_modules/cjs-dep/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "THE_DEFAULT";
+        exports.named = "NAMED";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("__toESM(require_cjs_dep(), 1)");
+    },
+    run: { stdout: `{"__esModule":true,"default":"THE_DEFAULT","named":"NAMED"}` },
+  });
 });

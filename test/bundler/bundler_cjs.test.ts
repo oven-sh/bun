@@ -3,31 +3,27 @@ import { itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
-// The key insight from the code change:
-// - `input_module_type` is set based on the AST's exports_kind (whether the importing
-//   file uses ESM syntax like import/export or CJS syntax like require/module.exports)
-// - When a file uses ESM syntax (import/export), isNodeMode = 1
-// - When a file uses CJS syntax (require), __toESM is not used at all
+// `input_module_type` is set based on the resolver's module_type for the
+// importing file (i.e. .mjs/.mts, or a .js file inside a package with
+// "type": "module"). When the importer is a Node ESM module by those rules,
+// isNodeMode = 1 and `__esModule` is IGNORED: the default import is the whole
+// `module.exports` object, matching Node.js.
 //
-// This means:
-// - Any file using `import` will always get isNodeMode=1, which IGNORES __esModule
-//   and always wraps the CJS module as the default export
-// - This matches Node.js ESM behavior where importing CJS from .mjs always wraps
-//   the entire exports object as the default
-//
-// The __esModule marker is only respected in non-bundled scenarios or when using
-// actual CommonJS require() syntax.
+// When the importer is a .js file without "type": "module" that happens to use
+// `import` syntax (the common "fake ESM" shape shipped by many npm packages),
+// isNodeMode is NOT set and the Babel-style `__esModule` interop is respected.
+// This matches esbuild and webpack.
 
 describe("bundler", () => {
   // ============================================================================
-  // Tests with ESM syntax (import statements)
+  // Tests with Node ESM importers (.mjs entry)
   // These all use isNodeMode=1, which IGNORES __esModule
   // ============================================================================
 
   // Test 1: import with __esModule marker - IGNORED
   itBundled("cjs/__toESM_import_syntax_with_esModule", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.mjs": /* js */ `
         import lib from './lib.cjs';
         console.log(JSON.stringify(lib));
       `,
@@ -38,7 +34,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // With import syntax, isNodeMode=1, so __esModule is IGNORED
+      // .mjs importer => isNodeMode=1, so __esModule is IGNORED
       // The entire CJS exports object is wrapped as default
       stdout: '{"__esModule":true,"default":{"value":"default export"},"named":"named export"}',
     },
@@ -196,7 +192,7 @@ describe("bundler", () => {
   // Test 10: format=esm
   itBundled("cjs/__toESM_format_esm", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.mjs": /* js */ `
         import lib from './lib.cjs';
         console.log(JSON.stringify(lib));
       `,
@@ -208,7 +204,7 @@ describe("bundler", () => {
     },
     format: "esm",
     run: {
-      // __esModule ignored because we're using import syntax
+      // __esModule ignored because importer is .mjs
       stdout: '{"__esModule":true,"default":"the default","other":"other"}',
     },
   });
@@ -216,7 +212,7 @@ describe("bundler", () => {
   // Test 11: format=cjs with import syntax
   itBundled("cjs/__toESM_format_cjs_with_import", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.mjs": /* js */ `
         import lib from './lib.cjs';
         console.log(JSON.stringify(lib));
       `,
@@ -228,7 +224,7 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: {
-      // Still ignores __esModule because entry uses import syntax
+      // Still ignores __esModule because importer is .mjs (output format does not matter)
       stdout: '{"__esModule":true,"default":"the default","other":"other"}',
     },
   });
@@ -369,7 +365,7 @@ describe("bundler", () => {
   // Test 18: __esModule with non-true value
   itBundled("cjs/__toESM_esModule_non_true", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.mjs": /* js */ `
         import lib from './lib.cjs';
         console.log(JSON.stringify(lib));
       `,
@@ -380,8 +376,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // Even if __esModule were respected, only `true` would work
-      // But it's ignored anyway due to import syntax
+      // .mjs importer => __esModule ignored regardless of its value
       stdout: '{"__esModule":"truthy","default":{"value":"default"},"other":"other"}',
     },
   });
@@ -408,7 +403,7 @@ describe("bundler", () => {
   // Test 20: module.exports with __esModule
   itBundled("cjs/__toESM_module_exports_with_esModule", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.mjs": /* js */ `
         import lib from './lib.cjs';
         console.log(JSON.stringify(lib));
       `,
@@ -421,7 +416,7 @@ describe("bundler", () => {
       `,
     },
     run: {
-      // __esModule is in the object but ignored due to import syntax
+      // __esModule is in the object but ignored because importer is .mjs
       stdout: '{"__esModule":true,"default":{"value":"nested"},"other":"prop"}',
     },
   });
@@ -431,7 +426,7 @@ describe("bundler", () => {
   // and input uses ESM syntax to import both default and named exports from CJS with __esModule
   itBundled("cjs/__toESM_input_esm_output_cjs_wrapper_print", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.mjs": /* js */ `
         import lib, { named } from "./lib.cjs";
         console.log(JSON.stringify({ default: lib, named }));
       `,
@@ -443,7 +438,7 @@ describe("bundler", () => {
     },
     format: "cjs",
     run: {
-      // With the fix: ignores __esModule, wraps entire module as default
+      // .mjs importer => ignores __esModule, wraps entire module as default
       // So default gets the whole exports object, named gets the named property
       stdout:
         '{"default":{"__esModule":true,"default":{"value":"default"},"named":"named export"},"named":"named export"}',

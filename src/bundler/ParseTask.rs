@@ -2661,6 +2661,10 @@ pub mod parse_worker {
         };
 
         ast.target = target;
+        if task.module_type == options::ModuleType::Esm {
+            ast.flags
+                .insert(crate::bundled_ast::Flags::MODULE_TYPE_WAS_ESM);
+        }
         if ast.parts.len() <= 1
             && ast.css.is_none()
             && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)

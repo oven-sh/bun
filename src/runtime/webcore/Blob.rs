@@ -5244,12 +5244,21 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
-                        // Tell the producer to buffer the whole body before `task` is
-                        // repurposed; otherwise a paused fetch never reaches `resolve()`.
-                        if let (Some(on_start_buffering), Some(producer_task)) =
-                            (locked.on_start_buffering.take(), locked.task)
-                        {
-                            on_start_buffering(producer_task);
+                        // Opt the producer into BufferAll before `task` is repurposed
+                        // so a paused fetch (#29831) resumes and eventually `resolve()`s.
+                        // Only valid while `on_start_streaming` hasn't been taken:
+                        // once the ByteStream is materialised the producer delivers
+                        // through it (never via `resolve()`), may already have dropped
+                        // its ref, and `check_body_stream_ref` can have moved the
+                        // readable out of `locked.readable`, so neither that slot nor
+                        // `locked.task` is a reliable witness here. The
+                        // materialised-stream case is the pre-existing #13237 hang.
+                        if locked.on_start_streaming.is_some() {
+                            if let (Some(on_start_buffering), Some(producer_task)) =
+                                (locked.on_start_buffering.take(), locked.task)
+                            {
+                                on_start_buffering(producer_task);
+                            }
                         }
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);

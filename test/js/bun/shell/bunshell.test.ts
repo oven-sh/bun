@@ -3067,9 +3067,7 @@ describe("FORCE_COLOR", () => {
   });
 
   test("is not set for .quiet() / .text()", async () => {
-    const output = await runInTerminal(
-      fixture(`const out = await $\`PROBE\`.text(); process.stdout.write(out);`),
-    );
+    const output = await runInTerminal(fixture(`const out = await $\`PROBE\`.text(); process.stdout.write(out);`));
     expect(output).toMatch(/^fc= nc=\r?$/m);
   });
 
@@ -3107,7 +3105,14 @@ describe("FORCE_COLOR", () => {
     using dir = tempDir("shell-fc-stderr", {});
     const out = join(String(dir), "out.txt");
     await using proc = Bun.spawn({
-      cmd: ["sh", "-c", `exec "$0" -e "$1" > "$2"`, bunExe(), fixture(`await $\`PROBE\`; process.stderr.write("DONE\\n");`), out],
+      cmd: [
+        "sh",
+        "-c",
+        `exec "$0" -e "$1" > "$2"`,
+        bunExe(),
+        fixture(`await $\`PROBE\`; process.stderr.write("DONE\\n");`),
+        out,
+      ],
       env: colorEnv,
       terminal,
     });

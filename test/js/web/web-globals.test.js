@@ -395,16 +395,15 @@ test.skipIf(isWindows)("alert/confirm/prompt work while readline has stdin in ra
   // child exit, so key this off the process itself. A clean exit is left to
   // the data callback (the final PTY read can arrive after the pidfd event in
   // the same poll batch, so rejecting on code 0 would race the success path).
+  let childExitError;
   proc.exited.then(code => {
     if (code === 0) return;
-    for (const w of waiters.splice(0)) {
-      w.reject(
-        new Error("child exited (" + code + ") before " + JSON.stringify(w.marker) + "; out=" + JSON.stringify(out)),
-      );
-    }
+    childExitError = new Error("child exited (" + code + ") before expected output; out=" + JSON.stringify(out));
+    for (const w of waiters.splice(0)) w.reject(childExitError);
   });
   const waitFor = marker =>
     new Promise((resolve, reject) => {
+      if (childExitError) return reject(childExitError);
       waiters.push({ marker, resolve, reject });
       pump();
     });

@@ -1,4 +1,4 @@
-// Under `--only` / `--test-only` (Node's --test-only), exactly the four
+// Under `--only` / `--test-only` (Node's --test-only), exactly the five
 // only-marked tests run; without the flag, `only` is a no-op and all eight run.
 const { test, describe } = require("node:test");
 

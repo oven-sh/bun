@@ -169,8 +169,7 @@ describe("node:test", () => {
         const { exitCode, stdout, stderr } = await runTests(["30-only-filter.js"], { CI: "false" }, [flag]);
         // The five only-marked tests (test.only, {only:true}, describe.only,
         // describe {only:true}, and a test.only nested in a plain describe) run,
-        // and nothing else does. Previously `--test-only` was an unknown flag
-        // (ran 8) and `--only` ran zero tests with exit 0.
+        // and nothing else does.
         expect(stdout.match(/^RAN .*/gm)?.sort()).toEqual([
           "RAN plain-suite-only-child",
           "RAN suite-modifier-child",
@@ -194,7 +193,16 @@ describe("node:test", () => {
       // Without the flag, `only` is a no-op like in Node — every marker form in
       // the fixture runs alongside its unmarked siblings.
       const { exitCode, stdout, stderr } = await runTests(["30-only-filter.js"], { CI: "false" });
-      expect(stdout.match(/^RAN .*/gm)).toHaveLength(8);
+      expect(stdout.match(/^RAN .*/gm)?.sort()).toEqual([
+        "RAN plain-suite-only-child",
+        "RAN plain-suite-plain-child",
+        "RAN suite-modifier-child",
+        "RAN suite-option-child",
+        "RAN top-only-modifier",
+        "RAN top-only-option",
+        "RAN top-plain",
+        "RAN unmarked-child",
+      ]);
       expect(stderr).toContain("8 pass");
       expect({ exitCode, stderr }).toMatchObject({
         exitCode: 0,

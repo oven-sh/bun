@@ -3800,10 +3800,7 @@ pub(super) fn server_set_secure_context_(
 /// `https.Server` 'keylog': arm key-log parking on the listener so sockets
 /// accepted from now on collect NSS key-log lines (drained by JS after each
 /// handshake). One-way — Node also never disarms once a listener existed.
-pub(super) fn server_enable_keylog_(
-    global: &JSGlobalObject,
-    server: JSValue,
-) -> JsResult<JSValue> {
+pub(super) fn server_enable_keylog_(global: &JSGlobalObject, server: JSValue) -> JsResult<JSValue> {
     if !server.is_object() {
         return Err(global.throw(format_args!(
             "Failed to enable keylog: The 'this' value is not a Server."

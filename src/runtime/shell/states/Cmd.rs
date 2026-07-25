@@ -385,8 +385,10 @@ impl Cmd {
         if matches!(interp.as_cmd(this).state, CmdState::BufferingRedirectBody) {
             // SAFETY: same JSC-owned location as above, re-read after the
             // producer callback — which may have resolved the body in place.
-            let still_locked =
-                matches!(unsafe { &*body_ptr }, crate::webcore::body::Value::Locked(_));
+            let still_locked = matches!(
+                unsafe { &*body_ptr },
+                crate::webcore::body::Value::Locked(_)
+            );
             if !still_locked {
                 // SAFETY: the producer resolved synchronously and dropped the
                 // hook without firing it (server empty-body path); `ctx` is

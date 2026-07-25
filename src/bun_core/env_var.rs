@@ -223,6 +223,10 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_MEMFD, "BUN_FEATURE_FLAG_DISABLE_MEMFD", {});
     // The RedisClient supports auto-pipelining by default. This flag disables that behavior.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING, "BUN_FEATURE_FLAG_DISABLE_REDIS_AUTO_PIPELINING", {});
+    // Disable module_info generation in the runtime transpiler (falls back to
+    // JSC re-parsing the transpiled output for import/export discovery). This
+    // is the escape hatch for the #7384 fix.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO, "BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK, "BUN_FEATURE_FLAG_DISABLE_RWF_NONBLOCK", {});
     // Fall back to the scalar byte-at-a-time VLQ decode in
     // bun_sourcemap::mapping::parse (skips the Highway-dispatched path).

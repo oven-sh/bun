@@ -930,11 +930,8 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
-        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
-        // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
-            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+        let generate_module_info =
+            !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
                 .unwrap_or(false);
 
         if let Some(entry_ptr) = cache.entry.take() {
@@ -958,7 +955,7 @@ impl TranspilerJob {
                 dump_source_string(vm, specifier, entry.output_code.byte_slice());
             }
 
-            let module_info: *mut c_void = if use_isolation_source_provider_cache
+            let module_info: *mut c_void = if generate_module_info
                 && entry.metadata.module_type != CacheModuleType::Cjs
                 && !entry.esm_record.is_empty()
             {
@@ -1075,22 +1072,16 @@ impl TranspilerJob {
         let is_commonjs_module = parse_result.ast.has_commonjs_export_names
             || parse_result.ast.exports_kind == ExportsKind::Cjs;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
-            if use_isolation_source_provider_cache
-                && !is_commonjs_module
-                && loader.is_java_script_like()
-            {
+            if generate_module_info && !is_commonjs_module && loader.is_java_script_like() {
                 Some(analyze_transpiled_module::ModuleInfo::create(
                     loader.is_type_script(),
                 ))
             } else {
                 None
             };
-        // Propagate top-level-await to the cached
-        // module record. Without this, modules cached via the isolation source
-        // provider (used under --isolate / --parallel) are reported to JSC as
-        // having no TLA, so the module's evaluation promise resolves before the
-        // top-level-await actually completes — causing the caller's
-        // `wait_for_promise` on the preload to return early.
+        // Propagate top-level-await to the module record. Without this, JSC
+        // reports no TLA for the module and the evaluation promise resolves
+        // before the top-level-await actually completes.
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }

@@ -3,10 +3,10 @@ import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 
 const ext = isWindows ? ".exe" : "";
 
-async function run(cmd: string[], cwd: string) {
+async function run(cmd: string[], cwd: string, extraEnv: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd,
-    env: bunEnv,
+    env: { ...bunEnv, ...extraEnv },
     cwd,
     stdio: ["inherit", "pipe", "pipe"],
   });
@@ -117,11 +117,7 @@ for (const b_file of b_files) {
         });
 
         describe.each(["run", "compile", "build"])("%s", mode => {
-          // TODO: "run" is skipped until ESM module_info is enabled in the runtime transpiler.
-          // Currently module_info is only generated for standalone ESM bytecode (--compile).
-          // Once enabled, flip this to include "run".
-          const testFn = mode === "run" ? test.skip : test.concurrent;
-          testFn("works", async () => {
+          test.concurrent("works", async () => {
             let result: { stdout: string; stderr: string; exitCode: number };
             if (mode === "compile") {
               result = await compileAndRun(dir, dir + "/c.ts");
@@ -305,9 +301,7 @@ describe("check ownkeys from a star import", () => {
   };
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    const testFn = mode === "run" ? test.skip : test.concurrent;
-
-    testFn("works", async () => {
+    test.concurrent("works", async () => {
       const result =
         mode === "compile" ? await compileAndRun(dir, dir + "/main.ts") : await run([bunExe(), "main.ts"], dir);
 
@@ -430,14 +424,53 @@ describe("import only used in decorator (#8439)", () => {
   });
 
   describe.each(["run", "compile"] as const)("%s", mode => {
-    const testFn = mode === "run" ? test.skip : test.concurrent;
-
-    testFn("works", async () => {
+    test.concurrent("works", async () => {
       const result =
         mode === "compile" ? await compileAndRun(dir, dir + "/index.ts") : await run([bunExe(), "index.ts"], dir);
 
       expect(result.stderr.trim()).toBe("");
       expect(result.exitCode).toBe(0);
     });
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/7384
+describe("re-export type alias without `export type` (#7384)", () => {
+  // Exercises both load paths: the async transpiler store (the default for a
+  // static `import` from the entry file) and the sync path (`importSync` /
+  // `require(esm)`, forced via BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER).
+  for (const asyncTranspiler of [true, false]) {
+    test.concurrent(`${asyncTranspiler ? "async" : "sync"} transpiler path`, async () => {
+      const dir = tempDirWithFiles("issue-7384", {
+        "EventTypes.ts": `
+          export type ValueOf<T> = T[keyof T];
+          export const SomeConst = 42;
+        `,
+        "utils.ts": `export { ValueOf, SomeConst } from './EventTypes';`,
+        "index.ts": `
+          import { SomeConst } from './utils';
+          console.log(JSON.stringify({ SomeConst }));
+        `,
+      });
+      const result = await run([bunExe(), "index.ts"], dir, {
+        ...(asyncTranspiler ? {} : { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" }),
+      });
+      expect(result.stderr.trim()).toBe("");
+      expect(JSON.parse(result.stdout.trim())).toEqual({ SomeConst: 42 });
+      expect(result.exitCode).toBe(0);
+    });
+  }
+
+  test.concurrent("BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO restores old behavior", async () => {
+    const dir = tempDirWithFiles("issue-7384-disable", {
+      "EventTypes.ts": `export type ValueOf<T> = T[keyof T];`,
+      "utils.ts": `export { ValueOf } from './EventTypes';`,
+      "index.ts": `import './utils';`,
+    });
+    const result = await run([bunExe(), "index.ts"], dir, {
+      BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO: "1",
+    });
+    expect(result.stderr).toContain("export 'ValueOf' not found");
+    expect(result.exitCode).toBe(1);
   });
 });

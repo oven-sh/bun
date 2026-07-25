@@ -1506,8 +1506,10 @@ describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
       // connection succeeding is the liveness proof.
       const probe = new RawH2(childPort);
       const probeResult = await Promise.race([
-        once(probe.socket, "connect").then(() => "connected" as const),
-        once(probe.socket, "error").then(([e]) => e as Error),
+        once(probe.socket, "connect").then(
+          () => "connected" as const,
+          e => e as Error,
+        ),
         proc.exited.then(code => `exited:${code}` as const),
       ]);
       if (probeResult !== "connected") {

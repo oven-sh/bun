@@ -386,36 +386,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Emit __privateAdd for a given storage ref.
-    fn emit_private_add(
-        &mut self,
-        is_static: bool,
-        storage_ref: Ref,
-        value: Option<Expr>,
-        loc: bun_ast::Loc,
-        constructor_inject: &mut BumpVec<'_, Stmt>,
-        static_blocks: &mut BumpVec<'_, Property>,
-    ) {
-        let target = self.new_expr(E::This {}, loc);
-        let storage = self.use_ref(storage_ref, loc);
-        let call = if let Some(v) = value {
-            self.call_rt(loc, b"__privateAdd", &[target, storage, v])
-        } else {
-            self.call_rt(loc, b"__privateAdd", &[target, storage])
-        };
-        if is_static {
-            static_blocks.push(self.make_static_block(call, loc));
-        } else {
-            constructor_inject.push(self.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                loc,
-            ));
-        }
-    }
-
     /// Get the method kind code (1=method, 2=getter, 3=setter).
     fn method_kind(prop: &Property) -> u8 {
         match prop.kind {
@@ -2019,14 +1989,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 if !emitted_private_adds.contains_key(&priv_inner2) {
                     emitted_private_adds.insert(priv_inner2, ());
-                    p.emit_private_add(
-                        prop.flags.contains(Flags::Property::IsStatic),
-                        private_storage_ref.unwrap(),
-                        None,
-                        loc,
-                        &mut constructor_inject_stmts,
-                        &mut static_private_add_blocks,
-                    );
+                    let t = p.new_expr(E::This {}, loc);
+                    let s = p.use_ref(private_storage_ref.unwrap(), loc);
+                    let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
+                    if prop.flags.contains(Flags::Property::IsStatic) {
+                        static_private_add_blocks.push(p.make_static_block(call, loc));
+                    } else {
+                        new_properties.push(p.inline_brand_field(
+                            &mut class_private_names,
+                            &mut brand_field_counter,
+                            call,
+                            loc,
+                        ));
+                    }
                 }
                 if prop.flags.contains(Flags::Property::IsStatic) {
                     static_non_field_elements.push(element);

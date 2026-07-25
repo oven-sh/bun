@@ -356,9 +356,9 @@ describe("bun patch <pkg>", async () => {
       expect(commit.stderr.toString()).not.toContain("error");
       expect(commit.exitCode).toBe(0);
 
-      expect(
-        (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["is-even@1.0.0"],
-      ).toEqual("patches/is-even@1.0.0.patch");
+      expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["is-even@1.0.0"]).toEqual(
+        "patches/is-even@1.0.0.patch",
+      );
       const patch = await Bun.file(join(tempdir, "patches", "is-even@1.0.0.patch")).text();
       expect(patch).toContain("patched");
     });

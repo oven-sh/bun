@@ -52,11 +52,8 @@ public:
     virtual ~EventListener() = default;
     virtual bool operator==(const EventListener&) const = 0;
     virtual void handleEvent(ScriptExecutionContext&, Event&) = 0;
-    // Invoked for listeners registered with Node.js's kIsNodeStyleListener
-    // (MessagePort.prototype.on/.once). Overridden by JSEventListener to call
-    // the JS function with the event's carried value (.data / .detail / .error)
-    // instead of the Event wrapper; the base delegates to handleEvent for
-    // non-JS listener types.
+    // For listeners registered with kIsNodeStyleListener; JSEventListener
+    // overrides this to pass the event's carried value (.data/.detail/.error).
     virtual void handleEventNodeStyle(ScriptExecutionContext& ctx, Event& event) { handleEvent(ctx, event); }
 
     virtual void visitJSFunction(JSC::AbstractSlotVisitor&) {}

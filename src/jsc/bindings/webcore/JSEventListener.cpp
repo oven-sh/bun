@@ -145,23 +145,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobal
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-// A listener registered with Node.js's kIsNodeStyleListener receives the value
-// the event carries rather than the Event wrapper: MessageEvent → .data,
-// CustomEvent → .detail, ErrorEvent → .error; other events carry no value.
+// The value a kIsNodeStyleListener listener receives instead of the Event wrapper
+// (MessageEvent → .data, CustomEvent → .detail, ErrorEvent → .error).
 static JSC::JSValue nodeStyleArgumentForEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Event& event)
 {
     switch (event.eventInterface()) {
     case MessageEventInterfaceType: {
         auto& me = static_cast<MessageEvent&>(event);
-        // Native MessagePort dispatch caches the deserialized payload on the
-        // wrapper; reuse it so node-style and EventTarget-style listeners see
-        // the same value by identity.
+        // Reuse the deserialized payload cached by MessagePort dispatch so
+        // .on listeners and event.data readers see the same value by identity.
         if (auto cached = me.cachedData().getValue({}))
             return cached;
         if (std::holds_alternative<MessageEvent::JSValueTag>(me.data()))
             return me.jsData().getValue(JSC::jsNull());
-        // Serialized but not yet deserialized (e.g. BroadcastChannel): fall
-        // through to the wrapper's .data getter so the result is cached.
+        // Still serialized: read through the wrapper so the result is cached.
         JSValue jsEvent = toJS(lexicalGlobalObject, globalObject, &event);
         if (auto* wrapper = dynamicDowncast<JSMessageEvent>(jsEvent.getObject()))
             return wrapper->data(*lexicalGlobalObject);

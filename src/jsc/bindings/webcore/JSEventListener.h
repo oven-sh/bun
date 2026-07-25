@@ -86,10 +86,7 @@ private:
     bool m_wasCreatedFromMarkup : 1;
 
     mutable bool m_isInitialized : 1;
-    // Transient dispatch state: set by handleEventNodeStyle for the duration
-    // of a single handleEvent call so the shared invocation path knows to pass
-    // the event's carried value instead of the Event wrapper. Not a bitfield
-    // because SetForScope takes a reference.
+    // Transient: set by handleEventNodeStyle around one handleEvent call.
     bool m_invokeAsNodeStyle { false };
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;
     mutable JSC::Weak<JSC::JSObject> m_wrapper;

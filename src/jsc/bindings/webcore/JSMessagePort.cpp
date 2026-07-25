@@ -71,11 +71,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef);
-// NodeEventTarget surface (node lib/internal/event_target.js): a curated subset
-// of EventEmitter that reads and writes the same listener list as EventTarget,
-// so .on()/addEventListener() dedupe against each other, listenerCount()/
-// eventNames()/removeAllListeners() see every listener, and emit() returns a
-// boolean while passing the raw argument to node-style listeners.
+// NodeEventTarget (node lib/internal/event_target.js): an EventEmitter subset
+// that reads and writes the same listener list as addEventListener.
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_on);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_once);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_off);
@@ -158,9 +155,7 @@ static const HashTableValue JSMessagePortPrototypeTableValues[] = {
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_hasRef, 0 } },
 };
 
-// NodeEventTarget methods live on an intermediate prototype between
-// MessagePort.prototype and EventTarget.prototype so that
-// Object.getOwnPropertyNames(MessagePort.prototype) matches node.
+// On an intermediate prototype so getOwnPropertyNames(MessagePort.prototype) matches node.
 static const HashTableValue JSMessagePortNodeEventTargetTableValues[] = {
     { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_on, 2 } },
     { "addListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_on, 2 } },
@@ -521,9 +516,8 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_emitBody(JSC::J
     if (had) {
         EnsureStillAliveScope argument1 = callFrame->argument(1);
         JSValue arg = argument1.value();
-        // node's MessagePort[kCreateEvent]: a MessageEvent for message /
-        // messageerror, a CustomEvent for everything else. Node-style
-        // listeners recover the raw argument by identity at invoke time.
+        // node's MessagePort[kCreateEvent]: MessageEvent for message/messageerror,
+        // CustomEvent otherwise; node-style listeners recover arg at invoke time.
         if (type == eventNames().messageEvent || type == eventNames().messageerrorEvent) {
             MessageEvent::Init init;
             init.data = arg;

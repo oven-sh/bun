@@ -100,11 +100,6 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
-// MessagePort is a NodeEventTarget: the node-style emitter surface (.on /
-// .once / .off / .emit / listenerCount / eventNames / removeAllListeners /
-// set|getMaxListeners) lives on MessagePort.prototype natively and shares the
-// same listener list as addEventListener, so no JS-side registry or wrapper
-// is needed.
 const _MessagePort = globalThis.MessagePort;
 const MessagePort = _MessagePort;
 
@@ -636,8 +631,7 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  // The NodeEventTarget surface on MessagePort.prototype requires a real
-  // MessagePort receiver; this stand-in forwards to the global scope instead.
+  // MessagePort.prototype.on/etc. require a real MessagePort receiver; forward to self.
   function on(this: any, type: string, listener: any) {
     self.addEventListener(type, listener, { $kIsNodeStyleListener: true } as AddEventListenerOptions);
     return this;

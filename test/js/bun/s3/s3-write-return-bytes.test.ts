@@ -3,6 +3,13 @@ import { describe, expect, it } from "bun:test";
 import { isASAN, tempDir } from "harness";
 import path from "node:path";
 
+// The S3 client routes through HTTP_PROXY without consulting NO_PROXY, which
+// breaks the localhost mock origin on proxied machines.
+process.env.HTTP_PROXY = "";
+process.env.HTTPS_PROXY = "";
+process.env.http_proxy = "";
+process.env.https_proxy = "";
+
 // writer() leaks its NetworkSink (pre-existing, fix in #34999), which trips
 // LeakSanitizer; skip those tests under ASAN until that PR lands.
 const itWriter = it.skipIf(isASAN);

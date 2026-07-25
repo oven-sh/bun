@@ -1584,9 +1584,6 @@ impl<'a> PackageInstaller<'a> {
                         }
                     }
                     resolution::Tag::Npm => {
-                        // An empty url is the lockfile shorthand for the
-                        // canonical path under the configured registry;
-                        // `NetworkTask::for_tarball` rebuilds it.
                         let npm = *resolution.npm();
                         match package_manager::enqueue_package_for_download(
                             self.manager_mut(),

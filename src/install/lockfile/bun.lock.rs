@@ -2382,13 +2382,11 @@ pub fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                // `""` means the tarball lives at the canonical path under the
-                // reader's configured registry. Keep the URL empty in memory so
-                // it round-trips as `""` on save; materializing the configured
+                // A `""` resolved field stays empty in memory so it
+                // round-trips as `""` on save; materializing the configured
                 // registry's URL here would get written back verbatim, pinning
                 // the shared lockfile to this machine's registry config
-                // (#35524). The download path rebuilds the URL from the
-                // configured scope when it's empty (`NetworkTask::for_tarball`).
+                // (#35524). `NetworkTask::for_tarball` rebuilds empty URLs.
                 if !registry_str.is_empty() {
                     let configured_registry = if let Some(mgr) = manager.as_deref() {
                         mgr.scope_for_package_name(name_str).url.href()

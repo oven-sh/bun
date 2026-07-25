@@ -100,9 +100,8 @@ pub(crate) fn build_url(
     )
 }
 
-/// Append the canonical registry tarball URL to `out`. Used to materialize a
-/// URL for a package whose lockfile `resolved` field is the empty-string
-/// shorthand for "canonical path under the configured registry".
+/// Append the canonical registry tarball URL to `out`, materializing the
+/// `""` resolved shorthand a `bun.lock` entry may carry.
 pub(crate) fn build_url_into_vec(
     out: &mut Vec<u8>,
     registry: &[u8],

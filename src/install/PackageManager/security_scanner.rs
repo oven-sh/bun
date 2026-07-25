@@ -731,9 +731,6 @@ impl<'a> JSONBuilder<'a> {
             // `npm` union variant is the active field here.
             let npm = pkg_res.npm();
 
-            // An empty URL is the lockfile shorthand for the canonical tarball
-            // path under the configured registry; scanners are documented to
-            // receive the URL bun downloads, so materialize it.
             let npm_url = npm.url.slice(string_buf);
             let mut built_url: Vec<u8> = Vec::new();
             let tarball_url: &[u8] = if npm_url.is_empty() {

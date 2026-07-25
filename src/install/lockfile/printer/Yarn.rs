@@ -213,9 +213,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
             if resolution.tag == bun_install::resolution::Tag::Npm
                 && resolution.npm().url.slice(string_buf).is_empty()
             {
-                // An empty npm URL is bun.lock shorthand for the canonical
-                // tarball path under the configured registry; yarn.lock has no
-                // such shorthand, so materialize the URL here.
+                // yarn.lock has no `""` shorthand, so materialize the URL.
                 crate::extract_tarball::build_url_into_vec(
                     &mut quoted_buf,
                     this.options.scope_for_package_name(name).url.href(),

@@ -256,17 +256,6 @@ export const primordials = {
       PromiseResolve: $PromiseResolve.$call($Promise, 1) instanceof $Promise,
     };
   },
-  refs() {
-    return {
-      ArrayPrototypePush: $ArrayPrototypePush,
-      StringPrototypeSlice: $StringPrototypeSlice,
-      ObjectDefineProperty: $ObjectDefineProperty,
-      MapPrototypeGet: $MapPrototypeGet,
-      MathMax: $MathMax,
-      ReflectOwnKeys: $ReflectOwnKeys,
-      TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength,
-    };
-  },
   // Materializes every primordial and returns one { name, holder, kind, key, value, available }
   // row per JSCPrimordials.h entry, straight from JSC.
   audit: $newCppFunction("PrimordialsAudit.cpp", "Bun__primordialsAudit", 0) as () => Array<{
@@ -283,17 +272,34 @@ export const primordials = {
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin
 // bundler cannot rewrite variable-path requires. Extend the map as more
-// vendored tests need more internals.
+// vendored tests need more internals. Values are lazy so merely requiring
+// bun:internal-for-testing does not evaluate the whole internal-module graph.
 export const exposedInternals = {
-  "internal/streams/add-abort-signal": require("internal/streams/add-abort-signal"),
-  "internal/async_context_frame": require("internal/async_context_frame"),
-  "internal/async_hooks": require("internal/async_hooks"),
-  "internal/webstreams/adapters": require("internal/webstreams_adapters"),
-  "internal/dgram": require("internal/dgram"),
+  get "internal/streams/add-abort-signal"() {
+    return require("internal/streams/add-abort-signal");
+  },
+  get "internal/async_context_frame"() {
+    return require("internal/async_context_frame");
+  },
+  get "internal/async_hooks"() {
+    return require("internal/async_hooks");
+  },
+  get "internal/webstreams/adapters"() {
+    return require("internal/webstreams_adapters");
+  },
+  get "internal/dgram"() {
+    return require("internal/dgram");
+  },
   // Node's internal/fixed_queue module IS the FixedQueue class.
-  "internal/fixed_queue": require("internal/fixed_queue").FixedQueue,
-  "internal/freelist": require("internal/freelist"),
-  "internal/validators": require("internal/validators"),
+  get "internal/fixed_queue"() {
+    return require("internal/fixed_queue").FixedQueue;
+  },
+  get "internal/freelist"() {
+    return require("internal/freelist");
+  },
+  get "internal/validators"() {
+    return require("internal/validators");
+  },
   "internal/fs/utils": {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert

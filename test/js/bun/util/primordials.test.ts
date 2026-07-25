@@ -25,7 +25,10 @@ const prelude = /* js */ `
   const reportAndExit = (obj) => { report(obj); exit(0); };
   const ownDesc = Object.getOwnPropertyDescriptor;
   const getProto = Object.getPrototypeOf;
+  const setProto = Object.setPrototypeOf;
   const defineProperty = Object.defineProperty;
+  const seal = Object.seal;
+  const freeze = Object.freeze;
   const objectKeys = Object.keys;
   const ownKeys = Reflect.ownKeys;
   const $apply = Reflect.apply;
@@ -54,7 +57,7 @@ const prelude = /* js */ `
     RegExpStringIteratorPrototype: () => protoOf(() => "a".matchAll(/a/g)),
     IteratorHelperPrototype: () => protoOf(() => [].values().map(x => x)),
     WrapForValidIteratorPrototype: () => protoOf(() => Iterator.from({ next() { return { done: true }; } })),
-    AsyncIteratorPrototype: () => getProto(protoOf(() => (async function* () {})())),
+    AsyncIteratorPrototype: () => getProto(getProto(protoOf(() => (async function* () {})()))),
     WeakRefPrototype: () => WeakRef.prototype,
     FinalizationRegistryPrototype: () => FinalizationRegistry.prototype,
     GlobalFunctions: () => globalThis,
@@ -214,10 +217,10 @@ describe.concurrent("primordials survive tampering", () => {
       for (let i = 0; i < holderNames.length; i++) {
         const holder = holderObjects[holderNames[i]];
         if (holder === globalThis) continue;
-        try { Object.setPrototypeOf(holder, { __proto__: null, get poisonedProto() { return "poisoned proto"; } }); } catch {}
+        try { setProto(holder, { __proto__: null, get poisonedProto() { return "poisoned proto"; } }); } catch {}
         try { holder.constructor = poison; } catch {}
-        try { Object.seal(holder); } catch {}
-        try { Object.freeze(holder); } catch {}
+        try { seal(holder); } catch {}
+        try { freeze(holder); } catch {}
       }
       // 4. Replace the global bindings themselves.
       const globals = ["Object","Function","Array","String","RegExp","Symbol","BigInt","Promise","Iterator","WeakRef","FinalizationRegistry",

@@ -6004,7 +6004,7 @@ describe.concurrent("bun-install", () => {
 
         // And after the swap, the new resolution is also a no-op on the next run.
         {
-          const { stdout, exited } = spawn({
+          const { stdout, stderr, exited } = spawn({
             cmd: [bunExe(), "install"],
             cwd: ctx.package_dir,
             stdout: "pipe",
@@ -6012,6 +6012,7 @@ describe.concurrent("bun-install", () => {
             stderr: "pipe",
             env,
           });
+          await stderr.text();
           const out = await stdout.text();
           expect(out).toContain("(no changes)");
           expect(await exited).toBe(0);

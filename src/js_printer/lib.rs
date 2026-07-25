@@ -2432,7 +2432,7 @@ pub mod __gated_printer {
             let record = self.import_record(import_record_index as usize);
             let module_type = self.options.module_type;
 
-            if IS_BUN_PLATFORM {
+            if IS_BUN_PLATFORM && self.options.bundling {
                 // "bun" is not a real module. It's just globalThis.Bun.
                 //
                 //  transform from:
@@ -2443,6 +2443,14 @@ pub mod __gated_printer {
                 //      const foo = await Promise.resolve(globalThis.Bun)
                 //      const bar = globalThis.Bun
                 //
+                // This inlining is safe only when `bundling` is true, because
+                // that path always runs a renamer seeded with `globalThis` /
+                // `Promise` (compute_initial_reserved_names), so a user-declared
+                // local of either name has already been renamed away. The
+                // runtime transpiler uses NoOpRenamer and would be captured by
+                // a local `let globalThis`; let require("bun") / import("bun")
+                // fall through to the external paths below instead, where the
+                // runtime module loader resolves "bun" to the Bun object.
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
                         self.print(b"Promise.resolve(globalThis.Bun)");
@@ -5761,7 +5769,10 @@ pub mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
 
-                    if IS_BUN_PLATFORM {
+                    if IS_BUN_PLATFORM && self.options.bundling {
+                        // Gated on `bundling` for the same reason as the Tag::Bun
+                        // arm in print_require_or_import_expr: the `globalThis.Bun`
+                        // literal is only safe once a renamer has reserved the name.
                         if record.tag == ImportRecordTag::Bun {
                             self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;

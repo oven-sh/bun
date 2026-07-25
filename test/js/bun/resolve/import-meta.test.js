@@ -225,7 +225,11 @@ it('require("bun") works', () => {
 });
 
 it('import("bun") works', async () => {
-  expect(await import("bun")).toBe(Bun);
+  const ns = await import("bun");
+  expect(ns.default).toBe(Bun);
+  expect(ns.serve).toBe(Bun.serve);
+  // Consistent with a non-constant specifier (see "dynamically import bun" below)
+  expect(ns).toBe(await import(eval("'bun'")));
 });
 
 it("require.resolve with empty options object", () => {

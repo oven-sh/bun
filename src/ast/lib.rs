@@ -2672,12 +2672,6 @@ impl LineColumnTracker {
             return source.init_error_position(offset_loc);
         }
 
-        // Resume from the first cursor at or behind `offset`. When every cursor
-        // has overshot (the `old_loc` of a redeclaration note points behind all
-        // of them), evict the least-advanced one and restart it from 0 rather
-        // than falling back to `init_error_position`: the fallback repeats
-        // `scan_line_end` on every call, which is O(line length) and turns a
-        // long error-bearing single line into O(errors × line length).
         let index = match self.cursors.iter().position(|c| c.offset <= offset) {
             Some(i) => i,
             None => {
@@ -3609,10 +3603,6 @@ mod line_column_tracker_tests {
 
     #[test]
     fn line_column_tracker_cycling_back_references_match_full_scan() {
-        // "a has already been declared" interleaves a forward-marching `new_loc`
-        // with a note `old_loc` that keeps jumping back to one of several early
-        // positions. Exercise both single-line and multi-line sources so the
-        // eviction path and the `line_end` reuse are covered.
         for contents in [
             &b"0123456789".repeat(200)[..],
             &b"0123456789\n".repeat(200)[..],

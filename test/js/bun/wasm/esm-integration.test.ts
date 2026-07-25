@@ -217,6 +217,38 @@ describe("wasm ES module integration (#12434)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("Bun.plugin virtual module with a .wasm specifier exposes wasm exports", async () => {
+    using dir = tempDir("wasm-esm-plugin", {
+      "add.wasm": addWasmBytes,
+      "preload.js": `
+        import { readFileSync } from "node:fs";
+        Bun.plugin({
+          name: "virtual-wasm",
+          setup(build) {
+            build.module("virtual-add.wasm", () => ({
+              contents: readFileSync(import.meta.dir + "/add.wasm"),
+            }));
+          },
+        });
+      `,
+      "index.js": `
+        const m = await import("virtual-add.wasm");
+        console.log(JSON.stringify({ add: typeof m.add, result: m.add(7, 8) }));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.js", "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ add: "function", result: 15 });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("importing a file with a bad wasm magic header throws a load error", async () => {
     using dir = tempDir("wasm-bad-magic", {
       "bad.wasm": "not a wasm module",

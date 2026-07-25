@@ -4622,11 +4622,8 @@ unsafe fn transpile_virtual_module(
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
     let specifier = specifier_slice.slice();
     // SAFETY: per fn contract.
-    let source_code_slice = unsafe { &*source_code }.to_slice();
-    // SAFETY: per fn contract.
     let referrer_slice = unsafe { &*referrer_ptr }.to_utf8();
 
-    let virtual_source = bun_ast::Source::init_path_string(specifier, source_code_slice.slice());
     let mut log = bun_ast::Log::init();
     // SAFETY: `TranspileExtra::path` is typed `'static` for the cross-crate
     // fn-ptr ABI; the borrow actually lives only for this call (the `extra`
@@ -4655,6 +4652,18 @@ unsafe fn transpile_virtual_module(
             }
         })
     };
+
+    // SAFETY: per fn contract.
+    let source_code_ref = unsafe { &*source_code };
+    // Wasm is binary: read the raw bytes instead of Latin-1→UTF-8 transcoding.
+    let source_code_slice;
+    let source_bytes: &[u8] = if loader == Loader::Wasm {
+        source_code_ref.byte_slice()
+    } else {
+        source_code_slice = source_code_ref.to_slice();
+        source_code_slice.slice()
+    };
+    let virtual_source = bun_ast::Source::init_path_string(specifier, source_bytes);
 
     // Reset the module loader's arena on scope exit.
     // `jsc_vm` is the live per-thread VM (BackRef invariant).

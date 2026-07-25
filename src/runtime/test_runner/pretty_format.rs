@@ -1111,8 +1111,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
-    /// Serializes a DOM node (jsdom / happy-dom) as markup, mirroring the
-    /// `pretty-format` `DOMElement` plugin used by Jest's snapshot serializer.
+    /// Prints a jsdom/happy-dom node as markup (mirrors pretty-format `DOMElement`).
     #[inline(never)]
     fn print_dom_node<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
@@ -1136,12 +1135,14 @@ impl<'a> Formatter<'a> {
             };
         }
 
+        use bun_jsc::console_object::formatter::{DOM_COMMENT_NODE, DOM_FRAGMENT_NODE, DOM_TEXT_NODE};
+
         let node_type = get_swallow!(value, "nodeType")
             .filter(|v| v.is_int32())
             .map(|v| v.to_int32())
             .unwrap_or(0);
 
-        if node_type == 3 || node_type == 8 {
+        if matches!(node_type, DOM_TEXT_NODE | DOM_COMMENT_NODE) {
             let data = get_swallow!(value, "data");
             let text = match data {
                 Some(v) if v.is_string() => {
@@ -1149,7 +1150,7 @@ impl<'a> Formatter<'a> {
                 }
                 _ => bun_core::OwnedString::new(bun_core::String::empty()),
             };
-            if node_type == 8 {
+            if node_type == DOM_COMMENT_NODE {
                 let _ = write!(writer_, "{}<!--{}-->{}", pf!("<r><d>"), text, pf!("<r>"));
             } else {
                 let _ = write!(writer_, "{}", text);
@@ -1157,7 +1158,7 @@ impl<'a> Formatter<'a> {
             return Ok(());
         }
 
-        let (tag_utf8, is_fragment) = if node_type == 11 {
+        let (tag_utf8, is_fragment) = if node_type == DOM_FRAGMENT_NODE {
             (bun_core::ZigStringSlice::from_utf8_never_free(b"DocumentFragment"), true)
         } else {
             let tag_name = get_swallow!(value, "tagName");
@@ -1186,7 +1187,7 @@ impl<'a> Formatter<'a> {
                     if let Some(len_v) = get_swallow!(attrs, "length") {
                         if len_v.is_int32() {
                             let n = len_v.to_int32().max(0) as u32;
-                            let mut pairs: Vec<(Vec<u8>, bun_core::OwnedString)> =
+                            let mut pairs: Vec<(Vec<u8>, Vec<u8>)> =
                                 Vec::with_capacity(n.min(64) as usize);
                             for i in 0..n {
                                 let Ok(attr) = attrs.get_index(self.global_this, i) else {
@@ -1202,14 +1203,12 @@ impl<'a> Formatter<'a> {
                                 }
                                 let name_s = name.get_zig_string(self.global_this)?;
                                 let name_owned = name_s.to_slice().slice().to_vec();
-                                let val = get_swallow!(attr, "value")
-                                    .filter(|v| v.is_string())
-                                    .map(|v| v.to_bun_string(self.global_this))
-                                    .transpose()?
-                                    .map(bun_core::OwnedString::new)
-                                    .unwrap_or_else(|| {
-                                        bun_core::OwnedString::new(bun_core::String::empty())
-                                    });
+                                let val = match get_swallow!(attr, "value") {
+                                    Some(v) if v.is_string() => {
+                                        v.get_zig_string(self.global_this)?.to_slice().slice().to_vec()
+                                    }
+                                    _ => Vec::new(),
+                                };
                                 pairs.push((name_owned, val));
                             }
                             pairs.sort_by(|a, b| a.0.cmp(&b.0));
@@ -1220,12 +1219,12 @@ impl<'a> Formatter<'a> {
                                 let _ = self.write_indent(writer_);
                                 let _ = write!(
                                     writer_,
-                                    "{}{}{}={}\"{}\"{}",
+                                    "{}{}{}={}{}{}",
                                     pf!("<blue>"),
                                     bstr::BStr::new(name),
                                     pf!("<r><d>"),
                                     pf!("<r><green>"),
-                                    val,
+                                    bun_core::fmt::quote(val),
                                     pf!("<r>"),
                                 );
                             }

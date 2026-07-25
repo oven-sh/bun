@@ -3319,14 +3319,12 @@ pub mod formatter {
         Ok(None)
     }
 
-    const DOM_ELEMENT_NODE: i32 = 1;
-    const DOM_TEXT_NODE: i32 = 3;
-    const DOM_COMMENT_NODE: i32 = 8;
-    const DOM_FRAGMENT_NODE: i32 = 11;
+    pub const DOM_ELEMENT_NODE: i32 = 1;
+    pub const DOM_TEXT_NODE: i32 = 3;
+    pub const DOM_COMMENT_NODE: i32 = 8;
+    pub const DOM_FRAGMENT_NODE: i32 = 11;
 
-    /// Mirrors the pretty-format `DOMElement` plugin test: given a constructor
-    /// name, return the `nodeType` value that would confirm the object is a DOM
-    /// node of that kind, or `None` if the name does not look DOM-like.
+    /// Constructor name → expected `nodeType` (pretty-format `DOMElement` plugin rule).
     pub fn dom_node_type_for_class_name(name: &[u8]) -> Option<i32> {
         use bun_core::strings;
         // /^((HTML|SVG)\w*)?Element$/
@@ -3345,17 +3343,15 @@ pub mod formatter {
         }
     }
 
-    /// DOM node detection (jsdom / happy-dom). Restricted to values whose
-    /// class name matches a known DOM pattern so the `nodeType` prototype
-    /// getter is never invoked on unrelated objects.
+    /// True when `value` duck-types as a jsdom/happy-dom node. `#[inline(never)]` keeps `Tag::get` frames small.
     #[inline(never)]
     pub fn is_dom_node(global_this: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-        // Fast bail for plain `{}` / `Object.create(null)` / one-level classes:
-        // DOM nodes inherit through at least `Node` → `EventTarget`, so an
-        // object whose prototype is `Object.prototype` (grand-proto is null)
-        // cannot be one and skips the `calculatedClassName` walk below.
+        // DOM nodes inherit through `Node`→`EventTarget`; a null grand-proto means plain `{}`.
         let proto = value.get_prototype(global_this);
-        if proto.is_empty_or_undefined_or_null() {
+        if proto.is_empty_or_undefined_or_null()
+            || !proto.is_cell()
+            || proto.js_type() == jsc::JSType::ProxyObject
+        {
             return Ok(false);
         }
         let grand = proto.get_prototype(global_this);
@@ -5526,10 +5522,7 @@ pub mod formatter {
             Ok(())
         }
 
-        /// Serializes a DOM node (jsdom / happy-dom) as markup, mirroring the
-        /// `pretty-format` `DOMElement` plugin so jest-dom matcher messages and
-        /// snapshots render `<button id="x">text</button>` instead of the full
-        /// object graph.
+        /// Prints a jsdom/happy-dom node as markup (`<button id="x">…</button>`).
         #[inline(never)]
         fn print_dom_node<const C: bool>(
             &mut self,
@@ -5622,7 +5615,7 @@ pub mod formatter {
                         if let Some(len_v) = get_swallow!(attrs, "length") {
                             if len_v.is_int32() {
                                 let n = len_v.to_int32().max(0) as u32;
-                                let mut pairs: Vec<(Vec<u8>, bun_core::OwnedString)> =
+                                let mut pairs: Vec<(Vec<u8>, Vec<u8>)> =
                                     Vec::with_capacity(n.min(64) as usize);
                                 for i in 0..n {
                                     let Ok(attr) = attrs.get_index(self.global_this, i) else {
@@ -5640,19 +5633,19 @@ pub mod formatter {
                                     }
                                     let name_s = name.get_zig_string(self.global_this)?;
                                     let name_owned = name_s.to_slice().slice().to_vec();
-                                    let val = get_swallow!(attr, "value")
-                                        .filter(|v| v.is_string())
-                                        .map(|v| v.to_bun_string(self.global_this))
-                                        .transpose()?
-                                        .map(bun_core::OwnedString::new)
-                                        .unwrap_or_else(|| {
-                                            bun_core::OwnedString::new(bun_core::String::empty())
-                                        });
+                                    let val = match get_swallow!(attr, "value") {
+                                        Some(v) if v.is_string() => {
+                                            v.get_zig_string(self.global_this)?
+                                                .to_slice()
+                                                .slice()
+                                                .to_vec()
+                                        }
+                                        _ => Vec::new(),
+                                    };
                                     pairs.push((name_owned, val));
                                 }
                                 pairs.sort_by(|a, b| a.0.cmp(&b.0));
-                                attrs_multiline =
-                                    !self.single_line && !pairs.is_empty() && pairs.len() > 1;
+                                attrs_multiline = !self.single_line && pairs.len() > 1;
                                 for (name, val) in &pairs {
                                     if attrs_multiline {
                                         let _ = writer_.write_all(b"\n");
@@ -5662,12 +5655,12 @@ pub mod formatter {
                                     }
                                     let _ = write!(
                                         writer_,
-                                        "{}{}{}={}\"{}\"{}",
+                                        "{}{}{}={}{}{}",
                                         pf!("<blue>"),
                                         bstr::BStr::new(name),
                                         pf!("<r><d>"),
                                         pf!("<r><green>"),
-                                        val,
+                                        bun_core::fmt::quote(val),
                                         pf!("<r>"),
                                     );
                                 }

@@ -805,9 +805,6 @@ it("CustomEvent", () => {
 });
 
 // https://github.com/oven-sh/bun/issues/10886
-// DOM nodes (jsdom / happy-dom) are duck-typed: an object whose constructor
-// name matches a DOM class *and* whose nodeType agrees is serialized as markup
-// instead of having its internals dumped.
 describe("DOM nodes", () => {
   function attr(name, value) {
     return new (class Attr {
@@ -884,6 +881,11 @@ describe("DOM nodes", () => {
     expect(Bun.inspect(svg)).toBe('<svg width="10" />');
   });
 
+  it("attribute value with quotes is escaped", () => {
+    const div = element(HTMLDivElement, "DIV", [attr("title", 'Say "Hi"')], []);
+    expect(Bun.inspect(div)).toBe('<div title="Say \\"Hi\\"" />');
+  });
+
   it("Text node", () => {
     expect(Bun.inspect(new Text("some text"))).toBe("some text");
   });
@@ -917,6 +919,35 @@ describe("DOM nodes", () => {
     expect(button).toCaptureDomPrints();
     expect(printed).toBe('<button id="x" />');
     expect(stringified).toBe('<button id="x" />');
+  });
+
+  it("toMatchInlineSnapshot (snapshot serializer path)", () => {
+    const div = element(HTMLDivElement, "DIV", [attr("id", "x")], [new Text("hi"), new Comment("c")]);
+    expect(div).toMatchInlineSnapshot(`
+<div
+  id="x"
+>
+  hi
+  <!--c-->
+</div>
+`);
+    expect(new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])])).toMatchInlineSnapshot(`
+<DocumentFragment>
+  <button />
+</DocumentFragment>
+`);
+  });
+
+  it("toEqual diff on a DOM element renders markup, not object graph", () => {
+    const a = element(HTMLButtonElement, "BUTTON", [], [new Text("a")]);
+    let message = "";
+    try {
+      expect(a).toEqual({ not: "a match" });
+    } catch (e) {
+      message = Bun.stripANSI(String(e.message));
+    }
+    expect(message).toContain("<button");
+    expect(message).not.toContain("nodeType");
   });
 
   it("constructor name matches but nodeType does not -> plain object", () => {

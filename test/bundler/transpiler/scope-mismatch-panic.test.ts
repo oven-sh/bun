@@ -233,11 +233,12 @@ describe("dropped TypeScript class members discard scopes", () => {
   // signature, abstract/declare method, or index signature), they are dropped too.
   // Scopes recorded while parsing them (e.g. arrow functions) used to be left behind,
   // so visiting a later scope of a different kind hit "Scope mismatch while visiting".
-  const cases: [name: string, source: string, expected: string[]][] = [
+  const cases: [name: string, source: string, expected: string[], experimentalDecorators?: boolean][] = [
     [
       "arrow decorator on a method overload signature plus an arrow parameter decorator",
       "class C {\r@((td) => { })oo(): oo;\n h(@(() => {})ny) {}}",
       ["class C"],
+      true,
     ],
     [
       "arrow decorator on a method overload signature followed by a nested block",
@@ -271,12 +272,13 @@ describe("dropped TypeScript class members discard scopes", () => {
     ],
   ];
 
-  test.concurrent.each(cases)("%s", async (_name, source, expected) => {
+  test.concurrent.each(cases)("%s", async (_name, source, expected, experimentalDecorators = false) => {
+    const tsconfig = experimentalDecorators ? { compilerOptions: { experimentalDecorators: true } } : undefined;
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `process.stdout.write(new Bun.Transpiler({ loader: "tsx", tsconfig: { compilerOptions: { experimentalDecorators: true } } }).transformSync(${JSON.stringify(source)}))`,
+        `process.stdout.write(new Bun.Transpiler({ loader: "tsx", tsconfig: ${JSON.stringify(tsconfig)} }).transformSync(${JSON.stringify(source)}))`,
       ],
       env: bunEnv,
       stderr: "pipe",

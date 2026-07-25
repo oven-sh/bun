@@ -176,6 +176,37 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(JSC::jsString(vm, host));
 }
 
+// IDNA-encode a hostname for node:dns resolve*/lookup. The caller has already
+// verified `input` contains non-ASCII bytes. Returns the number of ASCII bytes
+// written to `output`, or 0 if encoding failed or would not fit (Node.js passes
+// an empty name to c-ares in that case, which then rejects the query).
+extern "C" int32_t Bun__hostnameToASCII(const char* input, size_t input_len, char* output, size_t output_cap)
+{
+    auto domain = WTF::String::fromUTF8(std::span { input, input_len });
+    if (domain.isNull())
+        return 0;
+    if (domain.is8Bit())
+        domain.convertTo16Bit();
+
+    constexpr static int allowedNameToASCIIErrors = UIDNA_ERROR_EMPTY_LABEL | UIDNA_ERROR_LABEL_TOO_LONG | UIDNA_ERROR_DOMAIN_NAME_TOO_LONG | UIDNA_ERROR_LEADING_HYPHEN | UIDNA_ERROR_TRAILING_HYPHEN | UIDNA_ERROR_HYPHEN_3_4;
+    constexpr static size_t hostnameBufferLength = 2048;
+
+    auto encoder = &WTF::URLParser::internationalDomainNameTranscoder();
+    char16_t hostnameBuffer[hostnameBufferLength];
+    UErrorCode error = U_ZERO_ERROR;
+    UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
+    const auto span = domain.span16();
+    int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+
+    if (!U_SUCCESS(error) || (processingDetails.errors & ~allowedNameToASCIIErrors) || numCharactersConverted <= 0)
+        return 0;
+    if (static_cast<size_t>(numCharactersConverted) > output_cap)
+        return 0;
+    for (int32_t i = 0; i < numCharactersConverted; i++)
+        output[i] = static_cast<char>(hostnameBuffer[i]);
+    return numCharactersConverted;
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

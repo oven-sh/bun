@@ -2851,9 +2851,13 @@ type TestTracingChannel = {
   end: { hasSubscribers: boolean; publish: (data: object) => void };
   error: { hasSubscribers: boolean; publish: (data: object) => void };
 };
-let cachedTestChannel: TestTracingChannel | undefined;
+// Created at module load and held for the process lifetime like node's
+// (utils.js:264): bun's channel registry only holds channels weakly, so a
+// lazily created channel could be collected between a user's subscribe and
+// the first publish, silently dropping the subscription.
+const testTracingChannel: TestTracingChannel = require("node:diagnostics_channel").tracingChannel("node.test");
 function getTestChannel(): TestTracingChannel {
-  return (cachedTestChannel ??= require("node:diagnostics_channel").tracingChannel("node.test"));
+  return testTracingChannel;
 }
 function testChannelHasSubscribers(): boolean {
   const tc = getTestChannel();

@@ -160,7 +160,7 @@ Bun.env.API_TOKEN; // => "secret"
 import.meta.env.API_TOKEN; // => "secret"
 ```
 
-To print all currently-set environment variables, run `bun --print process.env`.
+To print all currently-set environment variables, run `bun --print process.env`. This lists variables from the OS environment and explicit `--env-file` arguments; values auto-loaded from `.env` files are [non-enumerable](#enumeration) and do not appear here. Use `bun --print 'Object.getOwnPropertyNames(process.env)'` to list every key including auto-loaded ones.
 
 ```sh
 bun --print process.env

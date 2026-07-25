@@ -571,6 +571,25 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
 
+            if (options.kind == WebCore::WorkerOptions::Kind::Node) {
+                // Node.js worker_threads do not expose Web Worker APIs on globalThis.
+                // node:worker_threads reaches the backing EventTarget through
+                // $newCppFunction instead (see fakeParentPort in worker_threads.ts).
+                static constexpr ASCIILiteral names[] = {
+                    "addEventListener"_s,
+                    "dispatchEvent"_s,
+                    "onerror"_s,
+                    "onmessage"_s,
+                    "postMessage"_s,
+                    "removeEventListener"_s,
+                    "self"_s,
+                };
+                for (auto name : names) {
+                    JSC::DeletePropertySlot slot;
+                    JSC::JSCell::deleteProperty(globalObject, globalObject, JSC::Identifier::fromString(vm, name), slot);
+                }
+            }
+
             if (options.env.has_value()) {
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();

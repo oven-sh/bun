@@ -905,6 +905,12 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
 
+namespace Zig {
+JSC_DECLARE_HOST_FUNCTION(jsFunctionAddEventListener);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRemoveEventListener);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionDispatchEvent);
+} // namespace Zig
+
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);

@@ -447,7 +447,7 @@ describe("worker_threads", () => {
 
   test("worker with eval = true succeeds with valid code", async () => {
     let message;
-    const worker = new wt.Worker("postMessage('hello')", { eval: true });
+    const worker = new wt.Worker("require('worker_threads').parentPort.postMessage('hello')", { eval: true });
     worker.on("message", e => {
       message = e;
     });

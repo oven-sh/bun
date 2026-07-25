@@ -1458,6 +1458,23 @@ where
             return;
         }
 
+        // Source::Bytes pipe (`return fetch(url)`): cancel so the upstream stops
+        // producing. The response_weakref lookup below can't find this stream
+        // (that arm moved the readable out of the body and set it to Used).
+        // Unpipe first so cancel can't re-enter on_pipe; deref balances the
+        // ref that arm took (on_pipe's is_done branch won't fire post-cancel).
+        if let Some(byte_stream) = this.byte_stream.take() {
+            shim::byte_stream_unpipe(byte_stream);
+            if let Some(stream) = this.response_body_readable_stream_ref.get(global_this) {
+                let _keep = jsc::EnsureStillAlive(stream.value);
+                stream.abort(global_this);
+                any_js_calls.set(true);
+            }
+            this.response_body_readable_stream_ref.deinit();
+            this.deref();
+            return;
+        }
+
         // if we can, free the request now.
         if this.is_dead_request() {
             this.finalize_without_deinit();

@@ -3676,3 +3676,67 @@ it.each([
 
   expect(statusLine).toBe("HTTP/1.1 400 Bad Request");
 });
+
+it("cancels the upstream fetch body when the client disconnects from `return fetch(url)`", async () => {
+  const CHUNK = 256 * 1024;
+  const TOTAL_CHUNKS = 1024;
+  const TOTAL_BYTES = CHUNK * TOTAL_CHUNKS;
+
+  let sentChunks = 0;
+  let ranToCompletion = false;
+  const upstreamClosed = Promise.withResolvers<void>();
+
+  const upstream = net.createServer(sock => {
+    let closed = false;
+    sock.on("error", () => {});
+    sock.on("close", () => {
+      closed = true;
+      upstreamClosed.resolve();
+    });
+    sock.once("data", () => {
+      sock.write(`HTTP/1.1 200 OK\r\ncontent-length: ${TOTAL_BYTES}\r\n\r\n`);
+      const body = Buffer.alloc(CHUNK);
+      const pump = () => {
+        while (!closed && sentChunks < TOTAL_CHUNKS) {
+          sentChunks++;
+          if (!sock.write(body)) return;
+        }
+        if (sentChunks >= TOTAL_CHUNKS) {
+          ranToCompletion = true;
+          sock.end();
+        }
+      };
+      sock.on("drain", pump);
+      pump();
+    });
+  });
+  await new Promise<void>(r => upstream.listen(0, "127.0.0.1", () => r()));
+  const upstreamUrl = `http://127.0.0.1:${(upstream.address() as net.AddressInfo).port}/`;
+
+  await using server = serve({
+    port: 0,
+    idleTimeout: 255,
+    fetch() {
+      return fetch(upstreamUrl);
+    },
+  });
+
+  const client = net.connect(server.port, "127.0.0.1");
+  client.on("error", () => {});
+  await new Promise<void>(r => client.once("connect", () => r()));
+  client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  let received = 0;
+  await new Promise<void>(r => {
+    client.on("data", d => {
+      received += d.length;
+      if (received > 1024 * 1024) r();
+    });
+  });
+  client.destroy();
+
+  await upstreamClosed.promise;
+  upstream.close();
+
+  expect(ranToCompletion).toBe(false);
+  expect(sentChunks).toBeLessThan(TOTAL_CHUNKS);
+});

@@ -2529,8 +2529,7 @@ impl FetchTasklet {
 
             if let BodyValue::Locked(locked) = body {
                 if locked.on_receive_value.is_some() {
-                    // Scenario 2b: a native consumer (Bun.write / ValueBufferer)
-                    // is awaiting resolve() via on_receive_value.
+                    // Scenario 2b.
                     return;
                 }
                 if let Some(promise) = locked.promise {

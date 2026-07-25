@@ -321,17 +321,15 @@ impl PendingValue {
         &mut self,
         ctx: *mut c_void,
         on_receive: fn(ctx: *mut c_void, value: *mut Value),
-    ) -> bool {
+    ) -> Option<DeferredStartBuffering> {
         // No producer `task` means nothing will ever call `resolve` on this body.
         let Some(producer_task) = self.task else {
-            return false;
+            return None;
         };
         if self.readable.has() || self.promise.is_some() || self.on_receive_value.is_some() {
-            return false;
+            return None;
         }
-        if let Some(on_start_buffering) = self.on_start_buffering.take() {
-            on_start_buffering(producer_task);
-        }
+        let on_start_buffering = self.on_start_buffering.take();
         self.task = Some(ctx);
         self.on_receive_value = Some(on_receive);
         // `task` now names the consumer, so the producer-ctx hooks must not fire.
@@ -339,7 +337,10 @@ impl PendingValue {
         self.on_readable_stream_available = None;
         self.on_stream_cancelled = None;
         self.on_stream_drained = None;
-        true
+        Some(DeferredStartBuffering {
+            on_start_buffering,
+            producer_task,
+        })
     }
 
     pub(crate) fn is_disturbed<T: BodyOwnerJs>(
@@ -347,7 +348,7 @@ impl PendingValue {
         global_object: &JSGlobalObject,
         this_value: JSValue,
     ) -> bool {
-        if self.promise.is_some() {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
             return true;
         }
 
@@ -366,7 +367,7 @@ impl PendingValue {
     }
 
     pub(crate) fn is_disturbed2(&self, global_object: &JSGlobalObject) -> bool {
-        if self.promise.is_some() {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
             return true;
         }
 
@@ -449,6 +450,19 @@ impl PendingValue {
                 on_start_buffering(self.task.unwrap());
             }
             Ok(promise_value)
+        }
+    }
+}
+
+pub struct DeferredStartBuffering {
+    on_start_buffering: Option<fn(ctx: *mut c_void)>,
+    producer_task: *mut c_void,
+}
+
+impl DeferredStartBuffering {
+    pub(crate) fn fire(self) {
+        if let Some(f) = self.on_start_buffering {
+            f(self.producer_task);
         }
     }
 }
@@ -802,7 +816,10 @@ impl Value {
                 if let Some(readable) = locked.readable.get(global_this) {
                     return Ok(readable.value);
                 }
-                if locked.promise.is_some() || !locked.action.is_none() {
+                if locked.promise.is_some()
+                    || !locked.action.is_none()
+                    || locked.on_receive_value.is_some()
+                {
                     return ReadableStream::used(global_this);
                 }
                 let mut drain_result = DrainResult::EstimatedSize(0);
@@ -1450,7 +1467,11 @@ impl Value {
             }));
         }
 
-        if locked.promise.is_some() || !locked.action.is_none() || locked.readable.has() {
+        if locked.promise.is_some()
+            || !locked.action.is_none()
+            || locked.readable.has()
+            || locked.on_receive_value.is_some()
+        {
             return Ok(Value::Used);
         }
 

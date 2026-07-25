@@ -271,7 +271,6 @@ impl Cmd {
                         _ => {}
                     }
                     if Self::try_buffer_redirect_body(interp, this, n) {
-                        interp.as_cmd_mut(this).state = CmdState::BufferingRedirectBody;
                         return Yield::suspended();
                     }
                     interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
@@ -337,37 +336,69 @@ impl Cmd {
         if idx >= interp.jsobjs.len() {
             return false;
         }
-        let Some(body) = crate::webcore::body::Value::from_request_or_response(interp.jsobjs[idx])
+        let Some(body_ptr) =
+            crate::webcore::body::Value::from_request_or_response(interp.jsobjs[idx])
         else {
             return false;
         };
-        // SAFETY: live JSC-owned `*mut Value` borrowed from the Request/Response
-        // wrapper while `jsobjs[idx]` is rooted.
-        let body = unsafe { &mut *body };
-        body.to_blob_if_possible();
-        let crate::webcore::body::Value::Locked(locked) = body else {
-            return false;
+        let start = {
+            // SAFETY: live JSC-owned `*mut Value` borrowed from the wrapper
+            // while `jsobjs[idx]` is rooted; the borrow ends before `start.fire()`.
+            let body = unsafe { &mut *body_ptr };
+            body.to_blob_if_possible();
+            let crate::webcore::body::Value::Locked(locked) = body else {
+                return false;
+            };
+            let ctx = bun_core::heap::alloc(RedirectBodyBufferCtx {
+                interp: interp.as_ctx_ptr(),
+                cmd: this,
+                keep_alive: bun_io::KeepAlive::default(),
+            });
+            // SAFETY: fresh heap allocation; freed by `on_redirect_body_received`
+            // or reclaimed below when the hook is not installed / was dropped.
+            unsafe {
+                (*ctx)
+                    .keep_alive
+                    .ref_(interp.event_loop.as_event_loop_ctx())
+            };
+            interp.as_cmd_mut(this).state = CmdState::BufferingRedirectBody;
+            match locked.hook_native_receiver(
+                ctx.cast::<core::ffi::c_void>(),
+                Self::on_redirect_body_received,
+            ) {
+                Some(start) => (start, ctx),
+                None => {
+                    interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                    // SAFETY: `ctx` was not published; reclaim and drop.
+                    unsafe {
+                        (*ctx)
+                            .keep_alive
+                            .unref(interp.event_loop.as_event_loop_ctx());
+                        bun_core::heap::destroy(ctx);
+                    };
+                    return false;
+                }
+            }
         };
-        let ctx = bun_core::heap::alloc(RedirectBodyBufferCtx {
-            interp: interp.as_ctx_ptr(),
-            cmd: this,
-            keep_alive: bun_io::KeepAlive::default(),
-        });
-        if !locked.hook_native_receiver(
-            ctx.cast::<core::ffi::c_void>(),
-            Self::on_redirect_body_received,
-        ) {
-            // SAFETY: `ctx` was just `heap::alloc`'d and never published.
-            unsafe { bun_core::heap::destroy(ctx) };
-            return false;
+        let (start, ctx) = start;
+        start.fire();
+        if matches!(interp.as_cmd(this).state, CmdState::BufferingRedirectBody) {
+            // SAFETY: same JSC-owned location as above, re-read after the
+            // producer callback — which may have resolved the body in place.
+            if !matches!(unsafe { &*body_ptr }, crate::webcore::body::Value::Locked(_)) {
+                // SAFETY: the producer resolved synchronously and dropped the
+                // hook without firing it (server empty-body path); `ctx` is
+                // still the live heap allocation we hold.
+                unsafe {
+                    (*ctx)
+                        .keep_alive
+                        .unref(interp.event_loop.as_event_loop_ctx());
+                    bun_core::heap::destroy(ctx);
+                };
+                interp.as_cmd_mut(this).state = CmdState::ExpandingRedirect { idx: 0 };
+                return false;
+            }
         }
-        // SAFETY: `ctx` is a fresh heap allocation published into the
-        // `PendingValue`; freed in `on_redirect_body_received`.
-        unsafe {
-            (*ctx)
-                .keep_alive
-                .ref_(interp.event_loop.as_event_loop_ctx())
-        };
         true
     }
 

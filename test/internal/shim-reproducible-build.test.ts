@@ -48,7 +48,10 @@ const workspaceResolvable =
 const havePrereqs =
   !isWindows && cargo != null && lldLink != null && rustSrc != null && winsysroot != null && workspaceResolvable;
 
-const triple = process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
+// `/Brepro` and `/DEBUG:NONE` are arch-independent lld-link behaviors, and
+// every provisioned winsysroot carries the x64 import libs (arm64 is optional),
+// so pin the target rather than match the host.
+const triple = "x86_64-pc-windows-msvc";
 
 async function buildShim(targetDir: string): Promise<Uint8Array> {
   // Mirror the freestanding link flags from scripts/build/rust.ts so the

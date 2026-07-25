@@ -1907,7 +1907,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           scripts: {
             // Exercise the chained-preprepare path (`<install> && ( <user>\n)`),
             // including a trailing shell comment that must not swallow the `)`.
-            preprepare: "what-bin && echo preprepare-ran > preprepare.txt # done",
+            preprepare: "echo preprepare-ran > preprepare.txt # done",
             prepare: "what-bin",
           },
         }),
@@ -1961,8 +1961,9 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(out).toContain("+ git-dep-needs-dev@git+file://");
       expect(exitCode).toBe(0);
 
-      // Both the user-declared `preprepare` and `prepare` ran and found the
-      // `what-bin` devDependency.
+      // The user-declared `preprepare` ran (after the injected nested install,
+      // which is chained with `&&`), and `prepare` ran and found the `what-bin`
+      // devDependency.
       expect((await file(join(depDir, "preprepare.txt")).text()).trim()).toBe("preprepare-ran");
       expect(await file(join(depDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
 

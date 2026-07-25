@@ -22,10 +22,12 @@ const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 fn registry_href_without_userinfo(href: &[u8]) -> Box<[u8]> {
     if let Some(scheme_end) = strings::index_of(href, b"://") {
         let auth_start = scheme_end + 3;
-        let path_start = strings::index_of_char(&href[auth_start..], b'/')
-            .map(|i| auth_start + i as usize)
+        let auth_end = href[auth_start..]
+            .iter()
+            .position(|&b| b == b'/' || b == b'?' || b == b'#')
+            .map(|i| auth_start + i)
             .unwrap_or(href.len());
-        if let Some(at) = strings::index_of_char(&href[auth_start..path_start], b'@') {
+        if let Some(at) = strings::index_of_char(&href[auth_start..auth_end], b'@') {
             let host_start = auth_start + at as usize + 1;
             let mut out = Vec::with_capacity(href.len() - (host_start - auth_start));
             out.extend_from_slice(&href[..auth_start]);

@@ -2698,6 +2698,62 @@ describe("bundler", () => {
       `);
     },
   });
+  // https://github.com/oven-sh/bun/issues/31929
+  itBundled("edgecase/DecoratorLoweringTempsAcrossModules", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from './a.js';
+        import { B } from './b.js';
+        console.log(new A().a, new B().b);
+      `,
+      "/a.js": /* js */ `
+        function double(v, c) { return x => x * 2; }
+        export const A = class { @double a = 1; };
+      `,
+      "/b.js": /* js */ `
+        function triple(v, c) { return x => x * 3; }
+        export const B = class { @triple b = 1; };
+      `,
+    },
+    run: {
+      stdout: "2 3",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/30568
+  itBundled("edgecase/AccessorStorageTempsAcrossModules", {
+    files: {
+      "/entry.js": /* js */ `
+        import { ComponentA } from './a.js';
+        import { ComponentB } from './b.js';
+        console.log(new ComponentA().myData, new ComponentB().myData);
+      `,
+      "/a.js": /* js */ `
+        import { state } from './decorator.js';
+        export class ComponentA {
+          @state() accessor myData = 'A';
+        }
+      `,
+      "/b.js": /* js */ `
+        import { state } from './decorator.js';
+        export class ComponentB {
+          @state() accessor myData = 'B';
+        }
+      `,
+      "/decorator.js": /* js */ `
+        export function state() {
+          return function (target, context) {
+            return {
+              get() { return target.get.call(this); },
+              set(newValue) { target.set.call(this, newValue); },
+            };
+          };
+        }
+      `,
+    },
+    run: {
+      stdout: "A B",
+    },
+  });
   itBundled("edgecase/NonAsciiIdentifierPreserved", {
     files: {
       "/entry.js": /* js */ `

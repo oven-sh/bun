@@ -531,17 +531,11 @@ void Worker::dispatchErrorWithMessage(WTF::String message, RefPtr<SerializedScri
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
         protectedThis->dispatchEvent(event);
 
-        // Default action (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2):
-        // report to the parent's uncaught-exception path so the error prints
-        // and the process exit code becomes 1. Suppressed when:
-        //  - node:worker_threads owns this Worker (it always registers an
-        //    'error' listener that forwards to EventEmitter, whose own
-        //    no-listener default already calls Bun__reportUnhandledError),
-        //  - an 'error' listener was present (listener presence suppresses,
-        //    matching node's EventEmitter contract) or preventDefault() was
-        //    called on the cancelable event (browser-style escape), or
-        //  - the event was dropped by Worker::dispatchEvent's terminate/closed
-        //    gate (terminate() mid-run stays silent).
+        // Default action: report via the parent's uncaught-exception path
+        // (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2).
+        // Listener presence suppresses (node EventEmitter semantics; the
+        // node:worker_threads wrapper always has one); preventDefault() is
+        // honoured. The terminate/closed check mirrors Worker::dispatchEvent.
         if (protectedThis->m_options.kind != WorkerOptions::Kind::Web
             || hadListener || event->defaultPrevented()
             || protectedThis->m_terminateRequested.load() || protectedThis->m_state.load() == State::Closed)

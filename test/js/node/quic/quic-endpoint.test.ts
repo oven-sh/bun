@@ -237,7 +237,7 @@ describe("QuicEndpoint validateAddress", () => {
     });
 
   const handshakeWith = async (validateAddress: boolean) => {
-    const ep = new QuicEndpoint({ validateAddress });
+    const ep = new QuicEndpoint({ validateAddress, retryTokenExpiration: 30 });
     const server = await listen(onSession, { endpoint: ep, sni: sniOpt, alpn: ["test"], transportParams: tp });
     const serverPort = server.address.port;
 
@@ -261,20 +261,25 @@ describe("QuicEndpoint validateAddress", () => {
     });
 
     await using clientEp = new QuicEndpoint();
-    const client = await connect(
-      { address: "127.0.0.1", port: front.address().port, family: "ipv4" },
-      { endpoint: clientEp, alpn: "test", verifyPeer: "manual", servername: "localhost", transportParams: tp },
-    );
-    await client.opened;
-    const retryCount = ep.stats.retryCount;
-    const serverSessions = ep.stats.serverSessions;
-    client.close();
-    await client.closed.catch(() => {});
-    await server.close();
-    relaying = false;
-    front.close();
-    back.close();
-    return { retryCount, serverSessions, sawRetry };
+    try {
+      const client = await connect(
+        { address: "127.0.0.1", port: front.address().port, family: "ipv4" },
+        { endpoint: clientEp, alpn: "test", verifyPeer: "manual", servername: "localhost", transportParams: tp },
+      );
+      await client.opened;
+      const retryCount = ep.stats.retryCount;
+      const serverSessions = ep.stats.serverSessions;
+      client.close();
+      await client.closed.catch(() => {});
+      return { retryCount, serverSessions, sawRetry };
+    } finally {
+      // Drain while the relay is still open; the endpoint's asyncDispose is a
+      // graceful close that would otherwise wait out the idle timeout.
+      await server.close().catch(() => {});
+      relaying = false;
+      front.close();
+      back.close();
+    }
   };
 
   test("true sends a Retry before accepting; false does not", async () => {

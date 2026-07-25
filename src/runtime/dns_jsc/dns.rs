@@ -1630,12 +1630,9 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
         timeouts: i32,
         results: *mut c_ares::AddrInfo,
     ) {
-        // Node.js `dns.lookup` is libc getaddrinfo and can only ever produce
-        // ENOTFOUND for a malformed hostname (via EAI_NONAME). When Bun uses
-        // c-ares for getaddrinfo it reports ARES_EBADNAME instead; remap it
-        // here so `dns.lookup` stays Node-compatible regardless of backend.
-        // The `dns.resolve*` path (ares_query) keeps EBADNAME; it does not
-        // flow through this handler.
+        // Node's dns.lookup (libc getaddrinfo) never yields EBADNAME; remap the
+        // c-ares status so lookup() is Node-compatible on every backend. The
+        // resolve* path (ares_query) does not flow through this handler.
         let status = match status {
             Some(c_ares::Error::EBADNAME) => Some(c_ares::Error::ENOTFOUND),
             other => other,

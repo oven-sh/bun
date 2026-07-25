@@ -44,4 +44,27 @@ describe.concurrent("run-cjs", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "custom-loader\n", exitCode: 0 });
   });
+
+  test('"use strict" still applies inside the CJS module wrapper', async () => {
+    const dir = tmpdirSync();
+    mkdirSync(dir, { recursive: true });
+    await Bun.write(
+      join(dir, "strict.cjs"),
+      `"use strict";
+try {
+  undeclared = 1;
+  console.log("sloppy");
+} catch (e) {
+  console.log(e.constructor.name);
+}`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "strict.cjs")],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    const stdout = await proc.stdout.text();
+    expect(stdout).toEqual("ReferenceError\n");
+  });
 });

@@ -7800,7 +7800,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         exports_kind: js_ast::ExportsKind,
         wrap_mode: WrapMode,
         hashbang: &'a [u8],
-        directives: bun_ast::StoreSlice<bun_ast::StoreStr>,
+        mut directives: bun_ast::StoreSlice<bun_ast::StoreStr>,
     ) -> Result<Box<js_ast::Ast<'a>>, crate::Error> {
         use crate::lower::lower_esm_exports_hmr::ConvertESMExportsForHmr;
         use crate::scan::scan_imports::ImportScanner;
@@ -8123,23 +8123,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 total_stmts_count += part.stmts.len();
             }
 
-            let preserve_strict_mode = self.module_scope().strict_mode
-                == js_ast::StrictModeKind::ExplicitStrictMode
-                && !(parts.len() > 0
-                    && parts[0].stmts.len() > 0
-                    && matches!(parts[0].stmts[0].data, js_ast::StmtData::SDirective(_)));
+            // The wrapper function body is the module's top level: re-insert
+            // the directive prologue there instead of printing it outside the
+            // wrapper (the program completion value must stay the wrapper).
+            let prologue = directives.slice();
+            directives = bun_ast::StoreSlice::EMPTY;
 
-            total_stmts_count += usize::from(preserve_strict_mode);
+            total_stmts_count += prologue.len();
 
             // Stmt is not Default; fill with `Stmt::empty()`.
             let stmts_to_copy = arena.alloc_slice_fill_with(total_stmts_count, |_| Stmt::empty());
             {
                 let mut remaining_stmts = &mut stmts_to_copy[..];
-                if preserve_strict_mode {
+                for directive in prologue {
                     remaining_stmts[0] = self.s(
-                        S::Directive {
-                            value: b"use strict".into(),
-                        },
+                        S::Directive { value: *directive },
                         self.module_scope_directive_loc,
                     );
                     remaining_stmts = &mut remaining_stmts[1..];

@@ -966,6 +966,12 @@ impl RuntimeTranspilerCache {
 
         let mut features_hasher = Wyhash::init(SEED);
         parser_options.hash_for_runtime_transpiler(&mut features_hasher, used_jsx);
+        // Whether the printer serializes an esm_record into this entry depends
+        // on this flag, so flag-on and flag-off runs must not share cache files.
+        features_hasher.update(&[u8::from(
+            bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
+                .unwrap_or(false),
+        )]);
         self.features_hash = Some(features_hasher.final_());
 
         self.entry = match Self::from_file(

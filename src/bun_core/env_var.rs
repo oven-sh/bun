@@ -220,10 +220,8 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG, "BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER, "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
-    // Skip building ModuleInfo alongside runtime transpiles. With module_info
-    // attached, JSC reads imports/exports from Bun's printer output instead of
-    // re-parsing the transpiled source, which is what lets a TypeScript file
-    // re-export a type-only name without `export 'X' not found` (#7384).
+    // Skip attaching ModuleInfo to runtime ESM transpiles so JSC falls back to
+    // its own analyze pass. Disables the #7384 fix.
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO, "BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE, "BUN_FEATURE_FLAG_DISABLE_FETCH_TLS_SESSION_CACHE", {});

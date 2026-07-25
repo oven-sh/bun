@@ -4803,17 +4803,12 @@ impl VirtualMachine {
 
     /// Whether to attach `ModuleInfo` to runtime-transpiled ESM so JSC builds
     /// the `JSModuleRecord` from Bun's printer output instead of re-parsing.
-    /// Always on (opt-out via `BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO`)
-    /// because a TypeScript re-export of a type-only name is only resolvable
-    /// through the `m_isTypeScript` / `SingleTypeScript` entries this record
-    /// carries; JSC's own analyze of the transpiled text has no way to know the
-    /// missing binding was a type.
+    /// The record carries `m_isTypeScript` / `SingleTypeScript` entries that
+    /// let a TypeScript re-export of a type-only name resolve (#7384).
     pub fn use_module_info_for_esm(&self) -> bool {
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RUNTIME_MODULE_INFO::get()
             .unwrap_or(false)
         {
-            // Still honored under --isolate so the isolation source-provider
-            // cache keeps working when the flag is set.
             return self.use_isolation_source_provider_cache();
         }
         true

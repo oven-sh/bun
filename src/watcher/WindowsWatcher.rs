@@ -383,13 +383,18 @@ impl WindowsWatcher {
             (&raw mut (*p).state).write(Arc::clone(&state));
             dw.assume_init()
         };
+        // Count the root before arming it: once `prepare` posts the I/O, the
+        // watch thread can retire this root and decrement on its behalf.
+        self.live_roots.fetch_add(1, Ordering::AcqRel);
         if ARM {
-            dw.prepare().map_err(crate::Error::from)?;
+            if let Err(err) = dw.prepare() {
+                self.live_roots.fetch_sub(1, Ordering::AcqRel);
+                return Err(err.into());
+            }
         }
         let dw_ptr = ptr::NonNull::from(&mut *dw);
         self.watchers.push(dw);
         self.roots.push(state);
-        self.live_roots.fetch_add(1, Ordering::AcqRel);
         if !ARM {
             self.needs_rearm = Some(dw_ptr);
         }

@@ -339,10 +339,12 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   try {
     const o2 = {};
     Error.captureStackTrace(o2);
-    expect(insidePrepare).toEqual({ keys: [], enumerable: false });
+    // V8 invokes prepareStackTrace lazily on first .stack access, not at capture time.
+    expect(insidePrepare).toBeUndefined();
     expect(Object.keys(o2)).toEqual([]);
     expectNonEnumerableStack(o2);
     expect(o2.stack).toBe("from-prepare");
+    expect(insidePrepare).toEqual({ keys: [], enumerable: false });
   } finally {
     Error.prepareStackTrace = origPrepareStackTrace;
   }
@@ -1120,4 +1122,113 @@ test("lazy error-info materialization does not store an empty stack value when t
     signalCode: null,
   });
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/13904
+test("captureStackTrace on a non-Error object reads name/message lazily for the stack header", () => {
+  // V8 installs a lazy accessor: the header is derived from .name/.message at
+  // first access, so setting them after capture is observable. This is the
+  // jsonwebtoken JsonWebTokenError shape.
+  function JsonWebTokenError(message) {
+    Error.call(this, message);
+    Error.captureStackTrace(this, this.constructor);
+    this.name = "JsonWebTokenError";
+    this.message = message;
+  }
+  JsonWebTokenError.prototype = Object.create(Error.prototype);
+  JsonWebTokenError.prototype.constructor = JsonWebTokenError;
+
+  function hello() {
+    return [new JsonWebTokenError("Hello world")];
+  }
+  noInline(hello);
+  const [e] = hello();
+
+  expect(e.stack.split("\n")[0]).toBe("JsonWebTokenError: Hello world");
+  expect(e.stack).toContain("at hello");
+  expect(e instanceof Error).toBe(true);
+
+  // plain object, name/message set after capture
+  const o = {};
+  Error.captureStackTrace(o);
+  o.name = "CustomName";
+  o.message = "custom msg";
+  expect(o.stack.split("\n")[0]).toBe("CustomName: custom msg");
+
+  // lazy means "first access wins": later mutations are not reflected
+  o.name = "Changed";
+  expect(o.stack.split("\n")[0]).toBe("CustomName: custom msg");
+});
+
+test("captureStackTrace on a non-Error object installs a lazy accessor", () => {
+  const o = {};
+  Error.captureStackTrace(o);
+  const d = Object.getOwnPropertyDescriptor(o, "stack");
+  expect({
+    hasGetter: typeof d.get,
+    hasSetter: typeof d.set,
+    value: d.value,
+    enumerable: d.enumerable,
+    configurable: d.configurable,
+  }).toEqual({
+    hasGetter: "function",
+    hasSetter: "function",
+    value: undefined,
+    enumerable: false,
+    configurable: true,
+  });
+
+  // setter replaces the lazy accessor with the assigned value
+  o.stack = "overwritten";
+  expect(o.stack).toBe("overwritten");
+
+  // captureStackTrace again re-installs the lazy accessor
+  Error.captureStackTrace(o);
+  expect(typeof Object.getOwnPropertyDescriptor(o, "stack").get).toBe("function");
+  expect(typeof o.stack).toBe("string");
+  expect(o.stack).toContain("at ");
+});
+
+test("captureStackTrace header on a non-Error object matches V8's Error.prototype.toString algorithm", () => {
+  const headerOf = obj => {
+    Error.captureStackTrace(obj);
+    return obj.stack.split("\n")[0];
+  };
+  // exact outputs verified against Node
+  expect(headerOf({})).toBe("Error");
+  expect(headerOf({ name: "N" })).toBe("N");
+  expect(headerOf({ message: "M" })).toBe("Error: M");
+  expect(headerOf({ name: "N", message: "M" })).toBe("N: M");
+  expect(headerOf({ name: "", message: "M" })).toBe("M");
+  expect(headerOf({ name: "N", message: "" })).toBe("N");
+  expect(headerOf({ name: "", message: "" })).toBe("");
+  expect(headerOf({ name: undefined, message: "M" })).toBe("Error: M");
+  expect(headerOf({ name: null, message: "M" })).toBe("null: M");
+  expect(headerOf({ name: 42, message: "M" })).toBe("42: M");
+  expect(headerOf(Object.create(Error.prototype))).toBe("Error");
+});
+
+test("captureStackTrace on a non-Error object invokes Error.prepareStackTrace at access time", () => {
+  let callCount = 0;
+  let sawName;
+  const o = {};
+  Error.captureStackTrace(o);
+  o.name = "LateName";
+  Error.prepareStackTrace = (err, sites) => {
+    callCount++;
+    sawName = err.name;
+    return { err, sites };
+  };
+  const result = o.stack;
+  expect(callCount).toBe(1);
+  expect(sawName).toBe("LateName");
+  expect(result.err).toBe(o);
+  expect(Array.isArray(result.sites)).toBe(true);
+  expect(result.sites.length).toBeGreaterThan(0);
+  expect(typeof result.sites[0].getFileName).toBe("function");
+
+  // cached after first access: prepareStackTrace not re-invoked
+  Error.prepareStackTrace = origPrepareStackTrace;
+  expect(o.stack).toBe(result);
+  expect(callCount).toBe(1);
 });

@@ -41,21 +41,36 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
     WTF::StringBuilder sb;
 
+    WTF::String name = "Error"_s;
+    auto errorName = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (errorName && !errorName.isUndefined()) {
+        auto* str = errorName.toString(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto value = str->value(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        name = value.data;
+    }
+
+    WTF::String message;
     auto errorMessage = errorObject->getIfPropertyExists(lexicalGlobalObject, vm.propertyNames->message);
     RETURN_IF_EXCEPTION(scope, {});
-    if (errorMessage) {
+    if (errorMessage && !errorMessage.isUndefined()) {
         auto* str = errorMessage.toString(lexicalGlobalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        if (str->length() > 0) {
-            auto value = str->view(lexicalGlobalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            sb.append("Error: "_s);
-            sb.append(value.data);
-        } else {
-            sb.append("Error"_s);
-        }
+        auto value = str->value(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        message = value.data;
+    }
+
+    if (name.isEmpty()) {
+        sb.append(message);
+    } else if (message.isEmpty()) {
+        sb.append(name);
     } else {
-        sb.append("Error"_s);
+        sb.append(name);
+        sb.append(": "_s);
+        sb.append(message);
     }
 
     for (size_t i = 0; i < framesCount; i++) {
@@ -428,7 +443,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
 }
 
-static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+static JSArray* buildSourceMappedCallSitesArray(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -511,6 +526,19 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     }
 
     JSArray* callSitesArray = JSC::constructArray(globalObject, globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous), callSites);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    return callSitesArray;
+}
+
+static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
+{
+    UNUSED_PARAM(line);
+    UNUSED_PARAM(column);
+    UNUSED_PARAM(sourceURL);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSArray* callSitesArray = buildSourceMappedCallSitesArray(vm, globalObject, lexicalGlobalObject, stackFrames);
     RETURN_IF_EXCEPTION(scope, {});
 
     RELEASE_AND_RETURN(scope, formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSitesArray, prepareStackTrace));
@@ -756,6 +784,42 @@ JSC_DEFINE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter, (JSGlobalObject * g
     return true;
 }
 
+// Lazy .stack getter installed by Error.captureStackTrace on objects that are
+// not JSC::ErrorInstance. The captured CallSite array is stashed under a
+// private name on the target so the header (name/message) and
+// Error.prepareStackTrace are read at first access, matching V8.
+JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* errorObject = JSValue::decode(thisValue).getObject();
+    if (!errorObject) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    const auto& privateName = WebCore::builtinNames(vm).capturedStackTracePrivateName();
+    JSValue callSitesValue = errorObject->getDirect(vm, privateName);
+    auto* callSites = callSitesValue ? dynamicDowncast<JSC::JSArray>(callSitesValue) : nullptr;
+    if (!callSites) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+
+    JSValue result;
+    if (globalObject->isInsideErrorPrepareStackTraceCallback) {
+        result = formatStackTraceToJSValue(vm, globalObject, lexicalGlobalObject, errorObject, callSites);
+    } else {
+        globalObject->isInsideErrorPrepareStackTraceCallback = true;
+        result = formatStackTraceToJSValueWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, errorObject, callSites);
+        globalObject->isInsideErrorPrepareStackTraceCallback = false;
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+    errorObject->putDirect(vm, privateName, jsUndefined(), 0);
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -806,12 +870,19 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_lazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
         }
     } else {
-        OrdinalNumber line;
-        OrdinalNumber column;
-        String sourceURL;
-        JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject, nullptr);
+        JSArray* callSitesArray = buildSourceMappedCallSitesArray(vm, globalObject, lexicalGlobalObject, stackTrace);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+
+        {
+            const auto& propertyName = vm.propertyNames->stack;
+            VM::DeletePropertyModeScope deleteScope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
+            DeletePropertySlot slot;
+            JSObject::deleteProperty(errorObject, globalObject, propertyName, slot);
+        }
+        RETURN_IF_EXCEPTION(scope, {});
+
+        errorObject->putDirect(vm, WebCore::builtinNames(vm).capturedStackTracePrivateName(), callSitesArray, 0);
+        errorObject->putDirectCustomAccessor(vm, vm.propertyNames->stack, globalObject->m_nonErrorLazyStackCustomGetterSetter.get(globalObject), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

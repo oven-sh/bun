@@ -31,6 +31,7 @@ const prelude = /* js */ `
   const freeze = Object.freeze;
   const objectKeys = Object.keys;
   const ownKeys = Reflect.ownKeys;
+  const reflectSet = Reflect.set;
   const $apply = Reflect.apply;
   function protoOf(f) { return getProto(f()); }
   const holderFactories = {
@@ -202,7 +203,7 @@ describe.concurrent("primordials survive tampering", () => {
         const row = rows[i], holder = holderObjects[row.holder];
         const tagged = function tampered() { return "tampered " + row.name; };
         try { holder[row.key] = tagged; } catch {}
-        try { Reflect.set(holder, row.key, tagged); } catch {}
+        try { reflectSet(holder, row.key, tagged); } catch {}
         try { defineProperty(holder, row.key, { __proto__: null, value: tagged, configurable: true, writable: true }); } catch {}
         try { defineProperty(holder, row.key, { __proto__: null, get() { return "tampered getter " + row.name; }, configurable: true }); } catch {}
       }
@@ -581,7 +582,7 @@ describe.concurrent("$Name link-time constants in builtin JavaScript", () => {
     }
     const out = primordials.run([], "hello", map, u8, /ell/);
     out.tampered = Array.prototype.push !== originalPush;
-    report(out);
+    reportAndExit(out);
   `;
 
   const expected = {

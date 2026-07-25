@@ -222,10 +222,12 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     size_t space) {
     struct nq_hset *h = hset;
     /* 2x max_bytes covers the Huffman decode-window headroom for a single
-     * header that is itself the whole configured maxHeaderLength; without a
-     * cap the peer's length varint alone drives the realloc (see
-     * US_NQ_HSET_MAX_BUF). */
-    size_t cap = h->max_bytes ? (size_t) h->max_bytes * 2 : US_NQ_HSET_MAX_BUF;
+     * header that is itself the whole configured maxHeaderLength; floored at
+     * US_NQ_HSET_MAX_BUF so a small or unset limit never lowers the abort
+     * threshold (a header over max_bytes is still silently dropped in
+     * process_header, which keeps the session alive). */
+    size_t cap = (size_t) h->max_bytes * 2;
+    if (cap < US_NQ_HSET_MAX_BUF) cap = US_NQ_HSET_MAX_BUF;
     if (space > LSXPACK_MAX_STRLEN || space > cap)
         return NULL;
     if (space > h->decode_cap) {

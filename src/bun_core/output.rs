@@ -545,9 +545,9 @@ impl Source {
                     enable_color = Some(depth != ColorDepth::None);
                 } else if Self::is_no_color() {
                     enable_color = Some(false);
-                } else if Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty) {
-                    enable_color = Some(true);
-                } else if env_var::TERM.get().unwrap_or(b"") != b"dumb" && is_ansi_capable_ci() {
+                } else if (Self::is_color_terminal() && (is_stdout_tty || is_stderr_tty))
+                    || (env_var::TERM.get().unwrap_or(b"") != b"dumb" && is_ansi_capable_ci())
+                {
                     enable_color = Some(true);
                 }
 

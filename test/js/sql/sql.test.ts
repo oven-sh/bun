@@ -1003,7 +1003,11 @@ if (isDockerEnabled()) {
     });
 
     test("Double", async () => {
-      expect((await sql`select ${1.123456789} as x`)[0].x).toBe(1.123456789);
+      // Non-integer number parameters are sent with OID 0 so PG can parse the
+      // decimal directly into numeric/float8/text without a lossy float8 cast;
+      // with no target type PG resolves $1 to text (same as postgres.js).
+      expect((await sql`select ${1.123456789} as x`)[0].x).toBe("1.123456789");
+      expect((await sql`select ${1.123456789}::float8 as x`)[0].x).toBe(1.123456789);
     });
 
     test("String", async () => {

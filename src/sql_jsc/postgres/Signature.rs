@@ -75,7 +75,6 @@ impl Signature {
                 Tag::bool
                 | Tag::int4
                 | Tag::int8
-                | Tag::float8
                 | Tag::int2
                 | Tag::numeric
                 | Tag::float4
@@ -83,6 +82,12 @@ impl Signature {
                     // We decide the type
                     fields.push(Int4::from(tag.0));
                 }
+                // A non-integer JS number: declaring float8 makes PG cast
+                // float8 -> numeric/text at DBL_DIG (15 digits), silently
+                // losing precision. Leave the OID unspecified and send the
+                // decimal string so PG parses it directly into the target
+                // type. This matches postgres.js (`number.to: 0`).
+                Tag::float8 => fields.push(0),
                 _ => {
                     // Allow postgres to decide the type
                     fields.push(0);

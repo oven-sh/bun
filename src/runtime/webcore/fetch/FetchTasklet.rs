@@ -2510,20 +2510,13 @@ impl FetchTasklet {
         if let Some(response) = this.native_response {
             // SAFETY: native_response is intrusively-ref'd by FetchTasklet; alive until unref.
             let body = unsafe { (*response).get_body_value() };
-            // Three scenarios:
-            //
-            // 1. We are streaming, in which case we should not ignore the body.
-            // 2. We were buffering, in which case
-            //    2a. if we have no promise, we should ignore the body.
-            //    2b. if we have a promise, we should keep loading the body.
-            // 3. We never started buffering, in which case we should ignore the body.
-            //
-            // Note: We cannot call .get() on the ReadableStreamRef. This is called inside a finalizer.
+            // Called inside a JSC Weak finalizer: do not `.get()` the ReadableStreamRef.
             if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-                // Scenario 1 or 3. A paused transport in Scenario 1 is
-                // unstuck by `drop_backpressure_if_unobserved` once the next
-                // already-scheduled chunk reaches `on_body_received` and
-                // finds the stream unlocked.
+                // Body already resolved, or a ReadableStream exists. A paused
+                // transport in the stream case is unstuck by
+                // `drop_backpressure_if_unobserved` once the next already-
+                // scheduled chunk reaches `on_body_received` and finds the
+                // stream unlocked.
                 return;
             }
 
@@ -2531,11 +2524,13 @@ impl FetchTasklet {
                 let has_live_promise = locked
                     .promise
                     .is_some_and(|p| !p.is_empty_or_undefined_or_null());
-                if !has_live_promise {
-                    // Scenario 2a / 3: close the socket rather than drain an unread body.
-                    this.abort_task();
-                    this.ignore_remaining_response_body(true);
+                if has_live_promise {
+                    // `.text()`/`.arrayBuffer()` etc. is still pending; keep loading.
+                    return;
                 }
+                // No consumer: close the socket rather than drain an unread body.
+                this.abort_task();
+                this.ignore_remaining_response_body(true);
             }
         }
     }

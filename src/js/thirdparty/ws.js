@@ -339,15 +339,9 @@ class BunWebSocket extends EventEmitter {
     return super.prependListener(event, listener);
   }
 
-  // EventEmitter.prototype.once() / prependOnceListener() call this.on() /
-  // this.prependListener(), which reach #ensureForwarder above.
-  once(event, listener) {
-    return super.once(event, listener);
-  }
-
-  prependOnceListener(event, listener) {
-    return super.prependOnceListener(event, listener);
-  }
+  // once() / prependOnceListener() are inherited: EventEmitter.prototype.once
+  // calls this.on() and prependOnceListener calls this.prependListener(), both
+  // of which reach #ensureForwarder above.
 
   send(data, opts, cb) {
     if ($isCallable(opts)) {

@@ -50,14 +50,12 @@ impl EventLoopTaskNoContext {
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
-    /// The VM that created this task. Only safe to dereference on that VM's JS
-    /// thread; worker VMs are freed by `terminate()`.
+    /// The creating VM. Only safe to dereference on that VM's JS thread.
     pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }
 
-    /// The creating context's `ScriptExecutionContextIdentifier`, for the
-    /// pool-thread checked unref in [`ConcurrentCppTask::run_owned`].
+    /// The creating context's identifier, for the checked pool-thread unref.
     pub fn context_identifier(&self) -> u32 {
         Bun__EventLoopTaskNoContext__contextIdentifier(self)
     }
@@ -84,8 +82,7 @@ impl ConcurrentCppTask {
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        // Checked unref: the creating VM may be a worker freed by terminate()
-        // while `run` ran; the contexts-map lock serializes with markTerminating().
+        // Checked: the creating VM may be a worker freed by terminate() while `run` ran.
         ScriptExecutionContext__unrefEventLoopConcurrently(context_id);
     }
 }
@@ -94,10 +91,9 @@ impl ConcurrentCppTask {
 pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
-    // the centralised non-null deref proof. Runs on the creating VM's JS
-    // thread (only caller is `PhonyWorkQueue::dispatch`), so dereferencing
-    // the captured VM here is safe; `run_owned`'s unref is the checked one.
+    // the centralised non-null deref proof. C++ just handed it over.
     if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
+        // Runs on the creating VM's JS thread (from `PhonyWorkQueue::dispatch`).
         vm.event_loop_shared().ref_concurrently();
     }
     WorkPool::schedule_new(ConcurrentCppTask {

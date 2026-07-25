@@ -143,16 +143,22 @@ test.skipIf(!isASAN)(
           // Four lanes of PBKDF2 deriveBits on the work pool. The 200k-iteration
           // SHA-512 body is long enough that terminate() reliably lands while
           // at least one ConcurrentCppTask is still in run_owned.
+          const k = await s.importKey("raw", new TextEncoder().encode("pw-material-key"), "PBKDF2", false, ["deriveBits"]);
           for (let i = 0; i < 4; i++) (async () => {
-            const k = await s.importKey("raw", new TextEncoder().encode("pw-material-key"), "PBKDF2", false, ["deriveBits"]);
             for (;;) try { await s.deriveBits({ name: "PBKDF2", salt: new Uint8Array(16), iterations: 200000, hash: "SHA-512" }, k, 512); } catch {}
           })();
           parentPort.postMessage("up");
         \`;
         for (let r = 0; r < ${rounds}; r++) {
           const w = new Worker(src, { eval: true });
-          await new Promise(res => w.once("message", res));
-          // Let the pool lanes fill before terminating.
+          await new Promise((res, rej) => {
+            w.once("message", res);
+            w.once("error", rej);
+            w.once("exit", code => rej(new Error("worker exited early: " + code)));
+          });
+          // The deriveBits tasks are on the work-pool queue as of "up"; give the
+          // pool threads a moment to enter the PBKDF2 body so terminate() frees
+          // the VM mid-op (the condition the fence must handle).
           await Bun.sleep(60 + ((r * 41) % 220));
           await w.terminate();
         }

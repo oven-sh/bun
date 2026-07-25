@@ -145,12 +145,10 @@ describe.concurrent("returning a Response with an already-used body", () => {
       ],
       env: {
         ...bunEnv,
-        // On the ASAN CI lane this file runs with detect_leaks=1 and
-        // BUN_DESTRUCT_VM_ON_EXIT=1, which bunEnv forwards via process.env. That
-        // turns this behavior probe into a ~24s leak scan. Disable leak detection
-        // for the subprocess; the outer test process still runs under LSan.
+        // On the ASAN CI lane bunEnv forwards detect_leaks=1 via process.env,
+        // turning this behavior probe into a ~24s leak scan at exit. Disable leak
+        // detection for the subprocess; the outer test process still runs under LSan.
         ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
-        BUN_DESTRUCT_VM_ON_EXIT: "0",
       },
       stdout: "pipe",
       stderr: "pipe",

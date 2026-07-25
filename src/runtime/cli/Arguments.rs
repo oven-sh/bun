@@ -89,21 +89,42 @@ macro_rules! maybe_verbose_error_trace {
     };
 }
 
+const BASE_HEAD_PARAMS: &[ParamType] = &[
+    parse_param!(
+        "--env-file <STR>...               Load environment variables from the specified file(s)"
+    ),
+    parse_param!("--no-env-file                     Disable automatic loading of .env files"),
+    parse_param!(
+        "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
+    ),
+];
+
+const BASE_TAIL_PARAMS: &[ParamType] = &[parse_param!(
+    "-h, --help                        Display this menu and exit"
+)];
+
+/// Shared by every subcommand that keeps `-c` as the `--config` shorthand.
 pub(crate) const BASE_PARAMS_: &[ParamType] = concat_params!(
     maybe_debug_params!(),
-    &[
-        parse_param!(
-            "--env-file <STR>...               Load environment variables from the specified file(s)"
-        ),
-        parse_param!("--no-env-file                     Disable automatic loading of .env files"),
-        parse_param!(
-            "--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd."
-        ),
-        parse_param!(
-            "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
-        ),
-        parse_param!("-h, --help                        Display this menu and exit"),
-    ],
+    BASE_HEAD_PARAMS,
+    &[parse_param!(
+        "-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+    )],
+    BASE_TAIL_PARAMS,
+    maybe_verbose_error_trace!(),
+    &[parse_param!("<POS>...")],
+);
+
+/// Same as [`BASE_PARAMS_`], but `--config` has no `-c` shorthand: the runtime
+/// commands give `-c` to `--check` for Node compatibility, so advertising it
+/// here too would document an alias that never resolves to `--config`.
+pub(crate) const BASE_PARAMS_NO_CONFIG_SHORT_: &[ParamType] = concat_params!(
+    maybe_debug_params!(),
+    BASE_HEAD_PARAMS,
+    &[parse_param!(
+        "--config <PATH>?                  Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml"
+    )],
+    BASE_TAIL_PARAMS,
     maybe_verbose_error_trace!(),
     &[parse_param!("<POS>...")],
 );
@@ -191,6 +212,10 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait"
     ),
     parse_param!(
+        "--inspect-port <STR>              Set the default [host:]port used when the debugger is activated with --inspect"
+    ),
+    parse_param!("--debug-port <STR>"),
+    parse_param!(
         "--cpu-prof                        Start CPU profiler and write profile to disk on exit"
     ),
     parse_param!("--cpu-prof-name <STR>             Specify the name of the CPU profile file"),
@@ -235,6 +260,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("-e, --eval <STR>!                 Evaluate argument as a script"),
     parse_param!(
         "-p, --print <STR>?!               Evaluate argument as a script and print the result"
+    ),
+    parse_param!(
+        "--input-type <STR>                Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
     ),
     parse_param!(
         "--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk"
@@ -338,6 +366,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+    // `-c` means `--check` for the runtime commands (Node.js compatibility).
+    // The AUTO/RUN tables pair this with BASE_PARAMS_NO_CONFIG_SHORT_ so
+    // `--config` keeps its long form and nothing else claims `-c`.
+    parse_param!(
+        "-c, --check                       Check the syntax of the entry point (or stdin) without executing it"
+    ),
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),
@@ -380,7 +414,7 @@ pub(crate) const AUTO_PARAMS: &[ParamType] = concat_params!(
     AUTO_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
-    BASE_PARAMS_
+    BASE_PARAMS_NO_CONFIG_SHORT_
 );
 
 pub(crate) const RUN_ONLY_PARAMS: &[ParamType] = concat_params!(
@@ -396,7 +430,7 @@ pub(crate) const RUN_PARAMS: &[ParamType] = concat_params!(
     RUN_ONLY_PARAMS,
     RUNTIME_PARAMS_,
     TRANSPILER_PARAMS_,
-    BASE_PARAMS_
+    BASE_PARAMS_NO_CONFIG_SHORT_
 );
 
 const BAKE_DEBUG_PARAMS: &[ParamType] = &[
@@ -1493,9 +1527,38 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             Global::exit(1);
         }
 
+        // `--inspect-port` / `--debug-port` (Node alias) set the default
+        // debugger target used when --inspect/--inspect-wait/--inspect-brk is
+        // passed without its own [host:]port. They do not activate the
+        // debugger on their own, matching Node.
+        let inspect_port_value: Option<&[u8]> =
+            match (args.option(b"--inspect-port"), args.option(b"--debug-port")) {
+                (Some(value), _) => {
+                    if value.is_empty() {
+                        exit_node_requires_argument(b"--inspect-port=");
+                    }
+                    Some(value)
+                }
+                (None, Some(value)) => {
+                    if value.is_empty() {
+                        exit_node_requires_argument(b"--debug-port=");
+                    }
+                    Some(value)
+                }
+                (None, None) => None,
+            };
+        let default_debugger_target = || -> Box<[u8]> {
+            inspect_port_value
+                .map(Box::<[u8]>::from)
+                .unwrap_or_default()
+        };
+
         if let Some(inspect_flag) = args.option(b"--inspect") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
-                Debugger::Enable(Default::default())
+                Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
+                    ..Default::default()
+                })
             } else {
                 Debugger::Enable(DebuggerEnable {
                     path_or_port: Box::<[u8]>::from(inspect_flag),
@@ -1505,6 +1568,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         } else if let Some(inspect_flag) = args.option(b"--inspect-wait") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
                     wait_for_connection: true,
                     ..Default::default()
                 })
@@ -1518,6 +1582,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         } else if let Some(inspect_flag) = args.option(b"--inspect-brk") {
             ctx.runtime_options.debugger = if inspect_flag.is_empty() {
                 Debugger::Enable(DebuggerEnable {
+                    path_or_port: default_debugger_target(),
                     wait_for_connection: true,
                     set_breakpoint_on_first_line: true,
                     ..Default::default()

@@ -2618,8 +2618,9 @@ where
             }
             Body::Value::Locked(_) => {
                 // Read before render_metadata() strips it, so HEAD frames like GET.
-                let user_content_length =
-                    response.get_init_headers_mut().and_then(handler_content_length);
+                let user_content_length = response
+                    .get_init_headers_mut()
+                    .and_then(handler_content_length);
                 this.render_metadata();
                 if let Some(cl) = user_content_length {
                     resp.write_header_int(b"content-length", cl);

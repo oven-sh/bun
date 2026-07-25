@@ -678,6 +678,81 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("class Foo\n");
       expect(exitCode).toBe(0);
     });
+
+    test("TS parameter decorators are rejected without experimentalDecorators", async () => {
+      using dir = tempDir("es-dec-ts-param", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": `
+          function d(..._args: any[]) {}
+          class C {
+            constructor(@d y?: number) {}
+            m(@d x: number) { return x; }
+          }
+          new C(1);
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stderr = filterStderr(rawStderr);
+      expect(stderr).toContain("Parameter decorators only work when experimental decorators are enabled");
+      expect(stderr).toContain('"experimentalDecorators": true');
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("JS parameter decorators are rejected", async () => {
+      const { stderr, stdout, exitCode } = await runDecorator(`
+        function d() {}
+        class C { m(@d x) { return x; } }
+        new C().m(1);
+      `);
+      expect(stderr).toContain("Parameter decorators are not allowed in JavaScript");
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("Bun.Transpiler rejects parameter decorators without experimentalDecorators", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      expect(() => transpiler.transformSync(`function d(){}\nclass C { constructor(@d y) {} }`)).toThrow(
+        /Parameter decorators only work when experimental decorators are enabled/,
+      );
+      expect(() => transpiler.transformSync(`function d(){}\nclass C { m(@d x) { return x; } }`)).toThrow(
+        /Parameter decorators only work when experimental decorators are enabled/,
+      );
+    });
+
+    test("TS parameter decorators still work with experimentalDecorators", async () => {
+      using dir = tempDir("es-dec-ts-param-exp", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),
+        "test.ts": `
+          const seen: string[] = [];
+          function d(...args: any[]) { seen.push("called:" + args.length); }
+          class C {
+            constructor(@d y?: number) {}
+            m(@d x: number) { return x; }
+          }
+          new C(1); new C().m(2);
+          console.log(JSON.stringify(seen));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe('["called:3","called:3"]\n');
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("extends clause", () => {

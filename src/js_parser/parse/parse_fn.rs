@@ -232,9 +232,32 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
             if opts.allow_ts_decorators {
+                let at_range = p.lexer.range();
                 ts_decorators = p.parse_type_script_decorators()?;
                 if ts_decorators.len_u32() > 0 {
                     arg_has_decorators = true;
+                    if p.options.features.standard_decorators {
+                        if Self::IS_TYPESCRIPT_ENABLED {
+                            p.log().add_range_error_with_notes(
+                                Some(p.source),
+                                at_range,
+                                b"Parameter decorators only work when experimental decorators are enabled"
+                                    .as_slice(),
+                                Box::new([bun_ast::Data {
+                                    text: std::borrow::Cow::Borrowed(
+                                        b"Add \"experimentalDecorators\": true to your tsconfig.json to enable them",
+                                    ),
+                                    ..Default::default()
+                                }]),
+                            );
+                        } else {
+                            p.log().add_range_error(
+                                Some(p.source),
+                                at_range,
+                                b"Parameter decorators are not allowed in JavaScript",
+                            );
+                        }
+                    }
                 }
             }
 

@@ -207,6 +207,14 @@ impl QuicStream {
             st.pending = 0;
         });
         self.write_stat(IDX_STATS_OPENED_AT, super::now_ns());
+        // A delayed 0-RTT stream the session cancelled while this wrapper
+        // was still raw==null: propagate the cancel to the lsquic stream
+        // it was just given instead of sending the request it queued.
+        if let Some(code) = self.with_state(|st| (st.reset != 0).then_some(st.reset_code)) {
+            s.stop_sending(code);
+            s.reset(code);
+            return;
+        }
         let pre_reset_code = s.error_code();
         if s.is_rejected() && self.peer_stop_sending_code.get().is_none() {
             self.peer_stop_sending_code.set(Some(pre_reset_code));
@@ -395,6 +403,7 @@ impl QuicStream {
             o.fin_pending = false;
             o.trailers_pending = false;
         });
+        self.pending_headers.with_mut(Vec::clear);
         self.with_state(|st| st.write_ended = 1);
         if let Some(s) = self.ls() {
             // stop_sending swaps `sm_readable` to `stream_readable_discard`

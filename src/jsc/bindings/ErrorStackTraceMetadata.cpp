@@ -25,9 +25,7 @@ struct CacheSlot {
 
 using Cache = std::array<CacheSlot, kCacheSize>;
 
-// Direct-mapped per-thread cache. .stack is almost always read in the same
-// turn it was captured, so a small cache suffices; on eviction the only
-// consequence is that the older error's stack loses its receiver prefixes.
+// Per-thread cache; eviction just drops the older error's receiver prefixes.
 static CacheSlot& slotFor(JSCell* owner)
 {
     static LazyNeverDestroyed<ThreadSpecific<Cache>> cache;
@@ -45,10 +43,8 @@ static WTF::String typeNameForReceiver(JSValue thisValue)
     if (!thisObject)
         return String();
 
-    // For bare `foo()` JSC passes the resolved scope as |this| and the callee
-    // converts it via to_this when |this| is used; the raw slot holds a scope
-    // (JSLexicalEnvironment, GlobalObject, etc.), which is never a real
-    // receiver. The global proxy is likewise a stand-in for "no receiver".
+    // Bare `foo()`: JSC passes the resolved scope as raw |this| (normalized
+    // later by to_this), so a scope/global-proxy here means "no receiver".
     JSC::JSType type = thisObject->type();
     if ((JSC::FirstScopeType <= type && type <= JSC::LastScopeType) || type == JSC::GlobalProxyType)
         return String();
@@ -58,18 +54,15 @@ static WTF::String typeNameForReceiver(JSValue thisValue)
         return String();
 
     ASCIILiteral name = classInfo->className;
-    // Generic classInfo names that would need calculatedClassName() to resolve
-    // to the user-visible constructor name; skip rather than mislabel.
+    // These need calculatedClassName() for the real name; skip rather than mislabel.
     if (name == "Object"_s || name == "Function"_s || name == "Module"_s || name == "GlobalObject"_s)
         return String();
     return name;
 }
 
-// Installed as VM::onAppendStackTrace. Runs inside Interpreter::getStackTrace
-// under AssertNoGC while the physical call frames are still live. Re-walks the
-// stack via StackVisitor, matches the already-filtered `stackTrace` frames by
-// callee in order, and records each frame's receiver type name into the cache
-// slot for this ErrorInstance.
+// VM::onAppendStackTrace hook: runs under AssertNoGC inside getStackTrace
+// while call frames are live; matches stackTrace[] frames by callee and
+// records each receiver's classInfo name into this ErrorInstance's cache slot.
 void captureStackFrameReceivers(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& stackTrace, size_t maxToAppend)
 {
     UNUSED_PARAM(maxToAppend);
@@ -136,9 +129,7 @@ void captureStackFrameReceivers(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& 
     uintptr_t gen = generation.fetch_add(1, std::memory_order_relaxed) + 1;
     slot.owner = owner;
     slot.generation = gen;
-    // Stamp the instance with the generation so a recycled cell at the same
-    // address does not pick up stale metadata. The value is never a real
-    // pointer; Bun__errorInstance__finalize is a no-op.
+    // Generation stamp guards against a recycled cell at the same address.
     errorInstance->setBunErrorData(reinterpret_cast<void*>(gen));
 }
 

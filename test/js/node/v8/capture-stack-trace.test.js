@@ -1130,6 +1130,15 @@ test("Error.stack includes the receiver's built-in class name", () => {
   arr.push(capture);
   expect(arr[0]()).toMatch(/^\s+at Array\.capture /);
 
+  // a function whose name begins with the receiver's class name still gets
+  // the prefix (the guard must check for a word boundary, not a bare prefix)
+  const map = new Map();
+  function Mapper() {
+    return new Error().stack.split("\n")[1];
+  }
+  map.Mapper = Mapper;
+  expect(map.Mapper()).toMatch(/^\s+at Map\.Mapper /);
+
   // direct call has no receiver prefix (strict mode receiver is undefined)
   expect(capture()).toMatch(/^\s+at capture /);
 

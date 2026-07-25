@@ -316,7 +316,7 @@ WTF::String formatStackTrace(
         WTF::String typeName;
         // Async frames are spliced into the trace after the metadata hook ran,
         // so they never have a corresponding entry; skip without advancing.
-        if (metadata && !frame.isAsyncFrame()) {
+        if (metadata && !frame.isAsyncFrame() && frame.callee()) {
             size_t probe = metadataCursor;
             while (probe < metadata->entries.size() && metadata->entries[probe].callee != frame.callee())
                 probe++;
@@ -364,8 +364,11 @@ WTF::String formatStackTrace(
             }
         }
 
-        if (!typeName.isEmpty() && !functionName.startsWith(typeName)) {
-            functionName = makeString(typeName, '.', functionName);
+        if (!typeName.isEmpty()) {
+            bool alreadyQualified = functionName.startsWith(typeName)
+                && (functionName.length() == typeName.length() || functionName[typeName.length()] == '.');
+            if (!alreadyQualified)
+                functionName = makeString(typeName, '.', functionName);
         }
 
         if (sourceURLForFrame.isEmpty()) {
@@ -457,7 +460,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
     if (const Bun::StackTraceMetadata* metadata = Bun::stackTraceMetadataFor(errorObject)) {
         size_t cursor = 0;
         for (size_t i = 0; i < stackTrace.size(); i++) {
-            if (stackTrace.at(i).isAsync())
+            if (stackTrace.at(i).isAsync() || !stackTrace.at(i).callee())
                 continue;
             size_t probe = cursor;
             while (probe < metadata->entries.size() && metadata->entries[probe].callee != stackTrace.at(i).callee())

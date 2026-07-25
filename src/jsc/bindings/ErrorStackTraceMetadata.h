@@ -12,13 +12,10 @@ class StackFrame;
 
 namespace Bun {
 
-// Side-channel metadata captured for an ErrorInstance's stack trace at
-// construction time, while the call stack is still live. Stored in a small
-// per-thread direct-mapped cache so that memory is bounded and does not depend
-// on the ErrorInstance's GC lifecycle. ErrorInstance has no destructor hook
-// Bun can reach (finalizeUnconditionally only runs for marked cells), so a
-// per-instance heap allocation would leak for errors collected before being
-// marked.
+// Per-frame receiver class names captured at Error construction. Held in a
+// bounded per-thread cache because ErrorInstance has no destructor hook Bun
+// can reach (finalizeUnconditionally only visits marked cells), so a
+// per-instance allocation would leak for errors collected without being marked.
 struct StackTraceMetadata {
     struct Entry {
         JSC::JSCell* callee;

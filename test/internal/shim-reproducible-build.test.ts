@@ -76,6 +76,7 @@ async function buildShim(targetDir: string): Promise<Uint8Array> {
     cmd: [
       cargo!,
       "build",
+      "--locked",
       "-p",
       "bun_shim_impl",
       "--bin",

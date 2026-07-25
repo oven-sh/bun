@@ -1949,8 +1949,8 @@ export default class {
 
           export const y = shared();
         `);
-        expect(out).toContain("./shared");
-        expect(out).toContain("shared");
+        expect(out).toMatch(/\{\s*shared\s*\}\s*from\s*"\.\/shared"/);
+        expect(out).toContain("shared()");
       });
 
       it("keeps originally-bare imports", () => {

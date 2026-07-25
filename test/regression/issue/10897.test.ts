@@ -1,10 +1,4 @@
 // https://github.com/oven-sh/bun/issues/10897
-//
-// `bun completions` (run by `bun upgrade` with IS_BUN_AUTO_UPDATE=true) only
-// recognised an already-installed zsh snippet by its absolute path or the
-// "# bun completions\n" marker. Users who reference the file via $HOME / ~ /
-// ${HOME}, or whose marker line ends in CRLF, got a fresh hardcoded copy
-// appended on every upgrade.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { readFileSync } from "node:fs";

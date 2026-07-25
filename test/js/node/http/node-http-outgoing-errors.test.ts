@@ -1,7 +1,7 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 async function withRawServer(fn: (port: number) => void | Promise<void>) {
   const srv = net.createServer(s => {

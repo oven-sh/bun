@@ -539,13 +539,14 @@ test("bun build --no-bundle --watch rebuilds when the entry file changes", async
   const waitForOutput = async (needle: string) => {
     while (true) {
       const exitCode = proc.exitCode;
+      const signalCode = proc.signalCode;
       const text = await Bun.file(outfile)
         .text()
         .catch(() => "");
       if (text.includes(needle)) return text;
-      if (exitCode !== null) {
+      if (exitCode !== null || signalCode !== null) {
         throw new Error(
-          `watcher exited (code ${exitCode}) before emitting ${JSON.stringify(needle)}\n` +
+          `watcher exited (code ${exitCode}, signal ${signalCode}) before emitting ${JSON.stringify(needle)}\n` +
             `outfile: ${JSON.stringify(text)}\nstdout: ${await stdout}\nstderr: ${await stderr}`,
         );
       }

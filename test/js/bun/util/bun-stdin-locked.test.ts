@@ -1,4 +1,4 @@
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // process.stdin is built on Bun.stdin.stream()'s reader. The Blob read helpers
@@ -35,11 +35,7 @@ describe.each(["arrayBuffer", "bytes", "text", "json"] as const)(
       });
       proc.stdin.write(payload);
       await proc.stdin.end();
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(JSON.parse(stdout)).toEqual({
         n: payload.length,
@@ -52,11 +48,7 @@ describe.each(["arrayBuffer", "bytes", "text", "json"] as const)(
 
 test.concurrent("Bun.stdin.arrayBuffer() with no other consumer reads every byte", async () => {
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `process.stdout.write(String((await Bun.stdin.arrayBuffer()).byteLength));`,
-    ],
+    cmd: [bunExe(), "-e", `process.stdout.write(String((await Bun.stdin.arrayBuffer()).byteLength));`],
     env: bunEnv,
     stdin: "pipe",
     stdout: "pipe",
@@ -64,11 +56,7 @@ test.concurrent("Bun.stdin.arrayBuffer() with no other consumer reads every byte
   });
   proc.stdin.write(payload);
   await proc.stdin.end();
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe(String(payload.length));
   expect(exitCode).toBe(0);

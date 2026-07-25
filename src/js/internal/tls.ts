@@ -178,13 +178,16 @@ function processPfxOptions(options) {
   return out;
 }
 
+const ArrayPrototypeSome = Array.prototype.some;
+const ArrayPrototypeMap = Array.prototype.map;
+
 function isPemKeyEntry(k) {
   return k && typeof k === "object" && !isArrayBufferView(k) && "pem" in k;
 }
 
 function hasPemObject(key) {
   if (!key) return false;
-  if ($isArray(key)) return key.some(isPemKeyEntry);
+  if ($isArray(key)) return ArrayPrototypeSome.$call(key, isPemKeyEntry);
   return isPemKeyEntry(key);
 }
 
@@ -192,7 +195,7 @@ function hasPemObject(key) {
 function normalizePemKeyOption(key, ctxPassphrase) {
   if (!key || !hasPemObject(key)) return key;
   const entries = $isArray(key) ? key : [key];
-  return entries.map(k => {
+  return ArrayPrototypeMap.$call(entries, k => {
     if (!isPemKeyEntry(k)) return k;
     // Node: an explicit per-key null passphrase means "no passphrase" and does not fall back to the context-level one
     const passphrase = k.passphrase !== undefined ? k.passphrase : ctxPassphrase;

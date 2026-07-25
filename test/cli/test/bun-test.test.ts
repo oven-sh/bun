@@ -495,6 +495,19 @@ describe("bun test", () => {
       });
       expect(stderr).not.toContain("\x1b[");
     });
+
+    test("console.clear() is a no-op on a pipe under GITHUB_ACTIONS", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", "console.clear()"],
+        env: { ...bunEnv, ...colorNeutralEnv, CI: "true", GITHUB_ACTIONS: "true" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
   describe("support for Github Actions", () => {
     test("should not group logs by default", () => {

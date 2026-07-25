@@ -2402,9 +2402,9 @@ pub(crate) fn init_with_runtime_once(
     // The lockfile allocation is folded into the struct literal above
     // (`Box::new(Lockfile::default())`).
 
-    if Output::enable_ansi_colors_stderr() {
+    if Output::stderr_descriptor_type() == Output::DescriptorType::Terminal {
         manager.progress = Progress::default();
-        manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
+        manager.progress.supports_ansi_escape_codes = true;
         // `Progress::start` returns `&mut Node` borrowing `manager.progress.root`.
         // Coerce to a raw pointer immediately so the borrow doesn't outlive the
         // statement; `root_progress_node` is BORROW_FIELD into `self.progress`.

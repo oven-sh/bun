@@ -1136,8 +1136,10 @@ pub fn writer_buffered() -> &'static mut io::Writer {
 }
 
 pub fn reset_terminal() {
-    let stderr = ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed);
-    let stdout = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed);
+    let stderr = ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+        && stderr_descriptor_type() == OutputStreamDescriptor::Terminal;
+    let stdout = ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+        && stdout_descriptor_type() == OutputStreamDescriptor::Terminal;
     if !stderr && !stdout {
         return;
     }
@@ -1152,10 +1154,14 @@ pub fn reset_terminal() {
 
 pub fn reset_terminal_all() {
     SOURCE.with_borrow_mut(|s| {
-        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed) {
+        if ENABLE_ANSI_COLORS_STDERR.load(Ordering::Relaxed)
+            && stderr_descriptor_type() == OutputStreamDescriptor::Terminal
+        {
             let _ = s.error_stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
         }
-        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed) {
+        if ENABLE_ANSI_COLORS_STDOUT.load(Ordering::Relaxed)
+            && stdout_descriptor_type() == OutputStreamDescriptor::Terminal
+        {
             let _ = s.stream().write_all(b"\x1B[2J\x1B[3J\x1B[H");
         }
     });

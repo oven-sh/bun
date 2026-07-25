@@ -127,11 +127,9 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Ok(JSValue::FALSE);
     }
 
-    Ok(if good == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
-        JSValue::FALSE
-    })
+    // Backoff means the message was queued behind a pending handle ack and will
+    // still be delivered, so only Failure reports false.
+    Ok(JSValue::TRUE)
 }
 
 #[bun_jsc::host_fn]
@@ -256,10 +254,12 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
 
     let success =
         ipc_data.serialize_and_send(global, message, is_internal, JSValue::NULL, zig_handle);
-    Ok(if success == SerializeAndSendResult::Success {
-        JSValue::TRUE
-    } else {
+    // Backoff means the message (and any handle fd) was queued behind a pending
+    // handle ack and will still be delivered, so only Failure reports false.
+    Ok(if success == SerializeAndSendResult::Failure {
         JSValue::FALSE
+    } else {
+        JSValue::TRUE
     })
 }
 

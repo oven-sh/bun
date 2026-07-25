@@ -2008,6 +2008,70 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // Rewrite `require('bindings')('<name>')` to a direct require of the
+        // `.node` addon so the bundler can embed it. The `bindings` npm package
+        // locates the addon at runtime relative to the calling module's package
+        // root, which cannot work once the module is bundled into a single file.
+        if p.options.bundle && !p.is_control_flow_dead {
+            if let Data::ERequireString(req) = e_.target.data {
+                if e_.args.len_u32() == 1
+                    && p.import_records.items()[req.import_record_index as usize]
+                        .path
+                        .text
+                        == b"bindings"
+                {
+                    let arg = e_.args.slice()[0];
+                    if let Data::EString(mut s) = arg.data {
+                        s.resolve_rope_if_needed(p.arena);
+                        let raw = s.string(p.arena).expect("unreachable");
+                        if !raw.is_empty() {
+                            let name: &'a [u8] =
+                                if strings::has_suffix_comptime(raw, b".node") {
+                                    raw
+                                } else {
+                                    let mut buf = bun_alloc::ArenaVec::with_capacity_in(
+                                        raw.len() + 5,
+                                        p.arena,
+                                    );
+                                    buf.extend_from_slice(raw);
+                                    buf.extend_from_slice(b".node");
+                                    buf.into_bump_slice()
+                                };
+                            let handles_import_errors =
+                                p.fn_or_arrow_data_visit.try_body_count != 0;
+                            let new_index = p.add_import_record_by_range(
+                                js_ast::ImportKind::Require,
+                                p.source.range_of_string(arg.loc),
+                                name,
+                            );
+                            {
+                                let recs = p.import_records.items_mut();
+                                recs[new_index as usize].flags.insert(
+                                    js_ast::ImportRecordFlags::NODE_BINDINGS_SEARCH,
+                                );
+                                recs[new_index as usize].flags.set(
+                                    js_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                                    handles_import_errors,
+                                );
+                                recs[req.import_record_index as usize]
+                                    .flags
+                                    .insert(js_ast::ImportRecordFlags::IS_UNUSED);
+                            }
+                            p.import_records_for_current_part.push(new_index);
+                            *e = p.new_expr(
+                                E::RequireString {
+                                    import_record_index: new_index,
+                                    ..Default::default()
+                                },
+                                expr.loc,
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

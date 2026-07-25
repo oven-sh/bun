@@ -5756,6 +5756,60 @@ pub mod bv2_impl {
         }
     }
 
+    /// Resolve a `require('bindings')('<name>.node')` addon name to an absolute
+    /// path the same way the npm `bindings` package does at runtime: walk up
+    /// from `source_dir` to the nearest directory that contains `package.json`,
+    /// then probe that package's build-output directories for `<name>.node`.
+    /// Returns the found path written into `out`, or `None` if no match.
+    fn locate_node_bindings_addon<'b>(
+        source_dir: &[u8],
+        name: &[u8],
+        out: &'b mut bun_paths::PathBuffer,
+    ) -> Option<&'b [u8]> {
+        const SEARCH_DIRS: &[&[u8]] = &[
+            b"build",
+            b"build/Debug",
+            b"build/Release",
+            b"out/Debug",
+            b"Debug",
+            b"out/Release",
+            b"Release",
+            b"build/default",
+            b"addon-build/release/install-root",
+            b"addon-build/debug/install-root",
+            b"addon-build/default/install-root",
+        ];
+
+        let mut root_buf = bun_paths::path_buffer_pool::get();
+        let mut dir: &[u8] = source_dir;
+        let module_root: &[u8] = loop {
+            if dir.is_empty() {
+                return None;
+            }
+            let probe = bun_paths::resolve_path::join_string_buf::<
+                bun_paths::resolve_path::platform::Auto,
+            >(&mut **root_buf, &[dir, b"package.json"]);
+            if bun_sys::exists(probe) {
+                break dir;
+            }
+            match bun_paths::dirname(dir) {
+                Some(parent) if parent.len() < dir.len() => dir = parent,
+                _ => return None,
+            }
+        };
+
+        for sub in SEARCH_DIRS {
+            let candidate = bun_paths::resolve_path::join_string_buf::<
+                bun_paths::resolve_path::platform::Auto,
+            >(&mut **out, &[module_root, sub, name]);
+            if bun_sys::exists(candidate) {
+                let len = candidate.len();
+                return Some(&out[..len]);
+            }
+        }
+        None
+    }
+
     pub struct ResolveImportRecordCtx<'a> {
         pub import_records: &'a mut [ImportRecord],
         pub source: &'a bun_ast::Source,
@@ -5922,6 +5976,55 @@ pub mod bv2_impl {
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                }
+
+                if import_record
+                    .flags
+                    .contains(bun_ast::ImportRecordFlags::NODE_BINDINGS_SEARCH)
+                    && source.path.is_file()
+                {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    if let Some(found) = locate_node_bindings_addon(
+                        source_dir,
+                        import_record.path.text,
+                        &mut buf,
+                    ) {
+                        // SAFETY: arena outlives every ImportRecord in this pass.
+                        let text: &'static [u8] = unsafe {
+                            bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(found))
+                        };
+                        import_record.path = Fs::Path::init(text);
+                    } else if !import_record
+                        .flags
+                        .contains(bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS)
+                        && !self.transpiler.options.ignore_module_resolution_errors
+                    {
+                        let log: &mut bun_ast::Log = unsafe {
+                            &mut *std::ptr::from_mut::<bun_ast::Log>(
+                                self.log_for_resolution_failures(
+                                    source.path.text,
+                                    ctx.target.bake_graph(),
+                                ),
+                            )
+                        };
+                        bun_ast::Log::add_resolve_error_with_text_dupe(
+                            log,
+                            Some(source),
+                            import_record.range,
+                            format_args!(
+                                "Could not locate the \"{}\" addon for require(\"bindings\"). Is it built?",
+                                bstr::BStr::new(&import_record.path.text),
+                            ),
+                            import_record.path.text,
+                            import_record.kind,
+                        );
+                        last_error = Some(_resolver::Error::ModuleNotFound.into());
+                        import_record.path.is_disabled = true;
+                        continue;
+                    } else {
+                        import_record.path.is_disabled = true;
+                        continue;
+                    }
                 }
 
                 if self.enqueue_on_resolve_plugin_if_needed(

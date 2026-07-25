@@ -541,4 +541,118 @@ describe("bundler", async () => {
       },
     });
   });
+
+  // The `bindings` npm package locates a .node addon at runtime by walking up
+  // from the calling file to the nearest package.json and probing build/ dirs.
+  // That search cannot work once the module is bundled: __dirname points at the
+  // bundle (or /$bunfs/root/... for --compile) and neither the package.json nor
+  // the addon live there. The bundler now rewrites `require('bindings')(name)`
+  // at build time so the addon is resolved statically and copied/embedded via
+  // the existing napi loader. https://github.com/oven-sh/bun/issues/14301
+  describe("napi require('bindings') rewrite", () => {
+    const bindingsPkg = {
+      "/node_modules/bindings/package.json": JSON.stringify({ name: "bindings", main: "bindings.js" }),
+      "/node_modules/bindings/bindings.js": /* js */ `
+        module.exports = function bindings() {
+          throw new Error("the bundled bindings() shim was called at runtime");
+        };
+        module.exports.getRoot = function getRoot(file) {
+          throw new Error('Could not find module root given file: "' + file + '".');
+        };
+      `,
+    };
+
+    itBundled("bun/napi-bindings-rewrite", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          const addon = require("mypkg");
+          console.log(typeof addon);
+        `,
+        "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "lib/binding.js" }),
+        "/node_modules/mypkg/lib/binding.js": /* js */ `
+          module.exports = require('bindings')('mypkg_native');
+        `,
+        "/node_modules/mypkg/build/Release/mypkg_native.node": Buffer.from("<native addon bytes>"),
+        ...bindingsPkg,
+      },
+      onAfterBundle(api) {
+        const files = readdirSync(api.outdir);
+        const nodeFile = files.find(x => x.endsWith(".node"));
+        expect(nodeFile).toBeDefined();
+        expect(fs.readFileSync(join(api.outdir, nodeFile!), "utf8")).toBe("<native addon bytes>");
+        const js = api.readFile("/out/entry.js");
+        expect(js).toContain(".node");
+        expect(js).not.toContain("Could not find module root");
+        expect(js).not.toContain("the bundled bindings() shim");
+      },
+    });
+
+    itBundled("bun/napi-bindings-rewrite-appends-node-extension", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `require("mypkg");`,
+        "/node_modules/mypkg/package.json": JSON.stringify({ name: "mypkg", main: "index.js" }),
+        "/node_modules/mypkg/index.js": /* js */ `
+          module.exports = require('bindings')('mypkg_native.node');
+        `,
+        "/node_modules/mypkg/build/Release/mypkg_native.node": Buffer.from("x"),
+        ...bindingsPkg,
+      },
+      onAfterBundle(api) {
+        const nodeFile = readdirSync(api.outdir).find(x => x.endsWith(".node"));
+        expect(nodeFile).toBeDefined();
+      },
+    });
+
+    itBundled("bun/napi-bindings-rewrite-inside-try-catch", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          let loaded;
+          try {
+            loaded = require('bindings')('does_not_exist');
+          } catch {
+            loaded = { fallback: true };
+          }
+          console.log(JSON.stringify(loaded));
+        `,
+        "/package.json": JSON.stringify({ name: "entry" }),
+        ...bindingsPkg,
+      },
+      run: { stdout: '{"fallback":true}' },
+    });
+
+    itBundled("bun/napi-bindings-not-found-error", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          module.exports = require('bindings')('does_not_exist');
+        `,
+        "/package.json": JSON.stringify({ name: "entry" }),
+        ...bindingsPkg,
+      },
+      bundleErrors: {
+        "/entry.ts": [
+          `Could not locate the "does_not_exist.node" addon for require("bindings"). Is it built?`,
+        ],
+      },
+    });
+
+    itBundled("bun/napi-bindings-leaves-non-call-alone", {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* js */ `
+          const bindings = require('bindings');
+          console.log(typeof bindings.getRoot);
+        `,
+        ...bindingsPkg,
+      },
+      run: { stdout: "function" },
+    });
+  });
 });

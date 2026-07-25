@@ -70,6 +70,12 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
+        /// The specifier is the `<name>.node` argument of
+        /// `require('bindings')('<name>')`. The bundler resolves it by walking
+        /// up to the enclosing package root and probing the build directories
+        /// the `bindings` npm package would search at runtime.
+        const NODE_BINDINGS_SEARCH = 1 << 7;
+
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;
 

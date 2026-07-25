@@ -835,7 +835,7 @@ const addon = require("./addon.node");
 console.log(addon.hello());
 ```
 
-If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must be required directly or it won't bundle correctly.
+Packages that load their addon through the [`bindings`](https://npmjs.com/package/bindings) helper (for example, `require("bindings")("addon")`) are handled automatically: the bundler locates the `.node` file in the package's `build/` output directories at build time and embeds it. If you're using `@mapbox/node-pre-gyp` or another loader that computes the addon path dynamically, the `.node` file must be required directly or it won't bundle correctly.
 
 ### Embed directories
 

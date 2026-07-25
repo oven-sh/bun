@@ -1232,7 +1232,7 @@ where
     pub(crate) fn on_writable_byte_stream(
         this: *mut Self,
         _write_offset: u64,
-        _resp: uws::AnyResponse,
+        resp: uws::AnyResponse,
     ) -> bool {
         ctx_log!("onWritableByteStream");
         // SAFETY: `this` is the live `RequestContext` user-data pointer registered with uWS.
@@ -1241,6 +1241,7 @@ where
         if this.is_aborted_or_ended() {
             return false;
         }
+        resp.reset_timeout();
         if let Some(byte_stream) = this.byte_stream {
             bun_ptr::BackRef::from(byte_stream).signal_drained();
         }
@@ -1474,6 +1475,17 @@ where
                 );
             }
             return;
+        }
+
+        if let Some(byte_stream) = this.byte_stream.take() {
+            shim::byte_stream_unpipe(byte_stream);
+            if let Some(stream) = this.response_body_readable_stream_ref.get(global_this) {
+                let _keep = jsc::EnsureStillAlive(stream.value);
+                stream.cancel(global_this);
+                any_js_calls.set(true);
+            }
+            this.response_body_readable_stream_ref.deinit();
+            this.deref();
         }
 
         // if we can, free the request now.

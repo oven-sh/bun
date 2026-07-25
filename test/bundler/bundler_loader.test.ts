@@ -621,6 +621,32 @@ describe("bundler", async () => {
     });
   }
 
+  // Browser target: the napi loader hard-errors, so the probe is skipped and a
+  // try/catch around `require('bindings')` falls through instead of failing the build.
+  itBundled("browser/napi-require-bindings-browser-target#8895", {
+    target: "browser",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* ts */ `
+        const addon = require("mypkg");
+        console.log(addon);
+      `,
+      "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./index.js"}`,
+      "/node_modules/mypkg/index.js": /* js */ `
+        try { module.exports = require('bindings')('mypkg_native'); }
+        catch { module.exports = { fallback: true }; }
+      `,
+      "/node_modules/mypkg/build/Release/mypkg_native.node": "<binary placeholder>",
+      "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
+      "/node_modules/bindings/bindings.js": "module.exports = () => {};",
+    },
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).some(x => x.endsWith(".node"))).toBe(false);
+      const js = api.readFile(join("/out", readdirSync(api.outdir).find(x => x.endsWith(".js"))!));
+      expect(js).toContain("fallback: true");
+    },
+  });
+
   // An addon named like a node builtin must not be hijacked by the alias table.
   itBundled("bun/napi-require-bindings-builtin-name-collision#8895", {
     target: "bun",

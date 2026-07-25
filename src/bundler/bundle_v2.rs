@@ -5872,11 +5872,15 @@ pub mod bv2_impl {
 
                 if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
                     import_record.tag = bun_ast::ImportRecordTag::None;
-                    if let Some(abs) = self
-                        .transpiler
-                        .resolver
-                        .resolve_node_gyp_bindings(source_dir, import_record.path.text)
-                    {
+                    let abs = if ctx.target.is_server_side() {
+                        self.transpiler
+                            .resolver
+                            .resolve_node_gyp_bindings(source_dir, import_record.path.text)
+                    } else {
+                        // Browser: `Loader::Napi` hard-errors, so skip the probe and fall through to external.
+                        None
+                    };
+                    if let Some(abs) = abs {
                         import_record.path = bun_paths::fs::Path::init(abs);
                     } else {
                         // No built addon on disk: leave `require("<name>.node")` external for runtime.

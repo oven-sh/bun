@@ -830,7 +830,7 @@ __std_minmax_8i                                                                 
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (45 symbols)
+# (44 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -873,13 +873,31 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
-strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]
 tanhf_fma                   [AVX, FMA]
 wcslen                      [AVX, AVX2]
 wcsnlen                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC CRT strspn family. Data-in-.text false positive, NOT a gate.
+#
+# The UCRT's x64 strspn.asm (assembled once each for strspn/strcspn/strpbrk)
+# is SSE2-only; the psrldq/pslldq byte-shift ladder is dispatched through an
+# indirect `jmp *table[rbp + rax*4]` where the table is three arrays of 4-byte
+# image-relative RVAs stored in .text right after the function's `ret`. Those
+# RVAs change with link layout, and linear sweep desyncs into them: entry
+# bytes `C7 F8 xx xx` / `C6 F8 xx` decode as XBEGIN/XABORT (handled in
+# is_impossible_feature), and `C4/C5 xx ..` can decode as stray VEX. The SDE
+# -nhm step in this job calls strcspn (libarchive mtree, sqlite3) and passes,
+# confirming no post-SSE2 code runs.
+# (3 symbols)
+# ----------------------------------------------------------------------------
+strcspn                     [AVX, AVX2]
+strpbrk                     [AVX, AVX2]
+strspn                      [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------

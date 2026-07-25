@@ -60,6 +60,10 @@ pub struct Parser<'a> {
     // Scratch storage recycled by compute_bracket_matches (links.rs) so inline
     // processing does not allocate a bracket-pair map per block.
     pub bracket_pairs: Vec<(OFF, OFF)>,
+    // Cache populated by scan_bracket_close (links.rs) on the rare path
+    // where an opener is missing from `bracket_pairs`; recycled across
+    // blocks so that path costs one allocation per Parser.
+    pub bracket_fallback: Vec<(OFF, OFF)>,
     // Label-frame stack recycled by process_inline_content (inlines.rs) so
     // blocks with links do not allocate a frame stack per block.
     pub label_frames: Vec<crate::inlines::LabelFrame>,
@@ -289,6 +293,7 @@ impl<'a> Parser<'a> {
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             bracket_pairs: Vec::new(),
+            bracket_fallback: Vec::new(),
             label_frames: Vec::new(),
             html_scan_memo: Cell::new(HtmlScanMemo::EMPTY),
             n_containers: 0,

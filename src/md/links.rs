@@ -231,7 +231,7 @@ impl Parser<'_> {
     /// when `content` is a link-label sub-slice). Falls back to a forward scan
     /// when the opener is unknown to the map.
     fn match_bracket(
-        &self,
+        &mut self,
         content: &[u8],
         start: usize,
         brackets: &BracketMatches,
@@ -245,61 +245,100 @@ impl Parser<'_> {
                 })
             }
             BracketLookup::Unmatched => None,
-            _ => self.scan_bracket_close(content, start),
+            _ => self.scan_bracket_close(content, start, base),
         }
     }
 
     /// Forward scan for the `]` matching the `[` at `start`, skipping code
-    /// spans, HTML tags/autolinks and backslash escapes. Only used when the
-    /// opener is missing from the precomputed bracket map.
-    fn scan_bracket_close(&self, content: &[u8], start: usize) -> Option<BracketScan> {
+    /// spans, HTML tags/autolinks and backslash escapes. Only reached when
+    /// the opener is missing from the precomputed bracket map because the
+    /// inline processor and the map's single pass disagree on tokenization
+    /// (typically a backtick inside a link destination that the map treated
+    /// as a code-span opener). The walk records every `[` it visits and its
+    /// match into `self.bracket_fallback`, so later calls for openers in the
+    /// walked range are answered by lookup instead of rescanning; without
+    /// that cache a run of N unknown openers costs N walks to the end, which
+    /// is quadratic on inputs like "[x](`y)" + "[".repeat(n) + "`".
+    fn scan_bracket_close(
+        &mut self,
+        content: &[u8],
+        start: usize,
+        base: usize,
+    ) -> Option<BracketScan> {
+        let abs = (base + start) as OFF;
+        let end = (base + content.len()) as OFF;
+        let answer = |fb: &[(OFF, OFF)], i: usize| match fb[i].1 {
+            BracketMatches::UNMATCHED => None,
+            // A closer past `end` belongs to an enclosing label frame and
+            // is not a match in this sub-slice.
+            close if close < end => Some(BracketScan {
+                close: close as usize - base,
+                has_inner_bracket: fb.get(i + 1).is_some_and(|&(o, _)| o < close),
+            }),
+            _ => None,
+        };
+        let mut fb = core::mem::take(&mut self.bracket_fallback);
+        // The cache's first entry is the opener its walk started on. If
+        // `abs` falls in the recorded range and the walk visited it, answer
+        // from the cache; otherwise (different slice, past the recorded
+        // range, or inside a span the previous walk skipped) rebuild below.
+        if fb.first().is_some_and(|&(o, _)| o <= abs) {
+            if let Ok(i) = fb.binary_search_by_key(&abs, |&(o, _)| o) {
+                let scan = answer(&fb, i);
+                self.bracket_fallback = fb;
+                return scan;
+            }
+        }
+
+        fb.clear();
+        fb.push((abs, BracketMatches::UNMATCHED));
+        let mut top: usize = 0;
         let mut pos = start + 1;
-        let mut bracket_depth: u32 = 1;
-        let mut has_inner_bracket = false;
-        while pos < content.len() && bracket_depth > 0 {
-            if content[pos] == b'\\' && pos + 1 < content.len() {
-                pos += 2;
-                continue;
-            }
-            // Skip code spans — they take precedence over brackets (CommonMark §6.3)
-            if content[pos] == b'`' {
-                let count = inlines::count_backticks(content, pos);
-                if let Some(end_pos) = self.find_code_span_end(content, pos + count, count) {
-                    pos = end_pos + count;
-                } else {
-                    pos += count;
+        'walk: while pos < content.len() {
+            match content[pos] {
+                b'\\' if pos + 1 < content.len() => pos += 2,
+                // Code spans take precedence over brackets (CommonMark §6.3)
+                b'`' => {
+                    let count = inlines::count_backticks(content, pos);
+                    match self.find_code_span_end(content, pos + count, count) {
+                        Some(end_pos) => pos = end_pos + count,
+                        None => pos += count,
+                    }
                 }
-                continue;
-            }
-            // Skip HTML tags and autolinks — they take precedence over brackets
-            if content[pos] == b'<' && !self.flags.no_html_spans {
-                if let Some(tag_end) = self.find_html_tag(content, pos) {
-                    pos = tag_end;
-                    continue;
+                // HTML tags and autolinks take precedence over brackets
+                b'<' if !self.flags.no_html_spans => {
+                    if let Some(tag_end) = self.find_html_tag(content, pos) {
+                        pos = tag_end;
+                    } else if let Some(autolink) = self.find_autolink(content, pos) {
+                        pos = autolink.end_pos;
+                    } else {
+                        pos += 1;
+                    }
                 }
-                if let Some(autolink) = self.find_autolink(content, pos) {
-                    pos = autolink.end_pos;
-                    continue;
+                b'[' => {
+                    fb.push(((base + pos) as OFF, top as OFF));
+                    top = fb.len() - 1;
+                    pos += 1;
                 }
-            }
-            if content[pos] == b'[' {
-                bracket_depth += 1;
-                has_inner_bracket = true;
-            }
-            if content[pos] == b']' {
-                bracket_depth -= 1;
-            }
-            if bracket_depth > 0 {
-                pos += 1;
+                b']' => {
+                    let close = (base + pos) as OFF;
+                    if top == 0 {
+                        fb[0].1 = close;
+                        break 'walk;
+                    }
+                    top = core::mem::replace(&mut fb[top].1, close) as usize;
+                    pos += 1;
+                }
+                _ => pos += 1,
             }
         }
-        if bracket_depth != 0 {
-            return None;
+        // Openers still on the threaded stack have no matching `]`.
+        while top != 0 {
+            top = core::mem::replace(&mut fb[top].1, BracketMatches::UNMATCHED) as usize;
         }
-        Some(BracketScan {
-            close: pos,
-            has_inner_bracket,
-        })
+        let scan = answer(&fb, 0);
+        self.bracket_fallback = fb;
+        scan
     }
 
     /// Emit the opening span for a link/image whose label is about to be

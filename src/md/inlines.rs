@@ -192,6 +192,9 @@ impl Parser<'_> {
         // recycled via self.bracket_pairs.
         let bracket_storage = core::mem::take(&mut self.bracket_pairs);
         let brackets = self.compute_bracket_matches(content, bracket_storage);
+        // The Unknown-opener fallback describes one slice; a previous
+        // block's entries in the recycled buffer must not answer this one.
+        self.bracket_fallback.clear();
 
         // A link/image/wikilink label is rendered as inline content of its
         // own: emphasis pairs within the label, and nested constructs inside

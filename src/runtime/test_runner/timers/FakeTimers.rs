@@ -19,12 +19,18 @@ unsafe extern "C" {
 #[derive(Default)]
 pub struct FakeTimers {
     active: bool,
+    /// Jest's `timerLimit`: maximum recursive timers `runAllTimers()` will drain
+    /// before throwing. Set by `useFakeTimers({ timerLimit })`; defaults to
+    /// `DEFAULT_TIMER_LIMIT` on every activation.
+    timer_limit: u32,
     /// The sorted fake timers. TimerHeap is not optimal here because we need these operations:
     /// - peek/takeFirst (provided by TimerHeap)
     /// - peekLast (cannot be implemented efficiently with TimerHeap)
     /// - count (cannot be implemented efficiently with TimerHeap)
     pub timers: TimerHeap,
 }
+
+const DEFAULT_TIMER_LIMIT: u32 = 100_000;
 
 // `date_now_offset` is stored as `AtomicU64` (f64 bits) so the static is `Sync`
 // without `static mut`.
@@ -119,8 +125,9 @@ impl FakeTimers {
         self.active
     }
 
-    fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
+    fn activate(&mut self, js_now: f64, timer_limit: u32, global: &JSGlobalObject) {
         self.active = true;
+        self.timer_limit = timer_limit;
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
     }
 
@@ -222,8 +229,24 @@ impl FakeTimers {
         Self::execute_until(global, until);
     }
 
-    fn execute_all_timers(global: &JSGlobalObject) {
-        while Self::execute_next(global) {}
+    fn execute_all_timers(global: &JSGlobalObject) -> JsResult<()> {
+        // Jest caps runAllTimers() so a self-re-arming timer (setInterval,
+        // Bun.cron) can't spin the drain loop forever.
+        let all = timer_all();
+        // SAFETY: per-thread `timer::All`, live for the VM lifetime.
+        let limit = unsafe { (*all).fake_timers.timer_limit };
+        for _ in 0..limit {
+            if !Self::execute_next(global) {
+                return Ok(());
+            }
+        }
+        // SAFETY: as above; borrow ends at this statement.
+        if unsafe { (*all).fake_timers.timers.peek() }.is_none() {
+            return Ok(());
+        }
+        Err(global.throw(format_args!(
+            "Aborting after running {limit} timers, assuming an infinite loop!"
+        )))
     }
 }
 
@@ -268,6 +291,7 @@ fn set_fake_timer_marker(global: &JSGlobalObject, enabled: bool) {
 fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: FFI call into C++ JSMock
     let mut js_now = JSMock__getCurrentUnixTimeMs();
+    let mut timer_limit = DEFAULT_TIMER_LIMIT;
 
     // Check if options object was provided
     let args = frame.arguments_as_array::<1>();
@@ -289,10 +313,24 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                 )));
             }
         }
+        if let Some(limit) = options_value.get(global, "timerLimit")? {
+            if !limit.is_number() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'timerLimit' must be a positive integer"
+                )));
+            }
+            let n = limit.as_number();
+            if !n.is_finite() || n < 1.0 || n > u32::MAX as f64 || n.trunc() != n {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "'timerLimit' must be a positive integer"
+                )));
+            }
+            timer_limit = n as u32;
+        }
     }
 
     // SAFETY: per-thread `timer::All`; `activate` does not re-enter `All`.
-    unsafe { (*timer_all()).fake_timers.activate(js_now, global) };
+    unsafe { (*timer_all()).fake_timers.activate(js_now, timer_limit, global) };
 
     // Set setTimeout.clock = true to signal that fake timers are enabled.
     // This is used by testing-library/react to detect if jest.advanceTimersByTime should be called.
@@ -373,7 +411,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
-    FakeTimers::execute_all_timers(global);
+    FakeTimers::execute_all_timers(global)?;
 
     Ok(frame.this())
 }

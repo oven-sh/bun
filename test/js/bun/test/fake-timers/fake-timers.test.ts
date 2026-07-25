@@ -1,3 +1,4 @@
+import { bunEnv, bunExe } from "harness";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
@@ -160,6 +161,86 @@ describe("runAllTimers", () => {
     expect(order.takeOrderMessages()).toEqual([]);
     vi.runAllTimers();
     expect(order.takeOrderMessages()).toEqual(["9", "10", "14", "20"]);
+  });
+
+  // Without the iteration cap these spin at 100% CPU forever, so run each in a
+  // subprocess with a spawn-side timeout as the fail-before guard.
+  async function runAllTimersFixture(options: string, setup: string) {
+    const src = `
+      const { jest } = require("bun:test");
+      jest.useFakeTimers(${options});
+      let fires = 0;
+      ${setup}
+      try {
+        jest.runAllTimers();
+        console.log(JSON.stringify({ threw: false, fires }));
+      } catch (e) {
+        console.log(JSON.stringify({ threw: true, message: String(e.message), fires }));
+      }
+      stop();
+      jest.useRealTimers();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 10_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  }
+
+  test.concurrent.each([
+    ["setInterval", `const id = setInterval(() => fires++, 10); const stop = () => clearInterval(id);`],
+    [
+      "recursive setTimeout",
+      `const tick = () => { fires++; setTimeout(tick, 10); }; setTimeout(tick, 10); const stop = () => {};`,
+    ],
+    ["Bun.cron", `const job = Bun.cron("* * * * *", () => fires++); const stop = () => job.stop();`],
+  ])("aborts with an error when %s re-arms forever", async (_name, setup) => {
+    const { stdout, stderr, exitCode, signalCode } = await runAllTimersFixture("{ timerLimit: 50 }", setup);
+    expect({ stdout, signalCode, stderr }).toEqual({
+      stdout:
+        JSON.stringify({
+          threw: true,
+          message: "Aborting after running 50 timers, assuming an infinite loop!",
+          fires: 50,
+        }) + "\n",
+      signalCode: null,
+      stderr: expect.not.stringContaining("error:"),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent.each([
+    ["below", 5],
+    ["at", 50],
+  ])("does not abort when the chain terminates %s the limit", async (_where, n) => {
+    const setup = `
+      let remaining = ${n};
+      const tick = () => { fires++; if (--remaining > 0) setTimeout(tick, 10); };
+      setTimeout(tick, 10);
+      const stop = () => {};
+    `;
+    const { stdout, stderr, exitCode, signalCode } = await runAllTimersFixture("{ timerLimit: 50 }", setup);
+    expect({ stdout, signalCode, stderr }).toEqual({
+      stdout: JSON.stringify({ threw: false, fires: n }) + "\n",
+      signalCode: null,
+      stderr: expect.not.stringContaining("error:"),
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("timerLimit validation", () => {
+    for (const bad of [0, -1, 1.5, NaN, Infinity, "ten", {}]) {
+      expect(() => vi.useFakeTimers({ timerLimit: bad as any })).toThrow("'timerLimit' must be a positive integer");
+    }
+    expect(() => vi.useFakeTimers({ timerLimit: undefined })).not.toThrow();
+    vi.useRealTimers();
+    expect(() => vi.useFakeTimers({ timerLimit: 1 })).not.toThrow();
+    vi.useRealTimers();
   });
 });
 describe("getTimerCount", () => {

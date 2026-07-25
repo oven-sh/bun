@@ -87,10 +87,7 @@ function getHeapStatistics() {
     total_allocated_bytes: stats.heapCapacity,
   };
 }
-// V8 partitions its heap into a fixed set of named spaces; JSC manages one
-// undivided heap. Report JSC's real totals under "old_space" and keep the
-// remaining V8 space names for shape compatibility with tools that iterate
-// this array (dd-trace, OpenTelemetry, Moleculer).
+// JSC has one undivided heap; report its totals under "old_space" and keep V8's other space names for shape compatibility.
 const kHeapSpaces = [
   "read_only_space",
   "new_space",
@@ -107,9 +104,7 @@ const kHeapSpaces = [
   "trusted_large_object_space",
 ];
 function getHeapSpaceStatistics() {
-  // process.memoryUsage() reads vm.heap.blockBytesAllocated() and
-  // sizeAfterLastEdenCollection() directly (O(1)); jsc.heapStats() would walk
-  // every live cell for type counts this function does not need.
+  // process.memoryUsage() is O(1); jsc.heapStats() would walk every live cell for counts we don't need here.
   const { heapTotal, heapUsed } = process.memoryUsage();
   const spaces = $newArrayWithSize(kHeapSpaces.length);
   for (let i = 0; i < kHeapSpaces.length; i++) {
@@ -128,8 +123,7 @@ function getHeapSpaceStatistics() {
   return spaces;
 }
 function getHeapCodeStatistics() {
-  // JSC does not expose a code/bytecode size breakdown. Zeros match what
-  // node returns for counters V8 is not tracking.
+  // JSC does not expose a code/bytecode size split.
   return {
     code_and_metadata_size: 0,
     bytecode_and_metadata_size: 0,

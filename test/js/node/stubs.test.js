@@ -156,7 +156,7 @@ describe("v8.getHeapSpaceStatistics", () => {
     const oldSpace = spaces.find(s => s.space_name === "old_space");
     expect(oldSpace.space_size).toBeGreaterThan(0);
     expect(oldSpace.space_used_size).toBeGreaterThanOrEqual(0);
-    expect(oldSpace.space_used_size).toBeLessThanOrEqual(oldSpace.space_size);
+    expect(oldSpace.space_available_size).toBeGreaterThanOrEqual(0);
   });
 });
 

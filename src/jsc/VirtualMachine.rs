@@ -6083,8 +6083,8 @@ impl VirtualMachine {
         let mut printed_stack_string = false;
         if exception.stack.frames().is_empty() && is_error_instance && !error_instance.is_error() {
             // `toZigException` leaves `frames` empty for a non-ErrorInstance.
-            if let Ok(Some(stack)) = error_instance.get_own_truthy(global_ref, "stack") {
-                if stack.is_string() {
+            match error_instance.get_own_truthy(global_ref, "stack") {
+                Ok(Some(stack)) if stack.is_string() => {
                     let stack = bun_core::OwnedString::new(stack.to_bun_string(global_ref)?);
                     let bytes = stack.to_utf8();
                     let slice = bytes.slice();
@@ -6098,8 +6098,12 @@ impl VirtualMachine {
                     }
                     printed_stack_string = true;
                 }
-            } else if allow_side_effects && global_ref.has_exception() {
-                global_ref.clear_exception();
+                Ok(_) => {}
+                Err(_) => {
+                    if global_ref.has_exception() {
+                        global_ref.clear_exception();
+                    }
+                }
             }
         }
         if !printed_stack_string {

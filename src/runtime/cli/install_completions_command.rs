@@ -665,8 +665,14 @@ impl InstallCompletionsCommand {
                     let contents = &buf[..read];
 
                     // Do they possibly have it in the file already?
+                    // Besides the absolute path we're about to write and the marker
+                    // comment, also accept any reference to the `_bun` file under a
+                    // `.bun` directory so hand-edited `$HOME`/`${HOME}`/`~` variants
+                    // are recognised (#10897). The marker comment intentionally does
+                    // not require a trailing '\n' so CRLF files match too.
                     if strings::contains(contents, completions_path)
-                        || strings::contains(contents, b"# bun completions\n")
+                        || strings::contains(contents, b"# bun completions")
+                        || strings::contains(contents, b"/.bun/_bun")
                     {
                         break 'brk false;
                     }

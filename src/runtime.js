@@ -109,9 +109,7 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
-// require("./dir/" + x) / import("./dir/" + x) where the directory has been
-// scanned at bundle time. `map` keys include both the full path with extension
-// ("./dir/foo.js") and the extensionless form ("./dir/foo").
+// require("./dir/" + x) with the directory scanned at bundle time.
 export var __glob = map => path => {
   var fn = map[path];
   if (fn) return fn();

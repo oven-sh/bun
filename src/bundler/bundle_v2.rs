@@ -5773,13 +5773,6 @@ pub mod bv2_impl {
             resolve_result.resolve_queue
         }
 
-        /// For each `require("./dir/" + x)` style import recorded by the
-        /// parser, scan the directory for bundleable files, resolve each match
-        /// and add it to `resolve_queue`. Keys are recorded both with and
-        /// without the file extension so that runtime lookups that omit the
-        /// extension (as Node's resolver allows) still succeed. Called after
-        /// `resolve_import_records` so the parent's shape path is never passed
-        /// to the resolver.
         fn expand_glob_imports(
             &mut self,
             result: &mut parse_task::Success,
@@ -5813,14 +5806,11 @@ pub mod bv2_impl {
                 let dir_prefix = &prefix[..=last_slash];
                 let file_prefix = &prefix[last_slash + 1..];
 
-                let mut abs = Vec::with_capacity(source_dir.len() + dir_prefix.len() + 1);
-                abs.extend_from_slice(source_dir);
-                if !source_dir.ends_with(b"/") {
-                    abs.push(b'/');
-                }
-                abs.extend_from_slice(dir_prefix);
+                let abs = bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
+                    source_dir, dir_prefix,
+                );
 
-                let Some(dir_info) = self.transpiler.resolver.read_dir_info_ignore_error(&abs)
+                let Some(dir_info) = self.transpiler.resolver.read_dir_info_ignore_error(abs)
                 else {
                     continue;
                 };
@@ -5834,8 +5824,7 @@ pub mod bv2_impl {
                     .data
                     .iter()
                     .map(|(_, v)| {
-                        // SAFETY: `*mut Entry` points at a process-lifetime
-                        // EntryStore slot; only the `base_` slice is read.
+                        // SAFETY: EntryStore slot; process-lifetime, read-only.
                         let entry = unsafe { &**v };
                         entry.base().to_vec()
                     })
@@ -5888,10 +5877,6 @@ pub mod bv2_impl {
             }
         }
 
-        /// Resolve a single glob-matched relative path and enqueue it for
-        /// parsing. Returns the `source_index` the linker will see once parsing
-        /// completes (either an existing index or the one reserved by
-        /// `process_resolve_queue`).
         fn resolve_glob_child(
             &mut self,
             source_dir: &[u8],
@@ -5914,8 +5899,6 @@ pub mod bv2_impl {
             }
             let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
             if resolve_entry.found_existing {
-                // Will be assigned a source_index by process_resolve_queue;
-                // look it up again afterwards via `patch_glob_import_indices`.
                 return Some(Index::INVALID);
             }
             let path = &mut resolve_result.path_pair.primary;
@@ -6009,8 +5992,7 @@ pub mod bv2_impl {
                 import_record.flags.contains(bun_ast::ImportRecordFlags::IS_UNUSED)
                 // Don't resolve the runtime
                 || import_record.flags.contains(bun_ast::ImportRecordFlags::IS_INTERNAL)
-                // Don't resolve the parent of a glob pattern; its children were
-                // appended by expand_glob_imports and are resolved individually.
+                // Glob parents are resolved via expand_glob_imports
                 || import_record.flags.contains(bun_ast::ImportRecordFlags::GLOB_PATTERN)
                 // Don't resolve pre-resolved imports
                 || import_record.source_index.is_valid()

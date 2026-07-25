@@ -70,10 +70,7 @@ bitflags::bitflags! {
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
 
-        /// The specifier is a glob pattern (e.g. `require("./src/" + x)`). The
-        /// record's `path.text` holds the shape with `\x00` as the wildcard
-        /// placeholder. Child records for each match are appended to the same
-        /// `import_records` list and referenced via `ast_result::GlobImport`.
+        /// `require("./dir/" + x)`; `path.text` is the shape with `\x00` as wildcard.
         const GLOB_PATTERN = 1 << 7;
 
         /// If true, this was originally written as a bare "import 'file'" statement

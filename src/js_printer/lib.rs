@@ -2438,7 +2438,7 @@ pub mod __gated_printer {
             let module_type = self.options.module_type;
 
             if record.flags.contains(ImportRecordFlags::GLOB_PATTERN) {
-                self.print_glob_require(import_record_index, record.kind, level_);
+                self.print_glob_require(import_record_index);
                 if wrap {
                     self.print(b")");
                 }
@@ -2704,30 +2704,17 @@ pub mod __gated_printer {
             }
         }
 
-        fn print_glob_require(&mut self, import_record_index: u32, kind: ImportKind, level: Level) {
-            let Some((arg, is_require, entries)) = self.options.glob_imports.and_then(|list| {
+        fn print_glob_require(&mut self, import_record_index: u32) {
+            let Some((arg, entries)) = self.options.glob_imports.and_then(|list| {
                 list.iter()
                     .find(|g| g.import_record_index == import_record_index)
-                    .map(|g| (g.arg, g.is_require, g.entries.as_slice()))
+                    .map(|g| (g.arg, g.entries.as_slice()))
             }) else {
-                // No glob data: fall back to a plain map that throws at
-                // runtime. This keeps non-bundling callers safe.
                 self.print_space_before_identifier();
                 self.print_symbol(self.options.glob_ref);
                 self.print(b"({})()");
                 return;
             };
-
-            let is_dynamic = kind == ImportKind::Dynamic || !is_require;
-            if is_dynamic {
-                self.print_space_before_identifier();
-                self.print(b"Promise.resolve().then(");
-                if !self.options.minify_whitespace {
-                    self.print(b"() => ");
-                } else {
-                    self.print(b"()=>");
-                }
-            }
 
             self.print_space_before_identifier();
             self.print_symbol(self.options.glob_ref);
@@ -2756,21 +2743,30 @@ pub mod __gated_printer {
                 let meta = self
                     .options
                     .require_or_import_meta_for_source(entry.source_index.get(), false);
-                if meta.wrapper_ref.is_valid() {
+                let has_wrapper = meta.wrapper_ref.is_valid();
+                let has_exports = meta.exports_ref.is_valid();
+                let wrap_comma = has_wrapper && has_exports;
+                if wrap_comma {
+                    self.print(b"(");
+                }
+                if has_wrapper {
                     self.print_symbol(meta.wrapper_ref);
                     self.print(b"()");
-                    if meta.exports_ref.is_valid() {
+                    if has_exports {
                         self.print(b",");
                         self.print_space();
                     }
                 }
-                if meta.exports_ref.is_valid() {
+                if has_exports {
                     self.print_symbol(self.options.to_commonjs_ref);
                     self.print(b"(");
                     self.print_symbol(meta.exports_ref);
                     self.print(b")");
-                } else if !meta.wrapper_ref.is_valid() {
+                } else if !has_wrapper {
                     self.print(b"{}");
+                }
+                if wrap_comma {
+                    self.print(b")");
                 }
             }
             self.options.indent.count -= 1;
@@ -2781,10 +2777,6 @@ pub mod __gated_printer {
             self.print(b"})(");
             self.print_expr(arg, Level::Comma, ExprFlag::none());
             self.print(b")");
-            if is_dynamic {
-                self.print(b")");
-            }
-            let _ = level;
         }
 
         #[inline]

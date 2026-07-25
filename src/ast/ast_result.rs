@@ -20,25 +20,17 @@ type ImportRecordList<'a> = crate::import_record::List<'a>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
-/// A `require()`/`import()` call whose argument is a glob pattern such as
-/// `require("./src/" + name)`. The parser records the parent import record and
-/// the original argument expression; the bundler later scans the directory and
-/// fills `entries` with one entry per runtime lookup key.
+/// `require("./src/" + x)`: parser records the parent record + arg; bundler fills `entries`.
 pub struct GlobImport {
     pub import_record_index: u32,
     pub arg: Expr,
-    pub is_require: bool,
-    /// Filled by the bundler after resolution. Uses the global allocator
-    /// because glob expansion runs on the bundle thread while the AST arena is
-    /// owned by a parse worker; the list is tiny (one entry per matched file
-    /// plus its extensionless alias).
+    /// Global-allocator `Vec`: glob expansion runs on the bundle thread, not the parse-arena thread.
     pub entries: Vec<GlobImportEntry>,
 }
 
 #[derive(Clone, Copy)]
 pub struct GlobImportEntry {
-    /// Lookup key as it appears at runtime, e.g. `"./src/cat"` or
-    /// `"./src/cat.js"`. Interned in the resolver's process-lifetime store.
+    /// Runtime lookup key (e.g. `"./src/cat"`), interned in the resolver store.
     pub key: &'static [u8],
     pub source_index: crate::Index,
 }

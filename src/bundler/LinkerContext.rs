@@ -956,7 +956,6 @@ impl<'a> LinkerContext<'a> {
                 parts,
                 parts_live,
                 import_records,
-                glob_imports,
                 entry_point_kinds,
                 css_reprs,
                 worklist: Vec::new(),
@@ -2295,9 +2294,7 @@ impl<'a> LinkerContext<'a> {
             glob_imports: if ast.glob_imports.is_empty() {
                 None
             } else {
-                // SAFETY: `ast` is borrowed for the duration of this call and
-                // the printer only reads from it; detach the lifetime so
-                // Options can coexist with the `&mut self` callback below.
+                // SAFETY: read-only detach alongside `ts_enums` above.
                 Some(unsafe { bun_ptr::detach_lifetime_ref(ast.glob_imports.as_slice()) })
             },
             require_or_import_meta_for_source_callback:
@@ -2661,7 +2658,6 @@ pub struct TreeShakeCtx<'a, 'r> {
     pub parts: &'r [bun_ast::PartList<'a>],
     pub parts_live: &'r mut [bun_collections::AutoBitSet],
     pub import_records: &'r [bun_ast::import_record::List<'a>],
-    pub glob_imports: &'r [bun_ast::ast_result::GlobImportList],
     pub entry_point_kinds: &'r [EntryPoint::Kind],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
     pub worklist: Vec<TreeShakeWork>,

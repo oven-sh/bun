@@ -617,6 +617,39 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("salut");
     },
   });
+  itBundled("cjs/GlobRequireEsmTarget", {
+    files: {
+      "/app/entry.js": /* js */ `
+        for (const name of ["a", "b"]) {
+          console.log(require("./mods/" + name).value);
+        }
+      `,
+      "/app/mods/a.js": /* js */ `export const value = "esm-a";`,
+      "/app/mods/b.js": /* js */ `module.exports = { value: "cjs-b" };`,
+    },
+    entryPoints: ["/app/entry.js"],
+    outfile: "/out.js",
+    target: "bun",
+    run: { stdout: "esm-a\ncjs-b" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__toCommonJS");
+    },
+  });
+  itBundled("cjs/GlobRequireUnsupportedShape", {
+    files: {
+      "/entry.js": /* js */ `
+        const lang = "en", i = 0;
+        try { require("./locales/" + lang + "/messages.js"); } catch {}
+        try { require("./pages/" + (i + 1) + ".js"); } catch {}
+        console.log("ok");
+      `,
+    },
+    target: "bun",
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__glob");
+    },
+  });
   itBundled("cjs/GlobRequireMissing", {
     files: {
       "/entry.js": /* js */ `

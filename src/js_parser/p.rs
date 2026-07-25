@@ -824,10 +824,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             return Ok(buf.as_slice());
         }
-        // Flatten a chain of string concatenations so that `"./a/" + x + ".js"`
-        // produces the same shape as the template form. A non-string operand
-        // becomes a `\x00` placeholder; if no string literal is involved the
-        // result stays opaque (empty).
         if self.flatten_string_concat_shape(arg, buf)? {
             return Ok(buf.as_slice());
         }
@@ -853,10 +849,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 saw_string = true;
                 return Ok(true);
             }
+            let mark = buf.len();
             if p.flatten_string_concat_shape(side, buf)? {
                 saw_string = true;
                 return Ok(true);
             }
+            buf.truncate(mark);
             buf.push(0);
             Ok(true)
         };
@@ -865,11 +863,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(saw_string)
     }
 
-    /// If `arg` is a relative glob-shaped specifier (starts with `./` or `../`
-    /// and contains at least one wildcard placeholder), record it as a glob
-    /// import and return the `E::RequireString` that refers to it. Otherwise
-    /// returns `None` and leaves state untouched.
-    pub fn try_glob_require(&mut self, arg: Expr, kind: ImportKind) -> Option<Expr> {
+    pub fn try_glob_require(&mut self, arg: Expr) -> Option<Expr> {
         if !self.options.bundle {
             return None;
         }
@@ -884,10 +878,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !is_relative {
             return None;
         }
-        // The directory to scan is everything up to the last '/' before the
-        // first wildcard; require at least one literal path segment beyond the
-        // leading "./" or "../" so we never glob the importing file's own
-        // directory (which would pull in unrelated siblings).
+        // Require a named subdirectory before the wildcard so we don't scan the importer's own dir.
         let first_wild = shape.iter().position(|&b| b == 0).unwrap();
         let after_dots = shape
             .iter()
@@ -896,11 +887,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if after_dots >= first_wild || !shape[after_dots..first_wild].contains(&b'/') {
             return None;
         }
+        let tail = &shape[first_wild + 1..];
+        if tail.contains(&0) || tail.contains(&b'/') {
+            return None;
+        }
 
         let owned: &'a [u8] = self.arena.alloc_slice_copy(shape);
         let path = fs::Path::init(owned);
         let import_record_index = self.add_import_record_by_range_and_path(
-            kind,
+            ImportKind::Require,
             js_lexer::range_of_identifier(self.source, arg.loc),
             &path,
         );
@@ -915,7 +910,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.glob_imports.push(bun_ast::ast_result::GlobImport {
             import_record_index,
             arg,
-            is_require: kind == ImportKind::Require,
             entries: Vec::new(),
         });
 
@@ -1327,7 +1321,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 if !self.is_control_flow_dead {
-                    if let Some(glob) = self.try_glob_require(arg, ImportKind::Require) {
+                    if let Some(glob) = self.try_glob_require(arg) {
                         return glob;
                     }
                 }

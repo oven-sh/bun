@@ -210,6 +210,31 @@ fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     }
 }
 
+/// Zero every `Loc` in a subtree spliced in from another document so comment-preserving `print_json` doesn't treat foreign offsets as package.json positions.
+fn clear_source_locs(expr: &mut Expr) {
+    expr.loc = bun_ast::Loc::EMPTY;
+    match &mut expr.data {
+        ExprData::EObject(o) => {
+            o.close_brace_loc = bun_ast::Loc::EMPTY;
+            for prop in o.properties.slice_mut() {
+                if let Some(key) = &mut prop.key {
+                    clear_source_locs(key);
+                }
+                if let Some(value) = &mut prop.value {
+                    clear_source_locs(value);
+                }
+            }
+        }
+        ExprData::EArray(a) => {
+            a.close_bracket_loc = bun_ast::Loc::EMPTY;
+            for item in a.items.slice_mut() {
+                clear_source_locs(item);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Shallow struct copy (`G::Property` lacks `Clone` because of its
 /// `Vec`/`NonNull` fields).
 fn shallow_clone_prop(p: &G::Property) -> G::Property {
@@ -1811,19 +1836,23 @@ fn update_package_json_after_migration(
                 }
             }
 
-            if let Some(catalog_expr) = ws_root.get_object(b"catalog") {
+            if let Some(mut catalog_expr) = ws_root.get_object(b"catalog") {
+                clear_source_locs(&mut catalog_expr);
                 catalog_obj = Some(catalog_expr);
             }
 
-            if let Some(catalogs_expr) = ws_root.get_object(b"catalogs") {
+            if let Some(mut catalogs_expr) = ws_root.get_object(b"catalogs") {
+                clear_source_locs(&mut catalogs_expr);
                 catalogs_obj = Some(catalogs_expr);
             }
 
-            if let Some(overrides_expr) = ws_root.get_object(b"overrides") {
+            if let Some(mut overrides_expr) = ws_root.get_object(b"overrides") {
+                clear_source_locs(&mut overrides_expr);
                 workspace_overrides_obj = Some(overrides_expr);
             }
 
-            if let Some(patched_deps_expr) = ws_root.get_object(b"patchedDependencies") {
+            if let Some(mut patched_deps_expr) = ws_root.get_object(b"patchedDependencies") {
+                clear_source_locs(&mut patched_deps_expr);
                 workspace_patched_deps_obj = Some(patched_deps_expr);
             }
         }

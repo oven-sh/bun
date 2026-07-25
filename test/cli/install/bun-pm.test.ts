@@ -952,6 +952,7 @@ test("bun pm trust preserves comments in a JSONC package.json", async () => {
   const out = await Bun.file(join(dirStr, "package.json")).text();
   expect(out).toContain("// my app");
   expect(out).toContain("// local dep");
+  expect(out).toContain("// before close brace");
   // stays inside the root object even though the editor rebuilds it
   expect(out.indexOf("// before close brace")).toBeLessThan(out.lastIndexOf("}"));
   expect(JSON.parse(out.replace(/\/\/.*$/gm, ""))).toEqual({

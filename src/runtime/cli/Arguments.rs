@@ -307,11 +307,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
-    // Node.js security-sensitive flags that Bun does not implement. Declaring
-    // them makes the parser consume the flag (and its value for the
-    // value-taking ones) so `reject_unsupported_security_flags` can refuse to
-    // start instead of running the application without the requested
-    // restriction. Hidden from `--help`.
+    // Node.js security flags Bun does not implement; see `reject_unsupported_security_flags`.
     parse_param!("--enable-fips"),
     parse_param!("--force-fips"),
     parse_param!("--tls-cipher-list <STR>"),
@@ -337,12 +333,7 @@ enum SecurityFlagKind {
     NodeLoader,
 }
 
-/// Node.js flags that restrict or harden runtime behavior which Bun does not
-/// implement. Accepting any of these silently would run the application
-/// *without* the restriction the caller asked for (FIPS, cipher pinning,
-/// loader hooks, permission model, ...), so they are refused at startup.
-/// Keep each entry's [`SecurityFlagKind`] in step with its `parse_param!`
-/// declaration in [`RUNTIME_PARAMS_`].
+/// Node.js hardening flags Bun refuses rather than ignores (fail-closed). Keep kinds in step with [`RUNTIME_PARAMS_`].
 const UNSUPPORTED_SECURITY_FLAGS: &[(&[u8], SecurityFlagKind)] = &[
     (b"--enable-fips", SecurityFlagKind::Flag),
     (b"--force-fips", SecurityFlagKind::Flag),
@@ -364,8 +355,7 @@ const UNSUPPORTED_SECURITY_FLAGS: &[(&[u8], SecurityFlagKind)] = &[
     (b"--experimental-permission", SecurityFlagKind::Flag),
 ];
 
-/// Refuse to start when any flag in [`UNSUPPORTED_SECURITY_FLAGS`] was passed.
-/// Exit code 9 matches Node's "invalid argument" code for a bad CLI option.
+/// Exits 9 (Node's bad-option code) if any [`UNSUPPORTED_SECURITY_FLAGS`] entry was passed, so the caller's hardening request fails closed instead of running unrestricted.
 fn reject_unsupported_security_flags(args: &clap::Args<clap::Help>, cmd: CommandTag) {
     for &(name, kind) in UNSUPPORTED_SECURITY_FLAGS {
         let present = match kind {

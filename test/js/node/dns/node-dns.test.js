@@ -749,6 +749,9 @@ describe("locally-rejected malformed hostnames report EBADNAME", () => {
   it("control: a well-formed name reaches the server and reports ENOTFOUND", async () => {
     const before = wire;
     expect(await callbackCode("resolve4", "good.example")).toBe("ENOTFOUND");
+    await expect(promisesResolver.resolve4("good.example")).rejects.toThrow(
+      expect.objectContaining({ code: "ENOTFOUND" }),
+    );
     expect(wire).toBeGreaterThan(before);
   });
 });

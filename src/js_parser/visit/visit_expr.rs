@@ -1207,6 +1207,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return;
                 }
 
+                // `typeof process` / `typeof Buffer` on its own is a
+                // feature-detection guard. Don't let it count toward the
+                // auto-polyfill injection; otherwise a lone `typeof Buffer`
+                // pulls in the whole Buffer polyfill just to answer "function".
+                // If some other expression in the file *does* use the global,
+                // the ref is the same symbol and this `typeof` will see the
+                // polyfill at runtime.
+                if p.options.features.auto_polyfill_node_globals
+                    && e_
+                        .flags
+                        .contains(E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER)
+                {
+                    if let Data::EIdentifier(id) = e_.value.data {
+                        if (!p.process_ref.is_empty() && id.ref_.eql(p.process_ref))
+                            || (!p.buffer_ref.is_empty() && id.ref_.eql(p.buffer_ref))
+                        {
+                            p.ignore_usage(id.ref_);
+                        }
+                    }
+                }
+
                 if let Some(typeof_) = SideEffects::typeof_(&e_.value.data) {
                     *e = p.new_expr(
                         E::String {

@@ -192,6 +192,55 @@ describe("bundler", () => {
       expect(out).not.toInclude("exports_process");
     },
   });
+  itBundled("browser/NodeGlobalProcessNotInjectedForTypeofOnly", {
+    files: {
+      "/entry.js": /* js */ `
+        // A lone typeof guard is feature detection; don't pull in the polyfill.
+        console.log(typeof process, typeof Buffer);
+      `,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      expect(out).not.toInclude("node:process");
+      expect(out).not.toInclude("node:buffer");
+      expect(out).toInclude("typeof process");
+      expect(out).toInclude("typeof Buffer");
+    },
+  });
+  itBundled("browser/NodeGlobalProcessTypeofWithRealUse", {
+    files: {
+      "/entry.js": /* js */ `
+        // typeof guard plus a real use: the real use pulls in the polyfill,
+        // and the typeof then sees it.
+        if (typeof process !== "object") throw new Error("typeof process: " + typeof process);
+        process.nextTick(() => console.log("tick"));
+        console.log("ok");
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout: "ok\ntick",
+    },
+    onAfterBundle(api) {
+      api.expectFile("out.js").toInclude("node:process");
+    },
+  });
+  itBundled("browser/NodeGlobalProcessPackagesExternal", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(process.nextTick);
+      `,
+    },
+    target: "browser",
+    packages: "external",
+    onAfterBundle(api) {
+      const out = api.readFile("out.js");
+      // With --packages external the injected import stays external, same as
+      // a user-written `import * as process from "node:process"` would.
+      expect(out).toMatch(/import\s*\*\s*as\s+process\s+from\s*"node:process"/);
+    },
+  });
   itBundled("browser/NodeFS", {
     files: {
       "/entry.js": /* js */ `

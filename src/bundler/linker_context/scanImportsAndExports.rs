@@ -926,8 +926,7 @@ pub fn scan_imports_and_exports(
                             } else {
                                 // We should use "__require" instead of "require" if we're not
                                 // generating a CommonJS output file, since it won't exist otherwise.
-                                // External "import()" expressions are never lowered to "require()",
-                                // so they don't need "__require".
+                                // External "import()" is printed as-is, so it never needs "__require".
                                 if kind != ImportKind::Dynamic
                                     && should_call_runtime_require(output_format)
                                 {

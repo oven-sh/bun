@@ -364,53 +364,222 @@ describe("Cookie name field is immutable", () => {
 });
 
 describe("iterator", () => {
-  test("delete in a loop", () => {
-    const map = new Bun.CookieMap();
-    for (let i = 0; i < 1000; i++) {
-      map.set(`name${i}`, `value${i}`);
-    }
-    for (const key of map.keys()) {
-      map.delete(key);
-    }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
-  });
-  test("delete in a loop with predefined entries", () => {
-    const entries: [string, string][] = [];
-    for (let i = 0; i < 1000; i++) {
-      entries.push([`name${i}`, `value${i}`]);
-    }
-    const map = new Bun.CookieMap(entries);
-    for (const key of map.keys()) {
-      map.delete(key);
-    }
-    expect(map.size).toBe(0);
-  });
-  test("delete in a loop with both", () => {
-    const entries: [string, string][] = [];
-    for (let i = 0; i < 500; i++) {
-      entries.push([`pre${i}`, `pre${i}`]);
-    }
-    const map = new Bun.CookieMap(entries);
-    for (let i = 0; i < 1000; i++) {
-      map.set(`post${i}`, `post${i}`);
-    }
-    for (const key of map.keys()) {
-      map.delete(key);
-    }
-    // expect(map.size).toBe(0);
-    expect(map.size).toBe(500); // FormData works this way, but not Set. maybe we should work like Set.
+  // Deleting during iteration skips every other entry (FormData-style), regardless of whether
+  // the entries came from the constructor or from set().
+  test.each([
+    [
+      "set()",
+      () => {
+        const map = new Bun.CookieMap();
+        for (let i = 0; i < 1000; i++) map.set(`name${i}`, `value${i}`);
+        return map;
+      },
+    ],
+    [
+      "constructor",
+      () => {
+        const entries: [string, string][] = [];
+        for (let i = 0; i < 1000; i++) entries.push([`name${i}`, `value${i}`]);
+        return new Bun.CookieMap(entries);
+      },
+    ],
+    [
+      "both",
+      () => {
+        const entries: [string, string][] = [];
+        for (let i = 0; i < 500; i++) entries.push([`pre${i}`, `pre${i}`]);
+        const map = new Bun.CookieMap(entries);
+        for (let i = 0; i < 500; i++) map.set(`post${i}`, `post${i}`);
+        return map;
+      },
+    ],
+  ] as const)("delete in a loop (entries via %s)", (_, build) => {
+    const map = build();
+    for (const key of map.keys()) map.delete(key);
+    // FormData works this way, but not Map/Set. maybe we should work like Map.
+    expect(map.size).toBe(500);
   });
   test("basic iterator", () => {
     const cookies = new Bun.CookieMap({ a: "b", c: "d" });
     cookies.set("e", "f");
     cookies.set("g", "h");
     expect([...cookies.entries()].map(([key, value]) => `${key}=${value}`).join("\n")).toMatchInlineSnapshot(`
-    "e=f
-    g=h
-    a=b
-    c=d"
+    "a=b
+    c=d
+    e=f
+    g=h"
   `);
+  });
+});
+
+describe("iteration order is Map-like", () => {
+  const keysVia = (map: Bun.CookieMap) => ({
+    spread: [...map].map(([k]) => k),
+    entries: [...map.entries()].map(([k]) => k),
+    keys: [...map.keys()],
+    forEach: (() => {
+      const out: string[] = [];
+      map.forEach((_v, k) => out.push(k));
+      return out;
+    })(),
+    toJSON: Object.keys(map.toJSON()),
+  });
+
+  test("set() on an existing name keeps its position", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    map.set("b", "B");
+    expect(keysVia(map)).toEqual({
+      spread: ["a", "b", "c"],
+      entries: ["a", "b", "c"],
+      keys: ["a", "b", "c"],
+      forEach: ["a", "b", "c"],
+      toJSON: ["a", "b", "c"],
+    });
+    expect([...map.values()]).toEqual(["1", "B", "3"]);
+    expect(map.get("b")).toBe("B");
+    expect(map.toSetCookieHeaders()).toEqual(["b=B; Path=/; SameSite=Lax"]);
+  });
+
+  test("set() on a new name appends", () => {
+    const map = new Bun.CookieMap("a=1; b=2");
+    map.set("z", "9");
+    expect(keysVia(map)).toEqual({
+      spread: ["a", "b", "z"],
+      entries: ["a", "b", "z"],
+      keys: ["a", "b", "z"],
+      forEach: ["a", "b", "z"],
+      toJSON: ["a", "b", "z"],
+    });
+  });
+
+  test("matches Map for a mixed sequence of set() and delete()", () => {
+    const ops: Array<["set", string, string] | ["delete", string]> = [
+      ["set", "b", "B"],
+      ["set", "z", "9"],
+      ["delete", "a"],
+      ["set", "c", "C"],
+      ["set", "a", "A"],
+      ["set", "z", "Z"],
+    ];
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    const ref = new Map<string, string>([
+      ["a", "1"],
+      ["b", "2"],
+      ["c", "3"],
+    ]);
+    for (const op of ops) {
+      if (op[0] === "set") {
+        map.set(op[1], op[2]);
+        ref.set(op[1], op[2]);
+      } else {
+        map.delete(op[1]);
+        ref.delete(op[1]);
+      }
+      expect([...map]).toEqual([...ref]);
+    }
+    expect([...map]).toEqual([
+      ["b", "B"],
+      ["c", "C"],
+      ["z", "Z"],
+      ["a", "A"],
+    ]);
+  });
+
+  test.each([
+    ["string", () => new Bun.CookieMap("a=1; b=2; c=3")],
+    [
+      "array",
+      () =>
+        new Bun.CookieMap([
+          ["a", "1"],
+          ["b", "2"],
+          ["c", "3"],
+        ]),
+    ],
+    ["object", () => new Bun.CookieMap({ a: "1", b: "2", c: "3" })],
+    [
+      "set() on empty",
+      () => {
+        const m = new Bun.CookieMap();
+        m.set("a", "1");
+        m.set("b", "2");
+        m.set("c", "3");
+        return m;
+      },
+    ],
+  ] as const)("set() on an existing name keeps its position (built via %s)", (_, build) => {
+    const map = build();
+    map.set("b", "B");
+    map.set("a", "A");
+    expect([...map]).toEqual([
+      ["a", "A"],
+      ["b", "B"],
+      ["c", "3"],
+    ]);
+  });
+
+  test("delete() then set() appends at the end", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    map.delete("a");
+    map.set("a", "A");
+    expect([...map.keys()]).toEqual(["b", "c", "a"]);
+  });
+
+  test("set() with a Cookie object keeps position and reflects later mutation", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    const cookie = new Bun.Cookie("b", "B");
+    map.set(cookie);
+    expect([...map]).toEqual([
+      ["a", "1"],
+      ["b", "B"],
+      ["c", "3"],
+    ]);
+    cookie.value = "BB";
+    expect([...map]).toEqual([
+      ["a", "1"],
+      ["b", "BB"],
+      ["c", "3"],
+    ]);
+    expect(map.get("b")).toBe("BB");
+  });
+
+  test("mutating a Cookie's value after set() is reflected consistently in iteration and Set-Cookie", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    const cookie = new Bun.Cookie("b", "");
+    map.set(cookie);
+    expect({ keys: [...map.keys()], get: map.get("b"), has: map.has("b"), size: map.size }).toEqual({
+      keys: ["a", "c"],
+      get: null,
+      has: false,
+      size: 2,
+    });
+    cookie.value = "B";
+    expect({
+      keys: [...map.keys()],
+      get: map.get("b"),
+      has: map.has("b"),
+      size: map.size,
+      headers: map.toSetCookieHeaders(),
+    }).toEqual({
+      keys: ["a", "b", "c"],
+      get: "B",
+      has: true,
+      size: 3,
+      headers: ["b=B; Path=/; SameSite=Lax"],
+    });
+  });
+
+  test("toSetCookieHeaders() still tracks every set()/delete()", () => {
+    const map = new Bun.CookieMap("a=1; b=2; c=3");
+    map.set("b", "B");
+    map.set("z", "9");
+    map.delete("c");
+    expect([...map.keys()]).toEqual(["a", "b", "z"]);
+    expect(map.toSetCookieHeaders()).toEqual([
+      "b=B; Path=/; SameSite=Lax",
+      "z=9; Path=/; SameSite=Lax",
+      "c=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax",
+    ]);
   });
 });
 

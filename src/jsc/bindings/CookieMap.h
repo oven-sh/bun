@@ -31,7 +31,6 @@ public:
     static ExceptionOr<Ref<CookieMap>> create(std::variant<Vector<Vector<String>>, HashMap<String, String>, String>&& init, bool throwOnInvalidCookieString = true);
 
     std::optional<String> get(const String& name) const;
-    Vector<KeyValuePair<String, String>> getAll() const;
     Vector<Ref<Cookie>> getAllChanges() const { return m_modifiedCookies; }
 
     bool has(const String& name) const;
@@ -62,12 +61,30 @@ public:
 
 private:
     CookieMap();
-    CookieMap(Vector<Ref<Cookie>>&& cookies);
     CookieMap(Vector<KeyValuePair<String, String>>&& cookies);
 
-    void removeInternal(const String& name);
+    // An entry is either an original cookie from construction (name/value pair) or one backed
+    // by a Cookie object from set(). For the latter, value() reads through the Cookie so that
+    // mutating the Cookie after set() is observable.
+    struct Entry {
+        KeyValuePair<String, String> pair;
+        RefPtr<Cookie> cookie;
 
-    Vector<KeyValuePair<String, String>> m_originalCookies;
+        Entry(KeyValuePair<String, String>&& p)
+            : pair(WTF::move(p))
+        {
+        }
+        Entry(Ref<Cookie>&& c)
+            : cookie(WTF::move(c))
+        {
+        }
+        const String& name() const { return cookie ? cookie->name() : pair.key; }
+        const String& value() const { return cookie ? cookie->value() : pair.value; }
+    };
+
+    // Live entries in insertion order; drives iteration, get()/has()/size()/toJSON().
+    Vector<Entry> m_entries;
+    // Cookies to emit as Set-Cookie headers (from set() and delete()).
     Vector<Ref<Cookie>> m_modifiedCookies;
 };
 

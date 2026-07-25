@@ -1676,10 +1676,7 @@ describe("deno_task", () => {
     describe("stdin from Request/Response", () => {
       const countStdin = `process.stdout.write(String((await Bun.stdin.bytes()).length))`;
 
-      async function served(
-        size: number,
-        opts: { chunked?: boolean } = {},
-      ): Promise<[Response, () => void]> {
+      async function served(size: number, opts: { chunked?: boolean } = {}): Promise<[Response, () => void]> {
         const srv = Bun.serve({
           port: 0,
           fetch: () =>

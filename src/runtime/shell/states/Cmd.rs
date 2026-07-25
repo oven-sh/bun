@@ -372,7 +372,11 @@ impl Cmd {
         }
         // SAFETY: `ctx` is a fresh heap allocation published into the
         // `PendingValue`; freed in `on_redirect_body_received`.
-        unsafe { (*ctx).keep_alive.ref_(interp.event_loop.as_event_loop_ctx()) };
+        unsafe {
+            (*ctx)
+                .keep_alive
+                .ref_(interp.event_loop.as_event_loop_ctx())
+        };
         true
     }
 
@@ -414,7 +418,10 @@ impl Cmd {
     /// `PendingValue::on_receive_value` hook. The producer has already written
     /// the final `InternalBlob` / `Error` into the Response body before
     /// invoking `resolve` / `to_error_instance`, so this only has to resume.
-    fn on_redirect_body_received(ctx: *mut core::ffi::c_void, _value: &mut crate::webcore::body::Value) {
+    fn on_redirect_body_received(
+        ctx: *mut core::ffi::c_void,
+        _value: &mut crate::webcore::body::Value,
+    ) {
         // SAFETY: `ctx` is the `heap::alloc`'d `RedirectBodyBufferCtx`
         // installed by `try_buffer_redirect_body`; consumed here.
         let mut ctx = unsafe { bun_core::heap::take(ctx.cast::<RedirectBodyBufferCtx>()) };

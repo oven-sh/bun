@@ -197,7 +197,7 @@ plugin({
 });
 
 // This is to test that it works when imported from a separate file
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
 import "../../third_party/svelte";
 import "./module-plugins";
@@ -774,10 +774,14 @@ it.concurrent(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { deltaMB } = JSON.parse(stdout.trim()) as { deltaMB: number };
-    // Unfixed: ~27 MB on release / ~32 MB under ASAN (one 128 KB StringImpl
-    // leaked per import). Fixed: ~3 MB of ambient growth.
-    expect(deltaMB).toBeLessThan(12);
+    // Unfixed: ~27 MB on release / ~32 MB on debug+ASAN (one 128 KB StringImpl
+    // leaked per import). Fixed: low-single-digit MB on release; ~4-10 MB of
+    // ambient growth on debug+ASAN even with quarantine disabled.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 20 : 12);
     expect(exitCode).toBe(0);
   },
+  // WTF::URL parsing + fileSystemPath() over ~25 MB of URL bytes is ~25 s under
+  // debug+ASAN; the workload cannot be shrunk without losing separation from
+  // the ambient RSS noise. Same allowance as test/js/bun/glob/leak.test.ts.
   60_000,
 );

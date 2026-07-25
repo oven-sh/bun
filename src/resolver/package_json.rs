@@ -588,19 +588,31 @@ impl PackageJSON {
         }
 
         // Read the "main" fields
-        for main in r.opts.main_fields.iter() {
-            if let Some(main_json) = json.as_property(main) {
+        //
+        // The parsed `PackageJSON` is cached in the process-global DirInfo map
+        // and may be read by a later resolver with a different target, so read
+        // every default main-field name here (not just `r.opts.main_fields`).
+        // Also read any user-configured names so a custom `--main-fields` is
+        // honored on the first parse. `put` overwrites on collision, so the
+        // overlap between the two lists is harmless.
+        let mut read_main_field = |name: &[u8]| {
+            if let Some(main_json) = json.as_property(name) {
                 let expr: &js_ast::Expr = &main_json.expr;
-
                 if let Some(str) = expr.as_utf8_string_literal() {
                     if !str.is_empty() {
                         package_json
                             .main_fields
-                            .put(main, Box::from(str))
+                            .put(name, Box::from(str))
                             .expect("unreachable");
                     }
                 }
             }
+        };
+        for name in crate::options::ALL_DEFAULT_MAIN_FIELD_NAMES {
+            read_main_field(name);
+        }
+        for name in r.opts.main_fields.iter() {
+            read_main_field(name);
         }
 
         // Read the "browser" property

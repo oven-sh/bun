@@ -332,6 +332,14 @@ static DEFAULT_MAIN_FIELDS_NODE: &[&[u8]] = &[b"main", b"module"];
 static DEFAULT_MAIN_FIELDS_BROWSER: &[&[u8]] = &[b"browser", b"module", b"jsnext:main", b"main"];
 static DEFAULT_MAIN_FIELDS_BUN: &[&[u8]] = &[b"module", b"main", b"jsnext:main"];
 
+/// Union of every default above. `PackageJSON::parse` reads all of these into
+/// the cached `main_fields` map regardless of the invoking resolver's target,
+/// because the parsed `PackageJSON` is interned process-globally and later
+/// resolvers with a different target (e.g. `Bun.build({ target: "browser" })`
+/// after a runtime import) look up their own keys in that same map.
+pub(crate) const ALL_DEFAULT_MAIN_FIELD_NAMES: &[&[u8]] =
+    &[b"browser", b"module", b"main", b"jsnext:main"];
+
 impl TargetMainFields {
     pub(crate) fn get(&self, t: Target) -> &'static [&'static [u8]] {
         match t {

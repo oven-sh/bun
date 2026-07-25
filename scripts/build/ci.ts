@@ -1156,9 +1156,9 @@ export async function inheritBuiltinBytecode(cfg: Config, ctx: OrderFileContext)
  * A canary lane that can execute its own binary generates the blob for the NEXT
  * build to inherit, records its SHA256 in this build's meta-data, and stages it
  * for upload. Generation runs the linked executable once with
- * BUN_GENERATE_BUILTIN_BYTECODE; ASLR is disabled for the child (`setarch -R`)
- * so the blob is byte-reproducible for a given binary. Returns the artifact
- * path to upload, or undefined.
+ * BUN_GENERATE_BUILTIN_BYTECODE; the blob is byte-reproducible for a given
+ * binary, so a native lane can regenerate and compare against what shipped.
+ * Returns the artifact path to upload, or undefined.
  */
 export function publishBuiltinBytecode(cfg: Config, ctx: OrderFileContext, exe: string): string | undefined {
   if (!builtinBytecodeEligible(cfg, ctx) || !cfg.canary || !cfg.canRunOnHost) return undefined;
@@ -1168,8 +1168,7 @@ export function publishBuiltinBytecode(cfg: Config, ctx: OrderFileContext, exe: 
   rmSync(out, { force: true });
 
   const env = { ...process.env, BUN_GENERATE_BUILTIN_BYTECODE: out, BUN_DEBUG_QUIET_LOGS: "1" };
-  const cmd = cfg.linux ? ["setarch", "-R", exe, "-e", "0"] : [exe, "-e", "0"];
-  const result = spawnSync(cmd[0], cmd.slice(1), { cwd: cfg.buildDir, env, stdio: "inherit", timeout: 5 * 60_000 });
+  const result = spawnSync(exe, ["-e", "0"], { cwd: cfg.buildDir, env, stdio: "inherit", timeout: 5 * 60_000 });
   if (result.status !== 0 || !existsSync(out) || statSync(out).size === 0) {
     console.error(
       `- builtin bytecode: generation FAILED (exit ${result.status}); next build parses builtins from source`,

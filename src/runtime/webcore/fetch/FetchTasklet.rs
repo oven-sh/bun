@@ -115,6 +115,13 @@ pub struct FetchTasklet {
     pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
+    /// A caller-supplied `Content-Length` for a streamed request body, parsed
+    /// once at setup. `None` when not set (or unparseable), in which case the
+    /// body is chunk-framed. When `Some`, `write_request_data` /
+    /// `write_end_request` count bytes against it and reject on mismatch so the
+    /// header this client writes is never contradicted by the body it sends.
+    pub declared_request_content_length: Option<u64>,
+    pub request_body_bytes_written: u64,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
     pub is_waiting_body: bool,
@@ -1900,6 +1907,8 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
+            declared_request_content_length: None,
+            request_body_bytes_written: 0,
             hostname: fetch_options.hostname,
             is_waiting_body: false,
             is_waiting_abort: false,
@@ -2048,6 +2057,10 @@ impl FetchTasklet {
         http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
+            fetch_tasklet.declared_request_content_length = fetch_tasklet
+                .request_headers
+                .get(b"content-length")
+                .and_then(|v| bun_core::parse_unsigned::<u64>(v, 10).ok());
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
             // thread), so the same raw pointer can be handed to both sides.
             let buffer = ThreadSafeStreamBuffer::new(ThreadSafeStreamBuffer::default());
@@ -2166,13 +2179,13 @@ impl FetchTasklet {
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// True for upgraded connections, HTTP/2, or when the caller supplied a
+    /// valid Content-Length (which `build_request` then emits instead of
+    /// `Transfer-Encoding: chunked`).
     fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection
             || self.result.is_http2
-            || (self.request_headers.get(b"content-length").is_some()
-                && self.request_headers.get(b"transfer-encoding").is_none())
+            || self.declared_request_content_length.is_some()
     }
 
     pub(crate) fn write_request_data(&mut self, data: &[u8]) -> ResumableSinkBackpressure {
@@ -2188,6 +2201,20 @@ impl FetchTasklet {
         // paused sink) can never fire, and the upload stalls forever.
         if data.is_empty() {
             return ResumableSinkBackpressure::WantMore;
+        }
+        if let Some(declared) = self.declared_request_content_length
+            && !self.upgraded_connection
+            && !self.result.is_http2
+        {
+            self.request_body_bytes_written =
+                self.request_body_bytes_written.saturating_add(data.len() as u64);
+            if self.request_body_bytes_written > declared {
+                // Rejecting before the surplus bytes are buffered is what makes
+                // this a request-smuggling guard: the wire never carries more
+                // body bytes than the Content-Length header promised.
+                self.abort_with_content_length_mismatch();
+                return ResumableSinkBackpressure::Done;
+            }
         }
         // reshaped for borrowck — read sink HWM (Copy) before
         // borrowing the stream buffer so `self` is unborrowed during the
@@ -2255,6 +2282,12 @@ impl FetchTasklet {
                 self.abort_reason.set(&self.global_this, js_error);
             }
             self.abort_task();
+        } else if let Some(declared) = self.declared_request_content_length
+            && !self.upgraded_connection
+            && !self.result.is_http2
+            && self.request_body_bytes_written != declared
+        {
+            self.abort_with_content_length_mismatch();
         } else {
             if !self.skip_chunked_framing() {
                 // Using chunked transfer encoding, send the terminating chunk
@@ -2276,6 +2309,17 @@ impl FetchTasklet {
         }
         // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
         FetchTasklet::deref(this_ptr);
+    }
+
+    #[cold]
+    fn abort_with_content_length_mismatch(&mut self) {
+        let global_this = self.global_this;
+        let err = jsc::ErrorCode::UND_ERR_REQ_CONTENT_LENGTH_MISMATCH.fmt(
+            &*global_this,
+            format_args!("Request body length does not match content-length header"),
+        );
+        self.abort_reason.set(&global_this, err);
+        self.abort_task();
     }
 
     pub(crate) fn abort_task(&mut self) {

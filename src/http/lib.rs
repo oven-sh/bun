@@ -2336,7 +2336,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_host_header = false;
         let mut override_connection_header = false;
         let mut override_user_agent = false;
-        let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
@@ -2421,13 +2420,12 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    if !self.flags.is_streaming_request_body {
-                        continue;
-                    }
-                    // We don't want to override chunked encoding header if it was set by the user
-                    if will_append {
-                        add_transfer_encoding = false;
-                    }
+                    // Transfer-Encoding is always engine-managed: a buffered body is
+                    // sent with Content-Length, and a streamed body is chunked (or
+                    // raw with a validated Content-Length). A caller-supplied value
+                    // would be written verbatim while the body is still chunk-framed,
+                    // producing an undecodable message per RFC 9112 section 6.1.
+                    continue;
                 }
                 _ => {}
             }
@@ -2471,21 +2469,17 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                if let Some(content_length) = original_content_length {
-                    if add_transfer_encoding {
-                        // User explicitly set Content-Length and did not set Transfer-Encoding;
-                        // preserve Content-Length instead of using chunked encoding.
-                        // This matches Node.js behavior where an explicit Content-Length is always honored.
-                        request_headers_buf[header_count] =
-                            picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
-                        header_count += 1;
-                    }
-                    // If !add_transfer_encoding, the user explicitly set Transfer-Encoding,
-                    // which was already added to request_headers_buf. We respect that and
-                    // do not add Content-Length (they are mutually exclusive per HTTP/1.1).
-                } else if add_transfer_encoding
-                    && self.flags.upgrade_state == HTTPUpgradeState::None
+                // A caller-supplied Content-Length is honoured only when it parses
+                // as a non-negative integer; the body writer (FetchTasklet) then
+                // enforces the byte count and rejects any mismatch, so the value
+                // on the wire is never a lie. Anything else falls back to chunked.
+                if let Some(content_length) = original_content_length
+                    && bun_core::parse_unsigned::<u64>(content_length, 10).is_ok()
                 {
+                    request_headers_buf[header_count] =
+                        picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
+                    header_count += 1;
+                } else if self.flags.upgrade_state == HTTPUpgradeState::None {
                     request_headers_buf[header_count] = CHUNKED_ENCODED_HEADER;
                     header_count += 1;
                 }

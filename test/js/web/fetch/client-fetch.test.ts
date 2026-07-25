@@ -650,6 +650,132 @@ test("an empty request body chunk does not stall a stream body sent with an expl
   expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("AAAABBBB");
 });
 
+// An explicit Content-Length on a streamed body is honoured on the wire, so the
+// byte count it declares must be enforced: a stream that produces more bytes is
+// a client-side request-smuggling primitive (the surplus lands at request-line
+// position on a keep-alive connection), and a stream that produces fewer leaves
+// the request unterminated. Node's fetch (undici) rejects both cases.
+test("a streamed body longer than its declared Content-Length is rejected before the surplus reaches the wire", async () => {
+  let recorded = Buffer.alloc(0);
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("close", onClose);
+      sock.on("data", d => {
+        recorded = Buffer.concat([recorded, d]);
+        const raw = recorded.toString("latin1");
+        const i = raw.indexOf("\r\n\r\n");
+        // Respond only once body bytes have arrived. A regression writes the
+        // full stream here; the fixed client aborts before buffering, so the
+        // server sees headers only and this branch is never taken.
+        if (i >= 0 && raw.length > i + 4) {
+          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const smuggled = "abcdGET /admin HTTP/1.1\r\n\r\n";
+  const outcome = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    duplex: "half",
+    headers: { "content-length": "4" },
+    body: new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode(smuggled));
+        c.close();
+      },
+    }),
+  }).then(
+    r => ({ rejected: false as const, status: r.status }),
+    e => ({ rejected: true as const, code: e?.code }),
+  );
+  await closed;
+  const raw = recorded.toString("latin1");
+  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  expect({ outcome, contentLength: /^content-length: (.*)$/im.exec(raw)?.[1], body }).toEqual({
+    outcome: { rejected: true, code: "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH" },
+    contentLength: "4",
+    body: "",
+  });
+});
+
+test("a streamed body shorter than its declared Content-Length is rejected", async () => {
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", () => sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const outcome = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    duplex: "half",
+    headers: { "content-length": "100" },
+    body: new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("abc"));
+        c.close();
+      },
+    }),
+  }).then(
+    r => ({ rejected: false as const, status: r.status }),
+    e => ({ rejected: true as const, code: e?.code }),
+  );
+  expect(outcome).toEqual({ rejected: true, code: "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH" });
+});
+
+// Transfer-Encoding is a forbidden request header (WHATWG fetch): the engine
+// owns body framing. A caller-supplied value used to be written verbatim while
+// the body was still chunk-framed, so `Transfer-Encoding: gzip` produced a
+// message that is undecodable per RFC 9112 section 6.1 (chunk octets presented
+// as a gzip member). The caller's value is now dropped and `chunked` emitted.
+test("a caller-supplied Transfer-Encoding on a streamed body is ignored", async () => {
+  let recorded = Buffer.alloc(0);
+  await using server = net
+    .createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        recorded = Buffer.concat([recorded, d]);
+        if (recorded.toString("latin1").endsWith("0\r\n\r\n")) {
+          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+    })
+    .listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as net.AddressInfo;
+
+  const res = await fetch(`http://127.0.0.1:${port}/`, {
+    method: "POST",
+    duplex: "half",
+    headers: { "transfer-encoding": "gzip" },
+    body: new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("xy"));
+        c.close();
+      },
+    }),
+  });
+  expect(await res.text()).toBe("ok");
+
+  const raw = recorded.toString("latin1");
+  const headers = raw.slice(0, raw.indexOf("\r\n\r\n"));
+  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+  expect({
+    transferEncoding: headers.match(/^transfer-encoding: (.*)$/gim),
+    body,
+  }).toEqual({
+    transferEncoding: ["Transfer-Encoding: chunked"],
+    body: "2\r\nxy\r\n0\r\n\r\n",
+  });
+});
+
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be
 // joined into the preceding field value with SP, or the message rejected.
 // Accepting it while silently discarding the continuation is neither: it

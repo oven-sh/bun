@@ -307,6 +307,109 @@ test("a completed streaming POST keeps its connection in the keep-alive pool", a
   });
 });
 
+// The do_redirect pooling gate only fires when request_stage == Done, which a
+// ReadableStream body reaches after the terminating chunk is written (a bytes
+// body parks at .body so the socket was already closed on redirect regardless
+// of Connection). With Connection: close ignored on 3xx, the closing socket was
+// pooled and immediately reused for the follow-up GET: if the origin lingers
+// (RFC 9112 §9.6: it stops reading further requests) fetch hangs forever, and
+// if it closes the GET hits FIN and is silently retried, so the origin sees it
+// twice. Subprocess so the pool is empty and a hang doesn't wedge the runner.
+test("a 303 with Connection: close after a streaming POST sends the follow-up GET on a new connection", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const conns = [];
+      const server = net.createServer(sock => {
+        const rec = { id: conns.length, data: "", requests: [] };
+        conns.push(rec);
+        sock.on("error", () => {});
+        sock.on("data", chunk => {
+          rec.data += chunk.toString("latin1");
+          for (const m of rec.data.matchAll(/(GET|POST) (\\S+) HTTP\\/1\\.1\\r\\n/g)) {
+            const line = m[1] + " " + m[2];
+            if (!rec.requests.includes(line)) rec.requests.push(line);
+          }
+          if (rec.id === 0) {
+            // Origin: reply 303+close once the chunked body terminator arrives,
+            // then linger (keep the socket open, ignore anything further). Any
+            // pipelined follow-up written here never gets a response.
+            if (!rec.responded && rec.data.includes("0\\r\\n\\r\\n")) {
+              rec.responded = true;
+              sock.write(
+                "HTTP/1.1 303 See Other\\r\\n" +
+                  "Location: /second\\r\\n" +
+                  "Connection: close\\r\\n" +
+                  "Content-Length: 0\\r\\n\\r\\n",
+              );
+            }
+          } else {
+            // Fresh connection: answer the redirected GET.
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\nConnection: close\\r\\n\\r\\nok");
+            sock.end();
+          }
+        });
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/first";
+
+      const body = new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("streamed-upload"));
+          c.close();
+        },
+      });
+      let outcome;
+      try {
+        const res = await fetch(url, {
+          method: "POST",
+          body,
+          duplex: "half",
+          signal: AbortSignal.timeout(2000),
+        });
+        outcome = { status: res.status, path: new URL(res.url).pathname, redirected: res.redirected, text: await res.text() };
+      } catch (e) {
+        outcome = { error: String(e) };
+      }
+      // outcome being populated means the follow-up GET already completed on
+      // its connection; nothing else writes to the recorded sockets after this.
+      console.log(
+        JSON.stringify({
+          outcome,
+          connections: conns.length,
+          conn0Requests: conns[0]?.requests,
+          conn0SawGET: (conns[0]?.data ?? "").includes("GET /second"),
+          conn1Requests: conns[1]?.requests,
+        }),
+      );
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    // Without the fix the GET is pipelined onto conn0 (conn0SawGET: true,
+    // conn0Requests includes "GET /second") and the lingering origin never
+    // answers it, so outcome is {error: TimeoutError ...} and connections: 1.
+    result: {
+      outcome: { status: 200, path: "/second", redirected: true, text: "ok" },
+      connections: 2,
+      conn0Requests: ["POST /first"],
+      conn0SawGET: false,
+      conn1Requests: ["GET /second"],
+    },
+    exitCode: 0,
+  });
+});
+
 // RFC 9112 §9.3/§9.6: a response carrying `Connection: close` must not be
 // pooled whatever its status code, and an HTTP/1.0 response is non-persistent
 // unless it carries an explicit `Connection: keep-alive`. The server below says

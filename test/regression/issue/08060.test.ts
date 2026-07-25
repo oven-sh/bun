@@ -46,11 +46,7 @@ describe.concurrent("process.env.TZ POSIX std+offset form", () => {
   // only on POSIX where the forms are meaningful.
   test.skipIf(isWindows)("runtime assignment: process.env.TZ = 'MSK-3'", async () => {
     await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        "process.env.TZ = 'MSK-3'; process.stdout.write(String(new Date().getTimezoneOffset()))",
-      ],
+      cmd: [bunExe(), "-e", "process.env.TZ = 'MSK-3'; process.stdout.write(String(new Date().getTimezoneOffset()))"],
       env: { ...bunEnv, TZ: "Etc/UTC" },
       stderr: "pipe",
     });

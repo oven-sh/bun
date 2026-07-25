@@ -10,8 +10,7 @@ fn main() {
     if std::env::var_os("CARGO_FEATURE_SHIM_STANDALONE").is_some()
         && std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
     {
-        // oven-sh/bun#12738: hash in place of COFF TimeDateStamp, and no
-        // PDB-derived RSDS GUID, so the shim PE is byte-reproducible.
+        // oven-sh/bun#12738: byte-reproducible PE (no wall-clock TimeDateStamp / RSDS GUID).
         println!("cargo:rustc-link-arg=/Brepro");
         println!("cargo:rustc-link-arg=/DEBUG:NONE");
     }

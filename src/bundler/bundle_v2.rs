@@ -2197,9 +2197,10 @@ pub mod bv2_impl {
                     &import_record.source_file,
                     &import_record.specifier,
                 ) {
-                    if self
-                        .should_skip_require_resolve_for_importer(import_record, target.bake_graph())
-                    {
+                    if self.should_skip_require_resolve_for_importer(
+                        import_record,
+                        target.bake_graph(),
+                    ) {
                         return;
                     }
                     let file_map_result = _file_map_result;

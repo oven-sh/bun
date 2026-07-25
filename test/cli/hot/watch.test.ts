@@ -62,8 +62,7 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 // exercises the fix on Windows; the stderr assertion (no warning, no crash)
 // is meaningful everywhere.
 test.concurrent("picks up changes in a linked workspace package outside the cwd", async () => {
-  const appSource = (app: number) =>
-    `import { value } from "@test/db";\nconsole.log("[app]", ${app}, value);\n`;
+  const appSource = (app: number) => `import { value } from "@test/db";\nconsole.log("[app]", ${app}, value);\n`;
   const root = tempDirWithFiles("watch-workspace", {
     "packages/db/package.json": JSON.stringify({ name: "@test/db", main: "index.js" }),
     "packages/db/index.js": `export const value = 1;\n`,

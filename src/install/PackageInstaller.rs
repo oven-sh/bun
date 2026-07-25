@@ -1923,13 +1923,9 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            // For npm packages `meta.has_install_script()` is the registry's
-                            // `hasInstallScript` packument field, which a minimal/private
-                            // registry may omit (false negative) or which may be a false positive
-                            // when the published tarball dropped its binding.gyp. For every other
-                            // resolution tag the flag was derived from the installed
-                            // package.json + binding.gyp, so it is authoritative and skips the
-                            // disk read when there is nothing to count.
+                            // `has_install_script()` is registry-supplied for npm (may be wrong
+                            // either way); non-npm tags derived it from package.json so it is
+                            // authoritative there.
                             if !is_trusted
                                 && (resolution.tag == resolution::Tag::Npm
                                     || self.metas[package_id as usize].has_install_script())

@@ -590,8 +590,9 @@ impl RunCommand {
                 let _ = bun_sys::delete_tree_absolute(dir);
             }
 
-            // `<tmp>/bun-node-<uid>-<sha>` + `/node` + NUL. The prefix is
-            // bounded (<= 12 + 10 + 10 + 1 + 9 = 42 bytes), so 64 is plenty.
+            // `<tmp>/bun-node-<uid>-<sha>` + `/node` + NUL. The longest prefix
+            // is android's `/data/local/tmp` (15); with a 10-digit uid and
+            // 9-char sha the whole thing is 51 bytes, so 64 is plenty.
             debug_assert!(dir.len() + b"/node\0".len() <= 64);
             let mut dir_buf = [0u8; 64];
             dir_buf[..dir.len()].copy_from_slice(dir);

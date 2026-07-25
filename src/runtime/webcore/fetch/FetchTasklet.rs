@@ -2502,7 +2502,38 @@ impl FetchTasklet {
     }
 }
 
+/// When the `Response` is dropped without the body being read, drain at most
+/// this many remaining bytes to keep the connection poolable; beyond that the
+/// socket is closed. undici's only drain-to-reuse path (`Readable.dump`) uses
+/// 128 KiB; we allow one extra window.
+const ABANDONED_RESPONSE_DRAIN_MAX_BYTES: usize = 256 * 1024;
+
 impl FetchTasklet {
+    /// Scenario 2b/3 of [`on_response_finalize`]: the JS `Response` was
+    /// collected with the body neither streamed nor buffered. Drain-to-reuse
+    /// only when the remaining body is small and bounded; otherwise abort the
+    /// transport first so [`ignore_remaining_response_body`] does not re-arm
+    /// the read and pull the entire body just to discard it.
+    ///
+    /// Runs inside a JSC Weak finalizer, so this must not touch any `JSCell`;
+    /// the regular [`abort_task`] is avoided because `tracker.did_cancel`
+    /// reaches the inspector.
+    fn abandon_response_body_from_finalizer(&mut self) {
+        let drain = match self.body_size {
+            http::BodySize::ContentLength(n) => {
+                n.saturating_sub(self.scheduled_response_buffer.list.len())
+                    <= ABANDONED_RESPONSE_DRAIN_MAX_BYTES
+            }
+            http::BodySize::TotalReceived(_) | http::BodySize::Unknown => false,
+        };
+        if !drain && !self.signal_store.aborted.swap(true, Ordering::Relaxed) {
+            if let Some(http_) = self.http.as_mut() {
+                http::http_thread().schedule_shutdown(http_);
+            }
+        }
+        self.ignore_remaining_response_body(true);
+    }
+
     #[bun_uws::uws_callback(export = "Bun__FetchResponse_finalize", no_catch)]
     pub(crate) fn on_response_finalize(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "onResponseFinalize");
@@ -2531,11 +2562,11 @@ impl FetchTasklet {
                 if let Some(promise) = locked.promise {
                     if promise.is_empty_or_undefined_or_null() {
                         // Scenario 2b.
-                        this.ignore_remaining_response_body(true);
+                        this.abandon_response_body_from_finalizer();
                     }
                 } else {
                     // Scenario 3.
-                    this.ignore_remaining_response_body(true);
+                    this.abandon_response_body_from_finalizer();
                 }
             }
         }

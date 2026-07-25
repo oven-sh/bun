@@ -887,9 +887,7 @@ impl PosixBufferedReader {
                                 // more keeps draining to EOF; there is no
                                 // poll to re-arm and the consumer is
                                 // push-driven (FileResponseStream).
-                                if received_hup
-                                    || (keep_going && file_type == FileType::File)
-                                {
+                                if received_hup || (keep_going && file_type == FileType::File) {
                                     head_start = 0;
                                     continue;
                                 }

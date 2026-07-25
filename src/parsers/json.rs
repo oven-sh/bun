@@ -198,8 +198,13 @@ fn run_stage2<'s>(
 ) -> crate::Result<ParseOutput> {
     let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
     let root = parser.parse_value()?;
-    if check_len && !parser.at_trailing_end() {
-        return Err(parser.unexpected_here());
+    if check_len {
+        if !parser.at_trailing_end() {
+            return Err(parser.unexpected_here());
+        }
+    } else if opts.allow_comments {
+        // Scan past the root value so a comment after it still lands in `sidx.comments`.
+        let _ = parser.at_trailing_end();
     }
     let tape = parser.take_tape();
     drop(parser);

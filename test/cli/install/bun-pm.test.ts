@@ -921,6 +921,7 @@ test("bun pm trust preserves comments in a JSONC package.json", async () => {
     // local dep
     "dep-a": "file:./dep"
   }
+  // before close brace
 }
 `,
   });
@@ -951,6 +952,8 @@ test("bun pm trust preserves comments in a JSONC package.json", async () => {
   const out = await Bun.file(join(dirStr, "package.json")).text();
   expect(out).toContain("// my app");
   expect(out).toContain("// local dep");
+  // stays inside the root object even though the editor rebuilds it
+  expect(out.indexOf("// before close brace")).toBeLessThan(out.lastIndexOf("}"));
   expect(JSON.parse(out.replace(/\/\/.*$/gm, ""))).toEqual({
     name: "app",
     dependencies: { "dep-a": "file:./dep" },

@@ -1,23 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
-
-// Fixture prelude that blocks a file until every peer file has also started, so
-// the assertions below run against genuinely overlapping workers.
-function barrier(me: string, peers: string[]): string {
-  return `
-    {
-      const fs = require("fs");
-      const at = n => import.meta.dir + "/" + n + ".barrier";
-      fs.writeFileSync(at("${me}"), "");
-      const idle = new Int32Array(new SharedArrayBuffer(4));
-      const deadline = Date.now() + 10_000;
-      const peers = ${JSON.stringify(peers)};
-      while (!peers.every(p => fs.existsSync(at(p))) && Date.now() < deadline) {
-        Atomics.wait(idle, 0, 0, 5);
-      }
-    }
-  `;
-}
+import { bunEnv, bunExe, normalizeBunSnapshot, parallelBarrierFixture as barrier, tempDir, tls } from "harness";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the

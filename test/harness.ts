@@ -448,6 +448,26 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+/**
+ * Fixture prelude that blocks a test file until every peer file has also started, so
+ * `--parallel` assertions run against genuinely overlapping workers.
+ */
+export function parallelBarrierFixture(me: string, peers: string[]): string {
+  return `
+    {
+      const fs = require("fs");
+      const at = n => import.meta.dir + "/" + n + ".barrier";
+      fs.writeFileSync(at(${JSON.stringify(me)}), "");
+      const idle = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 10_000;
+      const peers = ${JSON.stringify(peers)};
+      while (!peers.every(p => fs.existsSync(at(p))) && Date.now() < deadline) {
+        Atomics.wait(idle, 0, 0, 5);
+      }
+    }
+  `;
+}
+
 export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string): string {
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);

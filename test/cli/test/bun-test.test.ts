@@ -1,6 +1,13 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  parallelBarrierFixture as barrier,
+  tempDir,
+  tempDirWithFiles,
+  tmpdirSync,
+} from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1649,24 +1656,6 @@ describe("nested describe output", () => {
       .filter(l => /^\s*\((pass|fail|skip|todo)\)/.test(l))
       .map(l => (cwd ? l.replaceAll(cwd, "<cwd>") : l))
       .join("\n");
-  }
-
-  // Fixture prelude that blocks a file until every peer file has also started,
-  // so `--parallel` output really is produced by overlapping workers.
-  function barrier(me: string, peers: string[]): string {
-    return `
-      {
-        const fs = require("fs");
-        const at = n => import.meta.dir + "/" + n + ".barrier";
-        fs.writeFileSync(at("${me}"), "");
-        const idle = new Int32Array(new SharedArrayBuffer(4));
-        const deadline = Date.now() + 10_000;
-        const peers = ${JSON.stringify(peers)};
-        while (!peers.every(p => fs.existsSync(at(p))) && Date.now() < deadline) {
-          Atomics.wait(idle, 0, 0, 5);
-        }
-      }
-    `;
   }
 
   test("indents tests under their describe scope", () => {

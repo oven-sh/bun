@@ -5818,26 +5818,26 @@ pub mod bv2_impl {
                     source_dir, dir_prefix,
                 );
 
-                let Some(dir_info) = self.transpiler.resolver.read_dir_info_ignore_error(abs)
-                else {
-                    continue;
-                };
-                let Some(dir_entries) = dir_info.get_entries_ref(generation) else {
-                    continue;
-                };
-
                 let kind = parent.kind;
                 let mut seen_stems: Vec<&'static [u8]> = Vec::new();
 
-                let mut names: Vec<Vec<u8>> = dir_entries
-                    .data
-                    .iter()
-                    .map(|(_, v)| {
-                        // SAFETY: EntryStore slot; process-lifetime, read-only.
-                        let entry = unsafe { &**v };
-                        entry.base().to_vec()
+                let mut names: Vec<Vec<u8>> = self
+                    .transpiler
+                    .resolver
+                    .read_dir_info_ignore_error(abs)
+                    .and_then(|di| di.get_entries_ref(generation))
+                    .map(|dir_entries| {
+                        dir_entries
+                            .data
+                            .iter()
+                            .map(|(_, v)| {
+                                // SAFETY: EntryStore slot; process-lifetime, read-only.
+                                let entry = unsafe { &**v };
+                                entry.base().to_vec()
+                            })
+                            .collect()
                     })
-                    .collect();
+                    .unwrap_or_default();
                 names.sort_unstable();
 
                 for base in names {

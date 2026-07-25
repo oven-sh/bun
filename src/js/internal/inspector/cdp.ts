@@ -616,12 +616,20 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.setBreakpointsActive":
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         this.#flags.breakpointsActive = params.active !== false;
         this.#syncBackendAggregate();
         this.#replyToClient(id, {});
         return;
 
       case "Debugger.setPauseOnExceptions": {
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         const state = params.state === "caught" ? "all" : typeof params.state === "string" ? params.state : "none";
         this.#flags.pauseOnExceptions = state;
         this.#syncBackendAggregate();
@@ -630,9 +638,12 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.removeBreakpoint": {
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         const { breakpointId } = params;
-        const owner = breakpointOwner.$get(breakpointId);
-        if (owner !== undefined && owner !== this.#sessionId) {
+        if (breakpointOwner.$get(breakpointId) !== this.#sessionId) {
           // V8's per-session breakpoint store would have no entry here.
           this.#replyToClient(id, {});
           return;

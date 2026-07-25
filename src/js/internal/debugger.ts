@@ -604,6 +604,8 @@ class Debugger {
     const { backend, adapter } = data;
     adapter?.dispose?.();
     backend?.close();
+    data.adapter = undefined;
+    data.backend = undefined;
   }
 
   #error(connection: ConnectionOwner, error: Error): void {
@@ -612,6 +614,8 @@ class Debugger {
     console.error(error);
     adapter?.dispose?.();
     backend?.close();
+    data.adapter = undefined;
+    data.backend = undefined;
   }
 }
 

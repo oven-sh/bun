@@ -1089,8 +1089,8 @@ for await (const line of rl) {
       stdoutText += decoder.decode(value);
     }
   }
-  await waitForStdout("URL ");
-  const wsUrl = stdoutText.match(/URL (\S+)/)![1];
+  await waitForStdout("\n");
+  const wsUrl = stdoutText.match(/URL (\S+)\n/)![1];
 
   type Pending = { resolve: (msg: any) => void; reject: (err: Error) => void; method: string };
   type Client = {
@@ -1134,9 +1134,16 @@ for await (const line of rl) {
           }
         }
       };
-      ws.onerror = e => (pending.size ? client.abandon(`ws ${name} errored`) : reject(e));
-      ws.onclose = () => client.abandon(`ws ${name} closed`);
-      ws.onopen = () => resolve(client);
+      let opened = false;
+      ws.onerror = e => (opened ? client.abandon(`ws ${name} errored`) : reject(e));
+      ws.onclose = () => {
+        if (!opened) reject(new Error(`ws ${name} closed before open; stderr: ${stderrText}`));
+        client.abandon(`ws ${name} closed`);
+      };
+      ws.onopen = () => {
+        opened = true;
+        resolve(client);
+      };
     });
   }
 
@@ -1169,10 +1176,24 @@ for await (const line of rl) {
   expect(A.pauseCount).toBe(pausesBefore + 1);
 
   // B never enabled Debugger; none of these may touch A's session.
-  await B.send("Debugger.setBreakpointsActive", { active: false });
-  await B.send("Debugger.setPauseOnExceptions", { state: "none" });
-  await B.send("Debugger.removeBreakpoint", { breakpointId });
-  await B.send("Debugger.disable");
+  const bActive = await B.send("Debugger.setBreakpointsActive", { active: false });
+  const bPause = await B.send("Debugger.setPauseOnExceptions", { state: "none" });
+  const bRemove = await B.send("Debugger.removeBreakpoint", { breakpointId });
+  const bSetBp = await B.send("Debugger.setBreakpointByUrl", { lineNumber: 8, urlRegex: "debuggee\\.mjs$" });
+  const bDisable = await B.send("Debugger.disable");
+  expect({
+    active: bActive.error?.message,
+    pause: bPause.error?.message,
+    remove: bRemove.error?.message,
+    setBp: bSetBp.error?.message,
+    disable: bDisable.error?.message ?? "no error",
+  }).toEqual({
+    active: "Debugger agent is not enabled",
+    pause: "Debugger agent is not enabled",
+    remove: "Debugger agent is not enabled",
+    setBp: "Debugger agent is not enabled",
+    disable: "no error",
+  });
 
   const pausesMid = A.pauseCount;
   await triggerHit();
@@ -1259,6 +1280,10 @@ for await (const line of rl) {
   B.ws.close();
   proc.stdin.write("exit\n");
   proc.stdin.flush();
-  expect(await proc.exited).toBe(0);
+  const exitCode = await proc.exited;
   await stderrDrained;
+  expect({ exitCode, stderr: stderrText }).toEqual({
+    exitCode: 0,
+    stderr: expect.stringContaining("Debugger listening on"),
+  });
 }, 20_000);

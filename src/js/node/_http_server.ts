@@ -1401,10 +1401,7 @@ const kEnableRawData = Symbol("kEnableRawData");
 // a user reads the socket, have the native side forward the raw TCP payload
 // into this Duplex so 'data'/'readable' behave the same.
 function maybeEnableRawSocketData(socket) {
-  if (
-    !socket[kStreamingEnabled] &&
-    (socket.listenerCount("data") > 0 || socket.listenerCount("readable") > 0)
-  ) {
+  if (!socket[kStreamingEnabled] && (socket.listenerCount("data") > 0 || socket.listenerCount("readable") > 0)) {
     socket[kEnableRawData]();
   }
 }

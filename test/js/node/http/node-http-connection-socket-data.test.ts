@@ -1,11 +1,11 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { tls as tlsCerts } from "harness";
+import { once } from "node:events";
 import { createServer, request } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
-import { once } from "node:events";
+import type { AddressInfo } from "node:net";
 import { connect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
-import type { AddressInfo } from "node:net";
-import { tls as tlsCerts } from "harness";
 
 // https://github.com/oven-sh/bun/issues/11924
 // Node's http.Server feeds its parser from the connection socket's 'data'

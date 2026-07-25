@@ -1187,7 +1187,22 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     // by value without `dupe_ref()`/`deref()` refcount churn. Only the
     // URL-decoded branch produces a string we must release.
     let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
-        owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
+        let path = jsc::URL::path_from_file_url(specifier);
+        // path_from_file_url (fileSystemPath()) drops the ?query. Re-append it
+        // so resolve_maybe_needs_trailing_slash splits it off into
+        // owned.query_string, matching the non-file:// branch.
+        let spec_utf8 = specifier.to_utf8();
+        owned.decoded_specifier =
+            match bun_core::strings::index_of_char_usize(spec_utf8.slice(), b'?') {
+                Some(i) => {
+                    let mut buf = path.to_utf8_bytes();
+                    buf.extend_from_slice(&spec_utf8.slice()[i..]);
+                    path.deref();
+                    BunString::clone_utf8(&buf)
+                }
+                None => path,
+            };
+        drop(spec_utf8);
         owned.decoded_specifier
     } else {
         specifier

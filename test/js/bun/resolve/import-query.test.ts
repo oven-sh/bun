@@ -263,6 +263,73 @@ test("dynamic import of a file:// URL keeps the query string in the module key",
   expect(exitCode).toBe(0);
 });
 
+test("mock.module with a file:// URL + query string registers under the same key import() resolves to", async () => {
+  using dir = tempDir("import-query-file-url-mock", {
+    "real.mjs": `export default "REAL"; export const url = import.meta.url;`,
+    "entry.mjs": `
+      import { mock } from "bun:test";
+      import { pathToFileURL } from "node:url";
+      const base = pathToFileURL("./real.mjs").href;
+      mock.module(base + "?v=1", () => ({ default: "MOCKED", url: "mocked" }));
+      const m1 = await import(base + "?v=1");
+      const m2 = await import(base + "?v=2");
+      console.log(JSON.stringify({
+        mocked: m1.default,
+        unmocked: m2.default,
+        unmockedUrl: m2.url.slice(m2.url.lastIndexOf("/") + 1),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    mocked: "MOCKED",
+    unmocked: "REAL",
+    unmockedUrl: "real.mjs?v=2",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("Bun.resolveSync of a file:// URL keeps the query string", async () => {
+  using dir = tempDir("import-query-file-url-resolvesync", {
+    "target.mjs": ``,
+    "entry.mjs": `
+      import { pathToFileURL } from "node:url";
+      const base = pathToFileURL("./target.mjs").href;
+      const withQuery = Bun.resolveSync(base + "?t=1", import.meta.dir);
+      const noQuery = Bun.resolveSync(base, import.meta.dir);
+      const relative = Bun.resolveSync("./target.mjs?t=1", import.meta.dir);
+      console.log(JSON.stringify({
+        withQuery: withQuery.endsWith("target.mjs?t=1"),
+        noQuery: noQuery.endsWith("target.mjs"),
+        matchesRelative: withQuery === relative,
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    withQuery: true,
+    noQuery: true,
+    matchesRelative: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 test("static import of a file:// URL keeps the query string in the module key", async () => {
   using dir = tempDir("import-query-file-url-static", {
     "target.mjs": `(globalThis.hits ??= []).push(import.meta.url);`,

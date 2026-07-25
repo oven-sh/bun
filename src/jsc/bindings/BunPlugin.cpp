@@ -549,7 +549,10 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         if (specifier.startsWith("file:"_s)) {
             URL fileURL = URL(url, specifier);
             if (fileURL.isValid()) {
-                specifier = fileURL.fileSystemPath();
+                auto query = fileURL.queryWithLeadingQuestionMark();
+                specifier = query.isEmpty()
+                    ? fileURL.fileSystemPath()
+                    : makeString(fileURL.fileSystemPath(), query);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -581,10 +584,14 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                 if (relativeURL.isValid()) {
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
-                    if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
-                    else
+                    if (relativeURL.protocolIsFile()) {
+                        auto query = relativeURL.queryWithLeadingQuestionMark();
+                        specifier = query.isEmpty()
+                            ? relativeURL.fileSystemPath()
+                            : makeString(relativeURL.fileSystemPath(), query);
+                    } else {
                         specifier = relativeURL.string();
+                    }
 
                     specifierString = jsString(vm, specifier);
                 }

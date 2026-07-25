@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { isModuleResolveFilenameSlowPathEnabled } from "bun:internal-for-testing";
-import { expect, it, mock } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { describe, expect, it, mock } from "bun:test";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import Module from "node:module";
 import { tmpdir } from "node:os";
@@ -238,6 +238,84 @@ it("require.resolve with empty options object", () => {
 
 it("dynamically import bun", async () => {
   expect((await import(eval("'bun'"))).default).toBe(Bun);
+});
+
+// https://github.com/oven-sh/bun/issues/8058
+describe("require/import 'bun' with a local `globalThis` in scope", () => {
+  async function run(files) {
+    const entry = Object.keys(files)[0];
+    using dir = tempDir("issue-08058", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  }
+
+  it("require('bun')", async () => {
+    await run({
+      "index.ts": `{ let globalThis = { Bun: "intercepted" }; console.log(typeof require("bun").serve); }`,
+    });
+  });
+
+  it("dynamic import('bun') with local `globalThis` and `Promise`", async () => {
+    await run({
+      "index.ts":
+        `{ let globalThis = { Bun: "intercepted" }; let Promise = null;` +
+        ` import("bun").then(b => console.log(typeof b.serve)); }`,
+    });
+  });
+
+  it("require('bun') in CommonJS", async () => {
+    await run({
+      "index.cjs": `
+        module.exports = 1;
+        { let globalThis = { Bun: "intercepted" }; console.log(typeof require("bun").serve); }
+      `,
+    });
+  });
+
+  it("static `import * as B from 'bun'` with a module-level `let globalThis`", async () => {
+    await run({
+      "index.ts": `
+        let globalThis = { Bun: "intercepted" };
+        import * as B from "bun";
+        console.log(typeof B.serve);
+      `,
+    });
+  });
+
+  it("static `import { env } from 'bun'` does not eagerly reify the Bun object", async () => {
+    // The import statement form is still lowered to a var-destructure (not a
+    // real ESM import) so that only the requested property is touched and
+    // type-only names declared in bun.d.ts don't fail link-time validation.
+    using dir = tempDir("issue-08058-reify", {
+      "index.ts": `
+        import { env } from "bun";
+        import { hasNonReifiedStatic } from "bun:internal-for-testing";
+        if (!hasNonReifiedStatic(Bun)) throw new Error("import { env } from 'bun' reified the whole Bun object");
+        void env;
+        console.log("pass");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("pass\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 it("require.resolve error code", () => {

@@ -1719,7 +1719,17 @@ pub mod __gated_printer {
             if !IS_BUN_PLATFORM {
                 unreachable!();
             }
-            self.print_internal_bun_import(import, Some(b"globalThis.Bun"));
+            let src: &'static [u8] = if self.options.bundling {
+                b"globalThis.Bun"
+            } else {
+                // Runtime: NoOpRenamer can't protect a bare `globalThis`, and
+                // `import` is ESM-only so `import.meta` is always valid here.
+                if let Some(mi) = self.module_info() {
+                    mi.flags.contains_import_meta = true;
+                }
+                b"import.meta.require(\"bun\")"
+            };
+            self.print_internal_bun_import(import, Some(src));
         }
 
         fn print_internal_bun_import(
@@ -5765,9 +5775,6 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
 
                     if IS_BUN_PLATFORM {
-                        // Not gated on `bundling` (cf. print_require_or_import_expr): a real
-                        // ESM `import {x} from "bun"` reifies every Bun property and rejects
-                        // type-only names at link time.
                         if record.tag == ImportRecordTag::Bun {
                             self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;

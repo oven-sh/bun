@@ -270,10 +270,6 @@ describe("bundler", () => {
           import * as NS from "pkg";
           export { NS as sharedNS };
         `,
-        "/consumer.js": /* js */ `
-          import { utilNS, sharedNS } from "./entry1.js";
-          console.log(utilNS.tag, sharedNS.tag);
-        `,
       },
       entryPoints: ["/entry1.js", "/entry2.js"],
       splitting: true,
@@ -282,6 +278,10 @@ describe("bundler", () => {
       runtimeFiles: {
         "/node_modules/pkg/index.mjs": `export const tag = "EXT";`,
         "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+        "/out/consumer.js": /* js */ `
+          import { utilNS, sharedNS } from "./entry1.js";
+          console.log(utilNS.tag, sharedNS.tag);
+        `,
       },
       onAfterBundle(api) {
         // util.js and shared.js land in one shared chunk. Their two
@@ -291,7 +291,7 @@ describe("bundler", () => {
         // used-refs loop and its entry-exports loop must follow() before
         // recording; otherwise each entry chunk gets two clause items with the
         // same local name (a SyntaxError).
-        const chunkFiles = readdirSync(api.outdir).filter(f => !/^entry[12]\.js$/.test(f));
+        const chunkFiles = readdirSync(api.outdir).filter(f => !/^(entry[12]|consumer)\.js$/.test(f));
         expect(chunkFiles).toHaveLength(1);
         const sharedChunk = api.readFile("/out/" + chunkFiles[0]);
         expect(sharedChunk.match(/^import\s*\*\s*as\s/gm) ?? []).toHaveLength(1);
@@ -303,8 +303,8 @@ describe("bundler", () => {
         }
       },
       run: [
-        { file: name === "Use" ? "/out/entry1.js" : "/consumer.js", stdout: "EXT EXT" },
-        { file: name === "Use" ? "/out/entry2.js" : "/consumer.js", stdout: "EXT EXT" },
+        { file: name === "Use" ? "/out/entry1.js" : "/out/consumer.js", stdout: "EXT EXT" },
+        { file: name === "Use" ? "/out/entry2.js" : "/out/consumer.js", stdout: "EXT EXT" },
       ],
     });
   }

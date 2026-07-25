@@ -489,8 +489,8 @@ describe("bunx --no-install", () => {
 // The npm `bun` package ships its bins as `bin/bunx.exe` on every platform.
 // pnpm (and other cmd-shim-style linkers) exec that path directly instead of
 // via a `bunx`-named symlink, so argv[0] ends with `bunx.exe` even on posix.
-// Debug builds also install the bunx link as `bunx-debug`.
-it.concurrent.each(["bunx.exe", ...(isDebug ? ["bunx-debug", "bunx-debug.exe"] : [])])(
+// Debug builds also install the bunx link as `bunx-debug` (posix) / `bunx-debug.exe` (windows).
+it.concurrent.each(["bunx.exe", ...(isDebug ? [...(isWindows ? [] : ["bunx-debug"]), "bunx-debug.exe"] : [])])(
   "detects bunx mode when argv[0] ends with %s",
   async name => {
     const { x_dir, env } = setup();

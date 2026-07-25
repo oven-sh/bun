@@ -25,7 +25,7 @@ use bun_core::env::OperatingSystem;
 use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
-use bun_jsc::event_loop::EventLoop;
+
 use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
@@ -59,9 +59,6 @@ pub struct JSBundleCompletionTask {
     // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
-    // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
-    // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
-    pub jsc_event_loop: BackRef<EventLoop>,
     pub context_id: ScriptExecutionContextIdentifier,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
@@ -117,16 +114,12 @@ pub(crate) fn create_and_schedule_completion_task(
     config: JSBundlerConfig,
     plugins: Option<NonNull<Plugin>>,
     global_this: &JSGlobalObject,
-    event_loop: *mut EventLoop,
 ) -> crate::Result<*mut JSBundleCompletionTask> {
     let vm = global_this.bun_vm_ptr();
     let env = global_this.bun_vm().transpiler.env;
     let completion = bun_core::heap::into_raw(Box::new(JSBundleCompletionTask {
         ref_count: RefCount::init(),
         config,
-        // `event_loop` is the live JS-thread loop (caller derives it from
-        // `vm.event_loop()`); never null once `Bun.build` is reachable.
-        jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
         context_id: global_this.script_execution_context_identifier(),
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
@@ -764,13 +757,14 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
     result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     enqueue_task_concurrent: |c, task| {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`
-        // passed through from the bundler vtable; the queue takes ownership.
-        unsafe {
-            from_completion_handle(c)
-                .jsc_event_loop
-                .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(task))
+        // SAFETY: `task` is a fresh heap-allocated non-null `ConcurrentTaskItem`.
+        let node = unsafe { core::ptr::NonNull::new_unchecked(task) };
+        if !from_completion_handle(c)
+            .context_id
+            .post_concurrent_task(node)
+        {
+            // SAFETY: ownership not transferred; reclaim the heap node.
+            drop(unsafe { bun_core::heap::take(node.as_ptr()) });
         }
     },
 };

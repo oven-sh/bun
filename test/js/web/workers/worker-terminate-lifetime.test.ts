@@ -191,12 +191,14 @@ test.skipIf(!isASAN)(
     // Worker body: arm one in-flight op per cross-thread source, signal the
     // parent, then sit. All loopback-only; results ignored.
     const body = `
-      import { parentPort } from "node:worker_threads";
+      import { parentPort, threadId } from "node:worker_threads";
       import fs from "node:fs"; import fsp from "node:fs/promises";
       import zlib from "node:zlib"; import crypto from "node:crypto";
-      import os from "node:os"; import path from "node:path";
+      import path from "node:path";
       const sink = () => {}; const swallow = p => Promise.resolve(p).then(sink, sink);
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wt-"));
+      // Scratch rooted under body.mjs's dir (the harness tempDir) so cleanup is automatic.
+      const tmp = path.join(path.dirname(new URL(import.meta.url).pathname), "scratch-" + threadId);
+      fs.mkdirSync(tmp, { recursive: true });
       const tf = path.join(tmp, "a.txt");
       fs.writeFileSync(tf, Buffer.alloc(1 << 14, "x").toString());
       // WorkTask<ReadFile/WriteFile>
@@ -219,9 +221,12 @@ test.skipIf(!isASAN)(
       swallow(Array.fromAsync(new Bun.Glob("**/*").scan(tmp)));
       // ConcurrentCppTask (WebCrypto)
       swallow(crypto.subtle.digest("SHA-256", new Uint8Array(1 << 14)));
-      // JSBundleCompletionTask
+      // JSBundleCompletionTask (+ COMPLETION_VTABLE.enqueue_task_concurrent via plugins)
       const e = path.join(tmp, "e.ts"); fs.writeFileSync(e, "export const x=1;");
-      swallow(Bun.build({ entrypoints: [e], target: "bun" }));
+      swallow(Bun.build({
+        entrypoints: [e], target: "bun",
+        plugins: [{ name: "p", setup(b) { b.onLoad({ filter: /\\.ts$/ }, () => undefined); } }],
+      }));
       // FetchTasklet (HTTP thread)
       const srv = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(1 << 12, "x")) });
       swallow(fetch("http://127.0.0.1:" + srv.port + "/").then(r => r.text()));

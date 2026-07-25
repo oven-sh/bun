@@ -4,7 +4,7 @@
 // point is to have work airborne on a process-global thread when the VM dies,
 // not to observe the result.
 
-import { parentPort } from "node:worker_threads";
+import { parentPort, threadId } from "node:worker_threads";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import zlib from "node:zlib";
@@ -16,9 +16,12 @@ import path from "node:path";
 const sink = () => {};
 const swallow = (p) => Promise.resolve(p).then(sink, sink);
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "rootB-"));
+// One scratch root for all iterations (verify.mjs removes it on exit).
+const root = process.env.ROOTB_SCRATCH ?? path.join(os.tmpdir(), "rootB-verify");
+const tmp = path.join(root, String(threadId));
+fs.mkdirSync(tmp, { recursive: true });
 const tmpFile = path.join(tmp, "a.txt");
-fs.writeFileSync(tmpFile, "x".repeat(1 << 16));
+fs.writeFileSync(tmpFile, Buffer.alloc(1 << 16, "x").toString());
 
 // fetch / HTMLRewriter / TLS (HTTP thread -> FetchTasklet)
 {

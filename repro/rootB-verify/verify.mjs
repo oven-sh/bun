@@ -7,9 +7,15 @@
 //   bun bd repro/rootB-verify/verify.mjs
 
 import { Worker } from "node:worker_threads";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 const ITERATIONS = Number(process.env.ROOTB_ITER ?? 100);
 const body = new URL("./worker-body.mjs", import.meta.url);
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "rootB-verify-"));
+process.env.ROOTB_SCRATCH = scratch;
+process.on("exit", () => fs.rmSync(scratch, { recursive: true, force: true }));
 
 for (let i = 0; i < ITERATIONS; i++) {
   const w = new Worker(body);

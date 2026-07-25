@@ -132,7 +132,7 @@ describe.concurrent("Streaming body via", () => {
 
     let [exitCode, stderr] = await Promise.all([subprocess.exited, subprocess.stderr.text()]);
     expect(exitCode).toBeInteger();
-    expect(stderr).toContain("error: Oops");
+    expect(stderr).toContain("Error: Oops");
     expect(onMessage).toHaveBeenCalledTimes(1);
   });
 

@@ -873,6 +873,35 @@ unsafe fn ensure_debugger(vm: *mut VirtualMachine, block_until_connected: bool) 
     if unsafe { &*vm }.debugger.is_none() {
         return;
     }
+    // Node's permission model gates the inspector (inspector_agent.cc
+    // Agent::Start): without --allow-inspector, --inspect/--inspect-wait are
+    // silently skipped, and --inspect-brk raises ERR_ACCESS_DENIED for
+    // PauseOnNextJavascriptStatement as an uncaught exception (exit 1).
+    if crate::permission::is_enabled()
+        && !crate::permission::is_granted(crate::permission::Scope::Inspector, None)
+    {
+        // SAFETY: `vm` is the live per-thread VM.
+        let vm_ref = unsafe { &mut *vm };
+        let wants_first_line_break = vm_ref
+            .debugger
+            .as_deref()
+            .is_some_and(|d| d.set_breakpoint_on_first_line);
+        if wants_first_line_break {
+            // SAFETY: `vm.global` is set during `VirtualMachine::init`.
+            let global_ref = unsafe { &*vm_ref.global };
+            let err = crate::permission::access_denied_error(
+                global_ref,
+                crate::permission::Scope::Inspector,
+                b"PauseOnNextJavascriptStatement",
+            );
+            vm_ref.run_error_handler(err, None);
+            vm_ref.exit_handler.exit_code = 1;
+            vm_ref.on_exit();
+            vm_ref.global_exit();
+        }
+        vm_ref.debugger = None;
+        return;
+    }
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives
     // the VM; read the raw ptr before forming `&mut *vm` so the two derefs
     // don't alias.
@@ -1194,6 +1223,8 @@ fn print_exception(
         vm_ref.print_exception(exception, exception_list, writer, true);
     } else {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        formatter.node_uncaught_style =
+            !bun_jsc::virtual_machine::isBunTest.load(core::sync::atomic::Ordering::Relaxed);
         // `Formatter::new` already
         // defaults `error_display_level` to `Full` (ConsoleObject.rs:1176).
         let colors = bun_core::Output::enable_ansi_colors_stderr();

@@ -564,7 +564,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(exitCode).toBe(1);
-      expect(stderr).toInclude("error: boom");
+      expect(stderr).toInclude("Error: boom");
       expect(stdout).toBeEmpty();
     });
 
@@ -583,7 +583,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("monitor boom uncaughtException\nuncaughtException boom\n");
-      expect(stderr).not.toInclude("error: boom");
+      expect(stderr).not.toInclude("Error: boom");
       expect(exitCode).toBe(0);
     });
 
@@ -601,7 +601,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("captured boom\n");
-      expect(stderr).not.toInclude("error: boom");
+      expect(stderr).not.toInclude("Error: boom");
       expect(exitCode).toBe(0);
     });
 
@@ -623,7 +623,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("uncaughtException late\n");
-      expect(stderr).not.toInclude("error: late");
+      expect(stderr).not.toInclude("Error: late");
       expect(exitCode).toBe(0);
     });
 
@@ -663,7 +663,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("exit 1\n");
-      expect(stderr).toInclude("error: boom");
+      expect(stderr).toInclude("Error: boom");
       expect(exitCode).toBe(1);
     });
 
@@ -682,7 +682,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("caught boom\nbeforeExit 0\nexit 0\n");
-      expect(stderr).not.toInclude("error: boom");
+      expect(stderr).not.toInclude("Error: boom");
       expect(exitCode).toBe(0);
     });
 
@@ -703,7 +703,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("first 1\n");
-      expect(stderr).toInclude("error: boom");
+      expect(stderr).toInclude("Error: boom");
       expect(exitCode).toBe(1);
     });
 
@@ -719,7 +719,7 @@ describe.concurrent(() => {
         stdio: ["inherit", "pipe", "pipe"],
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
-      expect(stderr).toInclude("error: a");
+      expect(stderr).toInclude("Error: a");
       expect(stdout).toBeEmpty();
       // 7 is node's "the uncaughtException handler itself threw"; there is no handler here.
       expect(exitCode).toBe(1);
@@ -735,7 +735,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(exitCode).toBe(1);
-      expect(stderr).toInclude("error: boom");
+      expect(stderr).toInclude("Error: boom");
       expect(stdout).toBeEmpty();
     });
 
@@ -753,7 +753,7 @@ describe.concurrent(() => {
       });
       const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("monitor boom uncaughtException\nuncaughtException boom\n");
-      expect(stderr).not.toInclude("error: boom");
+      expect(stderr).not.toInclude("Error: boom");
       expect(exitCode).toBe(0);
     });
   });

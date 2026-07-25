@@ -96,10 +96,10 @@ test("throwing inside an error suppresses the error and prints the stack", async
   expect(stderr.toString().trim().split("\n").slice(0, -1).join("\n").trim()).toMatchInlineSnapshot(`
 "error: My custom error message
 {
-  message: "My custom error message",
+  message: 'My custom error message',
   name: [Getter],
   line: 42,
-  sourceURL: "http://example.com/test.js",
+  sourceURL: 'http://example.com/test.js',
 }
       at http://example.com/test.js:42"
 `);
@@ -113,11 +113,11 @@ test("throwing inside an error suppresses the error and continues printing prope
 
   const { stderr, exitCode } = result;
 
-  expect(stderr.toString().trim()).toStartWith(`ENOENT: no such file or directory, open 'this-file-path-is-bad'
-    path: "this-file-path-is-bad",
- syscall: "open",
+  expect(stderr.toString().trim()).toStartWith(`Error: ENOENT: no such file or directory, open 'this-file-path-is-bad'
+    path: 'this-file-path-is-bad',
+ syscall: 'open',
    errno: ${process.binding("uv").UV_ENOENT},
-    code: "ENOENT"
+    code: 'ENOENT'
 `);
   expect(exitCode).toBe(1);
 });

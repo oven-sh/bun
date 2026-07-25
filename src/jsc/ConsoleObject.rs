@@ -1875,6 +1875,11 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub format_buffer_as_text: bool,
+        /// Render like Node's uncaught-exception report: the error's own
+        /// `name` is printed verbatim (`Error: boom`, never Bun's lowercase
+        /// `error:` alias) and string properties are single-quoted
+        /// (`code: 'ENOENT'`). Set only on the uncaught/unhandled print path.
+        pub node_uncaught_style: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1905,6 +1910,7 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                node_uncaught_style: false,
             }
         }
 
@@ -1940,6 +1946,7 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                node_uncaught_style: self.node_uncaught_style,
             }
         }
 
@@ -3827,7 +3834,36 @@ pub mod formatter {
 
             if self.quote_strings && js_type != jsc::JSType::RegExpObject {
                 if str.is_empty() {
-                    writer.write_all(b"\"\"");
+                    writer.write_all(if self.node_uncaught_style {
+                        b"''"
+                    } else {
+                        b"\"\""
+                    });
+                    if writer.failed {
+                        self.failed = true;
+                    }
+                    return Ok(());
+                }
+
+                // Node quotes inspect strings with single quotes. Only simple
+                // ASCII strings take this path; anything needing escapes falls
+                // through to the JSON (double-quote) writer.
+                if self.node_uncaught_style
+                    && !str.is_utf16()
+                    && str
+                        .latin1()
+                        .iter()
+                        .all(|&b| (0x20..0x7f).contains(&b) && b != b'\'' && b != b'\\')
+                {
+                    if C {
+                        writer.write_all(pfmt!("<r><green>", true).as_bytes());
+                    }
+                    writer.write_all(b"'");
+                    writer.write_all(str.latin1());
+                    writer.write_all(b"'");
+                    if C {
+                        writer.write_all(pfmt!("<r>", true).as_bytes());
+                    }
                     if writer.failed {
                         self.failed = true;
                     }

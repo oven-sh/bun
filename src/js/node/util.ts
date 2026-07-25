@@ -253,7 +253,7 @@ var _extend = function (origin, add) {
 
 function callbackifyOnRejected(reason, cb) {
   if (!reason) {
-    var newReason = new Error("Promise was rejected with a falsy value");
+    var newReason = new Error("Promise was rejected with falsy value");
     newReason.reason = reason;
     newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;

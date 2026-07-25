@@ -505,9 +505,9 @@ pub fn drain_timers_export(vm: *mut VirtualMachine) {
     if all.is_null() {
         return;
     }
-    // SAFETY: `all` is the live per-thread `All`; `vm` is the erased VM pointer
-    // (mod.rs::All::drain_timers takes `*mut ()`).
-    unsafe { (*all).drain_timers(vm.cast::<()>()) };
+    // SAFETY: `all` is the live per-thread `All` with no outstanding `&mut`;
+    // `vm` is the erased VM pointer (mod.rs::All::drain_timers takes `*mut ()`).
+    unsafe { All::drain_timers(all, vm.cast::<()>()) };
 }
 
 // `generate-host-exports.ts`

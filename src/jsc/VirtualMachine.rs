@@ -2973,7 +2973,7 @@ fn esm_specifier_decode_buf() -> *mut bun_paths::PathBuffer {
 /// `fileURLToPath()` and rejects encoded separators before decoding.
 /// Absolute paths are left to the callers' existing `file://` handling.
 #[cold]
-fn decode_esm_specifier(path: &[u8]) -> Option<&'static [u8]> {
+pub fn decode_esm_specifier(path: &[u8]) -> Option<&'static [u8]> {
     for sep in [b"%2f".as_slice(), b"%2F", b"%5c", b"%5C"] {
         if bun_core::strings::contains(path, sep) {
             return None;

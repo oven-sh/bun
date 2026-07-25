@@ -4941,7 +4941,16 @@ unsafe fn _resolve<'a>(
     // ── Filesystem resolver ──────────────────────────────────────────────
     let is_special_source = source == MAIN_FILE_NAME || bun_js_parser::Macro::is_macro_path(source);
     let mut query_string: &[u8] = b"";
-    let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+    let mut normalized_specifier =
+        normalize_specifier_for_resolution(specifier, &mut query_string);
+    if is_esm
+        && bun_core::strings::contains_char(normalized_specifier, b'%')
+        && (normalized_specifier.starts_with(b"./") || normalized_specifier.starts_with(b"../"))
+    {
+        normalized_specifier =
+            bun_jsc::virtual_machine::decode_esm_specifier(normalized_specifier)
+                .ok_or(crate::Error::ModuleNotFound)?;
+    }
     // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.
     let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;

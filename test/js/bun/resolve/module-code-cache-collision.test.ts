@@ -7,16 +7,29 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // link bun's JSModuleRecord (which carries the second module's export/local
 // names) against the first module's symbol table, producing wrong values or a
 // null SymbolTableEntry lookup inside JSModuleNamespaceObject::getOwnPropertySlotCommon.
-//
-// The strings below are chosen so that bun's runtime transpiler emits them
-// byte-for-byte unchanged, i.e. the collision is on the literal source and
-// does not depend on transpiler formatting.
 
-test("modules with hash-colliding source evaluate their own code (const export)", async () => {
+// Each pair below was mined so the *literal* file bytes collide under WTF's
+// RapidHash (StringImpl::hash, masked to 24 bits). That only exercises the
+// CodeCache bug if the runtime transpiler emits these sources unchanged; the
+// precondition check fails loudly (rather than the tests going vacuous) when
+// printer output drifts and the pairs need re-mining.
+const transpiler = new Bun.Transpiler({ target: "bun" });
+function assertTranspilesToSelf(sources: readonly string[]) {
+  const diffs = sources.filter(src => transpiler.transformSync(src, "js") !== src);
+  expect(diffs, "runtime transpiler no longer emits these fixtures byte-for-byte; re-mine the collision pairs").toEqual(
+    [],
+  );
+}
+
+test.concurrent("modules with hash-colliding source evaluate their own code (const export)", async () => {
+  // RapidHash("export const tag = \"T004433\";\n") == RapidHash("export const tag = \"T004767\";\n")
+  const a = 'export const tag = "T004433";\n';
+  const b = 'export const tag = "T004767";\n';
+  assertTranspilesToSelf([a, b]);
+
   using dir = tempDir("codecache-collision-const", {
-    // RapidHash("export const tag = \"T004433\";\n") == RapidHash("export const tag = \"T004767\";\n")
-    "a.mjs": 'export const tag = "T004433";\n',
-    "b.mjs": 'export const tag = "T004767";\n',
+    "a.mjs": a,
+    "b.mjs": b,
     "run.mjs":
       "const a = await import('./a.mjs');\n" +
       "const b = await import('./b.mjs');\n" +
@@ -38,14 +51,18 @@ test("modules with hash-colliding source evaluate their own code (const export)"
   expect(exitCode).toBe(0);
 });
 
-test("modules with hash-colliding source do not crash on namespace default access", async () => {
+test.concurrent("modules with hash-colliding source do not crash on namespace default access", async () => {
+  // The differing function name means the second module's `default` local name
+  // is absent from an incorrectly-shared symbol table, which previously hit
+  // `ASSERT(iter != symbolTable->end(locker))` in debug and segfaulted in
+  // release at SymbolTableEntry::scopeOffset().
+  const a = "export default function fn_T000686() {}\n";
+  const b = "export default function fn_T004636() {}\n";
+  assertTranspilesToSelf([a, b]);
+
   using dir = tempDir("codecache-collision-fn", {
-    // RapidHash of these two transpiled sources collides; the differing
-    // function name means the second module's `default` local name is absent
-    // from the (incorrectly shared) symbol table, which previously segfaulted
-    // at SymbolTableEntry::scopeOffset() in release builds.
-    "a.mjs": "export default function fn_T000686() {}\n",
-    "b.mjs": "export default function fn_T004636() {}\n",
+    "a.mjs": a,
+    "b.mjs": b,
     "run.mjs":
       "const a = await import('./a.mjs');\n" +
       "const b = await import('./b.mjs');\n" +

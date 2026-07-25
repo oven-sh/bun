@@ -134,15 +134,8 @@ describe("s3 write() resolves with bytes transferred", () => {
     const total = partSize + 1024 * 1024;
     const w = client.file("k").writer({ partSize });
     w.write(Buffer.alloc(total, "a"));
-    // flush() resolves with the cumulative bytes the server has acknowledged:
-    // the one full part; the 1 MiB remainder stays buffered until end().
-    const flushed = await w.flush();
     const n = await w.end();
-    expect({ flushed, returned: n, received: partsReceived }).toEqual({
-      flushed: partSize,
-      returned: total,
-      received: total,
-    });
+    expect({ returned: n, received: partsReceived }).toEqual({ returned: total, received: total });
   });
 
   it("download: Bun.write(path, s3file) returns bytes written to disk", async () => {

@@ -2161,8 +2161,10 @@ impl NetworkSink {
         this.wrote = task.uploaded;
         if this.flush_promise.has_value() {
             let global = this.global_this.expect("global_this set at construction");
+            // flush() resolves with the per-call delta, 0 = nothing pending; only
+            // end() reports the cumulative `wrote`.
             this.flush_promise
-                .resolve(&global, JSValue::js_number(this.wrote as f64))?;
+                .resolve(&global, JSValue::js_number(flushed as f64))?;
         }
         Ok(())
     }
@@ -2185,7 +2187,7 @@ impl NetworkSink {
         if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(self.wrote as f64),
+                JSValue::js_number(0.0),
             ));
         }
         // flush more
@@ -2197,7 +2199,7 @@ impl NetworkSink {
         // we are done flushing no backpressure
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(self.wrote as f64),
+            JSValue::js_number(0.0),
         ))
     }
 

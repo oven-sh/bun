@@ -445,14 +445,13 @@ pub(crate) fn writable_stream(
             let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
-                    let uploaded = sink.wrote;
+                    // flush() keeps its delta contract: 0 = nothing left pending.
                     if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(global, JSValue::js_number(uploaded as f64))?;
+                        sink.flush_promise.resolve(global, JSValue::js_number(0.0))?;
                     }
                     if sink.end_promise.has_value() {
                         sink.end_promise
-                            .resolve(global, JSValue::js_number(uploaded as f64))?;
+                            .resolve(global, JSValue::js_number(sink.wrote as f64))?;
                     }
                 }
                 S3UploadResult::Failure(err) => {

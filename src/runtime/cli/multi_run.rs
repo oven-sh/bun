@@ -1139,7 +1139,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             group_dependents: Vec::new(),
             next_dependents: Vec::new(),
             options: SpawnOptions {
-                stdin: spawn::Stdio::Ignore,
+                stdin: spawn::Stdio::Inherit,
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]

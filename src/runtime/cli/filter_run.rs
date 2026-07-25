@@ -942,7 +942,7 @@ pub(crate) fn run_scripts_with_filter(
             buffer: Vec::new(),
             process: None,
             options: SpawnOptions {
-                stdin: spawn::Stdio::Ignore,
+                stdin: spawn::Stdio::Inherit,
                 #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
                 #[cfg(not(unix))]

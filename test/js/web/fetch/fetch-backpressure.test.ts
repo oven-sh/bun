@@ -386,12 +386,14 @@ describe.concurrent("fetch() receive backpressure — streaming consumer shapes"
 // the "just read the headers" pattern. The finalizer now aborts the request so
 // the server sees a close and stops at the kernel send window, matching undici.
 describe.each(["content-length", "chunked"] as const)("fetch() abandoned Response body (%s)", encoding => {
-  test.concurrent("GC-collecting the Response closes the connection instead of draining the body", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        /* js */ `
+  test.concurrent(
+    "GC-collecting the Response closes the connection instead of draining the body",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          /* js */ `
         const net = require("node:net");
         const CHUNK = Buffer.alloc(65536, 0x61);
         const TOTAL = 64 * 1024 * 1024;
@@ -456,26 +458,28 @@ describe.each(["content-length", "chunked"] as const)("fetch() abandoned Respons
         process.stdout.write(JSON.stringify({ outcome, written, total: TOTAL, conns, second }));
         process.exit(0);
       `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    if (!stdout) throw new Error(`client exited ${exitCode}: ${stderr}`);
-    const { outcome, written, total, conns, second } = JSON.parse(stdout);
-    // Before the fix the finalizer resumed the transport and the server wrote
-    // the full 64 MiB before pooling the socket (outcome "drained", conns 1).
-    // After, the server sees the close at the kernel send+recv window, well
-    // under half of 64 MiB on any lane, and the second fetch opens a fresh
-    // connection.
-    expect({ outcome, drained: written >= total, conns, second }).toEqual({
-      outcome: "closed",
-      drained: false,
-      conns: 2,
-      second: "ok",
-    });
-    expect(written).toBeLessThan(total / 2);
-    expect(exitCode).toBe(0);
-  }, 30_000);
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (!stdout) throw new Error(`client exited ${exitCode}: ${stderr}`);
+      const { outcome, written, total, conns, second } = JSON.parse(stdout);
+      // Before the fix the finalizer resumed the transport and the server wrote
+      // the full 64 MiB before pooling the socket (outcome "drained", conns 1).
+      // After, the server sees the close at the kernel send+recv window, well
+      // under half of 64 MiB on any lane, and the second fetch opens a fresh
+      // connection.
+      expect({ outcome, drained: written >= total, conns, second }).toEqual({
+        outcome: "closed",
+        drained: false,
+        conns: 2,
+        second: "ok",
+      });
+      expect(written).toBeLessThan(total / 2);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
 });

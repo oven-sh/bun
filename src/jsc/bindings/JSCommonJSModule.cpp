@@ -686,10 +686,12 @@ JSC_DEFINE_CUSTOM_SETTER(setterLoaded,
 JSC_DEFINE_CUSTOM_GETTER(getterUnderscoreCompile, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (thisObject && thisObject->m_overriddenCompile) {
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(jsUndefined());
+    }
+    if (thisObject->m_overriddenCompile) {
         return JSValue::encode(thisObject->m_overriddenCompile.get());
     }
-    // Also reached with the prototype itself as receiver (Module.prototype._compile).
     return JSValue::encode(defaultGlobalObject(globalObject)->modulePrototypeUnderscoreCompileFunction());
 }
 
@@ -697,17 +699,12 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSValue decodedThis = JSValue::decode(thisValue);
+    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
+    if (!thisObject)
+        return false;
     JSValue decodedValue = JSValue::decode(value);
-    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(decodedThis)) {
-        thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
-        return true;
-    }
-    if (auto* receiver = decodedThis.getObject()) {
-        receiver->putDirect(globalObject->vm(), propertyName, decodedValue, 0);
-        return true;
-    }
-    return false;
+    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -777,16 +774,23 @@ JSC_DEFINE_CUSTOM_GETTER(getterRequire, (JSC::JSGlobalObject * globalObject, JSC
     return JSValue::encode(globalObject->getDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName()));
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(setterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
     auto& vm = JSC::getVM(globalObject);
-    if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue))) {
-        moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), JSValue::decode(value), 0);
+    JSValue decodedThis = JSValue::decode(thisValue);
+    JSValue decodedValue = JSValue::decode(value);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    if (decodedThis == zigGlobal->CommonJSModuleObjectStructure()->storedPrototypeObject()) {
+        // Assigning on Object.getPrototypeOf(module) replaces the process-wide
+        // override (same slot Module.prototype.require writes to).
+        globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), decodedValue, 0);
         return true;
     }
-    // Module.prototype.require = fn (Next.js pattern): replace the process-wide override.
-    globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), JSValue::decode(value), 0);
-    return true;
+    if (auto* receiver = decodedThis.getObject()) {
+        receiver->putDirect(vm, propertyName, decodedValue, 0);
+        return true;
+    }
+    return false;
 }
 
 static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {

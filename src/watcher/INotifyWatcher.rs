@@ -384,10 +384,6 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     events_buf[..events_len].copy_from_slice(events);
     let events = &events_buf[..events_len];
 
-    // reshaped for borrowck — copy the (small) column to a local Vec
-    // so the borrow of `this.watchlist` ends before we mutably borrow other
-    // `this` fields inside the batching loop below.
-    //
     // The snapshot is taken locked. `on_file_update` may evict watchlist entries via
     // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
     // evicts the matched file watch). The enqueued reload then re-imports the
@@ -398,10 +394,12 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     // 128 `max_count` batch size, so the dir-event-only batch is common) the
     // unlocked read raced the realloc and the process occasionally died with
     // a non-zero exit code. Snapshot under the same mutex `add_file` takes.
-    let eventlist_index: Vec<EventListIndex> = {
+    {
         let _guard = this.mutex.lock_guard();
-        this.watchlist.items_eventlist_index().to_vec()
-    };
+        this.eventlist_index_scratch.clear();
+        this.eventlist_index_scratch
+            .extend_from_slice(this.watchlist.items_eventlist_index());
+    }
 
     let mut event_id: usize = 0;
     let mut events_processed: usize = 0;
@@ -441,7 +439,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 }
             }
 
-            let idx = match eventlist_index
+            let idx = match this
+                .eventlist_index_scratch
                 .iter()
                 .position(|&x| x == event.watch_descriptor)
             {

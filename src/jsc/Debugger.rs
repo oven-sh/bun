@@ -180,7 +180,10 @@ unsafe extern "C" {
         from_env: c_int,
         is_connect: bool,
         is_node_inspector: bool,
+<<<<<<< HEAD
         enable_node_cdp: bool,
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     );
 }
 
@@ -555,12 +558,17 @@ impl Debugger {
         if !from_env.is_empty() {
             let mut url = BunString::clone_utf8(from_env);
             let _scope = this.enter_event_loop_scope();
+<<<<<<< HEAD
             Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false, false);
+=======
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 1, is_connect, false);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         }
 
         if let Some(path_or_port) = path_or_port {
             let mut url = BunString::clone_utf8(path_or_port);
             let _scope = this.enter_event_loop_scope();
+<<<<<<< HEAD
             // A `--inspect*` listener keeps its JSC-protocol pathname and adds
             // Node's `/json` endpoints plus a second, CDP-speaking pathname.
             // `inspector.open()` servers are already CDP-only.
@@ -574,6 +582,9 @@ impl Debugger {
                 is_node_inspector,
                 enable_node_cdp,
             );
+=======
+            Bun__startJSDebuggerThread(global, ctx_id, &mut url, 0, is_connect, is_node_inspector);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         }
 
         this.global().handle_rejected_promises();
@@ -701,6 +712,7 @@ pub fn wait_for_node_inspector_connection() {
         }
         dbg.must_block_until_connected = true;
     }
+<<<<<<< HEAD
     // A frontend may already be attached with the NodeRuntime domain enabled
     // (inspector.open() then waitForDebugger()); Node announces the new wait to
     // it, so tell the debugger thread before blocking.
@@ -710,6 +722,8 @@ pub fn wait_for_node_inspector_connection() {
     };
     WAITING_FOR_DEBUGGER_CONTEXT.store(ctx_id, Ordering::Relaxed);
     BunDebugger__notifyWaitingForDebugger(ctx_id);
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     Debugger::wait_for_debugger_if_necessary(VirtualMachine::get_mut_ptr());
 }
 
@@ -721,12 +735,16 @@ pub fn abandon_node_inspector_wait() {
     let Some(dbg) = VirtualMachine::get().debugger_mut() else {
         return;
     };
+<<<<<<< HEAD
     let ctx_id = dbg.script_execution_context_id;
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     if dbg.wait_for_connection != Wait::Off {
         dbg.wait_for_connection = Wait::Off;
         dbg.must_block_until_connected = false;
         dbg.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
     }
+<<<<<<< HEAD
     let _ = WAITING_FOR_DEBUGGER_CONTEXT.compare_exchange(
         ctx_id,
         0,
@@ -785,6 +803,8 @@ pub fn debug_end() {
     if let Some(dbg) = VirtualMachine::get().debugger_mut() {
         dbg.debug_ended = true;
     }
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 }
 
 // HOST_EXPORT(Debugger__didConnect, c)

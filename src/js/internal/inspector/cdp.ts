@@ -8,6 +8,7 @@
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
 const { pathToFileURL, fileURLToPath } = require("node:url");
+<<<<<<< HEAD
 // The in-process node:inspector Session instantiates this adapter on the user's
 // main thread, so the fields iterated via for..of (#scriptIdsByUrl,
 // #preParseBreakpoints, DisconnectNotifyState.adapters) use SafeMap/SafeSet so
@@ -21,6 +22,11 @@ const EXECUTION_CONTEXT_ID = 1;
 // `<cwd>/[eval]` for -e/--eval/-p, `<cwd>/[stdin]` for `bun -`. Node reports
 // the bare names; a real file so named is reported that way too, as in Node.
 const PSEUDO_SCRIPT_NAMES = new Set(["[eval]", "[stdin]"]);
+=======
+const { isAbsolute } = require("node:path");
+
+const EXECUTION_CONTEXT_ID = 1;
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
 type AnyObject = Record<string, any>;
 
@@ -28,10 +34,13 @@ function toCdpUrl(url: string): string {
   // V8 reports filesystem-backed scripts with file:// URLs; JSC script URLs
   // are usually plain absolute paths.
   if (url && isAbsolute(url)) {
+<<<<<<< HEAD
     const base = basename(url);
     if (PSEUDO_SCRIPT_NAMES.$has(base)) {
       return base;
     }
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     try {
       return pathToFileURL(url).href;
     } catch {
@@ -55,12 +64,15 @@ function escapeRegex(text: string): string {
 // CDP clients address scripts by file:// URL while JSC usually knows them by
 // plain path, so match a breakpoint URL against every spelling.
 function breakpointUrlRegex(url: string): string {
+<<<<<<< HEAD
   if (PSEUDO_SCRIPT_NAMES.$has(url)) {
     // The reverse of toCdpUrl. Anchored on the trailing path segment rather
     // than on a cwd captured here: the debugger thread's cwd can differ from
     // the one the script URL was built with.
     return [`${escapeRegex("/" + url)}$`, `${escapeRegex("\\" + url)}$`, `^${escapeRegex(url)}$`].join("|");
   }
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   const candidates = new Set([url]);
   if (url.startsWith("file://")) {
     try {
@@ -74,6 +86,7 @@ function breakpointUrlRegex(url: string): string {
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
 }
 
+<<<<<<< HEAD
 // ── Source maps ────────────────────────────────────────────────────────────
 // Bun transpiles every script it runs, so the code JSC parsed is not the code
 // the user wrote: `--inspect-brk` prepends a `debugger;`, comments and blank
@@ -305,6 +318,9 @@ function ownSourceMappingURL(source: string): string {
 // main thread, where Object.prototype may have been tampered with.
 const SCOPE_TYPE_MAP: Record<string, string> = {
   __proto__: null,
+=======
+const SCOPE_TYPE_MAP: Record<string, string> = {
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   global: "global",
   with: "with",
   closure: "closure",
@@ -312,6 +328,7 @@ const SCOPE_TYPE_MAP: Record<string, string> = {
   functionName: "local",
   globalLexicalEnvironment: "script",
   nestedLexical: "block",
+<<<<<<< HEAD
 } as any;
 
 // JSC reports the async boundary itself as the top frame of an async stack
@@ -326,13 +343,19 @@ const ASYNC_BOUNDARY_DESCRIPTIONS: Record<string, string> = {
   catch: "Promise.catch",
   finally: "Promise.finally",
 } as any;
+=======
+};
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
 // No "log" entry: JSC reports console.warn/error/info/debug as
 // { type: "log", level: "warning"/"error"/... }, so a type-level match on "log"
 // would mask the level. #translateConsoleMessage falls through to
 // CONSOLE_LEVEL_MAP for those and for console.log itself.
 const CONSOLE_TYPE_MAP: Record<string, string> = {
+<<<<<<< HEAD
   __proto__: null,
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   dir: "dir",
   dirxml: "dirxml",
   table: "table",
@@ -345,15 +368,22 @@ const CONSOLE_TYPE_MAP: Record<string, string> = {
   timing: "timeEnd",
   profile: "profile",
   profileEnd: "profileEnd",
+<<<<<<< HEAD
 } as any;
 
 const CONSOLE_LEVEL_MAP: Record<string, string> = {
   __proto__: null,
+=======
+};
+
+const CONSOLE_LEVEL_MAP: Record<string, string> = {
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   log: "log",
   info: "info",
   warning: "warning",
   error: "error",
   debug: "debug",
+<<<<<<< HEAD
 } as any;
 
 // Per-server, shared by every CDP session attached to one inspected context.
@@ -365,15 +395,23 @@ interface DisconnectNotifyState {
   retaining: number;
   adapters: Set<InspectorCDPAdapter> | undefined;
 }
+=======
+};
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
+<<<<<<< HEAD
+=======
+  #nextBackendId = 1;
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   #nextExceptionId = 1;
   #pending = new Map<
     number,
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
+<<<<<<< HEAD
   #scripts = new Map<string, ScriptRecord>();
   // Every spelling of a script's URL, so a console message or a breakpoint
   // request that names one can be matched back to its sourcemap.
@@ -751,6 +789,13 @@ class InspectorCDPAdapter {
   #toOriginalLocations(locations: AnyObject[] | undefined): AnyObject[] {
     if (!locations) return [];
     return locations.map(this.#mapToOriginalLocation, this);
+=======
+  #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
+
+  constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
+    this.#writeToBackend = writeToBackend;
+    this.#writeToClient = writeToClient;
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   }
 
   handleClientMessage(message: string): void {
@@ -758,6 +803,7 @@ class InspectorCDPAdapter {
     try {
       parsed = JSON.parse(message);
     } catch {
+<<<<<<< HEAD
       parsed = null;
     }
     if (!parsed || typeof parsed !== "object" || typeof parsed.method !== "string") {
@@ -767,6 +813,13 @@ class InspectorCDPAdapter {
       return;
     }
     const { id, method, params } = parsed;
+=======
+      return;
+    }
+    if (parsed === null || typeof parsed !== "object") return;
+    const { id, method, params } = parsed;
+    if (typeof method !== "string") return;
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     try {
       this.#dispatchClientCommand(id, method, params || {});
     } catch (error) {
@@ -826,7 +879,11 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
+<<<<<<< HEAD
     const id = this.#allocateBackendId();
+=======
+    const id = this.#nextBackendId++;
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }
@@ -885,6 +942,7 @@ class InspectorCDPAdapter {
         // Promise itself instead of returning the objectId to await on).
         if (params.awaitPromise === true) {
           const firstStep = { ...jscParams, returnByValue: false };
+<<<<<<< HEAD
           this.#sendToBackend(
             "Runtime.evaluate",
             firstStep,
@@ -892,6 +950,38 @@ class InspectorCDPAdapter {
             method,
             this.#onEvaluateForAwaitPromise.bind(this, id, method, params),
           );
+=======
+          this.#sendToBackend("Runtime.evaluate", firstStep, null, method, (result, error) => {
+            if (error) {
+              this.#replyErrorToClient(id, error.code ?? -32000, error.message ?? "Unknown error");
+              return;
+            }
+            const remote = result.result;
+            const objectId = remote?.objectId;
+            if (!result.wasThrown && remote?.type === "object" && objectId) {
+              // JSC's Runtime.awaitPromise resolves any thenable and returns
+              // non-thenable objects as-is, so no subtype check is needed.
+              this.#sendToBackend(
+                "Runtime.awaitPromise",
+                {
+                  promiseObjectId: objectId,
+                  returnByValue: params.returnByValue,
+                  generatePreview: params.generatePreview,
+                  saveResult: params.saveResult,
+                },
+                id,
+                method,
+              );
+              return;
+            }
+            // Primitive / thrown: nothing to await. Primitives already carry
+            // value regardless of returnByValue; a thrown non-primitive comes
+            // back as an objectId (the first step forced returnByValue:false),
+            // which DevTools/vscode-js-debug inspect via exceptionDetails, so
+            // we do not re-serialize it to honour the client's returnByValue.
+            this.#replyToClient(id, this.#translateResult(method, result));
+          });
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
           return;
         }
         this.#sendToBackend("Runtime.evaluate", jscParams, id, method);
@@ -919,8 +1009,29 @@ class InspectorCDPAdapter {
 
       case "Runtime.callFunctionOn": {
         const { objectId, executionContextId } = params;
+<<<<<<< HEAD
         if (objectId) {
           this.#forwardCallFunctionOn(id, method, params, objectId);
+=======
+        const forward = (targetObjectId: unknown) =>
+          this.#sendToBackend(
+            "Runtime.callFunctionOn",
+            {
+              objectId: targetObjectId,
+              functionDeclaration: params.functionDeclaration,
+              arguments: params.arguments,
+              doNotPauseOnExceptionsAndMuteConsole: params.silent,
+              returnByValue: params.returnByValue,
+              generatePreview: params.generatePreview,
+              emulateUserGesture: params.userGesture,
+              awaitPromise: params.awaitPromise,
+            },
+            id,
+            method,
+          );
+        if (objectId) {
+          forward(objectId);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
           return;
         }
         if (executionContextId === undefined) {
@@ -936,7 +1047,18 @@ class InspectorCDPAdapter {
           { expression: "globalThis", objectGroup: params.objectGroup },
           null,
           method,
+<<<<<<< HEAD
           this.#onGlobalObjectForCallFunctionOn.bind(this, id, method, params),
+=======
+          (result, error) => {
+            const globalObjectId = result.result?.objectId;
+            if (error || !globalObjectId) {
+              this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+              return;
+            }
+            forward(globalObjectId);
+          },
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         );
         return;
       }
@@ -983,6 +1105,7 @@ class InspectorCDPAdapter {
       case "Debugger.stepOut":
       case "Debugger.stepOver":
       case "Debugger.setBreakpointsActive":
+<<<<<<< HEAD
         this.#sendToBackend(method, params, id, method);
         return;
 
@@ -1020,6 +1143,13 @@ class InspectorCDPAdapter {
         this.#sendToBackend(method, params, id, method);
         return;
       }
+=======
+      case "Debugger.removeBreakpoint":
+      case "Debugger.continueToLocation":
+      case "Debugger.getScriptSource":
+        this.#sendToBackend(method, params, id, method);
+        return;
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
       case "Debugger.setPauseOnExceptions":
         this.#sendToBackend(
@@ -1038,6 +1168,7 @@ class InspectorCDPAdapter {
         const { condition, urlRegex, url } = params;
         const options: AnyObject = {};
         if (condition) options.condition = condition;
+<<<<<<< HEAD
         // The line the client names is a line of the original file. Resolve it
         // through the map of the script it refers to; a breakpoint set before
         // that script is parsed has no map yet and is passed through.
@@ -1050,6 +1181,11 @@ class InspectorCDPAdapter {
         const jscParams: AnyObject = {
           lineNumber: generated.lineNumber,
           columnNumber: generated.columnNumber,
+=======
+        const jscParams: AnyObject = {
+          lineNumber: params.lineNumber,
+          columnNumber: params.columnNumber,
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
           options,
         };
         if (urlRegex) {
@@ -1065,6 +1201,7 @@ class InspectorCDPAdapter {
           this.#replyErrorToClient(id, -32602, "Either url or urlRegex must be specified.");
           return;
         }
+<<<<<<< HEAD
         if (known === undefined) {
           // No script (and so no map) yet: remember the original coordinates
           // so the breakpoint can be re-set through the map at scriptParsed.
@@ -1077,6 +1214,8 @@ class InspectorCDPAdapter {
           );
           return;
         }
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         this.#sendToBackend("Debugger.setBreakpointByUrl", jscParams, id, method);
         return;
       }
@@ -1086,7 +1225,11 @@ class InspectorCDPAdapter {
         this.#sendToBackend(
           "Debugger.setBreakpoint",
           {
+<<<<<<< HEAD
             location: this.#toGeneratedLocation(params.location),
+=======
+            location: params.location,
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
             options: condition ? { condition } : undefined,
           },
           id,
@@ -1106,12 +1249,16 @@ class InspectorCDPAdapter {
             columnNumber: script ? script.endColumn : 0,
           };
         }
+<<<<<<< HEAD
         this.#sendToBackend(
           "Debugger.getBreakpointLocations",
           { start: this.#toGeneratedLocation(start), end: this.#toGeneratedLocation(end) },
           id,
           method,
         );
+=======
+        this.#sendToBackend("Debugger.getBreakpointLocations", { start, end }, id, method);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         return;
       }
 
@@ -1136,6 +1283,7 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Heap.gc", undefined, id, method);
         return;
 
+<<<<<<< HEAD
       // V8's CPU profiler maps onto JSC's ScriptProfiler: track with samples,
       // then reshape them into a V8 profile (#translateSamplingProfile).
       case "Profiler.start":
@@ -1168,6 +1316,8 @@ class InspectorCDPAdapter {
         );
         return;
 
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
       case "Console.enable":
       case "Console.disable":
       case "Console.clearMessages":
@@ -1190,9 +1340,12 @@ class InspectorCDPAdapter {
       case "Runtime.setAsyncCallStackDepth":
       case "Profiler.enable":
       case "Profiler.disable":
+<<<<<<< HEAD
       // Accepted and ignored: JSC's ScriptProfiler protocol exposes no
       // sampling-interval control, so the hint cannot reach the backend.
       case "Profiler.setSamplingInterval":
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
       case "HeapProfiler.enable":
       case "HeapProfiler.disable":
       case "Network.enable":
@@ -1206,6 +1359,7 @@ class InspectorCDPAdapter {
       case "Target.setRemoteLocations":
       case "NodeWorker.enable":
       case "NodeWorker.disable":
+<<<<<<< HEAD
         this.#replyToClient(id, {});
         return;
 
@@ -1231,6 +1385,11 @@ class InspectorCDPAdapter {
 
       case "NodeRuntime.disable":
         this.#nodeRuntimeEnabled = false;
+=======
+      case "NodeRuntime.enable":
+      case "NodeRuntime.disable":
+      case "NodeRuntime.notifyWhenWaitingForDisconnect":
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         this.#replyToClient(id, {});
         return;
 
@@ -1273,6 +1432,7 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.getPossibleBreakpoints":
+<<<<<<< HEAD
         return { locations: this.#toOriginalLocations(result.locations) };
 
       case "Debugger.setBreakpointByUrl":
@@ -1283,6 +1443,9 @@ class InspectorCDPAdapter {
           breakpointId: result.breakpointId,
           actualLocation: this.#toOriginalLocation(result.actualLocation ?? result.location),
         };
+=======
+        return { locations: result.locations ?? [] };
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
       default:
         return result;
@@ -1294,6 +1457,7 @@ class InspectorCDPAdapter {
       case "Debugger.scriptParsed": {
         const url = params.sourceURL || params.url || "";
         const cdpUrl = toCdpUrl(url);
+<<<<<<< HEAD
         const decoded = decodeSourceMapURL(params.sourceMapURL);
         const contents = decoded?.sourcesContent;
         const source = typeof contents?.[0] === "string" ? contents[0] : undefined;
@@ -1319,11 +1483,19 @@ class InspectorCDPAdapter {
         });
         if (url) this.#scriptIdsByUrl.set(url, params.scriptId);
         if (cdpUrl) this.#scriptIdsByUrl.set(cdpUrl, params.scriptId);
+=======
+        this.#scripts.$set(params.scriptId, {
+          cdpUrl,
+          endLine: params.endLine ?? 0,
+          endColumn: params.endColumn ?? 0,
+        });
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
           startLine: params.startLine ?? 0,
           startColumn: params.startColumn ?? 0,
+<<<<<<< HEAD
           endLine,
           endColumn,
           executionContextId: EXECUTION_CONTEXT_ID,
@@ -1337,10 +1509,22 @@ class InspectorCDPAdapter {
         // Debugger.breakpointResolved reference this scriptId, and a
         // synchronous in-process client must learn the script first.
         this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
+=======
+          endLine: params.endLine ?? 0,
+          endColumn: params.endColumn ?? 0,
+          executionContextId: EXECUTION_CONTEXT_ID,
+          hash: "",
+          isModule: !!params.module,
+          sourceMapURL: params.sourceMapURL,
+          embedderName: cdpUrl,
+          scriptLanguage: "JavaScript",
+        });
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         return;
       }
 
       case "Debugger.paused": {
+<<<<<<< HEAD
         // A pause whose every hit breakpoint is a stale pre-parse binding is
         // at a coordinate the client never asked for. The pause loop drains
         // the backend queue, so the posted remove/re-set complete during this
@@ -1355,6 +1539,12 @@ class InspectorCDPAdapter {
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
           location: this.#toOriginalLocation(frame.location),
+=======
+        const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
+          callFrameId: frame.callFrameId,
+          functionName: frame.functionName ?? "",
+          location: frame.location,
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
           url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
           scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
             type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
@@ -1374,7 +1564,11 @@ class InspectorCDPAdapter {
             cdpParams.reason = "assert";
             break;
           case "Breakpoint":
+<<<<<<< HEAD
             if (data?.breakpointId) cdpParams.hitBreakpoints = [this.#toClientBreakpointId(data.breakpointId)];
+=======
+            if (data?.breakpointId) cdpParams.hitBreakpoints = [data.breakpointId];
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
             break;
         }
         if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
@@ -1387,6 +1581,7 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.breakpointResolved":
+<<<<<<< HEAD
         // A resolution of the stale pre-parse binding reports the coordinate
         // the re-set is about to correct; #onBreakpointReset forwards the
         // corrected one instead.
@@ -1394,6 +1589,11 @@ class InspectorCDPAdapter {
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: this.#toClientBreakpointId(params.breakpointId),
           location: this.#toOriginalLocation(params.location),
+=======
+        this.#emitToClient("Debugger.breakpointResolved", {
+          breakpointId: params.breakpointId,
+          location: params.location,
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         });
         return;
 
@@ -1405,6 +1605,7 @@ class InspectorCDPAdapter {
         this.#translateConsoleMessage(params.message || {});
         return;
 
+<<<<<<< HEAD
       case "ScriptProfiler.trackingStart":
         this.#profilerStartTime = params.timestamp ?? 0;
         return;
@@ -1443,12 +1644,15 @@ class InspectorCDPAdapter {
         }
         return;
 
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
       default:
         // JSC- and Bun-specific events have no CDP equivalent.
         return;
     }
   }
 
+<<<<<<< HEAD
   // Rebuilds V8's CPUProfile tree from JSC's flat sample list: each sampled
   // stack is walked caller-to-callee interning one node per call path, the
   // leaf takes the hit, and timestamps become microsecond deltas.
@@ -1541,6 +1745,19 @@ class InspectorCDPAdapter {
       }),
     };
     if (description !== undefined) translated.description = description;
+=======
+  #translateStackTrace(stackTrace: AnyObject | undefined): AnyObject | undefined {
+    if (!stackTrace) return undefined;
+    const translated: AnyObject = {
+      callFrames: (stackTrace.callFrames ?? []).map((frame: AnyObject) => ({
+        functionName: frame.functionName ?? "",
+        scriptId: frame.scriptId ?? "",
+        url: toCdpUrl(frame.url ?? ""),
+        lineNumber: frame.lineNumber ?? 0,
+        columnNumber: frame.columnNumber ?? 0,
+      })),
+    };
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     const { parentStackTrace } = stackTrace;
     if (parentStackTrace) {
       translated.parent = this.#translateStackTrace(parentStackTrace);
@@ -1553,18 +1770,26 @@ class InspectorCDPAdapter {
     const args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
 
     if (message.source !== "console-api" && level === "error") {
+<<<<<<< HEAD
       const reported = this.#toOriginalLocation({
         scriptId: this.#scriptIdsByUrl.get(message.url ?? ""),
         lineNumber: Math.max((message.line ?? 1) - 1, 0),
         columnNumber: Math.max((message.column ?? 1) - 1, 0),
       }) as AnyObject;
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
       this.#emitToClient("Runtime.exceptionThrown", {
         timestamp: message.timestamp ?? Date.now(),
         exceptionDetails: {
           exceptionId: this.#nextExceptionId++,
           text: message.text ?? "Uncaught",
+<<<<<<< HEAD
           lineNumber: reported.lineNumber,
           columnNumber: reported.columnNumber,
+=======
+          lineNumber: Math.max((message.line ?? 1) - 1, 0),
+          columnNumber: Math.max((message.column ?? 1) - 1, 0),
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
           url: toCdpUrl(message.url ?? ""),
           stackTrace: this.#translateStackTrace(message.stackTrace),
         },
@@ -1586,8 +1811,11 @@ class InspectorCDPAdapter {
   }
 }
 
+<<<<<<< HEAD
 export type { InspectorCDPAdapter };
 
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 export default {
   InspectorCDPAdapter,
   EXECUTION_CONTEXT_ID,

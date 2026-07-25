@@ -77,6 +77,12 @@ pub fn create_bun_socket_error_to_js(
                 format_args!("Failed to parse CRL"),
             )
             .to_js(),
+        create_bun_socket_error_t::invalid_ecdh_curve => global_object
+            .err(
+                bun_jsc::ErrorCode::ERR_CRYPTO_OPERATION_FAILED,
+                format_args!("Failed to set ECDH curve"),
+            )
+            .to_js(),
     }
 }
 

@@ -5,9 +5,14 @@
 // Protocol WebSocket server with breakpoint pausing.
 const { hideFromStack } = require("internal/shared");
 const { validateString, validateFunction } = require("internal/validators");
+<<<<<<< HEAD
 const { SafeSet, SafeMap } = require("internal/primordials");
 const EventEmitter = require("node:events");
 const { Buffer } = require("node:buffer");
+=======
+const { SafeSet } = require("internal/primordials");
+const EventEmitter = require("node:events");
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 const { pathToFileURL } = require("node:url");
 const { isAbsolute } = require("node:path");
 const DateNow = Date.now;
@@ -45,6 +50,7 @@ const waitForNodeInspectorConnection = $newCppFunction(
   0,
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
+<<<<<<< HEAD
 // In-process CDP: dispatch translated JSC-protocol messages against this
 // realm's inspector controller synchronously on the calling thread, and get
 // back every message the backend produced (see BunDebugger.cpp).
@@ -79,6 +85,12 @@ function isLoopbackHost(host: string) {
   );
 }
 
+=======
+const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
+
+let activeInspectorUrl: string | undefined;
+
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 function open(port?: number, host?: string, wait?: boolean) {
   if (activeInspectorUrl !== undefined) {
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
@@ -93,6 +105,7 @@ function open(port?: number, host?: string, wait?: boolean) {
       throw $ERR_OUT_OF_RANGE("port", ">= 0 && <= 65535", port);
     }
   }
+<<<<<<< HEAD
   // Node warns whenever a non-loopback host is passed, before binding.
   if (typeof host === "string" && host && !isLoopbackHost(host)) {
     process.emitWarning(
@@ -104,6 +117,8 @@ function open(port?: number, host?: string, wait?: boolean) {
       "SecurityWarning",
     );
   }
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
   const portNumber = port === undefined || port === null ? process.debugPort : port;
   const hostname = typeof host === "string" && host.length > 0 ? host : "127.0.0.1";
   // Bracket bare IPv6 hosts so they survive URL parsing.
@@ -147,9 +162,13 @@ function open(port?: number, host?: string, wait?: boolean) {
   try {
     process.debugPort = Number(new URL(resolvedUrl).port);
   } catch {}
+<<<<<<< HEAD
   process.stderr.write(
     `Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/learn/getting-started/debugging\n`,
   );
+=======
+  process.stderr.write(`Debugger listening on ${resolvedUrl}\n`);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
   if (wait) {
     waitForNodeInspectorConnection();
@@ -178,6 +197,294 @@ function waitForDebugger() {
     throw $ERR_INSPECTOR_NOT_ACTIVE();
   }
   waitForNodeInspectorConnection();
+<<<<<<< HEAD
+=======
+}
+
+// Sessions with Runtime enabled receive Runtime.consoleAPICalled for console
+// calls. This monkey-patches globalThis.console (not JSC's ConsoleClient as
+// cdp.ts does), so pre-captured refs bypass it and no stackTrace is emitted.
+// SafeSet iteration is tamper-proof (own frozen Symbol.iterator), so a hostile
+// Set.prototype[Symbol.iterator] cannot make console.log itself throw from
+// inside the hook's for-of loop head.
+const runtimeEnabledSessions: Set<Session> = new SafeSet();
+const hookedConsoleMethods: Array<[string, Function, Function]> = [];
+
+const CONSOLE_API_TYPES: Record<string, string> = {
+  __proto__: null,
+  log: "log",
+  info: "info",
+  warn: "warning",
+  error: "error",
+  debug: "debug",
+  trace: "trace",
+  dir: "dir",
+  table: "table",
+  group: "startGroup",
+  groupCollapsed: "startGroupCollapsed",
+  groupEnd: "endGroup",
+};
+
+function toRemoteObject(arg: unknown): object {
+  switch (typeof arg) {
+    case "string":
+      return { type: "string", value: arg };
+    case "number":
+      if (Object.is(arg, -0)) return { type: "number", unserializableValue: "-0", description: "-0" };
+      return Number.isFinite(arg)
+        ? { type: "number", value: arg, description: String(arg) }
+        : {
+            type: "number",
+            unserializableValue: String(arg),
+            description: String(arg),
+          };
+    case "boolean":
+      return { type: "boolean", value: arg };
+    case "undefined":
+      return { type: "undefined" };
+    case "bigint":
+      return {
+        type: "bigint",
+        unserializableValue: `${arg}n`,
+        description: `${arg}n`,
+      };
+    case "symbol":
+      return { type: "symbol", description: String(arg) };
+    case "function":
+      return {
+        type: "function",
+        description: Function.prototype.toString.$call(arg),
+      };
+    default:
+      if (arg === null) return { type: "object", subtype: "null", value: null };
+      return {
+        type: "object",
+        description: Object.prototype.toString.$call(arg),
+      };
+  }
+}
+
+// Node delivers consoleAPICalled through V8's message pump, so a listener
+// that logs cannot re-enter the console hook. We emit synchronously, so a
+// guard is needed: console calls made from inside a listener run the
+// original method but are not re-emitted.
+let emittingConsoleAPI = false;
+
+function emitConsoleAPICalled(type: string, args: unknown[]) {
+  if (emittingConsoleAPI) return;
+  emittingConsoleAPI = true;
+  try {
+    const timestamp = DateNow();
+    for (const session of runtimeEnabledSessions) {
+      // Neither a throwing listener nor a throwing argument serialization
+      // (toRemoteObject reads user-controlled toString) may make the console
+      // call itself throw, suppress the underlying output, or starve later
+      // sessions; Node surfaces listener exceptions as process warnings.
+      try {
+        // A fresh message per session: a listener that mutates its payload
+        // must not contaminate what the next session receives.
+        const message = {
+          method: "Runtime.consoleAPICalled",
+          params: {
+            type,
+            args: args.map(toRemoteObject),
+            executionContextId: 1,
+            timestamp,
+          },
+        };
+        // Node's Session#onMessage emits the method-specific event first,
+        // then the generic "inspectorNotification".
+        session.emit("Runtime.consoleAPICalled", message);
+        session.emit("inspectorNotification", message);
+      } catch (e) {
+        let warning: Error;
+        // Both `instanceof` (prototype walk) and String(e) can themselves
+        // throw on hostile values like a thrown revoked Proxy, which would
+        // defeat this guard.
+        try {
+          warning = e instanceof Error ? e : new Error(String(e));
+        } catch {
+          warning = new Error("Runtime.consoleAPICalled handler threw a value that could not be stringified");
+        }
+        process.emitWarning(warning);
+      }
+    }
+  } finally {
+    emittingConsoleAPI = false;
+  }
+}
+
+function makeConsoleHook(type: string, original: Function): Function {
+  return function (this: unknown, ...args: unknown[]) {
+    emitConsoleAPICalled(type, args);
+    return original.$apply(this, args);
+  };
+}
+
+function installConsoleHooks() {
+  if (hookedConsoleMethods.length > 0) return;
+  const consoleObject = globalThis.console;
+  for (const method in CONSOLE_API_TYPES) {
+    const original = consoleObject[method];
+    if (typeof original !== "function") continue;
+    const hook = makeConsoleHook(CONSOLE_API_TYPES[method], original);
+    hookedConsoleMethods.push([method, original, hook]);
+    consoleObject[method] = hook;
+  }
+}
+
+function removeConsoleHooks() {
+  const consoleObject = globalThis.console;
+  for (let i = 0; i < hookedConsoleMethods.length; i++) {
+    const entry = hookedConsoleMethods[i];
+    // Only restore slots that still hold our hook — user code may have
+    // reassigned the method since the Runtime domain was enabled.
+    if (consoleObject[entry[0]] === entry[2]) {
+      consoleObject[entry[0]] = entry[1];
+    }
+  }
+  hookedConsoleMethods.length = 0;
+}
+
+// Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
+// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
+// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
+// each function gets an entry whose first range spans the whole function with its
+// call count, followed by the basic-block ranges inside it; blocks outside any
+// function go on a synthetic whole-script entry.
+function buildScriptCoverageList(
+  rawScripts: Array<{
+    url: string;
+    scriptId: number;
+    sourceLength: number;
+    blocks: Array<[number, number, number]>;
+    functions: Array<[number, number, boolean]>;
+  }>,
+  callCount: boolean,
+  detailed: boolean,
+): object[] {
+  const result: object[] = [];
+
+  for (const script of rawScripts) {
+    const { scriptId, sourceLength } = script;
+    let { url } = script;
+    // V8 coverage reports file-backed scripts with file:// URLs even when the
+    // script name is a plain filesystem path (e.g. a vm script filename or a
+    // require()d module), so convert absolute paths the same way.
+    if (url && isAbsolute(url)) {
+      url = pathToFileURL(url).href;
+    }
+
+    // Outer functions before nested ones, so a stack-based sweep below sees
+    // enclosing ranges first.
+    const functions = script.functions
+      .filter(([start, end]) => start >= 0 && end >= start)
+      .sort((a, b) => a[0] - b[0] || b[1] - a[1]);
+    const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
+
+    // Assign each basic block to the innermost function range containing it.
+    const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
+    const topLevelBlocks: Array<[number, number, number]> = [];
+    const stack: number[] = [];
+    let nextFunction = 0;
+    for (const block of blocks) {
+      while (nextFunction < functions.length && functions[nextFunction][0] <= block[0]) {
+        stack.push(nextFunction);
+        nextFunction++;
+      }
+      // Functions that ended before this block started can no longer contain
+      // this block or any later one (blocks are sorted by start).
+      while (stack.length > 0 && functions[stack[stack.length - 1]][1] < block[0]) {
+        stack.pop();
+      }
+      // The stack is a nesting chain (siblings get popped above), so ends
+      // decrease towards the top; the first entry from the top that still
+      // covers the block's end is the innermost containing function.
+      let owner = -1;
+      for (let i = stack.length - 1; i >= 0; i--) {
+        if (functions[stack[i]][1] >= block[1]) {
+          owner = stack[i];
+          break;
+        }
+      }
+      if (owner === -1) {
+        topLevelBlocks.push(block);
+      } else {
+        blocksPerFunction[owner].push(block);
+      }
+    }
+
+    // Derived from the (delta-subtracted) block counts only: the function
+    // `executed` flag is cumulative and would make a second takePreciseCoverage
+    // report 1 even when nothing ran since the first.
+    const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
+    const entries: object[] = [];
+
+    const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
+      startOffset,
+      endOffset,
+      count: callCount ? count : count > 0 ? 1 : 0,
+    });
+
+    // Whole-script entry. V8 always reports one covering the entire source.
+    entries.push({
+      functionName: "",
+      ranges: [
+        { startOffset: 0, endOffset: sourceLength, count: scriptExecuted },
+        ...(detailed ? topLevelBlocks.map(toRange) : []),
+      ],
+      isBlockCoverage: detailed,
+    });
+
+    for (let i = 0; i < functions.length; i++) {
+      const [startOffset, endOffset, executed] = functions[i];
+      if (!executed) {
+        entries.push({
+          functionName: "",
+          ranges: [{ startOffset, endOffset, count: 0 }],
+          isBlockCoverage: false,
+        });
+        continue;
+      }
+
+      const ownBlocks = blocksPerFunction[i];
+      // Approximate the call count from the entry block (the one with the
+      // smallest start offset). Diverges from V8 for generators/async
+      // functions, which JSC compiles as two nested CodeBlocks whose body
+      // entry counts state-0 resumes rather than user-visible calls.
+      let count = 1;
+      if (ownBlocks.length > 0) {
+        let entryBlock = ownBlocks[0];
+        for (const block of ownBlocks) {
+          if (block[0] < entryBlock[0]) entryBlock = block;
+        }
+        count = entryBlock[2];
+      }
+      entries.push({
+        functionName: "",
+        ranges: [
+          { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
+          ...(detailed ? ownBlocks.map(toRange) : []),
+        ],
+        isBlockCoverage: detailed,
+      });
+    }
+
+    result.push({ scriptId: String(scriptId), url, functions: entries });
+  }
+
+  return result;
+}
+
+function collectCoverageScripts(): any[] | Error {
+  const raw = collectPreciseCoverage();
+  if (raw === null) return [];
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    return $ERR_INSPECTOR_COMMAND(`-32000: Failed to parse coverage JSON: ${e}`);
+  }
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 }
 
 // --- In-process CDP backend --------------------------------------------------
@@ -1078,6 +1385,7 @@ class Session extends EventEmitter {
   // Baseline for delta semantics: takePreciseCoverage must reset counters, but
   // JSC has no counter-reset API, so subtract the previous take instead.
   #coverageBaseline: Map<string, number> = new Map();
+<<<<<<< HEAD
   #adapter: any = undefined;
   // Resolvers for in-flight in-process commands, keyed by client command id.
   #pendingResults: Map<number, (err: any, result?: any) => void> = new SafeMap();
@@ -1176,6 +1484,8 @@ class Session extends EventEmitter {
       this.#dispatchingClientCommand = wasDispatching;
     }
   }
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
 
   connect() {
     if (this.#connected) {
@@ -1202,6 +1512,7 @@ class Session extends EventEmitter {
     this.#connected = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.delete(this);
+<<<<<<< HEAD
     networkEnabledSessions.delete(this);
     domStorageEnabledSessions.delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
@@ -1218,6 +1529,9 @@ class Session extends EventEmitter {
       }
       if (inProcessAdapters.size === 0) disconnectInProcessInspector();
     }
+=======
+    if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
     // pausing the process, matching Node's disconnect() contract.
@@ -1239,7 +1553,11 @@ class Session extends EventEmitter {
       params = undefined;
     }
     if (params !== undefined && params !== null && typeof params !== "object") {
+<<<<<<< HEAD
       throw $ERR_INVALID_ARG_TYPE("params", "object", params);
+=======
+      throw $ERR_INVALID_ARG_TYPE("params", "Object", params);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     }
     if (callback !== undefined) validateFunction(callback, "callback");
 
@@ -1289,6 +1607,7 @@ class Session extends EventEmitter {
         if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
         return {};
 
+<<<<<<< HEAD
       case "Network.enable": {
         // Node rebuilds this session's buffer on every enable, discarding prior state.
         const state = new NetworkState();
@@ -1360,6 +1679,8 @@ class Session extends EventEmitter {
         return { postData: Buffer.from(concatBlobs(entry.requestDataBlobs)).toString("utf8") };
       }
 
+=======
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
       case "Profiler.enable":
         this.#profilerEnabled = true;
         return {};
@@ -1455,6 +1776,7 @@ class Session extends EventEmitter {
         return { result: buildScriptCoverageList(scripts, false, false) };
       }
 
+<<<<<<< HEAD
       // HeapProfiler snapshotting: V8 streams the snapshot as
       // addHeapSnapshotChunk events and then answers the command. There is no
       // allocation-tracking timeline to keep, so start/stopTrackingHeapObjects
@@ -1477,6 +1799,13 @@ class Session extends EventEmitter {
       // backend so breakpoints pause where the remote debugger controls
       // resumption. The forwarding is fire-and-forget. Without a server these
       // fall through to the in-process backend below.
+=======
+      // Configuration-only Debugger commands are forwarded to the inspector
+      // server started by inspector.open() (vitest --inspect-brk uses
+      // Debugger.enable + Debugger.setBreakpointByUrl to stop at the first
+      // test file). The forwarding is fire-and-forget: results such as
+      // breakpointId are not available in-process.
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
       case "Debugger.enable":
       case "Debugger.disable":
       case "Debugger.setBreakpointByUrl":
@@ -1486,7 +1815,15 @@ class Session extends EventEmitter {
       case "Debugger.setSkipAllPauses":
       case "Debugger.setAsyncCallStackDepth":
       case "Debugger.setBlackboxPatterns": {
+<<<<<<< HEAD
         if (activeInspectorUrl === undefined) return kInProcess;
+=======
+        if (activeInspectorUrl === undefined) {
+          return $ERR_INSPECTOR_COMMAND(
+            `-32000: Inspector method "${method}" requires an active inspector (call inspector.open() first)`,
+          );
+        }
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
         if (!this.#forwardedDebugger) {
           this.#forwardedDebugger = true;
           postNodeInspectorControl(JSON.stringify({ type: "session-connect" }));
@@ -1569,7 +1906,11 @@ class Session extends EventEmitter {
       // Debugger.getScriptSource/getPossibleBreakpoints, HeapProfiler, ...)
       // is translated and executed by the in-process CDP backend.
       default:
+<<<<<<< HEAD
         return kInProcess;
+=======
+        return $ERR_INSPECTOR_COMMAND(`-32601: '${method}' wasn't found`);
+>>>>>>> df6c7eed6b37c4d632e4742d158285e2f436eeb0
     }
   }
 }

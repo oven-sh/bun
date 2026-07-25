@@ -5251,6 +5251,10 @@ pub fn write_file_internal(
                                 on_start_buffering(producer_task);
                             }
                         }
+                        locked.on_start_streaming = None;
+                        locked.on_readable_stream_available = None;
+                        locked.on_stream_cancelled = None;
+                        locked.on_stream_drained = None;
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.

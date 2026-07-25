@@ -1,6 +1,6 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isASAN, isWindows, tempDir, withoutAggressiveGC } from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -370,7 +370,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
   it("Bun.write(path, fetch()) with a streaming body", async () => {
     using tmpbase = tempDir("bun-write-fetch-streaming", {});
     const out = join(String(tmpbase), "dl.out");
-    const body = Buffer.alloc(1_000_000, "x").toString();
+    const body = Buffer.alloc(300_000, "x").toString();
     await using server = Bun.serve({
       port: 0,
       fetch: () => new Response(body),
@@ -381,6 +381,20 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(written).toBe(body.length);
     expect((await Bun.file(out).bytes()).length).toBe(body.length);
     expect(await Bun.file(out).text()).toBe(body);
+  });
+
+  it.skipIf(!isASAN)("Bun.write(path, fetch()) then resp.body does not crash", async () => {
+    using tmpbase = tempDir("bun-write-fetch-then-body", {});
+    const out = join(String(tmpbase), "dl.out");
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(Buffer.alloc(300_000, "y")),
+    });
+    const resp = await fetch(server.url);
+    const p = Bun.write(out, resp);
+    expect(resp.body).toBeInstanceOf(ReadableStream);
+    expect(() => resp.clone()).not.toThrow();
+    await Promise.race([p, Bun.sleep(1)]);
   });
 
   it("Response -> Bun.file -> Response -> text", async () => {

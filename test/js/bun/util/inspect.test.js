@@ -803,3 +803,162 @@ it("CustomEvent", () => {
     }"
   `);
 });
+
+describe("never throws from a throwing user accessor", () => {
+  it("Event subclass with throwing type getter", () => {
+    class E extends Event {
+      get type() {
+        throw new Error("boom");
+      }
+    }
+    const out = Bun.inspect(new E("x"));
+    expect(out).toContain("type: [Getter]");
+  });
+
+  it("Event with own throwing type getter", () => {
+    const ev = new Event("x");
+    Object.defineProperty(ev, "type", {
+      get() {
+        throw new Error("boom");
+      },
+    });
+    expect(Bun.inspect(ev)).toContain("type: [Getter]");
+    // Nested inside a container: the outer printer must not see the exception either.
+    expect(Bun.inspect({ a: 1, ev, b: 2 })).toContain("b: 2");
+  });
+
+  it("MessageEvent with throwing data getter", () => {
+    class ME extends MessageEvent {
+      get data() {
+        throw new Error("boom");
+      }
+    }
+    expect(Bun.inspect(new ME("message", { data: 1 }))).toBe(
+      'MessageEvent {\n  type: "message",\n  data: undefined,\n}',
+    );
+  });
+
+  it("ErrorEvent with throwing error getter", () => {
+    class EE extends ErrorEvent {
+      get error() {
+        throw new Error("boom");
+      }
+    }
+    expect(Bun.inspect(new EE("error", { error: new Error("inner") }))).toBe(
+      'ErrorEvent {\n  type: "error",\n  message: "",\n}',
+    );
+  });
+
+  it("ErrorEvent with throwing message getter", () => {
+    class EE extends ErrorEvent {
+      get message() {
+        throw new Error("boom");
+      }
+    }
+    expect(Bun.inspect(new EE("error", { message: "hi" }))).toBe(
+      'ErrorEvent {\n  type: "error",\n  error: null,\n}',
+    );
+  });
+
+  it("AggregateError with own errors accessor", () => {
+    const agg = new AggregateError([new Error("a")], "msg");
+    Object.defineProperty(agg, "errors", {
+      get() {
+        throw new Error("boom");
+      },
+    });
+    expect(() => Bun.inspect(agg)).not.toThrow();
+    expect(() => Bun.inspect([agg, "after"])).not.toThrow();
+    expect(Bun.inspect([agg, "after"])).toContain('"after"');
+  });
+
+  it("AggregateError with errors whose iterator throws", () => {
+    const agg = new AggregateError([], "msg");
+    agg.errors = {
+      [Symbol.iterator]() {
+        throw new Error("bad iter");
+      },
+    };
+    expect(() => Bun.inspect(agg)).not.toThrow();
+    expect(Bun.inspect([agg, "after"])).toContain('"after"');
+  });
+
+  it("console.log of hostile Event/AggregateError completes", async () => {
+    const src = `
+      const ev = new Event("x");
+      Object.defineProperty(ev, "type", { get() { throw new Error("boom"); } });
+      console.log(ev);
+      const agg = new AggregateError([new Error("a")], "msg");
+      Object.defineProperty(agg, "errors", { get() { throw new Error("boom"); } });
+      console.log(agg);
+      console.log("sentinel-reached");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    expect(stdout).toContain("sentinel-reached");
+    expect(stderr).not.toContain("boom");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("Map/Set entry count is capped", () => {
+  it("Map truncates past 100 entries", () => {
+    const m = new Map();
+    for (let i = 0; i < 150; i++) m.set(i, i);
+    const out = Bun.inspect(m);
+    expect(out).toContain("99: 99,");
+    expect(out).not.toContain("100: 100");
+    expect(out).toContain("... 50 more items");
+  });
+
+  it("Set truncates past 100 entries", () => {
+    const s = new Set();
+    for (let i = 0; i < 150; i++) s.add(i);
+    const out = Bun.inspect(s);
+    expect(out).toContain("99,");
+    expect(out).not.toContain("100,");
+    expect(out).toContain("... 50 more items");
+  });
+
+  it("singularizes 1 remaining entry", () => {
+    const m = new Map();
+    for (let i = 0; i < 101; i++) m.set(i, i);
+    expect(Bun.inspect(m)).toContain("... 1 more item,");
+    expect(Bun.inspect(m)).not.toContain("items");
+  });
+
+  it("Map/Set at exactly the cap are not truncated", () => {
+    const m = new Map();
+    for (let i = 0; i < 100; i++) m.set(i, i);
+    expect(Bun.inspect(m)).not.toContain("more item");
+    const s = new Set();
+    for (let i = 0; i < 100; i++) s.add(i);
+    expect(Bun.inspect(s)).not.toContain("more item");
+  });
+
+  it("single-line Map/Set truncation has the right separators", () => {
+    const m = new Map();
+    for (let i = 0; i < 105; i++) m.set(i, i);
+    expect(Bun.inspect(m, { compact: true })).toEndWith("98: 98, 99: 99, ... 5 more items }");
+    const s = new Set();
+    for (let i = 0; i < 105; i++) s.add(i);
+    expect(Bun.inspect(s, { compact: true })).toEndWith("98, 99, ... 5 more items }");
+  });
+
+  it("large Map output is bounded", () => {
+    const m = new Map();
+    for (let i = 0; i < 10_000; i++) m.set(i, i);
+    const out = Bun.inspect(m);
+    expect(out.length).toBeLessThan(4096);
+    expect(out).toContain("... 9900 more items");
+  });
+});

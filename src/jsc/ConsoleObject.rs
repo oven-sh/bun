@@ -2864,6 +2864,41 @@ pub mod formatter {
             write_indent_n(self.indent, writer)
         }
 
+        /// Emit the `... N more item(s)` elision marker used when a Map/Set
+        /// has more entries than `MAP_SET_ENTRY_CAP`. Mirrors the array
+        /// printer's truncation message and Node's output shape. The caller
+        /// has just finished printing entry `MAP_SET_ENTRY_CAP - 1`, so in
+        /// single-line mode this supplies the leading `, ` that the next
+        /// entry would have printed; in multi-line mode the previous entry
+        /// already wrote its own trailing `,\n`, so this supplies the indent
+        /// and its own trailing `,\n`.
+        fn print_more_items_marker<const C: bool>(
+            &mut self,
+            writer: &mut dyn bun_io::Write,
+            total: usize,
+            single_line: bool,
+        ) {
+            let remaining = total.saturating_sub(MAP_SET_ENTRY_CAP);
+            if single_line {
+                let _ = self.print_comma::<C>(writer);
+                let _ = writer.write_all(b" ");
+            } else {
+                let _ = self.write_indent(writer);
+            }
+            let _ = write!(
+                writer,
+                "{}... {} more item{}{}",
+                pfmt!("<r><d>", C),
+                remaining,
+                if remaining == 1 { "" } else { "s" },
+                pfmt!("<r>", C),
+            );
+            if !single_line {
+                let _ = self.print_comma::<C>(writer);
+                let _ = writer.write_all(b"\n");
+            }
+        }
+
         pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             writer: &mut dyn bun_io::Write,
@@ -2878,6 +2913,10 @@ pub mod formatter {
     // MapIterator / SetIterator / PropertyIterator (forEach callback contexts)
     // ───────────────────────────────────────────────────────────────────────
 
+    /// Matches the array printer's hardcoded cap and Node's `maxArrayLength`
+    /// default for Map/Set.
+    const MAP_SET_ENTRY_CAP: usize = 100;
+
     pub struct MapIteratorCtx<
         'a,
         'b,
@@ -2888,6 +2927,7 @@ pub mod formatter {
         pub formatter: &'a mut Formatter<'b>,
         pub writer: &'a mut dyn bun_io::Write,
         pub count: usize,
+        pub length: usize,
     }
 
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
@@ -2905,6 +2945,14 @@ pub mod formatter {
             };
             let this = ctx;
             if this.formatter.failed {
+                return;
+            }
+            if this.length > MAP_SET_ENTRY_CAP && this.count >= MAP_SET_ENTRY_CAP {
+                if this.count == MAP_SET_ENTRY_CAP {
+                    this.formatter
+                        .print_more_items_marker::<C>(this.writer, this.length, SINGLE_LINE);
+                }
+                this.count += 1;
                 return;
             }
             if SINGLE_LINE && this.count > 0 {
@@ -2986,7 +3034,8 @@ pub mod formatter {
     pub struct SetIteratorCtx<'a, 'b, const C: bool, const SINGLE_LINE: bool> {
         pub formatter: &'a mut Formatter<'b>,
         pub writer: &'a mut dyn bun_io::Write,
-        pub is_first: bool,
+        pub count: usize,
+        pub length: usize,
     }
 
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
@@ -3003,14 +3052,21 @@ pub mod formatter {
             if this.formatter.failed {
                 return;
             }
+            if this.length > MAP_SET_ENTRY_CAP && this.count >= MAP_SET_ENTRY_CAP {
+                if this.count == MAP_SET_ENTRY_CAP {
+                    this.formatter
+                        .print_more_items_marker::<C>(this.writer, this.length, SINGLE_LINE);
+                }
+                this.count += 1;
+                return;
+            }
             if SINGLE_LINE {
-                if !this.is_first {
+                if this.count > 0 {
                     this.formatter
                         .print_comma::<C>(this.writer)
                         .expect("unreachable");
                     this.writer.write_all(b" ").expect("unreachable");
                 }
-                this.is_first = false;
             } else {
                 let _ = this.formatter.write_indent(this.writer);
             }
@@ -3028,6 +3084,7 @@ pub mod formatter {
                 this.formatter.global_this,
             );
 
+            this.count += 1;
             if !SINGLE_LINE {
                 this.formatter
                     .print_comma::<C>(this.writer)
@@ -3497,6 +3554,36 @@ pub mod formatter {
                 opts |= TagOptions::DISABLE_INSPECT_CUSTOM;
             }
             opts
+        }
+
+        /// Property read for display purposes only: a user-installed getter
+        /// that throws must not abort the whole `console.log`/`Bun.inspect`
+        /// call. Mirrors the `print_to_json` catch-then-`clear_exception()`
+        /// pattern. The absent/undefined result is treated as `None`.
+        #[inline]
+        fn get_swallowing_throw(&self, receiver: JSValue, name: &str) -> Option<JSValue> {
+            match receiver.get(self.global_this, name) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.global_this.clear_exception();
+                    None
+                }
+            }
+        }
+
+        #[inline]
+        fn fast_get_swallowing_throw(
+            &self,
+            receiver: JSValue,
+            builtin_name: jsc::BuiltinName,
+        ) -> Option<JSValue> {
+            match receiver.fast_get(self.global_this, builtin_name) {
+                Ok(v) => v,
+                Err(_) => {
+                    self.global_this.clear_exception();
+                    None
+                }
+            }
         }
 
         #[inline(never)]
@@ -4743,11 +4830,13 @@ pub mod formatter {
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
                 let global_this = self.global_this;
+                let length = length.max(0) as usize;
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, false, true> {
                         formatter: self,
                         writer: writer_,
                         count: 0,
+                        length,
                     };
                     value.for_each(
                         global_this,
@@ -4766,6 +4855,7 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
+                        length,
                     };
                     value.for_each(
                         global_this,
@@ -4807,6 +4897,7 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
+                        length: 0,
                     };
                     value.for_each(
                         global_this,
@@ -4826,6 +4917,7 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
+                        length: 0,
                     };
                     value.for_each(
                         global_this,
@@ -4885,29 +4977,32 @@ pub mod formatter {
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
                 let global_this = self.global_this;
+                let length = length.max(0) as usize;
                 if self.single_line {
                     let mut iter = SetIteratorCtx::<C, true> {
                         formatter: self,
                         writer: writer_,
-                        is_first: true,
+                        count: 0,
+                        length,
                     };
                     value.for_each(
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, true>::for_each,
                     )?;
-                    let is_first = iter.is_first;
+                    let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
                     }
-                    if !is_first {
+                    if count > 0 {
                         let _ = writer_.write_all(b" ");
                     }
                 } else {
                     let mut iter = SetIteratorCtx::<C, false> {
                         formatter: self,
                         writer: writer_,
-                        is_first: true,
+                        count: 0,
+                        length,
                     };
                     value.for_each(
                         global_this,
@@ -4940,7 +5035,7 @@ pub mod formatter {
             }
 
             let event_type_value: JSValue = 'brk: {
-                let Some(value_) = value.get(self.global_this, "type")? else {
+                let Some(value_) = self.get_swallowing_throw(value, "type") else {
                     break 'brk JSValue::UNDEFINED;
                 };
                 if value_.is_string() {
@@ -5016,7 +5111,7 @@ pub mod formatter {
                 }
 
                 if let Some(message_value) =
-                    value.fast_get(self.global_this, jsc::BuiltinName::Message)?
+                    self.fast_get_swallowing_throw(value, jsc::BuiltinName::Message)
                 {
                     if message_value.is_string() {
                         if !self.single_line {
@@ -5054,8 +5149,8 @@ pub mod formatter {
                             pf!("<d>"),
                             pf!("<r>")
                         );
-                        let data: JSValue = value
-                            .fast_get(self.global_this, jsc::BuiltinName::Data)?
+                        let data: JSValue = self
+                            .fast_get_swallowing_throw(value, jsc::BuiltinName::Data)
                             .unwrap_or(JSValue::UNDEFINED);
                         let tag = Tag::get_advanced(data, self.global_this, self.tag_opts())?;
                         self.format::<C>(tag, writer_, data, self.global_this)?;
@@ -5069,7 +5164,7 @@ pub mod formatter {
                     }
                     EventType::ErrorEvent => {
                         if let Some(error_value) =
-                            value.fast_get(self.global_this, jsc::BuiltinName::Error)?
+                            self.fast_get_swallowing_throw(value, jsc::BuiltinName::Error)
                         {
                             if !self.single_line {
                                 self.write_indent(writer_).expect("unreachable");

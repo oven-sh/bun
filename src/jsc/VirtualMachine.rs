@@ -4839,11 +4839,21 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
+            // `getErrorsProperty` is `getDirect` (own data prop, nothrow). An
+            // own `errors` accessor therefore surfaces here as the raw
+            // `GetterSetter` cell (not an object), which `forEachInIterable`
+            // must not see; an `errors` data property whose iterator throws
+            // likewise leaves an exception pending. Either way the printer
+            // must swallow it, not leave it on the VM for the next
+            // `print_as_prelude` to re-throw.
             let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
+            if errors.is_object()
+                && errors
+                    .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
+                    .is_err()
+            {
+                global_ref.clear_exception();
+            }
             return;
         }
 

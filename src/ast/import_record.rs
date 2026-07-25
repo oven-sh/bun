@@ -39,6 +39,7 @@ bitflags::bitflags! {
         /// True for the following cases:
         ///
         ///   try { require('x') } catch { handle }
+        ///   try { ... } catch { require('x') }
         ///   try { await import('x') } catch { handle }
         ///   try { require.resolve('x') } catch { handle }
         ///   import('x').catch(handle)

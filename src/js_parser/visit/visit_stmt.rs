@@ -2053,8 +2053,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut _stmts = stmts_to_list(p.arena, catch.body);
                 p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, catch.body_loc)
                     .expect("unreachable");
+                p.fn_or_arrow_data_visit.try_body_count += 1;
                 p.visit_stmts(&mut _stmts, StmtsKind::None)
                     .expect("unreachable");
+                p.fn_or_arrow_data_visit.try_body_count -= 1;
                 p.pop_scope();
                 catch.body = list_to_stmts(_stmts);
             }

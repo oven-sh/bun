@@ -2858,6 +2858,125 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
+  // https://github.com/oven-sh/bun/issues/14509
+  // A require() in the catch handler of a try/catch is the common "fallback
+  // require" pattern and should not fail the build when unresolvable.
+  itBundled("edgecase/RequireInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        let v;
+        try {
+          v = require('pkg');
+        } catch (e) {
+          v = require('pkg/sub.cjs');
+        }
+        console.log(v);
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": "./index.js" },
+      }),
+      "/node_modules/pkg/index.js": `module.exports = "main";`,
+    },
+    target: "bun",
+    run: { stdout: "main" },
+  });
+  itBundled("edgecase/RequireInCatchBodyFromNodeModules", {
+    files: {
+      "/entry.js": `console.log(require('lib'));`,
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "index.js" }),
+      "/node_modules/lib/index.js": /* js */ `
+        let v;
+        try {
+          v = require('pkg');
+        } catch (e) {
+          v = require('pkg/dist/node/pkg.cjs');
+        }
+        module.exports = v;
+      `,
+      "/node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        exports: { ".": "./index.js" },
+      }),
+      "/node_modules/pkg/index.js": `module.exports = "pkg-main";`,
+    },
+    target: "bun",
+    run: { stdout: "pkg-main" },
+  });
+  itBundled("edgecase/RequireInCatchBodyBothUnresolved", {
+    files: {
+      "/entry.js": /* js */ `
+        exports.load = function () {
+          try {
+            return require('does-not-exist-a');
+          } catch (e) {
+            return require('does-not-exist-b');
+          }
+        };
+      `,
+    },
+    target: "bun",
+    runtimeFiles: {
+      "/test.js": /* js */ `
+        const { load } = require('./out.js');
+        try {
+          load();
+          console.log("no throw");
+        } catch (e) {
+          console.log("threw: " + e.message.includes("does-not-exist-b"));
+        }
+      `,
+    },
+    run: { file: "/test.js", stdout: "threw: true" },
+  });
+  itBundled("edgecase/RequireResolveInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        let v;
+        try {
+          v = require.resolve('does-not-exist-a');
+        } catch (e) {
+          v = require.resolve('does-not-exist-b');
+        }
+        console.log(typeof v);
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("does-not-exist-b");
+    },
+  });
+  itBundled("edgecase/AwaitImportInCatchBody", {
+    files: {
+      "/entry.js": /* js */ `
+        async function load() {
+          try {
+            return await import('does-not-exist-a');
+          } catch (e) {
+            return await import('does-not-exist-b');
+          }
+        }
+        load().catch(e => console.log("caught"));
+      `,
+    },
+    target: "bun",
+    run: { stdout: "caught" },
+  });
+  itBundled("edgecase/RequireInFinallyStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          console.log("ok");
+        } finally {
+          require('does-not-exist');
+        }
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist". Maybe you need to "bun install"?`],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

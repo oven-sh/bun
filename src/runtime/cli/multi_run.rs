@@ -1115,8 +1115,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     };
 
     // Initialize handles
-    // Inherit stdin only when one script group was requested (its pre/main/post
-    // run sequentially); multiple groups run concurrently and would race on fd 0.
+    // One requested script group inherits stdin like plain `bun run`.
     let single_group = group_infos.len() == 1;
     let mut handles: Vec<ProcessHandle> = Vec::with_capacity(configs.len());
     for (i, config) in configs.iter().enumerate() {

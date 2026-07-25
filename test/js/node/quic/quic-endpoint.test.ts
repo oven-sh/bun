@@ -335,7 +335,7 @@ describe("custom inspect", () => {
     // Before: Bun.inspect at K=4 was ~367 KB (~7x per extra session) and
     // util.inspect({depth: null}) recursed until the process was killed.
     // After: each session is expanded once, so doubling K roughly doubles
-    // the output, and {depth: null} clamps to the util.inspect default.
+    // the output, and every unbounded spelling clamps to the same ceiling.
     const expectKeys: Record<string, unknown> = {};
     for (const p of ["bun", "buninf", "session", "util", "util50", "null", "inf"])
       for (const K of [2, 4]) expectKeys[`${p}@${K}`] = expect.any(Number);
@@ -345,8 +345,8 @@ describe("custom inspect", () => {
     expect(sizes["buninf@4"]).toBeLessThan(64 * 1024);
     expect(sizes["session@4"]).toBeLessThan(64 * 1024);
     expect(sizes["util50@4"]).toBeLessThan(64 * 1024);
-    expect(sizes["null@4"]).toBeLessThan(16 * 1024);
-    expect(sizes["inf@4"]).toBeLessThan(16 * 1024);
+    expect(sizes["null@4"]).toBeLessThan(64 * 1024);
+    expect(sizes["inf@4"]).toBeLessThan(64 * 1024);
     expect(sizes["util@4"]).toBeLessThan(4 * 1024);
     expect(exitCode).toBe(0);
   }, 45000);

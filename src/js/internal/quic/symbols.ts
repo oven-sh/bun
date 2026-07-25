@@ -11,7 +11,7 @@ function inspectChildOptions(depth, options) {
   return {
     __proto__: null,
     ...options,
-    depth: MathMin(NumberIsFinite(depth) ? depth : 2, 6) - 1,
+    depth: MathMin(NumberIsFinite(depth) ? depth : 6, 6) - 1,
   };
 }
 

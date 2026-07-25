@@ -27,8 +27,8 @@ fn registry_href_without_userinfo(href: &[u8]) -> Box<[u8]> {
             .position(|&b| b == b'/' || b == b'?' || b == b'#')
             .map(|i| auth_start + i)
             .unwrap_or(href.len());
-        if let Some(at) = strings::index_of_char(&href[auth_start..auth_end], b'@') {
-            let host_start = auth_start + at as usize + 1;
+        if let Some(at) = strings::last_index_of_char(&href[auth_start..auth_end], b'@') {
+            let host_start = auth_start + at + 1;
             let mut out = Vec::with_capacity(href.len() - (host_start - auth_start));
             out.extend_from_slice(&href[..auth_start]);
             out.extend_from_slice(&href[host_start..]);

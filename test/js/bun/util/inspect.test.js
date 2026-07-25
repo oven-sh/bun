@@ -205,6 +205,36 @@ it("MessageEvent with deleted data", () => {
   );
 });
 
+it("Event subclass with a throwing getter does not make Bun.inspect throw", () => {
+  class ThrowType extends Event {
+    get type() {
+      throw new Error("type-getter-boom");
+    }
+  }
+  expect(() => Bun.inspect(new ThrowType("t"))).not.toThrow();
+  expect(() => Bun.inspect({ payload: [new ThrowType("t")] })).not.toThrow();
+  expect(Bun.inspect(new ThrowType("t"))).toContain("type");
+
+  class ThrowData extends Event {
+    get data() {
+      throw new Error("data-getter-boom");
+    }
+  }
+  expect(() => Bun.inspect(new ThrowData("message"))).not.toThrow();
+  expect(Bun.inspect(new ThrowData("message"))).toContain(`type: "message"`);
+
+  class ThrowError extends Event {
+    get error() {
+      throw new Error("error-getter-boom");
+    }
+    get message() {
+      throw new Error("message-getter-boom");
+    }
+  }
+  expect(() => Bun.inspect(new ThrowError("error"))).not.toThrow();
+  expect(Bun.inspect(new ThrowError("error"))).toContain(`type: "error"`);
+});
+
 // https://github.com/oven-sh/bun/issues/561
 it("TypedArray prints", () => {
   for (let TypedArray of [

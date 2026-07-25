@@ -1511,6 +1511,7 @@ impl JSValkeyClient {
 
     fn connect(&self) -> Result<(), crate::Error> {
         self.client_mut().flags.needs_to_open_socket = false;
+        self.client_mut().close_reason = None;
 
         let _guard = self.ref_scope();
 

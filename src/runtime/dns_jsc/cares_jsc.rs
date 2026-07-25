@@ -400,8 +400,9 @@ pub(crate) fn txt_reply_to_js_for_any(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    let array =
-        cares_list_to_js_array(this, global_this, |node, g| latin1_to_js(g, node.txt_bytes()))?;
+    let array = cares_list_to_js_array(this, global_this, |node, g| {
+        latin1_to_js(g, node.txt_bytes())
+    })?;
     let obj = JSValue::create_empty_object(global_this, 1);
     obj.put(global_this, b"entries", array);
     Ok(obj)

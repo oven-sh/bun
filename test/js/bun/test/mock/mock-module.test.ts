@@ -395,4 +395,56 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(stderr).not.toContain("fail)");
     expect(exitCode).toBe(0);
   });
+
+  test("reinstates a Bun.plugin virtual module that mock.module() overwrote", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "preload.ts": `
+        Bun.plugin({
+          name: "p",
+          setup(build) {
+            build.module("plugin-virtual", () => ({ exports: { hi: 123 }, loader: "object" }));
+          },
+        });
+      `,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        test("t", () => {
+          expect(require("plugin-virtual").hi).toBe(123);
+          mock.module("plugin-virtual", () => ({ hi: 999 }));
+          expect(require("plugin-virtual").hi).toBe(999);
+          mock.restore();
+          expect(require("plugin-virtual").hi).toBe(123);
+        });
+      `,
+      "bunfig.toml": `[test]\npreload = ["./preload.ts"]\n`,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("preload-installed mock.module() survives mock.restore()", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("./dep.ts", () => ({ getValue: () => "preload-mock" }));
+      `,
+      "fixture.test.ts": `
+        import { test, expect, mock, afterEach } from "bun:test";
+        import { getValue } from "./dep.ts";
+        afterEach(() => mock.restore());
+        test("first", () => {
+          expect(getValue()).toBe("preload-mock");
+        });
+        test("second still sees preload mock", () => {
+          expect(getValue()).toBe("preload-mock");
+        });
+      `,
+      "bunfig.toml": `[test]\npreload = ["./preload.ts"]\n`,
+    });
+    expect(stderr).toContain("2 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
 });

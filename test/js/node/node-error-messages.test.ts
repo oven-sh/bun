@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
+import http from "node:http";
 import http2 from "node:http2";
+import net from "node:net";
 
 // Node.js error codes are produced in C++ (ErrorCode.cpp jsFunctionMakeErrorWithCode).
 // Codes with no message template fall through to "use the first JS argument verbatim
@@ -20,79 +22,60 @@ test("ERR_HTTP2_UNSUPPORTED_PROTOCOL message matches Node.js", () => {
   expect(err?.message).toBe('protocol "gopher:" is unsupported.');
 });
 
-test.concurrent("ERR_HTTP_TRAILER_INVALID message matches Node.js", async () => {
-  const fixture = `
-    const http = require("node:http");
-    const req = http.request({ port: 1, method: "POST", createConnection: () => new (require("node:net").Socket)() });
-    req.on("error", () => {});
-    req.setHeader("Content-Length", "5");
-    req.setHeader("Trailer", "X-Foo");
-    try {
-      req.flushHeaders();
-      console.log("NO THROW");
-    } catch (e) {
-      console.log(e.code + "|" + e.message);
-    }
-    process.exit(0);
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "ERR_HTTP_TRAILER_INVALID|Trailers are invalid with this transfer encoding",
-    stderr: "",
-    exitCode: 0,
-  });
-});
-
-test.concurrent("ERR_HTTP_CONTENT_LENGTH_MISMATCH message matches Node.js", async () => {
-  const fixture = `
-    const http = require("node:http");
-    const req = http.request({ port: 1, method: "POST", createConnection: () => new (require("node:net").Socket)() });
-    req.on("error", () => {});
-    req.strictContentLength = true;
-    req.setHeader("Content-Length", "5");
+test("ERR_HTTP_TRAILER_INVALID message matches Node.js", () => {
+  const req = http.request({ port: 1, method: "POST", createConnection: () => new net.Socket() });
+  req.on("error", () => {});
+  req.setHeader("Content-Length", "5");
+  req.setHeader("Trailer", "X-Foo");
+  let err: any;
+  try {
     req.flushHeaders();
-    try {
-      req.write("hello world");
-      console.log("NO THROW");
-    } catch (e) {
-      console.log(e.code + "|" + e.message);
-    }
-    process.exit(0);
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout:
-      "ERR_HTTP_CONTENT_LENGTH_MISMATCH|Response body's content-length of 11 byte(s) does not match the content-length of 5 byte(s) set in header",
-    stderr: "",
-    exitCode: 0,
+  } catch (e) {
+    err = e;
+  }
+  req.destroy();
+  expect({ code: err?.code, message: err?.message }).toEqual({
+    code: "ERR_HTTP_TRAILER_INVALID",
+    message: "Trailers are invalid with this transfer encoding",
   });
 });
 
-test.concurrent("ERR_STREAM_DESTROYED message from http ServerResponse matches Node.js", async () => {
-  const fixture = `
-    const http = require("node:http");
-    const net = require("node:net");
-    const server = http.createServer((req, res) => {
-      res.destroy();
-      res.write("x", err => {
-        console.log(err.code + "|" + err.message);
-        server.close();
-        process.exit(0);
-      });
-    });
-    server.listen(0, function () {
-      const sock = net.connect(this.address().port);
-      sock.on("error", () => {});
-      sock.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
-    });
-  `;
-  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: "ERR_STREAM_DESTROYED|Cannot call write after a stream was destroyed",
-    stderr: "",
-    exitCode: 0,
+test("ERR_HTTP_CONTENT_LENGTH_MISMATCH message matches Node.js", () => {
+  const req = http.request({ port: 1, method: "POST", createConnection: () => new net.Socket() });
+  req.on("error", () => {});
+  req.strictContentLength = true;
+  req.setHeader("Content-Length", "5");
+  req.flushHeaders();
+  let err: any;
+  try {
+    req.write("hello world");
+  } catch (e) {
+    err = e;
+  }
+  req.destroy();
+  expect({ code: err?.code, message: err?.message }).toEqual({
+    code: "ERR_HTTP_CONTENT_LENGTH_MISMATCH",
+    message:
+      "Response body's content-length of 11 byte(s) does not match the content-length of 5 byte(s) set in header",
+  });
+});
+
+test("ERR_STREAM_DESTROYED message from http ServerResponse matches Node.js", async () => {
+  const { promise, resolve } = Promise.withResolvers<any>();
+  const server = http.createServer((req, res) => {
+    res.destroy();
+    res.write("x", resolve);
+  });
+  server.listen(0);
+  await once(server, "listening");
+  const sock = net.connect((server.address() as net.AddressInfo).port);
+  sock.on("error", () => {});
+  sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  const err = await promise;
+  sock.destroy();
+  await new Promise<void>(r => server.close(() => r()));
+  expect({ code: err?.code, message: err?.message }).toEqual({
+    code: "ERR_STREAM_DESTROYED",
+    message: "Cannot call write after a stream was destroyed",
   });
 });

@@ -1,10 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { getEventListeners, once } from "node:events";
-
 // Load so that a build without the native NodeEventTarget surface falls back
 // to the JS shim; with it present the require is a no-op for the prototype.
-require("node:worker_threads");
+import { Worker } from "node:worker_threads";
 
 // MessagePort is a NodeEventTarget in node: .on/.addListener/.once share the
 // same listener list as addEventListener, so listenerCount/eventNames/
@@ -237,37 +236,19 @@ describe("MessagePort NodeEventTarget", () => {
   });
 
   test("parentPort.listenerCount / eventNames / removeAllListeners work in a worker", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-        const { Worker } = require("node:worker_threads");
-        const w = new Worker(
-          "const { parentPort } = require('node:worker_threads');" +
-          "const fn = () => {};" +
-          "parentPort.on('message', fn);" +
-          "const lc = parentPort.listenerCount('message');" +
-          "const en = parentPort.eventNames().includes('message');" +
-          "parentPort.removeAllListeners('message');" +
-          "const after = parentPort.listenerCount('message');" +
-          "const ml = parentPort.getMaxListeners();" +
-          "parentPort.postMessage([lc, en, after, ml]);",
-          { eval: true }
-        );
-        w.on("message", m => {
-          process.stdout.write(JSON.stringify(m));
-          w.terminate();
-        });
-      `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("[1,true,0,10]");
-    expect(exitCode).toBe(0);
-  }, 30_000);
+    await using w = new Worker(
+      "const { parentPort } = require('node:worker_threads');" +
+        "const fn = () => {};" +
+        "parentPort.on('message', fn);" +
+        "const lc = parentPort.listenerCount('message');" +
+        "const en = parentPort.eventNames().includes('message');" +
+        "parentPort.removeAllListeners('message');" +
+        "const after = parentPort.listenerCount('message');" +
+        "const ml = parentPort.getMaxListeners();" +
+        "parentPort.postMessage([lc, en, after, ml]);",
+      { eval: true },
+    );
+    const [got] = await once(w, "message");
+    expect(got).toEqual([1, true, 0, 10]);
+  });
 });

@@ -257,6 +257,10 @@ async function testDecapsulateBits({ name, publicKeyPem, privateKeyPem, results 
   const variations = [];
 
   for (const vector of vectors) {
+    if (process.features.openssl_is_boringssl && vector.name === 'ML-KEM-512') {
+      common.printSkipMessage(`Skipping unsupported ${vector.name} test`);
+      continue;
+    }
     variations.push(testEncapsulateKey(vector));
     variations.push(testEncapsulateBits(vector));
     variations.push(testDecapsulateKey(vector));

@@ -471,6 +471,10 @@ async function testImportJwk({ name, publicUsages, privateUsages }, extractable)
 (async function() {
   const tests = [];
   for (const vector of testVectors) {
+    if (process.features.openssl_is_boringssl && vector.name === 'ML-KEM-512') {
+      common.printSkipMessage('Skipping unsupported ML-KEM-512 test');
+      continue;
+    }
     for (const extractable of [true, false]) {
       tests.push(testImportSpki(vector, extractable));
       tests.push(testImportPkcs8(vector, extractable));

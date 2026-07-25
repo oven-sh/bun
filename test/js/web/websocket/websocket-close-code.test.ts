@@ -17,9 +17,6 @@ describe.concurrent("WebSocket close() argument validation", () => {
   const VALID_CODES = [1000, 1001, 1002, 1003, 1007, 1008, 1009, 1010, 1011, 1012, 1013, 1014, 3000, 4999];
   const LONG_REASON = Buffer.alloc(124, "R").toString();
 
-  // `constructor` is DOMException for InvalidAccessError, but the native
-  // SyntaxError for the reason-length check: Bun intentionally maps
-  // ExceptionCode::SyntaxError to a JS SyntaxError (JSDOMExceptionHandling.cpp).
   function expectThrows(fn: () => void, constructor: Function, name: string, messageContains: string) {
     let error: Error | undefined;
     try {
@@ -79,11 +76,11 @@ describe.concurrent("WebSocket close() argument validation", () => {
     using server = upgradeServer();
     const ws = await open(server);
     try {
-      expectThrows(() => ws.close(1000, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
-      expectThrows(() => ws.close(undefined, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
+      expectThrows(() => ws.close(1000, LONG_REASON), DOMException, "SyntaxError", "123 UTF-8 bytes");
+      expectThrows(() => ws.close(undefined, LONG_REASON), DOMException, "SyntaxError", "123 UTF-8 bytes");
       // 62 two-byte characters: 62 UTF-16 code units but 124 UTF-8 bytes. The
       // limit is on the encoded size.
-      expectThrows(() => ws.close(4000, "é".repeat(62)), SyntaxError, "SyntaxError", "124 bytes");
+      expectThrows(() => ws.close(4000, "é".repeat(62)), DOMException, "SyntaxError", "124 bytes");
       expect(ws.readyState).toBe(WebSocket.OPEN);
     } finally {
       ws.close();
@@ -107,7 +104,7 @@ describe.concurrent("WebSocket close() argument validation", () => {
     await closed;
     expect(ws.readyState).toBe(WebSocket.CLOSED);
     expectThrows(() => ws.close(5000), DOMException, "InvalidAccessError", "Received 5000");
-    expectThrows(() => ws.close(1000, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
+    expectThrows(() => ws.close(1000, LONG_REASON), DOMException, "SyntaxError", "123 UTF-8 bytes");
   });
 
   it("validates arguments while the socket is still connecting", async () => {
@@ -121,7 +118,7 @@ describe.concurrent("WebSocket close() argument validation", () => {
     ws.onclose = () => opened.reject(new Error("connection closed before open"));
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     expectThrows(() => ws.close(5000), DOMException, "InvalidAccessError", "Received 5000");
-    expectThrows(() => ws.close(3000, LONG_REASON), SyntaxError, "SyntaxError", "123 UTF-8 bytes");
+    expectThrows(() => ws.close(3000, LONG_REASON), DOMException, "SyntaxError", "123 UTF-8 bytes");
     expect(ws.readyState).toBe(WebSocket.CONNECTING);
     await opened.promise;
     ws.onclose = null;

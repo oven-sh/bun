@@ -186,7 +186,7 @@ describe("WebSocket proxy API", () => {
       new WebSocket("ws://example.com", {
         proxy: "not-a-valid-url",
       });
-    }).toThrow(SyntaxError);
+    }).toThrow(DOMException);
   });
 
   test.each(["socks5", "socks4", "socks5h", "ftp", "ws", "gopher"])(

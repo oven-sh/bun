@@ -606,9 +606,7 @@ impl Package<u64> {
             .zip(resolutions.iter_mut())
             .enumerate()
         {
-            // Optional-peer slots are owned by `hoist`, not carried over:
-            // `enqueue_dependency` never resolves them, so a stale id here
-            // would pin a removed package.
+            // Optional-peer slots are re-derived by `hoist` (Cloner::flush), not carried over.
             if old_dependencies[i].behavior.is_optional_peer() {
                 *resolution = invalid_package_id;
                 continue;

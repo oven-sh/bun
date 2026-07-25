@@ -315,7 +315,14 @@ function fetchWithAgent(url, init, counter) {
             return;
           }
           const nextHeaders = new Headers(init.headers || (isWebRequest && url.headers) || undefined);
-          const nextInit: any = { ...init, method, signal, body: init.body, counter: counter + 1, headers: nextHeaders };
+          const nextInit: any = {
+            ...init,
+            method,
+            signal,
+            body: init.body,
+            counter: counter + 1,
+            headers: nextHeaders,
+          };
           const nextURL = new URL(locationURL);
           if (nextURL.hostname !== parsedHostname || nextURL.protocol !== protocol) {
             for (const name of ["authorization", "www-authenticate", "cookie", "cookie2"]) nextHeaders.delete(name);
@@ -437,7 +444,13 @@ function fetchWithAgent(url, init, counter) {
     } else if (body instanceof ArrayBuffer) {
       req.end(new Uint8Array(body));
     } else if (ArrayBuffer.isView(body)) {
-      req.end(new Uint8Array((body as ArrayBufferView).buffer, (body as ArrayBufferView).byteOffset, (body as ArrayBufferView).byteLength));
+      req.end(
+        new Uint8Array(
+          (body as ArrayBufferView).buffer,
+          (body as ArrayBufferView).byteOffset,
+          (body as ArrayBufferView).byteLength,
+        ),
+      );
     } else if (body instanceof Blob) {
       sendBuffered(body.arrayBuffer());
     } else if (typeof (body as any).pipe === "function" || typeof (body as any).getReader === "function") {

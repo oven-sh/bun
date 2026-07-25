@@ -1989,8 +1989,7 @@ mod _async_tasks {
                 // clonefile() copies the whole tree in one syscall, so there is no
                 // per-file `on_copy` callback. Skip it when the shell wants verbose
                 // output so the directory walk below reports each copy.
-                let skip_clonefile =
-                    IS_SHELL && this_ref.shelltask.is_some_and(|s| s.opts.verbose);
+                let skip_clonefile = IS_SHELL && this_ref.shelltask.is_some_and(|s| s.opts.verbose);
                 if !skip_clonefile {
                     // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
                     // mirror the O_NOFOLLOW directory open below instead of dereferencing.

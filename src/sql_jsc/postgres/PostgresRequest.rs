@@ -66,6 +66,16 @@ fn has_binary_param_encoder(tag: types::Tag) -> bool {
     )
 }
 
+/// A non-integer JS number bound to a PG-inferred `int4` target must not be
+/// silently truncated by `coerce::<i32>`; send the decimal text so PG errors
+/// cleanly. `float8` / `timestamp` / `timestamptz` stay binary because their
+/// encoders accept arbitrary f64 (including ±Infinity, see `date::from_js`).
+fn number_needs_text(tag: types::Tag, value: JSValue) -> bool {
+    matches!(tag, types::Tag::int4 | types::Tag::int4_array)
+        && value.is_number()
+        && !value.is_any_int()
+}
+
 pub fn write_bind<Context: WriterContext>(
     name: &[u8],
     cursor_name: BunString,
@@ -113,12 +123,7 @@ pub fn write_bind<Context: WriterContext>(
             || 'brk: {
                 iter.to(i as u32);
                 if let Some(value) = iter.next().map_err(js_error_to_postgres)? {
-                    // Strings are passed through as-is. A JS number that is not
-                    // integer-valued (or is outside the int52 range) is also
-                    // sent as text when PG inferred a non-float8 target, so PG
-                    // parses the exact decimal instead of us lossily coercing.
-                    break 'brk value.is_string()
-                        || (tag != types::Tag::float8 && value.is_number() && !value.is_any_int());
+                    break 'brk value.is_string() || number_needs_text(tag, value);
                 }
                 if iter.any_failed() {
                     return Err(AnyPostgresError::InvalidQueryBinding);
@@ -181,8 +186,7 @@ pub fn write_bind<Context: WriterContext>(
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
-        let as_text = value.is_string()
-            || (tag != types::Tag::float8 && value.is_number() && !value.is_any_int());
+        let as_text = value.is_string() || number_needs_text(tag, value);
         let effective_tag = if tag.is_binary_format_supported() && as_text {
             types::Tag::text
         } else {

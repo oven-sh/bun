@@ -314,11 +314,13 @@ describe("dotenv priority", () => {
   // Worker/subprocess-spawning tests below are slow under debug+ASAN.
   const spawnTimeout = (isDebug || isASAN ? 6 : 1) * 5000;
 
-  test("auto-loaded .env values survive founding a SHARE_ENV worker tree", () => {
-    const dir = tempDirWithFiles("dotenv-share-env", {
-      ".env": "AUTO_FROM_FILE=secret\n",
-      "worker.js": `process.exit(0);`,
-      "index.ts": `
+  test(
+    "auto-loaded .env values survive founding a SHARE_ENV worker tree",
+    () => {
+      const dir = tempDirWithFiles("dotenv-share-env", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "worker.js": `process.exit(0);`,
+        "index.ts": `
         const { Worker, SHARE_ENV } = require("worker_threads");
         console.log(process.env.AUTO_FROM_FILE);
         const w = new Worker("./worker.js", { env: SHARE_ENV });
@@ -327,30 +329,36 @@ describe("dotenv priority", () => {
           process.exit(0);
         });
       `,
-    });
-    const { stdout } = bunRun(`${dir}/index.ts`);
-    expect(stdout).toBe("secret\nsecret");
-  }, spawnTimeout);
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret\nsecret");
+    },
+    spawnTimeout,
+  );
 
-  test("auto-loaded .env values survive child_process default env inheritance", () => {
-    const dir = tempDirWithFiles("dotenv-cp", {
-      ".env": "AUTO_FROM_FILE=secret\n",
-      "sub/child.js": `
+  test(
+    "auto-loaded .env values survive child_process default env inheritance",
+    () => {
+      const dir = tempDirWithFiles("dotenv-cp", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "sub/child.js": `
         // enumerable=true iff the value arrived via the OS env block; false if
         // the child re-auto-loaded it from a .env file in cwd.
         const d = Object.getOwnPropertyDescriptor(process.env, "AUTO_FROM_FILE");
         console.log(process.env.AUTO_FROM_FILE, d?.enumerable, process.env.USER_MUTATION);
       `,
-      "index.ts": `
+        "index.ts": `
         process.env.USER_MUTATION = "from-js";
         const { execFileSync } = require("child_process");
         const out = execFileSync(process.execPath, ["child.js"], { cwd: "sub", encoding: "utf8" });
         console.log(out.trim());
       `,
-    });
-    const { stdout } = bunRun(`${dir}/index.ts`);
-    expect(stdout).toBe("secret true from-js");
-  }, spawnTimeout);
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret true from-js");
+    },
+    spawnTimeout,
+  );
 
   test("auto-loaded .env values survive Bun.$ default env inheritance", () => {
     const dir = tempDirWithFiles("dotenv-shell", {
@@ -367,11 +375,13 @@ describe("dotenv priority", () => {
     expect(stdout).toBe("secret from-js\nsecret");
   });
 
-  test("auto-loaded .env values survive cluster.fork default env inheritance", () => {
-    const dir = tempDirWithFiles("dotenv-cluster", {
-      ".env": "AUTO_FROM_FILE=secret\n",
-      "sub/.keep": "",
-      "index.ts": `
+  test(
+    "auto-loaded .env values survive cluster.fork default env inheritance",
+    () => {
+      const dir = tempDirWithFiles("dotenv-cluster", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "sub/.keep": "",
+        "index.ts": `
         const cluster = require("cluster");
         if (cluster.isPrimary) {
           cluster.setupPrimary({ cwd: "sub", exec: __filename });
@@ -382,25 +392,31 @@ describe("dotenv priority", () => {
           process.exit(0);
         }
       `,
-    });
-    const { stdout } = bunRun(`${dir}/index.ts`);
-    expect(stdout).toBe("secret true");
-  }, spawnTimeout);
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret true");
+    },
+    spawnTimeout,
+  );
 
-  test("auto-loaded .env values survive the default worker env snapshot", () => {
-    const dir = tempDirWithFiles("dotenv-worker-snap", {
-      ".env": "AUTO_FROM_FILE=secret\n",
-      "worker.js": `require("worker_threads").parentPort.postMessage(process.env.AUTO_FROM_FILE);`,
-      "index.ts": `
+  test(
+    "auto-loaded .env values survive the default worker env snapshot",
+    () => {
+      const dir = tempDirWithFiles("dotenv-worker-snap", {
+        ".env": "AUTO_FROM_FILE=secret\n",
+        "worker.js": `require("worker_threads").parentPort.postMessage(process.env.AUTO_FROM_FILE);`,
+        "index.ts": `
         const { Worker } = require("worker_threads");
         void process.env.PATH;
         const w = new Worker("./worker.js", {});
         w.on("message", (m) => { console.log(process.env.AUTO_FROM_FILE, m); process.exit(0); });
       `,
-    });
-    const { stdout } = bunRun(`${dir}/index.ts`);
-    expect(stdout).toBe("secret secret");
-  }, spawnTimeout);
+      });
+      const { stdout } = bunRun(`${dir}/index.ts`);
+      expect(stdout).toBe("secret secret");
+    },
+    spawnTimeout,
+  );
 
   test("auto-loaded special-cased env keys are not enumerable", () => {
     const dir = tempDirWithFiles("dotenv-special", {

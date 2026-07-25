@@ -1071,11 +1071,18 @@ test("concurrent inspector.open() clients never receive another client's Runtime
       else client.foreign++;
       if (--totalOutstanding === 0) allResponded.resolve();
     };
-    ws.onerror = e => failed.reject(e);
-    ws.onclose = () =>
-      totalOutstanding > 0 && failed.reject(new Error(`client ${i} closed early; stderr: ${stderrText}`));
     const opened = Promise.withResolvers<void>();
     ws.onopen = () => opened.resolve();
+    ws.onerror = e => {
+      opened.reject(e);
+      failed.reject(e);
+    };
+    ws.onclose = () => {
+      if (totalOutstanding === 0) return;
+      const err = new Error(`client ${i} closed early; stderr: ${stderrText}`);
+      opened.reject(err);
+      failed.reject(err);
+    };
     await opened.promise;
     clients.push(client);
   }

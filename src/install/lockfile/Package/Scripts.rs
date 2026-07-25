@@ -20,14 +20,14 @@ bun_output::declare_scope!(Lockfile, hidden);
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
 fn registry_href_without_userinfo(href: &[u8]) -> Box<[u8]> {
-    if let Some(scheme_end) = strings::index_of(href, b"://") {
+    if let Some(scheme_end) = href.windows(3).position(|w| w == b"://") {
         let auth_start = scheme_end + 3;
         let auth_end = href[auth_start..]
             .iter()
             .position(|&b| b == b'/' || b == b'?' || b == b'#')
             .map(|i| auth_start + i)
             .unwrap_or(href.len());
-        if let Some(at) = strings::last_index_of_char(&href[auth_start..auth_end], b'@') {
+        if let Some(at) = href[auth_start..auth_end].iter().rposition(|&b| b == b'@') {
             let host_start = auth_start + at + 1;
             let mut out = Vec::with_capacity(href.len() - (host_start - auth_start));
             out.extend_from_slice(&href[..auth_start]);
@@ -559,5 +559,22 @@ impl List {
                     .push(script.to_vec().into_boxed_slice());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::registry_href_without_userinfo as strip;
+
+    #[test]
+    fn strips_userinfo() {
+        assert_eq!(&*strip(b"http://host:4873/"), b"http://host:4873/");
+        assert_eq!(&*strip(b"https://user:pass@host/"), b"https://host/");
+        assert_eq!(&*strip(b"http://TOKEN@host:4873/"), b"http://host:4873/");
+        assert_eq!(&*strip(b"https://user:p@ss@host/"), b"https://host/");
+        assert_eq!(&*strip(b"https://host?m=@backup"), b"https://host?m=@backup");
+        assert_eq!(&*strip(b"https://host#@frag"), b"https://host#@frag");
+        assert_eq!(&*strip(b"host:4873/"), b"host:4873/");
+        assert_eq!(&*strip(b""), b"");
     }
 }

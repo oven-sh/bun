@@ -638,23 +638,29 @@ function fakeParentPort() {
   // eventNames/removeAllListeners see only those (self may carry internal
   // listeners the user must not touch).
   const byType = new SafeMap();
+  function track(type: string, listener: any, registered: any) {
+    let set = byType.get(type);
+    if (!set) byType.set(type, (set = new SafeMap()));
+    set.set(listener, registered);
+  }
   function on(this: any, type: string, listener: any) {
     self.addEventListener(type, listener, { $kIsNodeStyleListener: true } as AddEventListenerOptions);
-    let set = byType.get(type);
-    if (!set) byType.set(type, (set = new Set()));
-    set.add(listener);
+    track(type, listener, listener);
     return this;
   }
   function once(this: any, type: string, listener: any) {
-    self.addEventListener(type, listener, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
-    let set = byType.get(type);
-    if (!set) byType.set(type, (set = new Set()));
-    set.add(listener);
+    const wrapper = (arg: any) => {
+      byType.get(type)?.delete(listener);
+      listener(arg);
+    };
+    self.addEventListener(type, wrapper, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
+    track(type, listener, wrapper);
     return this;
   }
   function off(this: any, type: string, listener: any) {
-    self.removeEventListener(type, listener);
-    byType.get(type)?.delete(listener);
+    const set = byType.get(type);
+    self.removeEventListener(type, set?.get(listener) ?? listener);
+    set?.delete(listener);
     return this;
   }
   function listenerCount(type: string) {
@@ -669,11 +675,11 @@ function fakeParentPort() {
     const clear = (t: string) => {
       const set = byType.get(t);
       if (set) {
-        for (const fn of set) self.removeEventListener(t, fn);
+        for (const registered of set.values()) self.removeEventListener(t, registered);
         byType.delete(t);
       }
     };
-    if (arguments.length === 0) for (const t of [...byType.keys()]) clear(t);
+    if (arguments.length === 0) for (const t of Array.from(byType.keys())) clear(t);
     else clear(type!);
     return this;
   }

@@ -43,6 +43,15 @@ const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
 const kCapture = Symbol("kCapture");
+// Set on a listener array the first time emit() iterates it, and never
+// cleared. Mutators (on / prepend / removeListener) install a copy instead of
+// editing in place when they see it, so any emit() loop still running on that
+// array keeps a stable snapshot; the fresh copy has no mark, so subsequent
+// mutations are in-place again. Sticky (not a counter) keeps emit()'s hot
+// path to a single read-and-maybe-write instead of two writes, and sidesteps
+// the "nested emit clears the outer mark" problem a clear-after-loop boolean
+// would have.
+const kIterated = Symbol("kIterated");
 // Set when `_events` was preallocated (streams do this): removeListener then
 // writes `undefined` instead of `delete`, keeping one shared JSC Structure
 // so the (StructureID, name)-keyed megamorphic cache stays hot.
@@ -142,13 +151,14 @@ function emitError(emitter, args) {
 }
 
 // A listener list is a bare function for a single listener, else an array
-// (like node). Arrays are never mutated in place - mutators install a copy -
-// so a stored list can be iterated with no defensive clone.
+// (like node). Arrays are mutated in place by on/off; the kIterated mark makes
+// any concurrent mutation install a copy instead, so this snapshot stays stable.
 function applyHandlers(handlers, emitter, args) {
   if (typeof handlers === "function") {
     handlers.$apply(emitter, args);
     return;
   }
+  if (!handlers[kIterated]) handlers[kIterated] = true;
   for (let i = 0, { length } = handlers; i < length; i++) {
     handlers[i].$apply(emitter, args);
   }
@@ -208,9 +218,9 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
     }
     return true;
   }
-  // No defensive clone: stored arrays are never mutated in place (mutators
-  // install a copy), so this list stays stable for the whole loop even if a
-  // listener adds/removes listeners.
+  // No defensive clone: the kIterated mark makes any listener that adds or
+  // removes on this event install a fresh array, so `handler` stays stable.
+  if (!handler[kIterated]) handler[kIterated] = true;
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     switch (args.length) {
@@ -268,9 +278,9 @@ const emitWithRejectionCapture = function emit(type, ...args) {
     }
     return true;
   }
-  // No defensive clone: stored arrays are never mutated in place (mutators
-  // install a copy), so this list stays stable for the whole loop even if a
-  // listener adds/removes listeners.
+  // No defensive clone: the kIterated mark makes any listener that adds or
+  // removes on this event install a fresh array, so `handler` stays stable.
+  if (!handler[kIterated]) handler[kIterated] = true;
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     let result;
@@ -322,8 +332,15 @@ function _addListener(target, type, fn, prepend) {
   var handlers;
   if (typeof existing === "function") {
     handlers = events[type] = prepend ? [fn, existing] : [existing, fn];
-  } else {
+  } else if (existing[kIterated]) {
+    // emit() has iterated (and may still be iterating) this exact array;
+    // install a copy so its loop stays stable. The copy has no mark, so the
+    // next mutation is in-place again.
     handlers = events[type] = copyWithInserted(existing, fn, prepend);
+  } else {
+    if (prepend) ArrayPrototypeUnshift.$call(existing, fn);
+    else $arrayPush(existing, fn);
+    handlers = existing;
   }
   var m = _getMaxListeners(target);
   if (m > 0 && handlers.length > m && !handlers.warned) {
@@ -343,9 +360,9 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   return this;
 };
 
-// Copy-on-write: emit iterates stored arrays with no clone, so new listeners
-// land in a fresh array; `warned` carries over so the leak warning fires once.
-// An inline loop beats concat/slice here ~10x (host-call boundary).
+// Copy path for when `list` carries kIterated (emit() has walked it): a fresh
+// array leaves the iterated one untouched. `warned` carries over so the leak
+// warning fires once. An inline loop beats concat/slice ~10x (host-call cost).
 function copyWithInserted(list, fn, prepend) {
   const n = list.length;
   const copy = $newArrayWithSize(n + 1);
@@ -447,20 +464,34 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   }
   if (position < 0) return this;
 
-  // Copy-remove (arrays are never mutated in place), and store a lone
-  // survivor bare like node does, so `_events[type]` shape matches theirs.
-  const n = list.length;
-  const copy = $newArrayWithSize(n - 1);
-  for (let i = 0, j = 0; i < n; i++) {
-    if (i !== position) copy[j++] = list[i];
+  if (list[kIterated]) {
+    // emit() has iterated (and may still be iterating) this exact array;
+    // install a copy so its loop stays stable. A lone survivor is stored bare
+    // so `_events[type]` matches node.
+    const n = list.length;
+    const copy = $newArrayWithSize(n - 1);
+    for (let i = 0, j = 0; i < n; i++) {
+      if (i !== position) copy[j++] = list[i];
+    }
+    if (list.warned) copy.warned = true;
+    events[type] = copy.length === 1 ? copy[0] : copy;
+  } else if (list.length === 2) {
+    events[type] = list[1 - position];
+  } else {
+    spliceOne(list, position);
   }
-  if (list.warned) copy.warned = true;
-  events[type] = copy.length === 1 ? copy[0] : copy;
 
   if (events.removeListener !== undefined) this.emit("removeListener", type, listener.listener ?? listener);
 
   return this;
 };
+
+// In-place single-element remove; node's internal/util spliceOne. Removing the
+// last element is O(1), which makes a tail-first drain of N listeners linear.
+function spliceOne(list, index) {
+  for (; index + 1 < list.length; index++) list[index] = list[index + 1];
+  list.pop();
+}
 
 EventEmitterPrototype.off = EventEmitterPrototype.removeListener;
 
@@ -498,8 +529,10 @@ EventEmitterPrototype.removeAllListeners = function removeAllListeners(type) {
   if (typeof listeners === "function") {
     this.removeListener(type, listeners);
   } else if (listeners !== undefined) {
-    // LIFO order. `listeners` is our own snapshot; each removeListener call
-    // installs a fresh array (or bare fn / nothing), so it stays intact here.
+    // LIFO order, same as node's loop. Unmarked arrays shrink from the tail as
+    // we walk indices high-to-low; a marked array is left intact (the first
+    // removeListener COWs it away), so either way `listeners[i]` is the right
+    // function at every step.
     for (let i = listeners.length - 1; i >= 0; i--) this.removeListener(type, listeners[i]);
   }
   return this;

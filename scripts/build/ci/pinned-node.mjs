@@ -23,16 +23,21 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, "..", "..", "..");
 
-/** The pinned node version: `nodejs.version` in the image spec — the single
- * source of truth, the same node baked onto every CI image. */
-function specNodeVersion() {
+/** The pinned node version and dist base: `nodejs.version` and
+ * `nodejs.distBase` in the image spec — the single source of truth, the
+ * same node baked onto every CI image and the same mirror it comes from. */
+function specNode() {
   const specPath = join(repoRoot, "scripts", "build", "ci", "spec.ts");
   const spec = readFileSync(specPath, "utf8");
-  const match = spec.match(/export const nodejs[\s\S]*?version:\s*"([\d.]+)"/);
-  if (!match) {
+  const version = spec.match(/export const nodejs[\s\S]*?version:\s*"([\d.]+)"/);
+  if (!version) {
     throw new Error(`could not read nodejs.version from ${specPath}`);
   }
-  return match[1];
+  const distBase = spec.match(/export const nodejs[\s\S]*?distBase:\s*"([^"]+)"/);
+  if (!distBase) {
+    throw new Error(`could not read nodejs.distBase from ${specPath}`);
+  }
+  return { version: version[1], distBase: distBase[1] };
 }
 
 function nodePlatform() {
@@ -60,7 +65,7 @@ function nodeCpu() {
 /** Path to the pinned node binary, downloading and caching it if needed.
  * Cache dir matches .buildkite/generate-pipeline.sh so all share one copy. */
 export function ensurePinnedNode() {
-  const version = specNodeVersion();
+  const { version, distBase } = specNode();
   const folder = `node-v${version}-${nodePlatform()}-${nodeCpu()}`;
   const cacheDir = join(homedir() || tmpdir(), ".cache", "bun-ci-node");
   const nodeBin = join(cacheDir, folder, "bin", "node");
@@ -68,7 +73,7 @@ export function ensurePinnedNode() {
     return { nodeBin, version };
   }
 
-  const url = `https://nodejs.org/dist/v${version}/${folder}.tar.gz`;
+  const url = `${distBase}/v${version}/${folder}.tar.gz`;
   console.log(`--- Fetching Node.js ${version} for the CI tooling (${nodePlatform()} ${nodeCpu()})`);
   console.log(`    ${url}`);
   mkdirSync(cacheDir, { recursive: true });

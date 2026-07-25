@@ -312,6 +312,25 @@ function writeFile(path: string, content: string): string {
 /** systemSetup for an apt image (debian/ubuntu, systemd). */
 function aptSystemSetup(packages: LinuxPackages): string[] {
   return [
+    // dpkg + apt tuning for CI, written BEFORE the first apt-get so it
+    // governs every install below (llvm.sh, get.docker.com, ...):
+    // force-unsafe-io skips the per-file fsync (LLVM extracts thousands of
+    // files), no-debsig skips signature checks apt already covers,
+    // Install-Recommends/Suggests "false" keeps the image lean, and
+    // --force-confdef/--force-confold answers any conffile prompt so a bake
+    // can never hang waiting on one.
+    writeFile("/etc/dpkg/dpkg.cfg.d/01-ci-options", "force-unsafe-io\nno-debsig\n"),
+    writeFile(
+      "/etc/apt/apt.conf.d/99-ci-options",
+      [
+        'Acquire::Languages "none";',
+        'Acquire::GzipIndexes "true";',
+        'Acquire::CompressionTypes::Order:: "gz";',
+        'APT::Get::Install-Recommends "false";',
+        'APT::Get::Install-Suggests "false";',
+        'Dpkg::Options { "--force-confdef"; "--force-confold"; }',
+      ].join("\n") + "\n",
+    ),
     "DEBIAN_FRONTEND=noninteractive apt-get update -y",
     `DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends --fix-missing ${packages.common.join(" ")}`,
     `DEBIAN_FRONTEND=noninteractive apt-get install --yes --no-install-recommends --fix-missing ${[...packages.buildEssentials, ...packages.qemu].join(" ")}`,

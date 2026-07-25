@@ -997,6 +997,11 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
     label: `${getBuildkiteEmoji("package")} binary-size`,
     agents: getEc2Agent(buildHostPlatform, { instanceType: "c8g.large" }),
     depends_on: releasePlatforms.map(p => `${getTargetKey(p)}-build-bun`),
+    // allow_dependency_failure means this runs even when a build (or the
+    // build-host image bake) failed; if the bake failed the content-addressed
+    // image it requests never exists and no agent will ever pick it up. Bound
+    // the wait so a failed bake surfaces as a timeout, not a hung step.
+    timeout_in_minutes: 30,
     allow_dependency_failure: true,
     soft_fail: !!options.skipSizeCheck,
     retry: {

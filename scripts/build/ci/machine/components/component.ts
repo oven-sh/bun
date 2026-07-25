@@ -35,8 +35,9 @@ export type LinuxContext = {
   ci: boolean;
   /** Git ref cloned for the prefetch caches / xmac.mjs. */
   repoRef: string;
-  /** Every download this image performs, keyed by artifact name — the same
-   * bundle the image hash covers. Components read their downloads here. */
+  /** Every download this image performs, keyed by artifact name. Derived
+   * from the entry at bake time (not itself hashed — only the entry's
+   * values move the image name). Components read their downloads here. */
   artifacts: ArtifactBundle;
   /** This image's package manager, selected from the entry's
    * `packages.manager` fact by managerFor(). */

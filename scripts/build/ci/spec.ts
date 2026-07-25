@@ -34,12 +34,11 @@
 import type { AgeSpec, BunSpec, CrossToolchains, LlvmSpec, NodejsSpec, PinnedRelease } from "./types.ts";
 
 /**
- * Iteration lever: bump to force EVERY image to rebake without changing
- * any real fact. It is a value in every entry (via the shared bases), so
- * bumping it changes each entry's value and therefore each name. This
- * field exists only while the content-addressed image system is being
- * proven out — the last commit before merge deletes it (which itself
- * rebakes the fleet one final time from the final code).
+ * Rebake lever: a value in every entry (via the shared bases), so bumping
+ * it changes each entry's value, and therefore each image name, without
+ * touching any real fact — forcing EVERY image to rebake. Use it to
+ * propagate a code-only recipe change (only entry values move the hash).
+ * Changing OR removing this value renames all eight images.
  */
 export const epoch = 2;
 

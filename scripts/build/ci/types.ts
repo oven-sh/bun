@@ -181,8 +181,8 @@ export type LinuxImageBase = {
   readonly tailscaleInstallUrl: string;
   /** The things baked onto this image, BY COMPONENT NAME, IN INSTALL
    * ORDER (components/registry.ts resolves the names). Ordering is data:
-   * this list is the sequencer's only input, and the same list is walked
-   * to build the hashed download bundle. */
+   * this list is the sequencer's input, and the same list is walked to
+   * build the download bundle. */
   readonly components: readonly string[];
   /** Every path a linux bake writes to, rooted so each is written once.
    * Components compose their locations from these roots (see

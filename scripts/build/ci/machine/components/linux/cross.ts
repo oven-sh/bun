@@ -420,9 +420,10 @@ export const windowsSysroot: LinuxComponent = {
 export const macosSdk: LinuxComponent = {
   name: "macos-sdk",
   // xmac.mjs's full URL depends on the bootstrapping ref (known only at
-  // bake time, not part of the spec), so the step composes it from the
-  // hashed base + ctx.repoRef. The base is declared here so it still
-  // participates in the image hash.
+  // bake time, not part of the spec), so the step composes it from
+  // image.crossToolchains.macosSdk.xmacRawBase + ctx.repoRef. The base is a
+  // spec value on the entry, so it moves the image name; it is exposed as an
+  // artifact for the download machinery, not for hashing.
   artifacts: image =>
     image.buildHost ? { xmacRawBase: { url: image.crossToolchains.macosSdk.xmacRawBase, sha256: null } } : {},
   steps: ctx => {

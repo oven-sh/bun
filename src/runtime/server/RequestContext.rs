@@ -1229,6 +1229,31 @@ where
         }
     }
 
+    /// uWS drained its send buffer while a `ByteStream` pipe is mid-stream.
+    /// Resume the upstream producer (the fetch HTTP client) so the next chunk
+    /// is delivered; `on_pipe` will re-arm us on the next backpressured write.
+    ///
+    /// # Safety
+    /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
+    pub(crate) fn on_writable_byte_stream(
+        this: *mut Self,
+        _write_offset: u64,
+        _resp: uws::AnyResponse,
+    ) -> bool {
+        ctx_log!("onWritableByteStream");
+        // SAFETY: caller upholds the fn-level contract — `this` is the live
+        // `RequestContext` user-data pointer registered with uWS.
+        let this = unsafe { &mut *this };
+        debug_assert!(this.resp.is_some());
+        if this.is_aborted_or_ended() {
+            return false;
+        }
+        if let Some(byte_stream) = this.byte_stream {
+            bun_ptr::BackRef::from(byte_stream).signal_drained();
+        }
+        true
+    }
+
     /// # Safety
     /// `this` must be the live `RequestContext` user-data pointer registered with uWS.
     pub(crate) fn on_writable_response_buffer(
@@ -3270,13 +3295,13 @@ where
         this.do_render_blob();
     }
 
-    pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) {
+    pub fn on_pipe(this: &mut Self, stream: &WebCore::streams::Result) -> bool {
         let is_done = stream.is_done();
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
 
         if this.is_aborted_or_ended() {
-            return;
+            return true;
         }
         let resp = this.resp.expect("infallible: resp bound");
 
@@ -3286,19 +3311,29 @@ where
         // uSockets will append and manage the buffer
         // so any write will buffer if the write fails
         // SAFETY: FFI handle
-        if matches!(resp.write(chunk), uws::WriteResult::WantMore(_)) {
-            if is_done {
-                this.end_stream(this.should_close_connection());
+        match resp.write(chunk) {
+            uws::WriteResult::WantMore(_) => {
+                if is_done {
+                    this.end_stream(this.should_close_connection());
+                }
+                true
             }
-        } else {
-            // when it's the last one, we just want to know if it's done
-            if is_done {
+            uws::WriteResult::Backpressure(_) => {
                 this.flags.set_has_marked_pending(true);
-                // SAFETY: FFI handle
-                resp.on_writable(
-                    |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
-                    this,
-                );
+                if is_done {
+                    // SAFETY: FFI handle
+                    resp.on_writable(
+                        |this, off, resp| Self::on_writable_response_buffer(this, off, resp),
+                        this,
+                    );
+                } else {
+                    // SAFETY: FFI handle
+                    resp.on_writable(
+                        |this, off, resp| Self::on_writable_byte_stream(this, off, resp),
+                        this,
+                    );
+                }
+                false
             }
         }
     }
@@ -4372,7 +4407,7 @@ impl<ThisServer, const SSL_ENABLED: bool, const DEBUG_MODE: bool, const HTTP3: b
 where
     ThisServer: ServerLike + 'static,
 {
-    fn on_pipe(&mut self, stream: WebCore::streams::Result) {
+    fn on_pipe(&mut self, stream: WebCore::streams::Result) -> bool {
         // Forward to the inherent associated fn (not method-dispatched to avoid
         // recursing into this trait impl).
         RequestContext::on_pipe(self, &stream)

@@ -372,22 +372,25 @@ impl Pipe {
     }
 }
 
-pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
+/// Returns `true` when the consumer accepted the chunk without backpressure
+/// (the producer may be resumed), `false` when the consumer is backpressured
+/// and will call `ByteStream::signal_drained` itself once it drains.
+pub type Function = fn(ctx: NonNull<()>, stream: streams::Result) -> bool;
 
 // Callers implement `PipeHandler` for their type instead of passing a free fn
 // (`Wrap::<Foo>::init(self)`).
 pub(crate) trait PipeHandler {
-    fn on_pipe(&mut self, stream: streams::Result);
+    fn on_pipe(&mut self, stream: streams::Result) -> bool;
 }
 
 pub(crate) struct Wrap<T: PipeHandler>(core::marker::PhantomData<T>);
 
 impl<T: PipeHandler> Wrap<T> {
-    pub(crate) fn pipe(self_: NonNull<()>, stream: streams::Result) {
+    pub(crate) fn pipe(self_: NonNull<()>, stream: streams::Result) -> bool {
         // SAFETY: `self_` was produced from `NonNull::from(&mut T)` in `init` below; caller
         // guarantees the pointee outlives the Pipe and is exclusively borrowed here.
         let this = unsafe { self_.cast::<T>().as_mut() };
-        this.on_pipe(stream);
+        this.on_pipe(stream)
     }
 
     pub(crate) fn init(self_: &mut T) -> Pipe {

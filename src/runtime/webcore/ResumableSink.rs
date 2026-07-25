@@ -555,8 +555,9 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> PipeHandler
     for ResumableSink<Js, Context>
 {
     #[inline]
-    fn on_pipe(&mut self, stream: StreamResult) {
+    fn on_pipe(&mut self, stream: StreamResult) -> bool {
         self.on_stream_pipe(stream);
+        true
     }
 }
 

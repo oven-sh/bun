@@ -2540,8 +2540,9 @@ impl<'a> ValueBufferer<'a> {
 
 // `webcore::Wrap<T>` requires `T: PipeHandler`.
 impl<'a> crate::webcore::PipeHandler for ValueBufferer<'a> {
-    fn on_pipe(&mut self, stream: streams::Result) {
-        self.on_stream_pipe(&stream)
+    fn on_pipe(&mut self, stream: streams::Result) -> bool {
+        self.on_stream_pipe(&stream);
+        true
     }
 }
 

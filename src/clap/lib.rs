@@ -374,10 +374,7 @@ impl Default for Help {
 pub struct ParseOptions<'a> {
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
-    /// When set, everything after a literal `--` is routed to
-    /// `remaining()` instead of `positionals()`. Used by `bun test` so
-    /// arguments after `--` reach `process.argv` rather than the
-    /// file-filter list.
+    /// Route everything after a literal `--` to `remaining()` instead of `positionals()`.
     pub passthrough_after_double_dash: bool,
 }
 

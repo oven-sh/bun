@@ -1782,6 +1782,20 @@ describe.concurrent("bun test forwards args after -- to process.argv", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("an explicit empty string after -- is preserved", async () => {
+    using dir = tempDir("test-passthrough-i", { "argv.test.ts": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "argv.test.ts", "--", ""],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain(`ARGV=[""]`);
+    expect(exitCode).toBe(0);
+  });
+
   test("--parallel forwards -- args to workers", async () => {
     using dir = tempDir("test-passthrough-f", {
       "a.test.ts": fixture,
@@ -1832,6 +1846,21 @@ describe.concurrent("bun test forwards args after -- to process.argv", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain(`ARGV=["argv.test.ts"]`);
     expect(stderr).toContain(`"argv.test.ts" after -- is placed in process.argv`);
+    expect(exitCode).toBe(0);
+  });
+
+  test("hints for underscore-style test file names", async () => {
+    using dir = tempDir("test-passthrough-j", { "argv_test.ts": fixture });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--", "argv_test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain(`ARGV=["argv_test.ts"]`);
+    expect(stderr).toContain(`"argv_test.ts" after -- is placed in process.argv`);
     expect(exitCode).toBe(0);
   });
 });

@@ -1880,6 +1880,7 @@ bun_io::link_impl_EventLoopCtx! {
 }
 
 /// RAII guard returned by [`VirtualMachine::suppress_microtask_drain_scope`].
+#[must_use = "dropping immediately restores the prior suppress_microtask_drain value; bind to a named local"]
 pub struct SuppressMicrotaskDrain {
     vm: &'static VirtualMachine,
     prev: bool,

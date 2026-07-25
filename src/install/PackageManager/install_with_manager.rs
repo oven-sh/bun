@@ -731,15 +731,7 @@ pub fn install_with_manager(
                 }
             }
 
-            if log_level != Options::LogLevel::Silent {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
-                );
-                bun_core::note!(
-                    "try re-running without <d>--frozen-lockfile<r> or <d>--production<r> and commit the updated lockfile"
-                );
-            }
-            Global::crash();
+            crash_frozen_lockfile(log_level);
         }
     }
 
@@ -1378,6 +1370,20 @@ fn add_dependency_error(
 
 #[cold]
 #[inline(never)]
+fn crash_frozen_lockfile(log_level: Options::LogLevel) -> ! {
+    if log_level != Options::LogLevel::Silent {
+        bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
+        );
+        bun_core::note!(
+            "try re-running without <d>--frozen-lockfile<r> or <d>--production<r> and commit the updated lockfile"
+        );
+    }
+    Global::crash();
+}
+
+#[cold]
+#[inline(never)]
 fn report_lockfile_load_error(
     manager: &mut PackageManager,
     cause: &lockfile::LoadResultErr,
@@ -1517,15 +1523,7 @@ fn create_new_lockfile_and_enqueue(
     if manager.options.enable.frozen_lockfile()
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
-        if log_level != Options::LogLevel::Silent {
-            bun_core::pretty_errorln!(
-                "<r><red>error<r>: lockfile had changes, but lockfile is frozen"
-            );
-            bun_core::note!(
-                "try re-running without <d>--frozen-lockfile<r> or <d>--production<r> and commit the updated lockfile"
-            );
-        }
-        Global::crash();
+        crash_frozen_lockfile(log_level);
     }
 
     // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().

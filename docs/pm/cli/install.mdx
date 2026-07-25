@@ -164,7 +164,7 @@ To install in production mode (without `devDependencies`):
 bun install --production
 ```
 
-Passing `--production` also implies `--frozen-lockfile`, so the install fails if `package.json` is out of sync with the lockfile. If you only want to skip `devDependencies` without freezing the lockfile, use `--omit=dev` instead.
+Passing `--production` also implies `--frozen-lockfile`, so the install fails if `package.json` is out of sync with the lockfile. Production mode also aborts immediately on the first install error (for example, a bad lockfile or a failed bin link) instead of reporting it at the end. If you only want to skip `devDependencies` without these stricter checks, use `--omit=dev` instead.
 
 For reproducible installs without skipping `devDependencies`, use `--frozen-lockfile` on its own. Bun installs the exact versions specified in the lockfile and does not update it. If your `package.json` disagrees with `bun.lock`, Bun exits with an error.
 

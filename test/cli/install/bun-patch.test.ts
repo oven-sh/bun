@@ -300,19 +300,6 @@ describe("bun patch <pkg>", async () => {
     });
 
     // https://github.com/oven-sh/bun/issues/12882
-    //
-    // `bun patch <pkg>` run from a workspace package prints an absolute path in
-    // the suggested `bun patch --commit '<path>'` command. When the user ran
-    // that command verbatim from the same workspace package on Windows, the
-    // absolute drive-letter path was misclassified as relative and prefixed
-    // with the workspace-relative path, producing
-    //   ENOENT: packages\frontend\C:\project\node_modules\pkg\package.json
-    //
-    // This test drives the whole flow: parse the suggested path out of stdout
-    // and feed it straight back into `--commit` from inside the workspace
-    // package. It passes on POSIX before and after (the POSIX arm of the
-    // "is this path relative" check was already correct) and on Windows it
-    // exercises the fixed drive-letter-absolute case.
     test("inside workspace package with the absolute path from the patch suggestion", async () => {
       const tempdir = tempDirWithFiles("patch-ws-abs", {
         "package.json": JSON.stringify({
@@ -341,8 +328,6 @@ describe("bun patch <pkg>", async () => {
       const suggested = prep.stdout.toString().match(/bun patch --commit '([^']+)'/);
       expect(suggested).not.toBeNull();
       const absPath = suggested![1];
-      // The suggested path must be absolute and point at the root node_modules,
-      // not the workspace package's.
       expect(absPath).toContain("node_modules");
       expect(isAbsolute(absPath.replace(/\//g, sep))).toBe(true);
 

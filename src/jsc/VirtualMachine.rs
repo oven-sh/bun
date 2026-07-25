@@ -6088,7 +6088,7 @@ impl VirtualMachine {
                     let stack = bun_core::OwnedString::new(stack.to_bun_string(global_ref)?);
                     let bytes = stack.to_utf8();
                     let slice = bytes.slice();
-                    let tail = match slice.iter().position(|&b| b == b'\n') {
+                    let tail = match bun_core::strings::index_of_char_usize(slice, b'\n') {
                         Some(i) => bun_core::trim_right(&slice[i + 1..], b"\n"),
                         None => b"",
                     };

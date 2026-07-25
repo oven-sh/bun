@@ -2366,28 +2366,18 @@ pub mod __gated_printer {
             self.renamer.symbols().follow(ref_)
         }
 
-        /// Look up a symbol and return it detached from `&self` so the borrow
-        /// can be held across `&mut self` print calls.
         #[inline]
         fn get_symbol(&self, ref_: Ref) -> Option<&'a js_ast::Symbol> {
             let sym = self.renamer.symbols().get_const(ref_)?;
-            // SAFETY: `get_const` returns a `&Symbol` into the inner
-            // `Vec<Symbol>` heap buffer (via `Vec::as_ptr`), a separate
-            // allocation from the renamer struct whose inline `Map` header we
-            // reached it through. That buffer is never reallocated during the
-            // print pass (the only `symbols.get_mut` callers run before
-            // `Printer::init`), and `self.renamer: Renamer<'a, 'a>` borrows the
-            // owning renamer struct for `'a`, so the `Vec` it holds outlives
-            // `'a`. Detaching only this heap-backed reference leaves nothing
-            // pointing at the renamer's inline bytes, so later
-            // `&mut self.renamer` reborrows (`name_for_symbol`) do not alias it.
+            // SAFETY: `&Symbol` points into the `Vec<Symbol>` heap buffer, which
+            // is read-only during printing and outlives `'a` via `self.renamer`.
             Some(unsafe { &*std::ptr::from_ref(sym) })
         }
 
         #[inline]
         fn get_symbol_with_link(&self, ref_: Ref) -> Option<&'a js_ast::Symbol> {
             let sym = self.renamer.symbols().get_with_link_const(ref_)?;
-            // SAFETY: see `get_symbol` (`get_with_link_const` delegates to `get_const`).
+            // SAFETY: see `get_symbol`.
             Some(unsafe { &*std::ptr::from_ref(sym) })
         }
 

@@ -226,9 +226,11 @@ class InspectorCDPAdapter {
 
   // JSC's InjectedScript keeps one process-global objectGroup→ids map, so
   // prefix client-supplied group names per session and another client's
-  // releaseObjectGroup cannot name this session's handles.
-  #sessionObjectGroup(name: unknown): string {
-    return this.#objectGroupPrefix + (typeof name === "string" ? name : "");
+  // releaseObjectGroup cannot name this session's handles. An omitted group
+  // stays omitted so the handle is not bound to any releasable group, as in V8.
+  #sessionObjectGroup(name: unknown): string | undefined {
+    if (typeof name !== "string") return undefined;
+    return this.#objectGroupPrefix + name;
   }
 
   handleClientMessage(message: string): void {
@@ -655,10 +657,18 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.setAsyncCallStackDepth":
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         this.#sendToBackend("Debugger.setAsyncStackTraceDepth", { depth: params.maxDepth ?? 0 }, id, method);
         return;
 
       case "Debugger.setBreakpointByUrl": {
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         const { condition, urlRegex, url } = params;
         const options: AnyObject = {};
         if (condition) options.condition = condition;
@@ -687,6 +697,10 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.setBreakpoint": {
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         const { condition } = params;
         this.#sendToBackend(
           "Debugger.setBreakpoint",
@@ -702,6 +716,10 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.getPossibleBreakpoints": {
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         const start = params.start;
         let end = params.end;
         if (!end) {

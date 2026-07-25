@@ -417,9 +417,10 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure)
     return ptr;
 }
 
-GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId)
+GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, bool isNodeWorker)
 {
     GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, &globalObjectMethodTable());
+    ptr->m_isNodeWorker = isNodeWorker;
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -509,6 +510,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
+    bool isNodeWorker = worker_ptr && static_cast<WebCore::Worker*>(worker_ptr)->options().kind == WebCore::WorkerOptions::Kind::Node;
+
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {
             auto* structure = Zig::GlobalObject::createStructure(vm);
@@ -518,7 +521,8 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             return Zig::GlobalObject::create(
                 vm,
                 structure,
-                static_cast<ScriptExecutionContextIdentifier>(executionContextId));
+                static_cast<ScriptExecutionContextIdentifier>(executionContextId),
+                isNodeWorker);
         } else if (evalMode) {
             auto* structure = Zig::EvalGlobalObject::createStructure(vm);
             if (!structure) [[unlikely]] {
@@ -570,25 +574,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     if (executionContextId > -1) {
         const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
             auto& options = worker.options();
-
-            if (options.kind == WebCore::WorkerOptions::Kind::Node) {
-                // Node.js worker_threads do not expose Web Worker APIs on globalThis.
-                // node:worker_threads reaches the backing EventTarget through
-                // $newCppFunction instead (see fakeParentPort in worker_threads.ts).
-                static constexpr ASCIILiteral names[] = {
-                    "addEventListener"_s,
-                    "dispatchEvent"_s,
-                    "onerror"_s,
-                    "onmessage"_s,
-                    "postMessage"_s,
-                    "removeEventListener"_s,
-                    "self"_s,
-                };
-                for (auto name : names) {
-                    JSC::DeletePropertySlot slot;
-                    JSC::JSCell::deleteProperty(globalObject, globalObject, JSC::Identifier::fromString(vm, name), slot);
-                }
-            }
 
             if (options.env.has_value()) {
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
@@ -1205,6 +1190,43 @@ JSC_DEFINE_CUSTOM_SETTER(setGlobalOnError,
     vm.writeBarrier(thisObject, value);
     ensureStillAliveHere(value);
     return true;
+}
+
+// Host-function wrappers so node:worker_threads' fakeParentPort can reach the
+// globalEventScope attribute-listener slot without the onmessage/onerror
+// accessors being exposed on globalThis.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetGlobalOnMessage, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(eventHandlerAttribute(globalObject->eventTarget(), eventNames().messageEvent, globalObject->world()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetGlobalOnMessage, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue value = callFrame->argument(0);
+    setEventHandlerAttribute<JSEventListener>(globalObject->eventTarget(), eventNames().messageEvent, value, *globalObject);
+    vm.writeBarrier(globalObject, value);
+    ensureStillAliveHere(value);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionGetGlobalOnMessageError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(eventHandlerAttribute(globalObject->eventTarget(), eventNames().messageerrorEvent, globalObject->world()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetGlobalOnMessageError, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue value = callFrame->argument(0);
+    setEventHandlerAttribute<JSEventListener>(globalObject->eventTarget(), eventNames().messageerrorEvent, value, *globalObject);
+    vm.writeBarrier(globalObject, value);
+    ensureStillAliveHere(value);
+    return JSValue::encode(jsUndefined());
 }
 
 WebCore::EventTarget& GlobalObject::eventTarget()
@@ -3191,20 +3213,30 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
-    putDirectAccessor(
-        this,
-        builtinNames.selfPublicName(),
-        JSC::GetterSetter::create(
-            vm,
+    // Web Worker-style globals. Node.js worker_threads workers don't expose
+    // these on globalThis; node:worker_threads reaches the backing
+    // globalEventScope via $newCppFunction instead (see fakeParentPort).
+    if (!m_isNodeWorker) {
+        // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
+        putDirectAccessor(
             this,
-            JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
-            JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
-        PropertyAttribute::Accessor | 0);
+            builtinNames.selfPublicName(),
+            JSC::GetterSetter::create(
+                vm,
+                this,
+                JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
+                JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
+            PropertyAttribute::Accessor | 0);
 
-    // TODO: this should be usable on the lookup table. it crashed las time i tried it
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
-    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+        // TODO: this should be usable on the lookup table. it crashed las time i tried it
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
+        putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
+
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "addEventListener"_s), 2, jsFunctionAddEventListener, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "removeEventListener"_s), 2, jsFunctionRemoveEventListener, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "dispatchEvent"_s), 1, jsFunctionDispatchEvent, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "postMessage"_s), 1, WebCore::jsFunctionPostMessage, ImplementationVisibility::Public, NoIntrinsic, 0);
+    }
 
     // ----- Extensions to Built-in objects -----
 

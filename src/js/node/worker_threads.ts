@@ -763,28 +763,14 @@ function fakeParentPort() {
 
   const fake = Object.create(MessagePort.prototype);
 
-  let onmessage: unknown = null;
   Object.defineProperty(fake, "onmessage", {
-    get() {
-      return onmessage;
-    },
-    set(value) {
-      if (onmessage) removeEventListener.$call(undefined, "message", onmessage);
-      onmessage = typeof value === "function" ? value : null;
-      if (onmessage) addEventListener.$call(undefined, "message", onmessage);
-    },
+    get: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionGetGlobalOnMessage", 0),
+    set: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionSetGlobalOnMessage", 1),
   });
 
-  let onmessageerror: unknown = null;
   Object.defineProperty(fake, "onmessageerror", {
-    get() {
-      return onmessageerror;
-    },
-    set(value) {
-      if (onmessageerror) removeEventListener.$call(undefined, "messageerror", onmessageerror);
-      onmessageerror = typeof value === "function" ? value : null;
-      if (onmessageerror) addEventListener.$call(undefined, "messageerror", onmessageerror);
-    },
+    get: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionGetGlobalOnMessageError", 0),
+    set: $newCppFunction("ZigGlobalObject.cpp", "jsFunctionSetGlobalOnMessageError", 1),
   });
 
   Object.defineProperty(fake, "postMessage", {

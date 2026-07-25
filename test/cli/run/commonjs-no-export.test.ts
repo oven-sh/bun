@@ -36,21 +36,25 @@ describe.concurrent("commonjs-no-export", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("top-level return does not flip an .mjs file to CommonJS", async () => {
-    using dir = tempDir("cjs-top-level-return-mjs", {
-      "entry.mjs": `return 1;\n`,
+  for (const [label, source] of [
+    [".mjs", { "entry.mjs": `return 1;\n` }],
+    ["import statement", { "entry.js": `import "node:os";\nreturn 1;\n` }],
+    ["import.meta", { "entry.js": `void import.meta;\nreturn 1;\n` }],
+  ] as const) {
+    test(`top-level return does not flip a file with ${label} to CommonJS`, async () => {
+      using dir = tempDir("cjs-top-level-return-esm", source);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", join(String(dir), Object.keys(source)[0])],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain("Return statements are only valid inside functions");
+      expect(stdout).toBe("");
+      expect(exitCode).not.toBe(0);
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", join(String(dir), "entry.mjs")],
-      env: bunEnv,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("Return statements are only valid inside functions");
-    expect(stdout).toBe("");
-    expect(exitCode).not.toBe(0);
-  });
+  }
 
   test("top-level return switches a required module to CommonJS", async () => {
     using dir = tempDir("cjs-top-level-return-require", {

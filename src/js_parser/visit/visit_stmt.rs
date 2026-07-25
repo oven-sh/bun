@@ -1533,7 +1533,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
-            if !p.is_file_considered_to_have_esm_exports {
+            if !p.is_file_considered_to_have_esm_exports
+                && p.esm_import_keyword.len == 0
+                && !p.has_import_meta
+            {
                 p.has_top_level_return = true;
             }
 

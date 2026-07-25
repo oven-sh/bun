@@ -1864,7 +1864,7 @@ bool isAsymmetricMatcher(JSValue v)
 // any asymmetric matchers from `matchers` substituted in place of the matching
 // `value` properties. If no substitutions are needed the original `value` is
 // returned unchanged (no allocation). Cycles in `value` short-circuit by
-// returning the original reference at the cycle point.
+// returning the clone (or original) for the ancestor.
 //
 // Used by snapshot serialization so property matchers like `expect.any(Date)`
 // show up as `Any<Date>` in the saved snapshot without mutating the user's
@@ -1875,7 +1875,7 @@ JSValue substituteAsymmetricMatchersImpl(
     ThrowScope& throwScope,
     JSValue value,
     JSValue matchers,
-    std::set<EncodedJSValue>& seen,
+    std::unordered_map<EncodedJSValue, JSObject*>& ancestors,
     MarkedArgumentBuffer& gcBuffer)
 {
     if (isAsymmetricMatcher(matchers)) {
@@ -1885,12 +1885,27 @@ JSValue substituteAsymmetricMatchersImpl(
         return value;
     }
 
-    auto inserted = seen.insert(JSValue::encode(value));
-    if (!inserted.second) return value;
+    auto [entry, inserted] = ancestors.emplace(JSValue::encode(value), nullptr);
+    if (!inserted) {
+        JSObject* ancestorClone = entry->second;
+        return ancestorClone ? JSValue(ancestorClone) : value;
+    }
 
     auto& vm = globalObject->vm();
     JSObject* valueObj = value.getObject();
     JSObject* matchersObj = matchers.getObject();
+
+    bool valueIsArray = isArray(globalObject, value);
+    RETURN_IF_EXCEPTION(throwScope, value);
+    // The snapshot formatter dispatches on the cell's JSType. A JSFinalObject
+    // clone cannot stand in for ErrorInstance/JSDate/RegExpObject/JSMap/etc.,
+    // whose snapshot rendering does not enumerate own properties anyway, so
+    // the substituted matcher was never visible in the snapshot for those
+    // types under the old in-place mutation either.
+    if (!valueIsArray && valueObj->type() != JSC::FinalObjectType && valueObj->type() != JSC::ObjectType) {
+        ancestors.erase(JSValue::encode(value));
+        return value;
+    }
 
     PropertyNameArrayBuilder matcherProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     matchersObj->getPropertyNames(globalObject, matcherProps, DontEnumPropertiesMode::Exclude);
@@ -1899,8 +1914,6 @@ JSValue substituteAsymmetricMatchersImpl(
     JSObject* cloned = nullptr;
     auto ensureCloned = [&]() -> bool {
         if (cloned) return true;
-        bool valueIsArray = isArray(globalObject, value);
-        if (throwScope.exception()) return false;
         if (valueIsArray) {
             unsigned len = valueObj->getArrayLength();
             cloned = JSC::constructEmptyArray(globalObject, nullptr, len);
@@ -1914,9 +1927,12 @@ JSValue substituteAsymmetricMatchersImpl(
         }
         if (throwScope.exception()) return false;
         gcBuffer.append(cloned);
+        ancestors[JSValue::encode(value)] = cloned;
         // Copy own properties (including non-enumerable) so the snapshot sees
         // the same property set that `forEachPropertyOrdered` would on the
-        // original; substitutions below overwrite individual entries.
+        // original; substitutions below overwrite individual entries. Rewrite
+        // back-references to cloned ancestors so [Circular] detection in the
+        // formatter still fires at the same nesting level as on the original.
         PropertyNameArrayBuilder valueProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
         valueObj->methodTable()->getOwnPropertyNames(valueObj, globalObject, valueProps, DontEnumPropertiesMode::Include);
         if (throwScope.exception()) return false;
@@ -1924,6 +1940,10 @@ JSValue substituteAsymmetricMatchersImpl(
             JSValue v = valueObj->getIfPropertyExists(globalObject, p);
             if (throwScope.exception()) return false;
             if (v.isEmpty()) continue;
+            if (v.isCell()) {
+                auto found = ancestors.find(JSValue::encode(v));
+                if (found != ancestors.end() && found->second) v = JSValue(found->second);
+            }
             cloned->putDirectMayBeIndex(globalObject, p, v);
             if (throwScope.exception()) return false;
         }
@@ -1941,7 +1961,7 @@ JSValue substituteAsymmetricMatchersImpl(
         gcBuffer.append(valueProp);
         gcBuffer.append(matcherProp);
 
-        JSValue substituted = substituteAsymmetricMatchersImpl(globalObject, throwScope, valueProp, matcherProp, seen, gcBuffer);
+        JSValue substituted = substituteAsymmetricMatchersImpl(globalObject, throwScope, valueProp, matcherProp, ancestors, gcBuffer);
         RETURN_IF_EXCEPTION(throwScope, value);
 
         if (substituted == valueProp) continue;
@@ -1952,7 +1972,7 @@ JSValue substituteAsymmetricMatchersImpl(
         RETURN_IF_EXCEPTION(throwScope, value);
     }
 
-    seen.erase(JSValue::encode(value));
+    ancestors.erase(JSValue::encode(value));
     return cloned ? JSValue(cloned) : value;
 }
 }
@@ -2997,9 +3017,9 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__substituteAsymmetricMatchers(JSC::E
     JSValue matchers = JSValue::decode(matchersEncoded);
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    std::set<EncodedJSValue> seen;
+    std::unordered_map<EncodedJSValue, JSObject*> ancestors;
     MarkedArgumentBuffer gcBuffer;
-    JSValue result = substituteAsymmetricMatchersImpl(globalObject, scope, value, matchers, seen, gcBuffer);
+    JSValue result = substituteAsymmetricMatchersImpl(globalObject, scope, value, matchers, ancestors, gcBuffer);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(result);
 }

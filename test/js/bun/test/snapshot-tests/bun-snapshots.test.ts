@@ -53,6 +53,17 @@ test("property matchers preserve class name and handle shared references", () =>
   expect(dag.a).toBe(shared);
   expect(dag.b).toBe(shared);
   expect(shared.x).toBe(1);
+
+  const cyclic: any = { id: 1 };
+  cyclic.self = cyclic;
+  expect(cyclic).toMatchSnapshot({ id: expect.any(Number) });
+  expect(cyclic.id).toBe(1);
+  expect(cyclic.self).toBe(cyclic);
+
+  const err: any = new Error("boom");
+  err.code = "E_FOO";
+  expect(err).toMatchSnapshot({ code: expect.any(String) });
+  expect(err.code).toBe("E_FOO");
 });
 
 describe("toMatchSnapshot errors", () => {

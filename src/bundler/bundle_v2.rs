@@ -1764,19 +1764,24 @@ pub mod bv2_impl {
                             while let Some(redirect_id) =
                                 get_redirect_id(self.redirects[other_source.get() as usize])
                             {
-                                let (other_src_idx, other_path) = {
+                                let (other_src_idx, other_path, other_loader) = {
                                     let other_import_records = self.all_import_records
                                         [other_source.get() as usize]
                                         .as_slice();
                                     let other_import_record =
                                         &other_import_records[redirect_id as usize];
-                                    (other_import_record.source_index, other_import_record.path)
+                                    (
+                                        other_import_record.source_index,
+                                        other_import_record.path,
+                                        other_import_record.loader,
+                                    )
                                 };
                                 let import_record = &mut self.all_import_records
                                     [import_record_list_id.get() as usize]
                                     .as_mut_slice()[ir_idx];
                                 import_record.source_index = other_src_idx;
                                 import_record.path = other_path;
+                                import_record.loader = other_loader;
                                 other_source = other_src_idx;
                                 if redirect_count == Self::MAX_REDIRECTS {
                                     import_record.path.is_disabled = true;

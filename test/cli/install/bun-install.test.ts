@@ -6821,9 +6821,7 @@ describe.concurrent("bun-install", () => {
       // the note should mention --production, not just --frozen-lockfile
       const err = await stderr.text();
       expect(err).toContain("error: lockfile had changes, but lockfile is frozen");
-      expect(err).toContain(
-        "try re-running without --frozen-lockfile or --production and commit the updated lockfile",
-      );
+      expect(err).toContain("try re-running without --frozen-lockfile or --production and commit the updated lockfile");
       expect(await exited).toBe(1);
     });
   });

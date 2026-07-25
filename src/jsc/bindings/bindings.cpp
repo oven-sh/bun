@@ -2369,6 +2369,23 @@ JSC::EncodedJSValue SystemError__toErrorInstance(const SystemError* arg0, JSC::J
 
     JSC::JSObject* result = createError(globalObject, ErrorType::Error, message);
 
+    // When this is called from the top of the event loop (async fs / dns / socket
+    // threadpool callbacks) there are no JS frames on the stack, so createError()
+    // captures an empty stack trace. ErrorInstance::materializeErrorInfoIfNeeded
+    // then never installs a .stack property for an empty trace, leaving
+    // err.stack === undefined where Node.js always returns at least
+    // "Error: <message>". Install the lazy stack getter in that case; it formats
+    // whatever stackTrace() holds at access time (header-only, or the async frames
+    // later attached by Bun__attachAsyncStackFromPromise) and honors
+    // Error.prepareStackTrace.
+    if (auto* instance = dynamicDowncast<JSC::ErrorInstance>(result)) {
+        auto* trace = instance->stackTrace();
+        if (!trace || trace->isEmpty()) {
+            auto* zigGlobal = defaultGlobalObject(globalObject);
+            instance->putDirectCustomAccessor(vm, vm.propertyNames->stack, zigGlobal->m_lazyStackCustomGetterSetter.get(zigGlobal), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::CustomAccessor | 0);
+        }
+    }
+
     auto clientData = WebCore::clientData(vm);
 
     if (err.code.tag != BunStringTag::Empty) {

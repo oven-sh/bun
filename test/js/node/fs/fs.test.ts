@@ -5799,3 +5799,83 @@ describe("fs.close on stdio descriptors", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("async fs errors have a .stack string", () => {
+  const nope = path.join(tmpdir(), "__bun_fs_stack_nope", "deep", "f");
+  const header = /^Error: ENOENT: no such file or directory/;
+
+  it.each([
+    ["open", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.open(nope, "r", cb)],
+    ["readFile", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.readFile(nope, cb)],
+    ["stat", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.stat(nope, cb)],
+    ["readdir", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.readdir(nope, cb)],
+    ["unlink", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.unlink(nope, cb)],
+    ["mkdir", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.mkdir(nope, cb)],
+    ["rm", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.rm(nope, cb)],
+    ["copyFile", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.copyFile(nope, nope + "2", cb)],
+    ["rename", (cb: (e: NodeJS.ErrnoException | null) => void) => fs.rename(nope, nope + "2", cb)],
+  ] as const)("fs.%s (callback)", async (_name, call) => {
+    const err = await new Promise<NodeJS.ErrnoException>(resolve => call(e => resolve(e!)));
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ENOENT");
+    expect(typeof err.stack).toBe("string");
+    expect(err.stack).toMatch(header);
+  });
+
+  it.each(["readFile", "stat", "readdir", "unlink", "mkdir", "rm"] as const)("fs.promises.%s", async name => {
+    let err: any;
+    try {
+      await (fs.promises as any)[name](nope);
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ENOENT");
+    expect(typeof err.stack).toBe("string");
+    expect(err.stack).toMatch(header);
+  });
+
+  it("fs.promises via .then() (no await chain)", async () => {
+    const err = await new Promise<any>(resolve => {
+      fs.promises.readFile(nope).then(
+        () => resolve(undefined),
+        e => resolve(e),
+      );
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(typeof err.stack).toBe("string");
+    expect(err.stack).toMatch(header);
+  });
+
+  it("createReadStream 'error' event", async () => {
+    const err = await new Promise<any>(resolve => {
+      const s = fs.createReadStream(nope);
+      s.on("error", resolve);
+    });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ENOENT");
+    expect(typeof err.stack).toBe("string");
+    expect(err.stack).toMatch(header);
+  });
+
+  it("honors Error.prepareStackTrace for empty-trace errors", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          Error.prepareStackTrace = (err, frames) => "prep:" + frames.length + ":" + err.message;
+          require("node:fs").readFile(${JSON.stringify(nope)}, e => {
+            console.log(typeof e.stack === "string" && e.stack.startsWith("prep:") ? "ok" : "bad:" + e.stack);
+          });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ok");
+    expect(exitCode).toBe(0);
+  });
+});

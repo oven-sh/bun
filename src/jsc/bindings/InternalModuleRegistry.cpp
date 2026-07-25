@@ -11,6 +11,7 @@
 
 #include "InternalModuleRegistryConstants.h"
 #include "InternalBuiltinBytecode.h"
+#include <zstd.h>
 #include "wtf/Forward.h"
 
 #include "NativeModuleImpl.h"
@@ -122,13 +123,21 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, c
 #else
 
 // The module sources are linked as one read-only blob (bun_internal_modules_data,
-// see the generated InternalModuleRegistryConstants.S); each module is a span at
-// a known offset/length. createWithoutCopying is the same path the old
-// ASCIILiteral → String conversion took.
-#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                         \
-    return generateModule(globalObject, vm,                                                                                        \
-        WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
-        moduleId, urlString, static_cast<unsigned>(id))
+// see the generated InternalModuleRegistryConstants.S); each module is an
+// independent zstd frame at a known offset, inflated on first use.
+WTF::String inflateInternalModuleSource(unsigned moduleIndex)
+{
+    auto& span = InternalModuleRegistryConstants::kInternalModuleSpans[moduleIndex];
+    if (!span.compressedLength)
+        return WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + span.offset, span.length)));
+    std::span<Latin1Character> buffer;
+    auto string = WTF::StringImpl::createUninitialized(span.length, buffer);
+    size_t written = ZSTD_decompress(buffer.data(), span.length, bun_internal_modules_data + span.offset, span.compressedLength);
+    RELEASE_ASSERT(written == span.length);
+    return string;
+}
+#define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString) \
+    return generateModule(globalObject, vm, inflateInternalModuleSource(static_cast<unsigned>(id)), moduleId, urlString, static_cast<unsigned>(id))
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };

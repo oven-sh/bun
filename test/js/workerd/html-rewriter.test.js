@@ -95,17 +95,15 @@ describe("HTMLRewriter", () => {
   describe.concurrent("handler errors propagate to the caller and not to unhandledRejection", () => {
     const handlers = {
       "sync throw": `element() { throw new Zed("boom"); }`,
+      "return Error from sync handler": `element() { return new Zed("boom"); }`,
       "async throw before first await": `async element() { throw new Zed("boom"); }`,
       "Promise.reject from sync handler": `element() { return Promise.reject(new Zed("boom")); }`,
       "async throw after await": `async element() { await 1; throw new Zed("boom"); }`,
     };
     const bodies = {
-      // is_async == false in on_finished_buffering: the body is available
-      // synchronously, so the capture scope set up by init() is still live.
+      // is_async == false in on_finished_buffering (init() still on the stack).
       "string body": `new Response("<p>1</p>")`,
-      // is_async == true: init() has returned before the handler runs, so
-      // run_output_sink must install its own capture scope for the handler's
-      // error to reach the caller.
+      // is_async == true (init() has already returned when the handler runs).
       "Bun.file body": `new Response(Bun.file("async.html"))`,
     };
     const run = async (handler, body, withListener) => {

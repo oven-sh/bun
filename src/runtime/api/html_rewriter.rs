@@ -1259,6 +1259,7 @@ where
         // coverage (Exception cells / `Symbol.error` vs cross-realm
         // AggregateError).
         if result.is_error() || result.is_aggregate_error(global) {
+            capture_handler_error(vm(), result);
             return true;
         }
 

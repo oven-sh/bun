@@ -991,15 +991,12 @@ fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
 }
 
-/// Safety margin subtracted from the server's `Keep-Alive: timeout=N` hint so
-/// the pool drops an idle connection before the server does. Matches Node's
-/// `http.Agent` `agentKeepAliveTimeoutBuffer` default.
+/// Margin subtracted from the server's `Keep-Alive: timeout=N` hint; matches
+/// Node's `agentKeepAliveTimeoutBuffer` default.
 pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 1;
 
-/// Parse the `timeout` parameter from a `Keep-Alive` header value
-/// (`timeout=5, max=100`). Parameter name is case-insensitive; a leading
-/// `max=` (Apache's ordering) is accepted. Returns `None` when no `timeout=`
-/// parameter is present or its value is not a non-negative integer.
+/// `timeout=` parameter from a `Keep-Alive` header value such as
+/// `timeout=5, max=100`. Case-insensitive, any parameter order.
 pub(crate) fn parse_keepalive_timeout(value: &[u8]) -> Option<u32> {
     for param in value.split(|&b| b == b',') {
         let param = param.trim_ascii();
@@ -4917,11 +4914,6 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Keep-Alive") => {
-                    // RFC 9112 Appendix A.1.2: `timeout=N` advertises how long
-                    // the server will keep an idle connection open. Honoring it
-                    // lets the pool drop the socket before the server does,
-                    // avoiding the ECONNRESET race on a request dispatched at
-                    // the server's expiry. Matches undici / Node's http.Agent.
                     if let Some(secs) = parse_keepalive_timeout(header.value()) {
                         self.state.keepalive_timeout_seconds = Some(secs);
                     }

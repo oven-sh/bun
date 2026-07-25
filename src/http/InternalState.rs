@@ -31,10 +31,8 @@ pub struct InternalState<'a> {
     pub body_out_str: Option<NonNull<MutableString>>,
     pub compressed_body: MutableString,
     pub content_length: Option<usize>,
-    /// The `timeout=N` parameter from the response's `Keep-Alive` header, in
-    /// seconds. `None` when the header is absent or carries no `timeout`
-    /// parameter. Consumed by the keep-alive pool on release so the pooled
-    /// socket is dropped before the server closes its side.
+    /// `timeout=N` from the response's `Keep-Alive` header; bounds the pooled
+    /// socket's idle lifetime on release.
     pub keepalive_timeout_seconds: Option<u32>,
     pub total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the

@@ -181,11 +181,8 @@ pub struct PooledSocket<const SSL: bool> {
     /// HTTP/2 connection state (HPACK tables, server SETTINGS) when
     /// this socket negotiated "h2". Owned by the pool while parked.
     pub h2_session: Option<NonNull<h2::ClientSession>>,
-    /// HTTP-thread monotonic timestamp (ns since `http_thread().timer`) after
-    /// which this parked socket must not be handed out. Derived from the
-    /// server's `Keep-Alive: timeout=N` hint minus
-    /// [`crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS`]. `0` means no server hint
-    /// was received and only the fixed 5-minute idle timer applies.
+    /// Reuse deadline from `Keep-Alive: timeout=N` (ns since
+    /// `http_thread().timer`); `0` = no server hint.
     pub idle_deadline_ns: u64,
 }
 
@@ -593,11 +590,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         debug_assert!(!hostname.is_empty());
         debug_assert!(port > 0);
 
-        // Server's `Keep-Alive: timeout=N` → drop the connection before the
-        // server does. Subtract a 1 s safety margin (Node's
-        // `agentKeepAliveTimeoutBuffer` default); if that leaves 0, the
-        // server's idle window is too short to safely reuse at all, so close
-        // instead of pooling. Matches undici / Node's http.Agent.
+        // `Keep-Alive: timeout=N` minus a 1 s margin; 0 ⇒ too short to
+        // safely reuse, close instead of pooling (matches Node's http.Agent).
         let idle_seconds = keepalive_hint_seconds
             .map(|n| n.saturating_sub(crate::KEEPALIVE_TIMEOUT_BUFFER_SECONDS));
         let reusable = hostname.len() <= MAX_KEEPALIVE_HOSTNAME
@@ -624,10 +618,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ActiveSocket::<SSL>::init(pending_addr.as_ptr().cast_const()),
                 );
                 socket.flush();
-                // With a server hint, arm the short-tick timer for
-                // `hint - 1 s` and also record an absolute deadline so
-                // `existing_socket` can refuse reuse even if the timer tick
-                // hasn't fired yet. Cap the hint at the fixed 5-minute ceiling.
                 let idle_deadline_ns = match idle_seconds {
                     Some(secs) => {
                         let secs = secs.min(5 * 60);
@@ -818,9 +808,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     continue;
                 }
 
-                // A socket parked with a server `Keep-Alive: timeout=N` hint
-                // that has since elapsed is about to be (or already is) closed
-                // by the peer; dispatching onto it races the server's FIN.
+                // Past the server's advertised `Keep-Alive: timeout=N` ⇒ the
+                // peer is about to (or already did) close it; don't dispatch.
                 if socket.idle_deadline_ns != 0 && now_ns >= socket.idle_deadline_ns {
                     Self::close_socket(http_socket);
                     continue;

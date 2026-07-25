@@ -171,6 +171,30 @@ describe.if(!isWindows)("uv stubs", () => {
     await runUvAsync(true, true);
   });
 
+  test.concurrent("uv_async: close with a send already queued skips async_cb", async () => {
+    const addon = path.join(tempdir, "./build/Release/uv_test.node");
+    const script = `
+      const addon = require(${JSON.stringify(addon)});
+      const sync = addon.testUvAsyncClosePending(result => {
+        console.log(JSON.stringify({ sync, result }));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const out = JSON.parse(stdout.trim());
+    expect(out).toEqual({
+      sync: { firedSynchronously: 0, isClosingAfterClose: 1 },
+      result: { asyncFired: 0, closed: 1, isClosingInCloseCb: 1 },
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("uv_async: ref'd handle keeps the process alive until unref", async () => {
     const addon = path.join(tempdir, "./build/Release/uv_test.node");
     // The timer is unref'd so the uv_async handle is the only thing keeping

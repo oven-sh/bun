@@ -267,6 +267,43 @@ static napi_value test_uv_async(napi_env env, napi_callback_info info) {
   return ret;
 }
 
+static void async_test_on_async_must_not_run(uv_async_t *async) {
+  struct async_test_state *state = (struct async_test_state *)async->data;
+  state->async_fired += 1;
+}
+
+// uv_async_send then uv_close on the same tick, before dispatch runs: close
+// must take the "send already queued" path and async_cb must not fire.
+static napi_value test_uv_async_close_pending(napi_env env,
+                                              napi_callback_info info) {
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+
+  struct async_test_state *state = calloc(1, sizeof(*state));
+  state->env = env;
+  napi_create_reference(env, argv[0], 1, &state->cb_ref);
+
+  uv_loop_t *loop;
+  napi_get_uv_event_loop(env, &loop);
+  uv_async_init(loop, &state->async, async_test_on_async_must_not_run);
+  state->async.data = state;
+
+  napi_value ret;
+  napi_create_object(env, &ret);
+  napi_create_reference(env, ret, 1, &state->holder_ref);
+
+  uv_async_send(&state->async);
+  uv_close((uv_handle_t *)&state->async, async_test_on_close);
+
+  napi_value v;
+  napi_create_int32(env, state->async_fired, &v);
+  napi_set_named_property(env, ret, "firedSynchronously", v);
+  napi_create_int32(env, uv_is_closing((uv_handle_t *)&state->async), &v);
+  napi_set_named_property(env, ret, "isClosingAfterClose", v);
+  return ret;
+}
+
 // Handle kept ref'd with no send: process must stay alive until unref.
 static uv_async_t keepalive_async;
 static napi_value test_uv_async_keepalive_init(napi_env env,
@@ -310,6 +347,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_uv_async, NULL, &fn);
   napi_set_named_property(env, exports, "testUvAsync", fn);
+
+  napi_create_function(env, NULL, 0, test_uv_async_close_pending, NULL, &fn);
+  napi_set_named_property(env, exports, "testUvAsyncClosePending", fn);
 
   napi_create_function(env, NULL, 0, test_uv_async_keepalive_init, NULL, &fn);
   napi_set_named_property(env, exports, "testUvAsyncKeepaliveInit", fn);

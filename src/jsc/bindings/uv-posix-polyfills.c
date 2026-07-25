@@ -2,6 +2,7 @@
 
 #if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 
+#include <assert.h>
 #include <pthread.h>
 #include <sched.h>
 #include <unistd.h>
@@ -235,6 +236,8 @@ UV_EXTERN void uv_unref(uv_handle_t* handle)
 
 UV_EXTERN int uv_async_init(uv_loop_t* loop, uv_async_t* handle, uv_async_cb async_cb)
 {
+    if (loop == NULL)
+        return UV_EINVAL;
     handle->loop = loop;
     handle->type = UV_ASYNC;
     handle->close_cb = NULL;
@@ -310,9 +313,12 @@ UV_EXTERN void uv_close(uv_handle_t* handle, uv_close_cb close_cb)
     if (!bun__is_supported_handle(handle)) {
         __bun_throw_not_implemented("uv_close");
     }
-    handle->close_cb = close_cb;
-    if (handle->flags & BUN_UV_HANDLE_CLOSING)
+    // libuv: assert(!uv__is_closing(handle)) before any field write.
+    if (handle->flags & (BUN_UV_HANDLE_CLOSING | BUN_UV_HANDLE_CLOSED)) {
+        assert(0);
         return;
+    }
+    handle->close_cb = close_cb;
     // A closing handle keeps the loop alive until close_cb runs (libuv's
     // closing_handles list). If the handle was unref'd, take a ref back for
     // the duration of the deferred close; Bun__uv_handle_dispatch drops it.

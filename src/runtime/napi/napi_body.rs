@@ -3581,6 +3581,13 @@ mod posix_platform_specific_v8_apis {
 // these shims provide the two things it cannot do from C: schedule a callback
 // onto Bun's event loop, and adjust the loop's keep-alive refcount. On Windows
 // Bun links real libuv and none of this is used.
+//
+// Worker teardown: a `uv_async_t` initialised in a Worker stores that Worker's
+// `*mut EventLoop` in `handle->loop`. Unlike `ThreadSafeFunction` there is no
+// env-teardown hook yet to null it when the Worker terminates (#18546), so an
+// addon thread that keeps calling `uv_async_send` past `Worker::terminate()`
+// without the usual `uv_close` + join in a cleanup hook can reach a freed loop.
+// Handles on the main thread's loop are unaffected.
 
 #[cfg(unix)]
 mod uv_async_posix {
@@ -3645,11 +3652,14 @@ mod uv_async_posix {
     /// POSIX `uv_default_loop`: the main-thread VM's event loop, which is the
     /// same pointer `napi_get_uv_event_loop` returns on the main thread.
     /// Addons that call `uv_default_loop()` are assuming Node's model where
-    /// that loop is the one JS runs on.
+    /// that loop is the one JS runs on. Fall back to this thread's VM when
+    /// there is no main-thread VM yet (the `bun build` macro VM is created
+    /// with `is_main_thread: false`).
     #[unsafe(no_mangle)]
     pub(super) extern "C" fn Bun__uv_default_loop() -> *mut EventLoop {
-        match VirtualMachine::get_main_thread_vm() {
-            // SAFETY: `get_main_thread_vm` returns the live main-thread
+        let vm = VirtualMachine::get_main_thread_vm().or_else(VirtualMachine::get_or_null);
+        match vm {
+            // SAFETY: both accessors return a live per-thread or process
             // singleton; `event_loop()` is a raw self-pointer into it.
             Some(vm) => unsafe { &*vm }.event_loop(),
             None => core::ptr::null_mut(),

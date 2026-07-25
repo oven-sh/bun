@@ -3885,6 +3885,24 @@ JSC_DEFINE_HOST_FUNCTION(Process_unref, (JSGlobalObject * globalObject, CallFram
 
 extern "C" void Debugger__debugEnd();
 
+// process._debugProcess(pid): ask another process to start its inspector.
+// Node's POSIX implementation is kill(pid, SIGUSR1) with an errno exception on
+// failure (node_process_methods.cc DebugProcess); the Windows variant injects
+// a thread through a named mapping and stays a stub here.
+JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+#if !OS(WINDOWS)
+    int pid = callFrame->argument(0).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (kill(pid, SIGUSR1) != 0) {
+        throwSystemError(scope, globalObject, "kill"_s, errno);
+        return {};
+    }
+#endif
+    return JSValue::encode(jsUndefined());
+}
+
 // process._debugEnd(): Node stops this agent's IO thread here, which also
 // means exit no longer waits for an attached frontend. Bun implements the
 // second half only; the listener and any live session stay up.
@@ -4482,7 +4500,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
 /* Source for Process.lut.h
 @begin processObjectTable
   _debugEnd                        Process_functionDebugEnd                            Function 0
-  _debugProcess                    Process_stubEmptyFunction                           Function 0
+  _debugProcess                    Process_functionDebugProcess                        Function 1
   _eval                            processGetEval                                      CustomAccessor
   _fatalException                  Process_stubEmptyFunction                           Function 1
   _getActiveHandles                Process_stubFunctionReturningArray                  Function 0

@@ -62,6 +62,17 @@ process.env.FOO = "hello";
 
 ---
 
+## `.env` files and `package.json` scripts
+
+When you run a `package.json` script with `bun run <script>`, Bun loads `.env` and `.env.local` and exports their values to the script's subprocess. It does **not** export values that exist only in `.env.development`, `.env.production`, or `.env.test` (or their `.local` variants), because a script may set its own `NODE_ENV` and needs to re-derive those itself:
+
+```json package.json icon="file-json"
+"scripts": {
+  "dev": "vite",                               // sees .env and .env.local
+  "start": "NODE_ENV=production bun server.ts" // bun re-reads .env.production here
+}
+```
+
 ## Manually specifying `.env` files
 
 The `--env-file` flag overrides which `.env` files Bun loads. It works both when running a file with `bun` and when running `package.json` scripts.

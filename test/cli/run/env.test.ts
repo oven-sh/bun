@@ -830,7 +830,7 @@ for (const shell of ["system", "bun"]) {
     : "echo ENV_FILE_NAME=$ENV_FILE_NAME, NODE_ENV=$NODE_ENV";
 
   describe(`script runner with ${shell} shell`, () => {
-    test("does not pass variables from .env files into scripts", () => {
+    test(".env file values do not override process env", () => {
       const tmp = tempDirWithFiles("script-runner-env", {
         "package.json": '{"scripts":{"show-env":"' + show_env_script + '"}}',
 
@@ -842,6 +842,55 @@ for (const shell of ["system", "bun"]) {
 
       expect(bunRunAsScript(tmp, "show-env", { ...env }, ["--shell=" + shell]).stdout).toBe(
         "ENV_FILE_NAME=N/A, NODE_ENV=" + (isWindowsCMD ? "%NODE_ENV%" : ""),
+      );
+    });
+
+    // https://github.com/oven-sh/bun/issues/9877: running a package.json script
+    // whose body spawns a non-bun tool (vite, node, cypress, psql, ...) should
+    // see values from `.env` and `.env.local`. Values that exist only in a
+    // NODE_ENV-specific file are withheld so a script that assigns its own
+    // NODE_ENV can re-derive them (the e2e tests below cover that).
+    const show_dotenv_script = isWindowsCMD
+      ? "echo A=%BUNTEST_DOTENV_A%, B=%BUNTEST_DOTENV_B%, C=%BUNTEST_DOTENV_C%, D=%BUNTEST_DOTENV_D%"
+      : "echo A=$BUNTEST_DOTENV_A, B=$BUNTEST_DOTENV_B, C=$BUNTEST_DOTENV_C, D=$BUNTEST_DOTENV_D";
+
+    test("passes .env and .env.local values into scripts", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=from-env\nBUNTEST_DOTENV_B=from-env",
+        ".env.local": "BUNTEST_DOTENV_B=from-local",
+      });
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
+        `A=from-env, B=from-local, C=${unset[0]}, D=${unset[1]}`,
+      );
+    });
+
+    test("withholds .env.{NODE_ENV} values from scripts", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=from-env",
+        ".env.local": "BUNTEST_DOTENV_B=from-local",
+        ".env.development": "BUNTEST_DOTENV_C=from-dev",
+        ".env.development.local": "BUNTEST_DOTENV_D=from-dev-local",
+      });
+      const unset = isWindowsCMD ? ["%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"] : ["", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--shell=" + shell]).stdout).toBe(
+        `A=from-env, B=from-local, C=${unset[0]}, D=${unset[1]}`,
+      );
+    });
+
+    test("--no-env-file disables .env loading for scripts", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
+        ".env": "BUNTEST_DOTENV_A=from-env",
+        ".env.local": "BUNTEST_DOTENV_B=from-local",
+      });
+      const unset = isWindowsCMD
+        ? ["%BUNTEST_DOTENV_A%", "%BUNTEST_DOTENV_B%", "%BUNTEST_DOTENV_C%", "%BUNTEST_DOTENV_D%"]
+        : ["", "", "", ""];
+      expect(bunRunAsScript(tmp, "show-env", {}, ["--no-env-file", "--shell=" + shell]).stdout).toBe(
+        `A=${unset[0]}, B=${unset[1]}, C=${unset[2]}, D=${unset[3]}`,
       );
     });
 

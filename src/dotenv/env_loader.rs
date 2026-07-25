@@ -449,6 +449,7 @@ impl Loader {
                 *cxx_gop.key_ptr = Box::<[u8]>::from(&**cxx_gop.key_ptr);
                 *cxx_gop.value_ptr = HashTableValue {
                     value: ccache_path.clone(),
+                    conditional: false,
                 };
             }
             let c_gop = self
@@ -456,7 +457,10 @@ impl Loader {
                 .get_or_put_without_value(b"CMAKE_C_COMPILER_LAUNCHER")?;
             if !c_gop.found_existing {
                 *c_gop.key_ptr = Box::<[u8]>::from(&**c_gop.key_ptr);
-                *c_gop.value_ptr = HashTableValue { value: ccache_path };
+                *c_gop.value_ptr = HashTableValue {
+                    value: ccache_path,
+                    conditional: false,
+                };
             }
         }
         Ok(())
@@ -611,7 +615,11 @@ impl Loader {
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
-        Parser::parse_bytes::<OVERWRITE, false, EXPAND>(str, &mut self.map, &mut value_buffer)
+        Parser::parse_bytes::<OVERWRITE, false, EXPAND, false>(
+            str,
+            &mut self.map,
+            &mut value_buffer,
+        )
     }
 
     pub fn load<D: DirEntryProbe + ?Sized>(
@@ -629,17 +637,8 @@ impl Loader {
 
         if !env_files.is_empty() {
             self.load_explicit_files(env_files, &mut value_buffer)?;
-        } else {
-            // Do not automatically load .env files in `bun run <script>`
-            // Instead, it is the responsibility of the script's instance of `bun` to load .env,
-            // so that if the script runner is NODE_ENV=development, but the script is
-            // "NODE_ENV=production bun ...", there should be no development env loaded.
-            //
-            // See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
-            // for more details on how this edge case works.
-            if !skip_default_env {
-                self.load_default_files(suffix, dir, &mut value_buffer)?;
-            }
+        } else if !skip_default_env {
+            self.load_default_files(suffix, dir, &mut value_buffer)?;
         }
 
         if !self.quiet {
@@ -687,41 +686,50 @@ impl Loader {
         // directory entry is taken generically — `bun_resolver::fs::DirEntry`
         // impls `DirEntryProbe`.
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default::<_, true>(
+                dir,
+                dir_handle,
+                b".env.development.local",
+                value_buffer,
+            )?,
+            DotEnvFileSuffix::Production => self.try_load_default::<_, true>(
+                dir,
+                dir_handle,
+                b".env.production.local",
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
+                self.try_load_default::<_, true>(dir, dir_handle, b".env.test.local", value_buffer)?
             }
         }
 
         if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
+            self.try_load_default::<_, false>(dir, dir_handle, b".env.local", value_buffer)?;
         }
 
         match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
-            }
+            DotEnvFileSuffix::Development => self.try_load_default::<_, true>(
+                dir,
+                dir_handle,
+                b".env.development",
+                value_buffer,
+            )?,
             DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
+                self.try_load_default::<_, true>(dir, dir_handle, b".env.production", value_buffer)?
             }
             DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
+                self.try_load_default::<_, true>(dir, dir_handle, b".env.test", value_buffer)?
             }
         }
 
-        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+        self.try_load_default::<_, false>(dir, dir_handle, b".env", value_buffer)
     }
 
     /// Probe `dir` for a known `.env*` filename and, if present, load it into
     /// its dedicated slot and bump the analytics counter. Shared body for the
     /// eight call sites in `load_default_files`.
     #[inline]
-    fn try_load_default<D: DirEntryProbe + ?Sized>(
+    fn try_load_default<D: DirEntryProbe + ?Sized, const CONDITIONAL: bool>(
         &mut self,
         dir: &D,
         dir_handle: bun_sys::Fd,
@@ -729,10 +737,32 @@ impl Loader {
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
         if dir.has_comptime_query(name) {
-            self.load_env_file::<false>(dir_handle, name, value_buffer)?;
+            self.load_env_file::<false, CONDITIONAL>(dir_handle, name, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())
+    }
+
+    /// Drop every entry whose value came from a NODE_ENV-specific default file
+    /// (`.env.{development,production,test}[.local]`). `bun run <script>`
+    /// calls this after `load_default_files` so the script's subprocess
+    /// environment carries `.env` / `.env.local` values (no NODE_ENV
+    /// dependency) while leaving NODE_ENV-specific keys for the script's own
+    /// `bun` instance to re-derive under whatever NODE_ENV it sets.
+    /// See https://github.com/oven-sh/bun/issues/9635#issuecomment-2021350123
+    /// and https://github.com/oven-sh/bun/issues/9877.
+    ///
+    /// The corresponding file slots are cleared so a later
+    /// `load_default_files` on the same `Loader` (the `bun run <file>` slow
+    /// path boots a VM that shares the process singleton) re-reads them.
+    pub fn remove_conditional(&mut self) {
+        self.map.map.retain(|_, v| !v.conditional);
+        self.env_development = None;
+        self.env_production = None;
+        self.env_test = None;
+        self.env_development_local = None;
+        self.env_production_local = None;
+        self.env_test_local = None;
     }
 
     pub fn print_loaded(&self, start: i128) {
@@ -816,7 +846,7 @@ impl Loader {
         }
     }
 
-    pub fn load_env_file<const OVERRIDE: bool>(
+    pub fn load_env_file<const OVERRIDE: bool, const CONDITIONAL: bool>(
         &mut self,
         dir: bun_sys::Fd,
         base: &'static [u8],
@@ -870,7 +900,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true, CONDITIONAL>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                )?;
             }
         }
 
@@ -917,7 +951,11 @@ impl Loader {
                 }
             }
             ReadEnvFile::Bytes(buf) => {
-                Parser::parse_bytes::<OVERRIDE, false, true>(&buf, &mut self.map, value_buffer)?;
+                Parser::parse_bytes::<OVERRIDE, false, true, false>(
+                    &buf,
+                    &mut self.map,
+                    value_buffer,
+                )?;
             }
         }
 
@@ -1207,7 +1245,12 @@ impl<'a> Parser<'a> {
         Ok(Some(self.value_buffer.as_slice()))
     }
 
-    fn _parse<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    fn _parse<
+        const OVERRIDE: bool,
+        const IS_PROCESS: bool,
+        const EXPAND: bool,
+        const CONDITIONAL: bool,
+    >(
         &mut self,
         map: &mut Map,
     ) -> Result<(), AllocError> {
@@ -1231,7 +1274,10 @@ impl<'a> Parser<'a> {
                 }
                 // else: previous value freed by Drop on assignment below
             }
-            *entry.value_ptr = HashTableValue { value: value_owned };
+            *entry.value_ptr = HashTableValue {
+                value: value_owned,
+                conditional: CONDITIONAL,
+            };
         }
         if !IS_PROCESS && EXPAND {
             // borrowck — index-based iteration: clone the value bytes, run
@@ -1243,9 +1289,7 @@ impl<'a> Parser<'a> {
             while idx < total {
                 let current: Box<[u8]> = Box::from(&*map.map.values()[idx].value);
                 if let Some(expanded) = self.expand_value(map, &current)? {
-                    map.map.values_mut()[idx] = HashTableValue {
-                        value: Box::from(expanded),
-                    };
+                    map.map.values_mut()[idx].value = Box::from(expanded);
                 }
                 idx += 1;
             }
@@ -1258,7 +1302,12 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
+    pub(crate) fn parse_bytes<
+        const OVERRIDE: bool,
+        const IS_PROCESS: bool,
+        const EXPAND: bool,
+        const CONDITIONAL: bool,
+    >(
         src: &[u8],
         map: &mut Map,
         value_buffer: &mut Vec<u8>,
@@ -1272,7 +1321,7 @@ impl<'a> Parser<'a> {
             src: strings::without_utf8_bom(src),
             value_buffer,
         };
-        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND>(map)
+        parser._parse::<OVERRIDE, IS_PROCESS, EXPAND, CONDITIONAL>(map)
     }
 }
 
@@ -1281,6 +1330,12 @@ pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
+    /// Set for keys whose value came from a NODE_ENV-dependent default file
+    /// (`.env.development`, `.env.production`, `.env.test`, or their `.local`
+    /// variants). The `bun run <script>` dispatcher drops these before
+    /// spawning so a script that sets its own NODE_ENV can re-derive them;
+    /// keys that exist in `.env` / `.env.local` stay. See #9635 / #9877.
+    pub conditional: bool,
 }
 
 // On Windows, environment variables are case-insensitive. So we use a case-insensitive hash map.
@@ -1411,6 +1466,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         )
     }
@@ -1428,6 +1484,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         );
     }
@@ -1437,6 +1494,7 @@ impl Map {
         let gop = self.map.get_or_put(key)?;
         *gop.value_ptr = HashTableValue {
             value: Box::from(value),
+            conditional: false,
         };
         if !gop.found_existing {
             *gop.key_ptr = Box::from(key);
@@ -1471,6 +1529,7 @@ impl Map {
             key,
             HashTableValue {
                 value: Box::from(value),
+                conditional: false,
             },
         )?;
         Ok(())

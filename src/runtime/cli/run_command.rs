@@ -660,9 +660,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            // Always skip default .env files for package.json script runner
-            // (the script's own bun instance loads .env)
-            let _ = this_transpiler.run_env_loader(true);
+            // Load the default .env files so package.json scripts that spawn a
+            // non-bun tool (vite, node, cypress, psql, ...) see them (#9877),
+            // then drop the entries that came from a NODE_ENV-specific file
+            // (`.env.{development,production,test}[.local]`) so a script that
+            // sets its own NODE_ENV (e.g. "NODE_ENV=production bun ...") can
+            // re-derive the right file instead of inheriting this process's
+            // choice (#9635). Keys that also appear in `.env` / `.env.local`
+            // but were first supplied by a NODE_ENV-specific file are dropped
+            // here and re-derived by the child; keys that appear only in
+            // `.env` / `.env.local` are forwarded.
+            let disable_default = this_transpiler.options.env.disable_default_env_files;
+            let _ = this_transpiler.run_env_loader(disable_default);
+            this_transpiler.env_mut().remove_conditional();
         }
 
         // Re-derive after `run_env_loader` — that call creates its own

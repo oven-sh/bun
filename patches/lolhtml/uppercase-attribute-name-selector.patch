@@ -1,3 +1,14 @@
+Match attribute selector names ASCII case-insensitively.
+
+`[HREF]` was accepted but silently matched nothing (ast.rs stored the
+selector's original-case name while the matcher compares against
+lowercased element attribute names), and `[HREF="x"]` threw a bogus
+NamespacedSelector error (the `selectors` crate emits AttributeOther
+for non-lowercase names even without a namespace; parser.rs rejected
+all AttributeOther unconditionally).
+
+Upstream: https://github.com/cloudflare/lol-html/issues/328
+
 --- a/src/selectors_vm/parser.rs
 +++ b/src/selectors_vm/parser.rs
 @@ -146,6 +146,11 @@

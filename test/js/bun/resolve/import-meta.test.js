@@ -241,7 +241,7 @@ it("dynamically import bun", async () => {
 });
 
 // https://github.com/oven-sh/bun/issues/8058
-describe("require/import 'bun' with a local `globalThis` in scope", () => {
+describe.concurrent("require/import 'bun' with a local `globalThis` in scope", () => {
   async function run(files) {
     const entry = Object.keys(files)[0];
     using dir = tempDir("issue-08058", files);

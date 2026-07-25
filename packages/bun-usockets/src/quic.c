@@ -31,6 +31,15 @@ extern X509_STORE *us_get_default_ca_store(void);
 
 #define US_QUIC_READ_BUF (16 * 1024)
 
+/* Hard ceiling on the per-stream decoded header buffer. lsqpack calls
+ * prepare_decode with ~1.5x the peer-declared value length before a single
+ * value byte has arrived (DATA_STATE_READ_VAL_LEN -> guarantee_out_bytes),
+ * so without a cap a few wire bytes can reserve tens of MB; with 100 bidi
+ * streams that is a connection-level amplification attack. 128 KB covers a
+ * ~85 KB single header value (60 KB repros fine) while keeping the worst
+ * case at 128 KB x es_init_max_streams_bidi per connection. */
+#define US_QUIC_HSET_MAX_BUF (128 * 1024)
+
 /* Incoming header set: contiguous storage + index. Created before the
  * stream object exists (lsquic decodes headers ahead of on_new_stream),
  * so it lives standalone until on_read claims it via lsquic_stream_get_hset. */
@@ -430,9 +439,12 @@ static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
     /* NULL from this hook is connection-fatal in lsquic (LQRHS_ERROR ->
-     * HEC_QPACK_DECOMPRESSION_FAILED), so the only rejection is the
-     * structural limit of lsxpack_strlen_t; lsqpack never asks for more. */
-    if (space > LSXPACK_MAX_STRLEN) return NULL;
+     * HEC_QPACK_DECOMPRESSION_FAILED). The LSXPACK_MAX_STRLEN guard keeps the
+     * cast to lsxpack_strlen_t below from truncating; US_QUIC_HSET_MAX_BUF
+     * bounds the allocation a peer-declared length can force (see define). */
+    if (space > LSXPACK_MAX_STRLEN
+            || (size_t) h->len + space > US_QUIC_HSET_MAX_BUF)
+        return NULL;
     unsigned int need = h->len + (unsigned int) space;
     if (need > h->cap) {
         unsigned int ncap = h->cap ? h->cap : 512;
@@ -711,9 +723,10 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     lsquic_engine_init_settings(&ctx->settings, LSENG_HTTP_SERVER);
     ctx->settings.es_versions = LSQUIC_DF_VERSIONS & LSQUIC_IETF_VERSIONS;
     ctx->settings.es_ecn = 0;
-    /* QPACK can expand small dynamic-table refs into large header lists; cap
-     * the post-decode size at the same order as uWS H1's MAX_FALLBACK_SIZE so
-     * a single request can't run hsi_prepare to OOM. */
+    /* Advisory only: lsquic writes this into the SETTINGS frame but never
+     * enforces it on decode. The actual allocation guard is
+     * US_QUIC_HSET_MAX_BUF in us_quic_hsi_prepare. Kept at uWS H1's default
+     * so well-behaved clients don't send more than we intend to buffer. */
     ctx->settings.es_max_header_list_size = 16 * 1024;
     ctx->settings.es_init_max_streams_bidi = 100;
     /* Static-table-only response encoding: skips the per-header dynamic

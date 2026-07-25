@@ -1267,6 +1267,9 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   // A todo suite's advisory results never fail it (or the run) in node.
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   if (isTodo) suite.childrenFailed = 0;
+  // A skipped suite passes with its directive regardless of cancelled children
+  // (node's Suite.run: if (this.skipped) { this.#cancel(); this.pass(); }).
+  if (suite.skipped) suite.childrenFailed = 0;
   // A suite under a failed before() reports cancelledByParent with zero
   // duration, like its tests (node's Suite#cancel); write the failure back so
   // the parent's accounting sees it even when the suite has no children.
@@ -3694,7 +3697,7 @@ function inProcessSinkImpl(
   type: string,
   data: unknown,
 ) {
-  republishChildEvent({ type, data }, activeRunFile ?? Bun.main, reporter, counts, numbering);
+  republishChildEvent({ type, data }, activeRunFile ?? currentImportFile ?? Bun.main, reporter, counts, numbering);
 }
 
 async function runStandalone() {
@@ -3831,9 +3834,6 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     }
   } else {
     for (const child of node.standaloneChildren ?? []) {
-      // Abort cancels the suite's remaining children (node's recursive
-      // #cancel()), matching the setupFailed arm so the plan count and
-      // suite completion stay consistent.
       await runStandaloneEntry(child);
     }
   }

@@ -3102,7 +3102,7 @@ static bool bufferAccessCheckOffsetType(JSC::JSGlobalObject* lexicalGlobalObject
 
 // boundsError(offset, byteLength - byteSize): the same ERR_OUT_OF_RANGE / ERR_BUFFER_OUT_OF_BOUNDS as
 // lib/internal/buffer.js. Returns the offset when it is in range after all (an integral double).
-static std::optional<size_t> bufferAccessCheckOffsetBounds(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetValue, size_t byteLength, size_t byteSize)
+static std::optional<size_t> bufferAccessCheckOffsetBounds(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetValue, size_t viewLength, size_t byteSize)
 {
     double offset = offsetValue.asNumber();
     // Math.floor(value) !== value: NaN and fractions are "an integer"; +-Infinity get the range error.
@@ -3110,11 +3110,11 @@ static std::optional<size_t> bufferAccessCheckOffsetBounds(JSC::JSGlobalObject* 
         Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetValue);
         return std::nullopt;
     }
-    if (byteLength < byteSize) [[unlikely]] {
+    if (viewLength < byteSize) [[unlikely]] {
         Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, ""_s);
         return std::nullopt;
     }
-    size_t maxOffset = byteLength - byteSize;
+    size_t maxOffset = viewLength - byteSize;
     if (!(offset >= 0 && offset <= static_cast<double>(maxOffset))) [[unlikely]] {
         Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, makeString(">= 0 and <= "_s, maxOffset), offsetValue);
         return std::nullopt;
@@ -3168,8 +3168,8 @@ static JSC::EncodedJSValue bufferRead(JSC::JSGlobalObject* lexicalGlobalObject, 
     // The fast path: an int32 (or missing) offset inside a real ArrayBufferView -- what the JIT'd form assumes.
     if (view && (offsetValue.isInt32() || offsetValue.isUndefined())) [[likely]] {
         int32_t offset32 = offsetValue.isInt32() ? offsetValue.asInt32() : 0;
-        size_t byteLength = view->byteLength();
-        if (offset32 >= 0 && static_cast<size_t>(offset32) + byteSize <= byteLength) [[likely]] {
+        size_t viewLength = view->length();
+        if (offset32 >= 0 && static_cast<size_t>(offset32) + byteSize <= viewLength) [[likely]] {
             offset = offset32;
             goto fastPath;
         }
@@ -3185,7 +3185,7 @@ static JSC::EncodedJSValue bufferRead(JSC::JSGlobalObject* lexicalGlobalObject, 
             bufferAccessReceiver(lexicalGlobalObject, scope, thisValue);
             return {};
         }
-        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->byteLength(), byteSize);
+        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize);
         if (!checkedOffset)
             return {};
         offset = *checkedOffset;
@@ -3247,8 +3247,8 @@ static JSC::EncodedJSValue bufferWrite(JSC::JSGlobalObject* lexicalGlobalObject,
     // The fast path: an in-range value at an int32 (or missing) offset inside a real ArrayBufferView.
     if (view && (offsetValue.isInt32() || offsetValue.isUndefined())) [[likely]] {
         int32_t offset32 = offsetValue.isInt32() ? offsetValue.asInt32() : 0;
-        size_t byteLength = view->byteLength();
-        if (offset32 >= 0 && static_cast<size_t>(offset32) + byteSize <= byteLength && valueIsInRange()) [[likely]] {
+        size_t viewLength = view->length();
+        if (offset32 >= 0 && static_cast<size_t>(offset32) + byteSize <= viewLength && valueIsInRange()) [[likely]] {
             offset = offset32;
             goto fastPath;
         }
@@ -3278,7 +3278,7 @@ static JSC::EncodedJSValue bufferWrite(JSC::JSGlobalObject* lexicalGlobalObject,
             bufferAccessReceiver(lexicalGlobalObject, scope, thisValue);
             return {};
         }
-        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->byteLength(), byteSize);
+        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize);
         if (!checkedOffset)
             return {};
         offset = *checkedOffset;
@@ -3376,7 +3376,7 @@ static std::optional<size_t> bufferReadVarWidthOffset(JSC::JSGlobalObject* lexic
             RETURN_IF_EXCEPTION(scope, std::nullopt);
         }
     }
-    size_t byteLengthOfView = view->byteLength();
+    size_t byteLengthOfView = view->length();
     if (!(offset >= 0 && offset <= static_cast<double>(byteLengthOfView) - static_cast<double>(byteLength))) [[unlikely]] {
         // boundsError(offset, length - byteLength)
         if (std::floor(offset) != offset) {
@@ -3490,7 +3490,7 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
         return {};
     }
     // checkBounds(): the offset type was validated above; the range check is boundsError().
-    auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->byteLength(), byteLength);
+    auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)
         return {};

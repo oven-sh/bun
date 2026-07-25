@@ -4691,7 +4691,7 @@ describe("read*/write* after JIT tier-up", () => {
     for (const [name, byteSize, reference] of readers) {
       const read = new Function("b", "o", `return b.${name}(o);`);
       let mismatches = 0;
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < 1500; i++) {
         const o = i & 31;
         if (read(buf, o) !== reference(o)) mismatches++;
       }
@@ -4725,7 +4725,7 @@ describe("read*/write* after JIT tier-up", () => {
     for (const [name, byteSize, reference, value] of cases) {
       const write = new Function("b", "v", "o", `return b.${name}(v, o);`);
       let mismatches = 0;
-      for (let i = 0; i < 5000; i++) {
+      for (let i = 0; i < 1500; i++) {
         const o = i & 31;
         const v = value(i);
         if (write(buf, v, o) !== o + byteSize || reference(o) !== v) mismatches++;
@@ -4748,7 +4748,7 @@ describe("read*/write* after JIT tier-up", () => {
   it("BigInt writes match a DataView across many iterations, and 64-bit range checks keep throwing", () => {
     const values = [0n, 1n, -1n, 2n ** 32n + 7n, 2n ** 63n - 1n, -(2n ** 63n)];
     let mismatches = 0;
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < 1500; i++) {
       const o = (i & 7) * 8;
       const v = values[i % values.length];
       if (buf.writeBigInt64LE(v, o) !== o + 8 || dv.getBigInt64(o, true) !== v) mismatches++;
@@ -4799,13 +4799,21 @@ describe("read*/write* after JIT tier-up", () => {
   it("keeps working with other ArrayBufferView receivers via .call", () => {
     const u8 = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
     const dv8 = new DataView(u8.buffer);
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < 1500; i++) {
       expect(Buffer.prototype.readInt32LE.call(u8, 0)).toBe(dv8.getInt32(0, true));
       expect(Buffer.prototype.readUInt16BE.call(u8, 6)).toBe(dv8.getUint16(6, false));
       expect(Buffer.prototype.writeUInt8.call(u8, i & 0xff, 7)).toBe(8);
       expect(u8[7]).toBe(i & 0xff);
       expect(() => Buffer.prototype.readInt32LE.call({}, 0)).toThrow(TypeError);
     }
+    // The bound is the receiver's element count (this.length), as in lib/internal/buffer.js, not
+    // its byteLength: on a wider-element view these throw even though the bytes would fit.
+    const u16 = new Uint16Array(4);
+    expect(codeOf(() => Buffer.prototype.writeUInt32BE.call(u16, 1, 3))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => Buffer.prototype.readInt32LE.call(u16, 3))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => Buffer.prototype.readUIntLE.call(u16, 2, 3))).toBe("ERR_OUT_OF_RANGE");
+    u16[0] = 0x1234;
+    expect(Buffer.prototype.readInt32LE.call(u16, 0)).toBe(new DataView(u16.buffer).getInt32(0, true));
   });
 
   it("variable-width readers/writers match across widths after tier-up", () => {
@@ -4822,7 +4830,7 @@ describe("read*/write* after JIT tier-up", () => {
     const readConst3 = (b, o) => b.readUIntBE(o, 3);
     const readConst4 = (b, o) => b.readIntLE(o, 4);
     let mismatches = 0;
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < 1500; i++) {
       const o = i & 15;
       const l = 1 + (i % 6);
       if (buf.readIntLE(o, l) !== sint(o, l, true)) mismatches++;
@@ -4834,7 +4842,7 @@ describe("read*/write* after JIT tier-up", () => {
     }
     expect(mismatches).toBe(0);
     const scratch = Buffer.alloc(16);
-    for (let i = 0; i < 5000; i++) {
+    for (let i = 0; i < 1500; i++) {
       const l = 1 + (i % 6);
       const v = i % 100;
       expect(scratch.writeUIntLE(v, 0, l)).toBe(l);

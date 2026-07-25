@@ -141,6 +141,16 @@ pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
     StoredAddr::from_raw(ptr.cast(), len)
 }
 
+/// RFC 9000 §17.2.2 Initial: SCID-len, SCID, then the token-length varint.
+fn initial_has_token(payload: &[u8], scid_off: usize) -> bool {
+    payload
+        .get(scid_off)
+        .map(|&l| l as usize)
+        .filter(|&l| l <= MAX_CID_LEN)
+        .and_then(|l| payload.get(scid_off + 1 + l))
+        .is_some_and(|&b| b != 0)
+}
+
 fn conn_peer_addr(conn: *mut lsquic::lsquic_conn) -> Option<StoredAddr> {
     let mut local: *const c_void = null();
     let mut peer: *const c_void = null();
@@ -1684,20 +1694,9 @@ impl QuicEndpoint {
         if self.provisional.get().iter().any(|p| p.dcid == dcid) {
             return;
         }
-        // Under address validation a tokenless Initial is answered with a
-        // Retry, not a mini-conn, so a provisional announced now would time
-        // out. RFC 9000 §17.2.2: SCID-len, SCID, then the token-length varint.
-        if self.validate_address.get() {
-            let scid_off = dcid_start + dcid_len;
-            let has_token = payload
-                .get(scid_off)
-                .map(|&l| l as usize)
-                .filter(|&l| l <= MAX_CID_LEN)
-                .and_then(|l| payload.get(scid_off + 1 + l))
-                .is_some_and(|&b| b != 0);
-            if !has_token {
-                return;
-            }
+        // Under address validation a tokenless Initial gets a Retry, not a mini-conn.
+        if self.validate_address.get() && !initial_has_token(payload, dcid_start + dcid_len) {
+            return;
         }
         // On a dual-mode endpoint the peer's Initial *response* carries our
         // client's SCID, which only the client engine hashes -- checking the

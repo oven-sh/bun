@@ -337,6 +337,99 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   });
 });
 
+describe("Valkey: connect() error identity", () => {
+  // https://github.com/oven-sh/bun/issues/3064
+  // Previously all connect-time failures surfaced as ERR_REDIS_CONNECTION_CLOSED / "Connection closed".
+  const CRLF = "\r\n";
+
+  async function stubServer(reply: (text: string) => string | null) {
+    const server = net.createServer(sock => {
+      sock.on("error", () => {});
+      sock.on("data", d => {
+        const r = reply(d.toString().toUpperCase());
+        if (r !== null) sock.write(r);
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as net.AddressInfo;
+    return { port, close: () => server.close() };
+  }
+
+  async function connectError(url: string, options: any) {
+    const client = new RedisClient(url, options);
+    try {
+      await client.connect();
+      return { code: undefined, message: "<connected>" };
+    } catch (e: any) {
+      return { code: e?.code, message: e?.message };
+    } finally {
+      try {
+        client.close();
+      } catch {}
+    }
+  }
+
+  test("-WRONGPASS reply to HELLO rejects connect() with the server's error text", async () => {
+    const srv = await stubServer(t =>
+      t.includes("HELLO") ? `-WRONGPASS invalid username-password pair or user is disabled.${CRLF}` : `+OK${CRLF}`,
+    );
+    try {
+      expect(await connectError(`redis://:bad@127.0.0.1:${srv.port}`, { autoReconnect: false })).toEqual({
+        code: "ERR_REDIS_AUTHENTICATION_FAILED",
+        message: "WRONGPASS invalid username-password pair or user is disabled.",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("-NOAUTH reply to HELLO rejects connect() with the server's error text", async () => {
+    const srv = await stubServer(t =>
+      t.includes("HELLO")
+        ? `-NOAUTH HELLO must be called with the client already authenticated${CRLF}`
+        : `-NOAUTH Authentication required.${CRLF}`,
+    );
+    try {
+      expect(await connectError(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false })).toEqual({
+        code: "ERR_REDIS_AUTHENTICATION_FAILED",
+        message: "NOAUTH HELLO must be called with the client already authenticated",
+      });
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("connectionTimeout expiry rejects connect() with ERR_REDIS_CONNECTION_TIMEOUT", async () => {
+    const srv = await stubServer(() => null);
+    try {
+      const err = await connectError(`redis://127.0.0.1:${srv.port}`, {
+        autoReconnect: false,
+        connectionTimeout: 200,
+      });
+      expect(err.code).toBe("ERR_REDIS_CONNECTION_TIMEOUT");
+      expect(err.message).toContain("Connection timeout reached after");
+    } finally {
+      srv.close();
+    }
+  });
+
+  test("TCP connect error rejects connect() with a distinguishable message", async () => {
+    const listener = net.createServer();
+    await new Promise<void>(resolve => listener.listen(0, "127.0.0.1", resolve));
+    const { port } = listener.address() as net.AddressInfo;
+    await new Promise<void>(resolve => listener.close(() => resolve()));
+
+    const err = await connectError(`redis://127.0.0.1:${port}`, {
+      autoReconnect: false,
+      connectionTimeout: 2000,
+    });
+    expect(err).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: "Failed to connect",
+    });
+  });
+});
+
 describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
   function readCommands(state: { buffer: Buffer }): string[][] {
     const commands: string[][] = [];

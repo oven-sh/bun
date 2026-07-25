@@ -810,6 +810,7 @@ impl JSValkeyClient {
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
+                close_reason: None,
             }),
             global_object,
             this_value: JsCell::new(JsRef::empty()),
@@ -930,6 +931,7 @@ impl JSValkeyClient {
                 reply_scanner: Default::default(),
                 retry_attempts: 0,
                 auto_flusher: Default::default(),
+                close_reason: None,
             }),
             global_object,
             this_value: JsCell::new(JsRef::empty()),
@@ -1045,6 +1047,7 @@ impl JSValkeyClient {
         // Without this, every subsequent command rejects with "Connection has
         // failed" forever — see https://github.com/oven-sh/bun/issues/29925.
         self.client_mut().flags.failed = false;
+        self.client_mut().close_reason = None;
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
 
@@ -1374,12 +1377,14 @@ impl JSValkeyClient {
         };
         this_jsvalue.ensure_still_alive();
 
-        // Create an error value
-        let error_value = protocol_jsc::valkey_error_to_js(
-            &global_object,
-            b"Connection closed",
-            protocol::RedisError::ConnectionClosed,
-        );
+        let error_value = match self.client_mut().close_reason.take() {
+            Some((message, err)) => protocol_jsc::valkey_error_to_js(&global_object, &*message, err),
+            None => protocol_jsc::valkey_error_to_js(
+                &global_object,
+                b"Connection closed",
+                protocol::RedisError::ConnectionClosed,
+            ),
+        };
 
         let _exit = self.vm().enter_event_loop_scope();
 
@@ -1977,6 +1982,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
             p.client_mut().status = valkey::Status::Disconnected;
             p.update_poll_ref();
         });
+
+        if this.client.get().close_reason.is_none() {
+            this.client_mut().close_reason = Some((
+                Box::<[u8]>::from(&b"Failed to connect"[..]),
+                protocol::RedisError::ConnectionClosed,
+            ));
+        }
 
         narrow_terminated(this.client_mut().on_close())
     }

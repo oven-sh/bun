@@ -2600,8 +2600,21 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Locked(_) => {
+                // GET honours a handler-set Content-Length for a stream body
+                // (#10507); HEAD must frame the same way. Read it before
+                // `render_metadata()` swaps out and strips the init headers.
+                let user_content_length = response.get_init_headers_mut().and_then(|h| {
+                    if h.fast_has(jsc::HTTPHeaderName::TransferEncoding) {
+                        return None;
+                    }
+                    let cl = h.fast_get(jsc::HTTPHeaderName::ContentLength)?;
+                    let cl_str = cl.to_slice();
+                    bun_core::parse_int::<u64>(cl_str.slice(), 10).ok()
+                });
                 this.render_metadata();
-                if !HTTP3 {
+                if let Some(cl) = user_content_length {
+                    resp.write_header_int(b"content-length", cl);
+                } else if !HTTP3 {
                     // SAFETY: FFI handle
                     resp.write_header(b"transfer-encoding", b"chunked");
                 }
@@ -3632,9 +3645,23 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
+        // A ReadableStream body has no size for uWS to frame from, so the
+        // handler's Content-Length (#10507) is the only thing that can give
+        // the client a length. `do_write_headers` strips it; capture it first.
+        let mut user_content_length: Option<u64> = None;
         if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
+            if (self.sink.is_some() || self.byte_stream.is_some())
+                && !self.flags.needs_content_length()
+                && !headers_.fast_has(jsc::HTTPHeaderName::TransferEncoding)
+            {
+                if let Some(cl) = headers_.fast_get(jsc::HTTPHeaderName::ContentLength) {
+                    let cl_str = cl.to_slice();
+                    user_content_length = bun_core::parse_int::<u64>(cl_str.slice(), 10).ok();
+                    drop(cl_str);
+                }
+            }
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
             // incoming Range: header (sendfile.total > 0) we always 206.
@@ -3729,6 +3756,9 @@ where
             resp.write_header_int(b"content-length", size as u64);
             resp.mark_wrote_content_length_header();
             self.flags.set_needs_content_length(false);
+        } else if let Some(cl) = user_content_length {
+            resp.write_header_int(b"content-length", cl);
+            resp.mark_wrote_content_length_header();
         }
 
         if needs_content_range && !has_content_range {

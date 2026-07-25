@@ -1218,6 +1218,12 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
+            if res.state().has_written_content_length_header() {
+                res.end(buf, false);
+                self.has_backpressure = false;
+                self.handle_wrote(buf.len());
+                return true;
+            }
             let success = res.try_end(buf, self.end_len, false);
             if success {
                 self.has_backpressure = false;
@@ -1292,6 +1298,13 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
+            if res.state().has_written_content_length_header() {
+                let buf_len = self.buffer.len().saturating_sub(base);
+                res.end(&self.buffer[base..], false);
+                self.has_backpressure = false;
+                self.handle_wrote(buf_len);
+                return true;
+            }
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
             if success {

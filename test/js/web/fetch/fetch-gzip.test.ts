@@ -112,7 +112,6 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
           headers: {
             "Content-Encoding": "gzip",
             "Content-Type": "text/html; charset=utf-8",
-            "Content-Length": "1",
           },
         },
       );

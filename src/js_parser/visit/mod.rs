@@ -762,6 +762,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+        // Braceless if/else/while/do-while bodies do not push a scope, so track
+        // nesting here for the `is_top_level` check in `s_expr` to avoid
+        // emitting an `export {}` clause inside control flow (#11032).
+        self.visit_single_stmt_depth += 1;
+        let result = self.visit_single_stmt_inner(stmt, kind);
+        self.visit_single_stmt_depth -= 1;
+        result
+    }
+
+    fn visit_single_stmt_inner(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
         if matches!(stmt.data, StmtData::SBlock(_)) {
             return self.visit_single_stmt_block(stmt, kind);
         }

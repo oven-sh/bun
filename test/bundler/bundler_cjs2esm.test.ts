@@ -392,4 +392,137 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ExportsInBracelessIfElse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './mod.cjs';
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        if (!globalThis.NEVER_SET) exports.x = "yes"; else exports.x = "no";
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/mod.cjs"],
+    },
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).not.toContain("__INVALID__REF__");
+      expect(text).not.toContain("tagSymbol");
+    },
+    run: {
+      stdout: "yes",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ExportsInBracelessIf", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './mod.cjs';
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        if (!globalThis.NEVER_SET) exports.x = "yes";
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/mod.cjs"],
+    },
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).not.toContain("__INVALID__REF__");
+      expect(text).not.toContain("tagSymbol");
+    },
+    run: {
+      stdout: "yes",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ExportsInBracelessWhile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './mod.cjs';
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        var i = 0; while (i++ < 1) exports.x = "loop";
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/mod.cjs"],
+    },
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).not.toContain("__INVALID__REF__");
+      expect(text).not.toContain("tagSymbol");
+    },
+    run: {
+      stdout: "loop",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ExportsInBracelessDoWhile", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './mod.cjs';
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        var i = 0; do exports.x = "do"; while (i++ < 0);
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/mod.cjs"],
+    },
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).not.toContain("__INVALID__REF__");
+      expect(text).not.toContain("tagSymbol");
+    },
+    run: {
+      stdout: "do",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ModuleExportsInBracelessIfElse", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x } from './mod.cjs';
+        console.log(x);
+      `,
+      "/mod.cjs": /* js */ `
+        if (!globalThis.NEVER_SET) module.exports.x = "yes"; else module.exports.x = "no";
+      `,
+    },
+    cjs2esm: {
+      unhandled: ["/mod.cjs"],
+    },
+    onAfterBundle(api) {
+      const text = api.readFile("/out.js");
+      expect(text).not.toContain("__INVALID__REF__");
+      expect(text).not.toContain("tagSymbol");
+    },
+    run: {
+      stdout: "yes",
+    },
+  });
+  // https://github.com/oven-sh/bun/issues/11032
+  itBundled("cjs2esm/ExportsAfterBracelessIfStillOptimized", {
+    files: {
+      "/entry.js": /* js */ `
+        import { x, y } from './mod.cjs';
+        console.log(x, y);
+      `,
+      "/mod.cjs": /* js */ `
+        exports.x = "top";
+        if (!globalThis.NEVER_SET) exports.x = "overridden";
+        exports.y = "second";
+      `,
+    },
+    cjs2esm: true,
+    run: {
+      stdout: "overridden second",
+    },
+  });
 });

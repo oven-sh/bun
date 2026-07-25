@@ -309,6 +309,10 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub commonjs_named_exports_needs_conversion: u32,
     pub had_commonjs_named_exports_this_visit: bool,
     pub commonjs_replacement_stmts: StmtNodeList,
+    /// Nesting depth inside `visit_single_stmt` (braceless control-flow bodies).
+    /// Used alongside the scope check to decide whether an expression statement
+    /// is truly at the module top level for CommonJS-to-ESM export lowering.
+    pub visit_single_stmt_depth: u32,
 
     pub parse_pass_symbol_uses: ParsePassSymbolUsageType<'a>,
 
@@ -9138,6 +9142,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports_needs_conversion: u32::MAX,
             had_commonjs_named_exports_this_visit: false,
             commonjs_replacement_stmts: js_ast::StmtNodeList::EMPTY,
+            visit_single_stmt_depth: 0,
             parse_pass_symbol_uses: None,
             has_commonjs_export_names: false,
             should_fold_typescript_constant_expressions: false,

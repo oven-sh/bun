@@ -4,8 +4,11 @@
 
 #include "DOMWrapperWorld.h"
 #include "EventNames.h"
+#include "ErrorCode.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -185,18 +188,42 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
     if (!listenersVector) [[unlikely]] {
-        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
+        if (eventType == scriptExecutionContext()->vm().propertyNames->error) {
             Ref<EventEmitter> protectedThis(*this);
+            JSValue er = arguments.size() > 0 ? arguments.at(0) : JSC::jsUndefined();
             if (propagateExceptions) {
-                auto* globalObject = scriptExecutionContext()->jsGlobalObject();
-                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-                scope.throwException(globalObject, arguments.at(0));
+                auto* globalObject = defaultGlobalObject(scriptExecutionContext()->jsGlobalObject());
+                auto& vm = globalObject->vm();
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                if (er.isCell() && er.asCell()->inherits<JSC::ErrorInstance>()) {
+                    scope.throwException(globalObject, er);
+                    return false;
+                }
+                WTF::String inspected;
+                auto* inspectFn = globalObject->utilInspectFunction();
+                RETURN_IF_EXCEPTION(scope, false);
+                auto callData = JSC::getCallData(inspectFn);
+                MarkedArgumentBuffer inspectArgs;
+                inspectArgs.append(er);
+                WTF::NakedPtr<JSC::Exception> inspectException;
+                auto inspectResult = JSC::call(globalObject, inspectFn, callData, JSC::jsUndefined(), inspectArgs, inspectException);
+                if (!inspectException) {
+                    inspected = inspectResult.toWTFString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
+                auto message = makeString("Unhandled error. ("_s, inspected, ")"_s);
+                auto* err = Bun::createError(globalObject, Bun::ErrorCode::ERR_UNHANDLED_ERROR, message);
+                RETURN_IF_EXCEPTION(scope, false);
+                err->putDirect(vm, JSC::Identifier::fromString(vm, "context"_s), er, 0);
+                scope.throwException(globalObject, err);
                 return false;
             }
-            auto* thisObject = protectedThis->m_thisObject.get();
-            if (!thisObject)
-                return false;
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
+            if (arguments.size() > 0) {
+                auto* thisObject = protectedThis->m_thisObject.get();
+                if (!thisObject)
+                    return false;
+                Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(er));
+            }
             return false;
         }
         return false;

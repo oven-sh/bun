@@ -1771,17 +1771,23 @@ describe("process.emit propagates listener exceptions to the caller", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent("emit('error', err) with no error listener throws synchronously", async () => {
+  it.concurrent("emit('error', ...) with no error listener throws synchronously", async () => {
     const { stdout, exitCode } = await run(`
-      let caught;
-      try {
-        process.emit("error", new Error("no-listener"));
-      } catch (e) {
-        caught = e.message;
+      const out = {};
+      function probe(name, fn) {
+        try { fn(); out[name] = { caught: false }; }
+        catch (e) { out[name] = { caught: true, isError: e instanceof Error, code: e?.code, msg: e?.message ?? e, ctx: e?.context }; }
       }
-      console.log(JSON.stringify({ caught }));
+      probe("error-instance", () => process.emit("error", new Error("no-listener")));
+      probe("no-arg",          () => process.emit("error"));
+      probe("string",          () => process.emit("error", "boom"));
+      console.log(JSON.stringify(out));
     `);
-    expect(JSON.parse(stdout.trim())).toEqual({ caught: "no-listener" });
+    expect(JSON.parse(stdout.trim())).toEqual({
+      "error-instance": { caught: true, isError: true, msg: "no-listener" },
+      "no-arg": { caught: true, isError: true, code: "ERR_UNHANDLED_ERROR", msg: "Unhandled error. (undefined)" },
+      "string": { caught: true, isError: true, code: "ERR_UNHANDLED_ERROR", msg: "Unhandled error. ('boom')", ctx: "boom" },
+    });
     expect(exitCode).toBe(0);
   });
 

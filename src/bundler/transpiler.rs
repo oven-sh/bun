@@ -3016,7 +3016,12 @@ impl<'a> Transpiler<'a> {
                     resolve_result.dirname_fd,
                     file_path.pretty,
                 ) {
-                    Some(v) => output_file.value = v,
+                    Some(v) => {
+                        if let crate::output_file::Value::Buffer { bytes } = &v {
+                            output_file.size = bytes.len();
+                        }
+                        output_file.value = v;
+                    }
                     None => return Ok(None),
                 }
             }

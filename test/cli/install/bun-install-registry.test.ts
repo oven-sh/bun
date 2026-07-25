@@ -3098,6 +3098,97 @@ describe("binaries", () => {
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
   });
+
+  test("direct dependency wins a contested bin name", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+            "z-direct-claim": "./z-direct-claim",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "z-direct-claim", "package.json"),
+        JSON.stringify({
+          name: "z-direct-claim",
+          version: "1.0.0",
+          bin: {
+            "what-bin": "./direct.js",
+          },
+        }),
+      ),
+      write(join(packageDir, "z-direct-claim", "direct.js"), `#!/usr/bin/env node\nconsole.log("direct")`),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
+      join("..", "z-direct-claim", "direct.js"),
+    );
+    expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
+    expect(await exited).toBe(0);
+  });
+
+  test("workspace package wins a contested bin name", async () => {
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "z-workspace-claim", "package.json"),
+        JSON.stringify({
+          name: "z-workspace-claim",
+          version: "1.0.0",
+          bin: {
+            "what-bin": "./workspace.js",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "z-workspace-claim", "workspace.js"),
+        `#!/usr/bin/env node\nconsole.log("workspace")`,
+      ),
+    ]);
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+
+    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
+      join("..", "z-workspace-claim", "workspace.js"),
+    );
+    expect(await exists(join(packageDir, "node_modules", "what-bin", "what-bin.js"))).toBeTrue();
+    expect(await exited).toBe(0);
+  });
 });
 
 test("--config cli flag works", async () => {

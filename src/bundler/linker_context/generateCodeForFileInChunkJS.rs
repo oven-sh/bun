@@ -529,10 +529,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if needs_wrapper {
         match flags.wrap {
             WrapKind::Cjs => {
+                // If the wrapped body contains direct eval, bind `require` as a
+                // real parameter so code like `eval("require")("buffer")`
+                // (protobufjs) keeps working. `require_ref` is declared Unbound
+                // so the renamer keeps the original name.
+                let needs_require_arg =
+                    ast.module_scope.contains_direct_eval && runtime_require_ref.is_some();
+
                 // Only include the arguments that are actually used
                 let mut args: bun_alloc::ArenaVec<'_, G::Arg> =
                     bun_alloc::ArenaVec::with_capacity_in(
-                        if ast
+                        if needs_require_arg {
+                            3
+                        } else if ast
                             .flags
                             .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
                         {
@@ -543,9 +552,10 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         temp_arena,
                     );
 
-                if ast
-                    .flags
-                    .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
+                if needs_require_arg
+                    || ast
+                        .flags
+                        .intersects(AstFlags::USES_MODULE_REF | AstFlags::USES_EXPORTS_REF)
                 {
                     args.push(G::Arg {
                         binding: Binding::alloc(
@@ -558,7 +568,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         ..Default::default()
                     });
 
-                    if ast.flags.contains(AstFlags::USES_MODULE_REF) {
+                    if needs_require_arg || ast.flags.contains(AstFlags::USES_MODULE_REF) {
                         args.push(G::Arg {
                             binding: Binding::alloc(
                                 temp_arena,
@@ -569,6 +579,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             ),
                             ..Default::default()
                         });
+
+                        if needs_require_arg {
+                            args.push(G::Arg {
+                                binding: Binding::alloc(
+                                    temp_arena,
+                                    B::Identifier {
+                                        r#ref: ast.require_ref,
+                                    },
+                                    bun_ast::Loc::EMPTY,
+                                ),
+                                ..Default::default()
+                            });
+                        }
                     }
                 }
 
@@ -577,7 +600,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
-                let cjs_args = Vec::<Expr>::from_slice(&[Expr::init(
+                let closure = Expr::init(
                     E::Function {
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new(args.into_bump_slice()),
@@ -589,7 +612,21 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                         },
                     },
                     bun_ast::Loc::EMPTY,
-                )]);
+                );
+                let cjs_args = if needs_require_arg {
+                    Vec::<Expr>::from_slice(&[
+                        closure,
+                        Expr::init(
+                            E::Identifier {
+                                ref_: runtime_require_ref.unwrap(),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ),
+                    ])
+                } else {
+                    Vec::<Expr>::from_slice(&[closure])
+                };
 
                 let commonjs_wrapper_definition = Expr::init(
                     E::Call {

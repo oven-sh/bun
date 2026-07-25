@@ -3221,6 +3221,26 @@ impl<'a> LinkerContext<'a> {
                             crate::Index::RUNTIME,
                         )
                         .expect("unreachable");
+
+                    // Some CommonJS packages reach `require` through direct eval
+                    // (protobufjs does `eval("require")("buffer")` to probe for
+                    // Node Buffer support). When the closure body contains
+                    // direct eval, pass `__require` through so the original
+                    // `require` name is bound inside the wrapper. The CJS
+                    // output format already has `require` in the outer scope.
+                    if self.options.output_format != Format::Cjs
+                        && self.graph.ast.items_module_scope()[source_index as usize]
+                            .contains_direct_eval
+                    {
+                        self.graph
+                            .generate_runtime_symbol_import_and_use(
+                                source_index,
+                                crate::Index::part(part_index),
+                                b"__require",
+                                1,
+                            )
+                            .expect("unreachable");
+                    }
                 }
             }
 

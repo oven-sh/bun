@@ -167,10 +167,39 @@ describe("fake npm/npx cli", () => {
         // before any network request.
         "bunfig.toml": `[install]\nregistry = { url = "http://127.0.0.1:1/", token = "fake" }\n`,
       });
-      const r = await fakePmRun(String(dir), "npm", ["publish", "--dry-run", "--tag", "beta", "--access", "public"]);
+      // `--tag` before the subcommand pins that the keep list applies to
+      // pre-subcommand flags too; npm accepts config flags in any position.
+      const r = await fakePmRun(String(dir), "npm", ["--tag", "beta", "publish", "--dry-run", "--access", "public"]);
       expect(r.stdout).toContain("Tag: beta");
       expect(r.stdout).toContain("Access: public");
       expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm upgrade dispatches as bun update, not bun's self-upgrader", async () => {
+      using dir = tempDir("fake-npm-upgrade", { "package.json": "{}" });
+      const r = await fakePmRun(String(dir), "npm", ["upgrade", "--help"]);
+      expect(r.stdout).toContain("bun update");
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm cache dispatches as bun pm cache", async () => {
+      using dir = tempDir("fake-npm-cache", { "package.json": "{}" });
+      const r = await fakePmRun(String(dir), "npm", ["cache"]);
+      expect(r.stdout.trim()).not.toBe("");
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm install --save-dev writes to devDependencies", async () => {
+      using dir = tempDir("fake-npm-savedev", {
+        "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      const r = await fakePmRun(String(dir), "npm", ["install", "--save-dev", "./dep"]);
+      expect(r.exitCode).toBe(0);
+      const pkg = JSON.parse(await Bun.file(join(String(dir), "package.json")).text());
+      expect(pkg.devDependencies).toEqual({ dep: "./dep" });
+      expect(pkg.dependencies).toBeUndefined();
     });
 
     test.concurrent("npm version dispatches as bun pm version", async () => {

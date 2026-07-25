@@ -906,9 +906,17 @@ pub mod command {
     #[derive(Clone, Copy)]
     enum NpmFlag {
         Drop,
+        /// Copied through together with its value (bun accepts the npm
+        /// spelling for the mapped subcommand).
+        Keep,
         Rename(&'static bun_core::ZStr),
     }
 
+    /// Classify a value-taking npm flag. Returns `None` for anything that is
+    /// not a recognized value-taking npm flag (positionals, boolean flags,
+    /// bun's own flags). The advance over argv (flag plus separate value) is
+    /// the same whichever variant comes back, so a scan that only needs the
+    /// subcommand position can pass empty `keep`/`renames`.
     #[cold]
     fn translate_npm_value_flag(
         arg: &[u8],
@@ -929,7 +937,7 @@ pub mod command {
             return None;
         };
         if keep.contains(&name) {
-            return None;
+            return Some(NpmFlag::Keep);
         }
         if let Some(&(_, to)) = renames.iter().find(|(n, _)| *n == name) {
             return Some(NpmFlag::Rename(to));
@@ -939,6 +947,22 @@ pub mod command {
             b"prefix" => Some(NpmFlag::Rename(zstr!("--cwd"))),
             _ if NPM_VALUE_FLAGS_IGNORED.binary_search(&name).is_ok() => Some(NpmFlag::Drop),
             _ => None,
+        }
+    }
+
+    /// npm's boolean `--save-*` dependency-group flags under bun's spelling.
+    /// These take no value, so they are rewritten in place; bun's clap parser
+    /// would otherwise skip the npm spelling silently and e.g.
+    /// `npm install --save-dev typescript` would land in `"dependencies"`.
+    #[cold]
+    fn rename_npm_bool_flag(arg: &'static bun_core::ZStr) -> &'static bun_core::ZStr {
+        use bun_core::zstr;
+        match arg.as_bytes() {
+            b"--save-dev" => zstr!("--dev"),
+            b"--save-exact" => zstr!("--exact"),
+            b"--save-optional" => zstr!("--optional"),
+            b"--save-peer" => zstr!("--peer"),
+            _ => arg,
         }
     }
 
@@ -1002,35 +1026,57 @@ pub mod command {
                         && argv
                             .get(i + 1)
                             .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
-                    if let NpmFlag::Rename(new_name) = tr {
-                        hoisted.push(new_name);
-                        if let Some(eq) = eq {
-                            let with_nul = a.as_bytes_with_nul();
-                            hoisted.push(ZStr::from_static(&with_nul[eq as usize + 1..]));
-                        } else if consumes_next {
-                            hoisted.push(argv[i + 1]);
+                    match tr {
+                        NpmFlag::Drop => {}
+                        // Hoisted, not in place: before the subcommand the
+                        // flag's value would be taken for the subcommand by
+                        // `which()`'s leading-flag skip.
+                        NpmFlag::Keep => {
+                            hoisted.push(a);
+                            if consumes_next {
+                                hoisted.push(argv[i + 1]);
+                            }
+                        }
+                        NpmFlag::Rename(new_name) => {
+                            hoisted.push(new_name);
+                            if let Some(eq) = eq {
+                                let with_nul = a.as_bytes_with_nul();
+                                hoisted.push(ZStr::from_static(&with_nul[eq as usize + 1..]));
+                            } else if consumes_next {
+                                hoisted.push(argv[i + 1]);
+                            }
                         }
                     }
                     i += if consumes_next { 2 } else { 1 };
                     continue;
                 }
-                tail.push(a);
+                tail.push(rename_npm_bool_flag(a));
                 i += 1;
             }
             argv.len()
         }
 
-        let mut hoisted: Vec<&'static ZStr> = Vec::new();
-        let mut pre_subcommand_flags: Vec<&'static ZStr> = Vec::new();
-        let sub_idx = copy_translating_npm_flags(
-            argv,
-            &mut pre_subcommand_flags,
-            &mut hoisted,
-            1,
-            true,
-            &[],
-            &[],
-        );
+        // npm accepts config flags in any position, so the subcommand (and
+        // with it the keep/rename decision) must be known before the
+        // pre-subcommand flags are processed: `npm --tag beta publish` keeps
+        // `--tag beta` only because `publish` is found first. The scan
+        // advances over value flags exactly like `copy_translating_npm_flags`.
+        let sub_idx = {
+            let mut i = 1;
+            while i < argv.len() {
+                let ab = argv[i].as_bytes();
+                if ab == b"--" || ab.first() != Some(&b'-') {
+                    break;
+                }
+                let consumes_next = translate_npm_value_flag(ab, &[], &[]).is_some()
+                    && !strings::contains_char(ab, b'=')
+                    && argv
+                        .get(i + 1)
+                        .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
+                i += if consumes_next { 2 } else { 1 };
+            }
+            i
+        };
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
         let sub_bytes = subcommand.map(|z| z.as_bytes());
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
@@ -1038,6 +1084,32 @@ pub mod command {
             .iter()
             .take_while(|a| a.as_bytes() != b"--")
             .any(|a| a.as_bytes().first() != Some(&b'-'));
+
+        // npm flags bun's own parser accepts for the mapped subcommand must
+        // reach it instead of being dropped, either as-is (`keep`) or under
+        // bun's spelling (`renames`).
+        let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
+            Some(b"publish") => (&[b"access", b"otp", b"tag"], &[]),
+            Some(b"version" | b"verison") => (&[b"message"], &[]),
+            Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
+            _ => (&[], &[]),
+        };
+
+        let mut hoisted: Vec<&'static ZStr> = Vec::new();
+        let mut pre_subcommand_flags: Vec<&'static ZStr> = Vec::new();
+        let first_pass_end = copy_translating_npm_flags(
+            argv,
+            &mut pre_subcommand_flags,
+            &mut hoisted,
+            1,
+            true,
+            keep,
+            renames,
+        );
+        debug_assert_eq!(
+            first_pass_end, sub_idx,
+            "subcommand prescan must advance exactly like the copy pass"
+        );
 
         let mut mapped: Vec<&'static ZStr> = Vec::with_capacity(2);
         match sub_bytes {
@@ -1079,29 +1151,30 @@ pub mod command {
                 mapped.push(zstr!("install"));
             }
             Some(b"ls" | b"la" | b"ll") => mapped.push(zstr!("list")),
-            Some(b"view" | b"show") => mapped.push(zstr!("info")),
+            Some(b"view" | b"show" | b"v") => mapped.push(zstr!("info")),
+            // npm spells dependency-update as `upgrade`/`up`/`udpate` too;
+            // bare `upgrade` would dispatch bun's self-upgrader.
+            Some(b"upgrade" | b"up" | b"udpate") => mapped.push(zstr!("update")),
+            // `c` is npm's alias for `config`; bare `c` would dispatch
+            // `bun create`.
+            Some(b"c") => mapped.push(zstr!("config")),
             Some(b"version" | b"verison") => {
                 mapped.push(zstr!("pm"));
                 mapped.push(zstr!("version"));
             }
-            // Likewise `npm pack` is `bun pm pack`.
+            // Likewise `npm pack` / `npm cache` are `bun pm pack` / `pm cache`.
             Some(b"pack") => {
                 mapped.push(zstr!("pm"));
                 mapped.push(zstr!("pack"));
+            }
+            Some(b"cache") => {
+                mapped.push(zstr!("pm"));
+                mapped.push(zstr!("cache"));
             }
             Some(_) => mapped.push(*subcommand.unwrap()),
             None => {}
         }
 
-        // npm flags bun's own parser accepts for the mapped subcommand must
-        // reach it instead of being dropped, either as-is (`keep`) or under
-        // bun's spelling (`renames`).
-        let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
-            Some(b"publish") => (&[b"access", b"otp", b"tag"], &[]),
-            Some(b"version" | b"verison") => (&[b"message"], &[]),
-            Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
-            _ => (&[], &[]),
-        };
         let mut tail: Vec<&'static ZStr> =
             Vec::with_capacity(argv.len().saturating_sub(rest_start));
         copy_translating_npm_flags(

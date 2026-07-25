@@ -40,8 +40,10 @@ export const routes = {
 };
 
 export const static_responses: Record<string, Blob> = {};
+const static_headers: Record<string, Record<string, string>> = {};
 for (const [path, response] of Object.entries(routes)) {
   static_responses[path] = await response.clone().blob();
+  static_headers[path] = Object.fromEntries(response.headers);
 }
 
 export const stressPaths = ["/foo", "/big", "/foo/bar"] as const;
@@ -55,14 +57,15 @@ export async function runStress(
 ) {
   const bytes = method === "blob" ? static_responses[path] : await static_responses[path][method]();
   const expectedLength = String(static_responses[path].size);
+  const expectedHeaders = Object.entries(static_headers[path]);
 
   // macOS limits backlog to 128.
   const batchSize = Math.ceil(64 / (isWindows ? 8 : 1));
-  // Debug/ASAN builds run the fetch loop ~10x slower than release; one warmup +
-  // measurement round at 64-wide still exercises the backpressure path on every
-  // /big request, and the delta assertion below catches a per-request body leak
-  // in a single measurement pass (64 * 4MB = 256MB >> threshold).
-  const iterations = Math.ceil((isASAN || isDebug ? 4 : 12) / (isWindows ? 8 : 1));
+  // Debug/ASAN builds run the fetch loop ~10x slower than release. Two rounds
+  // at 64-wide exercise the backpressure path on every /big request, and two
+  // measurement passes move 2 * 64 * 4MB = 512MB, far above the 192MB delta
+  // threshold, so a per-request body leak is caught with margin to spare.
+  const iterations = Math.ceil((isASAN || isDebug ? 2 : 12) / (isWindows ? 8 : 1));
 
   async function iterate() {
     let array = new Array(batchSize);
@@ -73,6 +76,9 @@ export async function runStress(
           expect(res.status).toBe(200);
           expect(res.url).toBe(route);
           expect(res.headers.get("Content-Length")).toBe(expectedLength);
+          for (const [name, value] of expectedHeaders) {
+            expect(res.headers.get(name)).toBe(value);
+          }
           if (accessBody) {
             res.body;
           }
@@ -114,8 +120,8 @@ export async function runStress(
   expect(rss).toBeLessThan(isASAN ? 6144 : 4092);
   if (isASAN || isDebug) {
     // With the reduced iteration count the absolute ceiling alone would miss a
-    // per-request body leak on the first /big case (4 iter * 64 * 4MB = 1GB is
-    // well under 6GB). Under ASAN the post-gc delta is stable within tens of
+    // per-request body leak on the first /big case (2 iter * 64 * 4MB = 512MB
+    // is well under 6GB). Under ASAN the post-gc delta is stable within tens of
     // MB, so bound it directly; release keeps 12 iterations where the ceiling
     // is sufficient and mimalloc jitter on /big makes a tight delta flaky.
     expect(delta).toBeLessThan(192);

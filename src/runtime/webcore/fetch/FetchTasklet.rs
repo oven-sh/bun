@@ -935,9 +935,31 @@ impl FetchTasklet {
                 unsafe { (*sink).detach_js() };
             }
             stream.deinit();
-            if let Ok(Some(fresh)) = multipart_form_stream(&global_this, segments) {
-                *stream = fresh;
-                self.is_waiting_request_stream_start = true;
+            match multipart_form_stream(&global_this, segments) {
+                Ok(Some(fresh)) => {
+                    *stream = fresh;
+                    self.is_waiting_request_stream_start = true;
+                }
+                err => {
+                    // `to_readable_stream` failing here means OOM or a tampered
+                    // global; abort so the fetch promise rejects instead of
+                    // stalling at the body stage with no sink.
+                    let reason = match err {
+                        Err(_) => global_this.try_take_exception(),
+                        _ => None,
+                    }
+                    .unwrap_or_else(|| {
+                        global_this.create_error_instance(format_args!(
+                            "Failed to restart request body stream"
+                        ))
+                    });
+                    self.abort_reason.set(&global_this, reason);
+                    self.result.restart_request_stream = false;
+                    self.request_stream_restart_pending
+                        .store(false, Ordering::Release);
+                    self.abort_task();
+                    return Ok(());
+                }
             }
             self.result.restart_request_stream = false;
             if let Some(buf) = self.stream_buffer_mut() {

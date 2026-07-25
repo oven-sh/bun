@@ -734,7 +734,11 @@ impl HttpThread {
                                 }
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.stream_body_by_http_id(write.async_http_id, ended);
+                                session.stream_body_by_http_id(
+                                    write.async_http_id,
+                                    ended,
+                                    write.generation,
+                                );
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -754,12 +758,20 @@ impl HttpThread {
                                 }
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.stream_body_by_http_id(write.async_http_id, ended);
+                                session.stream_body_by_http_id(
+                                    write.async_http_id,
+                                    ended,
+                                    write.generation,
+                                );
                             }
                         }
                     }
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, ended);
+                    h3::ClientContext::stream_body_by_http_id(
+                        write.async_http_id,
+                        ended,
+                        write.generation,
+                    );
                 }
             }
             let len = queued_writes.len();

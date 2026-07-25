@@ -220,7 +220,11 @@ function injectFakeEmitter(Class) {
   function getMaxListeners() {
     return this[kMaxListeners] ?? 10;
   }
-  const getEventListenersForEventTarget = $newCppFunction("JSEventTargetNode.cpp", "jsFunctionNodeEventsGetEventListeners", 1);
+  const getEventListenersForEventTarget = $newCppFunction(
+    "JSEventTargetNode.cpp",
+    "jsFunctionNodeEventsGetEventListeners",
+    1,
+  );
   function listenerCount(type) {
     try {
       return getEventListenersForEventTarget(this, type).length;

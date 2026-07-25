@@ -20,12 +20,13 @@ import { detectWindowsSysroot } from "../../scripts/build/config.ts";
 
 const repoRoot = resolve(import.meta.dir, "..", "..");
 const cargo = Bun.which("cargo");
+const rustc = Bun.which("rustc");
 const lldLink = Bun.which("lld-link");
 const winsysroot = detectWindowsSysroot();
 const rustSrc = (() => {
-  if (cargo == null) return undefined;
+  if (cargo == null || rustc == null) return undefined;
   const probe = Bun.spawnSync({
-    cmd: ["rustc", "--print=sysroot"],
+    cmd: [rustc, "--print=sysroot"],
     cwd: repoRoot,
     env: { ...process.env, RUSTUP_TOOLCHAIN: "" },
   });
@@ -34,9 +35,18 @@ const rustSrc = (() => {
   return existsSync(join(sysroot, "lib", "rustlib", "src", "rust")) ? sysroot : undefined;
 })();
 
+// Cargo parses the whole workspace manifest (including path deps) before
+// applying -p, so it needs vendor/lolhtml on disk even for a zero-dep crate.
+// Test-only CI lanes run a prebuilt binary and never fetch it; skip there.
+// Same prerequisite check as rust-windows-sys-link.test.ts / linear-fifo.test.ts.
+const workspaceResolvable =
+  existsSync(join(repoRoot, "vendor", "lolhtml", "Cargo.toml")) &&
+  existsSync(join(repoRoot, "build", "debug", "codegen", "build_options.rs"));
+
 // Cross-compile from a non-Windows host only: native Windows test agents don't
 // reliably run inside a VS dev shell, so kernel32.lib isn't on %LIB%.
-const havePrereqs = !isWindows && cargo != null && lldLink != null && rustSrc != null && winsysroot != null;
+const havePrereqs =
+  !isWindows && cargo != null && lldLink != null && rustSrc != null && winsysroot != null && workspaceResolvable;
 
 const triple = process.arch === "arm64" ? "aarch64-pc-windows-msvc" : "x86_64-pc-windows-msvc";
 

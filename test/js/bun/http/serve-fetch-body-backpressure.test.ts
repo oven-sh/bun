@@ -39,7 +39,11 @@ test("Bun.serve proxying a fetch() body applies client backpressure to the upstr
   });
 
   await using proxy = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "serve-fetch-body-backpressure-fixture.ts"), `http://127.0.0.1:${upstream.port}/`],
+    cmd: [
+      bunExe(),
+      join(import.meta.dir, "serve-fetch-body-backpressure-fixture.ts"),
+      `http://127.0.0.1:${upstream.port}/`,
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "inherit",
@@ -55,8 +59,7 @@ test("Bun.serve proxying a fetch() body applies client backpressure to the upstr
   reader.releaseLock();
   const { proxyPort, controlPort } = JSON.parse(head.slice(0, head.indexOf("\n")));
 
-  const rss = async () =>
-    (await fetch(`http://127.0.0.1:${controlPort}/`).then(r => r.json())).rss as number;
+  const rss = async () => (await fetch(`http://127.0.0.1:${controlPort}/`).then(r => r.json())).rss as number;
   const baselineRss = await rss();
 
   // Raw client: send the request, read the response head + a little body,

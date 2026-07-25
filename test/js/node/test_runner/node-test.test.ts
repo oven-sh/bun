@@ -1084,11 +1084,11 @@ test.concurrent.each([
       });
     `,
   ],
-] as const)("run({isolation:'none'}): opts.signal stops between %s entries", async (_label, fixture) => {
-  // The in-process entry loop (top-level and per-suite) checks the signal
-  // between tests, so aborting from inside the first test means the second's
-  // body never runs (the eval driver's SIGINT handler routes through this
-  // signal under --test-isolation=none).
+] as const)("run({isolation:'none'}): opts.signal does not stop %s entries", async (_label, fixture) => {
+  // node's in-process runner never consults the run signal for scheduling
+  // (v26.3.0, side-effect verified): aborting from inside the first test
+  // still runs the second to a normal passing verdict and the run succeeds.
+  // Ctrl+C under --test-isolation=none is the CLI driver's prompt exit.
   using dir = tempDir("node-test-inprocess-signal", {
     "f.test.mjs": fixture,
     "driver.mjs": `
@@ -1118,8 +1118,9 @@ test.concurrent.each([
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expectedPasses = _label === "top-level" ? ["first", "second"] : ["first", "second", "s"];
   expect({ result: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-    result: { passes: ["first"], interrupted: true, success: false, secondRan: false },
+    result: { passes: expectedPasses, interrupted: false, success: true, secondRan: true },
     stderr: "",
     exitCode: 0,
   });

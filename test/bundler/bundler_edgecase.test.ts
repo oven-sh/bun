@@ -784,6 +784,31 @@ describe("bundler", () => {
       expect(out).toMatch(/\{\s*"use strict";\s*exports/);
     },
   });
+  itBundled("edgecase/DirectiveBeforeInitCallsInWrappedDep", {
+    files: {
+      "/entry.js": /* js */ `
+        const { a } = require("./a.js");
+        const { x } = require("./b.js");
+        console.log(a, x);
+      `,
+      "/a.js": /* js */ `
+        "use strict";
+        import { x } from "./b.js";
+        export const a = x;
+      `,
+      "/b.js": /* js */ `
+        export const x = 1;
+        console.log("b loaded");
+      `,
+    },
+    format: "cjs",
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // a.js's wrapper body must keep its directive prologue first: the
+      // injected init_b() dependency call goes after it, not before.
+      expect(out).toMatch(/__esm\(\(\) => \{\s*"use strict";\s*init_b\(\)/);
+    },
+  });
   itBundled("edgecase/DCEVarRedeclarationIssue2815", {
     todo: true,
     files: {

@@ -228,6 +228,10 @@ public:
         while (!m_cleanupHooks.empty()) {
             drain();
         }
+        // erase() above leaves the bucket array allocated; release it here
+        // since ~NapiEnv may not run before process exit (late finalizers can
+        // hold the last Ref past GlobalObject teardown).
+        m_cleanupHooks = Napi::HookSet();
         clearExceptionsBetweenFinalizers();
 
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
@@ -1017,7 +1021,10 @@ public:
         // TODO change to global? or find another way to avoid JSGlobalProxy
         JSC::JSObject* jscThis = globalObject->globalThis();
         if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+            // TopExceptionScope: this runs before the addon's callback and its
+            // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
+            // destruction that the next preamble would see as unchecked.
+            auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
             jscThis = m_callFrame->thisValue().toObject(globalObject);
             // https://tc39.es/ecma262/#sec-toobject
             // toObject only throws for undefined and null, which we checked for

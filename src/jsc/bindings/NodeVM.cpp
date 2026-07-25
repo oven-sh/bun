@@ -167,7 +167,15 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
             if (actuallyValid) {
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+                // Building the error materializes its stack, running a user
+                // Error.prepareStackTrace that may throw; Node throws the
+                // SyntaxError anyway. Terminations survive tryClearException.
+                if (exception)
+                    (void)throwScope.tryClearException();
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
+                // Node always attaches the arrow header to compile-time SyntaxErrors
+                // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+                decorateParseErrorStack(globalObject, vm, exception, code, options.filename, error, options.lineOffset);
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -479,6 +487,49 @@ JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::So
     return JSValue::encode(buffer);
 }
 
+// AppendExceptionLine helpers shared by the runtime (handleException) and
+// compile-time (decorateParseErrorStack) paths — a single implementation of
+// Node's arrow-header format so the two call sites cannot drift.
+static String nthSourceLineForArrowHeader(StringView source, int64_t physicalLine1Based)
+{
+    if (physicalLine1Based < 1 || physicalLine1Based > static_cast<int64_t>(source.length()) + 1)
+        return {};
+    size_t lineStart = 0;
+    for (int64_t currentLine = 1; currentLine < physicalLine1Based && lineStart != WTF::notFound; currentLine++) {
+        size_t newline = source.find('\n', lineStart);
+        lineStart = newline == WTF::notFound ? WTF::notFound : newline + 1;
+    }
+    if (lineStart == WTF::notFound)
+        return {};
+    size_t lineEnd = source.find('\n', lineStart);
+    if (lineEnd == WTF::notFound)
+        lineEnd = source.length();
+    StringView lineView = source.substring(lineStart, lineEnd - lineStart);
+    if (lineView.endsWith('\r'))
+        lineView = lineView.left(lineView.length() - 1);
+    // Like Node, skip the decoration for excessively long lines.
+    if (lineView.length() > 1024)
+        return {};
+    return lineView.toString();
+}
+
+static void writeArrowHeaderStack(VM& vm, ErrorInstance* errorInstance, const String& url, int reportedLine, const String& sourceLineText, unsigned caretColumn1Based, const String& stack)
+{
+    String prepend;
+    if (!sourceLineText.isNull() && caretColumn1Based >= 1 && caretColumn1Based <= sourceLineText.length() + 1) {
+        StringBuilder caretLine;
+        for (unsigned i = 1; i < caretColumn1Based; i++)
+            caretLine.append(i <= sourceLineText.length() && sourceLineText[i - 1] == '\t' ? '\t' : ' ');
+        caretLine.append('^');
+        prepend = makeString(url, ':', reportedLine, '\n', sourceLineText, '\n', caretLine.toString(), "\n\n"_s, stack);
+    } else {
+        prepend = makeString(url, ':', reportedLine, '\n', stack);
+    }
+    const auto& decoratedName = WebCore::builtinNames(vm).vmErrorDecoratedPrivateName();
+    errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
+    errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+}
+
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope)
 {
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(exception->value())) {
@@ -518,62 +569,75 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 
         // Node decorates vm script errors with the offending source line and a
         // caret marker (AppendExceptionLine):
-        //   <url>:<line>
-        //   <source line>
-        //   <caret>
-        //   <blank>
-        //   <stack>
+        //   <url>:<line>\n<source line>\n<caret>\n\n<stack>
         String sourceLineText;
         unsigned caretColumn = 0;
         if (JSC::CodeBlock* codeBlock = stack_frame.codeBlock()) {
             if (JSC::SourceProvider* provider = codeBlock->source().provider()) {
-                StringView providerSource = provider->source();
                 int64_t startLineZeroBased = provider->startPosition().m_line.zeroBasedInt();
                 int64_t physicalLine = static_cast<int64_t>(line_and_column.line) - startLineZeroBased;
-                if (physicalLine >= 1 && physicalLine <= static_cast<int64_t>(providerSource.length()) + 1) {
-                    // Extract the physicalLine-th (1-based) line of the source.
-                    size_t lineStart = 0;
-                    for (int64_t currentLine = 1; currentLine < physicalLine && lineStart != WTF::notFound; currentLine++) {
-                        size_t newline = providerSource.find('\n', lineStart);
-                        lineStart = newline == WTF::notFound ? WTF::notFound : newline + 1;
-                    }
-                    if (lineStart != WTF::notFound) {
-                        size_t lineEnd = providerSource.find('\n', lineStart);
-                        if (lineEnd == WTF::notFound)
-                            lineEnd = providerSource.length();
-                        StringView lineView = providerSource.substring(lineStart, lineEnd - lineStart);
-                        if (lineView.endsWith('\r'))
-                            lineView = lineView.left(lineView.length() - 1);
-                        // Like Node, skip the decoration for excessively long lines.
-                        if (lineView.length() <= 1024) {
-                            sourceLineText = lineView.toString();
-                            caretColumn = line_and_column.column;
-                            unsigned startColumnZeroBased = static_cast<unsigned>(provider->startPosition().m_column.zeroBasedInt());
-                            if (physicalLine == 1 && caretColumn > startColumnZeroBased)
-                                caretColumn -= startColumnZeroBased;
-                        }
-                    }
+                sourceLineText = nthSourceLineForArrowHeader(provider->source(), physicalLine);
+                if (!sourceLineText.isNull()) {
+                    caretColumn = line_and_column.column;
+                    unsigned startColumnZeroBased = static_cast<unsigned>(provider->startPosition().m_column.zeroBasedInt());
+                    if (physicalLine == 1 && caretColumn > startColumnZeroBased)
+                        caretColumn -= startColumnZeroBased;
                 }
             }
         }
 
-        String prepend;
-        if (!sourceLineText.isNull() && caretColumn >= 1 && caretColumn <= sourceLineText.length() + 1) {
-            StringBuilder caretLine;
-            for (unsigned i = 1; i < caretColumn; i++)
-                caretLine.append(i <= sourceLineText.length() && sourceLineText[i - 1] == '\t' ? '\t' : ' ');
-            caretLine.append('^');
-            prepend = makeString(source_url, ":"_s, line_and_column.line, "\n"_s, sourceLineText, "\n"_s, caretLine.toString(), "\n\n"_s, stack);
-        } else {
-            prepend = makeString(source_url, ":"_s, line_and_column.line, "\n"_s, stack);
-        }
-        errorInstance->putDirect(vm, vm.propertyNames->stack, jsString(vm, prepend), JSC::PropertyAttribute::DontEnum | 0);
-        errorInstance->putDirect(vm, decoratedName, jsBoolean(true), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
+        writeArrowHeaderStack(vm, errorInstance, source_url, static_cast<int>(line_and_column.line), sourceLineText, caretColumn, stack);
 
         JSC::throwException(globalObject, throwScope, exception.get());
         return true;
     }
     return false;
+}
+
+// Compile-time counterpart of handleException: prepends Node's arrow header
+// (`<url>:<line>\n<src>\n^\n\n`) using ParserError since there is no CodeBlock
+// yet. Node applies this unconditionally at compile time (not displayErrors).
+void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset)
+{
+    UNUSED_PARAM(globalObject);
+    auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
+    if (!errorInstance)
+        return;
+
+    // The caller's toErrorObject() already materialized the stack (running any
+    // user Error.prepareStackTrace), so this cannot re-enter JS or throw.
+    errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
+    JSValue stackValue = errorInstance->getDirect(vm, vm.propertyNames->stack);
+    if (!stackValue || !stackValue.isString())
+        return;
+    auto stackHolder = asString(stackValue)->tryGetValue();
+    const String& stack = stackHolder.data;
+    if (stack.isNull())
+        return;
+
+    // `url` is resolved by the caller: `new Script` substitutes
+    // evalmachine.<anonymous> only when no filename was provided, while
+    // compileFunction has no such default. An explicit "" renders as ":<line>".
+
+    // parseError.line() is already lineOffset-adjusted (JSC parses against a
+    // SourceCode whose start position carries the offset), but JSC clamps a
+    // negative provider start line to zero, so a negative offset comes back as
+    // the physical line. Undo/re-apply so Node's signed header still renders.
+    int lineOff = lineOffset.zeroBasedInt();
+    int jscLine = parseError.line();
+    int64_t physicalLine = lineOff < 0 ? static_cast<int64_t>(jscLine) : static_cast<int64_t>(jscLine) - lineOff;
+    int reportedLine = static_cast<int>(physicalLine) + lineOff;
+
+    // JSTextPosition::column() = offset - lineStartOffset — physical 0-based
+    // column into sourceString, so columnOffset needs no adjustment.
+    String sourceLineText = nthSourceLineForArrowHeader(sourceString, physicalLine);
+    unsigned caretColumn = 0;
+    if (!sourceLineText.isNull()) {
+        int col0 = parseError.token().m_startPosition.column();
+        caretColumn = col0 >= 0 ? static_cast<unsigned>(col0) + 1 : 1;
+    }
+
+    writeArrowHeaderStack(vm, errorInstance, url, reportedLine, sourceLineText, caretColumn, stack);
 }
 
 // Returns an encoded exception if the options are invalid.

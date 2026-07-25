@@ -182,6 +182,16 @@ impl SSLConfigFromJs for SSLConfig {
             result.sigalgs = zbox_into_raw(&sigalgs.to_owned_slice_z());
             any = true;
         }
+        if let Some(ecdh_curve) = generated.ecdh_curve.get() {
+            let bytes = ecdh_curve.to_owned_slice_z();
+            // Node treats `ecdhCurve: 'auto'` (the documented default) as
+            // "use the library's default group list", i.e. skip the
+            // SSL_CTX_set1_groups_list call entirely.
+            if bytes.as_bytes() != b"auto" {
+                result.ecdh_curve = zbox_into_raw(&bytes);
+                any = true;
+            }
+        }
         any = any
             || result.low_memory_mode
             || generated.reject_unauthorized.is_some()
@@ -205,6 +215,7 @@ impl SSLConfigFromJs for SSLConfig {
             || result.ssl_min_version != 0
             || result.ssl_max_version != 0
             || !result.sigalgs.is_null()
+            || !result.ecdh_curve.is_null()
             || result.session_timeout != 0
             || result.allow_partial_trust_chain;
 

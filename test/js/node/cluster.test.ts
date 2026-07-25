@@ -164,9 +164,11 @@ process.send("regular message");
 // https://github.com/oven-sh/bun/issues/13611
 // SO_REUSEPORT does not apply to AF_UNIX; every worker must adopt the same
 // listen descriptor from the primary instead of binding independently.
-test.skipIf(isWindows)("Bun.serve({ unix }) shares one listen socket across cluster workers", async () => {
-  using dir = tempDir("bun-serve-cluster-unix", {
-    "index.ts": `
+test.skipIf(isWindows)(
+  "Bun.serve({ unix }) shares one listen socket across cluster workers",
+  async () => {
+    using dir = tempDir("bun-serve-cluster-unix", {
+      "index.ts": `
       import cluster from "node:cluster";
       import net from "node:net";
       import path from "node:path";
@@ -237,21 +239,23 @@ test.skipIf(isWindows)("Bun.serve({ unix }) shares one listen socket across clus
         process.send!("ready");
       }
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("EADDRINUSE");
-  expect(stdout).toContain("listening=3");
-  expect(stdout).toContain("distinct=2");
-  expect(stdout).toContain("sock-after-stop=true");
-  expect(stdout).toContain("after-stop-responder=true");
-  expect(exitCode).toBe(0);
-}, 20_000);
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EADDRINUSE");
+    expect(stdout).toContain("listening=3");
+    expect(stdout).toContain("distinct=2");
+    expect(stdout).toContain("sock-after-stop=true");
+    expect(stdout).toContain("after-stop-responder=true");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);
 
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a

@@ -460,12 +460,7 @@ pub(crate) fn string_to_flags_for_testing(
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     use crate::node::types::FileSystemFlags;
-    let arguments = frame.arguments_old::<1>();
-    let val = if arguments.len < 1 {
-        JSValue::UNDEFINED
-    } else {
-        arguments.ptr[0]
-    };
+    let [val] = frame.arguments_as_array::<1>();
     let flags = FileSystemFlags::from_js(global, val)?.unwrap_or(FileSystemFlags::R);
     // On Windows the internal bun.O bits are POSIX-shaped and translated to the
     // MSVCRT `_O_*` values at the open boundary; node's stringToFlags and
@@ -482,15 +477,15 @@ pub(crate) fn create_memfd_for_testing(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
+    let [size_arg] = frame.arguments_as_array::<1>();
 
-    if arguments.len < 1 {
+    if frame.arguments_count() < 1 {
         return Ok(JSValue::UNDEFINED);
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
-        let _ = arguments;
+        let _ = size_arg;
         return Err(global.throw(format_args!(
             "memfd_create is not implemented on this platform"
         )));
@@ -498,7 +493,7 @@ pub(crate) fn create_memfd_for_testing(
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
-        let size = arguments.ptr[0].to_int64();
+        let size = size_arg.to_int64();
         match bun_sys::memfd_create(c"my_memfd", bun_sys::MemfdFlags::NonExecutable) {
             Ok(fd) => {
                 let _ = bun_sys::ftruncate(fd, size);

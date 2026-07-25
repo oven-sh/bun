@@ -2288,8 +2288,10 @@ Reo=
 
     it("closes a connection whose server certificate is not trusted", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, { ca: CA_CRT });
+      // A rejecting client reports the failed verdict at the callback, like
+      // node v26.3.0 (secureConnect never fires; socket.authorized is false).
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2302,8 +2304,10 @@ Reo=
 
     it("closes an untrusted connection with tls: true", async () => {
       using t = await connectTo({ key: ROGUE_KEY, cert: ROGUE_CRT }, true);
+      // Same node v26.3.0 contract as above: the rejected handshake reports
+      // authorized=false at the callback.
       expect(await t.handshake.promise).toEqual({
-        authorizedArg: true,
+        authorizedArg: false,
         authorizedGetter: false,
         callbackError: UNTRUSTED_MESSAGE,
         getterError: UNTRUSTED_MESSAGE,
@@ -2413,7 +2417,9 @@ Reo=
             handshake.resolve({
               authorized: socket.authorized,
               error: authorizationError?.message ?? null,
-              // The raw twin shares the fd: its writes must refuse too.
+              // The raw twin shares the fd: its writes must refuse too. A
+              // rejecting client's REJECTED flag propagates to the twin so a
+              // MITM that failed verification can never receive plaintext.
               rawWrite: raw.write("must-not-reach-the-peer"),
             });
           },
@@ -2432,6 +2438,58 @@ Reo=
       expect(await handshake.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE, rawWrite: -1 });
       await closed.promise;
       expect(received).toEqual([]);
+    });
+
+    it("refuses raw-twin writes after a failed (non-policy) handshake", async () => {
+      // rejectUnauthorized: false so the policy-reject path stays out of the
+      // picture: the transport must fail closed purely because the handshake
+      // itself failed (the peer is not speaking TLS), the way node destroys
+      // the underlying socket on a TLS failure.
+      const serverReceived: string[] = [];
+      const failure = Promise.withResolvers<number>();
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socket.write("this-is-not-a-tls-server\n");
+          },
+          data(_socket, data) {
+            serverReceived.push(data.toString("latin1"));
+          },
+          close() {},
+          error() {},
+        },
+      });
+      using tcp = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        socket: { data() {}, close() {}, error() {} },
+      });
+      const [raw, secure] = tcp.upgradeTLS({
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake(_socket: Socket, success: boolean) {
+            if (!success) failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          error() {
+            // Protocol failures surface here; the raw twin must already be
+            // fail-closed by the time JS observes the failure.
+            failure.resolve(raw.write("plaintext-after-failed-handshake"));
+          },
+          data() {},
+          close() {
+            closed.resolve();
+          },
+        },
+      } as any);
+      using _raw = raw;
+      using _secure = secure;
+
+      expect(await failure.promise).toBe(-1);
+      await closed.promise;
+      expect(serverReceived.join("")).not.toContain("plaintext-after-failed-handshake");
     });
 
     it("keeps a connection whose server certificate is trusted", async () => {
@@ -2524,6 +2582,9 @@ Reo=
         socket: {
           open() {},
           handshake(socket) {
+            // Fail closed: the rejected peer failed chain verification, so the
+            // write is refused outright (-1) rather than sealed with keys a
+            // malicious server can derive from the ECDHE exchange.
             handshake.resolve(socket.write("token-that-must-never-reach-a-mitm"));
           },
           data() {},
@@ -3227,3 +3288,45 @@ it.skipIf(!isLinux)(
     expect(out).toEqual({ localPort: null, remotePort: null });
   },
 );
+
+describe("TLS handshake callback throw", () => {
+  // A throw from a Bun-native handshake callback must reach the socket's own
+  // error handler (the documented contract), not crash the process — node:tls
+  // gets its uncaughtException semantics in net.ts, not in the shared native
+  // dispatch.
+  it("is delivered to the socket's own error handler", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      tls,
+      socket: {
+        data() {},
+        error() {},
+      },
+    });
+    try {
+      const boom = new Error("boom-native-handshake");
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { rejectUnauthorized: false },
+        socket: {
+          handshake() {
+            throw boom;
+          },
+          error(_socket, err) {
+            resolve(err as Error);
+          },
+          data() {},
+          close() {
+            reject(new Error("socket closed before the error handler ran"));
+          },
+        },
+      });
+      expect(await promise).toBe(boom);
+    } finally {
+      server.stop(true);
+    }
+  });
+});

@@ -7,3 +7,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_startCPUProfiler);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_stopCPUProfiler);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_setCPUSamplingInterval);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_stopPreciseCoverage);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_collectPreciseCoverage);

@@ -166,17 +166,11 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let this_ref = unsafe { &mut *this };
 
         if stream.is_locked(global_this) || stream.is_disturbed(global_this) {
-            // `SystemError` has no `Default` impl upstream — spell out
-            // every field explicitly.
             let err = SystemError {
-                errno: 0,
-                code: BunString::static_(<&'static str>::from(ErrorCode::ERR_STREAM_CANNOT_PIPE)),
-                message: BunString::static_("Stream already used, please create a new one"),
-                path: BunString::EMPTY,
-                syscall: BunString::EMPTY,
-                hostname: BunString::EMPTY,
-                fd: core::ffi::c_int::MIN,
-                dest: BunString::EMPTY,
+                code: BunString::static_(<&'static str>::from(ErrorCode::ERR_STREAM_CANNOT_PIPE))
+                    .into(),
+                message: BunString::static_("Stream already used, please create a new one").into(),
+                ..Default::default()
             };
             let err_instance = err.to_error_instance(global_this);
             err_instance.ensure_still_alive();

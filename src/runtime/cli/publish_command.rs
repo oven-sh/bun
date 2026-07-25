@@ -109,7 +109,7 @@ pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
 
     pub publish_script: Option<Box<[u8]>>,
     pub postpublish_script: Option<Box<[u8]>>,
-    pub script_env: Option<&'a mut dotenv::Loader<'a>>,
+    pub script_env: Option<&'a mut dotenv::Loader>,
 }
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]

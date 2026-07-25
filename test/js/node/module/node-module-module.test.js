@@ -158,6 +158,14 @@ describe.concurrent("node-module-module", () => {
       assert.strictEqual(m.require(), "instance");
       assert.strictEqual(Module.prototype.require, original);
 
+      // Module.prototype._compile can be reassigned (loader-hook pattern).
+      const origCompile = Module.prototype._compile;
+      Module.prototype._compile = origCompile;
+      assert.strictEqual(Module.prototype._compile, origCompile);
+      const hook = function (c, f) { return origCompile.call(this, c, f); };
+      Module.prototype._compile = hook;
+      assert.strictEqual(Module.prototype._compile, hook);
+
       console.log("ok");
     `;
     await using proc = Bun.spawn({

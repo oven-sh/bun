@@ -697,12 +697,17 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
-    JSCommonJSModule* thisObject = dynamicDowncast<JSCommonJSModule>(JSValue::decode(thisValue));
-    if (!thisObject)
-        return false;
+    JSValue decodedThis = JSValue::decode(thisValue);
     JSValue decodedValue = JSValue::decode(value);
-    thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
-    return true;
+    if (auto* thisObject = dynamicDowncast<JSCommonJSModule>(decodedThis)) {
+        thisObject->m_overriddenCompile.set(globalObject->vm(), thisObject, decodedValue);
+        return true;
+    }
+    if (auto* receiver = decodedThis.getObject()) {
+        receiver->putDirect(globalObject->vm(), propertyName, decodedValue, 0);
+        return true;
+    }
+    return false;
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -766,11 +771,6 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     return JSValue::encode(jsUndefined());
 }
 
-// These back `Module.prototype.require`. When read, they return the process-wide
-// overridable require (so `new Module(id).require(...)` resolves relative to that
-// module). When written on an instance, they shadow with an own property; when
-// written on the prototype they replace the process-wide function, which is how
-// tooling like Next.js hooks `Module.prototype.require`.
 JSC_DEFINE_CUSTOM_GETTER(getterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -784,6 +784,7 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequire, (JSC::JSGlobalObject * globalObject, JSC
         moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), JSValue::decode(value), 0);
         return true;
     }
+    // Module.prototype.require = fn (Next.js pattern): replace the process-wide override.
     globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), JSValue::decode(value), 0);
     return true;
 }

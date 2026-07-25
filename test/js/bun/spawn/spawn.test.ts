@@ -15,7 +15,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1270,13 +1270,18 @@ const ownThp = readOwnThp();
 // mimalloc sets PR_SET_THP_DISABLE at startup on Linux; the flag is inherited
 // across fork and preserved across execve. Spawn should clear it so children
 // get the system default instead of having transparent huge pages disabled.
-it.if(ownThp === "0")("child does not inherit PR_SET_THP_DISABLE", async () => {
-  await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "pipe" });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(stdout.match(/^THP_enabled:\s*(\d)/m)?.[1]).toBe("1");
-  expect(exitCode).toBe(0);
+// /proc reports THP_enabled: 0 on CONFIG_TRANSPARENT_HUGEPAGE=n kernels too,
+// so also require the sysfs directory that only exists when THP is built in.
+it.if(ownThp === "0" && existsSync("/sys/kernel/mm/transparent_hugepage"))(
+  "child does not inherit PR_SET_THP_DISABLE",
+  async () => {
+    await using proc = spawn({ cmd: ["cat", "/proc/self/status"], stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.match(/^THP_enabled:\s*(\d)/m)?.[1]).toBe("1");
+    expect(exitCode).toBe(0);
 
-  // Parent's flag is restored once vfork returns.
-  expect(readOwnThp()).toBe("0");
-});
+    // Parent's flag is restored once vfork returns.
+    expect(readOwnThp()).toBe("0");
+  },
+);

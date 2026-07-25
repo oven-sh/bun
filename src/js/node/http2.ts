@@ -2285,7 +2285,14 @@ function markStreamClosed(stream: Http2Stream) {
 }
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
-  session[bunHTTP2Native]?.rstStream(id, rstCode);
+  const native = session[bunHTTP2Native];
+  if (native) {
+    native.rstStream(id, rstCode);
+    // This can run on the program's last live turn (close() defers it via
+    // setImmediate / 'finish'); a RST_STREAM left in the cork for the
+    // auto-flusher would strand the peer waiting for the stream to settle.
+    native.flush();
+  }
 }
 // node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
 // drives the native receive window. While paused, the stream's window is not replenished; on
@@ -4095,10 +4102,11 @@ class ServerHttp2Session extends Http2Session {
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side (e.g. the response
-          // ended before the request body was consumed): node defers the destroy until the
-          // consumer drains it ('end'), so the buffered request body is not lost.
+        if (!stream.rstCode && !stream.destroyed && stream.errored == null && !stream.readableEnded) {
+          // Clean close before the readable side has delivered EOF (e.g. the response ended
+          // before the request body was consumed): node defers the destroy until 'end'
+          // (forced by the push(null)/resume() above), so the buffered request body is not
+          // lost and 'end' precedes 'close'.
           stream.once("end", destroySelfOnEnd);
         } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
           // The writable side is mid-finish (an in-flight _final settled the native stream
@@ -5029,10 +5037,11 @@ class ClientHttp2Session extends Http2Session {
         stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
         markStreamClosed(stream);
         self.#connections--;
-        if (stream.readable && !stream.rstCode) {
-          // Clean close while data is still buffered on the readable side: node defers the
-          // destroy until the consumer drains it ('end'), so a late-attaching reader does not
-          // lose data.
+        if (!stream.rstCode && !stream.destroyed && stream.errored == null && !stream.readableEnded) {
+          // Clean close before the readable side has delivered EOF: node defers the destroy
+          // until 'end' (emitted on the next tick by the push(null)/read(0) above), so a
+          // late-attaching reader does not lose data and 'end' precedes 'close'. This also
+          // covers a peer RST_STREAM(NO_ERROR), whose only frame is the reset itself.
           stream.once("end", destroySelfOnEnd);
         } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
           // The writable side is mid-finish (an in-flight _final settled the native stream

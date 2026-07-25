@@ -252,3 +252,88 @@ describe("unterminated string literals in large files", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+describe("class declaration TDZ is preserved", () => {
+  const probe =
+    `const t = (f) => { try { return f(); } catch (e) { return "THROW:" + e.constructor.name; } };\n` +
+    `console.log(JSON.stringify([t(() => typeof Pure), t(() => new Pure().m()), t(() => typeof WithBlock)]));\n`;
+
+  test.concurrent.each([
+    ["class", ""],
+    ["export class", "export "],
+  ])("runtime: %s stays in TDZ until its declaration", async (_, prefix) => {
+    using dir = tempDir("transpiler-class-tdz", {
+      "entry.mjs":
+        probe +
+        `${prefix}class Pure { m() { return "ok"; } f = 1; get g() { return 2; } static s = 3; }\n` +
+        `${prefix}class WithBlock { static { void 0; } }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["THROW:ReferenceError", "THROW:ReferenceError", "THROW:ReferenceError"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("runtime: export default class stays in TDZ until its declaration", async () => {
+    using dir = tempDir("transpiler-class-tdz-default", {
+      "entry.mjs":
+        `const t = (f) => { try { return f(); } catch (e) { return "THROW:" + e.constructor.name; } };\n` +
+        `console.log(JSON.stringify([t(() => typeof Named), t(() => new Named().m())]));\n` +
+        `export default class Named { m() { return "ok"; } static s = 3; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["THROW:ReferenceError", "THROW:ReferenceError"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("--no-bundle output keeps class declarations in source order", async () => {
+    using dir = tempDir("transpiler-class-tdz-print", {
+      "entry.mjs": `const marker = 1;\nclass Pure { m() { return "ok"; } static s = 3; }\nexport default class Named { static s = 3; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--target=bun", "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const markerPos = stdout.indexOf("marker");
+    const purePos = stdout.indexOf("class Pure");
+    const namedPos = stdout.indexOf("class Named");
+    expect({ markerPos, purePos, namedPos }).toEqual({
+      markerPos: expect.any(Number),
+      purePos: expect.any(Number),
+      namedPos: expect.any(Number),
+    });
+    expect(markerPos).toBeGreaterThanOrEqual(0);
+    expect(markerPos).toBeLessThan(purePos);
+    expect(purePos).toBeLessThan(namedPos);
+    expect(exitCode).toBe(0);
+  });
+});

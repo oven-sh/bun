@@ -782,8 +782,22 @@ describe("bundler", () => {
     format: "esm",
     external: ["external-pkg"],
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("__require");
+      api.expectFile("/out.js").toContain("var __require = ");
+      api.expectFile("/out.js").toContain('__require("external-pkg")');
       api.expectFile("/out.js").toContain('import("external-pkg")');
+    },
+  });
+  itBundled("edgecase/ExternalStaticImportIIFEStillEmitsRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import "external-pkg";
+      `,
+    },
+    format: "iife",
+    external: ["external-pkg"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("var __require = ");
+      api.expectFile("/out.js").toContain('__require("external-pkg")');
     },
   });
   itBundled("edgecase/RuntimeExternalRequire", {

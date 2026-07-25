@@ -551,11 +551,19 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
-                // transient when a concurrent process (another `bun install`
-                // sharing the cache, AV, the Search Indexer) is closing its
-                // handle to the destination. Back off briefly between retries.
-                const MAX_RETRIES: u32 = 4;
+                // Windows EBUSY/SHARING_VIOLATION/ACCESS_DENIED on
+                // `NtSetInformationFile` are transient when a concurrent process
+                // holds a handle into the tree being renamed: another `bun
+                // install` sharing the cache, antivirus, the Search Indexer, or
+                // an MDM agent scanning a just-extracted file. An open handle
+                // on any file inside the directory that lacks
+                // FILE_SHARE_DELETE fails the directory rename with
+                // STATUS_ACCESS_DENIED, which scanners routinely trigger on
+                // freshly written executables. Back off and retry; the retry
+                // budget (10 attempts, ~1.4s of total sleep) follows SQLite's
+                // winIoerrRetry, which is tuned for exactly this class of
+                // interference.
+                const MAX_RETRIES: u32 = 10;
                 let mut retries: u32 = 0;
                 let mut path2_buf = WPathBuffer::uninit();
                 let path2 = strings::to_wpath_normalized(&mut path2_buf, folder_name);
@@ -642,12 +650,9 @@ impl ExtractTarball {
                                             }
                                         }
                                         retries += 1;
-                                        // 10ms, 20ms, 40ms, 80ms — long enough
-                                        // for a concurrent close to land,
-                                        // short enough to not slow a legit
-                                        // failure noticeably.
+                                        // 25ms, 50ms, ... 250ms (∑ 1375ms).
                                         std::thread::sleep(std::time::Duration::from_millis(
-                                            10u64 << (retries - 1),
+                                            25u64 * u64::from(retries),
                                         ));
                                         continue;
                                     }

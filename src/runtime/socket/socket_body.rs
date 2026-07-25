@@ -2055,6 +2055,22 @@ impl<const SSL: bool> NewSocket<SSL> {
                 &sys::Error::from_code_int(err, sys::Tag::read),
                 &global,
             );
+        } else if SSL && reason.is_some_and(|r| !r.is_null()) {
+            // openssl.c's fatal-close path hands the full OpenSSL error string
+            // (e.g. a received certificate_required alert after the handshake).
+            // Copy it into a JS Error before entering the callback — the
+            // pointer is the loop's per-SSL scratch buffer, valid only for
+            // this synchronous dispatch. net.ts decorates it with the
+            // ERR_SSL_<REASON> code node uses for these.
+            // SAFETY: non-null NUL-terminated C string per the ssl_close call
+            // in ssl_on_data's fatal branch — the only non-null reason
+            // producer for these contexts.
+            let msg = unsafe { core::ffi::CStr::from_ptr(reason.unwrap().cast()) };
+            if !msg.is_empty() {
+                use bun_jsc::StringJsc as _;
+                js_error = bun_core::String::borrow_utf8(msg.to_bytes())
+                    .to_error_instance(&global);
+            }
         }
 
         if let Err(e) = callback.call(&global, this_value, &[this_value, js_error]) {

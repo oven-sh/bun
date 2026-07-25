@@ -316,22 +316,26 @@ function tlsHandshakeError(verifyError) {
       function?: string;
       reason?: string;
     };
-    // A fatal SSL-library error carries the full OpenSSL error string
-    // ("error:0a00042e:SSL routines:OPENSSL_internal:TLSV1_ALERT_PROTOCOL_VERSION").
-    // Decompose it into Node's library/function/reason properties and the
-    // ERR_SSL_<REASON> code the way ThrowCryptoError does.
-    const match = /^error:[0-9a-f]+:SSL routines:([^:]*):(.+)$/.exec(reason);
-    if (match) {
-      err.library = "SSL routines";
-      err.function = match[1];
-      err.reason = match[2];
-      err.code = `ERR_SSL_${match[2]}`;
-    } else {
+    if (!decorateOpenSSLError(err)) {
       err.code = verifyErrorCode;
     }
     return err;
   }
   return new ConnResetException("socket hang up");
+}
+
+// A fatal SSL-library error carries the full OpenSSL error string
+// ("error:0a00042e:SSL routines:OPENSSL_internal:TLSV1_ALERT_PROTOCOL_VERSION").
+// Decompose it into Node's library/function/reason properties and the
+// ERR_SSL_<REASON> code the way ThrowCryptoError does.
+function decorateOpenSSLError(err) {
+  const match = /^error:[0-9a-f]+:SSL routines:([^:]*):(.+)$/.exec(err.message);
+  if (!match) return false;
+  err.library = "SSL routines";
+  err.function = match[1];
+  err.reason = match[2];
+  err.code = `ERR_SSL_${match[2]}`;
+  return true;
 }
 
 const SocketHandlers: SocketHandler = {
@@ -569,6 +573,10 @@ function deferEndForOnreadTail(self) {
 }
 
 function SocketEmitEndNT(self, _err?) {
+  // A post-handshake TLS fatal (native hands the OpenSSL error string, e.g. a
+  // received certificate_required alert) gets node's ERR_SSL_<REASON> shape so
+  // it keeps its identity below instead of the reset synthesis.
+  if (_err) decorateOpenSSLError(_err);
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
   // ("read ECONNRESET") instead of emitting a graceful 'end'. Guard on
@@ -1284,6 +1292,10 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
+    // A post-handshake TLS fatal (native hands the OpenSSL error string, e.g.
+    // a received certificate_required alert) gets node's ERR_SSL_<REASON>
+    // shape so it keeps its identity below instead of the reset synthesis.
+    if (err) decorateOpenSSLError(err);
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the

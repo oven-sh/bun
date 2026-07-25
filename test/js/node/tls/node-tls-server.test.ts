@@ -2098,6 +2098,31 @@ describe("node v26.3.0 tls.Server parity follow-ups", () => {
     }
   });
 
+  // A TLS1.3 server that requires a client certificate completes its side of
+  // the handshake only after the client's (empty) certificate list arrives,
+  // then sends a fatal certificate_required alert. The client has already
+  // fired secureConnect by then, so the alert must surface as a socket
+  // 'error' with node's ERR_SSL_<REASON> shape — not as a bare close.
+  // Matches node v26 (test-tls-client-auth, openssl_is_boringssl branch).
+  it("surfaces a post-handshake certificate_required alert as ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED on the client", async () => {
+    const server = createServer({ ...COMMON_CERT, ca: [COMMON_CERT.cert], requestCert: true });
+    const serverErr = Promise.withResolvers<string | undefined>();
+    const clientErr = Promise.withResolvers<string | undefined>();
+    server.on("tlsClientError", err => serverErr.resolve((err as Error & { code?: string }).code));
+    let client: TLSSocket | undefined;
+    try {
+      const port = await listen(server);
+      // No client cert: the server rejects with certificate_required.
+      client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+      client.on("error", err => clientErr.resolve((err as Error & { code?: string }).code));
+      expect(await serverErr.promise).toBe("ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE");
+      expect(await clientErr.promise).toBe("ERR_SSL_TLSV1_ALERT_CERTIFICATE_REQUIRED");
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  });
+
   // Node normalizes with `options.requestCert === true`, so a truthy non-true
   // value behaves like `false`: no CertificateRequest is sent and the
   // anonymous client is accepted. The per-socket flag must agree with that

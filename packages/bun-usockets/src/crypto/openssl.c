@@ -1530,15 +1530,16 @@ struct us_bun_verify_error_t us_internal_ssl_verify_error(struct us_socket_t *s)
 
 /* ── Handshake state machine ─────────────────────────────────────────────── */
 
-/* Park the fatal OpenSSL reason behind a failed SSL_* call where the
- * handshake-failure dispatch can find it, then drain the queue and mark the
- * socket fatal. Only parks while the handshake is unfinished: that dispatch is
- * the sole consumer, so a later reason would linger and be misreported as some
- * other socket's handshake failure. */
+/* Park the fatal OpenSSL reason behind a failed SSL_* call, then drain the
+ * queue and mark the socket fatal. Two consumers: the handshake-failure
+ * dispatch (handshake still unfinished) and the fatal-close path in
+ * ssl_on_data (handshake complete — e.g. a received fatal alert), which hands
+ * the reason to on_close and clears the scratch, so a parked reason never
+ * lingers to be misreported as another socket's failure. */
 static void ssl_park_fatal_reason(struct us_socket_t *s) {
   struct loop_ssl_data *loop_ssl_data =
       (struct loop_ssl_data *) s->group->loop->data.ssl_data;
-  if (loop_ssl_data && s->ssl_handshake_state != HANDSHAKE_COMPLETED) {
+  if (loop_ssl_data) {
     /* The OLDEST queued entry is the root cause and is what node reports
      * (https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L860);
      * later entries wrap it or belong to another socket on this thread. */
@@ -2066,8 +2067,25 @@ restart:
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           ssl_park_fatal_reason(s);
         }
-        ssl_close(s, 0, NULL);
+        void *close_reason = NULL;
+        if (s->ssl_handshake_state == HANDSHAKE_COMPLETED &&
+            loop_ssl_data->ssl_last_fatal_error[0] &&
+            loop_ssl_data->ssl_last_fatal_error_owner == (void *)s) {
+          /* Post-handshake fatal (e.g. the peer's certificate_required
+           * alert): hand the OpenSSL reason string to on_close so node:net
+           * surfaces it as the socket error (Node reports these as
+           * ERR_SSL_<REASON>). Handshake-time reasons stay parked for
+           * ssl_trigger_handshake's dispatch instead. The dispatch copies the
+           * string synchronously, so handing the per-loop scratch is safe. */
+          close_reason = loop_ssl_data->ssl_last_fatal_error;
+        }
+        /* CONNECTION_RESET, not CLEAN_SHUTDOWN: a fatal record means the TLS
+         * channel is dead — a code-0 close would take ssl_handle_shutdown's
+         * graceful path, defer the fd close for a close_notify reply that will
+         * never come, and drop `close_reason` on the deferred re-entry. */
+        ssl_close(s, close_reason ? LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET : 0, close_reason);
         loop_ssl_data->ssl_last_fatal_error[0] = 0;
+        loop_ssl_data->ssl_last_fatal_error_owner = NULL;
         return NULL;
       } else {
         if (err == SSL_ERROR_WANT_WRITE) s->ssl_read_wants_write = 1;

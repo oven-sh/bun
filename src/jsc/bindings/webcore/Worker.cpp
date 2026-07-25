@@ -833,7 +833,11 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
     JSValue threadName = jsEmptyString(vm);
-    JSMap* environmentData = nullptr;
+    // Both the `Worker.data` getter and `$cpp("Worker.cpp", ...)` in
+    // node:worker_threads call this; re-entry must not clobber or re-deserialize.
+    JSMap* environmentData = globalObject->nodeWorkerEnvironmentData();
+    if (JSValue cached = globalObject->nodeWorkerData())
+        workerData = cached;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -877,6 +881,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     }
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
+    globalObject->setNodeWorkerData(workerData);
 
     bool isNodeWorker = false;
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))

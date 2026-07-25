@@ -4140,6 +4140,7 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
+void GlobalObject::setNodeWorkerData(JSValue data) { m_nodeWorkerData.set(vm(), this, data); }
 void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 {
     if (hook)

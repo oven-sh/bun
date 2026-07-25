@@ -511,6 +511,9 @@ public:
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+    /* The deserialized `workerData`/`data` value passed to `new Worker()`. */                               \
+    /* Initialized in createNodeWorkerThreadsBinding; read by the Worker.data getter. */                     \
+    V(private, WriteBarrier<JSC::Unknown>, m_nodeWorkerData)                                                 \
     /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
@@ -748,6 +751,8 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    JSValue nodeWorkerData() { return m_nodeWorkerData.get(); }
+    void setNodeWorkerData(JSValue data);
     JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
     void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 

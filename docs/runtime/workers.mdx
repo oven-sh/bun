@@ -310,3 +310,19 @@ if (Bun.isMainThread) {
   console.log("I'm in a worker");
 }
 ```
+
+## `Worker.data`
+
+Pass a `data` option to `new Worker()` to send a value to the worker at startup. Inside the worker it is available as `Worker.data`, and also as `require("node:worker_threads").workerData`.
+
+```ts
+// main.ts
+const worker = new Worker("./worker.ts", {
+  data: { greeting: "hello" },
+});
+
+// worker.ts
+console.log(Worker.data); // => { greeting: "hello" }
+```
+
+The value is cloned with the HTML structured clone algorithm. Use `transferList` to transfer `MessagePort`, `ArrayBuffer`, and similar values instead of copying them.

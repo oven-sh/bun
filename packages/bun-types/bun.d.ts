@@ -431,6 +431,16 @@ declare module "bun" {
      * Equivalent to passing the `--preload` CLI argument, but only for this Worker.
      */
     preload?: string[] | string | undefined;
+
+    /**
+     * Any JavaScript value that is cloned and made available inside the worker
+     * as `Worker.data` and `require("node:worker_threads").workerData`.
+     *
+     * The cloning uses the HTML structured clone algorithm; use
+     * `transferList` to transfer values such as `MessagePort` instead of
+     * copying them.
+     */
+    data?: any;
   }
 
   interface Worker extends EventTarget, AbstractWorker {

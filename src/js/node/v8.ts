@@ -71,7 +71,6 @@ function getHeapStatistics() {
     total_physical_size: memory.peak,
     total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
-    total_allocated_bytes: stats.heapCapacity,
     heap_size_limit: Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
@@ -85,6 +84,7 @@ function getHeapStatistics() {
     // ---- End of copied from Node
 
     external_memory: stats.extraMemorySize,
+    total_allocated_bytes: stats.heapCapacity,
   };
 }
 // V8 partitions its heap into a fixed set of named spaces; JSC manages one
@@ -107,13 +107,16 @@ const kHeapSpaces = [
   "trusted_large_object_space",
 ];
 function getHeapSpaceStatistics() {
-  const stats = jsc.heapStats();
+  // process.memoryUsage() reads vm.heap.blockBytesAllocated() and
+  // sizeAfterLastEdenCollection() directly (O(1)); jsc.heapStats() would walk
+  // every live cell for type counts this function does not need.
+  const { heapTotal, heapUsed } = process.memoryUsage();
   const spaces = $newArrayWithSize(kHeapSpaces.length);
   for (let i = 0; i < kHeapSpaces.length; i++) {
     const space_name = kHeapSpaces[i];
     const isOldSpace = space_name === "old_space";
-    const used = isOldSpace ? stats.heapSize : 0;
-    const size = isOldSpace ? stats.heapCapacity : 0;
+    const used = isOldSpace ? heapUsed : 0;
+    const size = isOldSpace ? heapTotal : 0;
     spaces[i] = {
       space_name,
       space_size: size,

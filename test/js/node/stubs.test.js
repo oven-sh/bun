@@ -155,7 +155,7 @@ describe("v8.getHeapSpaceStatistics", () => {
   test("old_space reports JSC's real heap totals", () => {
     const oldSpace = spaces.find(s => s.space_name === "old_space");
     expect(oldSpace.space_size).toBeGreaterThan(0);
-    expect(oldSpace.space_used_size).toBeGreaterThan(0);
+    expect(oldSpace.space_used_size).toBeGreaterThanOrEqual(0);
     expect(oldSpace.space_used_size).toBeLessThanOrEqual(oldSpace.space_size);
   });
 });

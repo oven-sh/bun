@@ -1125,7 +1125,7 @@ impl Display for URLFormatter<'_> {
                 {
                     f.write_char(b as char)?;
                 } else {
-                    let h = hex2_upper(b);
+                    let h = hex_byte_upper(b);
                     f.write_char('%')?;
                     f.write_char(h[0] as char)?;
                     f.write_char(h[1] as char)?;

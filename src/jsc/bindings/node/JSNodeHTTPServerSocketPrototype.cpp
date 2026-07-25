@@ -13,6 +13,8 @@ extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" void us_socket_resume(us_socket_t*);
 extern "C" void us_socket_pause(us_socket_t*);
+extern "C" void us_socket_nodelay(us_socket_t*, int enabled);
+extern "C" int us_socket_keepalive(us_socket_t*, int enabled, unsigned int delay);
 
 namespace Bun {
 
@@ -36,6 +38,8 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetResponseTrailers);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketIsRequestTimedOut);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStopParsing);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetKeepAlive);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetNoDelay);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterResponse);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
@@ -71,6 +75,8 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "isRequestTimedOut"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketIsRequestTimedOut, 2 } },
     { "startPipelinedResponse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStartPipelinedResponse, 3 } },
     { "stopParsing"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketStopParsing, 0 } },
+    { "setKeepAlive"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetKeepAlive, 2 } },
+    { "setNoDelay"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketSetNoDelay, 1 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
     { "servername"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterServername, noOpSetter } },
     { "authorizationError"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAuthorizationError, noOpSetter } },
@@ -177,6 +183,38 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (
     bool isAncient = callFrame->argument(1).toBoolean(globalObject);
     bool connectionClose = callFrame->argument(2).toBoolean(globalObject);
     return JSValue::encode(JSC::jsBoolean(thisObject->startPipelinedResponse(vm, response, isAncient, connectionClose)));
+}
+
+// node:net Socket#setKeepAlive for http-server connections: enable SO_KEEPALIVE
+// (and TCP_KEEPIDLE when a delay was given). The delay is in milliseconds; the
+// setsockopt takes seconds.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetKeepAlive, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    if (thisObject->isClosed()) {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    bool enabled = callFrame->argument(0).toBoolean(globalObject);
+    int32_t delayMs = callFrame->argument(1).toInt32(globalObject);
+    unsigned int delaySecs = delayMs > 0 ? static_cast<unsigned int>(delayMs) / 1000 : 0;
+    return JSValue::encode(JSC::jsBoolean(us_socket_keepalive(thisObject->socket, enabled, delaySecs) == 0));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetNoDelay, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    if (thisObject->isClosed()) {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    bool enabled = callFrame->argumentCount() >= 1 ? callFrame->argument(0).toBoolean(globalObject) : true;
+    us_socket_nodelay(thisObject->socket, enabled);
+    return JSValue::encode(JSC::jsBoolean(true));
 }
 
 // node:http: stop parsing further HTTP requests on this connection (the user

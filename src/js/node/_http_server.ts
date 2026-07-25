@@ -14,6 +14,7 @@ const {
   validateLinkHeaderValue,
   validateBoolean,
   validateInteger,
+  validateNumber,
   validateFunction,
   validateOneOf,
 } = require("internal/validators");
@@ -310,7 +311,6 @@ function Server(options, callback): void {
   this[kInternalSocketData] = undefined;
   this[kTrackedConnections] = new Set();
   this[tlsSymbol] = null;
-  this.noDelay = true;
   if (typeof options === "function") {
     callback = options;
     options = {};
@@ -1570,6 +1570,15 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
     this._secureEstablished = !!handle?.secureEstablished;
     handle.onclose = this.#onClose.bind(this);
     handle.duplex = this;
+    // Like Node's net.Server onconnection: the server's SO_KEEPALIVE option is
+    // applied to every accepted connection (TCP_NODELAY is already on: uSockets
+    // sets it unconditionally on accept, and http.Server defaults noDelay=true).
+    if (server.keepAlive) {
+      handle.setKeepAlive(true, server.keepAliveInitialDelay);
+    }
+    if (!server.noDelay) {
+      handle.setNoDelay(false);
+    }
 
     this.encrypted = encrypted;
     this.on("timeout", onNodeHTTPServerSocketTimeout);
@@ -1947,9 +1956,13 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
 
   resetAndDestroy() {}
 
-  setKeepAlive(_enable = false, _initialDelay = 0) {}
+  setKeepAlive(enable = false, initialDelayMsecs = 0) {
+    this[kHandle]?.setKeepAlive(Boolean(enable), ~~initialDelayMsecs);
+    return this;
+  }
 
-  setNoDelay(_noDelay = true) {
+  setNoDelay(enable = true) {
+    this[kHandle]?.setNoDelay(Boolean(enable === undefined ? true : enable));
     return this;
   }
 
@@ -3847,6 +3860,20 @@ function storeHTTPOptions(options) {
   // Node passes options.highWaterMark through to net.Server, which applies it
   // to every accepted connection socket (and from there to req/res streams).
   this[kHighWaterMark] = options.highWaterMark;
+
+  // net.Server options Node's http.Server forwards and applies per accepted
+  // connection: noDelay defaults to true for http (unlike net.Server); keepAlive
+  // sets SO_KEEPALIVE with keepAliveInitialDelay (milliseconds) as TCP_KEEPIDLE.
+  this.noDelay = Boolean(options.noDelay ?? true);
+  this.keepAlive = Boolean(options.keepAlive);
+  let keepAliveInitialDelay = options.keepAliveInitialDelay;
+  if (keepAliveInitialDelay !== undefined) {
+    validateNumber(keepAliveInitialDelay, "options.keepAliveInitialDelay");
+    if (keepAliveInitialDelay < 0) keepAliveInitialDelay = 0;
+  } else {
+    keepAliveInitialDelay = 0;
+  }
+  this.keepAliveInitialDelay = ~~keepAliveInitialDelay;
 
   this[kUniqueHeaders] = parseUniqueHeadersOption(options.uniqueHeaders);
 

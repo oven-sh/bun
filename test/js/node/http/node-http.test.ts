@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, isLinux, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -23,6 +23,7 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
+import { execFileSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -4053,4 +4054,83 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   const d = new OutgoingMessage();
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
+});
+
+// SO_KEEPALIVE on http-server connections: both the createServer options lane
+// and the per-request socket.setKeepAlive lane must reach the kernel. `ss -tno`
+// shows `timer:(keepalive,<idle>s,...)` on sockets with SO_KEEPALIVE set, `none`
+// otherwise (Linux-only kernel truth; the code path is platform-agnostic).
+describe.skipIf(!isLinux)("http.Server SO_KEEPALIVE", () => {
+  let hasSs = false;
+  try {
+    execFileSync("ss", ["--version"], { stdio: "ignore" });
+    hasSs = true;
+  } catch {}
+
+  const readKeepAlive = (port: number) => {
+    const out = execFileSync("ss", ["-tno", "state", "established", `( sport = :${port} )`], { encoding: "utf8" });
+    const m = out.match(/timer:\(([^,)]*),([^,)]*)/);
+    // Idle counts down from TCP_KEEPIDLE; kernel default is 7200s so a value
+    // at or below our requested delay proves the option landed.
+    return m
+      ? { timer: m[1], idleWithinBound: m[2].includes("ms") || Math.ceil(parseFloat(m[2])) <= 30 }
+      : { timer: "none", idleWithinBound: false };
+  };
+
+  const openRequest = async (port: number) => {
+    const client = connect(port, "127.0.0.1");
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n");
+    await once(client, "data");
+    return client;
+  };
+
+  it.skipIf(!hasSs)("createServer({ keepAlive, keepAliveInitialDelay }) sets SO_KEEPALIVE on accepted connections", async () => {
+    await using server = createServer({ keepAlive: true, keepAliveInitialDelay: 30000 }, (req, res) => res.end("ok"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    expect({ keepAlive: server.keepAlive, noDelay: server.noDelay }).toEqual({ keepAlive: true, noDelay: true });
+
+    const client = await openRequest(port);
+    try {
+      expect(readKeepAlive(port)).toEqual({ timer: "keepalive", idleWithinBound: true });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it.skipIf(!hasSs)("req.socket.setKeepAlive(true, ms) sets SO_KEEPALIVE on the connection", async () => {
+    const handled = Promise.withResolvers<boolean>();
+    await using server = createServer((req, res) => {
+      const ret = req.socket.setKeepAlive(true, 30000);
+      handled.resolve(ret === req.socket);
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    const client = await openRequest(port);
+    try {
+      expect(await handled.promise).toBe(true);
+      expect(readKeepAlive(port)).toEqual({ timer: "keepalive", idleWithinBound: true });
+    } finally {
+      client.destroy();
+    }
+  });
+
+  it.skipIf(!hasSs)("without keepAlive option SO_KEEPALIVE is not set by default", async () => {
+    await using server = createServer((req, res) => res.end("ok"));
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as AddressInfo).port;
+
+    expect(server.keepAlive).toBe(false);
+
+    const client = await openRequest(port);
+    try {
+      expect(readKeepAlive(port).timer).toBe("none");
+    } finally {
+      client.destroy();
+    }
+  });
 });

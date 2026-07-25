@@ -2215,11 +2215,24 @@ function newNodeHTTPServerSocket(server, handle, encrypted) {
   if (encrypted) {
     if (lazyTLSServerSocketTarget === undefined) {
       const { TLSSocket } = require("node:tls");
+      const descriptors = Object.getOwnPropertyDescriptors(NodeHTTPServerSocket.prototype);
+      // A name owned by TLSSocket.prototype would shadow the NetSocket-chain
+      // version this class relied on (its _final, for one, drives a TLS-wrap
+      // shutdown that never completes on a NodeHTTP handle and pins the event
+      // loop). Pin the previous resolution for every such name the old chain
+      // provided; genuinely TLS-only surface (getPeerCertificate, ...) still
+      // resolves through TLSSocket.prototype.
+      for (const name of Object.getOwnPropertyNames(TLSSocket.prototype)) {
+        if (name === "constructor" || name in descriptors) continue;
+        let proto = NodeHTTPServerSocket.prototype;
+        let desc;
+        while (proto && !(desc = Object.getOwnPropertyDescriptor(proto, name))) {
+          proto = Object.getPrototypeOf(proto);
+        }
+        if (desc) descriptors[name] = desc;
+      }
       const target = function SocketTLS() {};
-      target.prototype = Object.create(
-        TLSSocket.prototype,
-        Object.getOwnPropertyDescriptors(NodeHTTPServerSocket.prototype),
-      );
+      target.prototype = Object.create(TLSSocket.prototype, descriptors);
       lazyTLSServerSocketTarget = target;
     }
     return Reflect.construct(NodeHTTPServerSocket, [server, handle, true], lazyTLSServerSocketTarget);

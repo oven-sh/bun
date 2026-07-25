@@ -84,7 +84,12 @@ void JSNodeHTTPServerSocket::close()
                 flushPartialResponseBeforeClose<false>(socket);
             }
         }
-        us_socket_close(socket, 0, nullptr);
+        /* This is the socket.destroy() path (node's `_handle.close()`), so the
+         * teardown is forceful: send close_notify best-effort and close the fd
+         * now. A CLEAN_SHUTDOWN (0) close would defer the fd close until the
+         * peer's close_notify reply, which an allowHalfOpen peer never sends —
+         * the socket (and the event loop) would be pinned forever. */
+        us_socket_close(socket, LIBUS_SOCKET_CLOSE_CODE_FAST_SHUTDOWN, nullptr);
     }
 }
 

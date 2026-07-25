@@ -410,14 +410,9 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Windows builds compute
-    /// the path at runtime under `GetTempPathW`, so this helper is POSIX-only.
-    ///
-    /// The uid component keeps two users on the same host from colliding on a
-    /// single 0700 directory (issue #7504); the sha keeps two bun versions from
-    /// colliding. Two local builds at the same commit still share this dir, so
-    /// `create_fake_temporary_node_executable` re-points a stale link on EEXIST
-    /// instead of trusting it.
+    /// `/tmp/bun-node-<uid>-<sha>`. Keyed on uid so two users do not contend
+    /// for one 0700 dir (#7504). POSIX-only; Windows computes the path under
+    /// `GetTempPathW`.
     #[cfg(not(windows))]
     pub fn bun_node_dir() -> &'static str {
         static ONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -581,19 +576,13 @@ impl RunCommand {
 
             let dir = Self::bun_node_dir();
 
-            // `dir` is at most "/private/tmp/bun-node-<u32>-<short sha>" ≈ 48
-            // bytes, so `dir.len() + "/node\0".len()` comfortably fits 128.
             let mut link_buf = [0u8; 128];
-            debug_assert!(dir.len() + 6 <= link_buf.len());
+            debug_assert!(dir.len() + b"/node\0".len() <= link_buf.len());
             link_buf[..dir.len()].copy_from_slice(dir.as_bytes());
             let dir_z = ZStr::from_buf(&link_buf, dir.len());
 
-            // Don't trust attacker-created entries in a shared temp dir
-            // (`bun_node_dir()` lives under e.g. `/tmp`). Create it `0700`; if
-            // it already exists, refuse to use it unless it's a directory we
-            // own with no group/other write bits. The per-user uid in the path
-            // means legitimate use never hits a foreign-owned dir; this guard
-            // is for a squatter that pre-created our path.
+            // Create 0700; on EEXIST, refuse anything that isn't a directory
+            // we own with no group/other write bit (squat guard under /tmp).
             match bun_sys::mkdir(dir_z, 0o700) {
                 Ok(()) => {}
                 Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir_z) {
@@ -615,13 +604,8 @@ impl RunCommand {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed on uid+sha, so two different
-                            // binaries built at the same commit (e.g. side-by-
-                            // side local builds being benchmarked) collide
-                            // here. Blindly reusing the existing link would
-                            // make every `--bun` child of the SECOND binary
-                            // silently exec the FIRST. Verify the target
-                            // before reusing; replace it once if stale.
+                            // Two binaries at the same commit collide here;
+                            // re-point a stale link once rather than reusing it.
                             let mut buf = bun_paths::PathBuffer::uninit();
                             let matches = bun_sys::readlink(dest, &mut buf)
                                 .map(|n| &buf[..n] == argv0_z.as_bytes())
@@ -674,10 +658,8 @@ impl RunCommand {
 
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
 
-            // `GetTempPathW` is usually per-user but is not guaranteed to be
-            // (it falls through to the Windows dir, and services may share a
-            // temp root), so key the dir on `user_unique_id()` the same way
-            // bunx does.
+            // GetTempPathW is not guaranteed per-user, so key on the username
+            // hash like bunx does.
             let uid = win::user_unique_id();
             let mut dir_name_u8 = [0u8; 64];
             let dir_name_len = {

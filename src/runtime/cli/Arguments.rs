@@ -1168,10 +1168,43 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
 
         if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script.into();
             ctx.runtime_options.eval.eval_and_print = true;
+            if (script == b"-e" || script == b"--eval") && args.option(b"--eval").is_none() {
+                // node's `-p` is a bare flag and `-e` carries the code
+                // (`node -p -e "code"`), but bun's `-p` takes a value, so it
+                // swallows the literal `-e` token and the code lands in the
+                // entrypoint positional. Reclaim it; node consumes it too, so
+                // it must not stay in `positionals` (it would resolve as the
+                // run target and land in `process.argv`).
+                if ctx.positionals.is_empty() {
+                    // node: `node -p -e` → "<execPath>: -e requires an argument"
+                    // on stderr, exit code 9.
+                    let exe: &[u8] = bun_core::self_exe_path()
+                        .map(|p| p.as_bytes())
+                        .unwrap_or(b"bun");
+                    Output::pretty_error(&format_args!(
+                        "{}: -e requires an argument\n",
+                        BStr::new(exe)
+                    ));
+                    Output::flush();
+                    Global::exit(9);
+                }
+                ctx.runtime_options.eval.script = ctx.positionals.remove(0);
+            } else if let Some(code) = script.strip_prefix(b"--eval=") {
+                // `node --print --eval=-42`: the attached-value spelling for
+                // code starting with `-`.
+                ctx.runtime_options.eval.script = code.into();
+            } else {
+                ctx.runtime_options.eval.script = script.into();
+            }
         } else if let Some(script) = args.option(b"--eval") {
             ctx.runtime_options.eval.script = script.into();
+        }
+        // node: an eval expression starting with `-` can be escaped with a
+        // backslash (`node -p "\-42"` prints -42); strip the single leading
+        // backslash before it reaches the parser.
+        if ctx.runtime_options.eval.script.starts_with(b"\\-") {
+            ctx.runtime_options.eval.script = ctx.runtime_options.eval.script[1..].into();
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");

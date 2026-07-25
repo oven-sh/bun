@@ -3876,7 +3876,7 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
-extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
+extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue, bool isAsyncCapability);
 
 JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
@@ -3905,19 +3905,22 @@ JSC::JSValue EvalGlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGloba
         // so we can't rely on a later call to overwrite the captured value.
         //
         // Instead, when the module yielded, capture the async capability's
-        // promise. Its resolution value is the module's final completion
-        // value; the --print loop in run_command.rs already unwraps promises
-        // via asAnyPromise + Bun__onResolveEntryPointResult.
+        // promise (flagged so the --print loop in run_command.rs unwraps it
+        // via asAnyPromise + Bun__onResolveEntryPointResult; a promise that is
+        // itself the completion value is logged verbatim like node does).
         JSC::JSValue valueToStore = result;
+        bool isAsyncCapability = false;
         if (auto* moduleRecord = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue)) {
             JSC::JSValue state = moduleRecord->internalField(JSC::AbstractModuleRecord::Field::State).get();
             bool moduleYielded = state.isNumber() && state.asNumber() != static_cast<int32_t>(JSC::JSGenerator::State::Executing);
             if (moduleYielded) {
-                if (auto* capability = moduleRecord->asyncCapability())
+                if (auto* capability = moduleRecord->asyncCapability()) {
                     valueToStore = capability;
+                    isAsyncCapability = true;
+                }
             }
         }
-        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(valueToStore));
+        Bun__VM__setEntryPointEvalResultESM(globalObject->bunVM(), JSValue::encode(valueToStore), isAsyncCapability);
     }
 
     return result;

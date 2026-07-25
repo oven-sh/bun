@@ -327,6 +327,13 @@ JSValue createNodeCryptoBinding(Zig::GlobalObject* globalObject)
     VM& vm = globalObject->vm();
     JSObject* obj = constructEmptyObject(globalObject);
 
+    // The native WebCrypto object. node:crypto must not read
+    // `globalThis.crypto` for it: user code can replace that global, and in
+    // `-e`/`-p` mode it IS replaced (with node:crypto itself, matching node's
+    // eval semantics), which would recurse into this module's initializer.
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "nativeWebCrypto"_s)),
+        globalObject->cryptoObject(), 0);
+
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certVerifySpkac"_s)),
         JSFunction::create(vm, globalObject, 1, "verifySpkac"_s, jsCertVerifySpkac, ImplementationVisibility::Public, NoIntrinsic), 0);
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "certExportPublicKey"_s)),

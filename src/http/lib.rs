@@ -2421,9 +2421,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Expect") => {
-                    // h2/h3 use `Stream.awaiting_continue` (set in their own
-                    // encode paths); setting the h1 flag there would leave it
-                    // uncleared and gate `can_stream` forever.
+                    // h1-only: h2/h3 track this per-stream (`Stream.awaiting_continue`).
                     if will_append
                         && self.flags.protocol == Protocol::Http1_1
                         && bun_core::strings::eql_case_insensitive_ascii_check_length(
@@ -3583,8 +3581,6 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "resumeAfter100Continue");
         self.state.flags.awaiting_continue = false;
         if self.flags.is_streaming_request_body {
-            // Signal `can_stream` so JS starts pushing chunks; any buffered
-            // bytes flush via `drain_queued_writes` → `write_to_stream`.
             let ctx = self.get_ssl_ctx::<IS_SSL>();
             self.progress_update::<IS_SSL>(ctx, socket);
         } else {
@@ -3778,12 +3774,9 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.awaiting_continue
             && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
         {
-            // Final status from the origin without a preceding 100: abandon
-            // the upload. The declared Content-Length / chunked body will not
-            // be sent, so the connection framing is indeterminate and must
-            // not be reused. A CONNECT reply (tunnel not yet established) is
-            // not an origin response; the flag is re-evaluated once the real
-            // request head goes through the tunnel.
+            // Origin final status without a preceding 100: abandon the body
+            // and forbid reuse (declared length never sent). A CONNECT reply
+            // is not an origin response.
             self.state.flags.awaiting_continue = false;
             self.state.flags.allow_keepalive = false;
             self.state.request_body = bun_ptr::RawSlice::EMPTY;

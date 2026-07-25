@@ -2114,7 +2114,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_nonErrorLazyStackCustomGetterSetter.initLater(
         [](const Initializer<CustomGetterSetter>& init) {
-            init.set(CustomGetterSetter::create(init.vm, nonErrorInstanceLazyStackCustomGetter, errorInstanceLazyStackCustomSetter));
+            init.set(CustomGetterSetter::create(init.vm, nonErrorInstanceLazyStackCustomGetter, nonErrorInstanceLazyStackCustomSetter));
         });
 
     m_JSDOMFileConstructor.initLater(

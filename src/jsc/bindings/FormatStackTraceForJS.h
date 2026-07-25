@@ -79,6 +79,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace);
 JSC_DECLARE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter);
 JSC_DECLARE_CUSTOM_SETTER(errorInstanceLazyStackCustomSetter);
 JSC_DECLARE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter);
+JSC_DECLARE_CUSTOM_SETTER(nonErrorInstanceLazyStackCustomSetter);
 
 // Internal wrapper functions for JSC error info callbacks
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, WTF::Vector<JSC::StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, WTF::String& sourceURL, void* bunErrorData);

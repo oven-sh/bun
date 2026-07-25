@@ -1208,6 +1208,44 @@ test("captureStackTrace header on a non-Error object matches V8's Error.prototyp
   expect(headerOf(Object.create(Error.prototype))).toBe("Error");
 });
 
+test("captureStackTrace on a non-Error object preserves the async prefix on await-chain frames", async () => {
+  async function inner() {
+    await 1;
+    const o = {};
+    Error.captureStackTrace(o);
+    return o;
+  }
+  noInline(inner);
+  async function outer() {
+    return await inner();
+  }
+  noInline(outer);
+  const o = await outer();
+  expect(o.stack).toContain("at async outer");
+});
+
+test("captureStackTrace on a non-Error object terminates when a name/message getter reads .stack", () => {
+  const o = Object.create(null);
+  Object.defineProperty(o, "message", {
+    get() {
+      return String(this.stack);
+    },
+  });
+  Error.captureStackTrace(o);
+  expect(() => o.stack).not.toThrow();
+  expect(typeof o.stack).toBe("string");
+});
+
+test("captureStackTrace lazy .stack resolves when reached via the prototype chain", () => {
+  const parent = {};
+  Error.captureStackTrace(parent);
+  const child = Object.create(parent);
+  expect(typeof child.stack).toBe("string");
+  expect(child.stack.split("\n")[0]).toBe("Error");
+  expect(child.stack).toContain("at ");
+  expect(parent.stack).toBe(child.stack);
+});
+
 test("captureStackTrace on a non-Error object invokes Error.prepareStackTrace at access time", () => {
   let callCount = 0;
   let sawName;

@@ -793,15 +793,31 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSObject* errorObject = JSValue::decode(thisValue).getObject();
-    if (!errorObject) [[unlikely]]
+    JSObject* receiver = JSValue::decode(thisValue).getObject();
+    if (!receiver) [[unlikely]]
         return JSValue::encode(jsUndefined());
 
+    // The accessor may be reached via the prototype chain; the CallSite array
+    // lives on the object captureStackTrace was called with.
     const auto& privateName = WebCore::builtinNames(vm).capturedStackTracePrivateName();
-    JSValue callSitesValue = errorObject->getDirect(vm, privateName);
-    auto* callSites = callSitesValue ? dynamicDowncast<JSC::JSArray>(callSitesValue) : nullptr;
+    JSObject* errorObject = nullptr;
+    JSC::JSArray* callSites = nullptr;
+    for (JSObject* o = receiver; o; ) {
+        JSValue v = o->getDirect(vm, privateName);
+        if (auto* arr = v ? dynamicDowncast<JSC::JSArray>(v) : nullptr) {
+            callSites = arr;
+            errorObject = o;
+            break;
+        }
+        JSValue proto = o->getPrototypeDirect();
+        o = proto.isObject() ? asObject(proto) : nullptr;
+    }
     if (!callSites) [[unlikely]]
         return JSValue::encode(jsUndefined());
+
+    // Detach before running any user code (name/message getters, prepareStackTrace)
+    // so a re-entrant .stack read terminates at the !callSites guard above.
+    errorObject->putDirect(vm, privateName, jsUndefined(), 0);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
@@ -816,8 +832,17 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
     RETURN_IF_EXCEPTION(scope, {});
 
     errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
-    errorObject->putDirect(vm, privateName, jsUndefined(), 0);
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(nonErrorInstanceLazyStackCustomSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName))
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (auto* object = JSValue::decode(thisValue).getObject()) {
+        object->putDirect(vm, vm.propertyNames->stack, JSValue::decode(value), JSC::PropertyAttribute::DontEnum | 0);
+        object->putDirect(vm, WebCore::builtinNames(vm).capturedStackTracePrivateName(), jsUndefined(), 0);
+    }
+    return true;
 }
 
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))

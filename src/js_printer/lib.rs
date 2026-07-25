@@ -2443,14 +2443,9 @@ pub mod __gated_printer {
                 //      const foo = await Promise.resolve(globalThis.Bun)
                 //      const bar = globalThis.Bun
                 //
-                // This inlining is safe only when `bundling` is true, because
-                // that path always runs a renamer seeded with `globalThis` /
-                // `Promise` (compute_initial_reserved_names), so a user-declared
-                // local of either name has already been renamed away. The
-                // runtime transpiler uses NoOpRenamer and would be captured by
-                // a local `let globalThis`; let require("bun") / import("bun")
-                // fall through to the external paths below instead, where the
-                // runtime module loader resolves "bun" to the Bun object.
+                // Gated on `bundling`: the runtime transpiler uses NoOpRenamer, so a
+                // user `let globalThis` would capture the literal (#8058). Fall through
+                // to the external require/import paths there instead.
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
                         self.print(b"Promise.resolve(globalThis.Bun)");
@@ -5770,13 +5765,9 @@ pub mod __gated_printer {
                     self.add_source_mapping(stmt.loc);
 
                     if IS_BUN_PLATFORM {
-                        // Unlike print_require_or_import_expr this is not gated on
-                        // `bundling`: lowering `import { x } from "bun"` to a real
-                        // ESM import in the runtime path would (a) eagerly reify
-                        // every property on the Bun object and (b) fail link-time
-                        // validation for names that exist only as types in bun.d.ts.
-                        // When bundling, the renamer has already renamed any user
-                        // `globalThis` away (compute_initial_reserved_names).
+                        // Not gated on `bundling` (cf. print_require_or_import_expr): a real
+                        // ESM `import {x} from "bun"` reifies every Bun property and rejects
+                        // type-only names at link time.
                         if record.tag == ImportRecordTag::Bun {
                             self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;

@@ -1048,10 +1048,7 @@ pub fn compute_initial_reserved_names(
 
     let mut names = StringHashMap::<u32>::default();
 
-    // `globalThis` is reserved because the printer can emit the literal
-    // `globalThis.Bun` for `require("bun")` / `import("bun")` when bundling
-    // for the Bun target (see print_require_or_import_expr). A user-declared
-    // `let globalThis` would otherwise shadow it. https://github.com/oven-sh/bun/issues/8058
+    // Identifiers the printer may emit as raw text with no Ref (#8058).
     const EXTRAS: [&[u8]; 3] = [b"Promise", b"Require", b"globalThis"];
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];

@@ -16,6 +16,9 @@ test("new Module() instances inherit load() (#29253)", () => {
   // prototype; both must expose `load`.
   expect(typeof Module.prototype.load).toBe("function");
 
+  // Node's own `load` is an anonymous function (`.name === ""`); Bun
+  // deliberately names it "load" rather than leaking the internal
+  // builtin identifier.
   expect(m.load.name).toBe("load");
   expect(Module.prototype.load.name).toBe("load");
 });

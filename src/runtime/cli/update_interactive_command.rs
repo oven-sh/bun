@@ -380,8 +380,11 @@ impl UpdateInteractiveCommand {
                 let original_version = e_str.data.slice();
 
                 // Preserve the version prefix from the original
-                let version_with_prefix =
-                    preserve_version_prefix(original_version, &update.target_version, exact_versions)?;
+                let version_with_prefix = preserve_version_prefix(
+                    original_version,
+                    &update.target_version,
+                    exact_versions,
+                )?;
 
                 // Update the version using hash map put
                 // `Expr::init` would put the `E.String` *node*

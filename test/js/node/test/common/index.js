@@ -322,7 +322,7 @@ function installBunExposeInternalsRequireInterceptor() {
         if (override !== undefined) {
           const cached = mergedInternals[id];
           if (cached !== undefined) return cached;
-          return (mergedInternals[id] = { ...vendored, ...override() });
+          return (mergedInternals[id] = { ...vendored, ...override(vendored) });
         }
         return vendored;
       }
@@ -348,6 +348,39 @@ function installBunExposeInternalsRequireInterceptor() {
         kSetKeepAliveInitialDelay: bySymbolName('kSetKeepAliveInitialDelay'),
         kReinitializeHandle: bySymbolName('kReinitializeHandle'),
       };
+    },
+    // internal/http2/util: the vendored copy mints its own NghttpError and
+    // assert helpers; recover the live ones from node:http2's internals (plus
+    // the kSocket symbol) so instances created by the runtime keep matching.
+    'internal/http2/util': (vendored) => {
+      let internals = {};
+      let realSensitiveHeaders;
+      try {
+        const http2 = originalRequire.call(module, 'node:http2');
+        internals = http2[Symbol.for('::bunhttp2internals::')] ?? {};
+        realSensitiveHeaders = http2.sensitiveHeaders;
+      } catch {
+        // http2 may be unavailable in some builds; the vendored exports stand alone.
+      }
+      const util = { kSocket: Symbol.for('::bunhttp2socket::'), ...(internals.util ?? {}) };
+      // The vendored module mints its own kSensitiveHeaders symbol, but tests
+      // mark headers with the public http2.sensitiveHeaders. Bridge the two:
+      // export the real symbol and mirror it onto the vendored one before
+      // buildNgHeaderString reads its module-private copy.
+      if (realSensitiveHeaders !== undefined && vendored !== undefined &&
+          typeof vendored.buildNgHeaderString === 'function' && vendored.kSensitiveHeaders !== undefined) {
+        const vendoredSymbol = vendored.kSensitiveHeaders;
+        const inner = vendored.buildNgHeaderString;
+        util.kSensitiveHeaders = realSensitiveHeaders;
+        util.buildNgHeaderString = function buildNgHeaderString(arrayOrMap, ...rest) {
+          if (arrayOrMap != null && arrayOrMap[realSensitiveHeaders] !== undefined &&
+              arrayOrMap[vendoredSymbol] === undefined) {
+            arrayOrMap[vendoredSymbol] = arrayOrMap[realSensitiveHeaders];
+          }
+          return inner(arrayOrMap, ...rest);
+        };
+      }
+      return util;
     },
   };
   // http2-specific internal modules (internal/http2/util, …) are

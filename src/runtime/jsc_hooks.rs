@@ -4826,14 +4826,14 @@ const STDIN_SUFFIX: &[u8] = b"\\[stdin]";
 #[cfg(not(windows))]
 const STDIN_SUFFIX: &[u8] = b"/[stdin]";
 
-/// Split off the `?query` suffix.
+/// Split off the `?query` / `#fragment` suffix.
 #[inline]
 fn normalize_specifier_for_resolution<'a>(
     specifier: &'a [u8],
     query_string: &mut &'a [u8],
+    is_esm: bool,
 ) -> &'a [u8] {
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier, b'?') {
-        let i = i as usize;
+    if let Some(i) = bun_jsc::virtual_machine::index_of_query_or_fragment(specifier, is_esm) {
         *query_string = &specifier[i..];
         &specifier[..i]
     } else {
@@ -4941,7 +4941,8 @@ unsafe fn _resolve<'a>(
     // ── Filesystem resolver ──────────────────────────────────────────────
     let is_special_source = source == MAIN_FILE_NAME || bun_js_parser::Macro::is_macro_path(source);
     let mut query_string: &[u8] = b"";
-    let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+    let normalized_specifier =
+        normalize_specifier_for_resolution(specifier, &mut query_string, is_esm);
     // `Fs.PathName.init(source).dirWithTrailingSlash()` slices
     // `source` in place, so the `'a` lifetime is preserved.
     let top_level_dir: &'a [u8] = Fs::FileSystem::get().top_level_dir;
@@ -5274,11 +5275,7 @@ unsafe fn resolve_hook(
     if !query_string.is_null() {
         // SAFETY: per fn contract — `query_string` is a valid out-param.
         unsafe {
-            *query_string = if !result_query.is_empty() {
-                bun_core::String::clone_utf8(result_query)
-            } else {
-                bun_core::String::empty()
-            };
+            *query_string = bun_jsc::virtual_machine::clone_specifier_suffix(result_query);
         }
     }
 

@@ -2930,12 +2930,58 @@ static SOURCE_CODE_PRINTER_FROM_MACRO: Cell<bool> = Cell::new(false);
 fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
+    is_esm: bool,
 ) -> &'a [u8] {
-    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
+    if let Some(i) = index_of_query_or_fragment(specifier_, is_esm) {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
         specifier_
+    }
+}
+
+/// Index of the first `?` (or, for a relative ESM specifier, `#`) in a module
+/// specifier, or `None`.
+///
+/// Node keys the ESM cache on the full resolved URL including `?search` and
+/// `#hash`, so both must be split off for filesystem lookup and carried into
+/// the module key. `#` is only treated as a fragment for relative ESM
+/// specifiers (`./`, `../`): CommonJS resolution is path-based so `#` is a
+/// literal filename character there; a leading `#` is a package.json
+/// `"imports"` subpath (PACKAGE_IMPORTS_RESOLVE); and an absolute-path
+/// specifier here is most often a `file://` URL already decoded by
+/// `moduleLoaderResolve` / `moduleLoaderImportModule` (which hold the URL's
+/// real query/fragment separately), so a `#` in it is a filename byte.
+#[inline]
+pub fn index_of_query_or_fragment(specifier: &[u8], is_esm: bool) -> Option<usize> {
+    let q = bun_core::strings::index_of_char_usize(specifier, b'?');
+    if !is_esm || !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
+        return q;
+    }
+    let h = bun_core::strings::index_of_char_usize(specifier, b'#');
+    match (q, h) {
+        (Some(q), Some(h)) => Some(q.min(h)),
+        (a, b) => a.or(b),
+    }
+}
+
+/// Clone `suffix` (`?query`, `#frag`, or `?query#frag`) into a `bun.String`
+/// for the `queryString` out-param of `Zig__GlobalObject__resolve` /
+/// `Bun__resolveSync`. Bun's module cache key is a raw filesystem path with a
+/// single `?` delimiter (the loader splits on `?` only, because `#` is a legal
+/// filename byte), so a bare `#frag` gets a `?` prepended and rides in the
+/// query slot.
+#[inline]
+pub fn clone_specifier_suffix(suffix: &[u8]) -> bun_core::String {
+    if suffix.is_empty() {
+        bun_core::String::empty()
+    } else if suffix[0] == b'#' {
+        let mut buf = Vec::with_capacity(suffix.len() + 1);
+        buf.push(b'?');
+        buf.extend_from_slice(suffix);
+        bun_core::String::clone_utf8(&buf)
+    } else {
+        bun_core::String::clone_utf8(suffix)
     }
 }
 
@@ -4050,7 +4096,8 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string, is_esm);
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -4378,11 +4425,7 @@ impl VirtualMachine {
         }
 
         if let Some(query) = query_string {
-            *query = if !result.query_string.is_empty() {
-                bun_core::String::clone_utf8(result.query_string)
-            } else {
-                bun_core::String::empty()
-            };
+            *query = clone_specifier_suffix(result.query_string);
         }
 
         *res = ErrorableString::ok(bun_core::String::clone_utf8(result.path));

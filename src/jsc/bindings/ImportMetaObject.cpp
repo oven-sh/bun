@@ -167,14 +167,25 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
-    auto index = specifier.find('?');
+    auto q = specifier.find('?');
     URL url;
-    if (index != notFound) {
-        StringView view = specifier;
-        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        url.setQuery(view.substring(index + 1));
-    } else {
+    if (q == notFound) {
         url = URL::fileURLWithFileSystemPath(specifier);
+    } else {
+        // The module key encodes a bare #fragment as `?#frag` (see
+        // fileURLModuleKeySuffix / clone_specifier_suffix), so the suffix
+        // after '?' may be `query`, `query#frag`, or `#frag`.
+        StringView view = specifier;
+        url = URL::fileURLWithFileSystemPath(view.substring(0, q));
+        auto rest = view.substring(q + 1);
+        auto h = rest.find('#');
+        if (h != notFound) {
+            if (h > 0)
+                url.setQuery(rest.left(h));
+            url.setFragmentIdentifier(rest.substring(h + 1));
+        } else {
+            url.setQuery(rest);
+        }
     }
     return create(globalObject, url.string());
 }

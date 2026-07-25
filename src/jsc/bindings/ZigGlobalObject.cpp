@@ -3565,6 +3565,21 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
     globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
+// `?query#fragment` suffix of a file:// specifier, for appending to the
+// resolved module cache key. Bun's key is a raw filesystem path with a single
+// '?' delimiter (the loader splits on '?' only because '#' is a legal filename
+// byte), so a bare #fragment rides in the query slot. Returned separately
+// from fileSystemPath() so a '#' in the decoded path itself is never mistaken
+// for a fragment.
+static WTF::String fileURLModuleKeySuffix(const WTF::URL& url)
+{
+    auto query = url.query();
+    auto fragment = url.fragmentIdentifierWithLeadingNumberSign();
+    if (query.isEmpty() && fragment.isEmpty())
+        return String();
+    return makeString('?', query, fragment);
+}
+
 JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject,
     JSModuleLoader* loader, JSValue key,
     JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool)
@@ -3575,12 +3590,14 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     res.success = false;
 
     BunString keyZ;
+    String fileURLKeySuffix;
     if (key.isString()) {
         auto moduleName = uncheckedDowncast<JSString>(key)->value(globalObject);
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 keyZ = Bun::toStringRef(url.fileSystemPath());
+                fileURLKeySuffix = fileURLModuleKeySuffix(url);
             } else {
                 keyZ = Bun::toStringRef(moduleName);
             }
@@ -3633,6 +3650,12 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     referrerZ.deref();
 
     if (res.success) {
+        if (!fileURLKeySuffix.isEmpty()) {
+            ASSERT(queryString.isEmpty());
+            auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), fileURLKeySuffix));
+            res.result.value.deref();
+            return result;
+        }
         if (!queryString.isEmpty()) {
             auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));
             res.result.value.deref();
@@ -3683,10 +3706,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         sourceOriginStringHolder = String("."_s);
     } else if (sourceURL.protocolIsFile()) {
         sourceOriginStringHolder = sourceURL.fileSystemPath();
-        auto query = sourceURL.queryWithLeadingQuestionMark();
-        auto referrerKey = query.isEmpty()
+        auto suffix = fileURLModuleKeySuffix(sourceURL);
+        auto referrerKey = suffix.isEmpty()
             ? JSC::Identifier::fromString(vm, sourceOriginStringHolder)
-            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, query));
+            : JSC::Identifier::fromString(vm, makeString(sourceOriginStringHolder, suffix));
         referrerAsyncOrder = globalObject->moduleLoader()->asyncEvaluationOrderForKey(referrerKey);
     } else if (sourceURL.protocol() == "builtin"_s) {
         ASSERT(sourceURL.string().startsWith("builtin://"_s));
@@ -3713,10 +3736,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
         BunString moduleNameZ;
         String moduleStringHolder;
+        String fileURLKeySuffix;
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 moduleStringHolder = url.fileSystemPath();
+                fileURLKeySuffix = fileURLModuleKeySuffix(url);
                 moduleNameZ = Bun::toStringRef(moduleStringHolder);
             } else {
                 moduleNameZ = Bun::toStringRef(moduleName);
@@ -3743,7 +3768,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         }
 
-        if (queryString.isEmpty()) {
+        if (!fileURLKeySuffix.isEmpty()) {
+            ASSERT(queryString.isEmpty());
+            resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), fileURLKeySuffix));
+        } else if (queryString.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());
         } else {
             resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), queryString.toWTFString(BunString::ZeroCopy)));

@@ -700,6 +700,11 @@ impl NodeHTTPResponse {
 
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
+        // The body-read ref may still be held when the request is torn down
+        // before the body's fin arrived (socket closed mid-upload after the
+        // response had already ended). Release it here so vm.active_tasks is
+        // balanced; unref() is a no-op when already released.
+        self.body_read_ref.with_mut(|r| r.unref(vm));
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
         self.upgrade_context.with_mut(|c| c.reset());
 
@@ -1346,10 +1351,15 @@ impl NodeHTTPResponse {
         let Some(raw) = self.raw_response.get() else {
             return Ok(JSValue::FALSE);
         };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::ENDED)
-            || flags.contains(Flags::UPGRADED)
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return Ok(JSValue::FALSE);
+        }
+        // ENDED/REQUEST_HAS_COMPLETED alone do not gate pausing while the
+        // request body is still being consumed (res.end() ran first): the
+        // inStream re-armed in write_or_end keeps `userData == self`, so the
+        // buffered-pause swap and socket-level pause below are safe.
+        if (flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED))
+            && self.body_read_state.get() != BodyReadState::Pending
         {
             return Ok(JSValue::FALSE);
         }
@@ -1418,10 +1428,11 @@ impl NodeHTTPResponse {
         let Some(raw) = self.raw_response.get() else {
             return JSValue::FALSE;
         };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::ENDED)
-            || flags.contains(Flags::UPGRADED)
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            return JSValue::FALSE;
+        }
+        if (flags.contains(Flags::REQUEST_HAS_COMPLETED) || flags.contains(Flags::ENDED))
+            && self.body_read_state.get() != BodyReadState::Pending
         {
             return JSValue::FALSE;
         }
@@ -2016,9 +2027,13 @@ impl NodeHTTPResponse {
             // This is the equivalent of req._dump(); ServerResponse.prototype.end runs req._dump()
             // (which clears ondata) before reaching here whenever the IncomingMessage has no
             // consumer, so an ondata that is still set means the request body is being read.
+            // A closing connection (Connection: close / HTTP/1.0) also discards: the socket is
+            // shut down from the 'finish' nextTick before any later body segment could reach
+            // the parser, so keeping the body Pending there would only strand the ref.
             if self.body_read_ref.get().has
                 && self.body_read_state.get() == BodyReadState::Pending
-                && js::on_data_get_cached(this_value).is_none()
+                && (js::on_data_get_cached(this_value).is_none()
+                    || state.is_http_connection_close())
             {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.body_read_state.set(BodyReadState::None);

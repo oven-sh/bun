@@ -4161,4 +4161,75 @@ describe("request body still flows after res.end() was called in the handler", (
     sock.end();
     expect(body).toBe("hello world");
   });
+
+  it("socket closed mid-upload does not strand the event loop", async () => {
+    // Covers the case where the body's fin never arrives after the response
+    // ended: the body-read ref must be released on teardown.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const http = require("http");
+         const net = require("net");
+         const { once } = require("events");
+         (async () => {
+           const events = [];
+           const server = http.createServer((req, res) => {
+             req.on("data", c => events.push("data(" + c.length + ")"));
+             req.on("end", () => events.push("end"));
+             res.end("ok");
+           });
+           await once(server.listen(0, "127.0.0.1"), "listening");
+           const s = net.connect(server.address().port, "127.0.0.1");
+           await once(s, "connect");
+           s.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 100\\r\\n\\r\\nabc");
+           s.resume();
+           await once(s, "data");
+           s.destroy();
+           await once(s, "close");
+           server.close();
+           process.on("beforeExit", () => console.log(JSON.stringify(events)));
+         })();`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Like Node.js: the partial body is delivered, 'end' is not (incomplete),
+    // and the process reaches beforeExit.
+    expect(stdout.trim()).toBe('["data(3)"]');
+    expect(exitCode).toBe(0);
+  });
+
+  it("Connection: close does not hang when the body consumer stays attached", async () => {
+    // The socket is shut down right after the response is written, so later
+    // body segments are not delivered; 'end' must still fire so the consumer
+    // is not left waiting.
+    let ended = false;
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    await using server = createServer((req, res) => {
+      req.on("data", () => {});
+      req.once("end", () => (ended = true));
+      req.once("close", resolve);
+      res.end("ok");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sock = connect(port, "127.0.0.1");
+    await once(sock, "connect");
+    sock.write(
+      "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n",
+    );
+    sock.setNoDelay(true);
+    await new Promise<void>(r => setImmediate(r));
+    sock.write("6\r\n world\r\n0\r\n\r\n");
+    sock.resume();
+
+    await closed;
+    sock.end();
+    expect(ended).toBe(true);
+  });
 });

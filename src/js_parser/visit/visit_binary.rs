@@ -234,9 +234,6 @@ impl BinaryExpressionVisitor {
                             e_.left = simplified_left;
                         }
                     } else {
-                        // The left operand has no side effects, but we need to preserve
-                        // the comma operator semantics when used as a call target, and
-                        // avoid exposing an anonymous function/class to NamedEvaluation.
                         if (is_call_target && e_.right.has_value_for_this_in_call())
                             || e_.right.is_anonymous_named()
                         {

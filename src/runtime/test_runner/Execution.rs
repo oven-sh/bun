@@ -1023,19 +1023,9 @@ fn step_sequence_one(
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
 
-        // A preload-registered beforeAll/afterAll runs after `load_preloads()`
-        // has already cleared `is_in_preload`. Flag this window so spyOn can
-        // give such spies the same process lifetime as a top-level preload
-        // spy. `test_entry.is_none()` restricts this to hook-only sequences,
-        // which each own a whole ConcurrentGroup and so never overlap with a
-        // test body; preload beforeEach/afterEach re-run per test and do not
-        // need persistence.
-        //
-        // The flag is not scoped to `run_test_callback`: an async hook that
-        // awaits a macrotask returns a pending promise here and its
-        // continuation runs from the event loop later. Each call to this
-        // function overwrites the flag for the entry it is about to run, so
-        // the next non-preload entry clears it.
+        // Preload beforeAll/afterAll are the only preload entries with
+        // `test_entry.is_none()`. Overwritten per entry so the flag spans an
+        // async hook's macrotask gap; the per-file guard clears it at exit.
         global_this.bun_vm().as_mut().is_running_preload_hook =
             next_item.added_in_phase == AddedInPhase::Preload && sequence.test_entry.is_none();
 

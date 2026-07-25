@@ -648,10 +648,7 @@ extern "C" void JSMock__resetSpies(Zig::GlobalObject* globalObject)
 
 extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
 
-// Restore every spy registered by the test file that just finished, leaving
-// spies installed during --preload in place. Called at the file boundary by
-// the test runner so one file's spyOn/mockImplementation does not leak into
-// the next file.
+// Per-test-file teardown: restore every non-preload spy.
 extern "C" void JSMock__restoreTransientSpies(Zig::GlobalObject* globalObject)
 {
     if (!globalObject->mockModule.activeSpies) {
@@ -659,10 +656,7 @@ extern "C" void JSMock__restoreTransientSpies(Zig::GlobalObject* globalObject)
     }
 
     auto& vm = JSC::getVM(globalObject);
-    // Entered directly from Rust at file teardown with no enclosing throw
-    // scope; clearSpy() can reach overrideExportValue / putDirectIndex,
-    // which open their own throw scopes. Swallow anything they raise here
-    // rather than leaving an unchecked exception for the next file.
+    // Called from Rust with no enclosing throw scope; clearSpy() can throw.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     ActiveSpySet* spies = uncheckedDowncast<ActiveSpySet>(globalObject->mockModule.activeSpies.get());

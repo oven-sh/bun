@@ -231,7 +231,8 @@ function injectFakeEmitter(Class) {
       return wrapper(ev);
     }
     onceWrapper[kWrapped] = true;
-    if (recordListener(this, event, listener, onceWrapper, 0)) this.addEventListener(event, onceWrapper, { once: true });
+    if (recordListener(this, event, listener, onceWrapper, 0))
+      this.addEventListener(event, onceWrapper, { once: true });
     return this;
   }
 

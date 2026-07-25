@@ -164,7 +164,13 @@ pub(crate) const TRANSPILER_PARAMS_: &[ParamType] = &[
 
 pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
-        "--watch                           Automatically restart the process on file change"
+        "--watch <STR>?                    Automatically restart the process on file change"
+    ),
+    parse_param!(
+        "--watch-path <STR>...             Additional path to watch for changes when --watch is enabled (implies --watch)"
+    ),
+    parse_param!(
+        "--watch-preserve-output           Alias of --no-clear-screen, for Node.js compatibility"
     ),
     parse_param!(
         "--watch-kill-signal <STR>         Signal whose handlers run when --watch restarts the process (default: \"SIGTERM\")"
@@ -1044,13 +1050,22 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             }
         }
 
+        // Node accepts `--watch=<anything>` (even `--watch=false`) as watch
+        // mode on; `--watch-path` implies `--watch`.
+        let has_watch_flag =
+            args.option(b"--watch").is_some() || !args.options(b"--watch-path").is_empty();
         if args.flag(b"--hot") {
             ctx.debug.hot_reload = HotReload::Hot;
             if args.flag(b"--no-clear-screen") {
                 let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
             }
-        } else if args.flag(b"--watch") {
+        } else if has_watch_flag {
             ctx.debug.hot_reload = HotReload::Watch;
+            ctx.debug.watch_paths = args
+                .options(b"--watch-path")
+                .iter()
+                .map(|p| Box::<[u8]>::from(*p))
+                .collect();
 
             // Windows applies this to the watcher child process.
             // The parent process is unable to re-launch itself
@@ -1059,7 +1074,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 bun_core::set_auto_reload_on_crash(true);
             }
 
-            if args.flag(b"--no-clear-screen") {
+            if args.flag(b"--no-clear-screen") || args.flag(b"--watch-preserve-output") {
                 let _ = bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.set(true);
             }
         }

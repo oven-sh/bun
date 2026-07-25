@@ -22,7 +22,20 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
       });
       const { stdout } = process;
 
-      const iter = forEachLine(stdout);
+      // --watch prints node's orchestrator status lines between runs
+      // ("Completed running ...", "Restarting ..."); skip them so the
+      // assertions stay pinned to the script's own output.
+      const lines = forEachLine(stdout);
+      const iter = {
+        async next() {
+          while (true) {
+            const r = await lines.next();
+            if (r.done || !/^(Completed running|Restarting|Failed running) /.test(r.value)) {
+              return r;
+            }
+          }
+        },
+      };
       let { value: line, done } = await iter.next();
       expect(done).toBe(false);
       expect(line).toBe("hello #1");

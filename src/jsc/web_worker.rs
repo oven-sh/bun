@@ -971,6 +971,23 @@ impl WebWorker {
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
 
+            // `--watch` restarts the whole process, so worker-loaded modules
+            // must trigger it too: share the process-lifetime watcher with the
+            // worker VM (`add_file` is watcher-mutex serialized). `--hot`
+            // reloads modules in-place on the main thread only; keep workers
+            // out of it.
+            let parent_watcher = parent.bun_watcher;
+            if !parent_watcher.is_null()
+                // SAFETY: set once during main-VM startup before any worker
+                // can spawn; points at the leaked process-lifetime watcher.
+                && matches!(
+                    unsafe { &*parent_watcher },
+                    crate::hot_reloader::ImportWatcher::Watch(_)
+                )
+            {
+                vm_ref.bun_watcher = parent_watcher;
+            }
+
             // `--heap-prof` via execArgv: `vm.on_exit()` (worker thread,
             // `shutdown()`) writes the profile from this config.
             if let Some(config) = &self.heap_profiler_config {

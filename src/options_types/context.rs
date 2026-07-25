@@ -337,6 +337,9 @@ pub struct DebugOptions {
     /// `--watch-kill-signal`: signal whose JS handlers run before a `--watch`
     /// reload (node delivers this signal to its watched child; default SIGTERM).
     pub watch_kill_signal: bun_core::SignalCode,
+    /// `--watch-path`: extra paths registered with the watcher in addition to
+    /// the loaded-module graph (node watches these instead of the graph).
+    pub watch_paths: Vec<Box<[u8]>>,
     pub global_cache: GlobalCache,
     pub offline_mode_setting: Option<OfflineMode>,
     pub run_in_bun: bool,
@@ -364,6 +367,7 @@ impl Default for DebugOptions {
             silent: false,
             hot_reload: HotReload::None,
             watch_kill_signal: bun_core::SignalCode::DEFAULT,
+            watch_paths: Vec::new(),
             global_cache: GlobalCache::auto,
             offline_mode_setting: None,
             run_in_bun: false,

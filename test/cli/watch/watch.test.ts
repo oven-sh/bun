@@ -30,12 +30,22 @@ for (const dir of ["dir", "©️"]) {
         stdin: "ignore",
       });
 
-      for await (const line of watchee.stdout) {
-        if (i == 10) break;
-        var str = new TextDecoder().decode(line);
-        expect(str).toContain(`${i} ${cwd}`);
-        i++;
-        await updateFile(i);
+      // Reassemble lines across chunk boundaries and skip the watch
+      // orchestrator status lines ("Completed running ...", "Restarting ...")
+      // so each assertion sees exactly one script run's output.
+      let buffered = "";
+      outer: for await (const chunk of watchee.stdout) {
+        buffered += new TextDecoder().decode(chunk);
+        let newline;
+        while ((newline = buffered.indexOf("\n")) !== -1) {
+          const str = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (/^(Completed running|Restarting|Failed running) /.test(str)) continue;
+          expect(str).toContain(`${i} ${cwd}`);
+          i++;
+          if (i == 10) break outer;
+          await updateFile(i);
+        }
       }
       rmSync(path);
     },

@@ -6088,10 +6088,14 @@ impl VirtualMachine {
                     let stack = bun_core::OwnedString::new(stack.to_bun_string(global_ref)?);
                     let bytes = stack.to_utf8();
                     let slice = bytes.slice();
-                    let tail = match bun_core::strings::index_of_char_usize(slice, b'\n') {
-                        Some(i) => bun_core::trim_right(&slice[i + 1..], b"\n"),
-                        None => b"",
+                    let tail = if bun_core::strings::has_prefix_comptime(slice, b"    at ") {
+                        slice
+                    } else if let Some(i) = bun_core::strings::index_of(slice, b"\n    at ") {
+                        &slice[i + 1..]
+                    } else {
+                        b""
                     };
+                    let tail = bun_core::trim_right(tail, b"\n");
                     if !tail.is_empty() {
                         writer.write_all(tail)?;
                         writer.write_all(b"\n")?;

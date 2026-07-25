@@ -271,6 +271,43 @@ describe("Error-like object (instanceof Error, not a native ErrorInstance)", () 
     expect(called).toBe(false);
   });
 
+  test("a header-less .stack (frames-only prepareStackTrace) keeps its first frame", () => {
+    const err = Object.create(Error.prototype);
+    err.name = "JsonWebTokenError";
+    err.message = "boom";
+    err.stack = "    at inner (x.js:1:1)\n    at outer (x.js:2:2)";
+    const out = Bun.inspect(err, { colors: false });
+    expect(out).toContain("JsonWebTokenError: boom");
+    expect(out).toContain("at inner (x.js:1:1)");
+    expect(out).toContain("at outer (x.js:2:2)");
+  });
+
+  test("a multi-line message in the .stack header is stripped without duplication", () => {
+    const err = Object.create(Error.prototype);
+    err.name = "JsonWebTokenError";
+    err.message = "line1\nline2";
+    err.stack = new Error(err.message).stack;
+    const out = Bun.inspect(err, { colors: false });
+    expect(out.split("line2").length - 1).toBe(1);
+    expect(out).toMatch(/^\s+at /m);
+  });
+
+  test("a throwing own .stack getter is absorbed", () => {
+    const err = Object.create(Error.prototype);
+    err.name = "JsonWebTokenError";
+    err.message = "boom";
+    Object.defineProperty(err, "stack", {
+      get() {
+        throw new Error("nope");
+      },
+    });
+    expect(() => Bun.inspect(err, { colors: false })).not.toThrow();
+  });
+
+  test("the test-runner formatter renders it as [Name: message], not an object dump", () => {
+    expect(makeErrorLike()).toMatchInlineSnapshot(`[JsonWebTokenError: boom]`);
+  });
+
   const fixture = `
     function JsonWebTokenError(msg) {
       this.name = "JsonWebTokenError";

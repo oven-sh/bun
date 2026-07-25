@@ -47,7 +47,6 @@ mod _impl {
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
-        pub pending_reset: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
     }
@@ -99,7 +98,6 @@ mod _impl {
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
-                pending_reset: Cell::new(false),
                 closed: Cell::new(false),
                 task: JsCell::new(WorkPoolTask {
                     node: Default::default(),

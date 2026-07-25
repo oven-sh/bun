@@ -160,8 +160,6 @@ pub mod bun {
         // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
         pub use crate::api::h2_frame_parser_body::js_assert_settings;
-        pub use crate::api::h2_frame_parser_body::js_get_packed_settings;
-        pub use crate::api::h2_frame_parser_body::js_get_unpacked_settings;
     }
     pub use h2_frame_parser::H2FrameParser;
 }
@@ -276,4 +274,70 @@ pub(crate) fn with_text_format_source<R>(
     let source = bun_ast::Source::init_path_string(path, bytes);
 
     f(&arena, &mut log, &source)
+}
+
+// ─── shared Expr → JS conversion for the text-format parsers ─────────────────
+
+fn estring_to_js(
+    str: &bun_ast::E::EString,
+    global: &bun_jsc::JSGlobalObject,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    use bun_jsc::StringJsc as _;
+    // NOTE: the text-format parsers never build ropes, so the simple
+    // slice → JS path is sufficient.
+    if str.is_utf16 {
+        let zig = bun_core::ZigString::init_utf16(str.slice16());
+        let bun_s = bun_core::String::init(zig);
+        bun_s.to_js(global)
+    } else {
+        bun_jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
+    }
+}
+
+pub(crate) fn expr_to_js(
+    expr: bun_ast::Expr,
+    global: &bun_jsc::JSGlobalObject,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    expr_to_js_with_check(expr, global, bun_core::StackCheck::init())
+}
+
+fn expr_to_js_with_check(
+    expr: bun_ast::Expr,
+    global: &bun_jsc::JSGlobalObject,
+    stack_check: bun_core::StackCheck,
+) -> bun_jsc::JsResult<bun_jsc::JSValue> {
+    use bun_ast::expr::Data as ExprData;
+    use bun_collections::VecExt as _;
+    use bun_jsc::JSValue;
+
+    if !stack_check.is_safe_to_recurse() {
+        return Err(global.throw_stack_overflow());
+    }
+    match expr.data {
+        ExprData::ENull(_) => Ok(JSValue::NULL),
+        ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
+        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
+        ExprData::EString(str) => estring_to_js(str.get(), global),
+        ExprData::EArray(arr) => {
+            JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
+                expr_to_js_with_check(*item, global, stack_check)
+            })
+        }
+        ExprData::EObject(obj) => {
+            let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
+            for prop in obj.properties.slice() {
+                let key_expr = prop.key.expect("infallible: prop has key");
+                let value = expr_to_js_with_check(
+                    prop.value.expect("infallible: prop has value"),
+                    global,
+                    stack_check,
+                )?;
+                let key_js = expr_to_js_with_check(key_expr, global, stack_check)?;
+                let key_str = bun_core::OwnedString::new(key_js.to_bun_string(global)?);
+                js_obj.put_may_be_index(global, &key_str, value)?;
+            }
+            Ok(js_obj)
+        }
+        _ => Ok(JSValue::UNDEFINED),
+    }
 }

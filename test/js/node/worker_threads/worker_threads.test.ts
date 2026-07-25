@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,10 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Worker startup under debug/ASAN is slow enough that several tests here cannot
+// finish inside the 5s default.
+setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -421,6 +426,54 @@ describe("captured stdio backpressure", () => {
     for await (const data of worker.stdout) received += data.length;
     expect(received).toBe(128 * 8 * 1024);
     await worker.terminate();
+  });
+
+  // An unconsumed captured stream must not keep the worker (or parent) alive on its
+  // own. Regression: the lazy message listener meant the worker's writev ack never
+  // arrived, so its stdio port stayed ref'd and neither side could exit.
+  test("captured stdio that is never consumed does not prevent exit", async () => {
+    // One worker writing to both captured streams is enough to trip the hang.
+    const script = `
+      const { Worker } = require("node:worker_threads");
+      const { once } = require("node:events");
+      const src = [
+        'process.stdout.write("o", () => require("node:worker_threads").parentPort.postMessage("cb"));',
+        'process.stderr.write("e");',
+      ].join("");
+      const w = new Worker(src, { eval: true, stdout: true, stderr: true });
+      // Touching the getter must not matter either.
+      void w.stderr;
+      void w.stdout;
+      let cb = false;
+      w.on("message", () => (cb = true));
+      // The condition under test is "process exits on its own"; the watchdog turns
+      // a hang into a fast, distinguishable failure instead of the suite timeout.
+      w.on("online", () => setTimeout(() => process.exit(42), ${isDebug ? 20_000 : 5_000}).unref());
+      const [code] = await once(w, "exit");
+      // Data was pushed into the Readable buffer even though nothing consumed it,
+      // and stays readable after the worker has exited.
+      const out = w.stdout.read()?.toString() ?? null;
+      const err = w.stderr.read()?.toString() ?? null;
+      console.log(JSON.stringify({ code, cb, out, err }));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.trim(),
+      stderr: exitCode === 0 ? "" : stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
+      stdout: JSON.stringify({ code: 0, cb: true, out: "o", err: "e" }),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   });
 });
 

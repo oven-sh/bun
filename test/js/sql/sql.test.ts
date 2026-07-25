@@ -9293,8 +9293,8 @@ CREATE TABLE ${table_name} (
       `;
 
         const values = result[0].special_dates;
-        expect(values[0].toString()).toBe("Invalid Date");
-        expect(values[1].toString()).toBe("Invalid Date");
+        expect(values[0]).toBe(Infinity);
+        expect(values[1]).toBe(-Infinity);
         // Skip testing today/yesterday/tomorrow as they depend on current date
       });
 
@@ -9714,8 +9714,8 @@ CREATE TABLE ${table_name} (
         ]::timestamp[] as special_timestamps
       `;
 
-        expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
-        expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+        expect(result[0].special_timestamps[0]).toBe(Infinity);
+        expect(result[0].special_timestamps[1]).toBe(-Infinity);
         expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
       });
 
@@ -9917,8 +9917,8 @@ CREATE TABLE ${table_name} (
         ]::timestamptz[] as special_timestamps
       `;
 
-        expect(result[0].special_timestamps[0].toString()).toBe("Invalid Date");
-        expect(result[0].special_timestamps[1].toString()).toBe("Invalid Date");
+        expect(result[0].special_timestamps[0]).toBe(Infinity);
+        expect(result[0].special_timestamps[1]).toBe(-Infinity);
         expect(result[0].special_timestamps[2].toISOString()).toBe("1970-01-01T00:00:00.000Z");
       });
 

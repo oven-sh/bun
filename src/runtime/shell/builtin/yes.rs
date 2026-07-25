@@ -163,10 +163,7 @@ impl Yes {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(e) = e {
-            // Release the SystemError's owned BunString fields (no `Drop`
-            // impl on `bun_sys::SystemError`).
-            e.deref();
+        if let Some(_err) = e {
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }

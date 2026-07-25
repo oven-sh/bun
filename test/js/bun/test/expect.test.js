@@ -1714,6 +1714,18 @@ describe("expect()", () => {
     expect(ab1).not.toEqual(new ArrayBuffer(1));
   });
 
+  test("toEqual detached ArrayBuffer is not equal to a zero-length ArrayBuffer", () => {
+    function detached() {
+      const buf = new ArrayBuffer(4);
+      buf.transfer();
+      return buf;
+    }
+    expect(detached()).not.toEqual(new ArrayBuffer(0));
+    expect(detached()).not.toEqual(detached());
+    expect(detached()).not.toStrictEqual(new ArrayBuffer(0));
+    expect({ x: detached() }).not.toEqual({ x: new ArrayBuffer(0) });
+  });
+
   test("symbol based keys in arrays are processed correctly", () => {
     const mySymbol = Symbol("test");
 
@@ -4860,37 +4872,37 @@ describe("expect()", () => {
   test("toHaveBeenLastCalledWith to return undefined", () => {
     expect(expect(mocked).toHaveBeenLastCalledWith()).toBeUndefined();
   });
-  test.todo("toHaveBeenNthCalledWith to return undefined", () => {
-    expect(expect(() => {}).toHaveBeenNthCalledWith()).toBeUndefined();
+  test("toHaveBeenNthCalledWith to return undefined", () => {
+    expect(expect(mocked).toHaveBeenNthCalledWith(1)).toBeUndefined();
   });
-  test.todo("toHaveLastReturnedWith to return undefined", () => {
-    expect(expect(() => {}).toHaveLastReturnedWith()).toBeUndefined();
+  test("toHaveLastReturnedWith to return undefined", () => {
+    expect(expect(mocked).toHaveLastReturnedWith(undefined)).toBeUndefined();
   });
   test("toHaveLength to return undefined", () => {
     expect(expect([1]).toHaveLength(1)).toBeUndefined();
   });
-  test.todo("toHaveNthReturnedWith to return undefined", () => {
-    expect(expect(() => {}).toHaveNthReturnedWith()).toBeUndefined();
+  test("toHaveNthReturnedWith to return undefined", () => {
+    expect(expect(mocked).toHaveNthReturnedWith(1, undefined)).toBeUndefined();
   });
-  test.todo("toHaveProperty to return undefined", () => {
-    expect(expect({}).toHaveProperty()).toBeUndefined();
+  test("toHaveProperty to return undefined", () => {
+    expect(expect({ a: 1 }).toHaveProperty("a")).toBeUndefined();
   });
-  test.todo("toHaveReturnedTimes to return undefined", () => {
-    expect(expect(() => {}).toHaveReturnedTimes()).toBeUndefined();
+  test("toHaveReturnedTimes to return undefined", () => {
+    expect(expect(mocked).toHaveReturnedTimes(1)).toBeUndefined();
   });
-  test.todo("toHaveReturnedWith to return undefined", () => {
-    expect(expect(() => {}).toHaveReturnedWith()).toBeUndefined();
+  test("toHaveReturnedWith to return undefined", () => {
+    expect(expect(mocked).toHaveReturnedWith(undefined)).toBeUndefined();
   });
   test("toInclude to return undefined", () => {
     expect(expect("abc").toInclude("a")).toBeUndefined();
   });
-  test.todo("toIncludeRepeated to return undefined", () => {
-    expect(expect("abc").toIncludeRepeated("a")).toBeUndefined();
+  test("toIncludeRepeated to return undefined", () => {
+    expect(expect("abc").toIncludeRepeated("a", 1)).toBeUndefined();
   });
   test("toMatch to return undefined", () => {
     expect(expect("abc").toMatch("a")).toBeUndefined();
   });
-  test.todo("toMatchInlineSnapshot to return undefined", () => {
+  test("toMatchInlineSnapshot to return undefined", () => {
     expect(expect("abc").toMatchInlineSnapshot('"abc"')).toBeUndefined();
   });
   test("toMatchObject to return undefined", () => {

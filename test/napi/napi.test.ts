@@ -158,7 +158,10 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               // Not clear how to test for that.
             }
           },
-          10 * 1000,
+          // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
+          // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
+          // which on debian/ubuntu is disk-backed gp3.
+          30 * 1000,
         );
       }
 
@@ -705,6 +708,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
     it("handles accessor properties when filtering by napi_key_writable", async () => {
       await checkSameOutput("test_get_all_property_names_accessor", []);
+    });
+    it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
+      expect(output).toContain(`proxy own_only writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`proxy own_only configurable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`proxy(no traps) writable: status=0 keys=["ro","rw"]`);
+      expect(output).toContain(`string own_only writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`string own_only configurable: status=0 keys=[0,1]`);
+      expect(output).toContain(`derived string writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`proxy-proto include_prototypes writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`string-proto include_prototypes configurable: status=0 keys=[0,1]`);
+      expect(output).toContain(`plain writable: status=0 keys=["w","nc"]`);
+      expect(output).toContain(`frozen writable: status=0 keys=[]`);
     });
   });
 
@@ -1450,6 +1466,19 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       // as js_callback and passes it to napi_make_callback, it should succeed.
       const output = await checkSameOutput("test_make_callback_with_async_context", []);
       expect(output).toContain("PASS: napi_make_callback succeeded");
+    });
+
+    it("derives napi_make_callback status from pending exception, not return value", async () => {
+      // Returning an Error is napi_ok; throwing (any value) is napi_pending_exception
+      // and leaves the exception observable to napi_is_exception_pending.
+      const output = await checkSameOutput(
+        "test_napi_make_callback_status",
+        "[() => 42, () => new Error('returned'), () => { throw new Error('thrown'); }, () => { throw 'string'; }]",
+      );
+      expect(output).toContain("cb 1: status=0 pending=0 wrote_result=1 result_is_error=0");
+      expect(output).toContain("cb 2: status=0 pending=0 wrote_result=1 result_is_error=1");
+      expect(output).toContain("cb 3: status=10 pending=1 wrote_result=0 result_is_error=0");
+      expect(output).toContain("cb 4: status=10 pending=1 wrote_result=0 result_is_error=0");
     });
 
     it("should accept AsyncContextFrame in napi_create_threadsafe_function with null call_js_cb", async () => {

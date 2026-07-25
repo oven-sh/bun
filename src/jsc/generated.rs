@@ -315,6 +315,11 @@ pub struct SSLConfig {
     pub ciphers: GenOpt<GenString>,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub crl: SSLConfigFile,
+    pub allow_partial_trust_chain: bool,
+    pub session_timeout: i32,
+    pub sigalgs: GenOpt<GenString>,
+    pub ecdh_curve: GenOpt<GenString>,
 }
 
 // ── refcount release on drop ──────────────────────────────────────────────
@@ -411,6 +416,8 @@ impl Drop for SSLConfig {
         release_gen_opt_string(&self.ca_file);
         // `alpn_protocols`: `SSLConfigAlpnProtocols` — released by its own `Drop`.
         release_gen_opt_string(&self.ciphers);
+        release_gen_opt_string(&self.sigalgs);
+        release_gen_opt_string(&self.ecdh_curve);
     }
 }
 
@@ -560,6 +567,11 @@ struct ExternSSLConfig {
     ciphers: RawWTFStringImpl,
     client_renegotiation_limit: u32,
     client_renegotiation_window: u32,
+    crl: ExternSSLConfigFile,
+    allow_partial_trust_chain: bool,
+    session_timeout: i32,
+    sigalgs: RawWTFStringImpl,
+    ecdh_curve: RawWTFStringImpl,
 }
 
 // safe: same handle/out-param contract as
@@ -594,6 +606,11 @@ impl SSLConfig {
             ciphers: adopt_opt_string(ext.ciphers),
             client_renegotiation_limit: ext.client_renegotiation_limit,
             client_renegotiation_window: ext.client_renegotiation_window,
+            crl: SSLConfigFile::convert_from_extern(ext.crl),
+            allow_partial_trust_chain: ext.allow_partial_trust_chain,
+            session_timeout: ext.session_timeout,
+            sigalgs: adopt_opt_string(ext.sigalgs),
+            ecdh_curve: adopt_opt_string(ext.ecdh_curve),
         }
     }
 

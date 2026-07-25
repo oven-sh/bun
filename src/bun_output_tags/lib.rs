@@ -42,9 +42,7 @@ pub mod ansi_b {
     pub const DIM: &[u8] = ansi::DIM.as_bytes();
     pub const ITALIC: &[u8] = ansi::ITALIC.as_bytes();
     pub const UNDERLINE: &[u8] = ansi::UNDERLINE.as_bytes();
-    pub const INVERT: &[u8] = ansi::INVERT.as_bytes();
     pub const STRIKETHROUGH: &[u8] = ansi::STRIKETHROUGH.as_bytes();
-    pub const BLACK: &[u8] = ansi::BLACK.as_bytes();
     pub const RED: &[u8] = ansi::RED.as_bytes();
     pub const GREEN: &[u8] = ansi::GREEN.as_bytes();
     pub const YELLOW: &[u8] = ansi::YELLOW.as_bytes();
@@ -52,9 +50,6 @@ pub mod ansi_b {
     pub const MAGENTA: &[u8] = ansi::MAGENTA.as_bytes();
     pub const CYAN: &[u8] = ansi::CYAN.as_bytes();
     pub const WHITE: &[u8] = ansi::WHITE.as_bytes();
-    pub const BRIGHT_WHITE: &[u8] = ansi::BRIGHT_WHITE.as_bytes();
-    pub const BG_RED: &[u8] = ansi::BG_RED.as_bytes();
-    pub const BG_GREEN: &[u8] = ansi::BG_GREEN.as_bytes();
 }
 
 /// `(tag, ansi_escape)` pairs. 14 entries — linear scan in [`color_for`] is

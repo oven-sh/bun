@@ -16,20 +16,56 @@
  */
 // clang-format off
 #pragma once
+
+/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
+ * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
+ * but is included after us, so set it here before any system header (including
+ * whatever mimalloc.h transitively pulls in). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define LIBUS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define LIBUS_ASAN 1
+#endif
+#endif
+
+#if !defined(LIBUS_ASAN)
+#include "mimalloc.h"
+#ifndef us_calloc
+#define us_calloc mi_calloc
+#endif
+#ifndef us_malloc
+#define us_malloc mi_malloc
+#endif
+#ifndef us_realloc
+#define us_realloc mi_realloc
+#endif
+#ifndef us_free
+#define us_free mi_free
+#endif
+#ifndef us_strdup
+#define us_strdup mi_strdup
+#endif
+#else
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
-
 #ifndef us_malloc
 #define us_malloc malloc
 #endif
-
 #ifndef us_realloc
 #define us_realloc realloc
 #endif
-
 #ifndef us_free
 #define us_free free
+#endif
+#ifndef us_strdup
+#define us_strdup strdup
+#endif
 #endif
 
 #ifndef LIBUSOCKETS_H
@@ -93,13 +129,6 @@
 #define LIBUS_SOCKET_DESCRIPTOR int
 #endif
 
-/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
- * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
- * but is included after us, so set it here before any system header. */
-#if !defined(_WIN32) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE
-#endif
-
 #include "stddef.h"
 #include <stdint.h>
 
@@ -126,6 +155,11 @@ enum {
      * Safe for HTTP/TLS where the client always sends first; do not use for protocols where
      * the server sends the first bytes. */
     LIBUS_LISTEN_DEFER_ACCEPT = 64,
+    /* Enable IP_RECVERR on a UDP socket so ICMP errors land on the error
+     * queue for on_recv_error to drain. Off by default: on a shared
+     * unconnected socket it also makes the next send fail for a datagram
+     * bound to a different, live peer. */
+    LIBUS_UDP_LINUX_RECVERR = 128,
 };
 
 /* Library types publicly available */
@@ -191,11 +225,24 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
+
+/* SO_RCVBUF / SO_SNDBUF for a UDP socket. size == 0 reads the current value,
+ * non-zero sets it. Returns 0 and writes the resulting value to *out, or the
+ * failing setsockopt/getsockopt result (error in errno / WSAGetLastError). */
+int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, int *out);
+
+/* Underlying socket descriptor of a UDP socket. */
+LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
+
+/* Adopts an already created (and usually already bound) UDP socket descriptor
+ * instead of creating a new one. The fd is made non-blocking and the standard
+ * receive-path options are applied. Returns null with *err set on failure. */
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);
@@ -326,7 +373,8 @@ struct us_socket_t *us_socket_adopt(us_socket_r s, us_socket_group_r group,
  * sni may be NULL. */
 struct us_socket_t *us_socket_adopt_tls(us_socket_r s, us_socket_group_r group,
     unsigned char kind, struct ssl_ctx_st *ssl_ctx, const char *sni,
-    int is_client, int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
+    int is_client, int request_cert, int reject_unauthorized,
+    int old_ext_size, int ext_size) __attribute__((nonnull(1, 2, 4)));
 /* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
  * by the plain-TCP layer before the socket was adopted into TLS) through the
  * same decrypt path as bytes arriving from the kernel. */
@@ -374,6 +422,12 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
 void *us_socket_server_name_userdata(us_socket_r s);
+/* Socket-level SNI resolver, for a server-side socket adopted into TLS with no
+ * listen socket behind it. Same contract as the listener resolver: an owned
+ * SSL_CTX ref or NULL; *abort_handshake 1 = drop silently, 2 = suspend. */
+typedef struct ssl_ctx_st *(*us_socket_server_name_cb)(struct us_socket_t *socket,
+    const char *hostname, int *abort_handshake);
+void us_socket_on_server_name(us_socket_r s, us_socket_server_name_cb cb);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
  * Returns either us_socket_t* (fast path, *is_connecting=1) or
@@ -410,6 +464,11 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnul
 
 struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s);
 
+/* SNI hostname the peer sent in its ClientHello (server-side TLS sockets), or
+ * NULL when the socket is not TLS or no SNI extension was sent. The returned
+ * pointer is owned by the SSL object and only valid while the socket lives. */
+const char *us_socket_sni_servername(struct us_socket_t *s);
+
 /* ── SSL_CTX construction ─────────────────────────────────────────────────
  * The expensive bit (cert/key/CA parse, cipher list, DH params) is decoupled
  * from sockets entirely. Build once per SecureContext / config, share across
@@ -437,6 +496,18 @@ struct us_bun_socket_context_options_t {
     int request_cert;
     unsigned int client_renegotiation_limit;
     unsigned int client_renegotiation_window;
+    /* Session timeout in seconds applied via SSL_CTX_set_timeout; 0 = library default. */
+    int session_timeout;
+    /* PEM-encoded CRLs added to the context's X509_STORE (enables CRL checking). */
+    const char * const *crl;
+    unsigned int crl_count;
+    /* Sets X509_V_FLAG_PARTIAL_CHAIN on the context's certificate store. */
+    int allow_partial_trust_chain;
+    /* Colon-separated signature algorithm list applied via
+     * SSL_CTX_set1_sigalgs_list. */
+    const char *sigalgs;
+    /* Colon-separated named-group list applied via SSL_CTX_set1_groups_list. */
+    const char *ecdh_curve;
 };
 
 enum create_bun_socket_error_t {
@@ -445,6 +516,8 @@ enum create_bun_socket_error_t {
     CREATE_BUN_SOCKET_ERROR_INVALID_CA_FILE,
     CREATE_BUN_SOCKET_ERROR_INVALID_CA,
     CREATE_BUN_SOCKET_ERROR_INVALID_CIPHERS,
+    CREATE_BUN_SOCKET_ERROR_INVALID_CRL,
+    CREATE_BUN_SOCKET_ERROR_INVALID_ECDH_CURVE,
 };
 
 /* Build an SSL_CTX from options. Returns the BoringSSL SSL_CTX*; caller owns
@@ -585,6 +658,11 @@ int us_socket_is_closed(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_tls(us_socket_r s) nonnull_fn_decl;
 int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
+/* TLS ciphertext bytes already sealed for this socket and reported as
+ * written by us_socket_write(), still waiting on a writable event to reach
+ * the kernel (the loop-wide spill slot owned by this socket). 0 for
+ * plain-TCP sockets and for TLS sockets with nothing spilled. */
+unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
 

@@ -79,7 +79,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let name = p.lexer.identifier;
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
-            let ref_ = p.store_name_in_ref(name).expect("unreachable");
+            let ref_ = p.store_name_in_ref(name);
             let loc = left.loc;
             let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);
             *left = p.new_expr(
@@ -189,7 +189,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let _ = p.skip_type_script_type_arguments::<false>()?;
+                let _ = p.skip_type_script_type_arguments::<false, false>()?;
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }
@@ -218,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let name = p.lexer.identifier;
                     let name_loc = p.lexer.loc();
                     p.lexer.next()?;
-                    let ref_ = p.store_name_in_ref(name).expect("unreachable");
+                    let ref_ = p.store_name_in_ref(name);
                     let loc = left.loc;
                     let target = *left;
                     let index = p.new_expr(E::PrivateIdentifier { ref_ }, name_loc);

@@ -2,7 +2,6 @@ use crate::parser;
 use crate::types::Flags;
 
 // Re-export types needed by external renderers (e.g. JS callback renderer).
-pub use crate::types::Align;
 pub use crate::types::BLOCK_FENCED_CODE;
 pub use crate::types::BlockType;
 pub use crate::types::Renderer;
@@ -92,24 +91,6 @@ impl Options {
         autolink_headings: false,
     };
 
-    pub const COMMONMARK: Self = Self {
-        tables: false,
-        strikethrough: false,
-        tasklists: false,
-        ..Self::NONE
-    };
-
-    pub const GITHUB: Self = Self {
-        tables: true,
-        strikethrough: true,
-        tasklists: true,
-        permissive_autolinks: true,
-        permissive_www_autolinks: true,
-        permissive_email_autolinks: true,
-        tag_filter: true,
-        ..Self::NONE
-    };
-
     pub const TERMINAL: Self = Self {
         tables: true,
         strikethrough: true,
@@ -132,9 +113,7 @@ impl Options {
             permissive_www_autolinks: self.permissive_www_autolinks || self.permissive_autolinks,
             permissive_email_autolinks: self.permissive_email_autolinks
                 || self.permissive_autolinks,
-            hard_soft_breaks: self.hard_soft_breaks,
             wiki_links: self.wiki_links,
-            underline: self.underline,
             latex_math: self.latex_math,
             collapse_whitespace: self.collapse_whitespace,
             permissive_atx_headers: self.permissive_atx_headers,
@@ -234,11 +213,9 @@ pub fn render_with_renderer<'a>(
 
 pub use crate::types;
 
-pub use crate::entity;
 pub use crate::helpers;
 
 pub use crate::ansi_renderer as ansi;
-pub use ansi::AnsiRenderer;
 pub use ansi::ImageUrlCollector;
 pub use ansi::Theme as AnsiTheme;
 pub use ansi::detect_kitty_graphics;

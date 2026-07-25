@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomBytes } from "crypto";
-import { bunEnv, bunExe, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
@@ -994,6 +994,102 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // end_stream()/end()/end_without_body()/force_close() captured a local
+  // copy of `resp`, cleared onAborted via detach_response(), then called
+  // end_request_streaming_and_drain() (whose drain_microtasks() can re-enter
+  // lsquic via drain_quic_if_necessary and free the H3 stream when a client
+  // RESET is queued) before the final resp.state() read.
+  // Only detectable under ASAN; release builds corrupt memory silently.
+  test.skipIf(!isASAN)(
+    "client abort during streaming response + pending request body does not UAF",
+    async () => {
+      const script = `
+      const tls = ${JSON.stringify(tls)};
+      const server = Bun.serve({
+        port: 0, tls, http3: true, http1: false,
+        fetch(req) {
+          // Do NOT consume req.body: for H3 body-bearing methods the
+          // RequestContext's request_body stays Locked until FIN, and the
+          // client aborts before sending FIN. That Locked body is what makes
+          // end_request_streaming_and_drain() actually drain microtasks.
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(ctrl) {
+                ctrl.write("a");
+                ctrl.flush?.();
+                // Yield to a macro-task so the sink's resolve microtask runs
+                // with ctx->processing == 0 (outside lsquic), letting the
+                // drain_quic_if_necessary() re-entry reach process_conns.
+                await new Promise(r => setTimeout(r, 1));
+                ctrl.write("b");
+                ctrl.flush?.();
+                await new Promise(r => setTimeout(r, 1));
+                ctrl.write("c");
+                await ctrl.end();
+              },
+            }),
+            { headers: { "content-type": "text/plain" } },
+          );
+        },
+      });
+      const base = "https://127.0.0.1:" + server.port;
+      async function once(i) {
+        const ctrl = new AbortController();
+        let bodyCtrl;
+        const body = new ReadableStream({
+          start(c) { c.enqueue(new TextEncoder().encode("req")); bodyCtrl = c; },
+        });
+        try {
+          const res = await fetch(base + "/", {
+            method: "POST", body, duplex: "half",
+            protocol: "http3", tls: { rejectUnauthorized: false },
+            signal: ctrl.signal,
+            headers: { "content-type": "application/octet-stream" },
+          });
+          // Read one chunk so the server is definitely mid-stream, then
+          // abort. The client's RESET lands while the server's next
+          // setTimeout tick is queued in the same epoll iteration.
+          const rdr = res.body.getReader();
+          await rdr.read().catch(() => {});
+          if (i & 1) await new Promise(r => setTimeout(r, 0));
+          ctrl.abort();
+          await rdr.read().catch(() => {});
+          try { rdr.releaseLock(); } catch {}
+        } catch {}
+        try { bodyCtrl?.error(new Error("done")); } catch {}
+      }
+      const ITERS = 200, CONC = 16;
+      for (let b = 0; b * CONC < ITERS; b++) {
+        await Promise.all(Array.from({ length: CONC }, (_, k) => once(b * CONC + k)));
+      }
+      // Proof of life: one clean request after the abort storm.
+      const res = await fetch(base + "/", {
+        method: "POST", body: "done",
+        protocol: "http3", tls: { rejectUnauthorized: false },
+      });
+      const txt = await res.text();
+      console.log(JSON.stringify({ status: res.status, body: txt }));
+      server.stop(true);
+      process.exit(0);
+    `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Surface the ASAN report when it fires so the failing test is diagnosable.
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: JSON.stringify({ status: 200, body: "abc" }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
   // B: server.stop() (graceful) sends GOAWAY and lets in-flight H3 requests
   // finish before the engine tears down. lsquic_engine_cooldown drops mini
   // (still-handshaking) conns immediately, so we wait until the server has
@@ -1125,6 +1221,40 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 });
 
 describe("Bun.serve HTTP/3 production", () => {
+  // RFC 9110 §6.6.1: an origin server with a clock MUST send Date.
+  // H1 writes it via HttpResponse::writeMark(); H3 must too.
+  test("Date header is sent on every response shape", async () => {
+    await withServer(async port => {
+      // Cover every Http3Response header-send path: internalEnd (string/buffer
+      // body, 404, static route), flushHeaders (ReadableStream, Bun.file,
+      // file route), endWithoutBody (204, HEAD).
+      const cases: Array<{ path: string; method?: string }> = [
+        { path: "/hello" },
+        { path: "/big" },
+        { path: "/status" },
+        { path: "/nope" },
+        { path: "/stream" },
+        { path: "/file" },
+        { path: "/static" },
+        { path: "/file-route" },
+        { path: "/big", method: "HEAD" },
+      ];
+      const httpDate = /^[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT$/;
+      const results: Array<{ req: string; date: string | null }> = [];
+      for (const c of cases) {
+        const res = await fetchH3(port, c.path, c.method ? { method: c.method } : {});
+        await res.arrayBuffer();
+        results.push({ req: `${c.method ?? "GET"} ${c.path}`, date: res.headers.get("date") });
+      }
+      expect(results).toEqual(
+        cases.map(c => ({
+          req: `${c.method ?? "GET"} ${c.path}`,
+          date: expect.stringMatching(httpDate),
+        })),
+      );
+    });
+  });
+
   // E: H1 responses advertise the H3 endpoint so browsers can discover it.
   test("Alt-Svc emitted on HTTP/1.1 responses when http3 is enabled", async () => {
     await withServer(async port => {

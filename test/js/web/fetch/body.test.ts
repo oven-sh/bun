@@ -36,6 +36,18 @@ const bufferTypes = [
   Float64Array,
 ];
 
+// getRandomValues takes integer-typed views only, so fill through a Uint8Array
+// view to cover the ArrayBuffer/SharedArrayBuffer/Float* cases too.
+function randomFilled(bufferType: (typeof bufferTypes)[number], length: number) {
+  const buffer = new (bufferType as any)(length);
+  const bytes =
+    buffer instanceof ArrayBuffer || buffer instanceof SharedArrayBuffer
+      ? new Uint8Array(buffer)
+      : new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  crypto.getRandomValues(bytes);
+  return buffer;
+}
+
 const utf8 = [
   {
     string: "",
@@ -82,11 +94,11 @@ for (const { body, fn } of bodyTypes) {
           },
           {
             label: "small buffer",
-            buffer: () => crypto.getRandomValues(new bufferType(1_000)),
+            buffer: () => randomFilled(bufferType, 1_000),
           },
           {
             label: "large buffer",
-            buffer: () => crypto.getRandomValues(new bufferType(1_000_000)),
+            buffer: () => randomFilled(bufferType, 1_000_000),
           },
         ];
         describe(bufferType.name, () => {

@@ -679,10 +679,10 @@ impl ErrorDeferred {
         };
         let system_error = SystemError {
             errno: self.errno as i32,
-            code: bstr::String::static_(code),
-            message,
-            syscall: bstr::String::clone_utf8(self.syscall),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()),
+            code: bstr::String::static_(code).into(),
+            message: message.into(),
+            syscall: bstr::String::clone_utf8(self.syscall).into(),
+            hostname: self.hostname.take().unwrap_or(bstr::String::empty()).into(),
             ..Default::default()
         };
 
@@ -718,6 +718,16 @@ impl ErrorDeferred {
             }
         }
 
+        let vm = global_this.bun_vm();
+        // Worker terminate's `close_dns_for_terminate` fires EDESTRUCTION with
+        // `is_shutting_down` already set; the task queue is about to be
+        // drained-without-run and ManagedTask has no cleanup here, so enqueuing
+        // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
+        // JSC is still live so the Strong handle releases cleanly.
+        if vm.is_shutting_down() {
+            return;
+        }
+
         let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
             global_this: bun_ptr::BackRef::new(global_this),
@@ -725,9 +735,7 @@ impl ErrorDeferred {
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
-        global_this
-            .bun_vm()
-            .as_mut()
+        vm.as_mut()
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
                 context,
                 Context::callback,
@@ -757,13 +765,14 @@ pub(crate) fn error_to_js_with_syscall(
     let code = this.code();
     let instance = SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]),
-        syscall: bstr::String::static_(syscall),
+        code: bstr::String::static_(&code[4..]).into(),
+        syscall: bstr::String::static_(syscall).into(),
         message: bstr::String::create_format(format_args!(
             "{} {}",
             BStr::new(syscall),
             BStr::new(&code[4..])
-        )),
+        ))
+        .into(),
         ..Default::default()
     }
     .to_error_instance(global_this);
@@ -788,15 +797,16 @@ pub(crate) fn system_error_with_syscall_and_hostname(
     let code = this.code();
     SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]),
+        code: bstr::String::static_(&code[4..]).into(),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
             BStr::new(syscall),
             BStr::new(&code[4..]),
             BStr::new(hostname)
-        )),
-        syscall: bstr::String::static_(syscall),
-        hostname: bstr::String::clone_utf8(hostname),
+        ))
+        .into(),
+        syscall: bstr::String::static_(syscall).into(),
+        hostname: bstr::String::clone_utf8(hostname).into(),
         ..Default::default()
     }
 }

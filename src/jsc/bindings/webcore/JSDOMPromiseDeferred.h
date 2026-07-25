@@ -174,7 +174,7 @@ public:
 
         ASSERT(deferred());
         ASSERT(globalObject());
-        auto* lexicalGlobalObject = globalObject();
+        JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
         auto& vm = lexicalGlobalObject->vm();
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -191,7 +191,7 @@ public:
 
         ASSERT(deferred());
         ASSERT(globalObject());
-        auto* lexicalGlobalObject = globalObject();
+        JSC::JSGlobalObject* lexicalGlobalObject = globalObject();
         auto& vm = lexicalGlobalObject->vm();
         JSC::JSLockHolder locker(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

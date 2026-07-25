@@ -22,8 +22,9 @@
 
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { execSync } from "child_process";
 import fg from "fast-glob";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -1124,4 +1125,58 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
     );
     expect(norm(result)).toEqual(["linkdir/file.txt"]);
   });
+});
+
+// A directory the user can read but not write (RX-only grant) must still be
+// descended by the scanner: directory opens used to request FILE_ADD_FILE and
+// fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition
+// is probed and the test skips visibly then.
+let roDirRoot = "";
+let roDirA = "";
+let roDirEnforced = false;
+if (isWindows) {
+  try {
+    roDirRoot = tempDirWithFiles("glob-scan-readonly-dir", {
+      "a/b/file.txt": "under a read-only directory",
+    });
+    roDirA = path.join(roDirRoot, "a");
+    execSync(`icacls "${roDirA}" /inheritance:r /grant:r "${process.env.USERNAME}:(OI)(CI)(RX)" /Q`);
+    try {
+      fs.mkdirSync(path.join(roDirA, "probe"));
+      // Creation succeeded: ACL not enforced under this token — restore and skip.
+      execSync(`icacls "${roDirA}" /reset /T /Q`);
+    } catch {
+      roDirEnforced = true;
+    }
+  } catch {}
+}
+
+afterAll(() => {
+  if (!roDirA) return;
+  try {
+    execSync(`icacls "${roDirA}" /reset /T /Q`);
+  } catch {}
+  try {
+    fs.rmSync(roDirRoot, { recursive: true, force: true });
+  } catch {}
+});
+
+describe.skipIf(!isWindows)("glob scan descends read-only directories", () => {
+  test.skipIf(!roDirEnforced)(
+    `RX-only directory is descended, creates still fail${roDirEnforced ? "" : " (skipped: ACL not enforced under this token)"}`,
+    () => {
+      const entries = Array.from(new Glob("**/*.txt").scanSync({ cwd: roDirRoot }))
+        .map(p => p.replaceAll("\\", "/"))
+        .sort();
+      expect(entries).toEqual(["a/b/file.txt"]);
+
+      let err: any;
+      try {
+        fs.mkdirSync(path.join(roDirA, "x"));
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("EPERM");
+    },
+  );
 });

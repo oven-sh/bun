@@ -11,8 +11,6 @@ use crate::{
 pub struct Chunk {
     pub buffer: MutableString,
 
-    pub mappings_count: usize,
-
     /// This end state will be used to rewrite the start of the following source
     /// map chunk so that the delta-encoded VLQ numbers are preserved.
     pub end_state: SourceMapState,
@@ -36,7 +34,6 @@ impl Chunk {
     pub fn init_empty() -> Chunk {
         Chunk {
             buffer: MutableString::init_empty(),
-            mappings_count: 0,
             end_state: SourceMapState::default(),
             final_generated_column: 0,
             should_ignore: true,
@@ -53,20 +50,6 @@ impl Chunk {
         // SAFETY: `self` is a valid aligned reference; caller upholds the at-most-one-drop
         // contract above so the bitwise copy never causes a double free of `buffer`.
         unsafe { core::ptr::read(self) }
-    }
-
-    pub fn print_source_map_contents<const ASCII_ONLY: bool>(
-        &self,
-        source: &Source,
-        mutable: &mut MutableString,
-        include_sources_contents: bool,
-    ) -> Result<(), crate::Error> {
-        print_source_map_contents_json::<ASCII_ONLY>(
-            source,
-            mutable,
-            include_sources_contents,
-            self.buffer.list.as_slice(),
-        )
     }
 
     /// `chunk.buffer` holds an InternalSourceMap blob (the runtime path). Re-encode
@@ -208,7 +191,6 @@ pub struct VLQSourceMap {
     pub internal: Option<internal_source_map::Builder>,
     pub count: usize,
     pub offset: usize,
-    pub approximate_input_line_count: usize,
 }
 
 impl Default for VLQSourceMap {
@@ -218,7 +200,6 @@ impl Default for VLQSourceMap {
             internal: None,
             count: 0,
             offset: 0,
-            approximate_input_line_count: 0,
         }
     }
 }
@@ -426,8 +407,6 @@ impl Drop for OwnedLineOffsetTables {
     }
 }
 
-pub type SourceMapper<T> = SourceMapFormat<T>;
-
 // PERF(codegen): the hot-path methods below are implemented on the *concrete*
 // `NewBuilder<VLQSourceMap>` (the only instantiation — see `Builder` alias
 // below) rather than on `impl<T: SourceMapFormatCtx> NewBuilder<T>`. When these
@@ -474,7 +453,6 @@ impl NewBuilder<VLQSourceMap> {
         }
         Chunk {
             buffer: self.source_map.take_buffer(),
-            mappings_count: self.source_map.get_count(),
             end_state: self.prev_state,
             final_generated_column: self.generated_column,
             should_ignore: self.source_map.should_ignore(),

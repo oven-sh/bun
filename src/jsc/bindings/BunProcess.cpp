@@ -168,6 +168,7 @@ extern "C" bool Bun__GlobalObject__connectedIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
+extern "C" const char* Bun__sqlite3_version();
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
@@ -255,6 +256,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), JSC::PropertyAttribute::ReadOnly | 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "sqlite"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__sqlite3_version())))), JSC::PropertyAttribute::ReadOnly | 0);
 
 #define STRINGIFY_IMPL(x) #x
 #define STRINGIFY(x) STRINGIFY_IMPL(x)
@@ -1644,8 +1646,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionAbort, (JSGlobalObject * globalObject, 
     // Raising SIGABRT is handled in the CRT in windows, calling _exit() with ambiguous code "3" by default.
     // This adjustment to the abort behavior gives a more sane exit code on abort, by calling _exit directly with code 134.
     _exit(134);
-#endif
+#else
+    // process.abort() is user-requested; bypass the crash handler so it does
+    // not print "Bun has crashed" or upload a report.
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = SIG_DFL;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGABRT, &sa, nullptr);
     abort();
+#endif
 }
 
 #if !OS(WINDOWS)
@@ -3442,6 +3452,10 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
     }
 
     auto* zigGlobal = defaultGlobalObject(globalObject);
+    // Node's reallyExit is the raw exit that does not run 'exit' listeners. Arm
+    // m_isExiting so dispatchExitInternal (via Bun__Process__exit) skips them
+    // while native shutdown (profiles, cleanup hooks, SQLite close) still runs.
+    zigGlobal->processObject()->m_isExiting = true;
     Bun__Process__exit(zigGlobal, exitCode);
     // Main-thread Bun__Process__exit is noreturn. In a worker it returns; the
     // WebWorker exit path it called requests JSC termination (guarded so it's a
@@ -4192,6 +4206,9 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
 
+    // node:inspector serves a CDP endpoint, precise coverage and breakpoint
+    // pausing; the long tail of CDP domains (Network, NodeWorker, Target,
+    // tracing, DOMStorage, permissions) are not implemented yet.
     object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
 #ifdef BUN_DEBUG
     object->putDirect(vm, Identifier::fromString(vm, "debug"_s), jsBoolean(true));
@@ -4208,6 +4225,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "tls"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "cached_builtins"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "openssl_is_boringssl"_s), jsBoolean(true));
+    object->putDirect(vm, Identifier::fromString(vm, "quic"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 

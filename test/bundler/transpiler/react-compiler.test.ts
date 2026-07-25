@@ -579,6 +579,32 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("react-compiler/SuppressionInsideTSNamespaceDoesNotLeak", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        namespace N {
+          export function Foo() {
+            // eslint-disable-next-line react-hooks/rules-of-hooks
+            useState();
+          }
+        }
+        export function Component({ name }: { name: string }) {
+          return <div>Hello {name}</div>;
+        }
+      `,
+    },
+    reactCompiler: true,
+    backend: "cli",
+    external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      // The next-line suppression inside the namespace member must be consumed
+      // there and not bail the compiler out of the sibling Component.
+      expect(out).toContain("react/compiler-runtime");
+      expect(out).toMatch(/\b_c\(\d+\)/);
+    },
+  });
+
   // Stub react packages shared by the unbound-ref regression tests below.
   const stubReact = {
     "/node_modules/react/index.js": /* js */ `

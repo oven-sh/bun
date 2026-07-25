@@ -2,6 +2,7 @@
 // These complement sliceAnsi.test.ts with property-based and adversarial cases.
 
 import { describe, expect, test } from "bun:test";
+import { isASAN, isDebug } from "harness";
 
 // Seeded PRNG for reproducibility. Change seed to explore different cases.
 function makeRng(seed: number) {
@@ -222,11 +223,14 @@ describe("sliceAnsi adversarial", () => {
     for (let i = 9; i >= 1; i--) s += `\x1b[39m`;
     const out = Bun.sliceAnsi(s, 0, 1);
     expect(Bun.stripANSI(out)).toBe("X");
-    // Time bound: should be O(n), not O(n²). Generous threshold for debug builds.
+    // Time bound: should be O(n), not O(n²). Debug and ASAN are orders of
+    // magnitude slower than release, so scale the workload down there; an
+    // O(n²) regression would still blow past the bound at either count.
+    const iters = isDebug || isASAN ? 50 : 1000;
     const start = Bun.nanoseconds();
-    for (let i = 0; i < 1000; i++) Bun.sliceAnsi(s, 0, 1);
+    for (let i = 0; i < iters; i++) Bun.sliceAnsi(s, 0, 1);
     const elapsed = (Bun.nanoseconds() - start) / 1e6;
-    expect(elapsed).toBeLessThan(5000); // < 5s for 1000 iters
+    expect(elapsed).toBeLessThan(5000);
   });
 
   // Huge SGR parameter values.
@@ -436,8 +440,16 @@ function randomString(rng: () => number, minLen: number, maxLen: number): string
       // Control char
       pieces.push(String.fromCharCode(Math.floor(rng() * 0x20)));
     } else if (r < 0.96) {
-      // C1 control
-      pieces.push(String.fromCharCode(0x80 + Math.floor(rng() * 0x20)));
+      // C1 control. Remap the ANSI introducer bytes (0x90 DCS, 0x98 SOS,
+      // 0x9B CSI, 0x9D OSC, 0x9E PM, 0x9F APC) down by 0x10 so a lone
+      // introducer never opens an unterminated control string: sliceAnsi
+      // leaves the trailing bytes visible for those while stringWidth and
+      // stripANSI consume to EOF, and this generator is meant to produce
+      // inputs the three width models agree on.
+      const c1 = 0x80 + Math.floor(rng() * 0x20);
+      const safe =
+        c1 === 0x90 || c1 === 0x98 || c1 === 0x9b || c1 === 0x9d || c1 === 0x9e || c1 === 0x9f ? c1 - 0x10 : c1;
+      pieces.push(String.fromCharCode(safe));
     } else {
       // Truecolor SGR
       pieces.push(`\x1b[38;2;${Math.floor(rng() * 256)};${Math.floor(rng() * 256)};${Math.floor(rng() * 256)}m`);
@@ -486,9 +498,10 @@ describe("sliceAnsi negative indices", () => {
   test("computeTotalWidth matches stringWidth for cluster-rich input", () => {
     // Negative indices with clustering (emoji, ZWJ, combining) stress the
     // pre-pass path. It should give the same totalWidth as stringWidth.
-    // Note: use stringWidth(s) directly (NOT stripANSI) — stripANSI's
-    // consumeANSI swallows unterminated OSC to EOF, but both stringWidth
-    // and sliceAnsi correctly treat malformed introducers as standalone.
+    // randomString() excludes bare C1 escape introducers so the input never
+    // contains an unterminated control string (the one case where sliceAnsi's
+    // width model deliberately keeps the trailing bytes visible while
+    // stringWidth/stripANSI consume to EOF).
     const rng = makeRng(0x70741);
     for (let i = 0; i < 100; i++) {
       const s = randomString(rng, 10, 80);
@@ -780,11 +793,10 @@ describe("sliceAnsi direct stringWidth invariant (post-fix)", () => {
     // Now stringWidth correctly preserves grapheme state across ANSI, so
     // we can test the direct invariant. Keep +1 for wide-at-boundary.
     //
-    // KNOWN LIMITATION: stringWidth doesn't recognize C1 (8-bit) escape
-    // sequences (0x9B CSI, 0x9D OSC, 0x90 DCS, etc.) — only 7-bit (ESC[).
-    // sliceAnsi DOES handle C1. So inputs with C1 sequences will show
-    // stringWidth > sliceAnsi's internal width. We exclude C1 from this
-    // test's generator; C1 coverage is in the adversarial tests above.
+    // Unterminated control strings are the one place sliceAnsi's width model
+    // and stringWidth deliberately diverge (sliceAnsi keeps the trailing
+    // bytes visible; stringWidth/stripANSI consume to EOF). This generator
+    // excludes C1 bytes entirely so a stray control byte can never open one.
     const rng = makeRng(0xd1ec7);
     for (let i = 0; i < 200; i++) {
       const s = randomStringNoC1(rng, 0, 100);
@@ -799,9 +811,8 @@ describe("sliceAnsi direct stringWidth invariant (post-fix)", () => {
   });
 });
 
-// Like randomString but excludes C1 control bytes (0x80-0x9F). Used for tests
-// that compare directly against Bun.stringWidth, which doesn't recognize C1
-// escape sequences (only 7-bit ESC-based).
+// Like randomString but excludes C1 control bytes (0x80-0x9F) entirely, so no
+// piece can combine with a neighbour into an unterminated control string.
 function randomStringNoC1(rng: () => number, minLen: number, maxLen: number): string {
   const len = minLen + Math.floor(rng() * (maxLen - minLen + 1));
   const pieces: string[] = [];

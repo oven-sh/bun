@@ -932,22 +932,11 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        pub const VERSION: &'static str = "bun-npm-manifest-cache-v0.0.7\n";
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
-        pub const SIZES_FIELDS: &'static [&'static str] = &[
-            "pkg",
-            "string_buf",
-            "versions",
-            "external_strings",
-            "external_strings_for_versions",
-            "package_versions",
-            "extern_strings_bin_entries",
-            "bundled_deps_buf",
-        ];
     }
 
     const _: () = assert!(
@@ -1472,32 +1461,6 @@ pub mod package_manifest {
 impl PackageManifest {
     pub fn str<'a>(&'a self, external: &'a ExternalString) -> &'a [u8] {
         external.slice(&self.string_buf)
-    }
-
-    pub fn report_size(&self) {
-        bun_core::pretty_errorln!(
-            " Versions count:            {}\n \
-             External Strings count:    {}\n \
-             Package Versions count:    {}\n\n \
-             Bytes:\n\n  \
-             Versions:   {}\n  \
-             External:   {}\n  \
-             Packages:   {}\n  \
-             Strings:    {}\n  \
-             Total:      {}",
-            self.versions.len(),
-            self.external_strings.len(),
-            self.package_versions.len(),
-            core::mem::size_of_val(&*self.versions),
-            core::mem::size_of_val(&*self.external_strings),
-            core::mem::size_of_val(&*self.package_versions),
-            core::mem::size_of_val(&*self.string_buf),
-            core::mem::size_of_val(&*self.versions)
-                + core::mem::size_of_val(&*self.external_strings)
-                + core::mem::size_of_val(&*self.package_versions)
-                + core::mem::size_of_val(&*self.string_buf),
-        );
-        Output::flush();
     }
 }
 
@@ -2081,9 +2044,7 @@ impl PackageManifest {
                 let sliced_version = SlicedString::init(version_name, version_name);
                 let parsed_version = Semver::Version::parse(sliced_version);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(parsed_version.valid);
-                }
+                debug_assert!(parsed_version.valid);
                 if !parsed_version.valid {
                     log.add_error_fmt(
                         Some(&source),
@@ -2339,26 +2300,43 @@ impl PackageManifest {
             // PackageVersion's explicit `_padding_*` fields are zeroed by
             // `Default`, so no separate padding scrub is needed.
 
+            // Index the root `time` object once so the per-version publish-time
+            // lookup below is O(1) instead of a linear scan of ~V entries.
+            let time_obj = json.get(b"time").and_then(|e| match e.data {
+                JSON::ExprData::EObjectJSON(obj) => Some(obj),
+                _ => None,
+            });
+            let time_props: &[JSON::E::PropertyJSON] = time_obj
+                .as_ref()
+                .map(|o| o.get().properties())
+                .unwrap_or(&[]);
+            let mut time_index: HashMap<u64, u32, IdentityContext<u64>> = HashMap::default();
+            if !time_props.is_empty() {
+                time_index.ensure_total_capacity(time_props.len())?;
+                for (i, p) in time_props.iter().enumerate() {
+                    let gop = time_index.get_or_put(Wyhash11::hash(0, p.key.slice()))?;
+                    if !gop.found_existing {
+                        *gop.value_ptr = i as u32;
+                    }
+                }
+            }
+
             for prop in versions {
                 let version_name = prop.key.slice();
                 let mut sliced_version = SlicedString::init(version_name, version_name);
                 let mut parsed_version = Semver::Version::parse(sliced_version);
 
-                if cfg!(debug_assertions) {
-                    debug_assert!(parsed_version.valid);
-                }
+                debug_assert!(parsed_version.valid);
                 // We only need to copy the version tags if it contains pre and/or build
                 if parsed_version.version.tag.has_build() || parsed_version.version.tag.has_pre() {
                     let version_string = string_builder.append::<SemverString>(version_name);
                     sliced_version = version_string.sliced(string_builder.allocated_slice());
                     parsed_version = Semver::Version::parse(sliced_version);
-                    if cfg!(debug_assertions) {
-                        debug_assert!(parsed_version.valid);
-                        debug_assert!(
-                            parsed_version.version.tag.has_build()
-                                || parsed_version.version.tag.has_pre()
-                        );
-                    }
+                    debug_assert!(parsed_version.valid);
+                    debug_assert!(
+                        parsed_version.version.tag.has_build()
+                            || parsed_version.version.tag.has_pre()
+                    );
                 }
                 if !parsed_version.valid {
                     continue;
@@ -2939,14 +2917,18 @@ impl PackageManifest {
                     }
                 }
 
-                if let Some(time_expr) = json.get(b"time") {
-                    if let JSON::ExprData::EObjectJSON(time_obj) = &time_expr.data {
-                        if let Some(publish_time_str) =
-                            time_obj.get().get(version_name).and_then(|v| v.as_str())
-                        {
-                            if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                                package_version.publish_timestamp_ms = ms;
-                            }
+                if let Some(&i) = time_index.get(&Wyhash11::hash(0, version_name)) {
+                    let indexed = &time_props[i as usize];
+                    let entry = if indexed.key.slice() == version_name {
+                        Some(indexed)
+                    } else {
+                        // Hash collision: fall back to a linear scan so the
+                        // result matches the previous `ObjectJSON::get` exactly.
+                        time_props.iter().find(|p| p.key.slice() == version_name)
+                    };
+                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
+                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
+                            package_version.publish_timestamp_ms = ms;
                         }
                     }
                 }

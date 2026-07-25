@@ -80,6 +80,12 @@ namespace uWS {
         int request_cert = 0;
         unsigned int client_renegotiation_limit = 3;
         unsigned int client_renegotiation_window = 600;
+        int session_timeout = 0;
+        const char **crl = nullptr;
+        unsigned int crl_count = 0;
+        int allow_partial_trust_chain = 0;
+        const char *sigalgs = nullptr;
+        const char *ecdh_curve = nullptr;
 
         /* Conversion operator used internally */
         operator struct us_bun_socket_context_options_t() const {
@@ -413,19 +419,16 @@ public:
 
         /* Terminate on misleading idleTimeout values */
         if (behavior.idleTimeout && behavior.idleTimeout < 8) {
-            std::cerr << "Error: idleTimeout must be either 0 or greater than 8!" << std::endl;
             std::terminate();
         }
 
         /* Maximum idleTimeout is 16 minutes */
         if (behavior.idleTimeout > 240 * 4) {
-            std::cerr << "Error: idleTimeout must not be greater than 960 seconds!" << std::endl;
             std::terminate();
         }
 
         /* Maximum maxLifetime is 4 hours */
         if (behavior.maxLifetime > 240) {
-            std::cerr << "Error: maxLifetime must not be greater than 240 minutes!" << std::endl;
             std::terminate();
         }
 
@@ -757,6 +760,11 @@ public:
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }
 
+    /* Switch this app into node:http compat mode (see HttpContext::enableNodeHttpCompat). */
+    void enableNodeHttpCompat() {
+        httpContext->enableNodeHttpCompat();
+    }
+
     TemplatedApp &&run() {
         uWS::run();
         return std::move(*this);
@@ -767,9 +775,11 @@ public:
         return std::move(*this);
     }
 
-    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation) {
+    TemplatedApp &&setFlags(bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, bool httpAllowHalfOpen) {
         httpContext->getSocketContextData()->flags.requireHostHeader = requireHostHeader;
         httpContext->getSocketContextData()->flags.useStrictMethodValidation = useStrictMethodValidation;
+        httpContext->getSocketContextData()->flags.useInsecureHTTPParser = useInsecureHTTPParser;
+        httpContext->getSocketContextData()->flags.httpAllowHalfOpen = httpAllowHalfOpen;
         return std::move(*this);
     }
 

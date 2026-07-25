@@ -183,27 +183,6 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-/// Hash/eql context for [`DashedIdentHashMap`]: keys hash their string bytes
-/// (wyhash seed 0, truncated to u32) and compare by byte equality.
-#[derive(Default, Clone, Copy)]
-pub struct DashedIdentContext;
-
-impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedIdentContext {
-    #[inline]
-    fn hash(&self, key: &DashedIdent) -> u32 {
-        bun_collections::array_hash_map::hash_string(key.v())
-    }
-
-    #[inline]
-    fn eql(&self, a: &DashedIdent, b: &DashedIdent, _b_index: usize) -> bool {
-        a.v() == b.v()
-    }
-}
-
-/// Inherent assoc type aliases
-/// are unstable in Rust, so this is a free type alias instead.
-pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
-
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
         let location = input.current_source_location();
@@ -309,25 +288,6 @@ impl IdentOrRef {
         v |= (len as u128) << 64;
         IdentOrRef(v)
     }
-
-    #[cfg(debug_assertions)]
-    pub fn debug_ident(self) -> &'static [u8] {
-        // Returns an arena-borrowed slice; `'static` is a placeholder for the
-        // not-yet-threaded `'bump` lifetime.
-        if self.ref_bit() {
-            let ptr = self.ptrbits() as usize as *const *const [u8];
-            // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
-            // written by `from_ref`; the pointee is an arena-owned slice (see `DashedIdent::v`).
-            unsafe { crate::arena_str(*ptr) }
-        } else {
-            // SAFETY: as_ident reconstructs the arena slice this was packed from
-            unsafe { crate::arena_str(self.as_ident().unwrap().v) }
-        }
-    }
-
-    // NOTE: no `#[cfg(not(debug_assertions))]` variant. `compile_error!` fires at expansion and
-    // would break every release build. Omitting the fn in release yields a name-resolution error
-    // at the call site, which is the intent: this is debug-only.
 
     pub fn from_ident(ident: Ident) -> Self {
         let s = ident.v();

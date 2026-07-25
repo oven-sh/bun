@@ -23,6 +23,10 @@ extern "C" void Bun__DhJobCtx__runTask(DhJobCtx* ctx, JSGlobalObject* globalObje
 }
 void DhJobCtx::runTask(JSGlobalObject* globalObject)
 {
+    // A failed derive must not leave its OpenSSL errors on the thread's error queue, where a
+    // later unrelated operation would pick them up.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
+
     auto dp = DHPointer::stateless(m_privateKey->asymmetricKey, m_publicKey->asymmetricKey);
     if (!dp) {
         return;
@@ -46,7 +50,8 @@ void DhJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback)
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
 
     if (!m_result) {
-        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman failed"_s);
+        // Same message as the synchronous path so callers observe identical errors either way.
+        JSObject* err = createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "diffieHellman operation failed"_s);
         Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
         return;
     }
@@ -111,7 +116,7 @@ std::optional<DhJobCtx> DhJobCtx::fromJS(JSGlobalObject* globalObject, ThrowScop
     }
 
     if (publicKey.type() != CryptoKeyType::Public && publicKey.type() != CryptoKeyType::Private) {
-        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, publicKey.type(), "public or private"_s);
+        ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, publicKey.type(), "private or public"_s);
         return std::nullopt;
     }
 

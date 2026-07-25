@@ -407,3 +407,32 @@ test("Exact match with node", () => {
     "
   `);
 });
+
+test("ERR_INVALID_MIME_SYNTAX message matches Node.js", () => {
+  const msg = (input: string) => {
+    try {
+      new MIMEType(input);
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return undefined;
+  };
+
+  expect({
+    "text/ html": msg("text/ html"),
+    "aaaa/bbb@c": msg("aaaa/bbb@c"),
+    "text /html": msg("text /html"),
+    " text /html": msg(" text /html"),
+    "/html": msg("/html"),
+    "text/": msg("text/"),
+    "texthtml": msg("texthtml"),
+  }).toEqual({
+    "text/ html": 'The MIME syntax for a subtype in "text/ html" is invalid at 0',
+    "aaaa/bbb@c": 'The MIME syntax for a subtype in "aaaa/bbb@c" is invalid at 3',
+    "text /html": 'The MIME syntax for a type in "text /html" is invalid at 4',
+    " text /html": 'The MIME syntax for a type in " text /html" is invalid at 4',
+    "/html": 'The MIME syntax for a type in "/html" is invalid',
+    "text/": 'The MIME syntax for a subtype in "text/" is invalid',
+    "texthtml": 'The MIME syntax for a type in "texthtml" is invalid',
+  });
+});

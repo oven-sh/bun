@@ -27,7 +27,7 @@ pub mod bindgen_test {
     pub(crate) fn create_add_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&zig_string::static_(b"add")),
+            Some(&zig_string::ZigString::init(b"add")),
             3,
             JS_ADD,
             false,
@@ -38,7 +38,7 @@ pub mod bindgen_test {
     pub(crate) fn create_required_and_optional_arg_callback(global: &JSGlobalObject) -> JSValue {
         host_fn::new_runtime_function(
             global,
-            Some(&zig_string::static_(b"requiredAndOptionalArg")),
+            Some(&zig_string::ZigString::init(b"requiredAndOptionalArg")),
             4,
             JS_REQUIRED_AND_OPTIONAL_ARG,
             false,

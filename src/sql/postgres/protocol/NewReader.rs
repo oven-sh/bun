@@ -1,7 +1,6 @@
 use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
 use crate::shared::Data;
-use bun_core::String as BunString;
 
 /// Trait capturing the methods `NewReaderWrap` requires of its wrapped context.
 pub trait ReaderContext {
@@ -9,6 +8,9 @@ pub trait ReaderContext {
     fn peek(&self) -> &[u8];
     fn skip(&mut self, count: usize);
     fn ensure_length(&mut self, count: usize) -> bool;
+    /// On `Ok`, the returned slice is exactly `count` bytes; otherwise
+    /// `Err(ShortRead)`. Callers rely on this: `int<Int>()` passes the
+    /// result straight to `from_be_slice` without re-checking length.
     fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError>;
     fn read_z(&mut self) -> Result<Data, AnyPostgresError>;
 }
@@ -68,8 +70,6 @@ pub struct NewReaderWrap<Context: ReaderContext> {
     pub wrapped: Context,
 }
 
-pub type Ctx<Context> = Context;
-
 impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// Reborrow as `NewReaderWrap<&mut Context>` so the same reader can be
     /// passed by-value into per-message handlers across loop iterations.
@@ -116,6 +116,23 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.wrapped.read_z()
     }
 
+    /// Read a NUL-terminated string whose terminator must appear within the
+    /// next `limit` bytes. Returns `InvalidMessage` (not `ShortRead`) when it
+    /// does not: the caller has already established via `length()` that those
+    /// bytes are the message body, so a missing terminator is a framing
+    /// violation, not a partial read. Returns the string without its NUL and
+    /// the total bytes consumed (string + NUL).
+    pub fn string_within(&mut self, limit: usize) -> Result<(Data, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        let bound = view.len().min(limit);
+        let Some(zero) = view[..bound].iter().position(|&b| b == 0) else {
+            return Err(AnyPostgresError::InvalidMessage);
+        };
+        let data = self.wrapped.read(zero)?;
+        self.wrapped.skip(1);
+        Ok((data, zero + 1))
+    }
+
     #[inline]
     pub fn ensure_capacity(&mut self, count: usize) -> Result<(), AnyPostgresError> {
         if !self.wrapped.ensure_length(count) {
@@ -126,19 +143,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn int<Int: ProtocolInt>(&mut self) -> Result<Int, AnyPostgresError> {
         let data = self.read(Int::SIZE)?;
-        let slice = data.slice();
-        if slice.len() < Int::SIZE {
-            return Err(AnyPostgresError::ShortRead);
-        }
-        Ok(Int::from_be_slice(&slice[0..Int::SIZE]))
-    }
-
-    pub fn peek_int<Int: ProtocolInt>(&self) -> Option<Int> {
-        let remain = self.peek();
-        if remain.len() < Int::SIZE {
-            return None;
-        }
-        Some(Int::from_be_slice(&remain[0..Int::SIZE]))
+        Ok(Int::from_be_slice(data.slice()))
     }
 
     pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
@@ -154,38 +159,58 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.int::<PostgresShort>()
     }
 
-    pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
-        let expected = self.int::<PostgresInt32>()?;
-        // The length of every Postgres v3 message is a signed Int32 that
-        // includes its own 4 bytes, so a value below 4 (or negative, i.e. the
-        // sign bit set on the wire) is malformed. `expected` is server-controlled.
-        if expected < 4 || expected > i32::MAX as u32 {
+    /// The length of every Postgres v3 message is a signed Int32 that includes
+    /// its own 4 bytes, so a value below 4 (or negative, i.e. the sign bit set
+    /// on the wire) is malformed. `raw` is server-controlled.
+    #[inline]
+    fn validate_length(raw: PostgresInt32) -> Result<PostgresInt32, AnyPostgresError> {
+        if raw < 4 || raw > i32::MAX as u32 {
             return Err(AnyPostgresError::InvalidMessageLength);
         }
-        self.ensure_capacity((expected - 4) as usize)?;
+        Ok(raw)
+    }
 
+    pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
+        let expected = Self::validate_length(self.int::<PostgresInt32>()?)?;
+        self.ensure_capacity((expected - 4) as usize)?;
         Ok(expected)
     }
 
+    /// `length()` without consuming: validates the Int32 at the cursor and
+    /// confirms the whole message body is present, but leaves both for the
+    /// handler to read. Returns `(remaining, length)` where `remaining` is the
+    /// buffer's byte count before the length field, so after the handler runs
+    /// the frame boundary is `remaining - length`.
+    pub fn peek_length(&mut self) -> Result<(usize, usize), AnyPostgresError> {
+        let view = self.wrapped.peek();
+        if view.len() < 4 {
+            return Err(AnyPostgresError::ShortRead);
+        }
+        let raw = PostgresInt32::from_be_slice(&view[..4]);
+        let length = Self::validate_length(raw)? as usize;
+        if view.len() < length {
+            return Err(AnyPostgresError::ShortRead);
+        }
+        Ok((view.len(), length))
+    }
+
+    /// `length()` minus the 4 bytes the length field itself occupies, i.e. the
+    /// number of body bytes remaining in this message. Cannot underflow:
+    /// `length()` has already returned `InvalidMessageLength` for any value
+    /// below 4, and `ensure_capacity` has confirmed those bytes are present.
+    #[inline]
+    pub fn body_length(&mut self) -> Result<usize, AnyPostgresError> {
+        Ok((self.length()? - 4) as usize)
+    }
+
     pub fn skip_message(&mut self) -> Result<(), AnyPostgresError> {
-        let length = self.length()?;
-        self.skip(usize::try_from(length - 4).expect("int cast"))
+        let body = self.body_length()?;
+        self.skip(body)
     }
 
     #[inline]
     pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.read(count)
-    }
-
-    /// Returns a `BunString` that BORROWS the connection read buffer.
-    ///
-    /// Invariant: callers must not hold the returned `BunString` past the next
-    /// buffer fill — `borrow_utf8` stores a raw pointer with no lifetime, so
-    /// the string is only valid until more data is read into the buffer.
-    /// (The bytes live in the connection buffer, not the `Data` wrapper.)
-    pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
-        let result = self.read_z()?;
-        Ok(BunString::borrow_utf8(result.slice()))
     }
 }
 

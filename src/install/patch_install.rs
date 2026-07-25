@@ -728,19 +728,6 @@ impl PatchTask {
         Some(hasher.final_())
     }
 
-    pub fn notify(&mut self) {
-        // Push, then wake. No early returns.
-        let mgr = self.manager.as_ptr();
-        // SAFETY: `self.manager` is a long-lived BACKREF;
-        // only touches the lock-free queue and event-loop wake atomics.
-        unsafe {
-            (*mgr)
-                .patch_task_queue
-                .push(core::ptr::NonNull::from(&mut *self));
-            PackageManager::wake_raw(mgr);
-        }
-    }
-
     pub fn schedule(&mut self, batch: &mut Batch) {
         batch.push(Batch::from(&raw mut self.task));
     }

@@ -294,12 +294,6 @@ pub struct GraphMemoryCost {
 }
 
 impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
-    /// Helper for `DevServer::is_file_cached`.
-    #[inline]
-    pub fn file_kind_at(&self, index: usize) -> FileKind {
-        self.bundled_files.values()[index].kind
-    }
-
     /// `@fieldParentPtr(@tagName(side) ++ "_graph", g)` — recover the owning
     /// `DevServer` from this inline field. Returns a raw pointer because the
     /// caller already holds `&mut self` (a sub-borrow of `*dev`); forming
@@ -377,17 +371,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     }
 
     // ── per-bundle scratch accessors (kept for existing call sites) ────────
-    #[inline]
-    pub fn current_chunk_parts_len(&self) -> usize {
-        match SIDE {
-            Side::Client => self.current_chunk_parts.len(),
-            Side::Server => self.current_chunk_code.len(),
-        }
-    }
-    #[inline]
-    pub fn current_chunk_source_maps_is_empty(&self) -> bool {
-        self.current_chunk_source_maps.is_empty()
-    }
 
     /// Does NOT count `size_of::<Self>()`.
     pub fn memory_cost_detailed(&self) -> GraphMemoryCost {
@@ -524,7 +507,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
     }
 
-    pub(super) fn disconnect_and_delete_file(&mut self, file_index: FileIndex<SIDE>) {
+    pub(super) fn disconnect_and_delete_file(
+        &mut self,
+        directory_watchers: &mut super::DirectoryWatchStore,
+        file_index: FileIndex<SIDE>,
+    ) {
         debug_assert!(self.first_dep[file_index.get() as usize].is_none()); // must have no dependencies
 
         // Disconnect all imports.
@@ -539,21 +526,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
-        {
-            // Note: reshaped for borrowck — re-derive the key slice via raw
-            // ptr so the `&mut DevServer.directory_watchers` borrow does not
-            // overlap the `&mut self.bundled_files` borrow.
-            let key_ptr: *const [u8] =
-                &raw const *self.bundled_files.keys()[file_index.get() as usize];
-            // SAFETY: see `owner()`; touches `directory_watchers` sibling only,
-            // and `key_ptr` points into `bundled_files` which is not mutated
-            // by `remove_dependencies_for_file`.
-            unsafe {
-                (*self.owner())
-                    .directory_watchers
-                    .remove_dependencies_for_file(&*key_ptr);
-            }
-        }
+        directory_watchers
+            .remove_dependencies_for_file(&self.bundled_files.keys()[file_index.get() as usize]);
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
@@ -771,9 +745,10 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .is_client_component_boundary
                     {
                         // SAFETY: cross-graph access via `owner()`. We hold
-                        // `&mut self` (server_graph); `client_graph` is a
-                        // disjoint sibling field.
-                        let client_graph = unsafe { &mut (*dev).client_graph };
+                        // `&mut self` (server_graph); `client_graph` and
+                        // `directory_watchers` are disjoint sibling fields.
+                        let (client_graph, directory_watchers) =
+                            unsafe { (&mut (*dev).client_graph, &mut (*dev).directory_watchers) };
                         let key = bun_ptr::RawSlice::new(
                             &*self.bundled_files.keys()[file_index.get() as usize],
                         );
@@ -783,7 +758,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                                     "Client graph's SCB was already deleted",
                                 ))
                             });
-                        client_graph.disconnect_and_delete_file(client_index);
+                        client_graph.disconnect_and_delete_file(directory_watchers, client_index);
                         self.bundled_files.values_mut()[file_index.get() as usize]
                             .is_client_component_boundary = false;
                         self.dev_incremental_result()

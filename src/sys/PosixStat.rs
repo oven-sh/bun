@@ -226,8 +226,4 @@ impl PosixStat {
     pub fn ctime(&self) -> Timespec {
         self.ctim
     }
-
-    pub fn birthtime(&self) -> Timespec {
-        self.birthtim
-    }
 }

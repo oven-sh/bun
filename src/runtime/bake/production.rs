@@ -61,10 +61,9 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
 }
 
 /// Process-lifetime backing storage for the dotenv singleton; `OnceLock` owns
-/// the allocation. `Loader` self-borrows `Map`, so both live in one cell.
+/// the allocation.
 struct DotenvSingleton {
-    map: UnsafeCell<dotenv::Map>,
-    loader: UnsafeCell<MaybeUninit<dotenv::Loader<'static>>>,
+    loader: UnsafeCell<dotenv::Loader>,
 }
 // SAFETY: `build_command` runs single-threaded during CLI init; the singleton
 // is set exactly once before any reader exists.
@@ -218,9 +217,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    // Note: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
-    // the raw VM pointer and re-borrow inside.
-    match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
+    match build_with_vm(ctx, &cwd, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
             // SAFETY: vm.global is live for VM lifetime.
@@ -284,14 +281,11 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub(super) fn build_with_vm(
-    ctx: Context,
-    cwd: &[u8],
-    vm_ptr: *mut VirtualMachine,
-    pt: &mut PerThread,
-) -> crate::Result<()> {
-    // SAFETY: vm_ptr is the live per-thread VM passed from build_command;
-    // exclusive access on this thread for the duration of the call.
+pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+    // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
+    // `as_ptr()` is `Copy` and does not borrow `pt`.
+    let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
+    // SAFETY: exclusive access on this thread for the duration of the call.
     let vm = unsafe { &mut *vm_ptr };
     // Load and evaluate the configuration module. `global()` returns
     // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
@@ -420,22 +414,15 @@ pub(super) fn build_with_vm(
 
     // this is probably wrong
     // Note: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no leaking). `Loader` self-borrows `Map`,
-    // so both live in `DOTENV_SINGLETON`.
+    // (PORTING.md §Forbidden: no leaking).
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
-        map: UnsafeCell::new(dotenv::Map::init()),
-        loader: UnsafeCell::new(MaybeUninit::uninit()),
+        loader: UnsafeCell::new(dotenv::Loader::init()),
     });
-    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time setup
-    // and `backing` is never moved (static storage), so the exclusive map borrow
-    // self-borrow stored in `Loader` stays valid for process lifetime.
-    let loader = unsafe {
-        let map = &mut *backing.map.get();
-        (*backing.loader.get()).write(dotenv::Loader::init(map));
-        (*backing.loader.get()).assume_init_mut()
-    };
+    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
+    // setup and `backing` is never moved (static storage).
+    let loader = unsafe { &mut *backing.loader.get() };
     loader.map.put(b"NODE_ENV", b"production")?;
-    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader<'static>>(loader));
+    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
     // In-place init via `MaybeUninit` (`init_transpiler_with_options`
     // keeps the out-param shape shared with the dev-server path).
@@ -710,12 +697,10 @@ pub(super) fn build_with_vm(
             // wrapper functions like `__esm`) is marked as server side, but it is
             // also used by client
             if file.bake_extra.bake_is_runtime {
-                if cfg!(debug_assertions) {
-                    debug_assert!(
-                        maybe_runtime_file_index.is_none(),
-                        "Runtime file should only be in one chunk."
-                    );
-                }
+                debug_assert!(
+                    maybe_runtime_file_index.is_none(),
+                    "Runtime file should only be in one chunk."
+                );
                 maybe_runtime_file_index = Some(u32::try_from(i).expect("int cast"));
             }
 
@@ -1380,9 +1365,7 @@ pub(super) extern "C" fn BakeProdResolve(
         return BunString::dead();
     }
 
-    if cfg!(debug_assertions) {
-        debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
-    }
+    debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
 
     // dirname semantics: returns None for the root / no-parent.
     let after_scheme = &referrer.slice()[5..];
@@ -1406,7 +1389,8 @@ pub(super) extern "C" fn BakeProdResolve(
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
 /// tier) so the bundler and runtime share ONE nominal type. Re-exported here
 /// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::{EntryPointHashMap, EntryPointMap, InputFile};
+pub use bun_bundler::bake_types::production::EntryPointMap;
+use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
     fn get_file_id_for_router(
@@ -1678,18 +1662,6 @@ impl TypeAndFlags {
 
     pub const fn bits(self) -> i32 {
         self.0
-    }
-
-    pub const fn r#type(self) -> u8 {
-        (self.0 & 0xFF) as u8
-    }
-
-    /// Don't inclue the runtime client code (e.g.
-    /// bun-framework-react/client.tsx). This is used if we know a server
-    /// component does not include any downstream usages of "use client" and so
-    /// we can omit the client code entirely.
-    pub const fn no_client(self) -> bool {
-        ((self.0 >> 8) & 1) != 0
     }
 }
 

@@ -56,13 +56,7 @@ struct bsd_addr_t {
     int port;
 };
 
-#ifdef _WIN32
-// on windows we can only receive one packet at a time
-#define LIBUS_UDP_RECV_COUNT 1
-#else
-// on unix we can receive at most as many packets as fit into the receive buffer
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
-#endif
 
 #ifdef __APPLE__
 /*
@@ -141,8 +135,8 @@ struct udp_recvbuf {
 #if defined(_WIN32)
     char *buf;
     size_t buflen;
-    size_t recvlen;
-    struct sockaddr_storage addr;
+    size_t recvlen[LIBUS_UDP_RECV_COUNT];
+    struct sockaddr_storage addr[LIBUS_UDP_RECV_COUNT];
 #else
     struct mmsghdr msgvec[LIBUS_UDP_RECV_COUNT];
     struct iovec iov[LIBUS_UDP_RECV_COUNT];
@@ -192,6 +186,14 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
  * negative platform errno; get returns the value (>= 0) or a negative errno. */
 int bsd_socket_set_tos(LIBUS_SOCKET_DESCRIPTOR fd, int tos);
 int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd);
+/* SO_RCVBUF (is_recv) / SO_SNDBUF. size == 0 reads the current value, non-zero
+ * sets it (without re-reading, like libuv). On success returns 0 and writes the
+ * resulting value to *out; on failure returns the setsockopt/getsockopt result
+ * with the error left in errno (WSAGetLastError on Windows). */
+int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out);
+int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd);
+int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR fd);
+int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags);
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err);
 

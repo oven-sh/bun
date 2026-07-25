@@ -360,7 +360,9 @@ impl MySQLConnection {
             bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
-            true, // is_client
+            true,  // is_client
+            false, // request_cert (server-only)
+            false, // reject_unauthorized (server-only)
             ext_size,
             ext_size,
         ) else {

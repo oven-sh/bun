@@ -163,9 +163,6 @@ impl FileCloser for WriteFile {
     fn close_after_io(&self) -> bool {
         self.close_after_io
     }
-    fn set_close_after_io(&mut self, v: bool) {
-        self.close_after_io = v;
-    }
     fn state(&self) -> &AtomicU8 {
         &self.state
     }
@@ -224,9 +221,6 @@ impl FileCloser for WriteFile {
 
 impl WriteFile {
     pub const IO_TAG: io::Tag = io::Tag::WriteFile;
-
-    pub const OPEN_FLAGS: i32 =
-        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK;
 
     pub fn on_writable(request: &mut io::Request) {
         // SAFETY: request points to WriteFile.io_request
@@ -958,27 +952,17 @@ mod windows_impl {
                 .pathlike
                 .path()
                 .slice();
-            // LIFETIME: `AsyncMkdirp::new` returns `Box<Self>`. The allocation
-            // is intentionally leaked here and freed by `work_pool_callback`
-            // after invoking `completion`. A temporary
-            // `Box` would drop at end-of-statement, freeing the allocation immediately
-            // after `schedule()` stashes a raw `*mut WorkPoolTask` into the work pool,
-            // so the worker thread would dereference freed memory. `Box::leak` hands
-            // ownership to the work-pool/completion path.
-            Box::leak(crate::node::fs::async_::AsyncMkdirp::new(
-                crate::node::fs::async_::AsyncMkdirp {
-                    completion: Self::on_mkdirp_complete_concurrent,
-                    completion_ctx: ctx,
-                    // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
-                    // points into `self.file_blob.store`, which outlives the mkdirp
-                    // task (it's released only in `deinit()`).
-                    path: bun_core::dirname(path)
-                        // this shouldn't happen
-                        .unwrap_or(path) as *const [u8],
-                    ..Default::default()
-                },
-            ))
-            .schedule();
+            crate::node::fs::async_::AsyncMkdirp::schedule(crate::node::fs::async_::AsyncMkdirp {
+                completion: Self::on_mkdirp_complete_concurrent,
+                completion_ctx: ctx,
+                // BORROW: AsyncMkdirp.path is `*const [u8]` (not owned); `path`
+                // points into `self.file_blob.store`, which outlives the mkdirp
+                // task (it's released only in `deinit()`).
+                path: bun_core::dirname(path)
+                    // this shouldn't happen
+                    .unwrap_or(path) as *const [u8],
+                ..Default::default()
+            });
         }
 
         /// # Safety

@@ -32,6 +32,9 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyOneShot, (JSGlobalObject * lexicalGlobalObject,
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_verifyResult) {
+        if (ctx->m_unsupportedContext) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Context parameter is unsupported"_s);
+        }
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "verify operation failed"_s);
         return {};
     }
@@ -60,6 +63,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSignOneShot, (JSGlobalObject * lexicalGlobalObject, C
     ctx->runTask(lexicalGlobalObject);
 
     if (!ctx->m_signResult) {
+        if (ctx->m_unsupportedContext) {
+            return ERR::CRYPTO_OPERATION_FAILED(scope, lexicalGlobalObject, "Context parameter is unsupported"_s);
+        }
         throwCryptoError(lexicalGlobalObject, scope, ctx->m_opensslError, "sign operation failed"_s);
         return {};
     }
@@ -89,6 +95,10 @@ extern "C" void Bun__SignJobCtx__runTask(SignJobCtx* ctx, JSGlobalObject* global
 }
 void SignJobCtx::runTask(JSGlobalObject* globalObject)
 {
+    if (m_unsupportedContext) {
+        return;
+    }
+
     ClearErrorOnReturn clearError;
     auto context = EVPMDCtxPointer::New();
     if (!context) [[unlikely]] {
@@ -217,7 +227,9 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     switch (m_mode) {
     case Mode::Sign: {
         if (!m_signResult) {
-            JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
+            JSValue err = m_unsupportedContext
+                ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
+                : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "sign operation failed"_s);
             Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
             return;
         }
@@ -240,7 +252,9 @@ void SignJobCtx::runFromJS(JSGlobalObject* lexicalGlobalObject, JSValue callback
     }
     case Mode::Verify: {
         if (!m_verifyResult) {
-            JSValue err = createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
+            JSValue err = m_unsupportedContext
+                ? createError(lexicalGlobalObject, ErrorCode::ERR_CRYPTO_OPERATION_FAILED, "Context parameter is unsupported"_s)
+                : createCryptoError(lexicalGlobalObject, scope, m_opensslError, "verify operation failed"_s);
             Bun__EventLoop__runCallback1(lexicalGlobalObject, JSValue::encode(callback), JSValue::encode(jsUndefined()), JSValue::encode(err));
             return;
         }
@@ -313,6 +327,20 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
     RETURN_IF_EXCEPTION(scope, {});
     auto dsaSigEnc = getDSASigEnc(globalObject, scope, keyValue);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // The `context` signing option only applies to Ed448 signatures, which BoringSSL does not
+    // provide, so a provided context always makes the operation itself fail (after input
+    // validation, like Node).
+    bool unsupportedContext = false;
+    if (JSObject* keyOptions = keyValue.getObject()) {
+        JSValue contextValue = keyOptions->get(globalObject, Identifier::fromString(globalObject->vm(), "context"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!contextValue.isUndefined()) {
+            getArrayBufferOrView2(globalObject, scope, contextValue, "context"_s, jsUndefined());
+            RETURN_IF_EXCEPTION(scope, {});
+            unsupportedContext = true;
+        }
+    }
 
     Vector<uint8_t> signatureData;
     if (mode == Mode::Verify) {
@@ -430,6 +458,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             padding,
             pssSaltLength,
             dsaSigEnc,
+            unsupportedContext,
             WTF::move(signature));
     }
 
@@ -440,7 +469,8 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
         digest,
         padding,
         pssSaltLength,
-        dsaSigEnc);
+        dsaSigEnc,
+        unsupportedContext);
 }
 
 } // namespace Bun

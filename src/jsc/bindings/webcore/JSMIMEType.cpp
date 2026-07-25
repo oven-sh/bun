@@ -229,18 +229,15 @@ static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* gl
     size_t typeEnd = input->find('/', position);
     if (typeEnd == notFound) {
         StringView remaining = input->substring(position);
-        size_t invalidIndex = findFirstInvalidHTTPTokenChar(remaining);
-        // Adjust index relative to original string
-        size_t originalIndex = (invalidIndex == -1) ? notFound : position + invalidIndex;
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), originalIndex);
+        int invalidTypeIndex = findFirstInvalidHTTPTokenChar(remaining);
+        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), invalidTypeIndex);
         return {};
     }
 
     StringView typeView = input->substring(position, typeEnd - position);
     int invalidTypeIndex = findFirstInvalidHTTPTokenChar(typeView);
     if (typeView.isEmpty() || invalidTypeIndex != -1) {
-        size_t originalIndex = (invalidTypeIndex == -1) ? position : position + invalidTypeIndex;
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), originalIndex);
+        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "type"_s, input->toString(), invalidTypeIndex);
         return {};
     }
     String type = typeView.convertToASCIILowercase();
@@ -265,8 +262,7 @@ static std::tuple<String, String, size_t> parseTypeAndSubtype(JSGlobalObject* gl
 
     int invalidSubtypeIndex = findFirstInvalidHTTPTokenChar(subtypeView);
     if (subtypeView.isEmpty() || invalidSubtypeIndex != -1) {
-        size_t originalIndex = (invalidSubtypeIndex == -1) ? position : position + invalidSubtypeIndex;
-        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "subtype"_s, input->toString(), originalIndex);
+        Bun::ERR::INVALID_MIME_SYNTAX(scope, globalObject, "subtype"_s, input->toString(), invalidSubtypeIndex);
         return {};
     }
     String subtype = subtypeView.convertToASCIILowercase();

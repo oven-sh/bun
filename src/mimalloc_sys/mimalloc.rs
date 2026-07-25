@@ -1,6 +1,6 @@
 #![allow(non_camel_case_types, non_snake_case, clippy::missing_safety_doc)]
 
-use core::ffi::{c_char, c_int, c_long, c_ulong, c_ulonglong, c_ushort, c_void};
+use core::ffi::{c_char, c_int, c_long, c_ulonglong, c_ushort, c_void};
 
 // `Option` below is the mimalloc `mi_option_t` enum, which shadows
 // `core::option::Option` in this module. Nullable fn-pointer params therefore
@@ -114,12 +114,6 @@ bun_opaque::opaque_ffi! {
 
 impl Heap {
     #[inline]
-    pub fn delete(&mut self) {
-        // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
-        unsafe { mi_heap_delete(self) }
-    }
-
-    #[inline]
     pub fn malloc(&mut self, size: usize) -> *mut c_void {
         // SAFETY: `self` is a live `*mut Heap` obtained from mimalloc.
         unsafe { mi_heap_malloc(self, size) }
@@ -141,13 +135,6 @@ impl Heap {
 
     // `p` is only address-range-tested (never dereferenced) — there is no
     // caller precondition, so this stays safe.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    #[inline]
-    pub fn is_owned(&self, p: *const c_void) -> bool {
-        // SAFETY: `self` is a live `*const Heap` obtained from mimalloc;
-        // `mi_heap_contains` never dereferences `p`.
-        unsafe { mi_heap_contains(self, p) }
-    }
 }
 
 unsafe extern "C" {
@@ -494,10 +481,6 @@ unsafe extern "C" {
     pub fn mi_new_reallocn(p: *mut c_void, newcount: usize, size: usize) -> *mut c_void;
 }
 
-pub const MI_SMALL_WSIZE_MAX: c_int = 128;
-pub const MI_SMALL_SIZE_MAX: usize =
-    MI_SMALL_WSIZE_MAX as usize * core::mem::size_of::<*mut c_void>();
-pub const MI_ALIGNMENT_MAX: c_ulong = (16 * 1024) * 1024;
 pub const MI_MAX_ALIGN_SIZE: usize = 16;
 
 #[inline]
@@ -556,29 +539,6 @@ pub unsafe fn mi_heap_zalloc_auto_align(heap: *mut Heap, size: usize, align: usi
             mi_heap_zalloc_aligned(heap, size, align)
         } else {
             mi_heap_zalloc(heap, size)
-        }
-    }
-}
-
-/// `THeap`-scoped variant of [`mi_malloc_auto_align`] (skips per-call
-/// `heap → theap` lookup).
-///
-/// # Safety
-/// `theap` must point to a live `mi_theap_t` for the calling thread.
-#[deprecated = "mi_theap_t* is per-OS-thread; do not cache across Send."]
-#[allow(deprecated)]
-#[inline(always)]
-pub unsafe fn mi_theap_malloc_auto_align(
-    theap: *mut THeap,
-    size: usize,
-    align: usize,
-) -> *mut c_void {
-    // SAFETY: caller guarantees `theap` is live for this thread.
-    unsafe {
-        if must_use_aligned_alloc(align) {
-            mi_theap_malloc_aligned(theap, size, align)
-        } else {
-            mi_theap_malloc(theap, size)
         }
     }
 }

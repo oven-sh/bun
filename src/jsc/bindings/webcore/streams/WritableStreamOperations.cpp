@@ -2,6 +2,7 @@
 #include "WebStreamsInternals.h"
 
 #include "AbortController.h"
+#include "ErrorCode.h"
 #include "JSAbortController.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMWrapperCache.h"
@@ -231,7 +232,7 @@ JSPromise* writableStreamClose(JSGlobalObject* globalObject, JSWritableStream* s
 
     WritableStreamState state = stream->m_state;
     if (state == WritableStreamState::Closed || state == WritableStreamState::Errored)
-        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, createTypeError(globalObject, "Cannot close a WritableStream that is closed or errored"_s)));
+        RELEASE_AND_RETURN(scope, promiseRejectedWith(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot close a WritableStream that is closed or errored"_s)));
     ASSERT(state == WritableStreamState::Writable || state == WritableStreamState::Erroring);
     ASSERT(!writableStreamCloseQueuedOrInFlight(stream));
 
@@ -281,6 +282,16 @@ void writableStreamDealWithRejection(JSGlobalObject* globalObject, JSWritableStr
     }
     ASSERT(state == WritableStreamState::Erroring);
     RELEASE_AND_RETURN(scope, writableStreamFinishErroring(globalObject, stream));
+}
+
+// `$webStreamControllerError` — see the ReadableStream overload in ReadableStreamOperations.cpp.
+// Mirrors WritableStreamDefaultController.prototype.error, which is what Node's
+// addAbortSignal() holds a bound reference to.
+void webStreamControllerError(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue error)
+{
+    if (stream->m_state != WritableStreamState::Writable)
+        return;
+    writableStreamDefaultControllerError(globalObject, stream->m_controller.get(), error);
 }
 
 void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue reason)

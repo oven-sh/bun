@@ -57,8 +57,6 @@ unsafe extern "C" {
         constructor: Option<JSHostFn>,
     ) -> JSValue;
 
-    pub(crate) safe fn JSC__JSFunction__optimizeSoon(value: JSValue);
-
     safe fn JSC__JSFunction__getSourceCode(value: JSValue, out: &mut ZigString) -> bool;
 }
 
@@ -79,10 +77,6 @@ impl JSFunction {
             options.intrinsic,
             options.constructor,
         )
-    }
-
-    pub fn optimize_soon(value: JSValue) {
-        JSC__JSFunction__optimizeSoon(value)
     }
 
     pub fn get_source_code(value: JSValue) -> Option<BunString> {

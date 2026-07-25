@@ -191,12 +191,12 @@ impl Clone for S3Credentials {
     fn clone(&self) -> Self {
         Self {
             ref_count: RefCount::init(),
-            access_key_id: dupe_slice(&self.access_key_id),
-            secret_access_key: dupe_slice(&self.secret_access_key),
-            region: dupe_slice(&self.region),
-            endpoint: dupe_slice(&self.endpoint),
-            bucket: dupe_slice(&self.bucket),
-            session_token: dupe_slice(&self.session_token),
+            access_key_id: self.access_key_id.clone(),
+            secret_access_key: self.secret_access_key.clone(),
+            region: self.region.clone(),
+            endpoint: self.endpoint.clone(),
+            bucket: self.bucket.clone(),
+            session_token: self.session_token.clone(),
             storage_class: self.storage_class,
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
@@ -265,12 +265,12 @@ impl S3Credentials {
     pub fn dupe(&self) -> IntrusiveRc<S3Credentials> {
         IntrusiveRc::new(S3Credentials {
             ref_count: RefCount::init(),
-            access_key_id: dupe_slice(&self.access_key_id),
-            secret_access_key: dupe_slice(&self.secret_access_key),
-            region: dupe_slice(&self.region),
-            endpoint: dupe_slice(&self.endpoint),
-            bucket: dupe_slice(&self.bucket),
-            session_token: dupe_slice(&self.session_token),
+            access_key_id: self.access_key_id.clone(),
+            secret_access_key: self.secret_access_key.clone(),
+            region: self.region.clone(),
+            endpoint: self.endpoint.clone(),
+            bucket: self.bucket.clone(),
+            session_token: self.session_token.clone(),
             storage_class: None,
             insecure_http: self.insecure_http,
             virtual_hosted_style: self.virtual_hosted_style,
@@ -919,8 +919,6 @@ impl S3Credentials {
         Ok(result)
     }
 }
-
-use bun_ptr::owned::alloc_dupe_slice as dupe_slice;
 
 // ──────────────────────────────────────────────────────────────────────────
 // DateResult / getAMZDate

@@ -313,11 +313,15 @@ fn parse_array(
                         continue;
                     }
                     if array_type == types::Tag::date_array {
-                        let mut str = BunString::init(element);
-                        array.push(SQLDataCell::date(
-                            crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
-                                .map_err(crate::jsc::js_error_to_postgres)?,
-                        ));
+                        let ms = match crate::postgres::types::date::parse_infinity(element) {
+                            Some(inf) => inf,
+                            None => {
+                                let mut str = BunString::init(element);
+                                crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                                    .map_err(crate::jsc::js_error_to_postgres)?
+                            }
+                        };
+                        array.push(SQLDataCell::date(ms));
                     } else {
                         // the only escape sequency possible here is \b
                         if element == b"\\b" {
@@ -828,10 +832,16 @@ pub(crate) fn from_bytes(
                 if bun_core::strings::eql_case_insensitive_ascii(bytes, b"NULL", true) {
                     return Ok(SQLDataCell::null());
                 }
-                // `timestamp` (without time zone) text carries no offset, so
-                // decode its components as UTC to match the binary path. `date`
-                // (UTC midnight) and `timestamptz` (explicit offset) already
-                // parse correctly via Date.parse, so only redirect `timestamp`.
+                if let Some(inf) = crate::postgres::types::date::parse_infinity(bytes) {
+                    return Ok(SQLDataCell::date(inf));
+                }
+                // DateStyle is pinned to ISO in the startup packet, so the
+                // server always emits `YYYY-MM-DD[...]` here regardless of
+                // postgresql.conf / ALTER DATABASE / ALTER ROLE defaults.
+                // `timestamp` (no offset) is decoded as UTC components to
+                // agree with the binary path; `date` (UTC midnight) and
+                // `timestamptz` (explicit offset) go through Date.parse,
+                // which handles the ISO form unambiguously.
                 let date = match tag {
                     T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
                     _ => None,
@@ -1055,6 +1065,10 @@ fn parse_binary_numeric<'a>(
                 0
             };
             bun_core::scoped_log!(PostgresDataCell, "digit: {}", digit);
+            // Postgres numeric_recv rejects `d < 0 || d >= NBASE` (NBASE = 10000).
+            if digit >= 10000 {
+                return Err(crate::Error::InvalidBuffer);
+            }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             let digit_len = 4usize;
             if !first_non_zero {
@@ -1098,6 +1112,9 @@ fn parse_binary_numeric<'a>(
                 0
             };
             bun_core::scoped_log!(PostgresDataCell, "dscale digit: {}", digit);
+            if digit >= 10000 {
+                return Err(crate::Error::InvalidBuffer);
+            }
             let digit_str: [u8; 4] = bun_core::fmt::itoa_padded::<4>(u64::from(digit));
             result.extend_from_slice(&digit_str);
             d += 1;

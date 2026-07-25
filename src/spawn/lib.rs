@@ -119,9 +119,6 @@ pub use bun_sys as spawn_sys;
 pub use process::{PosixSpawnOptions, PosixSpawnResult, PosixStdio as Stdio, WaitPidResult};
 #[cfg(unix)]
 pub type SpawnResult = process::PosixSpawnResult;
-/// Alias for the per-extra-fd Stdio entry passed in `SpawnOptions::extra_fds`.
-#[cfg(unix)]
-pub type ExtraFd = process::PosixStdio;
 
 #[cfg(windows)]
 pub use process::{

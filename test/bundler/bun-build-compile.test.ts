@@ -451,14 +451,14 @@ if (isLinux) {
       expect(bunAddr % 128n).toBe(0n);
 
       // Sanity: the binary still runs and produces the expected output.
-      // (Ignore stderr — a debug-ASAN bun may log `hintSourcePagesDontNeed`
-      // advisory warnings from the compiled binary's mmap'd .bun segment.)
       await using proc = Bun.spawn({
         cmd: [result.outputs[0].path],
+        env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
       expect(stdout).toContain("wsl1-regression-20000");
       expect(exitCode).toBe(0);
     }, 60_000);

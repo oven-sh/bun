@@ -24,6 +24,85 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(terminal.write(new TextEncoder().encode("abc"))).toBe(3);
   });
 
+  // The streaming writer buffers whatever it can't flush synchronously, so
+  // write() must report the full input as accepted. Before the fix it returned
+  // the synchronously-flushed count (~12-14KB on a PTY), and a caller that
+  // re-sent the "unwritten" tail duplicated stdin on the child. ConPTY injects
+  // escape sequences into the byte stream so exact counting is POSIX-only.
+  test.skipIf(isWindows)("write returns the full input length when the PTY buffer fills", async () => {
+    const N = 128 * 1024;
+    const childSrc = `
+      let buf = Buffer.alloc(0);
+      process.stdin.on("data", d => {
+        buf = Buffer.concat([buf, d]);
+        const idx = buf.indexOf(0);
+        if (idx >= 0) {
+          process.stdout.write("CHILD_READ " + idx + "\\n");
+          process.exit(0);
+        }
+      });
+      process.stdout.write("READY\\n");
+    `;
+
+    let output = "";
+    let drainCount = 0;
+    const ready = Promise.withResolvers<void>();
+    const done = Promise.withResolvers<string>();
+    const drained = Promise.withResolvers<void>();
+
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "-e", childSrc],
+      env: bunEnv,
+      terminal: {
+        data(_t, chunk) {
+          output += new TextDecoder().decode(chunk);
+          if (output.includes("READY")) ready.resolve();
+          const m = output.match(/CHILD_READ (\d+)/);
+          if (m) done.resolve(m[1]);
+        },
+        drain() {
+          drainCount++;
+          drained.resolve();
+        },
+        exit() {
+          const err = new Error("terminal exit; output=" + JSON.stringify(output));
+          ready.reject(err);
+          done.reject(err);
+          drained.reject(err);
+        },
+      },
+    });
+    const terminal = proc.terminal!;
+    terminal.setRawMode(true);
+
+    await ready.promise;
+
+    // A single write that overflows the kernel PTY buffer: the writer accepts
+    // everything (buffering the tail), so the return must be the input length.
+    const payload = Buffer.alloc(N, 65);
+    const r1 = terminal.write(payload);
+    expect(r1).toBe(N);
+
+    // Second write while the first is still buffered: must also return its own
+    // input length (previously could include bytes drained from the first).
+    const r2 = terminal.write(Buffer.alloc(64, 66));
+    expect(r2).toBe(64);
+
+    // Terminator so the child can report without a timeout.
+    terminal.write(new Uint8Array([0]));
+
+    // Child must receive exactly N + 64 bytes before the terminator.
+    const childRead = Number(await done.promise);
+    expect(childRead).toBe(N + 64);
+
+    // Buffered data was drained to reach the child, so drain must have fired.
+    await drained.promise;
+    expect(drainCount).toBeGreaterThan(0);
+
+    await proc.exited;
+    terminal.close();
+  });
+
   test("resize succeeds", async () => {
     await using terminal = new Bun.Terminal({ cols: 80, rows: 24 });
     expect(() => terminal.resize(100, 30)).not.toThrow();

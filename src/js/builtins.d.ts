@@ -114,6 +114,12 @@ declare function $pokePromiseAsHandled(promise: Promise<any>): void;
  * Does not lock the stream. Throws when given anything else.
  */
 declare function $webStreamClosedPromise(stream: ReadableStream | WritableStream): Promise<void>;
+
+/**
+ * Error a WHATWG ReadableStream/WritableStream as `controller.error(e)` would, including its
+ * no-op once the stream is no longer readable/writable. Throws for any other value.
+ */
+declare function $webStreamControllerError(stream: ReadableStream | WritableStream, error: unknown): void;
 declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,
@@ -462,6 +468,15 @@ declare interface UnderlyingSource {
   $stream?: ReadableStream;
 }
 
+declare interface AddEventListenerOptions {
+  /**
+   * Private symbol read by the native EventTarget. A listener registered with it still
+   * runs after another listener called `stopImmediatePropagation()`. Mirrors Node.js's
+   * internal `kResistStopPropagation`.
+   */
+  $kResistStopPropagation?: boolean;
+}
+
 declare class OutOfMemoryError {
   constructor();
 }
@@ -589,6 +604,13 @@ declare function $ERR_INVALID_FD_TYPE(type): TypeError;
 declare function $ERR_IP_BLOCKED(ip): Error;
 
 declare function $ERR_IPC_DISCONNECTED(): Error;
+declare function $ERR_INSPECTOR_ALREADY_ACTIVATED(message?: string): Error;
+declare function $ERR_INSPECTOR_NOT_ACTIVE(): Error;
+declare function $ERR_INSPECTOR_ALREADY_CONNECTED(): Error;
+declare function $ERR_INSPECTOR_NOT_CONNECTED(): Error;
+declare function $ERR_INSPECTOR_NOT_WORKER(): Error;
+declare function $ERR_INSPECTOR_COMMAND(message: string): Error;
+declare function $ERR_WORKER_UNSUPPORTED_OPERATION(message: string): TypeError;
 declare function $ERR_SERVER_NOT_RUNNING(): Error;
 declare function $ERR_IPC_CHANNEL_CLOSED(): Error;
 declare function $ERR_SOCKET_BAD_TYPE(): Error;
@@ -607,6 +629,7 @@ declare function $ERR_STREAM_CANNOT_PIPE(): Error;
 declare function $ERR_STREAM_WRITE_AFTER_END(): Error;
 declare function $ERR_STREAM_UNSHIFT_AFTER_END_EVENT(): Error;
 declare function $ERR_STREAM_PUSH_AFTER_EOF(): Error;
+declare function $ERR_TRAILING_JUNK_AFTER_STREAM_END(): TypeError;
 declare function $ERR_STREAM_UNABLE_TO_PIPE(): Error;
 declare function $ERR_ILLEGAL_CONSTRUCTOR(): TypeError;
 declare function $ERR_SERVER_ALREADY_LISTEN(): Error;

@@ -81,13 +81,6 @@ pub enum Status {
     Connected,
 }
 
-impl Status {
-    #[inline]
-    pub fn is_active(self) -> bool {
-        matches!(self, Status::Connected | Status::Connecting)
-    }
-}
-
 pub use super::valkey_command_body as Command_;
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
@@ -121,10 +114,6 @@ impl Protocol {
 
     pub fn is_tls(self) -> bool {
         matches!(self, Protocol::StandaloneTls | Protocol::StandaloneTlsUnix)
-    }
-
-    pub fn is_unix(self) -> bool {
-        matches!(self, Protocol::StandaloneUnix | Protocol::StandaloneTlsUnix)
     }
 }
 
@@ -1214,9 +1203,8 @@ impl ValkeyClient {
         // `self.write_buffer` directly (disjoint field) via `WriteBufWriter`.
         let hello_write_result = {
             let mut hello_args_buf: [&[u8]; 4] = [b"3", b"AUTH", b"", b""];
-            let hello_args: &[&[u8]];
 
-            if !self.username.is_empty() || !self.password.is_empty() {
+            let hello_args: &[&[u8]] = if !self.username.is_empty() || !self.password.is_empty() {
                 hello_args_buf[0] = b"3";
                 hello_args_buf[1] = b"AUTH";
 
@@ -1228,10 +1216,10 @@ impl ValkeyClient {
                     hello_args_buf[3] = &self.password;
                 }
 
-                hello_args = &hello_args_buf[0..4];
+                &hello_args_buf[0..4]
             } else {
-                hello_args = &hello_args_buf[0..1];
-            }
+                &hello_args_buf[0..1]
+            };
 
             // Format and send the HELLO command without adding to command queue
             // We'll handle this response specially in handleResponse
@@ -1549,10 +1537,6 @@ impl ValkeyClient {
 
     pub fn on_valkey_close(&mut self) -> JsTerminated<()> {
         self.parent().on_valkey_close()
-    }
-
-    pub fn on_valkey_timeout(&mut self) {
-        self.parent().on_valkey_timeout();
     }
 }
 

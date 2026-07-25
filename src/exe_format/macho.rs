@@ -90,9 +90,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        // reshaped for borrowck — capture base ptr as usize before iterating so we can
-        // compute byte offsets without holding a borrow of self.data across the mutable writes below.
-        let base_addr = self.data.as_ptr() as usize;
+        let lc_base = size_of::<macho::mach_header_64>();
         let mut iter = self.iterator();
 
         while let Some(entry) = iter.next() {
@@ -104,7 +102,7 @@ impl MachoFile {
                         .expect("unreachable");
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
-                            let section_offset = entry.data.as_ptr() as usize - base_addr;
+                            let section_offset = lc_base + entry.offset;
                             let sections_base =
                                 section_offset + size_of::<macho::segment_command_64>();
                             let sect_sz = size_of::<macho::section_64>();
@@ -168,11 +166,11 @@ impl MachoFile {
                             }
                         }
                     } else if command.seg_name() == SEG_LINKEDIT {
-                        linkedit_seg_idx = Some(entry.data.as_ptr() as usize - base_addr);
+                        linkedit_seg_idx = Some(lc_base + entry.offset);
                     }
                 }
                 macho::LC::CODE_SIGNATURE => {
-                    code_sign_cmd_idx = Some(entry.data.as_ptr() as usize - base_addr);
+                    code_sign_cmd_idx = Some(lc_base + entry.offset);
                 }
                 _ => {}
             }
@@ -182,29 +180,8 @@ impl MachoFile {
             return Err(MachoError::InvalidObject);
         }
 
-        // Calculate how much larger/smaller the section will be compared to its current size
-        let size_diff: i64 = i64::try_from(aligned_size).expect("int cast")
-            - i64::try_from(original_segsize).expect("int cast");
-
-        // We assume that the section is page-aligned, so we can calculate the number of new pages
-        debug_assert!(size_diff % PAGE_SIZE as i64 == 0);
-        let num_of_new_pages = size_diff / PAGE_SIZE as i64;
-
-        // Pre-grow the backing buffer to fit: the `size_diff` bytes of new section
-        // content and one SHA-256 hash per new page. `buildAndSign` may grow further
-        // to write the complete signature, but reserving this up front avoids the
-        // common reallocation.
-        self.data.reserve(
-            usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as i64).expect("int cast"),
-        );
-
-        let linkedit_seg_idx = match linkedit_seg_idx {
-            Some(idx) => idx,
-            None => return Err(MachoError::MissingLinkeditSegment),
-        };
-
-        let mut sig_size: usize = 0;
-
+        // Validate the template's __BUN segment lies inside the file before any
+        // growth arithmetic: these offsets came from untrusted load commands.
         let prev_len = self.data.len();
         let original_bun_end = usize::try_from(original_fileoff)
             .ok()
@@ -215,6 +192,33 @@ impl MachoFile {
         if original_bun_end > prev_len || original_data_end > original_bun_end {
             return Err(MachoError::OffsetOutOfRange);
         }
+
+        // __BUN is grown to fit the bundle; shrinking is not implemented (the
+        // offset-shift logic below only moves data forward). Real Bun templates
+        // ship a minimal placeholder so `aligned_size >= filesize` always holds.
+        let size_diff: u64 = aligned_size
+            .checked_sub(original_segsize)
+            .ok_or(MachoError::InvalidObject)?;
+
+        // We assume that the section is page-aligned, so we can calculate the number of new pages
+        debug_assert!(size_diff.is_multiple_of(PAGE_SIZE));
+        let num_of_new_pages = size_diff / PAGE_SIZE;
+
+        // Pre-grow the backing buffer to fit: the `size_diff` bytes of new section
+        // content and one SHA-256 hash per new page. `buildAndSign` may grow further
+        // to write the complete signature, but reserving this up front avoids the
+        // common reallocation.
+        self.data.reserve(
+            usize::try_from(size_diff + num_of_new_pages * HASH_SIZE as u64).expect("int cast"),
+        );
+
+        let linkedit_seg_idx = match linkedit_seg_idx {
+            Some(idx) => idx,
+            None => return Err(MachoError::MissingLinkeditSegment),
+        };
+
+        let mut sig_size: usize = 0;
+
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
         unsafe {
@@ -262,8 +266,8 @@ impl MachoFile {
             let seg_sz = size_of::<macho::segment_command_64>();
             let mut v: macho::segment_command_64 =
                 read_struct(&self.data[linkedit_seg_idx..][..seg_sz]);
-            v.fileoff += usize::try_from(size_diff).expect("int cast") as u64;
-            v.vmaddr += usize::try_from(size_diff).expect("int cast") as u64;
+            v.fileoff += size_diff;
+            v.vmaddr += size_diff;
             write_struct(&mut self.data[linkedit_seg_idx..][..seg_sz], &v);
         }
 
@@ -285,8 +289,7 @@ impl MachoFile {
                 let seg_sz = size_of::<macho::segment_command_64>();
 
                 let mut cs: macho::linkedit_data_command = read_struct(&self.data[idx..][..cs_sz]);
-                let new_sig_dataoff: u64 =
-                    cs.dataoff as u64 + u64::try_from(size_diff).expect("int cast");
+                let new_sig_dataoff: u64 = cs.dataoff as u64 + size_diff;
                 let new_sig_size = MachoSigner::compute_signature_size(new_sig_dataoff);
 
                 let mut seg: macho::segment_command_64 =
@@ -316,7 +319,7 @@ impl MachoFile {
             let (le_fileoff, le_filesize) = (seg.fileoff, seg.filesize);
             self.update_load_command_offsets(
                 original_fileoff,
-                u64::try_from(size_diff).expect("int cast"),
+                size_diff,
                 le_fileoff,
                 le_filesize,
                 sig_size,
@@ -585,7 +588,7 @@ impl MachoSigner {
                 // Store segment info
                 if seg.seg_name() == SEG_LINKEDIT {
                     linkedit_seg = seg;
-                    linkedit_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
+                    linkedit_off = header_size + cmd.offset;
 
                     // Validate linkedit is after text
                     if linkedit_seg.fileoff < text_seg.fileoff + text_seg.filesize {
@@ -612,7 +615,7 @@ impl MachoSigner {
                         .expect("unreachable");
                     sig_off = cs.dataoff as usize;
                     sig_sz = cs.datasize as usize;
-                    cs_cmd_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;
+                    cs_cmd_off = header_size + cmd.offset;
                 }
                 _ => {}
             }

@@ -8,12 +8,6 @@ pub struct BackendKeyData {
 }
 
 impl BackendKeyData {
-    pub fn decode<Container: super::new_reader::ReaderContext>(
-        context: Container,
-    ) -> Result<Self, AnyPostgresError> {
-        Self::decode_internal(NewReader { wrapped: context })
-    }
-
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {

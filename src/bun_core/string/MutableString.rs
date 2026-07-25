@@ -1,28 +1,5 @@
-use crate::string::ZStr;
 use crate::strings;
 use bun_alloc::AllocError;
-
-/// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
-/// `bun_ast::E::String`). Low tier defines the interface; high tier
-/// (`bun_js_parser`) provides `impl EStringRef for E::String`.
-/// Dyn dispatch is acceptable: cold path (formatter/writer).
-pub trait EStringRef {
-    fn is_utf8(&self) -> bool;
-    fn slice(&mut self) -> &[u8];
-    fn slice16(&mut self) -> &[u16];
-}
-
-/// Layout-identical to POSIX `struct iovec` with a const base
-/// (`{ base: *const u8, len: usize }`), used unconditionally on every target —
-/// it does NOT alias `uv_buf_t`/`WSABUF` on Windows (those have reversed field
-/// order and a `u32` len). `to_socket_buffers` returns this shape on all
-/// platforms, so there is no `cfg(windows)` split.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct SocketBuffer {
-    pub iov_base: *const u8,
-    pub iov_len: usize,
-}
 
 /// A growable byte buffer: a thin wrapper over `Vec<u8>` (the global mimalloc
 /// allocator is implicit).
@@ -109,14 +86,6 @@ impl MutableString {
         debug_assert!(bytes.is_empty() || !self.owns(bytes));
         self.list.extend_from_slice(bytes);
         Ok(bytes.len())
-    }
-
-    pub fn buffered_writer(&mut self) -> BufferedWriter<'_> {
-        BufferedWriter {
-            context: self,
-            buffer: [0u8; BufferedWriter::MAX],
-            pos: 0,
-        }
     }
 
     pub fn init(capacity: usize) -> Result<MutableString, AllocError> {
@@ -226,9 +195,7 @@ impl MutableString {
 
             let _ = has_needed_gap;
 
-            if cfg!(debug_assertions) {
-                debug_assert!(js_lexer::is_identifier(&mutable.list));
-            }
+            debug_assert!(js_lexer::is_identifier(&mutable.list));
 
             return Ok(mutable.to_owned_slice());
         }
@@ -304,20 +271,9 @@ impl MutableString {
     }
 
     #[inline]
-    pub fn append_char_n_times(&mut self, char: u8, n: usize) -> Result<(), AllocError> {
-        self.list.extend(core::iter::repeat_n(char, n));
-        Ok(())
-    }
-
-    #[inline]
     pub fn append_char(&mut self, char: u8) -> Result<(), AllocError> {
         self.list.push(char);
         Ok(())
-    }
-
-    #[inline]
-    pub fn append_char_assume_capacity(&mut self, char: u8) {
-        self.list.push(char);
     }
 
     #[inline]
@@ -354,22 +310,12 @@ impl MutableString {
         self.list.extend_from_slice(char);
     }
 
-    #[inline]
-    pub fn len_i(&self) -> i32 {
-        i32::try_from(self.list.len()).expect("int cast")
-    }
-
     pub fn take_slice(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.list)
     }
 
     pub fn to_owned_slice(&mut self) -> Box<[u8]> {
         core::mem::take(&mut self.list).into_boxed_slice()
-    }
-
-    pub fn to_dynamic_owned(&mut self) -> Box<[u8]> {
-        // With the global allocator this collapses to `Box<[u8]>`.
-        self.to_owned_slice()
     }
 
     /// Alias of [`Self::to_owned_slice`]; the global allocator is implicit.
@@ -381,37 +327,6 @@ impl MutableString {
         &mut self.list
     }
 
-    /// Appends `0` if needed
-    pub fn slice_with_sentinel(&mut self) -> &mut ZStr {
-        if !self.list.is_empty() && self.list[self.list.len() - 1] != 0 {
-            self.list.push(0);
-        }
-        let len = self.list.len() - 1;
-        ZStr::from_buf_mut(&mut self.list, len)
-    }
-
-    pub fn to_owned_slice_length(&mut self, length: usize) -> Box<[u8]> {
-        // SAFETY: caller guarantees `length` bytes have been initialized.
-        unsafe { self.list.set_len(length) };
-        self.to_owned_slice()
-    }
-
-    pub fn contains_char(&self, char: u8) -> bool {
-        self.index_of_char(char).is_some()
-    }
-
-    pub fn index_of_char(&self, char: u8) -> Option<u32> {
-        strings::index_of_char(&self.list, char)
-    }
-
-    pub fn last_index_of_char(&self, char: u8) -> Option<usize> {
-        strings::last_index_of_char(&self.list, char)
-    }
-
-    pub fn last_index_of(&self, str: u8) -> Option<usize> {
-        strings::last_index_of_char(&self.list, str)
-    }
-
     pub fn index_of(&self, str: u8) -> Option<usize> {
         // Single-byte search (the `str` parameter is one byte despite the name).
         self.list.iter().position(|&b| b == str)
@@ -419,23 +334,6 @@ impl MutableString {
 
     pub fn eql(&self, other: &[u8]) -> bool {
         self.list.as_slice() == other
-    }
-
-    /// Returns `[SocketBuffer; COUNT]` —
-    /// `{ base: *const u8, len: usize }` on every target (including Windows;
-    /// it is NOT `uv_buf_t`). Single implementation, no `cfg(windows)` split.
-    pub fn to_socket_buffers<const COUNT: usize>(
-        &self,
-        ranges: [(usize, usize); COUNT],
-    ) -> [SocketBuffer; COUNT] {
-        core::array::from_fn(|i| {
-            let r = ranges[i];
-            let s = &self.list[r.0..r.1];
-            SocketBuffer {
-                iov_base: s.as_ptr(),
-                iov_len: s.len(),
-            }
-        })
     }
 
     pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {
@@ -451,154 +349,5 @@ impl std::io::Write for MutableString {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
-    }
-}
-
-const BUFFERED_WRITER_MAX: usize = 2048;
-
-pub struct BufferedWriter<'a> {
-    pub context: &'a mut MutableString,
-    pub buffer: [u8; BUFFERED_WRITER_MAX],
-    pub pos: usize,
-}
-
-impl<'a> BufferedWriter<'a> {
-    const MAX: usize = BUFFERED_WRITER_MAX;
-
-    // `impl std::io::Write for BufferedWriter` below; `writer()` returns `&mut Self`.
-
-    pub fn flush(&mut self) -> Result<(), AllocError> {
-        let _ = self.context.write_all(&self.buffer[0..self.pos])?;
-        self.pos = 0;
-        Ok(())
-    }
-
-    pub fn write_all(&mut self, bytes: &[u8]) -> Result<usize, AllocError> {
-        let pending = bytes;
-
-        if pending.len() >= Self::MAX {
-            self.flush()?;
-            self.context.append(pending)?;
-            return Ok(pending.len());
-        }
-
-        if !pending.is_empty() {
-            if pending.len() + self.pos > Self::MAX {
-                self.flush()?;
-            }
-            let pos = self.pos;
-            self.buffer[pos..pos + pending.len()].copy_from_slice(pending);
-            self.pos += pending.len();
-        }
-
-        Ok(pending.len())
-    }
-
-    /// Write a E.String to the buffer.
-    /// This automatically encodes UTF-16 into UTF-8 using
-    /// the same code path as TextEncoder
-    pub fn write_string(&mut self, bytes: &mut dyn EStringRef) -> Result<usize, AllocError> {
-        // was `&mut bun_ast::E::String`; now vtable dispatch.
-        if bytes.is_utf8() {
-            return self.write_all(bytes.slice());
-        }
-
-        self.write_all16(bytes.slice16())
-    }
-
-    /// Write a UTF-16 string to the (UTF-8) buffer
-    /// This automatically encodes UTF-16 into UTF-8 using
-    /// the same code path as TextEncoder
-    pub fn write_all16(&mut self, bytes: &[u16]) -> Result<usize, AllocError> {
-        let pending = bytes;
-
-        if pending.len() >= Self::MAX {
-            self.flush()?;
-            // Write into the freshly-reserved context.list tail.
-            let old = self.context.list.len();
-            // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
-            let tail =
-                unsafe { crate::vec::writable_slice(&mut self.context.list, bytes.len() * 2) };
-            let decoded = strings::copy_utf16_into_utf8(tail, bytes);
-            self.context.list.truncate(old + decoded.written as usize);
-            return Ok(pending.len());
-        }
-
-        if !pending.is_empty() {
-            if (pending.len() * 2) + self.pos > Self::MAX {
-                self.flush()?;
-            }
-            let pos = self.pos;
-            let decoded =
-                strings::copy_utf16_into_utf8(&mut self.buffer[pos..pos + bytes.len() * 2], bytes);
-            self.pos += decoded.written as usize;
-        }
-
-        Ok(pending.len())
-    }
-
-    pub fn write_html_attribute_value_string(
-        &mut self,
-        str: &mut dyn EStringRef,
-    ) -> Result<(), AllocError> {
-        // was `&mut bun_ast::E::String`; now vtable dispatch.
-        if str.is_utf8() {
-            self.write_html_attribute_value(str.slice())?;
-            return Ok(());
-        }
-
-        self.write_html_attribute_value16(str.slice16())
-    }
-
-    pub fn write_html_attribute_value(&mut self, bytes: &[u8]) -> Result<(), AllocError> {
-        let mut items = bytes;
-        while !items.is_empty() {
-            // index_of_any_char dispatches to highway SIMD for n>=2.
-            if let Some(j) = strings::index_of_any(items, b"\"<>") {
-                let _ = self.write_all(&items[0..j])?;
-                // needle b"\"<>" ⇒ Some, &/' never reached
-                let _ = self.write_all(strings::html_escape_entity(items[j]).unwrap())?;
-
-                items = &items[j + 1..];
-                continue;
-            }
-
-            let _ = self.write_all(items)?;
-            break;
-        }
-        Ok(())
-    }
-
-    pub fn write_html_attribute_value16(&mut self, bytes: &[u16]) -> Result<(), AllocError> {
-        let mut items = bytes;
-        while !items.is_empty() {
-            const NEEDLES: &[u16] = &[b'"' as u16, b'<' as u16, b'>' as u16];
-            if let Some(j) = strings::index_of_any16(items, NEEDLES) {
-                let _ = self.write_all16(&items[0..j])?;
-                // needle ∈ {0x22,0x3C,0x3E} so `as u8` is lossless
-                let _ = self.write_all(strings::html_escape_entity(items[j] as u8).unwrap())?;
-
-                items = &items[j + 1..];
-                continue;
-            }
-
-            let _ = self.write_all16(items)?;
-            break;
-        }
-        Ok(())
-    }
-
-    pub fn writer(&mut self) -> &mut Self {
-        self
-    }
-}
-
-impl<'a> std::io::Write for BufferedWriter<'a> {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        self.write_all(buf)
-            .map_err(|_| std::io::ErrorKind::OutOfMemory.into())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        BufferedWriter::flush(self).map_err(|_| std::io::ErrorKind::OutOfMemory.into())
     }
 }

@@ -482,9 +482,9 @@ impl DateHeaderTimer {
             unsafe { (*(*vm).uws_loop()).update_date() };
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; `All::update` only touches `lock`/`timers`/
-            // `fake_timers`/`epoch`, disjoint from `date_header_timer` which `self`
-            // aliases (raw-ptr-per-field re-entry pattern, see jsc_hooks.rs).
+            // SAFETY: single JS thread; nothing `All::update` touches overlaps
+            // `date_header_timer`, which `self` aliases (raw-ptr-per-field
+            // re-entry pattern, see jsc_hooks.rs).
             unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
         } else {
             // The date was updated recently, just reschedule for the next second

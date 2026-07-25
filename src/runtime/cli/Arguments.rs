@@ -11,7 +11,6 @@ use bstr::BStr;
 use bun_bundler::options;
 use bun_clap as clap;
 use bun_clap::parse_param;
-use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
@@ -39,24 +38,6 @@ fn slice_to_owned(input: &[&[u8]]) -> Vec<Box<[u8]>> {
 pub(crate) fn loader_resolver(input: &[u8]) -> crate::Result<api::Loader> {
     let option_loader = bun_ast::Loader::from_string(input).ok_or(crate::Error::InvalidLoader)?;
     Ok(option_loader.to_api())
-}
-
-/// Resolve `filename` against `cwd`, open it, read its full contents, close it,
-/// and return the buffer.
-///
-/// Built on `bun_paths::resolve_path` + `bun_sys::File::read_from`, which is
-/// the cross-platform path the rest of the runtime uses.
-pub fn read_file(cwd: &[u8], filename: &[u8]) -> crate::Result<Vec<u8>> {
-    let mut buf = PathBuffer::uninit();
-    let outpath = resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut *buf, &[filename]);
-    let len = outpath.len();
-    buf[len] = 0;
-    // SAFETY: `buf[len] == 0` written above; `buf` outlives the call.
-    let path_z = ZStr::from_buf(&buf[..], len);
-    match bun_sys::File::read_from(bun_sys::Fd::cwd(), path_z) {
-        bun_sys::Result::Ok(bytes) => Ok(bytes),
-        bun_sys::Result::Err(err) => Err(err.into()),
-    }
 }
 
 pub(crate) fn resolve_jsx_runtime(s: &[u8]) -> crate::Result<api::JsxRuntime> {
@@ -195,6 +176,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
         "--smol                            Use less memory, but run garbage collection more often"
     ),
     parse_param!(
+        "--interactive                     Start a Node.js-compatible REPL, like node --interactive"
+    ),
+    parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
     parse_param!("--require <STR>...                Alias of --preload, for Node.js compatibility"),
@@ -286,6 +270,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     ),
     parse_param!("--use-openssl-ca                  Use OpenSSL's default CA store"),
     parse_param!("--use-bundled-ca                  Use bundled CA store"),
+    parse_param!("--tls-min-v1.0                    Set the default TLS minimum to TLSv1.0"),
+    parse_param!("--tls-min-v1.1                    Set the default TLS minimum to TLSv1.1"),
+    parse_param!("--tls-min-v1.2                    Set the default TLS minimum to TLSv1.2"),
+    parse_param!("--tls-min-v1.3                    Set the default TLS minimum to TLSv1.3"),
+    parse_param!("--tls-max-v1.2                    Set the default TLS maximum to TLSv1.2"),
+    parse_param!("--tls-max-v1.3                    Set the default TLS maximum to TLSv1.3"),
     parse_param!("--redis-preconnect                Preconnect to $REDIS_URL at startup"),
     parse_param!("--sql-preconnect                  Preconnect to PostgreSQL at startup"),
     parse_param!(
@@ -327,7 +317,7 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
-        "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                      Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'"
@@ -552,7 +542,7 @@ pub(crate) const BUILD_PARAMS: &[ParamType] =
 // TODO: update test completions
 pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
     parse_param!(
-        "--no-orphans                     Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
+        "--no-orphans                     Exit when the parent process dies, and on exit kill every descendant."
     ),
     parse_param!(
         "--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000."
@@ -1075,7 +1065,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;
-        } else if args.flag(b"-i") {
+        } else if args.flag(b"-i") && cmd != CommandTag::RunAsNodeCommand {
+            // Under node emulation `-i` is node's --interactive alias, not
+            // --install=fallback (auto-install is meaningless there).
             ctx.debug.global_cache = options::GlobalCache::fallback;
         } else if let Some(enum_value) = args.option(b"--install") {
             // -i=auto --install=force, --install=disable
@@ -1101,6 +1093,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
+        // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
+        ctx.runtime_options.interactive = args.flag(b"--interactive")
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");
@@ -1112,6 +1107,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // builds. Debug builds always allow them.
             bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                 .store(true, core::sync::atomic::Ordering::Relaxed);
+            bun_resolve_builtins::set_expose_internals_enabled(true);
         }
 
         if let Some(depth_str) = args.option(b"--console-depth") {
@@ -1329,6 +1325,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // `Bun__Node__UseSystemCA` is written unconditionally,
             // even when no CA flag/env was supplied (default bundled ⇒ false).
             Bun__Node__UseSystemCA.store(false, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        if args.flag(b"--tls-min-v1.3") && args.flag(b"--tls-max-v1.2") {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: --tls-min-v1.3 sets default TLS minimum to TLSv1.3 and is not compatible with --tls-max-v1.2, which sets default TLS maximum to TLSv1.2; use one or the other, not both"
+            );
+            Global::exit(1);
         }
     }
 

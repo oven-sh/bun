@@ -427,16 +427,10 @@ pub enum RemoveOrUpgradeMode {
 }
 
 pub struct LocateWeakRefResult {
-    pub index: usize,
     pub r#ref: WeakRef,
 }
 
-/// `bun.GenericIndex(u32, Entry)`.
-pub enum SmEntryMarker {}
-pub type EntryIndex = bun_core::GenericIndex<u32, SmEntryMarker>;
-
 pub struct GetResult<'a> {
-    pub index: EntryIndex,
     pub mappings: source_map::mapping::List,
     pub file_paths: &'a [Box<[u8]>],
     pub entry_files: &'a [packed_map::Shared],
@@ -623,7 +617,7 @@ impl SourceMapStore {
         for i in 0..self.weak_refs.readable_length() {
             let r = self.weak_refs.peek_item(i);
             if r.key() == key {
-                return Some(LocateWeakRefResult { index: i, r#ref: r });
+                return Some(LocateWeakRefResult { r#ref: r });
             }
         }
         None
@@ -714,7 +708,6 @@ impl SourceMapStore {
                 None
             }
             source_map::ParseResult::Success(mut psm) => Some(GetResult {
-                index: EntryIndex::init(u32::try_from(index).expect("int cast")),
                 mappings: core::mem::take(&mut psm.mappings),
                 file_paths: &entry.paths,
                 entry_files: &entry.files,

@@ -423,7 +423,7 @@ mod stdarg {
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+#[derive(thiserror::Error, Debug)]
 enum DeferredError {
     #[error("DeferredErrors")]
     DeferredErrors,
@@ -976,8 +976,7 @@ impl FFI {
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
         }
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
+        let arguments = callframe.arguments();
         if arguments.is_empty() || !arguments[0].is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -1514,14 +1513,10 @@ impl FFI {
                             )
                             .ok();
                             let system_error = SystemError {
-                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED"),
-                                message: bun_core::String::clone_utf8(&msg),
-                                syscall: bun_core::String::clone_utf8(b"dlopen"),
-                                errno: 0,
-                                path: bun_core::String::EMPTY,
-                                hostname: bun_core::String::EMPTY,
-                                fd: -1,
-                                dest: bun_core::String::EMPTY,
+                                code: bun_core::String::clone_utf8(b"ERR_DLOPEN_FAILED").into(),
+                                message: bun_core::String::clone_utf8(&msg).into(),
+                                syscall: bun_core::String::clone_utf8(b"dlopen").into(),
+                                ..Default::default()
                             };
                             return system_error.to_error_instance(global);
                         }
@@ -1947,7 +1942,6 @@ impl Function {
         if !matches!(self.step, Step::Failed { .. }) {
             self.step = Step::Failed {
                 msg: Box::<[u8]>::from(msg),
-                allocated: false,
             };
         }
     }
@@ -1982,7 +1976,6 @@ impl Function {
 
         this.step = Step::Failed {
             msg: Box::<[u8]>::from(msg),
-            allocated: true,
         };
     }
 
@@ -2212,10 +2205,6 @@ impl Function {
 
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
-            // SAFETY: opaque-handle storage only. Never
-            // dereferenced or written through on the Rust side; stored as
-            // NonNull to avoid laundering &T → *mut T provenance.
-            js_context: Some(NonNull::from(js_context)),
             ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
         });
         Ok(())
@@ -2524,7 +2513,7 @@ unsafe extern "C" {
 pub enum Step {
     Pending,
     Compiled(Compiled),
-    Failed { msg: Box<[u8]>, allocated: bool },
+    Failed { msg: Box<[u8]> },
 }
 
 /// Stores no JS function value: symbol functions are rooted by the
@@ -2532,9 +2521,6 @@ pub enum Step {
 /// `JSC::Strong` inside `FFICallbackFunctionWrapper`.
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // Opaque storage, never dereferenced. NonNull avoids
-    // a &T → *mut T cast at the assignment site in compile_callback().
-    pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
 
@@ -2542,7 +2528,6 @@ impl Default for Compiled {
     fn default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
-            js_context: None,
             ffi_callback_function_wrapper: None,
         }
     }

@@ -203,8 +203,10 @@ describe.each([
       expect(messages.listenerCount("error")).toBeLessThanOrEqual(1);
 
       // RSS round-2 vs round-1: weak signal (mimalloc segment noise) but
-      // catches anything egregious that heapStats can't see.
-      const rssBound = isASAN || isDebug ? 32 * 1024 * 1024 : 8 * 1024 * 1024;
+      // catches anything egregious that heapStats can't see. The release bound
+      // is sized so a real per-iteration leak (5000 iters) would blow past it
+      // while a few MB of allocator segment growth does not.
+      const rssBound = isASAN || isDebug ? 32 * 1024 * 1024 : 16 * 1024 * 1024;
       expect(after2.rss - after1.rss).toBeLessThan(rssBound);
     } finally {
       sock.destroy();

@@ -1176,10 +1176,6 @@ impl ReactCompilerState {
         }
     }
 
-    pub fn any_compiled(&self) -> bool {
-        self.any_compiled
-    }
-
     fn lazy_init(&mut self, host: &dyn Host) {
         if self.did_lazy_init {
             return;

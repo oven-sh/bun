@@ -3,7 +3,6 @@
 use core::cell::UnsafeCell;
 
 use crate::Mutex;
-use bun_safety::ThreadLock;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// This type uses `bun_threading::Mutex` internally.
@@ -11,14 +10,6 @@ use bun_safety::ThreadLock;
 /// Drop-in for `parking_lot::Mutex<T>`: `const fn new(T)`, `.lock()` returns
 /// a guard with `Deref`/`DerefMut`, no poisoning.
 pub type Guarded<Value> = GuardedBy<Value, Mutex>;
-
-/// `parking_lot::MutexGuard<'a, T>` drop-in alias for the [`Guarded`] case.
-/// Named here (not at crate root) to avoid colliding with the bare
-/// [`crate::mutex::MutexGuard`] returned by `Mutex::lock_guard()`.
-pub type MutexGuard<'a, Value> = GuardedLock<'a, Value, Mutex>;
-
-/// Uses `bun_safety::ThreadLock`.
-pub type Debug<Value> = GuardedBy<Value, ThreadLock>;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
 /// `M` should have `lock` and `unlock` methods.
@@ -77,15 +68,6 @@ impl<Value> GuardedBy<Value, Mutex> {
         } else {
             None
         }
-    }
-
-    /// Borrow the underlying raw [`Mutex`]. Needed by callers that split
-    /// `lock()`/`unlock()` across function boundaries (e.g. `Progress.rs`
-    /// porting `lock_api::RawMutex`) or pair this `Guarded` with a bare
-    /// [`Condition::wait`](crate::Condition::wait).
-    #[inline]
-    pub fn raw_mutex(&self) -> &Mutex {
-        &self.mutex
     }
 }
 
@@ -165,16 +147,5 @@ impl RawMutex for Mutex {
     #[inline]
     fn unlock(&self) {
         Mutex::unlock(self)
-    }
-}
-
-impl RawMutex for ThreadLock {
-    #[inline]
-    fn lock(&self) {
-        ThreadLock::lock(self)
-    }
-    #[inline]
-    fn unlock(&self) {
-        ThreadLock::unlock(self)
     }
 }

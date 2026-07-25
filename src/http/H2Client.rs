@@ -106,8 +106,8 @@ pub(crate) mod bridge {
             self.do_redirect::<true>(ctx, socket);
         }
         #[inline]
-        pub fn h2_clone_metadata(&mut self) {
-            self.clone_metadata();
+        pub fn h2_clone_metadata(&mut self, response: &bun_picohttp::Response<'_>) {
+            self.clone_metadata(response);
         }
         #[inline]
         pub fn h2_handle_response_body(

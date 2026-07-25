@@ -47,10 +47,7 @@ pub mod jsc {
     /// nominal type.
     pub(crate) use crate::api::js_bundler::Plugin;
     pub(crate) use crate::jsc::*;
-    pub(crate) use bun_jsc::debugger::DebuggerId;
 }
-
-pub const API_NAME: &str = "app";
 
 // ══════════════════════════════════════════════════════════════════════════
 // Top-level types
@@ -87,19 +84,6 @@ pub struct ServerComponents {
 }
 // No `Default` impl — `server_runtime_import` is a required field. Callers must
 // supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
-impl ServerComponents {
-    /// Construct with the defaults for the three `register*` exports;
-    /// `server_runtime_import` must be supplied.
-    pub fn new(server_runtime_import: Cow<'static, [u8]>) -> Self {
-        Self {
-            separate_ssr_graph: false,
-            server_runtime_import,
-            server_register_client_reference: Cow::Borrowed(b"registerClientReference"),
-            server_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-            client_register_server_reference: Cow::Borrowed(b"registerServerReference"),
-        }
-    }
-}
 
 #[derive(Clone)]
 pub struct ReactFastRefresh {
@@ -462,8 +446,6 @@ impl Framework {
         }
     }
 
-    pub const REACT_INSTALL_COMMAND: &str = "bun i react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental";
-
     pub fn add_react_install_command_note(log: &mut bun_ast::Log) {
         log.add_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Note,
@@ -564,8 +546,8 @@ impl From<bake_body::Framework> for Framework {
 impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
     fn from(src: bake_body::BuildConfigSubset) -> Self {
         // `BuildConfigSubset` mirrors the field-set
-        // `Framework::init_transpiler` reads (everything except `loader` /
-        // `source_map`, which only `init_transpiler_with_options` honours).
+        // `Framework::init_transpiler` reads (everything except `source_map`,
+        // which only `init_transpiler_with_options` honours).
         Self {
             ignore_dce_annotations: src.ignore_dce_annotations,
             conditions: src.conditions,
@@ -607,8 +589,8 @@ pub struct BuildConfigSubset {
     pub minify_syntax: Option<bool>,
     pub minify_identifiers: Option<bool>,
     pub minify_whitespace: Option<bool>,
-    // `loader`/`source_map` intentionally omitted — only
-    // `init_transpiler_with_options` (bake_body) honours those, and DevServer
+    // `source_map` intentionally omitted — only
+    // `init_transpiler_with_options` (bake_body) honours it, and DevServer
     // never calls that path.
 }
 
@@ -666,9 +648,7 @@ pub use framework_router as FrameworkRouter;
 // production
 // ══════════════════════════════════════════════════════════════════════════
 pub mod production {
-    pub use super::production_body::{
-        EntryPointHashMap, EntryPointMap, InputFile, PerThread, TypeAndFlags, build_command,
-    };
+    pub use super::production_body::{EntryPointMap, PerThread, TypeAndFlags, build_command};
 }
 
 // ══════════════════════════════════════════════════════════════════════════

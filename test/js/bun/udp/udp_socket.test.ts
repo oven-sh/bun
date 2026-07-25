@@ -584,3 +584,27 @@ describe("udpSocket()", () => {
     );
   });
 });
+
+// us_udp_socket_send batches at most ~204 messages per sendmmsg; a >batch-size
+// sendMany must loop and report the TOTAL accepted. The pre-fix loop condition
+// compared against a decremented `num` and stopped after one batch, which every
+// <=100-packet test above still satisfies.
+test("sendMany() sends every packet of a larger-than-one-batch call", async () => {
+  const server = await udpSocket({ socket: { data() {} } });
+  const client = await udpSocket({ connect: { port: server.port, hostname: "127.0.0.1" } });
+  try {
+    const N = 500;
+    const payloads = new Array(N);
+    for (let i = 0; i < N; i++) payloads[i] = "x";
+    // The regression this guards: the old loop exited after ONE batch, so a
+    // 500-packet call reported <=~204. Assert "more than one batch" rather
+    // than the exact count -- a loaded kernel may legitimately accept fewer
+    // than all 500.
+    const res = client.sendMany(payloads);
+    expect(res).toBeGreaterThan(204);
+    expect(res).toBeLessThanOrEqual(N);
+  } finally {
+    client.close();
+    server.close();
+  }
+});

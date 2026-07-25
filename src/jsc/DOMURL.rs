@@ -1,7 +1,7 @@
 use core::ffi::c_int;
 
 use crate::{JSValue, VM};
-use bun_core::{self as bstr, ZigString};
+use bun_core as bstr;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for WebCore::DOMURL (C++ side).
@@ -14,8 +14,6 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
     safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
-    safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut ZigString);
-    safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut ZigString);
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
@@ -47,16 +45,6 @@ impl DOMURL {
         )
     }
 
-    pub fn href_(&mut self, out: &mut ZigString) {
-        WebCore__DOMURL__href_(self, out)
-    }
-
-    pub fn href(&mut self) -> ZigString {
-        let mut out = ZigString::EMPTY;
-        self.href_(&mut out);
-        out
-    }
-
     pub fn file_system_path(&mut self) -> Result<bstr::String, ToFileSystemPathError> {
         let mut error_code: c_int = 0;
         let path = WebCore__DOMURL__fileSystemPath(self, &mut error_code);
@@ -68,15 +56,5 @@ impl DOMURL {
         }
         debug_assert!(path.tag() != bun_core::Tag::Dead);
         Ok(path)
-    }
-
-    pub fn pathname_(&mut self, out: &mut ZigString) {
-        WebCore__DOMURL__pathname_(self, out)
-    }
-
-    pub fn pathname(&mut self) -> ZigString {
-        let mut out = ZigString::EMPTY;
-        self.pathname_(&mut out);
-        out
     }
 }

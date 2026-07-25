@@ -529,23 +529,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if needs_wrapper {
         match flags.wrap {
             WrapKind::Cjs => {
-                // If the wrapped body contains direct eval, bind `require` as a
-                // real parameter so code like `eval("require")("buffer")`
-                // (protobufjs) keeps working. Use the "require" entry from the
-                // module scope instead of `ast.require_ref`, because the latter
-                // may have been replaced with the file-local `__require`
-                // polyfill symbol when the body also contains a dynamic
-                // `require(expr)` or bare `require` reference.
+                // Direct eval may reach `require` by name (protobufjs), so bind
+                // it as a parameter. `ast.require_ref` can point at the
+                // `__require` polyfill, so take the Unbound scope member.
                 let require_arg_ref =
                     if ast.module_scope.contains_direct_eval && runtime_require_ref.is_some() {
-                        ast.module_scope.members.get(&b"require"[..]).and_then(|m| {
-                            match c.graph.symbols.get_const(m.ref_).map(|s| s.kind) {
-                                Some(bun_ast::symbol::Kind::Unbound) => Some(m.ref_),
-                                // User declared their own `var require`; it already
-                                // shadows whatever we would pass.
-                                _ => None,
-                            }
-                        })
+                        ast.module_scope
+                            .members
+                            .get(&b"require"[..])
+                            .map(|m| m.ref_)
+                            .filter(|r| {
+                                c.graph.symbols.get_const(*r).map(|s| s.kind)
+                                    == Some(bun_ast::symbol::Kind::Unbound)
+                            })
                     } else {
                         None
                     };

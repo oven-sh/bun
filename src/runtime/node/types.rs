@@ -309,6 +309,45 @@ impl bun_jsc::Unprotect for StringOrBuffer {
 }
 
 impl StringOrBuffer {
+    /// Borrow `value`'s byte storage for a call that may outlive later JS
+    /// coercions (async work, or a sync call whose later arguments can run
+    /// user code). `FastTypedArray` storage is duped into an owned
+    /// [`EncodedSlice`](Self::EncodedSlice) — pinning it would run
+    /// `slowDownAndWasteMemory()` (malloc + copy + butterfly) for a view that
+    /// cannot be detached anyway. Every other mode is pinned in place.
+    ///
+    /// `protect=true` GC-roots the JS value for the pinned case; the duped
+    /// case owns its bytes and never needs a root.
+    fn pinned_buffer_from_js(global: &JSGlobalObject, value: JSValue, protect: bool) -> Self {
+        use jsc::BorrowedBufferBytes;
+        match value.borrow_array_buffer_bytes(global) {
+            BorrowedBufferBytes::Fast { ptr, len } => {
+                // SAFETY: classifier guarantees `ptr[0..len]` is valid until
+                // the next GC safe-point; we copy immediately.
+                let owned = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+                global.vm().report_extra_memory(owned.len());
+                Self::EncodedSlice(ZigStringSlice::init_owned(owned))
+            }
+            BorrowedBufferBytes::Pinned(buf) => {
+                if protect {
+                    buf.value.protect();
+                }
+                Self::Buffer(Buffer {
+                    buffer: buf,
+                    owns_buffer: false,
+                    pinned: true,
+                })
+            }
+            BorrowedBufferBytes::None => {
+                let buffer = Buffer::from_array_buffer(global, value);
+                if protect {
+                    buffer.buffer.value.protect();
+                }
+                Self::Buffer(buffer)
+            }
+        }
+    }
+
     pub fn to_thread_safe(&mut self) {
         match self {
             Self::String(s) => {
@@ -437,18 +476,11 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                let buffer = if is_async {
-                    Buffer::from_js_pinned(global, value)
-                        .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+                *out = if is_async {
+                    Self::pinned_buffer_from_js(global, value, true)
                 } else {
-                    Buffer::from_array_buffer(global, value)
+                    Self::Buffer(Buffer::from_array_buffer(global, value))
                 };
-
-                if is_async {
-                    buffer.buffer.value.protect();
-                }
-
-                *out = Self::Buffer(buffer);
                 Ok(true)
             }
             _ => Ok(false),
@@ -508,16 +540,11 @@ impl StringOrBuffer {
         allow_string_object: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            let buffer = if is_async {
-                Buffer::from_js_pinned(global, value)
-                    .unwrap_or_else(|| Buffer::from_array_buffer(global, value))
+            *out = if is_async {
+                Self::pinned_buffer_from_js(global, value, true)
             } else {
-                Buffer::from_array_buffer(global, value)
+                Self::Buffer(Buffer::from_array_buffer(global, value))
             };
-            if is_async {
-                buffer.buffer.value.protect();
-            }
-            *out = Self::Buffer(buffer);
             return Ok(true);
         }
 

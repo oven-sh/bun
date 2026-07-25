@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -489,32 +489,36 @@ describe("bunx --no-install", () => {
 // The npm `bun` package ships its bins as `bin/bunx.exe` on every platform.
 // pnpm (and other cmd-shim-style linkers) exec that path directly instead of
 // via a `bunx`-named symlink, so argv[0] ends with `bunx.exe` even on posix.
-it.concurrent("detects bunx mode when argv[0] ends with bunx.exe on posix", async () => {
-  const { x_dir, env } = setup();
-  const exe = join(x_dir, "bunx.exe");
-  if (isWindows) {
-    copyFileSync(bunExe(), exe);
-  } else {
-    symlinkSync(bunExe(), exe);
-  }
+// Debug builds also install the bunx link as `bunx-debug`.
+it.concurrent.each(["bunx.exe", ...(isDebug ? ["bunx-debug", "bunx-debug.exe"] : [])])(
+  "detects bunx mode when argv[0] ends with %s",
+  async name => {
+    const { x_dir, env } = setup();
+    const exe = join(x_dir, name);
+    if (isWindows) {
+      copyFileSync(bunExe(), exe);
+    } else {
+      symlinkSync(bunExe(), exe);
+    }
 
-  await using proc = spawn({
-    cmd: [exe, "--help"],
-    cwd: x_dir,
-    stdout: "pipe",
-    stdin: "ignore",
-    stderr: "pipe",
-    env,
-  });
-  const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    await using proc = spawn({
+      cmd: [exe, "--help"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // `bunx --help` writes its usage to stderr and exits 1; `bun --help` (the
-  // wrong mode before this fix) writes the full CLI help to stdout and exits 0.
-  expect(err).toContain("Usage: bunx");
-  expect(out).not.toContain("Bun is a fast JavaScript runtime");
-  expect(out).toHaveLength(0);
-  expect(exited).toBe(1);
-});
+    // `bunx --help` writes its usage to stderr and exits 1; `bun --help` (the
+    // wrong mode before this fix) writes the full CLI help to stdout and exits 0.
+    expect(err).toContain("Usage: bunx");
+    expect(out).not.toContain("Bun is a fast JavaScript runtime");
+    expect(out).toHaveLength(0);
+    expect(exited).toBe(1);
+  },
+);
 
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {
   const { x_dir, env } = setup();

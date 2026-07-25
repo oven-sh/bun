@@ -2512,8 +2512,7 @@ impl FetchTasklet {
             let body = unsafe { (*response).get_body_value() };
             // Called inside a JSC Weak finalizer: do not `.get()` the ReadableStreamRef.
             if !matches!(body, BodyValue::Locked(_)) || this.readable_stream_ref.has() {
-                // Body already resolved, or a ReadableStream exists; a paused stream
-                // transport is handled by `drop_backpressure_if_unobserved`.
+                // Body resolved or streaming; `drop_backpressure_if_unobserved` handles a paused stream.
                 return;
             }
 

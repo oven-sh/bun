@@ -461,20 +461,15 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 }
             }
 
-            SpawnStatus::Signaled(_) => {
-                // Only the *print* is gated on a valid signal code;
-                // `suppress_reporting` + `raise_ignoring_panic_handler`
-                // run unconditionally.
-                let signal_code = spawn_result.status.signal_code();
-                if let Some(sig) = signal_code {
-                    if sig != bun_sys::SignalCode::SIGINT && !silent {
-                        pretty_errorln!(
-                            "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
-                            bstr::BStr::new(name),
-                            sig.fmt(Output::enable_ansi_colors_stderr()),
-                        );
-                        Output::flush();
-                    }
+            SpawnStatus::Signaled(sig) => {
+                let sc = bun_sys::SignalCode(sig);
+                if sc != bun_sys::SignalCode::SIGINT && !silent {
+                    pretty_errorln!(
+                        "<r><red>error<r><d>:<r> script <b>\"{}\"<r> was terminated by signal {}<r>",
+                        bstr::BStr::new(name),
+                        sc.fmt(Output::enable_ansi_colors_stderr()),
+                    );
+                    Output::flush();
                 }
 
                 if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
@@ -483,10 +478,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     bun_crash_handler::suppress_reporting();
                 }
 
-                if let Some(sig) = signal_code {
-                    Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(sig.0));
-                }
-                Global::exit(1);
+                Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(sig));
             }
 
             SpawnStatus::Err(ref err) => {

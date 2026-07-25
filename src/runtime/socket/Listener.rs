@@ -1697,7 +1697,9 @@ pub(crate) fn js_get_ticket_keys(global: &JSGlobalObject, frame: &CallFrame) -> 
     if let Some(sc) = args[0].as_class_ref::<SecureContext>() {
         return get_ticket_keys_for_ctx(global, sc.ctx);
     }
-    Err(global.throw(format_args!("Expected a Listener or SecureContext instance")))
+    Err(global.throw(format_args!(
+        "Expected a Listener or SecureContext instance"
+    )))
 }
 
 #[bun_jsc::host_fn]
@@ -1717,7 +1719,9 @@ pub(crate) fn js_set_ticket_keys(global: &JSGlobalObject, frame: &CallFrame) -> 
     if let Some(sc) = args[0].as_class_ref::<SecureContext>() {
         return set_ticket_keys_for_ctx(global, sc.ctx, args[1]);
     }
-    Err(global.throw(format_args!("Expected a Listener or SecureContext instance")))
+    Err(global.throw(format_args!(
+        "Expected a Listener or SecureContext instance"
+    )))
 }
 
 #[cfg(windows)]

@@ -1616,9 +1616,7 @@ pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> 
 const TICKET_KEY_SIZE: usize = 48;
 
 impl Listener {
-    /// The `SSL_CTX*` backing accepted sockets: `secure_ctx` for TCP listeners,
-    /// or the named-pipe context's ctx on Windows. `None` before `listen()`
-    /// builds the context.
+    /// The `SSL_CTX*` backing accepted sockets; `None` before `listen()`.
     fn ssl_ctx(&self) -> Option<NonNull<boring_sys::SSL_CTX>> {
         if let Some(ctx) = self.secure_ctx.get() {
             return Some(ctx);
@@ -1680,9 +1678,8 @@ fn set_ticket_keys_for_ctx(
     Ok(JSValue::UNDEFINED)
 }
 
-/// Accepts either a `Listener` (listen() path) or a native `SecureContext`
-/// (the `server.emit('connection', sock)` path, where no Listener is built
-/// and the handshake uses `_sharedCreds.context`).
+/// Accepts a `Listener` (listen() path) or a `SecureContext` (the
+/// `server.emit('connection')` path's `_sharedCreds.context`).
 #[bun_jsc::host_fn]
 pub(crate) fn js_get_ticket_keys(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     jsc::mark_binding!();

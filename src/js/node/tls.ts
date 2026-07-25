@@ -1160,9 +1160,7 @@ function buildSharedCreds(server) {
       minVersion: server.minVersion,
       maxVersion: server.maxVersion,
     },
-    // A server with ticketKeys needs its own SSL_CTX — the digest-interned
-    // cache shares one SSL_CTX* across consumers, so setting per-server
-    // ticket key material on it would leak into unrelated servers.
+    // Per-server ticket keys must not land on a digest-cached shared SSL_CTX.
     ticketKeys === undefined,
   ));
   if (ticketKeys !== undefined && sc.context) _setTicketKeys(sc.context, ticketKeys);
@@ -1419,7 +1417,6 @@ function Server(options, secureConnectionListener): void {
         ? serverTLSOptions
         : { ...serverTLSOptions };
     // After _sharedCreds is assigned so the keys reach the new context.
-    // validateSecureContextOptions already checked type + 48-byte length.
     const ticketKeys = options?.ticketKeys;
     if (ticketKeys != null) this.setTicketKeys(ticketKeys);
   };
@@ -1430,27 +1427,21 @@ function Server(options, secureConnectionListener): void {
   Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
   Server.prototype.getTicketKeys = function () {
-    // Prefer the live SSL_CTX: the Listener's when listening, or the
-    // SecureContext backing server.emit('connection') upgrades.
     const { _handle } = this;
     if (_handle) {
       const keys = _getTicketKeys(_handle);
       if (keys !== undefined) {
         if (this._ticketKeys === undefined) {
-          // BoringSSL auto-rotates its default key every ~48h until
-          // SSL_CTX_set_tlsext_ticket_keys is called; Node/OpenSSL fixes the
-          // bytes at ctx creation. Pin what we just read so future calls
-          // return the same bytes and tickets stay decryptable.
+          // BoringSSL auto-rotates its default key until one is set; pin what
+          // we read so future calls are stable like Node/OpenSSL.
           this._ticketKeys = Buffer.from(keys);
           _setTicketKeys(_handle, keys);
         }
         return keys;
       }
     }
-    // No SSL_CTX yet (before listen() / first injected connection). Node
-    // builds the SSL_CTX in the constructor and returns its keys here, so
-    // return the recorded key material instead of throwing, generating it on
-    // first access. kRealListen/buildSharedCreds apply these exact bytes.
+    // Pre-listen: the SSL_CTX does not exist yet, so return the stored key
+    // material (generated lazily); kRealListen/buildSharedCreds apply it.
     let stored = this._ticketKeys;
     if (stored === undefined) {
       stored = (_randomBytes ??= require("node:crypto").randomBytes)(48);
@@ -1467,21 +1458,15 @@ function Server(options, secureConnectionListener): void {
       throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
     }
     if (keys.byteLength !== 48) {
-      // Node: validateBuffer(keys); assert(keys.byteLength === 48, …) — where
-      // `assert` is internal/assert, so the length failure surfaces as
-      // ERR_INTERNAL_ASSERTION (Error), not a TypeError.
+      // Node checks length via internal/assert, so ERR_INTERNAL_ASSERTION (Error).
       throw $ERR_INTERNAL_ASSERTION("Session ticket keys must be a 48-byte buffer" + kInternalAssertionSuffix);
     }
-    // Buffer.from(Uint8Array) copies, so later mutation of the caller's
-    // buffer cannot change what is applied to the SSL_CTX at listen time.
-    // The intermediate Uint8Array view also accepts a DataView input.
+    // Copy so caller-side mutation cannot change what is applied at listen().
     const copy = (this._ticketKeys = Buffer.from(new Uint8Array(keys.buffer, keys.byteOffset, keys.byteLength)));
     const { _handle } = this;
     if (_handle) _setTicketKeys(_handle, copy);
-    // For the emit('connection') path, drop the cached creds so the next
-    // injected socket rebuilds them with the new keys. buildSharedCreds opts
-    // out of the digest cache when _ticketKeys is set, so the rebuilt ctx is
-    // private to this server.
+    // emit('connection') path: drop cached creds so the next injected socket
+    // rebuilds them with the new keys (on an unshared SSL_CTX).
     if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
       this._sharedCreds = null;
     }

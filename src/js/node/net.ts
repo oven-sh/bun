@@ -3933,8 +3933,7 @@ Server.prototype[kRealListen] = function (
   }
 
   if (tls) {
-    // Bun.listen() just built the SSL_CTX; apply the session-ticket key
-    // material now so it is in place before the first accept callback runs.
+    // Apply session-ticket keys to the freshly built SSL_CTX before any accept.
     const ticketKeys = tls.ticketKeys;
     if (ticketKeys !== undefined) setTicketKeys(this._handle, ticketKeys);
   }

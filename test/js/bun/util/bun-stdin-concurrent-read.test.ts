@@ -27,8 +27,10 @@ async function run(src: string) {
   return { stdout, stderr, exitCode };
 }
 
-test.concurrent("two concurrent Bun.stdin.text() calls: second rejects ERR_INVALID_STATE, first reads every byte", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+test.concurrent(
+  "two concurrent Bun.stdin.text() calls: second rejects ERR_INVALID_STATE, first reads every byte",
+  async () => {
+    const { stdout, stderr, exitCode } = await run(`
     const wrap = p => p.then(
       v => ({ state: "resolved", len: v.length }),
       e => ({ state: "rejected", code: e?.code, name: e?.name }),
@@ -36,13 +38,14 @@ test.concurrent("two concurrent Bun.stdin.text() calls: second rejects ERR_INVAL
     const [a, b] = await Promise.all([wrap(Bun.stdin.text()), wrap(Bun.stdin.text())]);
     process.stdout.write(JSON.stringify({ a, b }));
   `);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    a: { state: "resolved", len: SIZE },
-    b: { state: "rejected", code: "ERR_INVALID_STATE", name: "Error" },
-  });
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      a: { state: "resolved", len: SIZE },
+      b: { state: "rejected", code: "ERR_INVALID_STATE", name: "Error" },
+    });
+    expect(exitCode).toBe(0);
+  },
+);
 
 describe.each(["text", "arrayBuffer", "bytes"] as const)("Bun.stdin.%s()", method => {
   test.concurrent(`rejects when process.stdin holds the reader; process.stdin receives every byte`, async () => {
@@ -85,9 +88,7 @@ test.concurrent("sequential Bun.stdin.text() after the first read completes does
 });
 
 test.concurrent("Bun.stdin.text() with no other consumer reads every byte", async () => {
-  const { stdout, stderr, exitCode } = await run(
-    `process.stdout.write(String((await Bun.stdin.text()).length));`,
-  );
+  const { stdout, stderr, exitCode } = await run(`process.stdout.write(String((await Bun.stdin.text()).length));`);
   expect(stderr).toBe("");
   expect(stdout).toBe(String(SIZE));
   expect(exitCode).toBe(0);

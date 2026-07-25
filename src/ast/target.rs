@@ -101,11 +101,13 @@ impl Target {
         // Callers (`ESMConditions::init`) take byte slices, so surface
         // bytes directly rather than `&str`.
         match self {
-            Target::Node => &[b"node"],
+            // "module-sync" is a default condition in Node v22.10+ (matched
+            // for both import and require once require(esm) is available).
+            Target::Node => &[b"node", b"module-sync"],
             Target::Browser => &[b"browser", b"module"],
-            Target::Bun => &[b"bun", b"node"],
-            Target::ServerComponentsSsr => &[b"bun", b"node"],
-            Target::BunMacro => &[b"macro", b"bun", b"node"],
+            Target::Bun => &[b"bun", b"node", b"module-sync"],
+            Target::ServerComponentsSsr => &[b"bun", b"node", b"module-sync"],
+            Target::BunMacro => &[b"macro", b"bun", b"node", b"module-sync"],
         }
     }
 }

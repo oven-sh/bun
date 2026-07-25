@@ -2181,10 +2181,15 @@ impl<'a> ESModule<'a> {
                         subpath,
                         internal,
                     );
+                    // Node's PACKAGE_TARGET_RESOLVE array handling: continue
+                    // past invalid targets and null results, remembering the
+                    // last error; only a successful resolution returns.
                     if result.status == Status::InvalidPackageTarget
                         || result.status == Status::Null
                     {
                         last_exception = result.status;
+                        *self.module_type = prev_module_type;
+                        continue;
                     }
 
                     if result.status.is_undefined() {

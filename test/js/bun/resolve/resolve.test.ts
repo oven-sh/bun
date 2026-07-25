@@ -589,6 +589,50 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+describe("package.json imports/exports resolution", () => {
+  it.concurrent("resolves subpath imports through a '#/*' key", () => {
+    using dir = tempDir("resolver-imports-hash-slash", {
+      "package.json": JSON.stringify({
+        name: "host",
+        imports: { "#/*": "./src/*.js", "#plain": "./src/plain.js" },
+      }),
+      "src/foo.js": "module.exports = 'foo';",
+      "src/plain.js": "module.exports = 'plain';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("#/foo", join(root, "index.js"))).toBe(join(root, "src/foo.js"));
+    expect(Bun.resolveSync("#plain", join(root, "index.js"))).toBe(join(root, "src/plain.js"));
+    // A bare "#" is still invalid.
+    expect(() => Bun.resolveSync("#", join(root, "index.js"))).toThrow();
+  });
+
+  it.concurrent("continues past invalid and null entries in an exports fallback array", () => {
+    using dir = tempDir("resolver-exports-fallback-array", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: {
+          // Node's PACKAGE_TARGET_RESOLVE: [] -> null, null -> continue,
+          // {} -> no matching condition, bare specifier -> invalid target;
+          // "./*" is the first (and only) resolvable entry.
+          "./fallbackdir/*": [[], null, {}, "builtin:x/*", "./*"],
+          "./fallbackfile": [[], null, {}, "builtin:x", "./real.js"],
+          "./nofallback": [],
+        },
+      }),
+      "node_modules/test-pkg/lib/a.js": "module.exports = 'a';",
+      "node_modules/test-pkg/real.js": "module.exports = 'real';",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/fallbackdir/lib/a.js", root)).toBe(join(root, "node_modules/test-pkg/lib/a.js"));
+    expect(Bun.resolveSync("test-pkg/fallbackfile", root)).toBe(join(root, "node_modules/test-pkg/real.js"));
+    expect(() => Bun.resolveSync("test-pkg/nofallback", root)).toThrow();
+  });
+});
+
 describe("package.json exports target percent-encoding", () => {
   // ESModule.finalize short-circuits when the resolved path contains no '%'.
   // These cases exercise both that branch and the decode branch to keep them in lockstep.

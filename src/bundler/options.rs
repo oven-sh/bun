@@ -277,13 +277,7 @@ pub trait TargetExt: Copy {
     }
 
     fn default_conditions_map() -> EnumMap<Target, &'static [&'static [u8]]> {
-        EnumMap::from_fn(|k| match k {
-            Target::Node => &[b"node" as &[u8]][..],
-            Target::Browser => &[b"browser" as &[u8], b"module"][..],
-            Target::Bun => &[b"bun" as &[u8], b"node"][..],
-            Target::ServerComponentsSsr => &[b"bun" as &[u8], b"node"][..],
-            Target::BunMacro => &[b"macro" as &[u8], b"bun", b"node"][..],
-        })
+        EnumMap::from_fn(|k: Target| k.default_conditions())
     }
 }
 

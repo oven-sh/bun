@@ -1732,7 +1732,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             Err(_) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
-                    bun_core::fmt::QuotedFormatter { text: &name_pattern },
+                    bun_core::fmt::QuotedFormatter {
+                        text: &name_pattern
+                    },
                 );
                 Global::exit(1);
             }

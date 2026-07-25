@@ -473,11 +473,10 @@ async function runOneFile(
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
 
-  // Auto-loaded .env values are DontEnum on process.env; spread would drop
-  // them. getOwnPropertyNames includes them so child tests inherit .env values.
   const baseEnv: Record<string, string> = {};
-  if (opts.env) {
-    Object.assign(baseEnv, opts.env);
+  const optsEnv = opts.env;
+  if (optsEnv) {
+    Object.assign(baseEnv, optsEnv);
   } else {
     for (const k of $Object.getOwnPropertyNames(process.env)) {
       const v = process.env[k];

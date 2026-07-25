@@ -1021,8 +1021,6 @@ function normalizeSpawnArguments(file, args, options) {
 
   let envKeys: string[] = [];
   if (env === process.env) {
-    // Auto-loaded .env values are DontEnum on process.env; getOwnPropertyNames
-    // includes them (and runtime mutations) so children keep inheriting both.
     for (const key of $Object.getOwnPropertyNames(env)) {
       ArrayPrototypePush.$call(envKeys, key);
     }

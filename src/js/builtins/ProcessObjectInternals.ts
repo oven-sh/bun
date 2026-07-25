@@ -453,9 +453,6 @@ export function windowsEnv(
   //
   // it throws "Cannot convert a Symbol value to a string"
 
-  // envMapList now includes auto-loaded .env keys (DontEnum on internalEnv) so
-  // getOwnPropertyNames can see them; inspection and toJSON mirror Object.keys
-  // by skipping keys whose storage property is non-enumerable.
   const enumerableView = () => {
     let o = {};
     for (let k of envMapList) {

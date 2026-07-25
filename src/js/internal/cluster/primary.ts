@@ -78,8 +78,6 @@ function setupSettingsNT(settings) {
 }
 
 function createWorkerProcess(id, env) {
-  // Auto-loaded .env values are DontEnum on process.env; spread would drop
-  // them. getOwnPropertyNames includes them so workers inherit .env values.
   const workerEnv = {};
   for (const k of $Object.getOwnPropertyNames(process.env)) {
     const v = process.env[k];

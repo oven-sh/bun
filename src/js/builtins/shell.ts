@@ -253,9 +253,6 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
   const originalDefaultEnv = defaultEnv;
   var defaultCwd: string | undefined = undefined;
 
-  // Auto-loaded .env values are DontEnum on process.env; setEnv iterates
-  // enumerable-only. Snapshot via getOwnPropertyNames so $`cmd` keeps
-  // inheriting both .env values and runtime process.env mutations.
   function snapshotProcessEnv(env) {
     const out = {};
     for (const key of $Object.getOwnPropertyNames(env)) {

@@ -193,7 +193,10 @@ const inspector = require("node:inspector");
 const { Worker } = require("node:worker_threads");
 const mainUrl = inspector.url();
 const worker = new Worker("./worker.mjs");
-const fromWorker = await new Promise(resolve => worker.on("message", resolve));
+const fromWorker = await new Promise((resolve, reject) => {
+  worker.on("message", resolve);
+  worker.on("error", reject);
+});
 // The worker's close() must not have shut down the main thread's server.
 const urlAfterWorker = inspector.url();
 console.log(JSON.stringify({ mainUrl, urlAfterWorker, ...fromWorker }));

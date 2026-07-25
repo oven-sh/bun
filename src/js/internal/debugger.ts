@@ -386,7 +386,7 @@ class Debugger {
     }
 
     if (protocol === "ws+unix:") {
-      Bun.serve({
+      this.#server = Bun.serve({
         unix: pathname,
         fetch: this.#fetch.bind(this),
         websocket: this.#websocket,

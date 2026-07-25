@@ -4040,6 +4040,10 @@ GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction h
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestThen;
     } else if (handler == Bun__TestScope__Describe2__bunTestCatch) {
         return GlobalObject::PromiseFunctions::Bun__TestScope__Describe2__bunTestCatch;
+    } else if (handler == Bun__WriteFileLocked__onStreamResolved) {
+        return GlobalObject::PromiseFunctions::Bun__WriteFileLocked__onStreamResolved;
+    } else if (handler == Bun__WriteFileLocked__onStreamRejected) {
+        return GlobalObject::PromiseFunctions::Bun__WriteFileLocked__onStreamRejected;
     } else if (handler == Bun__onResolveEntryPointResult) {
         return GlobalObject::PromiseFunctions::Bun__onResolveEntryPointResult;
     } else if (handler == Bun__onRejectEntryPointResult) {

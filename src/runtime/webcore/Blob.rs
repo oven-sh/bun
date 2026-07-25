@@ -5244,6 +5244,25 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
+                        // A body backed by a ReadableStream has no producer to
+                        // fire `on_receive_value`; read the stream ourselves.
+                        if let Some(readable) =
+                            get_stream(global_this).or_else(|| locked.readable.get(global_this))
+                        {
+                            let bytes_promise =
+                                global_this.readable_stream_to_bytes(readable.value);
+                            // SAFETY: re-borrow after `readable_stream_to_bytes`.
+                            *(unsafe { &mut *body_value }) = BodyValue::Used;
+                            bytes_promise.then(
+                                global_this,
+                                task,
+                                write_file_mod::write_file_locked_on_stream_resolved_shim,
+                                write_file_mod::write_file_locked_on_stream_rejected_shim,
+                            );
+                            // SAFETY: `task` heap-allocated above; consumed by
+                            // the `then` reactions.
+                            return Ok(ControlFlow::Break(unsafe { (*task).promise.value() }));
+                        }
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.

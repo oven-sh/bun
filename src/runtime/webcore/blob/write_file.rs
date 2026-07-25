@@ -9,7 +9,7 @@ use bun_core::ZigString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -1326,6 +1326,33 @@ impl WriteFileWaitFromLockedValueTask {
         // TODO: properly propagate exception upwards
     }
 
+    /// `.then` reaction for a `Locked` body that already has a readable: the
+    /// body was read via `readableStreamToBytes`; wrap the resolved bytes as
+    /// an `InternalBlob` and hand them to [`then`](Self::then).
+    fn on_stream_resolved(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JSValue {
+        let args = callframe.arguments_old::<2>();
+        let this = args.ptr[args.len - 1].as_promise_ptr::<Self>();
+        let mut value = match args.ptr[0].as_array_buffer(global) {
+            Some(buf) => body::Value::InternalBlob(body::InternalBlob {
+                bytes: buf.slice().to_vec(),
+                was_string: false,
+            }),
+            None => body::Value::Empty,
+        };
+        let _ = Self::then(NonNull::new(this).unwrap(), &mut value);
+        JSValue::UNDEFINED
+    }
+
+    fn on_stream_rejected(global: &JSGlobalObject, callframe: &jsc::CallFrame) -> JSValue {
+        let args = callframe.arguments_old::<2>();
+        let this = args.ptr[args.len - 1].as_promise_ptr::<Self>();
+        let mut value = body::Value::Error(body::ValueError::JSValue(
+            jsc::strong::Optional::create(args.ptr[0], global),
+        ));
+        let _ = Self::then(NonNull::new(this).unwrap(), &mut value);
+        JSValue::UNDEFINED
+    }
+
     /// # Safety
     /// `this` must point to a live Box-allocated `WriteFileWaitFromLockedValueTask`.
     /// On every arm except `body::Value::Locked`, the allocation is consumed.
@@ -1425,5 +1452,28 @@ impl WriteFileWaitFromLockedValueTask {
             }
         }
         Ok(())
+    }
+}
+
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__WriteFileLocked__onStreamResolved")]
+    pub(crate) unsafe fn write_file_locked_on_stream_resolved_shim(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
+        WriteFileWaitFromLockedValueTask::on_stream_resolved(global, callframe)
+    }
+}
+bun_jsc::jsc_host_abi! {
+    #[unsafe(export_name = "Bun__WriteFileLocked__onStreamRejected")]
+    pub(crate) unsafe fn write_file_locked_on_stream_rejected_shim(
+        global: *mut JSGlobalObject,
+        callframe: *mut CallFrame,
+    ) -> JSValue {
+        let (global, callframe) =
+            (bun_opaque::opaque_deref(global), bun_opaque::opaque_deref(callframe));
+        WriteFileWaitFromLockedValueTask::on_stream_rejected(global, callframe)
     }
 }

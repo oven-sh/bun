@@ -1377,10 +1377,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let arg = call.args.slice()[0];
         let (name, name_loc): (&'a [u8], js_ast::Loc) = match arg.data {
-            js_ast::ExprData::EString(mut s) => {
-                s.resolve_rope_if_needed(self.arena);
-                (s.string(self.arena).expect("unreachable"), arg.loc)
-            }
+            js_ast::ExprData::EString(mut s) => (s.slice(self.arena), arg.loc),
             js_ast::ExprData::EObject(obj) => {
                 // Only rewrite the exact `{ bindings: "name" }` shape. Any
                 // other option (`path`, `module_root`, `try`, spreads,
@@ -1407,8 +1404,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let js_ast::ExprData::EString(mut s) = value.data else {
                     return None;
                 };
-                s.resolve_rope_if_needed(self.arena);
-                (s.string(self.arena).expect("unreachable"), value.loc)
+                (s.slice(self.arena), value.loc)
             }
             _ => return None,
         };

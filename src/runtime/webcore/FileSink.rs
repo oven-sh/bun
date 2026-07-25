@@ -915,12 +915,17 @@ impl FileSink {
         // must not touch live JS cells.
 
         // The JS side abandoned this sink. If bytes are still buffered below
-        // the writer's chunk threshold, flush them now so they reach the fd
-        // before `deinit` closes it; otherwise a GC between `write()` and the
-        // deferred-microtask drain drops the data on the floor.
+        // the writer's chunk threshold, drain them to the fd now; otherwise a
+        // GC between `write()` and the deferred-microtask drain drops them on
+        // the floor. This must not go through `IOWriter::flush()`: that can
+        // dispatch `Parent::on_*` via the stored `*mut FileSink` backref,
+        // which is the R-2 noalias hazard this file's header documents (and
+        // `on_error → run_pending` would touch a JSPromise during the sweep).
+        // `drain_without_reporting()` is pure syscalls on POSIX and a no-op on
+        // Windows, where the first write already queued a `uv_fs_write` that
+        // holds a parent ref.
         if !self.done.get() && self.writer.get().has_pending_data() {
-            // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
-            let _ = self.writer.with_mut(|w| w.flush());
+            self.writer.with_mut(|w| w.drain_without_reporting());
         }
 
         // Shutdown never unwinds the writer: the loop stops ticking, so the

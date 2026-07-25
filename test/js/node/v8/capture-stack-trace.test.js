@@ -1,7 +1,7 @@
 import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1120,4 +1120,122 @@ test("lazy error-info materialization does not store an empty stack value when t
     signalCode: null,
   });
   expect(exitCode).toBe(0);
+});
+
+// https://github.com/oven-sh/bun/issues/10483
+// Errors created inside an async function that is awaited at a module's top
+// level should include that top-level await as an async frame, matching Node.
+test("async stack trace includes the top-level-await caller frame", async () => {
+  using dir = tempDir("tla-async-stack", {
+    // One level: the async function is awaited directly at the module top level.
+    "direct.mjs": `async function inner() {
+  await 0;
+  console.log(new Error("boom").stack);
+}
+await inner();
+`,
+    // Three nested async functions under the module's top-level await.
+    "chain.mjs": `async function inner() {
+  await 0;
+  console.log(new Error("boom").stack);
+}
+async function mid() { await inner(); }
+async function outer() { await mid(); }
+await outer();
+`,
+    // The issue's original reproduction: an anonymous async arrow awaited at
+    // top level, thrown so Bun's own error printer renders the stack.
+    "anon.mjs": `export function throwSome(b) {
+  return async () => {
+    await b();
+    throw new Error("asd");
+  };
+}
+export const some = throwSome(async () => {});
+await some();
+`,
+    // The module frame is exposed as a CallSite with isAsync() true and no
+    // function name, matching Node.
+    "callsites.mjs": `async function inner() {
+  await 0;
+  Error.prepareStackTrace = (e, sites) => JSON.stringify(sites.map(s => ({
+    fn: s.getFunctionName() || null,
+    async: s.isAsync(),
+    line: s.getLineNumber(),
+  })));
+  console.log(new Error("x").stack);
+}
+await inner();
+`,
+    // A module's await frame reaches across an import boundary.
+    "entry.mjs": `import { run } from "./lib.mjs";
+await run();
+`,
+    "lib.mjs": `async function inner() {
+  await 0;
+  console.log(new Error("boom").stack);
+}
+export async function run() { await inner(); }
+`,
+  });
+
+  const run = async name => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), name],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+
+  {
+    const { stdout, exitCode } = await run("direct.mjs");
+    const lines = stdout.trim().split("\n");
+    expect(lines[0]).toBe("Error: boom");
+    expect(lines[1]).toMatch(/^ {4}at inner \(.*direct\.mjs:3:\d+\)$/);
+    expect(lines[2]).toMatch(/^ {4}at async .*direct\.mjs:5:\d+$/);
+    expect(lines).toHaveLength(3);
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, exitCode } = await run("chain.mjs");
+    const lines = stdout.trim().split("\n");
+    expect(lines[1]).toMatch(/^ {4}at inner \(.*chain\.mjs:3:\d+\)$/);
+    expect(lines[2]).toMatch(/^ {4}at async mid \(.*chain\.mjs:5:\d+\)$/);
+    expect(lines[3]).toMatch(/^ {4}at async outer \(.*chain\.mjs:6:\d+\)$/);
+    expect(lines[4]).toMatch(/^ {4}at async .*chain\.mjs:7:\d+$/);
+    expect(lines).toHaveLength(5);
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stdout, exitCode } = await run("entry.mjs");
+    const lines = stdout.trim().split("\n");
+    expect(lines[1]).toMatch(/^ {4}at inner \(.*lib\.mjs:3:\d+\)$/);
+    expect(lines[2]).toMatch(/^ {4}at async run \(.*lib\.mjs:5:\d+\)$/);
+    expect(lines[3]).toMatch(/^ {4}at async .*entry\.mjs:2:\d+$/);
+    expect(lines).toHaveLength(4);
+    expect(exitCode).toBe(0);
+  }
+
+  {
+    const { stderr, exitCode } = await run("anon.mjs");
+    expect(stderr).toMatch(/anon\.mjs:4:\d+/);
+    expect(stderr).toMatch(/anon\.mjs:8:\d+/);
+    expect(exitCode).toBe(1);
+  }
+
+  {
+    const { stdout, exitCode } = await run("callsites.mjs");
+    const sites = JSON.parse(stdout.trim());
+    expect(sites).toEqual([
+      { fn: "inner", async: false, line: 8 },
+      { fn: null, async: true, line: 10 },
+    ]);
+    expect(exitCode).toBe(0);
+  }
 });

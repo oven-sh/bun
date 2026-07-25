@@ -11,6 +11,10 @@
 // ErrorInstance with no stack of its own; no-op otherwise. Never throws.
 extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject*, JSC::EncodedJSValue errorValue, JSC::JSPromise*);
 
+namespace JSC {
+class StackFrame;
+}
+
 namespace Bun {
 
 // C++ convenience wrapper over Bun__attachAsyncStackFromPromise.
@@ -18,5 +22,8 @@ inline void attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObject, JSC::
 {
     Bun__attachAsyncStackFromPromise(globalObject, JSC::JSValue::encode(error), promise);
 }
+
+// VM::onAppendStackTrace hook: appends the top-level-await module frame that JSC's async stack walk drops. See AsyncStackTrace.cpp.
+void appendTopLevelAwaitStackFrame(JSC::VM&, JSC::JSCell* owner, WTF::Vector<JSC::StackFrame>&, size_t maxToAppend);
 
 } // namespace Bun

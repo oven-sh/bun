@@ -12,12 +12,28 @@
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSAsyncFunctionGenerator.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSModuleRecord.h>
 #include <JavaScriptCore/JSPromiseReaction.h>
+#include <JavaScriptCore/ModuleProgramCodeBlock.h>
+#include <JavaScriptCore/ModuleProgramExecutable.h>
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
+#include <JavaScriptCore/VMEntryRecord.h>
 
 using namespace JSC;
+
+static BytecodeIndex yieldStateToBytecodeIndex(CodeBlock* codeBlock, int32_t state)
+{
+    size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+    if (state > 0 && numberOfJumpTables > 0) {
+        const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(numberOfJumpTables - 1);
+        int32_t offset = jumpTable.offsetForValue(state);
+        if (offset)
+            return BytecodeIndex(offset);
+    }
+    return BytecodeIndex(0);
+}
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
@@ -105,20 +121,8 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
     };
 
     auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
-        JSC::BytecodeIndex bytecodeIndex(0);
         JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = JSC::BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
+        return stateValue.isInt32() ? yieldStateToBytecodeIndex(codeBlock, stateValue.asInt32()) : JSC::BytecodeIndex(0);
     };
 
     auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
@@ -175,4 +179,91 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         return;
 
     instance->setStackFrames(vm, WTF::move(frames));
+}
+
+// Installed as VM::onAppendStackTrace. Interpreter::getAsyncStackTrace walks
+// the await chain in terms of JSAsyncFunctionGenerator only, so when the
+// outermost awaiter is a module's top-level await the reaction context is a
+// JSModuleRecord and the walk stops one frame short of the
+// `at async file.mjs:N:M` frame Node shows. getStackTrace calls this hook
+// after the sync walk and before inserting its async frames, so a frame
+// appended here lands at the bottom of the result. We locate the same origin
+// generator getStackTrace will use, follow the same chain, and if it ends at
+// a suspended module record append one frame for that await.
+void Bun::appendTopLevelAwaitStackFrame(VM& vm, JSCell* owner, Vector<StackFrame>& results, size_t maxToAppend)
+{
+    if (!maxToAppend || !Options::useAsyncStackTrace())
+        return;
+
+    AssertNoGC assertNoGC;
+
+    // getStackTrace only inspects entry frames that contributed visible
+    // (non-private) frames; the innermost entry frame with a generator context
+    // is the microtask resume behind the current sync stack and is what it
+    // picks. Deeper entry frames belong to the embedder's scheduler and would
+    // walk into internal modules.
+    JSAsyncFunctionGenerator* origin = nullptr;
+    for (EntryFrame* entryFrame = vm.topEntryFrame; entryFrame;) {
+        VMEntryRecord* record = vmEntryRecord(entryFrame);
+        if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(record->m_context)) {
+            origin = generator;
+            break;
+        }
+        entryFrame = record->prevTopEntryFrame();
+    }
+    if (!origin)
+        return;
+
+    auto reactionContext = [](JSValue context) -> JSValue {
+        auto* promise = dynamicDowncast<JSPromise>(context);
+        return promise ? promise->asyncStackTraceContext() : JSValue();
+    };
+
+    JSValue terminal;
+    JSAsyncFunctionGenerator* generator = origin;
+    for (unsigned hops = 0; generator && hops < 256; hops++) {
+        JSValue context = reactionContext(generator->internalField(JSAsyncFunctionGenerator::Field::Context).get());
+        if (!context)
+            return;
+        if (auto* next = dynamicDowncast<JSAsyncFunctionGenerator>(context)) {
+            generator = next;
+            continue;
+        }
+        if (auto* promise = dynamicDowncast<JSPromise>(context)) {
+            JSValue inner = reactionContext(promise);
+            if (auto* next = dynamicDowncast<JSAsyncFunctionGenerator>(inner)) {
+                generator = next;
+                continue;
+            }
+            terminal = inner;
+        } else
+            terminal = context;
+        break;
+    }
+
+    auto* moduleRecord = dynamicDowncast<JSModuleRecord>(terminal);
+    if (!moduleRecord)
+        return;
+
+    // SAFETY: a positive Field::State (a yield index) means the module body is
+    // suspended at an await, the only state in which JSModuleRecord::evaluate
+    // has not cleared m_moduleProgramExecutable, so getOrMakeExecutable()
+    // returns the stored executable without allocating. Required because
+    // getStackTrace runs under AssertNoGC.
+    JSValue stateValue = moduleRecord->internalField(AbstractModuleRecord::Field::State).get();
+    if (!stateValue.isInt32())
+        return;
+    int32_t state = stateValue.asInt32();
+    if (state <= 0)
+        return;
+
+    ModuleProgramExecutable* executable = moduleRecord->getOrMakeExecutable(moduleRecord->globalObject());
+    if (!executable)
+        return;
+    CodeBlock* codeBlock = executable->codeBlock();
+    if (!codeBlock)
+        return;
+
+    BytecodeIndex bytecodeIndex = yieldStateToBytecodeIndex(codeBlock, state);
+    results.append(StackFrame(vm, owner, moduleRecord, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
 }

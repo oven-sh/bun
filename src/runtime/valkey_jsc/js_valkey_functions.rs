@@ -28,10 +28,6 @@ const fn bname(b: &'static [u8]) -> &'static str {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Returns a rejected `Promise` (never throws) when the client is in
-/// subscriber mode. The prototype methods that call this are declared as
-/// promise-returning, so a state error must reject rather than throw so that
-/// `.catch()` / `await ... catch` observes it.
 fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> Option<JSValue> {
     if this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).

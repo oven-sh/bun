@@ -3291,6 +3291,14 @@ where
         let is_done = stream.is_done();
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
+        if is_done {
+            // Last chunk delivered: nothing left to cancel, and the pipe ref
+            // is released on this scope exit. Clear byte_stream so on_abort's
+            // byte_stream branch (which derefs that same ref) won't be taken.
+            if let Some(byte_stream) = this.byte_stream.take() {
+                shim::byte_stream_unpipe(byte_stream);
+            }
+        }
 
         if this.is_aborted_or_ended() {
             return;

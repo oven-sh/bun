@@ -3711,31 +3711,41 @@ it("cancels the upstream fetch body when the client disconnects from `return fet
     });
   });
   await new Promise<void>(r => upstream.listen(0, "127.0.0.1", () => r()));
-  const upstreamUrl = `http://127.0.0.1:${(upstream.address() as net.AddressInfo).port}/`;
+  try {
+    const upstreamUrl = `http://127.0.0.1:${(upstream.address() as net.AddressInfo).port}/`;
 
-  await using server = serve({
-    port: 0,
-    idleTimeout: 255,
-    fetch() {
-      return fetch(upstreamUrl);
-    },
-  });
-
-  const client = net.connect(server.port, "127.0.0.1");
-  client.on("error", () => {});
-  await new Promise<void>(r => client.once("connect", () => r()));
-  client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-  let received = 0;
-  await new Promise<void>(r => {
-    client.on("data", d => {
-      received += d.length;
-      if (received > 1024 * 1024) r();
+    await using server = serve({
+      port: 0,
+      idleTimeout: 255,
+      fetch() {
+        return fetch(upstreamUrl);
+      },
     });
-  });
-  client.destroy();
 
-  await upstreamClosed.promise;
-  upstream.close();
+    const client = net.connect(server.port, "127.0.0.1");
+    try {
+      await new Promise<void>((res, rej) => {
+        client.once("connect", () => res());
+        client.once("error", rej);
+      });
+      client.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      let received = 0;
+      await new Promise<void>((res, rej) => {
+        client.on("data", d => {
+          received += d.length;
+          if (received > 1024 * 1024) res();
+        });
+        client.on("error", rej);
+        client.on("close", () => rej(new Error("client closed before 1MB received")));
+      });
+    } finally {
+      client.destroy();
+    }
+
+    await upstreamClosed.promise;
+  } finally {
+    upstream.close();
+  }
 
   expect(ranToCompletion).toBe(false);
   expect(sentChunks).toBeLessThan(TOTAL_CHUNKS);

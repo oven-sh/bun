@@ -122,7 +122,6 @@ const kAgentTlsKeys = [
   "cert",
   "key",
   "passphrase",
-  "pfx",
   "ciphers",
   "secureOptions",
   "minVersion",
@@ -144,16 +143,22 @@ function tlsFromAgent(agent, url) {
     agent = agent.$call(undefined, parsedUrl);
   }
   if (!$isObject(agent)) return undefined;
-  // https.Agent stores the constructor options on `options`. Agents from the
-  // `proxy-agent` family keep their TLS settings on `connectOpts` instead.
-  let opts = agent.options;
-  if (!$isObject(opts)) opts = agent.connectOpts;
-  else if ($isObject(agent.connectOpts)) opts = { __proto__: null, ...agent.connectOpts, ...opts };
-  if (!$isObject(opts)) return undefined;
+  // https.Agent keeps its options on `options`; the proxy-agent family uses `connectOpts`
+  let options = Object.hasOwn(agent, "options") ? agent.options : undefined;
+  if (!$isObject(options)) options = undefined;
+  let connectOpts = Object.hasOwn(agent, "connectOpts") ? agent.connectOpts : undefined;
+  if (!$isObject(connectOpts)) connectOpts = undefined;
+  if (options === undefined && connectOpts === undefined) return undefined;
+  const opts = { __proto__: null, ...connectOpts, ...options };
   let tls;
   for (const key of kAgentTlsKeys) {
-    const value = opts[key];
-    if (value !== undefined) (tls ??= { __proto__: null })[key] = value;
+    let value = opts[key];
+    if (value === undefined) continue;
+    if (typeof value === "string" && (key === "minVersion" || key === "maxVersion")) {
+      value = require("internal/tls").tlsStringToProtocolVersion(value);
+      if (!value) continue;
+    }
+    (tls ??= { __proto__: null })[key] = value;
   }
   return tls;
 }

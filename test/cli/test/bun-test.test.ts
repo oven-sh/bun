@@ -1647,6 +1647,7 @@ describe.concurrent("test file discovery (scanner)", () => {
         "test/dir/file.test.ts": make("dirfile"),
         "test/config/config.test.ts": make("config"),
         "other/elsewhere.test.ts": make("elsewhere"),
+        "app/[slug]/page.test.ts": make("slug"),
       });
 
     async function run(dir: string, args: string[]) {
@@ -1670,6 +1671,7 @@ describe.concurrent("test file discovery (scanner)", () => {
       expect(stdout).toContain("RAN dirfile");
       expect(stdout).toContain("RAN config");
       expect(stdout).not.toContain("RAN elsewhere");
+      expect(stdout).not.toContain("RAN slug");
       expect(stderr).toContain(" 4 pass");
       expect(exitCode).toBe(0);
     });
@@ -1700,16 +1702,53 @@ describe.concurrent("test file discovery (scanner)", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("brace expansion works in glob filters", async () => {
+    test("brace expansion works when the filter also contains '*'", async () => {
       using dir = fixture();
-      const { stdout, stderr, exitCode } = await run(String(dir), ["test/{module,script}.test.ts"]);
+      const { stdout, stderr, exitCode } = await run(String(dir), ["test/{dir,config}/*.test.ts"]);
 
-      expect(stdout).toContain("RAN module");
-      expect(stdout).toContain("RAN script");
-      expect(stdout).not.toContain("RAN dirfile");
-      expect(stdout).not.toContain("RAN config");
+      expect(stdout).toContain("RAN dirfile");
+      expect(stdout).toContain("RAN config");
+      expect(stdout).not.toContain("RAN module");
+      expect(stdout).not.toContain("RAN script");
       expect(stderr).toContain(" 2 pass");
       expect(exitCode).toBe(0);
+    });
+
+    test("'[slug]' (no '*') is still a substring filter, not a character class", async () => {
+      using dir = fixture();
+      const { stdout, stderr, exitCode } = await run(String(dir), ["[slug]"]);
+
+      expect(stdout).toContain("RAN slug");
+      expect(stdout).not.toContain("RAN module");
+      expect(stderr).toContain(" 1 pass");
+      expect(exitCode).toBe(0);
+    });
+
+    test("leading '!' (no '*') is not a negated glob", async () => {
+      using dir = fixture();
+      const { stderr, exitCode } = await run(String(dir), ["!nope"]);
+
+      expect(stderr).toContain("did not match any test files");
+      expect(exitCode).toBe(1);
+    });
+
+    test("a non-matching glob does not suggest prefixing with './'", async () => {
+      using dir = fixture();
+      const { stderr, exitCode } = await run(String(dir), ["nope/**/*.test.ts"]);
+
+      expect(stderr).toContain("did not match any test files");
+      expect(stderr).not.toContain("filter as a path");
+      expect(stderr).not.toContain("bun test ./");
+      expect(exitCode).toBe(1);
+    });
+
+    test("a non-matching plain filter still suggests prefixing with './'", async () => {
+      using dir = fixture();
+      const { stderr, exitCode } = await run(String(dir), ["missing.test.ts"]);
+
+      expect(stderr).toContain("did not match any test files");
+      expect(stderr).toContain(`bun test ./missing.test.ts`);
+      expect(exitCode).toBe(1);
     });
 
     test("filters without glob syntax still substring-match", async () => {

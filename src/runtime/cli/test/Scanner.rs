@@ -300,7 +300,7 @@ impl<'a> Scanner<'a> {
         }
 
         for filter_name in self.filter_names {
-            if bun_glob::detect_glob_syntax(filter_name) {
+            if is_glob_filter(filter_name) {
                 if bun_glob::r#match(filter_name, name).matches() {
                     return true;
                 }
@@ -449,3 +449,10 @@ impl<'a> Scanner<'a> {
 }
 
 pub(crate) const TEST_NAME_SUFFIXES: [&[u8]; 4] = [b".test", b"_test", b".spec", b"_spec"];
+
+/// A positional filter is treated as a glob only when it contains `*`.
+/// `?`, `[`, `{`, and leading `!` are legal path characters on POSIX (e.g.
+/// Next.js `[slug]` directories) and must keep their substring semantics.
+pub(crate) fn is_glob_filter(filter: &[u8]) -> bool {
+    strings::index_of_char(filter, b'*').is_some()
+}

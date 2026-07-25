@@ -32,7 +32,7 @@ To filter which test files run, pass additional positional arguments to `bun tes
 bun test <filter> <filter> ...
 ```
 
-Any test file with a path that contains one of the filters runs. Filters are substring matches, not glob patterns.
+Any test file with a path that contains one of the filters runs. Filters are substring matches by default.
 
 For example, to run all tests in a `utils` directory:
 
@@ -41,6 +41,12 @@ bun test utils
 ```
 
 This matches files like `src/utils/string.test.ts` and `lib/utils/array_test.js`.
+
+A filter that contains `*` is matched as a glob pattern against the project-relative path instead of as a substring. Quote the pattern so your shell does not expand it first:
+
+```bash terminal icon="terminal"
+bun test 'test/**/*.test.ts'
+```
 
 ### Specifying Exact File Paths
 

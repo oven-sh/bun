@@ -2461,7 +2461,7 @@ impl TestCommand {
                 for in_ in filter_names {
                     let mut to_normalize = in_.to_vec();
                     // Glob patterns stay posix-form; `\` is a glob escape, not a separator.
-                    if !bun_glob::detect_glob_syntax(in_) {
+                    if !scanner::is_glob_filter(in_) {
                         bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
                     }
                     normalized.push(to_normalize.into_boxed_slice());
@@ -2830,7 +2830,7 @@ impl TestCommand {
                     pretty_error!(" {}", bstr::BStr::new(filter));
 
                     if has_file_like.is_none()
-                        && !bun_glob::detect_glob_syntax(filter)
+                        && !scanner::is_glob_filter(filter)
                         && (strings::ends_with(filter, b".ts")
                             || strings::ends_with(filter, b".tsx")
                             || strings::ends_with(filter, b".js")

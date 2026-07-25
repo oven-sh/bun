@@ -4,7 +4,9 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::{Store as BlobStore, StoreRef};
+use crate::webcore::blob::{
+    Store as BlobStore, StoreRef, WriteFileOptions, write_file_with_source_destination,
+};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -60,6 +62,15 @@ impl Archive {
     #[inline]
     pub fn store_ref(&self) -> &StoreRef {
         &self.store
+    }
+
+    /// Gzip level if this archive is configured for gzip, else `None`.
+    #[inline]
+    pub(crate) fn gzip_level(&self) -> Option<u8> {
+        match self.compress {
+            Compression::Gzip(opts) => Some(opts.level),
+            Compression::None => None,
+        }
     }
 }
 
@@ -1111,6 +1122,134 @@ fn start_write_task(
 
     let promise_js = WriteTask::promise_value(task);
     WriteTask::schedule(task);
+    Ok(promise_js)
+}
+
+// ============================================================================
+// Bun.write(dest, archive) with gzip
+// ============================================================================
+//
+// Compresses the archive's store on the thread pool, then resumes the normal
+// `write_file_with_source_destination` pipeline with a byte-backed source blob.
+// This keeps the gzip work off the JS thread (parity with `archive.bytes()` /
+// `Archive.write`) while still honoring every destination kind (local file,
+// Bun.file, S3) rather than the path-only `WriteContext`.
+
+enum CompressWriteResult {
+    Pending,
+    Ok(Vec<u8>),
+    Err(&'static str),
+}
+
+pub struct ArchiveCompressWriteContext {
+    store: StoreRef,
+    level: u8,
+    destination: Blob,
+    mkdirp_if_not_exists: Option<bool>,
+    mode: Option<Mode>,
+    /// `options.extra_options` (e.g. S3 credentials). GC-protected before the
+    /// thread-pool hop and read only on the JS thread in `run_from_js`.
+    extra_options: Option<JSValue>,
+    result: CompressWriteResult,
+}
+
+// SAFETY: the only `!Send` field is `extra_options: Option<JSValue>`. It is
+// GC-protected in `start_archive_compress_write_task` before the task is
+// scheduled and is never dereferenced on the worker thread (`run` touches only
+// `store`/`level`); it is consumed on the JS thread in `run_from_js`/`Drop`.
+// `store` and `destination` are already `Send` (`StoreRef`/`Blob`).
+unsafe impl Send for ArchiveCompressWriteContext {}
+
+impl Drop for ArchiveCompressWriteContext {
+    fn drop(&mut self) {
+        // `destination` (a `Blob`) derefs its store on drop.
+        if let Some(v) = self.extra_options {
+            v.unprotect();
+        }
+    }
+}
+
+impl TaskContext for ArchiveCompressWriteContext {
+    const TAG: TaskTag = task_tag::ArchiveCompressWriteTask;
+
+    fn run(&mut self) {
+        self.result = match compress_gzip(self.store.shared_view(), self.level) {
+            Ok(v) => CompressWriteResult::Ok(v),
+            Err(e) => CompressWriteResult::Err(e.into()),
+        };
+    }
+
+    fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
+        let bytes = match core::mem::replace(&mut self.result, CompressWriteResult::Pending) {
+            CompressWriteResult::Ok(v) => v,
+            CompressWriteResult::Err(e) => {
+                return Ok(PromiseResult::Reject(global.create_error_instance(
+                    format_args!("Failed to gzip archive: {e}"),
+                )));
+            }
+            CompressWriteResult::Pending => unreachable!("run() always sets result"),
+        };
+
+        // Hand the compressed bytes to the normal write pipeline as a
+        // byte-backed source blob (drops naturally; the write task clones it).
+        let write_options = WriteFileOptions {
+            mkdirp_if_not_exists: self.mkdirp_if_not_exists,
+            extra_options: self.extra_options,
+            mode: self.mode,
+        };
+        let mut source = Blob::create_with_bytes_and_allocator(bytes, global, false);
+        let new_promise = write_file_with_source_destination(
+            global,
+            &mut source,
+            &mut self.destination,
+            &write_options,
+        )?;
+
+        // Forward the inner write promise's eventual state onto the promise we
+        // returned to the caller.
+        if let Some(p) = new_promise.as_any_promise() {
+            Ok(
+                match p.unwrap(global.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
+                    jsc::PromiseResult::Pending => PromiseResult::Resolve(new_promise),
+                    jsc::PromiseResult::Fulfilled(v) => PromiseResult::Resolve(v),
+                    jsc::PromiseResult::Rejected(err) => PromiseResult::Reject(err),
+                },
+            )
+        } else {
+            Ok(PromiseResult::Resolve(new_promise))
+        }
+    }
+}
+
+pub type ArchiveCompressWriteTask = AsyncTask<ArchiveCompressWriteContext>;
+
+pub(crate) fn start_archive_compress_write_task(
+    global: &JSGlobalObject,
+    store: StoreRef,
+    level: u8,
+    destination: Blob,
+    options: &WriteFileOptions,
+) -> JsResult<JSValue> {
+    // Pin `extra_options` for the duration of the async task; `Drop` unprotects.
+    if let Some(v) = options.extra_options {
+        v.protect();
+    }
+
+    let task = ArchiveCompressWriteTask::create(
+        global,
+        ArchiveCompressWriteContext {
+            store,
+            level,
+            destination,
+            mkdirp_if_not_exists: options.mkdirp_if_not_exists,
+            mode: options.mode,
+            extra_options: options.extra_options,
+            result: CompressWriteResult::Pending,
+        },
+    )?;
+
+    let promise_js = ArchiveCompressWriteTask::promise_value(task);
+    ArchiveCompressWriteTask::schedule(task);
     Ok(promise_js)
 }
 

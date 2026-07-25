@@ -77,8 +77,9 @@ macro_rules! __fs_pat {
 // (high-tier owns them all; grouped by source module)
 
 use crate::api::archive::{
-    AsyncTask as ArchiveAsyncTask, BlobTask as ArchiveBlobTask, ExtractTask as ArchiveExtractTask,
-    FilesTask as ArchiveFilesTask, WriteTask as ArchiveWriteTask,
+    ArchiveCompressWriteTask, AsyncTask as ArchiveAsyncTask, BlobTask as ArchiveBlobTask,
+    ExtractTask as ArchiveExtractTask, FilesTask as ArchiveFilesTask,
+    WriteTask as ArchiveWriteTask,
 };
 
 use crate::shell::builtins::{
@@ -283,6 +284,9 @@ pub fn run_task(
         }
         task_tag::ArchiveWriteTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveWriteTask))?;
+        }
+        task_tag::ArchiveCompressWriteTask => {
+            ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveCompressWriteTask))?;
         }
         task_tag::ArchiveFilesTask => {
             ArchiveAsyncTask::run_from_js(cast_ptr!(ArchiveFilesTask))?;
@@ -584,7 +588,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 97,
+    task_tag::COUNT == 98,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 

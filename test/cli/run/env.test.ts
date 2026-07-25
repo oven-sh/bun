@@ -953,6 +953,21 @@ for (const shell of ["system", "bun"]) {
       expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe("API_URL=https://api.example.com");
     });
 
+    test.skipIf(isWindowsCMD)(
+      "e2e: .env expansion of a same-file key shadowed only by .env.{other_NODE_ENV} is not pinned",
+      () => {
+        const tmp = tempDirWithFiles("script-runner-dotenv", {
+          "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+          "index.ts": "console.log('API_URL=' + process.env.API_URL);",
+          ".env": "HOST=localhost\nAPI_URL=http://$HOST/api",
+          ".env.production": "HOST=api.example.com",
+        });
+        expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+          "API_URL=http://api.example.com/api",
+        );
+      },
+    );
+
     test("--no-env-file disables .env loading for scripts", () => {
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',
@@ -1026,10 +1041,11 @@ for (const shell of ["system", "bun"]) {
 // `bun run <bare>` that resolves to a file shares the dot_env singleton with
 // the dispatch transpiler; forwarding `.env` values to scripts must not leave
 // that singleton in a state where the VM's suffix decision diverges from the
-// `bun run ./<file>` fast path.
+// `bun run ./<file>` fast path. A package.json script that re-invokes bun
+// must agree with both too.
 test("bun run <bare-file> and bun run ./<file> agree when .env sets NODE_ENV", () => {
   const tmp = tempDirWithFiles("script-runner-nodeenv", {
-    "package.json": "{}",
+    "package.json": `{"scripts":{"start":"'${bunExe().replaceAll("\\", "\\\\")}' index.ts"}}`,
     "index.ts": "console.log('API=' + process.env.API + ', NODE_ENV=' + process.env.NODE_ENV);",
     ".env": "NODE_ENV=production",
     ".env.development": "API=dev",
@@ -1045,6 +1061,7 @@ test("bun run <bare-file> and bun run ./<file> agree when .env sets NODE_ENV", (
   const fast = run("./index.ts");
   expect(fast).toEqual({ stdout: "API=dev, NODE_ENV=production", exitCode: 0 });
   expect(run("index")).toEqual(fast);
+  expect(run("start")).toEqual(fast);
 });
 
 test("bun --env-file run <bare-file> sees the --env-file values (slow path)", () => {

@@ -680,19 +680,19 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 // boots a VM on this singleton) matches the fast path.
                 let process_env_count = env_loader.map.map.count();
                 let disable_default = this_transpiler.options.env.disable_default_env_files;
-                let _ = this_transpiler.run_env_loader(disable_default);
-                // A `.env` key shadowed by a file under a NODE_ENV the parent
-                // does not run under must not be forwarded either, so visit
-                // the other-suffix files to mark those keys conditional.
+                // Explicit --env-file (if any); skip auto-discovery here.
+                let _ = this_transpiler.run_env_loader(true);
                 if !disable_default && this_transpiler.options.env.files.is_empty() {
                     if let Some(entries) =
                         root_dir_info.get_entries(this_transpiler.resolver.generation)
                     {
                         // SAFETY: BSSMap-owned; single-threaded dispatch.
                         let dir: &bun_resolver::fs::DirEntry = unsafe { &*entries };
+                        // Every NODE_ENV-dependent file is loaded before .env
+                        // so .env's expansion sees their keys as conditional.
                         let _ = this_transpiler
                             .env_mut()
-                            .mark_keys_in_other_node_env_files(dir);
+                            .load_default_files_for_script_runner(dir);
                     }
                 }
                 this_transpiler

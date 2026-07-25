@@ -732,13 +732,11 @@ impl Loader {
         self.try_load_default::<_, false>(dir, dir_handle, b".env", value_buffer)
     }
 
-    /// Load every NODE_ENV-specific default file (`.env.{development,
-    /// production,test}[.local]` + `.env.local`) as conditional. Files whose
-    /// slot is already set are skipped, so calling this after
-    /// [`Self::load_default_files`] visits only the other-suffix files. Used by
-    /// the `bun run <script>` path to mark `.env` keys that are shadowed by a
-    /// NODE_ENV file the parent's suffix did not load.
-    pub fn mark_keys_in_other_node_env_files<D: DirEntryProbe + ?Sized>(
+    /// Load every NODE_ENV-dependent default file as conditional, then `.env`
+    /// as non-conditional. `.env` expanding `$VAR` against a key that any
+    /// NODE_ENV-dependent file defines is thereby tainted before
+    /// [`Self::take_script_dotenv`] runs. See #9877 / #9635.
+    pub fn load_default_files_for_script_runner<D: DirEntryProbe + ?Sized>(
         &mut self,
         dir: &D,
     ) -> crate::Result<()> {
@@ -755,7 +753,7 @@ impl Loader {
         ] {
             self.try_load_default::<_, true>(dir, dir_handle, name, &mut value_buffer)?;
         }
-        Ok(())
+        self.try_load_default::<_, false>(dir, dir_handle, b".env", &mut value_buffer)
     }
 
     /// Probe `dir` for a known `.env*` filename and, if present, load it into
@@ -769,7 +767,7 @@ impl Loader {
         name: &'static [u8],
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
-        if dir.has_comptime_query(name) {
+        if dir.has_comptime_query(name) && self.default_file_slot(name).is_none() {
             self.load_env_file::<false, CONDITIONAL>(dir_handle, name, value_buffer)?;
             analytics::Features::dotenv_inc();
         }
@@ -782,10 +780,17 @@ impl Loader {
     pub fn take_script_dotenv(&mut self, process_env_count: usize) {
         self.script_forward.clear();
         {
+            #[cfg(windows)]
+            let is_suffix_key = |k: &[u8]| {
+                strings::eql_case_insensitive_ascii_check_length(k, b"NODE_ENV")
+                    || strings::eql_case_insensitive_ascii_check_length(k, b"BUN_ENV")
+            };
+            #[cfg(not(windows))]
+            let is_suffix_key = |k: &[u8]| k == b"NODE_ENV" || k == b"BUN_ENV";
             let keys = self.map.map.keys();
             let values = self.map.map.values();
             for i in process_env_count..keys.len() {
-                if !values[i].conditional {
+                if !values[i].conditional && !is_suffix_key(&keys[i]) {
                     self.script_forward
                         .push((keys[i].clone(), values[i].value.clone()));
                 }
@@ -1416,8 +1421,8 @@ pub struct HashTableValue {
     // `Box<[u8]>` is owned-by-default, trading some copies for uniform
     // ownership.
     pub value: Box<[u8]>,
-    /// Set for values from a NODE_ENV-specific default file
-    /// (`.env.{development,production,test}[.local]`) or expanded from one.
+    /// Set for values whose presence depends on NODE_ENV; gates what
+    /// [`Loader::take_script_dotenv`] forwards.
     pub conditional: bool,
 }
 

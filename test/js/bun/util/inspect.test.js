@@ -211,17 +211,19 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
       throw new Error("type-getter-boom");
     }
   }
-  expect(() => Bun.inspect(new ThrowType("t"))).not.toThrow();
+  const typeOut = Bun.inspect(new ThrowType("t"));
+  expect(typeOut).toContain("type: [Getter]");
+  expect(typeOut).not.toContain("type-getter-boom");
   expect(() => Bun.inspect({ payload: [new ThrowType("t")] })).not.toThrow();
-  expect(Bun.inspect(new ThrowType("t"))).toContain("type");
 
   class ThrowData extends Event {
     get data() {
       throw new Error("data-getter-boom");
     }
   }
-  expect(() => Bun.inspect(new ThrowData("message"))).not.toThrow();
-  expect(Bun.inspect(new ThrowData("message"))).toContain(`type: "message"`);
+  const dataOut = Bun.inspect(new ThrowData("message"));
+  expect(dataOut).toContain(`type: "message"`);
+  expect(dataOut).toContain("data: undefined");
 
   class ThrowError extends Event {
     get error() {
@@ -231,8 +233,10 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
       throw new Error("message-getter-boom");
     }
   }
-  expect(() => Bun.inspect(new ThrowError("error"))).not.toThrow();
-  expect(Bun.inspect(new ThrowError("error"))).toContain(`type: "error"`);
+  const errorOut = Bun.inspect(new ThrowError("error"));
+  expect(errorOut).toContain(`type: "error"`);
+  expect(errorOut).not.toContain("message:");
+  expect(errorOut).not.toContain("error:");
 });
 
 // https://github.com/oven-sh/bun/issues/561

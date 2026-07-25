@@ -556,16 +556,7 @@ describe("bundler", () => {
     },
   });
   itBundled("cjs2esm/UnwrappedRequireOfWrappedCjsEntryPoint#12463", {
-    files: {
-      "/entry.js": /* js */ `
-        const compiled = await import("./out/react.js");
-        console.log(JSON.stringify({
-          useState: compiled.default.useState(),
-          hasDefault: "default" in compiled.default,
-        }));
-      `,
-      ...reactProdDevRedirect,
-    },
+    files: reactProdDevRedirect,
     entryPointsRaw: ["./node_modules/react/index.js"],
     outdir: "/out",
     entryNaming: "react.[ext]",
@@ -607,19 +598,30 @@ describe("bundler", () => {
       stdout: '{"useState":"dev","hasDefault":false}',
     },
   });
-  itBundled("cjs2esm/UnwrappedRequireOfConvertedCjsStillWorks", {
+  // Marking the record WAS_ORIGINALLY_REQUIRE also stops TypeScript's
+  // unused-import trimming from dropping an unwrapped require() whose binding
+  // is unused (scan_imports.rs:282). esbuild keeps it.
+  itBundled("cjs2esm/UnwrappedRequireUnusedBindingKeptForSideEffects", {
     files: {
-      "/entry.js": /* js */ `
-        const react = require("react");
-        console.log(react.react);
+      "/entry.ts": /* ts */ `
+        const _unused = require("react");
+        console.log("__reactLoaded:" + globalThis.__reactLoaded);
       `,
-      ...fakeReactNodeModules,
+      "/node_modules/react/index.js": /* js */ `
+        (function () {
+          globalThis.__reactLoaded = true;
+          exports.version = "18.0.0";
+        })();
+      `,
+      "/node_modules/react/package.json": /* json */ `
+        { "name": "react", "version": "18.0.0", "main": "index.js" }
+      `,
     },
     onAfterBundle: api => {
-      expect(api.readFile("out.js")).not.toContain("__toESM(");
+      expect(api.readFile("out.js")).toContain("require_react()");
     },
     run: {
-      stdout: "react",
+      stdout: "__reactLoaded:true",
     },
   });
 });

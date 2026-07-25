@@ -1996,6 +1996,13 @@ describe("workspace integration", () => {
       expect(r.exitCode).not.toBe(0);
     }
     {
+      // matched, multiple script names, none present (plural-branch in multi_run.rs)
+      const r = await runMulti(["run", "--parallel", "--filter", "*", "nonexistent", "nonexistent2"], String(dir));
+      expect(r.stderr).toContain("None of the selected packages has matching scripts");
+      expect(r.stderr).not.toContain("No packages matched the filter");
+      expect(r.exitCode).not.toBe(0);
+    }
+    {
       // no package matched the filter at all
       const r = await runMulti(["run", "--parallel", "--filter", "does-not-exist", "build"], String(dir));
       expect(r.stderr).toContain("No packages matched the filter");

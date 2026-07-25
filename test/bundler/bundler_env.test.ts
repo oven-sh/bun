@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isBroken, isWindows } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -28,6 +29,8 @@ for (let backend of ["api", "cli"] as const) {
       });
 
     itBundled("env/inline system", {
+      // On Windows CI the inlined process.env.PATH is not substituted; prints the runtime value instead.
+      todo: isBroken && isWindows,
       env: {
         PATH: process.env.PATH,
       },

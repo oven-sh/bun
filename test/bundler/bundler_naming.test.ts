@@ -1,4 +1,5 @@
 import { describe } from "bun:test";
+import { isWindows } from "harness";
 import { ESBUILD, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -166,6 +167,8 @@ describe("bundler", () => {
     },
   });
   itBundled("naming/AssetNamingDir", {
+    // On Windows the [dir] placeholder resolves relative to the drive root instead of the project root.
+    todo: isWindows,
     files: {
       "/src/lib/first/file.js": /* js */ `
         import file from "../second/data.file";

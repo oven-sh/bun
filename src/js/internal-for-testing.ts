@@ -225,6 +225,51 @@ export const isolatedModuleCacheSourceType: (specifier: string) => string | null
 );
 export const Dequeue = require("internal/fifo");
 
+// Exercise the link-time-constant primordials (runtime/JSCPrimordials.h) so the
+// test can verify they are captured, callable via `.@call`, and tamper-proof.
+// One entry per holder kind (eager prototype, LUT-backed constructor, lazy class
+// structure, PropertyCallback, LazyProperty) plus one getter and one symbol key.
+export const primordials = {
+  run(arrayLike: unknown[], string: string, mapLike: Map<unknown, unknown>, u8: Uint8Array, regexp: RegExp) {
+    return {
+      ArrayPrototypePush: $ArrayPrototypePush.$call(arrayLike, 1, 2),
+      ArrayPrototypeSlice: $ArrayPrototypeSlice.$call(arrayLike, 0),
+      ArrayPrototypeSymbolIterator: $ArrayPrototypeSymbolIterator.$call(arrayLike).next().value,
+      StringPrototypeSlice: $StringPrototypeSlice.$call(string, 1, 3),
+      StringPrototypeSplit: $StringPrototypeSplit.$call(string, ""),
+      ObjectKeys: $ObjectKeys({ a: 1, b: 2 }),
+      ObjectDefineProperty: $ObjectDefineProperty({}, "x", { value: 42 }).x,
+      FunctionPrototypeBind: $FunctionPrototypeBind.$call(function (this: number, y: number) {
+        return this + y;
+      }, 5)(3),
+      RegExpPrototypeTest: $RegExpPrototypeTest.$call(regexp, string),
+      RegExpPrototypeGetSource: $RegExpPrototypeGetSource.$call(regexp),
+      MapPrototypeGet: $MapPrototypeGet.$call(mapLike, "k"),
+      MapPrototypeGetSize: $MapPrototypeGetSize.$call(mapLike),
+      DateNow: typeof $DateNow(),
+      NumberIsInteger: $NumberIsInteger(3),
+      MathMax: $MathMax(1, 5, 3),
+      ReflectOwnKeys: $ReflectOwnKeys({ a: 1 }),
+      JSONStringify: $JSONStringify({ a: 1 }),
+      TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength.$call(u8),
+      TypedArrayPrototypeSubarray: $TypedArrayPrototypeSubarray.$call(u8, 1, 3).length,
+      DataViewPrototypeGetByteLength: $DataViewPrototypeGetByteLength.$call(new DataView(u8.buffer)),
+      PromiseResolve: $PromiseResolve.$call($Promise, 1) instanceof $Promise,
+    };
+  },
+  refs() {
+    return {
+      ArrayPrototypePush: $ArrayPrototypePush,
+      StringPrototypeSlice: $StringPrototypeSlice,
+      ObjectDefineProperty: $ObjectDefineProperty,
+      MapPrototypeGet: $MapPrototypeGet,
+      MathMax: $MathMax,
+      ReflectOwnKeys: $ReflectOwnKeys,
+      TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength,
+    };
+  },
+};
+
 // Userland access to node-internal modules for vendored node tests that
 // declare `// Flags: --expose-internals` (served via the require interceptor
 // in test/js/node/test/common/index.js). Static requires only — the builtin

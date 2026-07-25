@@ -123,7 +123,7 @@ test("dependency on workspace without version in package.json", async () => {
     "kjwoehcojrgjoj", // dist-tag does not exist, should choose local workspace
     "*.1.*",
     "*-pre",
-    // dist-tags prefer the local workspace when the name matches (npm parity)
+    // dist-tags link the local workspace (bun-specific; npm only does this for "", #4830)
     "latest",
     "",
   ];

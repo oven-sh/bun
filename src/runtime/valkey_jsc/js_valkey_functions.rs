@@ -1648,6 +1648,7 @@ impl JSValkeyClient {
         fn_name: &'static str,
         arg_name: &'static str,
         redis_command: &'static [u8],
+        err_msg: &'static str,
     ) -> JsResult<JSValue> {
         // `upsert_receive_handler`'s exit guard re-enters `on_writable` /
         // `update_poll_ref` before `send()` is reached; hold a ref so `*this`
@@ -1719,7 +1720,7 @@ impl JSValkeyClient {
                 this._subscription_ctx
                     .get()
                     .clear_all_receive_handlers(kind, global)?;
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
+                return send_err_to_js(global, err_msg, &err);
             }
         };
 
@@ -1736,6 +1737,7 @@ impl JSValkeyClient {
             "subscribe",
             "channel",
             b"SUBSCRIBE",
+            "Failed to send SUBSCRIBE command",
         )
     }
 
@@ -1753,6 +1755,7 @@ impl JSValkeyClient {
             "psubscribe",
             "pattern",
             b"PSUBSCRIBE",
+            "Failed to send PSUBSCRIBE command",
         )
     }
 
@@ -1764,6 +1767,7 @@ impl JSValkeyClient {
         this_js: JSValue,
         global: &JSGlobalObject,
         redis_command: &'static [u8],
+        err_msg: &'static str,
         redis_channels: &[JSArgument],
     ) -> JsResult<JSValue> {
         send_cmd(
@@ -1773,7 +1777,7 @@ impl JSValkeyClient {
             redis_command,
             CommandArgs::Args(redis_channels),
             CommandMeta::default(),
-            "Failed to send UNSUBSCRIBE command",
+            err_msg,
         )
     }
 
@@ -1785,6 +1789,7 @@ impl JSValkeyClient {
         fn_name: &'static str,
         arg_name: &'static str,
         redis_command: &'static [u8],
+        err_msg: &'static str,
     ) -> JsResult<JSValue> {
         // Hold a ref so `*this` stays live across the handler-map updates and
         // the `send()` below.
@@ -1807,6 +1812,7 @@ impl JSValkeyClient {
                 frame.this(),
                 global,
                 redis_command,
+                err_msg,
                 &redis_channels,
             );
         }
@@ -1872,6 +1878,7 @@ impl JSValkeyClient {
                     frame.this(),
                     global,
                     redis_command,
+                    err_msg,
                     &redis_channels,
                 );
             }
@@ -1925,6 +1932,7 @@ impl JSValkeyClient {
             frame.this(),
             global,
             redis_command,
+            err_msg,
             &redis_channels,
         )
     }
@@ -1943,6 +1951,7 @@ impl JSValkeyClient {
             "unsubscribe",
             "channel",
             b"UNSUBSCRIBE",
+            "Failed to send UNSUBSCRIBE command",
         )
     }
 
@@ -1960,6 +1969,7 @@ impl JSValkeyClient {
             "punsubscribe",
             "pattern",
             b"PUNSUBSCRIBE",
+            "Failed to send PUNSUBSCRIBE command",
         )
     }
 

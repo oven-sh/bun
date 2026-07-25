@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 
 use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_ptr::RefPtr;
-use bun_sys::{self, Fd, FdExt};
+use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
@@ -22,7 +22,6 @@ pub enum Writable<'a> {
     Pipe(NonNull<FileSink>),
     Fd(Fd),
     Buffer(RefPtr<StaticPipeWriter<'a>>),
-    Memfd(Fd),
     Inherit,
     Ignore,
 }
@@ -94,7 +93,6 @@ impl<'a> Writable<'a> {
         match self {
             Writable::Pipe(pipe) => Self::pipe_sink(*pipe).memory_cost(),
             Writable::Buffer(buffer) => buffer.memory_cost(),
-            // TODO: memfd
             _ => 0,
         }
     }
@@ -373,22 +371,12 @@ impl<'a> Writable<'a> {
                 result,
                 super::source_from_array_buffer(core::mem::take(array_buffer)),
             ))),
-            Stdio::Memfd(_) => {
-                // Transfer ownership: `Stdio`'s Drop would close the memfd, so
-                // take it out via ManuallyDrop (same pattern as the Blob arm)
-                // to keep the caller's `stdio[0]` drop from double-closing the
-                // fd that Writable now owns.
-                let owned = core::mem::ManuallyDrop::new(core::mem::replace(stdio, Stdio::Ignore));
-                let Stdio::Memfd(fd) = &*owned else {
-                    unreachable!()
-                };
-                debug_assert!(*fd != Fd::INVALID);
-                Ok(Writable::Memfd(*fd))
-            }
             Stdio::Fd(_) => Ok(Writable::Fd(result.unwrap())),
             Stdio::Inherit => Ok(Writable::Inherit),
             Stdio::Path(_) | Stdio::Ignore => Ok(Writable::Ignore),
             Stdio::Ipc | Stdio::Capture(_) => Ok(Writable::Ignore),
+            // Only stdout/stderr are converted to memfds; stdin never sees this.
+            Stdio::Memfd(_) => unreachable!("Memfd at stdin"),
             // Rejected at i < 3 in Stdio::extract(); stdin never sees this.
             Stdio::SocketFd => unreachable!("SocketFd at stdin"),
         }
@@ -401,10 +389,6 @@ impl<'a> Writable<'a> {
             Writable::Fd(fd) => {
                 subprocess.stdin.set(Writable::Fd(fd));
                 fd.to_js(global_this)
-            }
-            Writable::Memfd(fd) => {
-                subprocess.stdin.set(Writable::Memfd(fd));
-                JSValue::UNDEFINED
             }
             Writable::Ignore => JSValue::UNDEFINED,
             Writable::Buffer(buffer) => {
@@ -515,9 +499,6 @@ impl<'a> Writable<'a> {
                 // RefPtr::deref drops the held ref.
                 buffer.deref();
             }
-            Writable::Memfd(fd) => {
-                fd.close();
-            }
             Writable::Ignore => {}
             Writable::Fd(fd) => {
                 subprocess.stdin.set(Writable::Fd(fd));
@@ -532,10 +513,6 @@ impl<'a> Writable<'a> {
         match self {
             Writable::Pipe(pipe) => {
                 let _ = Self::pipe_sink(*pipe).end(None);
-            }
-            Writable::Memfd(fd) => {
-                fd.close();
-                *self = Writable::Ignore;
             }
             Writable::Fd(_) => {
                 *self = Writable::Ignore;

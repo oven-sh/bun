@@ -1786,7 +1786,13 @@ describe("process.emit propagates listener exceptions to the caller", () => {
     expect(JSON.parse(stdout.trim())).toEqual({
       "error-instance": { caught: true, isError: true, msg: "no-listener" },
       "no-arg": { caught: true, isError: true, code: "ERR_UNHANDLED_ERROR", msg: "Unhandled error. (undefined)" },
-      "string": { caught: true, isError: true, code: "ERR_UNHANDLED_ERROR", msg: "Unhandled error. ('boom')", ctx: "boom" },
+      "string": {
+        caught: true,
+        isError: true,
+        code: "ERR_UNHANDLED_ERROR",
+        msg: "Unhandled error. ('boom')",
+        ctx: "boom",
+      },
     });
     expect(exitCode).toBe(0);
   });

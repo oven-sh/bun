@@ -767,6 +767,39 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     return true;
 }
 
+JSC_DEFINE_CUSTOM_GETTER(getModulePrototypeCompile,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    return JSValue::encode(globalObject->modulePrototypeUnderscoreCompileFunction());
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setModulePrototypeCompile,
+    (JSGlobalObject * lexicalGlobalObject,
+        EncodedJSValue thisValue, EncodedJSValue encodedValue,
+        PropertyName propertyName))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto value = JSValue::decode(encodedValue);
+    if (value.isCell()) {
+        bool isOriginal = false;
+        if (value.isCallable()) {
+            JSC::CallData callData = JSC::getCallData(value);
+            if (callData.type == JSC::CallData::Type::Native) {
+                if (callData.native.function.untaggedPtr() == &functionJSCommonJSModule_compile) {
+                    isOriginal = true;
+                }
+            }
+        }
+        globalObject->hasOverriddenModulePrototypeCompile = !isOriginal;
+        globalObject->m_modulePrototypeUnderscoreCompileFunction.set(
+            lexicalGlobalObject->vm(), globalObject, value.asCell());
+    }
+    return true;
+}
+
 static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
 {
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
@@ -778,7 +811,11 @@ static JSValue getModulePrototypeObject(VM& vm, JSObject* moduleObject)
             setterRequireFunction),
         0);
 
-    prototype->putDirect(vm, Identifier::fromString(vm, "_compile"_s), globalObject->modulePrototypeUnderscoreCompileFunction());
+    prototype->putDirectCustomAccessor(
+        vm, Identifier::fromString(vm, "_compile"_s),
+        JSC::CustomGetterSetter::create(vm, getModulePrototypeCompile,
+            setModulePrototypeCompile),
+        0);
 
     return prototype;
 }
@@ -1121,12 +1158,12 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
-            JSFunction* resolveFilenameFunction = JSFunction::create(
+        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+            JSFunction* compileFunction = JSFunction::create(
                 init.vm, init.owner, 2, "_compile"_s,
                 functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
                 JSC::NoIntrinsic);
-            init.set(resolveFilenameFunction);
+            init.set(compileFunction);
         });
 
     globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(

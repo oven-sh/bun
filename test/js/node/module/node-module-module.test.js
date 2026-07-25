@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -218,6 +218,53 @@ describe.concurrent("node-module-module", () => {
     const stdout = await proc.stdout.text();
     expect(stdout.trim().endsWith("--pass--")).toBe(true);
     expect(await proc.exited).toBe(0);
+  });
+
+  test("Overwriting Module.prototype._compile intercepts require()", async () => {
+    using dir = tempDir("module-prototype-compile", {
+      "package.json": JSON.stringify({ type: "commonjs" }),
+      "main.cjs": `
+        const Module = require("module");
+        const orig = Module.prototype._compile;
+        let hits = 0;
+        Module.prototype._compile = function (code, filename) {
+          hits++;
+          return orig.call(this, code.replace("ORIGINAL", "PATCHED"), filename);
+        };
+        const v1 = require("./t.js");
+        // Restoring the original re-enables the fast path.
+        Module.prototype._compile = orig;
+        delete require.cache[require.resolve("./t.js")];
+        const v2 = require("./t.js");
+        // A module instance reflects the prototype override.
+        const m = new Module("x");
+        console.log(JSON.stringify({
+          present: typeof orig === "function",
+          hits,
+          v1,
+          v2,
+          reflects: m._compile === orig,
+        }));
+      `,
+      "t.js": `module.exports = "ORIGINAL";`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      present: true,
+      hits: 1,
+      v1: "PATCHED",
+      v2: "ORIGINAL",
+      reflects: true,
+    });
+    expect(exitCode).toBe(0);
   });
 
   test.each([

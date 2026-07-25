@@ -814,6 +814,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
             target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
+        } else if (globalObject->hasOverriddenModulePrototypeCompile) [[unlikely]] {
+            target->evaluateWithPotentiallyOverriddenCompile(globalObject, specifierWtfString, specifierValue, res->result.value);
         } else {
             target->evaluate(globalObject, specifierWtfString, res->result.value);
         }

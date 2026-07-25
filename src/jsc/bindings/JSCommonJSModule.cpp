@@ -1420,13 +1420,13 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
     JSValue keyJSString,
     ResolvedSource& source)
 {
-    if (JSValue compileFunction = this->m_overriddenCompile.get()) {
+    JSValue compileFunction = this->m_overriddenCompile.get();
+    if (!compileFunction && globalObject->hasOverriddenModulePrototypeCompile) [[unlikely]] {
+        compileFunction = globalObject->modulePrototypeUnderscoreCompileFunction();
+    }
+    if (compileFunction) {
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (!compileFunction) {
-            throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);
-            return;
-        }
         JSC::CallData callData = JSC::getCallData(compileFunction.asCell());
         if (callData.type == JSC::CallData::Type::None) {
             throwTypeError(globalObject, scope, "overridden module._compile is not a function (called from overridden Module._extensions)"_s);

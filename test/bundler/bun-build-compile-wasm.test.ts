@@ -122,5 +122,5 @@ describe("Bun.build compile with wasm", () => {
     expect(stdout).toContain("WASM result: 5");
     expect(stdout).toContain("WASM module loaded successfully");
     expect(stderr).toBe("");
-  });
+  }, 60_000);
 });

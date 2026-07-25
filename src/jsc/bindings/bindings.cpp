@@ -1952,7 +1952,11 @@ JSValue substituteAsymmetricMatchersImpl(
             auto found = ancestors.find(JSValue::encode(v));
             if (found != ancestors.end() && found->second) v = JSValue(found->second);
         }
-        cloned->putDirectMayBeIndex(globalObject, p, v);
+        unsigned attrs = slot.attributes() & PropertyAttribute::DontEnum;
+        if (std::optional<uint32_t> index = parseIndex(p))
+            cloned->putDirectIndex(globalObject, index.value(), v, attrs, PutDirectIndexLikePutDirect);
+        else
+            cloned->putDirect(vm, p, v, attrs);
         RETURN_IF_EXCEPTION(throwScope, value);
     }
 

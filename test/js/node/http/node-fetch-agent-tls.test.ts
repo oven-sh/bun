@@ -4,12 +4,12 @@
 // Bun's node-fetch shim must forward those TLS options to the underlying fetch.
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import https from "node:https";
+import { tls as harnessTls } from "harness";
+import nodeFetch from "node-fetch";
 import { once } from "node:events";
+import https from "node:https";
 import type { AddressInfo } from "node:net";
 import { join } from "path";
-import nodeFetch from "node-fetch";
-import { tls as harnessTls } from "harness";
 
 const fixturesDir = join(import.meta.dir, "..", "tls", "fixtures");
 const ca1 = readFileSync(join(fixturesDir, "ca1-cert.pem"), "utf8");

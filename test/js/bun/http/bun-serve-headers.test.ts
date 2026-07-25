@@ -300,8 +300,15 @@ describe("response Content-Length for ReadableStream bodies", () => {
       const chunks: Buffer[] = [];
       socket.on("data", c => chunks.push(c));
       await closed.promise;
-      const head = Buffer.concat(chunks).toString("latin1").split("\r\n\r\n")[0] ?? "";
-      expect(contentLength(head).length).toBeLessThanOrEqual(1);
+      // The close is the invariant under test; a reset may beat the header
+      // flush, so the head is only checked when it made it out.
+      const raw = Buffer.concat(chunks);
+      const sep = raw.indexOf("\r\n\r\n");
+      if (sep !== -1) {
+        const head = raw.subarray(0, sep).toString("latin1");
+        expect(contentLength(head)).toEqual(["100"]);
+        expect(raw.length - (sep + 4)).toBeLessThan(100);
+      }
     } finally {
       socket.destroy();
     }

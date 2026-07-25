@@ -933,12 +933,7 @@ where
                         .run_error_handler(value, None);
                 }
             }
-            let state = resp.state();
-            if state.is_response_pending()
-                && (state.is_http_write_called() || state.has_written_content_length_header())
-            {
-                ctx.force_close();
-            } else {
+            if !ctx.force_close_if_framing_committed() {
                 ctx.end_stream(ctx.should_close_connection());
             }
             return;
@@ -1232,6 +1227,23 @@ where
             // that would alias `&mut self` through a captured raw pointer.
             self.deref();
         }
+    }
+
+    /// Framing (a chunked write or a Content-Length) is already on the wire but
+    /// the body cannot complete; close so the client sees a truncated message
+    /// instead of waiting on the promised bytes over keep-alive.
+    fn force_close_if_framing_committed(&mut self) -> bool {
+        let Some(resp) = self.resp else {
+            return false;
+        };
+        let state = resp.state();
+        if state.is_response_pending()
+            && (state.is_http_write_called() || state.has_written_content_length_header())
+        {
+            self.force_close();
+            return true;
+        }
+        false
     }
 
     /// # Safety
@@ -2605,15 +2617,9 @@ where
                 this.end_without_body(this.should_close_connection());
             }
             Body::Value::Locked(_) => {
-                // Read before render_metadata() strips it, so HEAD frames like GET (#10507).
-                let user_content_length = response.get_init_headers_mut().and_then(|h| {
-                    if h.fast_has(jsc::HTTPHeaderName::TransferEncoding) {
-                        return None;
-                    }
-                    let cl = h.fast_get(jsc::HTTPHeaderName::ContentLength)?;
-                    let cl_str = cl.to_slice();
-                    bun_core::parse_int::<u64>(cl_str.slice(), 10).ok()
-                });
+                // Read before render_metadata() strips it, so HEAD frames like GET.
+                let user_content_length =
+                    response.get_init_headers_mut().and_then(handler_content_length);
                 this.render_metadata();
                 if let Some(cl) = user_content_length {
                     resp.write_header_int(b"content-length", cl);
@@ -3081,14 +3087,8 @@ where
         // Body bytes were already written: close without the terminating chunk
         // (RFC 9112 section 7) so the client sees an incomplete message, not a
         // truncated body that looks like a complete, successful response.
-        if let Some(resp) = req.resp {
-            let state = resp.state();
-            if state.is_response_pending()
-                && (state.is_http_write_called() || state.has_written_content_length_header())
-            {
-                req.force_close();
-                return;
-            }
+        if req.force_close_if_framing_committed() {
+            return;
         }
         req.end_stream(req.should_close_connection());
     }
@@ -3298,15 +3298,11 @@ where
         }
         let resp = this.resp.expect("infallible: resp bound");
 
-        // An errored stream cannot complete the committed framing; close like handle_reject.
-        if matches!(stream, WebCore::streams::Result::Err(_)) {
-            let state = resp.state();
-            if state.is_response_pending()
-                && (state.is_http_write_called() || state.has_written_content_length_header())
-            {
-                this.force_close();
-                return;
-            }
+        // An errored stream cannot complete the committed framing.
+        if matches!(stream, WebCore::streams::Result::Err(_))
+            && this.force_close_if_framing_committed()
+        {
+            return;
         }
 
         let chunk = stream.slice();
@@ -3668,13 +3664,8 @@ where
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             if (self.sink.is_some() || self.byte_stream.is_some())
                 && !self.flags.needs_content_length()
-                && !headers_.fast_has(jsc::HTTPHeaderName::TransferEncoding)
             {
-                if let Some(cl) = headers_.fast_get(jsc::HTTPHeaderName::ContentLength) {
-                    let cl_str = cl.to_slice();
-                    user_content_length = bun_core::parse_int::<u64>(cl_str.slice(), 10).ok();
-                    drop(cl_str);
-                }
+                user_content_length = handler_content_length(&mut headers_);
             }
             // For .slice()-driven ranges, only promote to 206 if the user
             // also set Content-Range (preserves the old contract). For an
@@ -4600,6 +4591,17 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
     };
 
     (content_type, needs_content_type, content_type_needs_free)
+}
+
+/// Handler-set Content-Length for framing a stream body (#10507); None when the
+/// handler also set Transfer-Encoding or the value does not parse.
+fn handler_content_length(headers: &mut FetchHeaders) -> Option<u64> {
+    if headers.fast_has(jsc::HTTPHeaderName::TransferEncoding) {
+        return None;
+    }
+    let cl = headers.fast_get(jsc::HTTPHeaderName::ContentLength)?;
+    let cl_str = cl.to_slice();
+    bun_core::parse_int::<u64>(cl_str.slice(), 10).ok()
 }
 
 // `ServerLike` lives in `crate::server` (mod.rs) and is impl'd for the four

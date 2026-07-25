@@ -1,15 +1,6 @@
 const delta = 1;
 const initialRuns = 1_000;
 let runs = initialRuns;
-// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run higher under ASAN; widen the threshold to avoid false positives. Detect
-// ASAN from the runtime (the debug build is ASAN-instrumented but named
-// `bun-debug`, so the name check alone is wrong for local runs).
-let isASAN = false;
-try {
-  isASAN = require("bun:internal-for-testing").isASANEnabled();
-} catch {}
-isASAN ||= process.execPath.includes("-asan");
 
 function usage() {
   return process.memoryUsage.rss();
@@ -83,15 +74,21 @@ async function batch(iterations) {
 
     if (globalThis.Bun) {
       const heapStats = require("bun:jsc").heapStats();
-      console.log("Timeout object count:", heapStats.objectTypeCounts.Timeout || 0);
+      const timeoutCount = heapStats.objectTypeCounts.Timeout || 0;
+      console.log("Timeout object count:", timeoutCount);
       if (heapStats.protectedObjectTypeCounts.Timeout) {
         throw new Error("Expected 0 protected Timeout but received " + heapStats.protectedObjectTypeCounts.Timeout);
       }
+      // One batch (200 timers) is live until the next GC; anything much larger means cleared
+      // timers from earlier batches are being retained.
+      if (timeoutCount > 500) {
+        throw new Error("Expected <= 500 live Timeout objects but received " + timeoutCount);
+      }
     }
 
-    // With a 32 KiB payload pinned on each timer, a leaked batch of timers costs ~6 MB; 20 batches
-    // would add well over 100 MB, so both thresholds are comfortably below the leak signal.
-    if (delta > (isASAN ? 50 : 20)) {
+    // With a 32 KiB payload pinned on each timer, 20 leaked batches would add well over 100 MB,
+    // so this backstop is well below the leak signal and well above allocator/heap growth noise.
+    if (delta > 50) {
       throw new Error("Memory leak detected");
     }
   }

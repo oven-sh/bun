@@ -1,13 +1,18 @@
-var lastCall = performance.now();
+const start = performance.now();
 const delta = 16;
-let tries = 25;
+const total = 25;
+let tries = total;
 setInterval(() => {
   const now = performance.now();
-  if (now - lastCall < ((delta / 2) | 0)) {
-    console.error("fired after only", (now - lastCall) | 0, "ms (expected >=", delta, "ms)");
+  // The Nth tick is not allowed to fire before N*delta ms have elapsed. Checking against the
+  // previous tick is wrong: if the event loop stalls for >delta, the catch-up tick correctly
+  // fires immediately and the gap between ticks can legitimately be ~0ms.
+  const ticks = total - tries + 1;
+  const earliest = ticks * delta;
+  if (now - start < earliest - 2) {
+    console.error("tick", ticks, "fired at", (now - start) | 0, "ms (expected >=", earliest, "ms)");
     process.exit(1);
   }
-  lastCall = now;
 
   if (--tries === 0) {
     console.log("PASS");

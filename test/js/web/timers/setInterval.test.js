@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -122,16 +122,22 @@ async function runFixture(args) {
   return { stdout, stderr, exitCode };
 }
 
-it.concurrent(
-  "setInterval runs with at least the delay time",
-  async () => {
-    const { stdout, stderr, exitCode } = await runFixture(["run", join(import.meta.dir, "setInterval-fixture.js")]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("PASS");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+it.concurrent("setInterval runs with at least the delay time", async () => {
+  const { stdout, stderr, exitCode } = await runFixture(["run", join(import.meta.dir, "setInterval-fixture.js")]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("PASS");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("setInterval doesn't run when cancelled after being scheduled", async () => {
+  const { stdout, stderr, exitCode } = await runFixture([
+    "run",
+    join(import.meta.dir, "setinterval-cancel-fixture.js"),
+  ]);
+  expect(stderr).toBe("");
+  expect(stdout).toMatch(/^RSS: \d+ MB\n$/);
+  expect(exitCode).toBe(0);
+});
 
 it.concurrent(
   "setInterval canceling with unref, close, _idleTimeout, and _onTimeout",
@@ -144,6 +150,8 @@ it.concurrent(
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   },
+  // the fixture spends ~2s under debug+ASAN just loading node/test/common; with the other
+  // fixtures running concurrently it can exceed the default 5s
   30_000,
 );
 
@@ -156,20 +164,6 @@ it.concurrent(
     ]);
     expect(stderr).toBe("");
     expect(stdout).toMatch(/^RSS \d+ MB\nDelta -?\d+ MB\nTimeout object count: \d+\n$/);
-    expect(exitCode).toBe(0);
-  },
-  !isWindows ? 30_000 : 90_000,
-);
-
-it.concurrent(
-  "setInterval doesn't run when cancelled after being scheduled",
-  async () => {
-    const { stdout, stderr, exitCode } = await runFixture([
-      "run",
-      join(import.meta.dir, "setinterval-cancel-fixture.js"),
-    ]);
-    expect(stderr).toBe("");
-    expect(stdout).toMatch(/^RSS: \d+ MB\n$/);
     expect(exitCode).toBe(0);
   },
   30_000,

@@ -305,6 +305,20 @@ describe("FormData", () => {
       expect([...fd]).toEqual([]);
     });
 
+    it("parses a headers-only part (no body octets) as an empty value", async () => {
+      const fd = await make(
+        `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}` + `${CRLF}--${B}--${CRLF}`,
+      );
+      expect([...fd]).toEqual([["a", ""]]);
+    });
+
+    it("parses a zero-octet body as an empty value", async () => {
+      const fd = await make(
+        `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}${CRLF}` + `${CRLF}--${B}--${CRLF}`,
+      );
+      expect([...fd]).toEqual([["a", ""]]);
+    });
+
     it("ignores a preamble before the first delimiter", async () => {
       const body =
         `this is a preamble${CRLF}` +

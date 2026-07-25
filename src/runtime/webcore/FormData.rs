@@ -266,15 +266,10 @@ pub fn for_each_multipart_entry<C>(
     let mut slice = input;
     let subslicer = SlicedString::init(input, input);
 
-    // RFC 2046 §5.1.1: the CRLF preceding the encapsulation boundary is
-    // conceptually attached to the boundary, not to the preceding part's body.
-    // Matching `--boundary` without that leading CRLF lets a mid-line
-    // `--boundary` inside a field value terminate the part early and parses
-    // the value's remaining bytes as an attacker-authored extra part.
+    // RFC 2046 §5.1.1: the CRLF before `--boundary` is part of the delimiter.
     let mut buf = [0u8; 78];
     {
-        // Hand-rolled `\r\n--{boundary}--` formatting — boundary is raw
-        // bytes, not guaranteed UTF-8, so avoid `core::fmt`.
+        // `\r\n--{boundary}--` (boundary is raw bytes, so no `core::fmt`).
         let need = boundary.len() + 6;
         if need > buf.len() {
             return Err(crate::Error::BoundaryIsTooLong);
@@ -295,15 +290,12 @@ pub fn for_each_multipart_entry<C>(
         }
     }
 
-    // Hand-rolled `\r\n--{boundary}\r\n` formatting (same raw-bytes caveat).
-    // Length check already passed above (same `boundary.len() + 6`).
+    // `\r\n--{boundary}\r\n` (length bound already checked above).
     let sep_len = boundary.len() + 6;
     buf[4 + boundary.len()..sep_len].copy_from_slice(b"\r\n");
     let separator = &buf[..sep_len];
 
-    // The opening dash-boundary is the one delimiter permitted without a
-    // leading CRLF (no preamble). Consume it explicitly so every remaining
-    // delimiter is the full CRLF-anchored form.
+    // RFC 2046 permits the opening `--boundary` at offset 0 with no CRLF.
     if slice.starts_with(&separator[2..]) {
         slice = &slice[separator.len() - 2..];
     } else if let Some(i) = strings::index_of(slice, separator) {
@@ -316,10 +308,17 @@ pub fn for_each_multipart_entry<C>(
 
     while let Some(chunk) = splitter.next() {
         let mut remain = chunk;
-        let header_end =
-            strings::index_of(remain, b"\r\n\r\n").ok_or(crate::Error::IsMissingHeaderEnd)?;
-        let header = &remain[..header_end + 2];
-        remain = &remain[header_end + 4..];
+        let header;
+        if let Some(header_end) = strings::index_of(remain, b"\r\n\r\n") {
+            header = &remain[..header_end + 2];
+            remain = &remain[header_end + 4..];
+        } else if remain.ends_with(b"\r\n") {
+            // `body-part := MIME-part-headers [CRLF *OCTET]` permits no body.
+            header = remain;
+            remain = b"";
+        } else {
+            return Err(crate::Error::IsMissingHeaderEnd);
+        }
 
         let mut field = Field::default();
         let mut name = bun_semver::String::default();

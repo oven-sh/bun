@@ -3372,13 +3372,8 @@ extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalOb
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    // notifyNeedTermination() sets the VMTraps trap bit from another thread;
-    // the next safepoint on this thread handles it by calling
-    // setHasTerminationRequest() and throwing. If the caller reached here
-    // without passing through a safepoint (e.g. the worker's event loop
-    // observed its own requested_terminate flag and jumped straight to
-    // shutdown), the trap is still armed and would re-fire inside the next
-    // allocation. Clear it so "clear termination" actually means cleared.
+    // The trap bit is set cross-thread and may not have reached a safepoint
+    // yet; without this it would re-fire inside the next allocation.
     vm.traps().clearTrap(JSC::VMTraps::NeedTermination);
     // Clear the request for the termination exception to be thrown
     vm.clearHasTerminationRequest();

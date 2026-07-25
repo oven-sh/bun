@@ -208,17 +208,12 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        // ErrorInstance::create can hit an allocation safepoint and surface a
-        // pending TerminationException (value is a JSString, not a JSObject).
-        // Leave it pending for the caller's exception check; downcasting it to
-        // JSObject would crash in reportZappedCellAndCrash.
+        // TerminationException's value is a JSString; leave it pending.
         if (vm.isTerminationException(thrown_exception))
             return created_error;
         (void)scope.tryClearException();
         auto value = thrown_exception->value();
-        if (value.isObject())
-            return asObject(value);
-        return created_error;
+        return value.isObject() ? asObject(value) : created_error;
     }
     return created_error;
 }

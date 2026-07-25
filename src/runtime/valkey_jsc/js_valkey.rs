@@ -468,13 +468,9 @@ impl bun_ptr::RefCounted for JSValkeyClient {
         // SAFETY: last ref dropped; `this` is live until `deinit` reclaims it.
         let this_ref = unsafe { &*this };
         if this_ref.this_value.get().is_not_empty() {
-            // The count reached 0 while the JS wrapper is still attached
-            // (`finalize()` clears `this_value` as its last step). A ref was
-            // released that was not owned; freeing now would make the body of
-            // `finalize()` (or a later GC finalize) read the freed box.
-            // Donate the stolen ref back and leave the allocation live so
-            // `finalize()`'s own release runs `deinit` instead. Assertion
-            // builds panic so the over-release is still caught.
+            // Over-release: `finalize()` clears `this_value` last, so the
+            // wrapper's +1 is still outstanding. Donate back; freeing now
+            // would UAF the rest of the finalize body.
             debug_assert!(
                 false,
                 "JSValkeyClient refcount reached 0 with this_value still attached",
@@ -1444,11 +1440,8 @@ impl JSValkeyClient {
         }
 
         // During VM shutdown the event loop won't tick, so the deferred task
-        // below would never run; close inline. `flags.finalized` is set (the
-        // only caller is `finalize`), so `fail()` / `update_poll_ref()` in
-        // the synchronous on_close path short-circuit. In practice the socket
-        // was already closed by `close_all_socket_groups` before `finalize`,
-        // so `is_closed()` above returns and this branch is not reached.
+        // below would never run; close inline. `flags.finalized` is already
+        // set, so the synchronous on_close path short-circuits.
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             self.client_mut().close();
@@ -1510,11 +1503,8 @@ impl JSValkeyClient {
         this.client_mut().flags.finalized = true;
         this.stop_timers();
         this.close_socket_next_tick();
-        // Cleared last: `destructor()` treats a non-empty `this_value` as the
-        // "still in finalize" signal and donates instead of freeing, so every
-        // `this.*` above sees a live box even if `stop_timers()` or
-        // `close_socket_next_tick()` re-enter a deref that would otherwise
-        // take the count to 0.
+        // Cleared last: `destructor()` gates `deinit` on this being empty, so
+        // the body above never observes a freed box.
         this.this_value.with_mut(|t| t.finalize());
         // `_subscription_ctx` is three inline bools (no allocation, no GC
         // ref); `is_subscriber` can legitimately still be set here if the

@@ -2086,6 +2086,7 @@ export default <>hi</>
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
       logLevel: "error",
+      autoImportJSX: false,
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
@@ -2154,6 +2155,40 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
+  // https://github.com/oven-sh/bun/issues/7499
+  // The automatic JSX runtime emits calls to generated symbols (jsxDEV_7x81h0kn
+  // etc.). Bun.Transpiler previously defaulted autoImportJSX to false, so those
+  // calls were left undefined in the output.
+  it("JSX automatic runtime import is emitted by default", () => {
+    for (const loader of ["jsx", "tsx"]) {
+      const out = new Bun.Transpiler({ loader }).transformSync("export default <><div /></>");
+      expect(out).toStartWith("import {");
+      expect(out).toContain('from "react/jsx-dev-runtime"');
+      // Every generated JSX symbol that is called/used must be bound by the import.
+      for (const [name] of out.matchAll(/\b(jsxDEV|jsx|jsxs|Fragment|createElement)_\w+\b/g)) {
+        expect(out).toContain(` as ${name}`);
+      }
+    }
+
+    // tsconfig jsxImportSource is honored by the default-on auto-import.
+    const preact = new Bun.Transpiler({
+      loader: "tsx",
+      tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+    }).transformSync("export default <div />");
+    expect(preact).toContain('from "preact/jsx-runtime"');
+
+    // The classic runtime has no auto-import and must stay import-free.
+    const classic = new Bun.Transpiler({
+      loader: "tsx",
+      tsconfig: { compilerOptions: { jsx: "react" } },
+    }).transformSync("export default <div />");
+    expect(classic).not.toContain("import ");
+
+    // autoImportJSX: false opts out of the import.
+    const optOut = new Bun.Transpiler({ loader: "tsx", autoImportJSX: false }).transformSync("export default <div />");
+    expect(optOut).not.toContain("import ");
+  });
+
   // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision
@@ -2203,6 +2238,7 @@ console.log(<div {...obj} key="after" />);`),
             loader: "jsx",
             define: { "process.env.NODE_ENV": JSON.stringify("development") },
             logLevel: "error",
+            autoImportJSX: false,
           });
           process.stdout.write(t.transformSync('console.log(<div key key="duplicate"></div>);'));
           process.stdout.write(t.transformSync('console.log(<div key className="x" key="duplicate"></div>);'));
@@ -2344,6 +2380,7 @@ console.log(<div {...obj} key="after" />);`),
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      autoImportJSX: false,
     });
     expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {

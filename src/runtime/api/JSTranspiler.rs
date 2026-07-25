@@ -97,6 +97,7 @@ impl Default for Config {
             log: bun_ast::Log::default(), // overwritten at construction
             runtime: Runtime::Features {
                 top_level_await: true,
+                auto_import_jsx: true,
                 ..Default::default()
             },
             tree_shaking: false,

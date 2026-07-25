@@ -2462,6 +2462,15 @@ declare module "bun" {
      */
     macro?: MacroMap;
 
+    /**
+     * When the automatic JSX runtime is active, prepend the
+     * `import { jsx, ... } from "<jsxImportSource>/jsx-runtime"` statement that
+     * binds the generated `jsx`/`jsxs`/`jsxDEV`/`Fragment` calls.
+     *
+     * Has no effect when the classic runtime (`jsx: "react"`) is in use.
+     *
+     * @default true
+     */
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
     exports?: {

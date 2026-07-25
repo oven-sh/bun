@@ -727,6 +727,34 @@ describe("ES Decorators", () => {
       );
     });
 
+    test("experimentalDecorators in leaf tsconfig is honored through extends chain", async () => {
+      using dir = tempDir("es-dec-ts-param-extends", {
+        "base.json": JSON.stringify({ compilerOptions: {} }),
+        "tsconfig.json": JSON.stringify({
+          extends: "./base.json",
+          compilerOptions: { experimentalDecorators: true },
+        }),
+        "test.ts": `
+          const seen: string[] = [];
+          function d(...args: any[]) { seen.push("called:" + args.length); }
+          class C { constructor(@d y?: number) {} }
+          new C(1);
+          console.log(JSON.stringify(seen));
+        `,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe('["called:3"]\n');
+      expect(exitCode).toBe(0);
+    });
+
     test("TS parameter decorators still work with experimentalDecorators", async () => {
       using dir = tempDir("es-dec-ts-param-exp", {
         "tsconfig.json": JSON.stringify({ compilerOptions: { experimentalDecorators: true } }),

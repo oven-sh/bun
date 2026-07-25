@@ -1,8 +1,8 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isDebug, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, existsSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1256,6 +1256,33 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
   // The key assertion: we should NOT see a panic
   expect(stderr).not.toContain("panic");
   expect(stderr).not.toContain("reached unreachable code");
+});
+
+// `bun completions` on Windows installs bunx.exe as a hard link to the running
+// bun.exe. When CreateHardLinkW fails it falls back to writing a bunx.cmd
+// wrapper, but previously the fallback wrote the batch text into bunx.exe
+// instead of bunx.cmd. A directory at the bunx.exe path blocks both the
+// non-directory delete and the hard link, forcing the fallback.
+it.skipIf(!isWindows)("completions: writes bunx.cmd (not bunx.exe) when hard link fails", async () => {
+  const dir = tmpdirSync();
+  const bunxName = isDebug ? "bunx-debug" : "bunx";
+  const bunCopy = join(dir, "bun-copy.exe");
+  copyFileSync(bunExe(), bunCopy);
+  await mkdir(join(dir, `${bunxName}.exe`));
+
+  await using proc = spawn({
+    cmd: [bunCopy, "completions"],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const cmdPath = join(dir, `${bunxName}.cmd`);
+  expect(existsSync(cmdPath)).toBe(true);
+  expect(await Bun.file(cmdPath).text()).toBe("@%~dp0bun.exe x %*\n");
+  expect(statSync(join(dir, `${bunxName}.exe`)).isDirectory()).toBe(true);
 });
 
 // The bunx cache root lives at a predictable path inside the shared temp dir

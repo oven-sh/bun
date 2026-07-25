@@ -148,13 +148,11 @@ impl InstallCompletionsCommand {
             // if hard link fails, use a cmd script
             const SCRIPT: &[u8] = b"@%~dp0bun.exe x %*\n";
 
-            let bunx_cmd_with_z = strings::concat_buf_t::<u16>(
+            let bunx_cmd = strings::concat_buf_t::<u16>(
                 &mut bunx_path_buf,
-                &[&windows::NT_OBJECT_PREFIX, image_dirname, exe_suffix_z],
+                &[&windows::NT_OBJECT_PREFIX, image_dirname, cmd_suffix],
             )?;
-            // SAFETY: exe_suffix_z ends in NUL
-            let bunx_cmd = WStr::from_slice_with_nul(&bunx_cmd_with_z[..]);
-            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
+            let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd)?;
             file.write_all(SCRIPT)?;
         }
         Ok(())

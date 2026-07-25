@@ -13,7 +13,7 @@ import {
   toHaveBins,
 } from "harness";
 import { basename, join } from "path";
-import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, package_dir } from "./dummy.registry";
+import { dummyAfterAll, dummyAfterEach, dummyBeforeAll, dummyBeforeEach, getPort, package_dir } from "./dummy.registry";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -475,11 +475,15 @@ it("should link dependency without crashing", async () => {
 
 // https://github.com/oven-sh/bun/issues/4719
 describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", linker => {
-  async function checkLink(dep: string, expected: { name: string; version: string }) {
+  async function setLinker() {
     await writeFile(
       join(package_dir, "bunfig.toml"),
-      `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
+      `[install]\ncache = false\nregistry = "http://localhost:${getPort()}/"\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
     );
+  }
+
+  async function checkLink(dep: string, expected: { name: string; version: string }) {
+    await setLinker();
     const { out, err, exited } = await runBunInstall(env, package_dir);
     const errText = stderrForInstall(await new Response(err).text());
     expect(errText).not.toContain("not linked");
@@ -566,10 +570,7 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
       JSON.stringify({ name: "foo", dependencies: { localpkg: "link:./local" } }),
     );
     await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
-    await writeFile(
-      join(package_dir, "bunfig.toml"),
-      `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
-    );
+    await setLinker();
     const { err, exited } = await runBunInstall(env, package_dir);
     expect(stderrForInstall(await new Response(err).text())).not.toContain("error:");
     expect(await exited).toBe(0);
@@ -590,10 +591,7 @@ describe.each(["hoisted", "isolated"])("link: with a filesystem path (%s)", link
         dependencies: { missing: "link:./does-not-exist" },
       }),
     );
-    await writeFile(
-      join(package_dir, "bunfig.toml"),
-      `[install]\ncache = false\nsaveTextLockfile = true\nlinker = "${linker}"\n`,
-    );
+    await setLinker();
     const { stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: package_dir,

@@ -82,6 +82,10 @@ describe.concurrent.skipIf(isWindows)("shell completions", () => {
     // `set -l` variables from the sourced file have gone out of scope. Make
     // sure no condition string references one.
     expect(fish).not.toMatch(/complete -c bun[^\n]* -n '[^'\n]*\$bun_builtin_cmds\b/);
+    // Per-command flags must be gated on the *first* positional only, so
+    // `bun pm cache rm` doesn't pick up `bun remove`'s flags via the trailing
+    // `rm` token.
+    expect(fish).toMatch(/^function __bun_first_arg_in\b/m);
   });
 
   test("bash: includes runtime and per-command flags", async () => {

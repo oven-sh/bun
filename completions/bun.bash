@@ -7,13 +7,7 @@ _file_arguments() {
     local reset
     reset="$(shopt -p extglob 2>/dev/null)"
     shopt -s extglob 2>/dev/null
-
-    if [[ -z "${cur_word}" ]]; then
-        COMPREPLY+=( $(compgen -fG -X "${extensions}" -- "${cur_word}") );
-    else
-        COMPREPLY+=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
-    fi
-
+    COMPREPLY+=( $(compgen -f -X "${extensions}" -- "${cur_word}") )
     eval "$reset" 2>/dev/null
 }
 
@@ -88,7 +82,11 @@ _bun_completions() {
 
     local first_word="" i
     for (( i=1; i < COMP_CWORD; i++ )); do
-        [[ "${COMP_WORDS[i]}" != -* ]] && { first_word="${COMP_WORDS[i]}"; break; }
+        case "${COMP_WORDS[i]}" in
+            --conditions|--config|--console-depth|--cwd|--dns-result-order|--elide-lines|--env-file|--eval|--fetch-preconnect|--filter|--import|--inspect|--inspect-brk|--inspect-wait|--install|--max-http-header-size|--port|--preload|--print|--require|--shell|--title|--unhandled-rejections|-F|-c|-e|-p|-r) ((i++)) ;;
+            -*) ;;
+            *) first_word="${COMP_WORDS[i]}"; break ;;
+        esac
     done
 
     case "${first_word}" in

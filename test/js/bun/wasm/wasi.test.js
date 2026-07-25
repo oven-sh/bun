@@ -110,6 +110,61 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   expect(wasi.FD_MAP.has(4)).toBe(false);
 });
 
+it("fd_write/fd_read return an errno for out-of-bounds iovecs instead of throwing or writing host output", async () => {
+  // A hostile guest probing memory bounds must get a clean errno back from every
+  // hostcall shape (iovec array pointer OOB, iov.buf OOB, iov.len overrunning
+  // memory) and must not be able to make the host emit debug output or write the
+  // truncated bytes. Node.js returns WASI_EOVERFLOW (61) for each of these.
+  const src = `
+    const { WASI } = require("node:wasi");
+    const wasi = new WASI({ version: "preview1" });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    const view = new DataView(wasi.memory.buffer);
+    const call = (fn, fd, iovs, iovsLen, outPtr = 256) => {
+      try { return wasi.wasiImport[fn](fd, iovs, iovsLen, outPtr); }
+      catch (e) { return "THREW " + e.constructor.name; }
+    };
+    // (1) iovec array pointer lies outside linear memory
+    console.log("iovs-ptr-oob", call("fd_write", 2, 65534, 1));
+    // (2) iov.buf lies outside linear memory
+    view.setUint32(0, 70000, true); view.setUint32(4, 10, true);
+    console.log("buf-oob", call("fd_write", 2, 0, 1));
+    // (3) iov.len overruns linear memory
+    view.setUint32(0, 65530, true); view.setUint32(4, 4096, true);
+    console.log("len-overrun", call("fd_write", 2, 0, 1));
+    // (4) same via the multi-iovec path
+    view.setUint32(0, 16, true);  view.setUint32(4, 0, true);
+    view.setUint32(8, 65530, true); view.setUint32(12, 4096, true);
+    console.log("len-overrun-multi", call("fd_write", 2, 0, 2));
+    // (5) fd_read goes through the same iovec decoder
+    console.log("fd_read-iovs-ptr-oob", call("fd_read", 0, 65534, 1));
+    // (6) valid iovec but nwritten pointer lies outside memory: must not write
+    view.setUint32(0, 32, true); view.setUint32(4, 7, true);
+    new Uint8Array(wasi.memory.buffer, 32, 7).set([76, 69, 65, 75, 69, 68, 10]);
+    console.log("nwritten-oob", call("fd_write", 2, 0, 1, 70000));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const WASI_EOVERFLOW = 61;
+  // stderr must be empty (no console.warn noise, no truncated guest bytes from
+  // the len-overrun case, no "LEAKED\n" from the nwritten-oob case) and stdout
+  // must be exactly the result lines with no `{ buf, bufLen, total_memory }`
+  // debug object between them.
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: ["iovs-ptr-oob", "buf-oob", "len-overrun", "len-overrun-multi", "fd_read-iovs-ptr-oob", "nwritten-oob"]
+      .map(k => `${k} ${WASI_EOVERFLOW}\n`)
+      .join(""),
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("path_* syscalls cannot escape the preopened directory", () => {
   using dir = tempDir("wasi-sandbox", {
     "secret.txt": "outside",

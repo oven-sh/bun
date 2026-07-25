@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import * as internalForTesting from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const { stringImplHash } = internalForTesting as { stringImplHash?: (s: string) => number };

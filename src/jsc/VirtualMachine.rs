@@ -4469,6 +4469,7 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
+        formatter.stack_check = bun_core::util::StackCheck::init();
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -4784,7 +4785,59 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        if value.is_aggregate_error(global_ref) {
+        let is_aggregate = value.is_aggregate_error(global_ref);
+        if is_aggregate {
+            use crate::console_object::formatter::visited;
+
+            // Depth guard: this branch re-enters through `agg_iter` below with
+            // no intervening JSC stack check.
+            if !formatter.stack_check.is_safe_to_recurse() {
+                let marker = if allow_ansi_color {
+                    bun_core::pretty_fmt!("<r><cyan>[AggregateError: nesting too deep]<r>\n", true)
+                } else {
+                    bun_core::pretty_fmt!("<r><cyan>[AggregateError: nesting too deep]<r>\n", false)
+                };
+                let _ = writer.write_all(marker.as_bytes());
+                return;
+            }
+
+            // Circular-ref guard keyed on the AggregateError object identity,
+            // same visited pool the cause-chain and object printers use.
+            if formatter.map_node.is_none() {
+                let mut node = NonNull::new(visited::Pool::get_node())
+                    .expect("ObjectPool::get_node always returns a valid heap node");
+                let data = visited::node_data_mut(&mut node);
+                data.clear();
+                formatter.map = core::mem::take(data);
+                formatter.map_node = Some(node);
+            }
+            let entry = formatter.map.get_or_put(value).expect("unreachable");
+            if entry.found_existing {
+                let marker = if allow_ansi_color {
+                    bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", true)
+                } else {
+                    bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", false)
+                };
+                let _ = writer.write_all(marker.as_bytes());
+                return;
+            }
+            // Fall through so the AggregateError's own name/message/stack is
+            // printed before its children.
+        }
+
+        // Note: reborrow so the add-to-error-list tail can still see it after
+        // `print_error_from_maybe_private_data`.
+        let mut exception_list = exception_list;
+        let was_internal = self.print_error_from_maybe_private_data(
+            value,
+            exception_list.as_deref_mut(),
+            formatter,
+            writer,
+            allow_ansi_color,
+            allow_side_effects,
+        );
+
+        if is_aggregate {
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -4830,34 +4883,30 @@ impl VirtualMachine {
                     ctx.allow_side_effects,
                 );
             }
-            let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(formatter),
-                writer: std::ptr::from_mut(writer),
-                exception_list: exception_list
-                    .map(std::ptr::from_mut::<ExceptionList>)
-                    .unwrap_or(core::ptr::null_mut()),
-                allow_ansi_color,
-                allow_side_effects,
-            };
-            // `getErrorsProperty` is
-            // `getDirect` (own data prop, nothrow); `for_each` may throw, in
-            // which case the error is swallowed.
+            // `getErrorsProperty` is `getDirect` (own data prop, nothrow), so
+            // a deleted or accessor `errors` surfaces here as empty / a
+            // GetterSetter cell.
             let errors = value.get_errors_property(global_ref);
-            let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
+            if errors.is_object() {
+                let mut ctx = AggCtx {
+                    formatter: std::ptr::from_mut(formatter),
+                    writer: std::ptr::from_mut(writer),
+                    exception_list: exception_list
+                        .map(std::ptr::from_mut::<ExceptionList>)
+                        .unwrap_or(core::ptr::null_mut()),
+                    allow_ansi_color,
+                    allow_side_effects,
+                };
+                if errors
+                    .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
+                    .is_err()
+                {
+                    self.global().clear_exception();
+                }
+            }
+            let _ = formatter.map.remove(&value);
             return;
         }
-
-        // Note: reborrow so the add-to-error-list tail can still see it after
-        // `print_error_from_maybe_private_data`.
-        let mut exception_list = exception_list;
-        let was_internal = self.print_error_from_maybe_private_data(
-            value,
-            exception_list.as_deref_mut(),
-            formatter,
-            writer,
-            allow_ansi_color,
-            allow_side_effects,
-        );
 
         if was_internal {
             if let Some(exception_) = exception {

@@ -131,6 +131,8 @@ struct FileCoverage {
     path: Box<[u8]>,
     fnf: u32,
     fnh: u32,
+    /// function name → (start line, summed hit count).
+    fns: StringArrayHashMap<(u32, u32)>,
     /// 1-based line number → summed hit count.
     da: ArrayHashMap<u32, u32>,
 }
@@ -143,13 +145,21 @@ impl FileCoverage {
         }
         n
     }
+
+    fn fn_totals(&self) -> (u32, u32) {
+        if self.fns.count() > 0 {
+            let mut hit = 0u32;
+            for &(_, h) in self.fns.values() {
+                hit += (h > 0) as u32;
+            }
+            (self.fns.count() as u32, hit)
+        } else {
+            (self.fnf, self.fnh)
+        }
+    }
 }
 
-/// Merge per-worker LCOV fragments into a single report. Line-level (DA) merge
-/// is precise. FNF/FNH take the per-worker max since Bun's LCOV writer doesn't
-/// emit per-function FN/FNDA records yet, so disjoint per-worker function hits
-/// can't be unioned; this under-reports % Funcs when workers cover different
-/// functions of the same file. The non-parallel path has the same FN/FNDA gap.
+/// Merge per-worker LCOV fragments into a single report.
 pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,
@@ -197,6 +207,38 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                     } else {
                         cnt
                     };
+                } else if line.starts_with(b"FN:") {
+                    let rest = &line[3..];
+                    let Some(comma) = strings::index_of_char(rest, b',') else {
+                        continue;
+                    };
+                    let Ok(ln) = strings::parse_int::<u32>(&rest[..comma as usize], 10) else {
+                        continue;
+                    };
+                    let name = &rest[comma as usize + 1..];
+                    let gop = bun_core::handle_oom(fc.fns.get_or_put(name));
+                    if !gop.found_existing {
+                        gop.key_ptr.clone_from(&Box::from(name));
+                        *gop.value_ptr = (ln, 0);
+                    } else {
+                        gop.value_ptr.0 = ln;
+                    }
+                } else if line.starts_with(b"FNDA:") {
+                    let rest = &line[5..];
+                    let Some(comma) = strings::index_of_char(rest, b',') else {
+                        continue;
+                    };
+                    let Ok(cnt) = strings::parse_int::<u32>(&rest[..comma as usize], 10) else {
+                        continue;
+                    };
+                    let name = &rest[comma as usize + 1..];
+                    let gop = bun_core::handle_oom(fc.fns.get_or_put(name));
+                    if !gop.found_existing {
+                        gop.key_ptr.clone_from(&Box::from(name));
+                        *gop.value_ptr = (0, cnt);
+                    } else {
+                        gop.value_ptr.1 = gop.value_ptr.1.saturating_add(cnt);
+                    }
                 } else if line.starts_with(b"FNF:") {
                     fc.fnf = fc
                         .fnf
@@ -253,15 +295,26 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
+                    let _ = write!(&mut w, "TN:\nSF:{}\n", BStr::new(&fc.path));
+                    if fc.fns.count() > 0 {
+                        let mut fn_order: Vec<usize> = (0..fc.fns.count()).collect();
+                        {
+                            let vals = fc.fns.values();
+                            fn_order.sort_by_key(|&j| vals[j].0);
+                        }
+                        let keys = fc.fns.keys();
+                        let vals = fc.fns.values();
+                        for &j in &fn_order {
+                            let _ = writeln!(&mut w, "FN:{},{}", vals[j].0, BStr::new(&keys[j]));
+                        }
+                        for &j in &fn_order {
+                            let _ = writeln!(&mut w, "FNDA:{},{}", vals[j].1, BStr::new(&keys[j]));
+                        }
+                    }
+                    let (fnf, fnh) = fc.fn_totals();
+                    let _ = write!(&mut w, "FNF:{}\nFNH:{}\n", fnf, fnh);
                     let mut sorted: Vec<u32> = fc.da.keys().to_vec();
                     sorted.sort_unstable();
-                    let _ = write!(
-                        &mut w,
-                        "TN:\nSF:{}\nFNF:{}\nFNH:{}\n",
-                        BStr::new(&fc.path),
-                        fc.fnf,
-                        fc.fnh
-                    );
                     for &ln in &sorted {
                         let _ =
                             writeln!(&mut w, "DA:{},{}", ln, fc.da.get(&ln).expect("unreachable"));
@@ -293,9 +346,10 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         let fc = &by_file.values()[i];
         let lf: f64 = fc.da.count() as f64;
         let lh_: f64 = fc.lh() as f64;
+        let (fnf, fnh) = fc.fn_totals();
         *frac = CoverageFraction {
-            functions: if fc.fnf > 0 {
-                fc.fnh as f64 / fc.fnf as f64
+            functions: if fnf > 0 {
+                fnh as f64 / fnf as f64
             } else {
                 1.0
             },

@@ -315,8 +315,23 @@ pub mod lcov {
         }
         writer.write_all(b"\n")?;
 
-        // ** Per-function coverage not supported yet, since JSC does not support function names yet. **
-        // FN: line number,function name
+        // FN:<start line>,<name>
+        // JSC's FunctionHasExecutedCache does not expose names, so emit a stable
+        // synthetic name derived from the start line (same scheme c8/istanbul use
+        // for anonymous functions).
+        for fn_ in report.functions.iter() {
+            writeln!(
+                writer,
+                "FN:{},(anonymous_{})",
+                fn_.start_line + 1,
+                fn_.start_line
+            )?;
+        }
+
+        // FNDA:<hits>,<name>
+        for fn_ in report.functions.iter() {
+            writeln!(writer, "FNDA:{},(anonymous_{})", fn_.hits, fn_.start_line)?;
+        }
 
         // FNF: functions found
         writeln!(writer, "FNF:{}", report.functions.len())?;
@@ -420,6 +435,31 @@ pub struct BasicBlockRange {
     execution_count: usize,
 }
 
+/// JSC's FunctionHasExecutedCache only records whether a function ran, not how
+/// many times. The ControlFlowProfiler *does* count executions per basic block,
+/// and BytecodeGenerator emits an `op_profile_control_flow` at the function's
+/// `startStartOffset()` (FunctionNode::emitBytecode), so the basic block whose
+/// start sits closest to the function's start offset has the call count.
+fn function_entry_hits(blocks: &[BasicBlockRange], function: &BasicBlockRange) -> u32 {
+    let fn_start = function.start_offset.min(function.end_offset);
+    let fn_end = function.start_offset.max(function.end_offset);
+    let mut best_start = c_int::MAX;
+    let mut best_span = c_int::MAX;
+    let mut best_count: usize = 0;
+    for b in blocks {
+        if b.start_offset < fn_start || b.start_offset > fn_end {
+            continue;
+        }
+        let span = b.end_offset.saturating_sub(b.start_offset);
+        if b.start_offset < best_start || (b.start_offset == best_start && span < best_span) {
+            best_start = b.start_offset;
+            best_span = span;
+            best_count = b.execution_count;
+        }
+    }
+    best_count.min(u32::MAX as usize) as u32
+}
+
 pub struct ByteRangeMapping {
     pub line_offset_table: line_offset_table::List,
     pub source_id: i32,
@@ -504,7 +544,6 @@ impl ByteRangeMapping {
 
         let mut functions: Vec<Block> = Vec::new();
         functions.reserve_exact(function_blocks.len());
-        let mut functions_which_have_executed: Bitset = Bitset::init_empty(function_blocks.len())?;
         let mut stmts_which_have_executed: Bitset = Bitset::init_empty(blocks.len())?;
 
         let mut stmts: Vec<Block> = Vec::new();
@@ -532,6 +571,7 @@ impl ByteRangeMapping {
                 let mut max_line: u32 = 0;
 
                 let has_executed = block.has_executed || block.execution_count > 0;
+                let hits = block.execution_count.min(u32::MAX as usize) as u32;
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -554,7 +594,11 @@ impl ByteRangeMapping {
                     executable_lines.set(line as usize);
                     if has_executed {
                         lines_which_have_executed.set(line as usize);
-                        line_hits_slice[line as usize] += 1;
+                        // A line can be visited by multiple byte offsets of the same block
+                        // and by multiple overlapping blocks; take the max execution_count
+                        // so the lcov DA record reflects how many times the line actually ran
+                        // (mirrors JSC's basicBlockExecutionCountAtTextOffset semantics).
+                        line_hits_slice[line as usize] = line_hits_slice[line as usize].max(hits);
                     }
                 }
 
@@ -566,11 +610,12 @@ impl ByteRangeMapping {
                     stmts.push(Block {
                         start_line: min_line,
                         end_line: max_line,
+                        hits,
                     });
                 }
             }
 
-            for (i, function) in function_blocks.iter().enumerate() {
+            for function in function_blocks.iter() {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
                 }
@@ -614,14 +659,17 @@ impl ByteRangeMapping {
                     }
                 }
 
+                let hits = if did_fn_execute {
+                    function_entry_hits(blocks, function).max(1)
+                } else {
+                    0
+                };
+
                 functions.push(Block {
                     start_line: min_line,
                     end_line: max_line,
+                    hits,
                 });
-
-                if did_fn_execute {
-                    functions_which_have_executed.set(i);
-                }
             }
         } else if let Some(parsed_mapping) = parsed_mappings_.as_deref() {
             line_count = (parsed_mapping.input_line_count as u32) + 1;
@@ -644,6 +692,7 @@ impl ByteRangeMapping {
                 let mut min_line: u32 = u32::MAX;
                 let mut max_line: u32 = 0;
                 let has_executed = block.has_executed || block.execution_count > 0;
+                let hits = block.execution_count.min(u32::MAX as usize) as u32;
 
                 for byte_offset in min..max {
                     let Some(new_line_index) = LineOffsetTable::find_index(
@@ -694,7 +743,8 @@ impl ByteRangeMapping {
                         executable_lines.set(line as usize);
                         if has_executed {
                             lines_which_have_executed.set(line as usize);
-                            line_hits_slice[line as usize] += 1;
+                            line_hits_slice[line as usize] =
+                                line_hits_slice[line as usize].max(hits);
                         }
 
                         min_line = min_line.min(line);
@@ -706,6 +756,7 @@ impl ByteRangeMapping {
                     stmts.push(Block {
                         start_line: min_line,
                         end_line: max_line,
+                        hits,
                     });
 
                     if has_executed {
@@ -714,7 +765,7 @@ impl ByteRangeMapping {
                 }
             }
 
-            for (i, function) in function_blocks.iter().enumerate() {
+            for function in function_blocks.iter() {
                 if function.end_offset < 0 || function.start_offset < 0 {
                     continue; // does not map to anything
                 }
@@ -795,16 +846,39 @@ impl ByteRangeMapping {
                     }
                 }
 
+                let hits = if did_fn_execute {
+                    function_entry_hits(blocks, function).max(1)
+                } else {
+                    0
+                };
+
                 functions.push(Block {
                     start_line: min_line,
                     end_line: max_line,
+                    hits,
                 });
-                if did_fn_execute {
-                    functions_which_have_executed.set(i);
-                }
             }
         } else {
             unreachable!();
+        }
+
+        // JSC's FunctionHasExecutedCache can report the same function range more
+        // than once (e.g. when a CodeBlock for it is linked multiple times), which
+        // inflates FNF. Collapse duplicates by (start_line, end_line) and rebuild
+        // functions_which_have_executed from the deduplicated list.
+        functions.sort_unstable_by(|a, b| {
+            (a.start_line, a.end_line, core::cmp::Reverse(a.hits)).cmp(&(
+                b.start_line,
+                b.end_line,
+                core::cmp::Reverse(b.hits),
+            ))
+        });
+        functions.dedup_by(|a, b| a.start_line == b.start_line && a.end_line == b.end_line);
+        let mut functions_which_have_executed: Bitset = Bitset::init_empty(functions.len())?;
+        for (i, f) in functions.iter().enumerate() {
+            if f.hits > 0 {
+                functions_which_have_executed.set(i);
+            }
         }
 
         Ok(Report {
@@ -945,4 +1019,5 @@ pub use bun_options_types::code_coverage_options::Fraction;
 pub struct Block {
     pub start_line: u32,
     pub end_line: u32,
+    pub hits: u32,
 }

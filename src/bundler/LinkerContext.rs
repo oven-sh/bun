@@ -1997,25 +1997,52 @@ impl<'a> LinkerContext<'a> {
                     if Index::is_invalid(Index::init(parent.parent)) {
                         continue;
                     }
+                    let mut tla_source = child_source_index;
+                    while tla_keywords[tla_source as usize].len == 0 {
+                        let next = tla_checks[tla_source as usize].parent;
+                        if !Index::is_valid(Index::init(next)) || next == tla_source {
+                            break;
+                        }
+                        tla_source = next;
+                    }
                     let source: &Source = &input_files[source_index as usize];
                     let child_path = &input_files[child_source_index as usize].path.pretty;
+                    let tla_path = &input_files[tla_source as usize].path.pretty;
                     let range = ast_import_records[source_index as usize].as_slice()
                         [parent_import_record_index as usize]
                         .range;
                     let mut text = Vec::new();
                     use std::io::Write;
-                    write!(
-                        &mut text,
-                        "This require call is not allowed because the matched file \"{}\" contains a top-level await",
-                        bstr::BStr::new(child_path)
-                    )
+                    if tla_source == child_source_index {
+                        write!(
+                            &mut text,
+                            "This require call is not allowed because the matched file \"{}\" contains a top-level await",
+                            bstr::BStr::new(child_path)
+                        )
+                    } else {
+                        write!(
+                            &mut text,
+                            "This require call is not allowed because the matched file \"{}\" transitively imports \"{}\" which contains a top-level await",
+                            bstr::BStr::new(child_path),
+                            bstr::BStr::new(tla_path)
+                        )
+                    }
                     .expect("infallible: in-memory write");
-                    self.log_disjoint().add_range_error_with_notes(
-                        Some(source),
-                        range,
-                        text,
-                        Box::new([]),
-                    );
+                    let tla_range = tla_keywords[tla_source as usize];
+                    let notes: Box<[Data]> = if tla_range.len > 0 {
+                        Box::new([Data {
+                            text: b"The top-level await is here:"[..].into(),
+                            location: bun_ast::Location::init_or_null(
+                                Some(&input_files[tla_source as usize]),
+                                tla_range,
+                            ),
+                            ..Default::default()
+                        }])
+                    } else {
+                        Box::new([])
+                    };
+                    self.log_disjoint()
+                        .add_range_error_with_notes(Some(source), range, text, notes);
                 }
                 Frame::AfterChild {
                     source_index,

@@ -5783,8 +5783,11 @@ pub mod bv2_impl {
             result: &mut parse_task::Success,
             resolve_queue: &mut ResolveQueue,
         ) {
-            use bun_resolver::fs::FilenameStore;
-
+            // SAFETY: `graph.heap` outlives the bundle pass; keys are only read
+            // by the printer within the same pass. Detach so callers below can
+            // reborrow `&mut self`.
+            let arena: &'static bun_alloc::Arena =
+                unsafe { bun_ptr::detach_lifetime_ref(self.arena()) };
             let source_dir = result.source.path.source_dir();
             let target = result.ast.target;
             let generation = self.transpiler.resolver.generation;
@@ -5866,15 +5869,13 @@ pub mod bv2_impl {
                         continue;
                     };
 
-                    let key: &'static [u8] =
-                        FilenameStore::instance().append_slice(&rel).expect("oom");
+                    let key: &'static [u8] = arena.alloc_slice_copy(&rel);
                     glob.entries
                         .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
                     if suffix.is_empty() {
-                        let stem: &'static [u8] = FilenameStore::instance()
-                            .append_slice(&rel[..rel.len() - ext.len()])
-                            .expect("oom");
-                        if !seen_stems.iter().any(|s| *s == stem) {
+                        let stem = &rel[..rel.len() - ext.len()];
+                        if !seen_stems.iter().any(|s| **s == *stem) {
+                            let stem: &'static [u8] = arena.alloc_slice_copy(stem);
                             seen_stems.push(stem);
                             let stem_idx = self
                                 .resolve_glob_child(source_dir, stem, kind, target, resolve_queue)

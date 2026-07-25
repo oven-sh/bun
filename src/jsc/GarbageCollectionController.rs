@@ -1,18 +1,4 @@
-//! Idle garbage-collection timer for Bun's JavaScript runtime.
-//!
-//! JavaScriptCore already paces eden and full collections against allocation
-//! rate via `GCActivityCallback::didAllocate` / `Heap::collectIfNecessaryOrDefer`
-//! (bridged onto Bun's timer heap through `WTFTimer`). This controller only
-//! adds a low-frequency idle timer that requests a collection every
-//! `gc_timer_interval` ms (default 1 s, decaying to 30 s after 30 steady ticks)
-//! so a process that stops allocating still releases memory.
-//!
-//! Tuning knobs (process environment):
-//! - `BUN_GC_TIMER_INTERVAL`  fast-mode interval in ms (default 1000)
-//! - `BUN_GC_TIMER_DISABLE`   truthy value disables the timer entirely
-//!
-//! Thread Safety: This type must be unique per JavaScript thread and is not
-//! thread-safe. Each VirtualMachine instance has its own controller.
+//! Idle GC timer: JSC's own `GCActivityCallback` (via `WTFTimer`) paces eden/full against allocation rate; this only adds a 1 s / 30 s idle `collect_async()` so a process that stops allocating still releases memory. Knobs: `BUN_GC_TIMER_INTERVAL` (ms), `BUN_GC_TIMER_DISABLE`. One per JS thread, not thread-safe.
 
 use core::ffi::c_int;
 
@@ -26,12 +12,7 @@ const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
     pub gc_repeating_timer: EventLoopTimer,
-    /// Written by every `perform_gc()` caller (not just the repeating timer), so
-    /// the fast/slow comparison in `on_gc_repeating_timer` sees the heap size at
-    /// the last `perform_gc()` call rather than strictly the last fire. External
-    /// callers are one-shot (serve/listen, entry-point load, hot reload); worst
-    /// case is one extra 30 s slow-mode interval before the next fire picks up
-    /// the drift.
+    /// Written by every `perform_gc()` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub gc_last_heap_size: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_interval: i32,
@@ -87,9 +68,7 @@ impl GarbageCollectionController {
         let actual = unsafe { &mut *uws::Loop::get() };
         actual.internal_loop_data.jsc_vm = vm.jsc_vm.cast();
 
-        // The dotenv loader may not be populated yet when this runs (it exists
-        // from `Transpiler::init` but `load_process()` has not run); fall back
-        // to the process environment so the knobs below are always honoured.
+        // Fall back to process env: `load_process()` has not run when this fires.
         let env = vm.env_loader_opt();
         let get_env = |zkey: &'static ZStr| -> Option<&'static [u8]> {
             env.and_then(|e| e.get(zkey))
@@ -142,9 +121,7 @@ impl GarbageCollectionController {
         }
     }
 
-    /// Arms the idle timer on first call; a branch on `state` thereafter. Kept
-    /// at the existing event-loop call sites so the timer's first deadline is
-    /// included in the poll that follows.
+    /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
     pub fn process_gc_timer(&mut self) {
         if self.disabled || self.gc_repeating_timer.state != TimerState::PENDING {
@@ -167,11 +144,7 @@ impl GarbageCollectionController {
         self.gc_last_heap_size = vm.block_bytes_allocated();
     }
 
-    /// `Tag::GcRepeating` fire body. Runs every second in fast mode or every
-    /// 30 seconds in slow mode: when the heap size is increasing we stay in
-    /// fast mode; after 30 consecutive fast-mode fires with no heap growth we
-    /// drop to slow mode so an idle long-running process is not constantly
-    /// using CPU doing GC for no reason.
+    /// `Tag::GcRepeating` fire body: 1 s in fast mode, 30 s in slow mode; drops to slow after 30 fires with no heap growth.
     ///
     /// # Safety
     /// `this` is the live per-VM controller; `vm` is the per-thread VM.

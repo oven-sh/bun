@@ -162,12 +162,7 @@ impl Loader {
         self.map.iterator()
     }
 
-    /// The truthiness predicate behind [`Self::has`]. Exposed so callers that
-    /// fall back to the process environment before `load_process()` has run can
-    /// share one definition instead of hard-copying the falsy set.
-    ///
-    /// NOTE: intentionally stricter than `is_emptyish`; also rejects
-    /// `"0"`/`"false"`. Do not collapse the extra terms.
+    /// Truthiness predicate behind [`Self::has`]; stricter than `is_emptyish` (also rejects `"0"`/`"false"`, do not collapse).
     #[inline]
     pub fn is_truthy(value: &[u8]) -> bool {
         !Self::is_emptyish(value) && value != b"0" && value != b"false"

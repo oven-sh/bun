@@ -402,11 +402,9 @@ impl StaticRoute {
     /// `this` must be a live heap-allocated route with write provenance; may free
     /// `*this` via `deref_` when the refcount reaches zero.
     unsafe fn on_response_complete(this: *mut Self, _resp: AnyResponse) {
-        // The response was either just ended (markDone/clearOnWritableAndAborted
-        // already nulled onAborted/onWritable/onTimeout, and uws_res_try_end
-        // then replayed any buffered pipelined request whose handler installed
-        // its own) or is being aborted (onClose destructs the response data).
-        // Clearing here would null the replayed request's handlers.
+        // markDone() already nulled resp's onAborted/onWritable/onTimeout, and
+        // the end wrapper then replayed any buffered pipelined request; clearing
+        // here would null THAT request's handlers.
         // SAFETY: caller contract.
         unsafe {
             if let Some(mut server) = (*this).server.get() {

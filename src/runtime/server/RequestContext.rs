@@ -2389,14 +2389,10 @@ where
         }
     }
 
-    /// Release our handle after a `uws_res_end*` wrapper has already run
-    /// `markDone()` (and, for `try_end`, `clearOnWritableAndAborted()`): those
-    /// nulled `onAborted` / `inStream` / `onTimeout` / `onWritable`, and the
-    /// wrapper then replayed any buffered pipelined request, so the socket's
-    /// per-request callbacks now belong to the NEXT request. Calling
-    /// `resp.clear_*()` here would null that request's handlers (its
-    /// `req.signal` would never fire on disconnect; a backpressured body
-    /// would stall). Just drop the local handle and flags.
+    /// `detach_response` without the `resp.clear_*` FFI calls: `markDone()`
+    /// already nulled them, and the `uws_res_end*` wrapper then replayed any
+    /// buffered pipelined request, so those handlers now belong to the next
+    /// request.
     fn detach_response_after_end(&mut self) {
         self.request_body_buf = Vec::new();
         self.resp.take();

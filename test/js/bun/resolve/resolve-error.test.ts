@@ -43,10 +43,8 @@ describe("ResolveMessage", () => {
       e = err;
     }
     expect(e.name).toBe("ResolveMessage");
-    expect(typeof e.stack).toBe("string");
-    expect(e.stack).toStartWith(`ResolveMessage: ${e.message}`);
-    expect(e.stack).toContain("does-not-exist-stack-test.js");
-    expect(`${e.stack}`).not.toBe("undefined");
+    // Resolve errors carry no source location, so the stack is exactly the header line.
+    expect(e.stack).toBe(`ResolveMessage: ${e.message}`);
   });
 
   it(".stack is writable", async () => {

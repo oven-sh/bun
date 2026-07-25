@@ -1338,9 +1338,7 @@ describe("SVG/MathML integration-point elements reach handlers after a sibling i
         },
       })
       .transform(
-        new Response(
-          `<math><mi>x</mi><annotation-xml encoding="text/html"><span>y</span></annotation-xml></math>`,
-        ),
+        new Response(`<math><mi>x</mi><annotation-xml encoding="text/html"><span>y</span></annotation-xml></math>`),
       )
       .text();
     expect(handlers).toEqual(["annotation-xml"]);

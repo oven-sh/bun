@@ -1337,6 +1337,7 @@ describe("bun test", () => {
         test("beta two", () => {});
         test("gamma three", () => {});
       `,
+      expectExitCode: 0,
     });
     expect(stderr).toContain("(pass) alpha one");
     expect(stderr).toContain("(pass) beta two");
@@ -1355,6 +1356,7 @@ describe("bun test", () => {
         test("barbar", () => {});
         test("quux", () => {});
       `,
+      expectExitCode: 0,
     });
     expect(stderr).toContain("(pass) foofoo");
     expect(stderr).toContain("(pass) barbar");

@@ -2710,17 +2710,8 @@ impl<'a> Resolver<'a> {
                                         }
 
                                         if !skip_bun_condition
-                                            && matches!(
-                                                matched_status,
-                                                crate::package_json::Status::Exact
-                                                    | crate::package_json::Status::ExactEndsWithStar
-                                                    | crate::package_json::Status::Inexact
-                                            )
                                             && self
-                                                .opts
-                                                .conditions
-                                                .import
-                                                .contains_key(b"bun".as_slice())
+                                                .should_retry_without_bun_condition(matched_status)
                                         {
                                             skip_bun_condition = true;
                                             module_type = package_json.module_type;
@@ -3226,17 +3217,8 @@ impl<'a> Resolver<'a> {
                                         }
 
                                         if !skip_bun_condition
-                                            && matches!(
-                                                matched_status,
-                                                crate::package_json::Status::Exact
-                                                    | crate::package_json::Status::ExactEndsWithStar
-                                                    | crate::package_json::Status::Inexact
-                                            )
                                             && self
-                                                .opts
-                                                .conditions
-                                                .import
-                                                .contains_key(b"bun".as_slice())
+                                                .should_retry_without_bun_condition(matched_status)
                                         {
                                             skip_bun_condition = true;
                                             module_type = options::ModuleType::Unknown;
@@ -3668,6 +3650,14 @@ impl<'a> Resolver<'a> {
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.
         unreachable!("TODO: implement enqueueDependencyToResolve for non-root packages")
+    }
+
+    fn should_retry_without_bun_condition(&self, status: crate::package_json::Status) -> bool {
+        use crate::package_json::Status;
+        matches!(
+            status,
+            Status::Exact | Status::ExactEndsWithStar | Status::Inexact
+        ) && self.opts.conditions.import.contains_key(b"bun".as_slice())
     }
 
     fn handle_esm_resolution(
@@ -4928,13 +4918,7 @@ impl<'a> Resolver<'a> {
 
             if !result.is_success()
                 && !skip_bun_condition
-                && matches!(
-                    matched_status,
-                    crate::package_json::Status::Exact
-                        | crate::package_json::Status::ExactEndsWithStar
-                        | crate::package_json::Status::Inexact
-                )
-                && self.opts.conditions.import.contains_key(b"bun".as_slice())
+                && self.should_retry_without_bun_condition(matched_status)
             {
                 skip_bun_condition = true;
                 continue;

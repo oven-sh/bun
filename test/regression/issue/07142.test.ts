@@ -161,7 +161,7 @@ describe.concurrent('exports "bun" condition target missing on disk', () => {
     });
 
     const { stderr, exitCode } = await run(dir, "index.mjs");
-    expect(stderr).toContain("pkg");
+    expect(stderr).toContain("Cannot find package 'pkg'");
     expect(exitCode).not.toBe(0);
   });
 
@@ -183,7 +183,7 @@ describe.concurrent('exports "bun" condition target missing on disk', () => {
     });
 
     const { stdout, stderr, exitCode } = await run(dir, "index.mjs");
-    expect(stderr).toContain("pkg");
+    expect(stderr).toContain("Cannot find package 'pkg'");
     expect(stdout.trim()).not.toBe("index.mjs");
     expect(exitCode).not.toBe(0);
   });

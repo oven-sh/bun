@@ -1007,7 +1007,9 @@ impl ClientSession {
 
         if stream.headers_ready {
             stream.headers_ready = false;
-            let result = match self.apply_headers(stream, client) {
+            let (result, response) = match client
+                .apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
+            {
                 Ok(r) => r,
                 Err(err) => {
                     self.rst_stream(stream, wire::ErrorCode::CANCEL);
@@ -1034,12 +1036,14 @@ impl ClientSession {
                 client.h2_do_redirect(self.ctx, self.socket);
                 return true;
             }
+            // Deep-copy before detaching: `response` borrows
+            // `stream.decoded_headers`.
+            client.h2_clone_metadata(&response);
             if result == HeaderResult::Finished
                 || (stream.remote_closed() && stream.body_buffer.is_empty())
             {
                 stream.client = None;
                 client.h2 = None;
-                client.h2_clone_metadata();
                 client.state.flags.received_last_chunk = true;
                 // .finished = HEAD/204/304: no body is expected regardless of
                 // any Content-Length header, so clear it. Otherwise leave the
@@ -1050,7 +1054,6 @@ impl ClientSession {
                 }
                 return self.finish_stream(stream, client);
             }
-            client.h2_clone_metadata();
             // Mirror the h1 path: deliver headers
             // to JS now so `await fetch()` resolves and `getReader()` can enable
             // response_body_streaming. Without this, a content-length response
@@ -1132,19 +1135,6 @@ impl ClientSession {
         }
         client.h2_progress_update(self.ctx, self.socket);
         true
-    }
-
-    /// Hand the pre-decoded response headers to the existing HTTP/1.1
-    /// metadata pipeline (`handleResponseMetadata` + `cloneMetadata`).
-    fn apply_headers(
-        &mut self,
-        stream: &mut Stream,
-        client: &mut HTTPClient,
-    ) -> Result<HeaderResult, Error> {
-        // SAFETY: decoded_headers borrow stream.decoded_bytes, which outlives
-        // the synchronous clone_metadata that follows in `process_stream` —
-        // see `HTTPClient::apply_multiplexed_headers` contract.
-        client.apply_multiplexed_headers(stream.status_code, &stream.decoded_headers)
     }
 }
 

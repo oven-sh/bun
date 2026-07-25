@@ -225,8 +225,6 @@ impl Loader {
             .is_some()
     }
 
-    pub fn load_tracy(&self) {}
-
     pub fn get_s3_credentials(&mut self) -> &S3Credentials {
         if self.aws_credentials.is_none() {
             // Copy to `Box<[u8]>` so the cached struct owns its bytes and we

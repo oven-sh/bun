@@ -3,7 +3,7 @@ import * as iso from "isomorphic-fetch";
 import fetch2, { fetch, Headers, Request, Response } from "node-fetch";
 import * as stream from "stream";
 
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
@@ -157,4 +157,70 @@ test("node-fetch request body streams properly", async () => {
   const allData = Buffer.concat(receivedChunks).toString();
   expect(allData).toBe("first chunksecond chunkthird chunk");
   expect(requestBodyComplete).toBe(true);
+});
+
+// https://github.com/oven-sh/bun/issues/14481
+// https://github.com/oven-sh/bun/issues/13390
+describe("node-fetch Response accepts legacy Stream bodies", () => {
+  // Minimal stand-in for minipass / minipass-pipeline: extends the legacy Stream base
+  // class, implements pipe() and Symbol.asyncIterator, but has no _readableState.
+  class MinipassLike extends stream.Stream {
+    #chunks;
+    constructor(chunks) {
+      super();
+      this.#chunks = chunks;
+    }
+    pipe(dest) {
+      for (const chunk of this.#chunks) dest.write(chunk);
+      dest.end();
+      return dest;
+    }
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of this.#chunks) yield chunk;
+    }
+  }
+
+  // Minimal stand-in for combined-stream: extends the legacy Stream base class and
+  // implements pipe(), but provides neither _readableState nor Symbol.asyncIterator.
+  class LegacyStream extends stream.Stream {
+    #chunks;
+    constructor(chunks) {
+      super();
+      this.#chunks = chunks;
+    }
+    pipe(dest) {
+      for (const chunk of this.#chunks) dest.write(chunk);
+      dest.end();
+      return dest;
+    }
+  }
+
+  test("minipass-style stream (async iterable, no _readableState)", async () => {
+    const body = new MinipassLike([Buffer.from("hello "), Buffer.from("world")]);
+    expect(body instanceof stream.Stream).toBe(true);
+    expect(body instanceof stream.Readable).toBe(false);
+    expect(typeof body._readableState).toBe("undefined");
+    expect(typeof body[Symbol.asyncIterator]).toBe("function");
+
+    const res = new Response(body);
+    expect(await res.text()).toBe("hello world");
+  });
+
+  test("legacy stream (pipe only, no async iterator)", async () => {
+    const body = new LegacyStream([Buffer.from("abc"), Buffer.from("def")]);
+    expect(body instanceof stream.Stream).toBe(true);
+    expect(typeof body._readableState).toBe("undefined");
+    expect(body[Symbol.asyncIterator]).toBeUndefined();
+
+    const res = new Response(body);
+    expect(await res.text()).toBe("abcdef");
+  });
+
+  test("proper Readable body still works", async () => {
+    const body = stream.Readable.from([Buffer.from("proper "), Buffer.from("readable")]);
+    expect(typeof body._readableState).toBe("object");
+
+    const res = new Response(body);
+    expect(await res.text()).toBe("proper readable");
+  });
 });

@@ -405,8 +405,7 @@ describe("bun test", () => {
     }, 10000);
   });
   describe("color output", () => {
-    // Env vars that influence color detection must all be scrubbed so the
-    // only signals the child sees are the ones each case sets.
+    // Scrub everything that feeds colour detection; each case sets its own.
     const colorNeutralEnv = {
       NO_COLOR: undefined,
       FORCE_COLOR: undefined,

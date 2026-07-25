@@ -894,11 +894,7 @@ fn compute_color_depth() -> ColorDepth {
     ColorDepth::None
 }
 
-/// CI environments whose log viewers render ANSI escape sequences. On such a
-/// system we enable color output even when stdout/stderr are pipes. The
-/// provider list is the same one used by Node's `tty.WriteStream#getColorDepth`
-/// (`src/js/internal/tty.ts`) and `chalk/supports-color`, so behaviour matches
-/// the broader ecosystem. Bare `CI` without a known provider stays uncoloured.
+/// CI log viewers that render ANSI; list matches `src/js/internal/tty.ts`.
 #[cfg(not(target_arch = "wasm32"))]
 fn is_ansi_capable_ci() -> bool {
     macro_rules! set {

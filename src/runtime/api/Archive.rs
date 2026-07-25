@@ -11,6 +11,7 @@ use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_glob as glob;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
@@ -682,7 +683,7 @@ pub trait TaskContext: Send {
 pub struct AsyncTask<C: TaskContext> {
     ctx: C,
     promise: JSPromiseStrong,
-    vm: *mut VirtualMachine,
+    context_id: ScriptExecutionContextIdentifier,
     task: WorkPoolTask,
     concurrent_task: ConcurrentTask,
     keep_alive: KeepAlive,
@@ -694,15 +695,10 @@ impl<C: TaskContext> Taskable for AsyncTask<C> {
 
 impl<C: TaskContext> AsyncTask<C> {
     fn create(global: &JSGlobalObject, ctx: C) -> Result<*mut Self, bun_alloc::AllocError> {
-        // `bun_vm_ptr()` returns `*mut VirtualMachine` with write provenance; valid for
-        // process lifetime. Do NOT launder `bun_vm()` (a `&VirtualMachine`) through
-        // `*const _ as *mut _` — that derives a writeable pointer from a shared
-        // reference and is UB under Stacked Borrows.
-        let vm: *mut VirtualMachine = global.bun_vm_ptr();
         let this = Box::new(AsyncTask {
             ctx,
             promise: JSPromiseStrong::init(global),
-            vm,
+            context_id: global.script_execution_context_identifier(),
             task: WorkPoolTask {
                 callback: Self::run_callback,
                 node: Default::default(),
@@ -746,12 +742,18 @@ impl<C: TaskContext> AsyncTask<C> {
         let this: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, work_task) };
         // SAFETY: thread-pool has exclusive access to ctx until it enqueues the concurrent task.
         unsafe { (*this).ctx.run() };
-        // SAFETY: vm points to the live owning VM; concurrent_task is intrusive on the same allocation.
+        // SAFETY: concurrent_task is intrusive on the same allocation.
         unsafe {
+            let context_id = (*this).context_id;
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            (*(*this).vm).enqueue_task_concurrent(ct);
+            // Post by stable context id so the target VM is only dereferenced
+            // under the contexts-map lock. If the context is gone the box is
+            // leaked — its `JSPromiseStrong` lives in the dead JSC heap and
+            // cannot be released off-thread; `ct` is a field of `*this`, so no
+            // separate free.
+            let _ = context_id.post_concurrent_task(ct);
         }
     }
 

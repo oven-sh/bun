@@ -1702,9 +1702,70 @@ impl ScriptExecutionContextIdentifier {
     pub fn valid(self) -> bool {
         self.global_object().is_some()
     }
+
+    /// `true` while the context exists and has not been marked terminating.
+    /// Serializes with `markTerminating()` on the C++ contexts-map lock, so
+    /// unlike [`Self::valid`] this is safe to consult off-thread for the
+    /// "skip a queued unit of work whose worker has begun shutdown" check.
+    #[inline]
+    pub fn is_alive(self) -> bool {
+        ScriptExecutionContext__isAlive(self.0)
+    }
+
+    /// Enqueue a heap-allocated [`ConcurrentTaskItem`] onto this context's JS
+    /// event loop from any thread, without holding any pointer into the target
+    /// VM. The enqueue is performed under the C++ contexts-map lock (the same
+    /// lock worker `markTerminating()` takes before its VM is freed), so the
+    /// target `EventLoop` is dereferenced only while known live.
+    ///
+    /// Returns `true` if the task was enqueued (ownership transferred to the
+    /// queue). Returns `false` if the context is gone or terminating; the
+    /// caller retains ownership of `task` and must free it (without touching
+    /// the target VM or JSC heap).
+    ///
+    /// [`ConcurrentTaskItem`]: crate::event_loop::ConcurrentTaskItem
+    #[inline]
+    pub fn post_concurrent_task(
+        self,
+        task: core::ptr::NonNull<crate::event_loop::ConcurrentTaskItem>,
+    ) -> bool {
+        ScriptExecutionContext__postConcurrentTask(self.0, task.as_ptr().cast::<c_void>())
+    }
+
+    /// Decrement this context's event-loop `concurrent_ref` from off-thread
+    /// under the contexts-map lock; no-op when the context is gone or
+    /// terminating. The paired increment happened on the JS thread before the
+    /// job was scheduled, so a lost decrement on a terminating worker is the
+    /// intended behavior (its loop will never tick again).
+    #[inline]
+    pub fn unref_event_loop_concurrently(self) {
+        ScriptExecutionContext__unrefEventLoopConcurrently(self.0);
+    }
 }
 
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+    // safe: by-value `u32` in, opaque pointer C++ only forwards back to Rust
+    // under the contexts-map lock; bool out.
+    safe fn ScriptExecutionContext__postConcurrentTask(id: u32, task: *mut c_void) -> bool;
+    // safe: by-value `u32` in; bool out.
+    safe fn ScriptExecutionContext__isAlive(id: u32) -> bool;
+    // safe: by-value `u32` in; void out.
+    safe fn ScriptExecutionContext__unrefEventLoopConcurrently(id: u32);
+    // safe: `&JSGlobalObject` is a live opaque handle; returns the context's id.
+    safe fn ScriptExecutionContextIdentifier__forGlobalObject(global: &JSGlobalObject) -> u32;
+}
+
+impl JSGlobalObject {
+    /// The stable `u32` identifier for this global's `ScriptExecutionContext`.
+    /// Capture on the JS thread when scheduling off-thread work; the pool
+    /// thread posts its completion back via
+    /// [`ScriptExecutionContextIdentifier::post_concurrent_task`] instead of a
+    /// raw `&EventLoop`/`&VirtualMachine`, so a worker VM freed by
+    /// `terminate()` is never dereferenced.
+    #[inline]
+    pub fn script_execution_context_identifier(&self) -> ScriptExecutionContextIdentifier {
+        ScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier__forGlobalObject(self))
+    }
 }

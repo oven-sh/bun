@@ -3,6 +3,7 @@ use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::event_loop::EventLoop;
+use crate::js_global_object::ScriptExecutionContextIdentifier;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
 use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsTerminated};
@@ -31,9 +32,15 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
-    /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
-    /// `EventLoop`) outlives every task scheduled on it.
+    /// BACKREF — captured from the JS-thread VM at create time. Only
+    /// dereferenced on the JS thread; the pool-thread completion goes through
+    /// [`Self::context_id`] so a worker VM freed by `terminate()` is never
+    /// touched.
     pub event_loop: BackRef<EventLoop>,
+    /// Stable `u32` id for the originating `ScriptExecutionContext`. The
+    /// pool-thread `on_finish` posts the completion via this id under the C++
+    /// contexts-map lock (serializing with worker `markTerminating()`).
+    pub context_id: ScriptExecutionContextIdentifier,
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     pub concurrent_task: ConcurrentTask,
@@ -62,6 +69,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         let event_loop = BackRef::new(VirtualMachine::get().as_mut().event_loop_shared());
         let mut this = Box::new(Self {
             event_loop,
+            context_id: global_this.script_execution_context_identifier(),
             ctx: value,
             task: WorkPoolTask {
                 node: Default::default(),
@@ -108,15 +116,19 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
         // `this` while holding `&mut *this` is sound because `from` only stores
         // the pointer (does not dereference it).
         let this_ref = unsafe { &mut *this };
-        let event_loop = this_ref.event_loop;
+        let context_id = this_ref.context_id;
         let task = core::ptr::NonNull::from(
             this_ref
                 .concurrent_task
                 .from(this, AutoDeinit::ManualDeinit),
         );
-        // `task` is the live `concurrent_task` field of the heap-allocated
-        // job; the queue takes ownership of its intrusive `next` link.
-        event_loop.enqueue_task_concurrent(task);
+        // Post by stable context id: the enqueue dereferences the target VM
+        // only under the contexts-map lock (serializes with worker
+        // `markTerminating()`). When the context is gone the box is leaked
+        // (its `JSPromiseStrong` and `global_this` point into the dead JSC
+        // heap and cannot be released off-thread); `task` is a field of
+        // `*this`, so no separate free.
+        let _ = context_id.post_concurrent_task(task);
     }
 
     /// Frees the heap allocation backing this task.

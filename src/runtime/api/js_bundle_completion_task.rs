@@ -26,6 +26,7 @@ use bun_io::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
@@ -61,6 +62,7 @@ pub struct JSBundleCompletionTask {
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
     // `Deref` so call sites read `self.jsc_event_loop.enqueue_task_concurrent(..)`.
     pub jsc_event_loop: BackRef<EventLoop>,
+    pub context_id: ScriptExecutionContextIdentifier,
     pub task: AnyTask,
     pub global_this: BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
@@ -125,6 +127,7 @@ pub(crate) fn create_and_schedule_completion_task(
         // `event_loop` is the live JS-thread loop (caller derives it from
         // `vm.event_loop()`); never null once `Bun.build` is reachable.
         jsc_event_loop: BackRef::from(core::ptr::NonNull::new(event_loop).expect("event_loop")),
+        context_id: global_this.script_execution_context_identifier(),
         task: AnyTask::default(),
         global_this: BackRef::new(global_this),
         promise: jsc::JSPromiseStrong::default(),
@@ -979,11 +982,15 @@ impl CompletionStruct for JSBundleCompletionTask {
     }
 
     fn complete_on_bundle_thread(&mut self) {
-        // `jsc_event_loop` is a `BackRef<EventLoop>` — safe Deref.
-        // `ConcurrentTask::create` heap-allocates a fresh task; the
-        // queue takes ownership of it.
-        self.jsc_event_loop
-            .enqueue_task_concurrent(jsc::ConcurrentTask::create(self.task.task()));
+        let task = jsc::ConcurrentTask::create(self.task.task());
+        if !self.context_id.post_concurrent_task(task) {
+            // SAFETY: ownership was not transferred; `task` is the fresh heap
+            // node from `ConcurrentTask::create` above.
+            drop(unsafe { bun_core::heap::take(task.as_ptr()) });
+            // `on_complete_anytask` will never run; the box (promise/plugins/
+            // KeepAlive) points into the dead VM and cannot be reclaimed
+            // off-thread. Bounded leak on worker terminate.
+        }
     }
     fn set_result(&mut self, result: BundleV2Result) {
         self.result = result;

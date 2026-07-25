@@ -304,6 +304,9 @@ pub(crate) fn list_objects(
         callback: s3_simple_request::Callback::ListObjects(callback),
         headers,
         vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+        context_id: VirtualMachine::get()
+            .global()
+            .script_execution_context_identifier(),
         response_buffer: MutableString::default(),
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
@@ -1011,6 +1014,9 @@ pub(crate) fn download_stream(
             headers,
             // `VirtualMachine::get()` returns the live per-thread VM singleton.
             vm: Some(bun_ptr::BackRef::new(VirtualMachine::get())),
+            context_id: VirtualMachine::get()
+                .global()
+                .script_execution_context_identifier(),
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
             signals: Default::default(),

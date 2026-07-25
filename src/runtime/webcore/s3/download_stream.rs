@@ -7,6 +7,7 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
@@ -21,6 +22,10 @@ pub struct S3HttpDownloadStreamingTask {
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
     pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// Stable id of the originating `ScriptExecutionContext`. The HTTP-thread
+    /// completion posts back via this id under the C++ contexts-map lock so a
+    /// worker VM freed by `terminate()` is never dereferenced.
+    pub context_id: ScriptExecutionContextIdentifier,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
@@ -62,6 +67,7 @@ impl Default for S3HttpDownloadStreamingTask {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
             vm: None,
+            context_id: ScriptExecutionContextIdentifier(0),
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: NonNull::dangling(),
@@ -344,15 +350,13 @@ impl S3HttpDownloadStreamingTask {
             let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            self_
-                .vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // Post by stable context id under the C++ contexts-map lock so a
+            // worker VM freed by `terminate()` is never dereferenced. On
+            // abandon the heap task is leaked: `Drop` touches the VM event
+            // loop and must not run off-thread against a dead VM. `task` is
+            // the inline `concurrent_task` field of this heap request; the
+            // queue takes ownership of its `next` link.
+            let _ = self_.context_id.post_concurrent_task(task);
         }
     }
 }

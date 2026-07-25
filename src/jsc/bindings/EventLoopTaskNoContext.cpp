@@ -12,4 +12,9 @@ extern "C" void* Bun__EventLoopTaskNoContext__createdInBunVm(const EventLoopTask
     return task->createdInBunVm();
 }
 
+extern "C" uint32_t Bun__EventLoopTaskNoContext__contextId(const EventLoopTaskNoContext* task)
+{
+    return task->contextId();
+}
+
 } // namespace Bun

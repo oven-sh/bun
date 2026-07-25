@@ -34,6 +34,7 @@ use bun_watcher::Watcher;
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
+use crate::js_global_object::ScriptExecutionContextIdentifier;
 use crate::resolved_source::OwnedResolvedSource;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
@@ -319,6 +320,7 @@ impl RuntimeTranspilerStore {
                 non_threadsafe_input_specifier: OwnedString::new(input_specifier),
                 path: owned_path,
                 global_this: BackRef::new(global_object),
+                context_id: global_object.script_execution_context_identifier(),
                 non_threadsafe_referrer: OwnedString::new(referrer),
                 vm,
                 log: bun_ast::Log::init(),
@@ -378,6 +380,7 @@ pub struct TranspilerJob {
     // store and outlives every job).
     pub vm: *mut VirtualMachine,
     pub global_this: BackRef<JSGlobalObject>,
+    pub context_id: ScriptExecutionContextIdentifier,
     pub fetcher: Fetcher,
     pub poll_ref: KeepAlive,
     pub generation_number: u32,
@@ -485,17 +488,43 @@ impl TranspilerJob {
     }
 
     pub(crate) fn dispatch_to_main_thread(&mut self) {
+        let context_id = self.context_id;
+        // The VM owns both `transpiler_store.queue` and the event loop; touch
+        // neither once the target context has begun teardown. `is_alive()`
+        // serializes with `markTerminating()` on the contexts-map lock.
+        if !context_id.is_alive() {
+            // Reclaim pure-Rust heap owned by this job; leak the JSC-heap
+            // handles (`promise`, `fetcher`, specifiers, `resolved_source`).
+            let old_path = core::mem::take(&mut self.path);
+            if !old_path.text.is_empty() {
+                // SAFETY: `text` is the `Box<[u8]>` produced by
+                // `heap::into_raw` in `transpile()`; this is the unique owner.
+                drop(unsafe {
+                    bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut())
+                });
+            }
+            self.log = bun_ast::Log::init();
+            self.parse_error = None;
+            return;
+        }
         let vm = self.vm;
-        // SAFETY: vm outlives the job (BACKREF — VM owns the store).
+        // SAFETY: `is_alive()` held the contexts-map lock; the VM is live for
+        // this queue push (BACKREF — VM owns the store).
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe { &*(*vm).event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+        let task = ConcurrentTask::create_from(transpiler_store);
+        if !context_id.post_concurrent_task(task) {
+            // Raced with `markTerminating()`; the job is already in
+            // `transpiler_store.queue` (inside the VM being freed). Reclaim
+            // only the freshly-allocated node.
+            // SAFETY: ownership was not transferred; `task` is the
+            // `ConcurrentTask::create_from` heap node above.
+            drop(unsafe { bun_core::heap::take(task.as_ptr()) });
+        }
     }
 
     pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {

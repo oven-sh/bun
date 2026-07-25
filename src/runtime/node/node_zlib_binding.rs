@@ -9,6 +9,7 @@ use bun_core::{String as BunString, ZigStringSlice};
 use bun_event_loop::Taskable;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
@@ -210,6 +211,9 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
+    /// Captured on the JS thread at construction; used off-thread to post the
+    /// completion so a freed worker VM/global is never dereferenced.
+    fn context_id(&self) -> ScriptExecutionContextIdentifier;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
     /// Write `(avail_out, avail_in)` into the JS-owned 2-element `Uint32Array`
@@ -472,24 +476,22 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `ref_()` in `write()`); bodies use the `&self` accessor surface
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
-        let global_this: &JSGlobalObject = this_ref.global_this();
-        // `bun_vm_concurrently()` is the thread-safe accessor (skips the
-        // JS-thread debug assert; same backing pointer as `bun_vm()`).
-        // BACKREF — `bun_vm_concurrently()` never returns null for a Bun-owned
-        // global; wrap once so the `event_loop()` read below is safe Deref.
-        let vm = ParentRef::from(
-            NonNull::new(global_this.bun_vm_concurrently()).expect("bun_vm_concurrently"),
-        );
 
         this_ref.stream().with_mut(|s| s.do_work());
 
-        // SAFETY: `event_loop()` is a self-pointer into a live VM; the
-        // `enqueue_task_concurrent` body only touches the lock-free
-        // `concurrent_tasks` queue (thread-safe). `this` is the heap-allocated
-        // `m_ctx` payload — the matching `ref()` in `write()` keeps it alive
-        // until `run_from_js_thread` runs and calls `deref()`.
-        unsafe {
-            (*vm.event_loop()).enqueue_task_concurrent(ConcurrentTask::create(Task::init(this)));
+        // Post by stable context id: the enqueue dereferences the target VM
+        // only under the contexts-map lock (serializes with worker
+        // `markTerminating()`). `this` is the heap-allocated `m_ctx` payload —
+        // the matching `ref()` in `write()` keeps it alive until
+        // `run_from_js_thread` runs and calls `deref()`.
+        let node = ConcurrentTask::create(Task::init(this));
+        if !this_ref.context_id().post_concurrent_task(node) {
+            // Target context gone or terminating. `run_from_js_thread` will
+            // never fire. `this` is the JSC-owned m_ctx holding `Strong`/
+            // `KeepAlive`; its `deref()` is not safe off-thread, so leak it.
+            // SAFETY: ownership was not transferred; `node` was
+            // `ConcurrentTask::create`-allocated above.
+            drop(unsafe { bun_core::heap::take(node.as_ptr()) });
         }
     }
 
@@ -998,6 +1000,7 @@ macro_rules! __impl_compression_stream {
             type Stream = $ctx;
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
+            #[inline] fn context_id(&self) -> ::bun_jsc::js_global_object::ScriptExecutionContextIdentifier { self.context_id }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }

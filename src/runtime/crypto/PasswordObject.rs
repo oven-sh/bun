@@ -9,12 +9,12 @@ use bun_jsc::{
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::ZigStringJsc as _;
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_threading::work_pool::WorkPool;
@@ -549,7 +549,7 @@ struct PasswordJob<Op: PasswordOp> {
     op: Op,
     password: Box<[u8]>,
     promise: JSPromiseStrong,
-    event_loop: *mut EventLoop,
+    context_id: ScriptExecutionContextIdentifier,
     global: *const JSGlobalObject,
     r#ref: KeepAlive,
     task: WorkPoolTask,
@@ -585,13 +585,15 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         unsafe {
             (*result).task = AnyTask::from_typed(result, PasswordResult::<Op>::run_from_js_erased);
         }
-        // SAFETY: `event_loop` was stored from the JS-thread VM and outlives the
-        // job; ownership of `result` transfers to the event loop here. `task` is
-        // an intrusive field at a stable address.
-        unsafe {
-            (*self.event_loop).enqueue_task_concurrent(ConcurrentTask::create_from(
-                core::ptr::addr_of_mut!((*result).task),
-            ));
+        // SAFETY: `result.task` is an intrusive field at a stable heap address.
+        let node = ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) });
+        if !self.context_id.post_concurrent_task(node) {
+            // Target context is gone. Free the queue node and the result box;
+            // leak the JSPromiseStrong (its JSC heap is dead and cannot be
+            // released off-thread).
+            drop(unsafe { bun_core::heap::take(node.as_ptr()) });
+            let mut r = unsafe { bun_core::heap::take(result) };
+            core::mem::forget(core::mem::take(&mut r.promise));
         }
         // `self: Box<Self>` drops here; Drop runs secure_zero on password (+op).
     }
@@ -670,8 +672,7 @@ impl JSPasswordObject {
             op,
             password,
             promise,
-            // SAFETY: bun_vm() is non-null for a Bun-owned global; VM outlives the job.
-            event_loop: global_object.bun_vm().event_loop(),
+            context_id: global_object.script_execution_context_identifier(),
             global: std::ptr::from_ref(global_object),
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),

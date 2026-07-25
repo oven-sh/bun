@@ -302,6 +302,50 @@ extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObjec
     return context->globalObject();
 }
 
+// True while the context exists and has not been marked terminating. Checked
+// under the contexts-map lock so it serializes with markTerminating().
+extern "C" bool ScriptExecutionContext__isAlive(ScriptExecutionContextIdentifier id)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(id);
+    return context && !context->isTerminating();
+}
+
+extern "C" void Bun__EventLoop__enqueueConcurrentTask(JSC::JSGlobalObject*, void* task);
+
+// postTaskTo() for a Rust-allocated ConcurrentTask. Returns true if the task
+// was enqueued (ownership transferred to the target context's concurrent
+// queue); false if the context is gone or terminating, in which case the
+// caller retains ownership. The map lock is held across the enqueue, which is
+// what serializes this with markTerminating(): either the poster's whole
+// critical section runs before worker shutdown's markTerminating() (task
+// enqueued, and shutdown's subsequent release_queued_tasks_for_shutdown()
+// drain observes it), or after (isTerminating() true; poster drops the task
+// without touching the freed VM). See markTerminating()'s comment for the
+// ordering argument.
+extern "C" bool ScriptExecutionContext__postConcurrentTask(ScriptExecutionContextIdentifier id, void* task)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(id);
+    if (!context || context->isTerminating())
+        return false;
+    Bun__EventLoop__enqueueConcurrentTask(context->globalObject(), task);
+    return true;
+}
+
+// Decrement the target context's event-loop concurrent refcount, under the
+// contexts-map lock so the bunVM pointer is dereferenced only while the
+// context is known live. No-op (and no VM dereference) when the context is
+// gone or terminating.
+extern "C" void ScriptExecutionContext__unrefEventLoopConcurrently(ScriptExecutionContextIdentifier id)
+{
+    Locker locker { allScriptExecutionContextsMapLock };
+    auto* context = allScriptExecutionContextsMap().get(id);
+    if (!context || context->isTerminating())
+        return;
+    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(context->vm())->bunVM, -1);
+}
+
 extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* globalObject)
 {
     if (auto* context = defaultGlobalObject(globalObject)->scriptExecutionContext())

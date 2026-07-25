@@ -17,6 +17,7 @@ use bun_io::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
+use bun_jsc::js_global_object::ScriptExecutionContextIdentifier;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
@@ -1238,6 +1239,7 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        pub context_id: ScriptExecutionContextIdentifier,
         pub task: WorkPoolTask,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -1281,6 +1283,7 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
+                context_id: global_object.script_execution_context_identifier(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1304,16 +1307,19 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers; the
-            // event-loop's concurrent queue is MPSC-safe.
-            let vm = this.global_object().bun_vm_concurrently();
-            // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
-            unsafe {
-                (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
-                    std::ptr::from_mut::<Self>(this),
-                ));
+            // Post by stable context id: the enqueue dereferences the target VM
+            // only under the contexts-map lock (serializes with worker
+            // `markTerminating()`).
+            let context_id = this.context_id;
+            let node = ConcurrentTask::create_from(std::ptr::from_mut::<Self>(this));
+            if !context_id.post_concurrent_task(node) {
+                // Target context gone or terminating. `run_from_js_thread` will
+                // never fire; reclaim the heap `ConcurrentTask` node. `*this`
+                // holds `JSPromiseStrong`/`ThreadSafe<A>` handles into the dead
+                // JSC heap and cannot be released off-thread, so the box is leaked.
+                // SAFETY: `post_concurrent_task` returned false so ownership was
+                // not transferred; `node` was `ConcurrentTask::create_from`-allocated above.
+                drop(unsafe { bun_core::heap::take(node.as_ptr()) });
             }
         }
 
@@ -1395,6 +1401,7 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Cp>,
         pub evtloop: EventLoopHandle,
+        pub context_id: ScriptExecutionContextIdentifier,
         pub task: WorkPoolTask,
         /// Written from any workpool thread (first `finish_concurrently` caller wins via
         /// `has_result` CAS); read on the JS thread in `run_from_js_thread`. Wrapped in
@@ -1582,6 +1589,7 @@ mod _async_tasks {
                 result: core::cell::Cell::new(Ok(())),
                 // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
                 evtloop: EventLoopHandle::init(vm.event_loop.cast()),
+                context_id: global_object.script_execution_context_identifier(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -1615,6 +1623,7 @@ mod _async_tasks {
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
                 evtloop: EventLoopHandle::init_mini(mini),
+                context_id: ScriptExecutionContextIdentifier(0),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker { id: 0 },
@@ -1690,14 +1699,18 @@ mod _async_tasks {
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
             if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
-                this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
-                    js: ConcurrentTask::from_callback(this, |p| {
-                        // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
-                        // JS-thread callback holds the only live reference (exclusive `&mut`).
-                        unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
-                    })
-                    .as_ptr(),
+                let node = ConcurrentTask::from_callback(this, |p| {
+                    // SAFETY: `p` is the `Box::leak`'d task; subtask count hit zero so this
+                    // JS-thread callback holds the only live reference (exclusive `&mut`).
+                    unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
                 });
+                if !this_ref.context_id.post_concurrent_task(node) {
+                    // Target context is gone; reclaim the node. `this` holds
+                    // `JSPromiseStrong` into the dead JSC heap, so it is leaked.
+                    // SAFETY: ownership was not transferred; `node` was
+                    // `ConcurrentTask::from_callback`-allocated just above.
+                    drop(unsafe { bun_core::heap::take(node.as_ptr()) });
+                }
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
@@ -2163,6 +2176,7 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        pub context_id: ScriptExecutionContextIdentifier,
         pub task: WorkPoolTask,
         pub r#ref: KeepAlive,
         pub tracker: AsyncTaskTracker,
@@ -2358,6 +2372,7 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
+                context_id: global_object.script_execution_context_identifier(),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2533,16 +2548,20 @@ mod _async_tasks {
                 }
             }
 
-            // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
-            // documented accessor for off-thread (work-pool) callers.
-            // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
-            // sole `&mut` borrow at this point on the work-pool thread.
-            let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
-            // `ConcurrentTask::create` heap-allocates a fresh task; the
-            // queue takes ownership of it.
-            vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
-                Self,
-            >(self))));
+            // Post by stable context id: the enqueue dereferences the target VM
+            // only under the contexts-map lock (serializes with worker
+            // `markTerminating()`).
+            let context_id = self.context_id;
+            let node = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
+            if !context_id.post_concurrent_task(node) {
+                // Target context gone or terminating. `run_from_js_thread` will
+                // never fire; reclaim the heap `ConcurrentTask` node. `*self`
+                // holds `JSPromiseStrong` into the dead JSC heap and cannot be
+                // released off-thread, so the box is leaked.
+                // SAFETY: `post_concurrent_task` returned false so ownership was
+                // not transferred; `node` was `ConcurrentTask::create`-allocated above.
+                drop(unsafe { bun_core::heap::take(node.as_ptr()) });
+            }
         }
 
         fn clear_result_list(&mut self) {

@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use crate::js_global_object::ScriptExecutionContextIdentifier;
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -10,6 +11,7 @@ unsafe extern "C" {
     safe fn Bun__EventLoopTaskNoContext__createdInBunVm(
         task: &EventLoopTaskNoContext,
     ) -> *mut VirtualMachine;
+    safe fn Bun__EventLoopTaskNoContext__contextId(task: &EventLoopTaskNoContext) -> u32;
 }
 
 bun_opaque::opaque_ffi! {
@@ -55,6 +57,14 @@ impl EventLoopTaskNoContext {
     pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }
+
+    /// Stable `u32` id of the `ScriptExecutionContext` that created this task,
+    /// captured on the JS thread at construction. Safe to use off-thread via
+    /// [`ScriptExecutionContextIdentifier::unref_event_loop_concurrently`] so
+    /// the VM is dereferenced only under the contexts-map lock.
+    pub fn context_id(&self) -> ScriptExecutionContextIdentifier {
+        ScriptExecutionContextIdentifier(Bun__EventLoopTaskNoContext__contextId(self))
+    }
 }
 
 /// A task created from C++ code that runs inside the workpool, usually via ScriptExecutionContext.
@@ -73,14 +83,16 @@ impl ConcurrentCppTask {
         let cpp_task = self.cpp_task;
         // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref`
         // is the centralised non-null deref proof. Valid until `run` consumes it.
-        let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
+        let context_id = EventLoopTaskNoContext::opaque_ref(cpp_task).context_id();
         drop(self);
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        if let Some(vm) = maybe_vm {
-            vm.event_loop_shared().unref_concurrently();
-        }
+        // The task body (e.g. a WebCrypto crypto-thread lambda) posts its own
+        // result back via `ScriptExecutionContext::postTaskTo`, which already
+        // serializes with `markTerminating()`. The trailing `concurrent_ref`
+        // decrement dereferences the VM, so route it through the same lock.
+        context_id.unref_event_loop_concurrently();
     }
 }
 

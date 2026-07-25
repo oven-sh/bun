@@ -593,8 +593,7 @@ unsafe extern "C" fn Bun__runVirtualModule(
 ) -> JSValue {
     jsc::mark_binding();
     let vm = global.bun_vm();
-    // Skip onLoad while loading `preload` entries so a plugin registered in an
-    // earlier preload cannot intercept a later preload file.
+    // Preload files load with the default loader, not earlier preloads' onLoad.
     if vm.plugin_runner.is_none() || vm.is_in_preload {
         return JSValue::ZERO;
     }

@@ -718,9 +718,7 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        // Suppress runtime onResolve while loading `preload` entries so a plugin
-        // registered in an earlier preload cannot redirect a later preload (or
-        // its static imports, which reach here via the linker).
+        // Preload files resolve with the default resolver, not earlier preloads' onResolve.
         if self.bun_vm().is_in_preload {
             return Ok(None);
         }

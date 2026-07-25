@@ -2502,31 +2502,19 @@ impl FetchTasklet {
     }
 }
 
-/// When the `Response` is dropped without the body being read, drain at most
-/// this many remaining bytes to keep the connection poolable; beyond that the
-/// socket is closed. undici's only drain-to-reuse path (`Readable.dump`) uses
-/// 128 KiB; we allow one extra window.
+/// Drain-to-reuse cap for a GC-abandoned body (undici's `Readable.dump` is 128 KiB).
 const ABANDONED_RESPONSE_DRAIN_MAX_BYTES: usize = 256 * 1024;
 
 impl FetchTasklet {
-    /// Scenario 2b/3 of [`on_response_finalize`]: the JS `Response` was
-    /// collected with the body neither streamed nor buffered. Drain-to-reuse
-    /// only when the remaining body is small and bounded; otherwise abort the
-    /// transport first so [`ignore_remaining_response_body`] does not re-arm
-    /// the read and pull the entire body just to discard it.
-    ///
-    /// Runs inside a JSC Weak finalizer, so this must not touch any `JSCell`;
-    /// the regular [`abort_task`] is avoided because `tracker.did_cancel`
-    /// reaches the inspector.
+    /// Scenario 2b/3 of [`on_response_finalize`]. Runs inside a Weak finalizer:
+    /// no `JSCell` may be touched, so the close arm inlines `abort_task` minus
+    /// `tracker.did_cancel`.
     fn abandon_response_body_from_finalizer(&mut self) {
-        // `body_size` is assigned by the HTTP-thread `callback()` under
-        // `self.mutex`; take the same lock here so the enum read is not torn.
+        // `body_size` is written by HTTP-thread `callback()` under `self.mutex`.
         self.mutex.lock();
         let body_size = self.body_size;
         self.mutex.unlock();
-        // `Content-Length` is the wire (post-encoding) size; compare it
-        // directly. `scheduled_response_buffer` holds decompressed bytes, so
-        // subtracting it from the wire count would mix units.
+        // `Content-Length` is wire bytes; `scheduled_response_buffer` is decompressed.
         let drain = matches!(
             body_size,
             http::BodySize::ContentLength(n) if n <= ABANDONED_RESPONSE_DRAIN_MAX_BYTES

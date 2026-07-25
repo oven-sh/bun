@@ -293,10 +293,8 @@ pub fn normalize_idle_timeout_seconds(raw: u64) -> c_uint {
 
 pub const END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY: &[u8] = b"0\r\n\r\n";
 
-/// Upper bound on the discard-drain that runs after a `Response` is abandoned
-/// (body_receive_mode = `Ignore`). The per-read idle timeout is not re-armed in
-/// that mode, so this is the wall-clock deadline for the whole drain rather
-/// than a per-read budget.
+/// Wall-clock cap on the `BodyReceiveMode::Ignore` discard-drain (not re-armed
+/// per read in `on_data`).
 pub const IGNORE_DRAIN_TIMEOUT_SECONDS: c_uint = 5;
 
 /// HTTP-thread-only scratch buffer for building NUL-terminated hostnames.
@@ -4051,10 +4049,8 @@ impl<'a> HTTPClient<'a> {
         let _ = socket.resume_stream();
         bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
         if self.signals.is_receive_ignored() {
-            // Armed once here and never re-armed in `on_data` while ignored, so
-            // this is the absolute deadline for the whole discard-drain. Proxy
-            // tunnels never pause receive and so never reach here; their drain
-            // runs under the previously-armed idle timeout.
+            // Not re-armed in `on_data` while ignored: absolute drain deadline.
+            // Proxy tunnels never pause so never reach this arm.
             socket.set_timeout(IGNORE_DRAIN_TIMEOUT_SECONDS);
         } else {
             self.set_timeout(&socket);

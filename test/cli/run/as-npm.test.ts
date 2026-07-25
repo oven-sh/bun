@@ -144,7 +144,7 @@ describe("fake npm/npx cli", () => {
       return { stdout, stderr, exitCode };
     }
 
-    test.concurrent("npm test runs the package.json script, not bun's test runner", async () => {
+    test("npm test runs the package.json script, not bun's test runner", async () => {
       using dir = tempDir("fake-npm-test", {
         "package.json": JSON.stringify({ scripts: { test: "echo TEST-SCRIPT-RAN" } }),
       });
@@ -154,7 +154,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm start / npm run <script> run the package.json script", async () => {
+    test("npm start / npm run <script> run the package.json script", async () => {
       using dir = tempDir("fake-npm-start", {
         "package.json": JSON.stringify({ scripts: { start: "echo STARTED", other: "echo OTHER" } }),
       });
@@ -162,7 +162,7 @@ describe("fake npm/npx cli", () => {
       expect((await fakePmRun(String(dir), "npm", ["run", "other"])).stdout).toContain("OTHER");
     });
 
-    test.concurrent("npm install drops npm-only value-taking flags", async () => {
+    test("npm install drops npm-only value-taking flags", async () => {
       using dir = tempDir("fake-npm-install", {
         "package.json": JSON.stringify({ name: "p", version: "0.0.0" }),
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
@@ -187,7 +187,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm publish keeps --tag/--access/--otp", async () => {
+    test("npm publish keeps --tag/--access/--otp", async () => {
       using dir = tempDir("fake-npm-publish", {
         "package.json": JSON.stringify({ name: "fake-npm-publish", version: "1.2.3" }),
         // A token so publish gets past the auth check; --dry-run stops
@@ -202,7 +202,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm upgrade dispatches as bun update, not bun's self-upgrader", async () => {
+    test("npm upgrade dispatches as bun update, not bun's self-upgrader", async () => {
       using dir = tempDir("fake-npm-upgrade", { "package.json": "{}" });
       const r = await fakePmRun(String(dir), "npm", ["upgrade", "--help"]);
       expect(r.stdout).toContain("bun update");
@@ -214,7 +214,7 @@ describe("fake npm/npx cli", () => {
       expect(dd.exitCode).toBe(0);
     });
 
-    test.concurrent("npm cache dispatches as bun pm cache", async () => {
+    test("npm cache dispatches as bun pm cache", async () => {
       using dir = tempDir("fake-npm-cache", { "package.json": "{}" });
       const r = await fakePmRun(String(dir), "npm", ["cache"]);
       // `bun pm cache` prints the cache directory path.
@@ -222,7 +222,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm install --save-dev writes to devDependencies", async () => {
+    test("npm install --save-dev writes to devDependencies", async () => {
       using dir = tempDir("fake-npm-savedev", {
         "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
         "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
@@ -240,7 +240,7 @@ describe("fake npm/npx cli", () => {
       expect(pkg.dependencies).toBeUndefined();
     });
 
-    test.concurrent("npm install -P does not enable bun's production mode", async () => {
+    test("npm install -P does not enable bun's production mode", async () => {
       using dir = tempDir("fake-npm-saveprod", {
         "package.json": JSON.stringify({
           name: "root",
@@ -257,7 +257,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm config value flags before the subcommand do not eat it", async () => {
+    test("npm config value flags before the subcommand do not eat it", async () => {
       using dir = tempDir("fake-npm-preflag", {
         "package.json": JSON.stringify({ name: "p", version: "0.0.0" }),
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
@@ -269,7 +269,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm version dispatches as bun pm version", async () => {
+    test("npm version dispatches as bun pm version", async () => {
       using dir = tempDir("fake-npm-version", {
         "package.json": JSON.stringify({ name: "fake-npm-version", version: "1.2.3" }),
       });
@@ -279,7 +279,7 @@ describe("fake npm/npx cli", () => {
       expect(JSON.parse(await Bun.file(join(String(dir), "package.json")).text()).version).toBe("1.2.4");
     });
 
-    test.concurrent("npm pack dispatches as bun pm pack, rewriting --pack-destination", async () => {
+    test("npm pack dispatches as bun pm pack, rewriting --pack-destination", async () => {
       using dir = tempDir("fake-npm-pack", {
         "package.json": JSON.stringify({ name: "fake-npm-pack", version: "1.0.0" }),
       });
@@ -293,20 +293,43 @@ describe("fake npm/npx cli", () => {
       expect(existsSync(join(String(dir), "fake-npm-pack-1.0.0.tgz"))).toBe(true);
     });
 
-    test.concurrent("npm --version prints a version", async () => {
+    test("npm --version prints a version", async () => {
       using dir = tempDir("fake-npm-ver", { "package.json": "{}" });
       const r = await fakePmRun(String(dir), "npm", ["--version"]);
       expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npx / npm exec dispatch as bunx", async () => {
+    test("npx / npm exec dispatch as bunx", async () => {
       using dir = tempDir("fake-npx", { "package.json": "{}" });
       expect((await fakePmRun(String(dir), "npx", ["--help"])).stderr).toContain("Usage: bunx");
       expect((await fakePmRun(String(dir), "npm", ["exec", "--help"])).stderr).toContain("Usage: bunx");
+      // npm's -p before the subcommand must not become bunx's --package,
+      // which would take the mapped "x" token for the package name.
+      expect((await fakePmRun(String(dir), "npm", ["-p", "exec", "--help"])).stderr).toContain("Usage: bunx");
     });
 
-    test.concurrent("npx drops npm config flags before the package name", async () => {
+    test("npm lowercase shorts are not bun's production/yarn flags", async () => {
+      using dir = tempDir("fake-npm-shorts", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          devDependencies: { dep: "./dep" },
+        }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      // npm's -p is --parseable, not bun's --production.
+      const r = await fakePmRun(String(dir), "npm", ["install", "-p"]);
+      expect(existsSync(join(String(dir), "node_modules", "dep"))).toBe(true);
+      expect(r.exitCode).toBe(0);
+      // npm's -y is --yes, not bun's --yarn.
+      const y = await fakePmRun(String(dir), "npm", ["-y", "install"]);
+      expect(existsSync(join(String(dir), "yarn.lock"))).toBe(false);
+      expect(y.exitCode).toBe(0);
+    });
+
+    test("npx drops npm config flags before the package name", async () => {
       using dir = tempDir("fake-npx-flags", {
         "package.json": "{}",
         // `error` must not be taken for the package name; the registry
@@ -323,7 +346,7 @@ describe("fake npm/npx cli", () => {
       expect(pkg.stdout + pkg.stderr).toContain("you must specify the binary");
     });
 
-    test.concurrent("npm init <x> / npm create <x> dispatch as bun create, not bun init", async () => {
+    test("npm init <x> / npm create <x> dispatch as bun create, not bun init", async () => {
       using dir = tempDir("fake-npm-init", {
         "package.json": "{}",
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
@@ -341,7 +364,7 @@ describe("fake npm/npx cli", () => {
       expect(bare.stdout + bare.stderr).toContain("bun init");
     });
 
-    test.concurrent("npm init flags do not leak into the template name", async () => {
+    test("npm init flags do not leak into the template name", async () => {
       using dir = tempDir("fake-npm-init-flags", {
         "package.json": "{}",
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
@@ -357,7 +380,7 @@ describe("fake npm/npx cli", () => {
       expect(ws.stdout + ws.stderr).not.toContain("create-client");
     });
 
-    test.concurrent("npm init separators and boolean flags do not leak into the template", async () => {
+    test("npm init separators and boolean flags do not leak into the template", async () => {
       using dir = tempDir("fake-npm-init-sep", {
         "package.json": "{}",
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
@@ -369,13 +392,19 @@ describe("fake npm/npx cli", () => {
       const y = await fakePmRun(String(dir), "npm", ["init", "-y", "nonexistent-template"]);
       expect(y.stdout + y.stderr).toContain("create-nonexistent-template");
       expect(y.stdout + y.stderr).not.toContain("create--y");
-      // `--scope` takes a value; it must not become the template.
+    });
+
+    test("npm init --scope's value does not become the template", async () => {
+      using dir = tempDir("fake-npm-init-scope", {
+        "package.json": "{}",
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
       const scoped = await fakePmRun(String(dir), "npm", ["init", "--scope", "@myorg", "nonexistent-template"]);
       expect(scoped.stdout + scoped.stderr).toContain("create-nonexistent-template");
       expect(scoped.stdout + scoped.stderr).not.toContain("@myorg");
     });
 
-    test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {
+    test("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {
       using dir = tempDir("fake-npm-ws", {
         "package.json": JSON.stringify({
           name: "root",
@@ -396,7 +425,7 @@ describe("fake npm/npx cli", () => {
       expect(r3.stdout).toContain("FROM-A");
     });
 
-    test.concurrent("npm test --prefix <dir> runs the script in that directory", async () => {
+    test("npm test --prefix <dir> runs the script in that directory", async () => {
       using dir = tempDir("fake-npm-test-prefix", {
         "package.json": JSON.stringify({ name: "root" }),
         "client/package.json": JSON.stringify({ name: "client", scripts: { test: "echo CLIENT-TEST" } }),
@@ -408,7 +437,7 @@ describe("fake npm/npx cli", () => {
       expect(r.exitCode).toBe(0);
     });
 
-    test.concurrent("npm run flags after the script name are npm's, not the script's", async () => {
+    test("npm run flags after the script name are npm's, not the script's", async () => {
       using dir = tempDir("fake-npm-postflag", {
         "package.json": JSON.stringify({ name: "p", scripts: { go: "echo ARGS:" } }),
       });
@@ -421,8 +450,14 @@ describe("fake npm/npx cli", () => {
       // missing script exits 0.
       const ip = await fakePmRun(String(dir), "npm", ["run", "missing-script", "--if-present"]);
       expect(ip.exitCode).toBe(0);
-      // An unknown config flag consumes its value like npm's parser does;
-      // neither may shift the script name or reach the script.
+    });
+
+    test("npm run value flags consume their value like npm's parser", async () => {
+      using dir = tempDir("fake-npm-pairflag", {
+        "package.json": JSON.stringify({ name: "p", scripts: { go: "echo ARGS:" } }),
+      });
+      // Neither the flag nor its value may shift the script name or reach
+      // the script.
       const pair = await fakePmRun(String(dir), "npm", ["run", "go", "--port", "3000"]);
       expect(pair.stdout).toContain("ARGS:");
       expect(pair.stdout).not.toContain("3000");
@@ -431,6 +466,12 @@ describe("fake npm/npx cli", () => {
       const short = await fakePmRun(String(dir), "npm", ["run", "-s", "go"]);
       expect(short.stdout).toContain("ARGS:");
       expect(short.exitCode).toBe(0);
+    });
+
+    test("npm run boolean flags do not eat the script name", async () => {
+      using dir = tempDir("fake-npm-boolflag", {
+        "package.json": JSON.stringify({ name: "p", scripts: { go: "echo ARGS:" } }),
+      });
       const force = await fakePmRun(String(dir), "npm", ["run", "--force", "go"]);
       expect(force.stdout).toContain("ARGS:");
       expect(force.exitCode).toBe(0);
@@ -441,7 +482,7 @@ describe("fake npm/npx cli", () => {
       expect(pre.exitCode).toBe(0);
     });
 
-    test.concurrent("npm -y init does not scaffold into a folder named init", async () => {
+    test("npm -y init does not scaffold into a folder named init", async () => {
       using dir = tempDir("fake-npm-yinit", {
         "package.json": "{}",
         // init runs an install afterwards; keep it off the network.
@@ -452,7 +493,7 @@ describe("fake npm/npx cli", () => {
       expect(existsSync(join(String(dir), "index.ts"))).toBe(true);
     });
 
-    test.concurrent("-- stops flag translation", async () => {
+    test("-- stops flag translation", async () => {
       using dir = tempDir("fake-npm-dd", {
         "package.json": JSON.stringify({ scripts: { go: "echo ARGS:" } }),
       });
@@ -460,7 +501,7 @@ describe("fake npm/npx cli", () => {
       expect(r.stdout).toContain("ARGS: --loglevel error");
     });
 
-    test.concurrent("pnpm as argv0 is not treated as npm", async () => {
+    test("pnpm as argv0 is not treated as npm", async () => {
       using dir = tempDir("fake-pnpm", {
         "package.json": JSON.stringify({ scripts: { test: "echo SHOULD-NOT-RUN" } }),
       });

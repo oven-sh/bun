@@ -1200,7 +1200,57 @@ pub mod command {
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
             hoisted.clear();
         }
-        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"run" | b"init")) {
+        if matches!(
+            sub_bytes,
+            Some(
+                b"i" | b"isntall"
+                    | b"in"
+                    | b"ins"
+                    | b"inst"
+                    | b"insta"
+                    | b"instal"
+                    | b"install"
+                    | b"ci"
+                    | b"clean-install"
+                    | b"ic"
+                    | b"install-clean"
+                    | b"isntall-clean"
+                    | b"update"
+                    | b"upgrade"
+                    | b"up"
+                    | b"udpate"
+                    | b"outdated"
+                    | b"add"
+                    | b"a"
+                    | b"remove"
+                    | b"r"
+                    | b"rm"
+                    | b"uninstall"
+                    | b"link"
+                    | b"unlink"
+                    | b"ls"
+                    | b"la"
+                    | b"ll"
+                    | b"list"
+            )
+        ) {
+            let drop_colliding_shorts = |v: &mut Vec<&'static ZStr>| {
+                let mut past_separator = false;
+                v.retain(|a| {
+                    let b = a.as_bytes();
+                    if b == b"--" {
+                        past_separator = true;
+                    }
+                    past_separator || !matches!(b, b"-p" | b"-y" | b"-d")
+                });
+            };
+            drop_colliding_shorts(&mut pre_subcommand_flags);
+            drop_colliding_shorts(&mut tail);
+        }
+        if matches!(
+            mapped.first().map(|z| z.as_bytes()),
+            Some(b"run" | b"init" | b"x" | b"pm")
+        ) {
             for a in pre_subcommand_flags.drain(..) {
                 if matches!(a.as_bytes(), b"--if-present" | b"--silent") {
                     hoisted.push(a);

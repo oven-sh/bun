@@ -5,7 +5,7 @@
 // stream isn't monotonic the LineColumnTracker fell back to a full
 // scan-to-end-of-line on every diagnostic. 256KB took ~8s, 512KB ~33s.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 test("long single line with many redeclarations reports errors in bounded time", async () => {
   const fixture = `

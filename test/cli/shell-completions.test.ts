@@ -170,6 +170,8 @@ test_has "bun" "run"
 test_has "bun" "test"
 test_has "bun pm" "pack"
 test_has "bun --watch" "run"
+test_has "bun --inspect test" "--update-snapshots"
+test_has "bun --cwd . test" "--update-snapshots"
 test_not "bun dev" "install"
 test_not "bun dev" "--watch"
 test_not "bun install" "--watch"
@@ -190,7 +192,7 @@ test_not "bun install" "--watch"
     expect(stderr).toBe("");
     expect(stdout).not.toContain("MISSING");
     expect(stdout).not.toContain("LEAKED");
-    expect(stdout.split("\n").filter(l => l.startsWith("ok ")).length).toBe(13);
+    expect(stdout.split("\n").filter(l => l.startsWith("ok ")).length).toBe(15);
     expect(exitCode).toBe(0);
   });
 

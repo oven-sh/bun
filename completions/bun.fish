@@ -30,8 +30,15 @@ end
 function __bun_first_arg_in -d "Test whether the first non-option token is one of the given words"
     set -l tokens (commandline -poc)
     set -e tokens[1]
+    set -l skip 0
     for t in $tokens
+        if test $skip -eq 1
+            set skip 0
+            continue
+        end
         switch $t
+            case --conditions --config --console-depth --cwd --dns-result-order --elide-lines --env-file --eval --fetch-preconnect --filter --import --install --max-http-header-size --port --preload --print --require --shell --title --unhandled-rejections -F -c -e -p -r
+                set skip 1
             case '-*'
                 continue
             case $argv

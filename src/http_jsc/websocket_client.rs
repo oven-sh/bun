@@ -2176,10 +2176,7 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         next: ReceiveState::Fail,
     };
 
-    // RFC 6455 §5.1: a server MUST NOT mask any frame, and a client MUST fail
-    // the connection on any masked server frame. This is not limited to data
-    // frames; a masked control frame's 4-byte masking key would otherwise be
-    // parsed as payload (for Close, as the close code).
+    // RFC 6455 §5.1: a server must not mask any frame it sends to a client.
     if header.mask() {
         parsed.next = ReceiveState::NeedMask;
         return parsed;

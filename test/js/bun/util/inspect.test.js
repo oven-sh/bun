@@ -216,16 +216,16 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
   expect(typeOut).not.toContain("type-getter-boom");
   expect(() => Bun.inspect({ payload: [new ThrowType("t")] })).not.toThrow();
 
-  class ThrowData extends Event {
+  class ThrowData extends MessageEvent {
     get data() {
       throw new Error("data-getter-boom");
     }
   }
-  const dataOut = Bun.inspect(new ThrowData("message"));
-  expect(dataOut).toContain(`type: "message"`);
-  expect(dataOut).toContain("data: undefined");
+  expect(Bun.inspect(new ThrowData("message", { data: "p" }))).toBe(
+    `MessageEvent {\n  type: "message",\n  data: undefined,\n}`,
+  );
 
-  class ThrowError extends Event {
+  class ThrowError extends ErrorEvent {
     get error() {
       throw new Error("error-getter-boom");
     }
@@ -233,10 +233,43 @@ it("Event subclass with a throwing getter does not make Bun.inspect throw", () =
       throw new Error("message-getter-boom");
     }
   }
-  const errorOut = Bun.inspect(new ThrowError("error"));
-  expect(errorOut).toContain(`type: "error"`);
-  expect(errorOut).not.toContain("message:");
-  expect(errorOut).not.toContain("error:");
+  expect(Bun.inspect(new ThrowError("error", { message: "m", error: new Error("i") }))).toBe(
+    `ErrorEvent {\n  type: "error",\n}`,
+  );
+
+  // Own-instance accessors (not subclass) on the Event branch reads.
+  const me = new MessageEvent("message", { data: "p" });
+  Object.defineProperty(me, "data", {
+    get() {
+      throw new Error("own-data-boom");
+    },
+    configurable: true,
+  });
+  expect(Bun.inspect(me)).toBe(`MessageEvent {\n  type: "message",\n  data: undefined,\n}`);
+  expect(Bun.inspect({ nested: me })).toContain("data: undefined");
+});
+
+it("AggregateError with a hostile 'errors' property does not make Bun.inspect throw", () => {
+  // Accessor own prop: getDirect returns the GetterSetter cell, for_each throws.
+  const a = new AggregateError([new Error("x")], "agg");
+  Object.defineProperty(a, "errors", {
+    get() {
+      throw new Error("errors-getter-boom");
+    },
+    configurable: true,
+  });
+  expect(() => Bun.inspect(a)).not.toThrow();
+  expect(() => Bun.inspect({ nested: a })).not.toThrow();
+
+  // Non-iterable data prop: for_each throws TypeError.
+  const b = new AggregateError([new Error("x")], "agg");
+  b.errors = { not: "iterable" };
+  expect(() => Bun.inspect(b)).not.toThrow();
+
+  // Deleted own prop: getDirect returns empty; used to segfault in for_each.
+  const c = new AggregateError([new Error("x")], "agg");
+  delete c.errors;
+  expect(() => Bun.inspect(c)).not.toThrow();
 });
 
 // https://github.com/oven-sh/bun/issues/561

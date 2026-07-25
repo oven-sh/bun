@@ -3745,17 +3745,30 @@ impl VirtualMachine {
             };
         }
         // Const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
+        let mut was_new = false;
         let source = if ADD_DOUBLE_REF {
-            self.ref_counted_string::<false>(code, hash_)
+            self.ref_counted_string_with_was_new::<false>(&mut was_new, code, hash_)
         } else {
-            self.ref_counted_string::<true>(code, hash_)
+            self.ref_counted_string_with_was_new::<true>(&mut was_new, code, hash_)
         };
-        // SAFETY: `ref_counted_string` returns a live `*mut RefString` held in
-        // `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
+        // SAFETY: `ref_counted_string_with_was_new` returns a live `*mut RefString`
+        // held in `self.ref_strings`; we own +1 (or +3 below) until JSC calls the
         // external-string finalizer.
         let source_ref = unsafe { &*source };
         if ADD_DOUBLE_REF {
             source_ref.ref_();
+            source_ref.ref_();
+        }
+
+        // `ref_strings` is a weak cache: entries self-remove via the external
+        // string finalizer (free_ref_string -> RefString::destroy ->
+        // clear_ref_string) when the impl refcount hits zero. Hand the caller
+        // exactly +1 that it will balance via `source_code_needs_deref = true`.
+        // A fresh entry already carries the +1 from `create_external`; a cache
+        // hit does not, so take one here. Without this the create_external +1
+        // was never released and every distinct transpiled source under --hot
+        // leaked its duped bytes and map slot forever.
+        if !was_new {
             source_ref.ref_();
         }
 
@@ -3764,7 +3777,7 @@ impl VirtualMachine {
             specifier,
             source_url: create_if_different(&specifier, source_url),
             allocator: source.cast::<c_void>(),
-            source_code_needs_deref: false,
+            source_code_needs_deref: true,
             ..Default::default()
         }
     }

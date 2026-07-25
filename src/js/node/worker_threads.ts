@@ -130,9 +130,7 @@ function injectFakeEmitter(Class) {
     };
   }
 
-  // message/messageerror arrive as MessageEvent (.data), from native dispatch
-  // and from emit() below; everything else rides CustomEvent.detail (node's
-  // NodeEventTarget default). MessagePort has no native "error" event.
+  // native messageerror is a MessageEvent (.data), not an ErrorEvent
   function functionForEventType(event, listener) {
     switch (event) {
       case "message":
@@ -190,9 +188,7 @@ function injectFakeEmitter(Class) {
     return this;
   }
 
-  // node's NodeEventTarget.emit(type, arg): single arg, boolean return. The
-  // init dicts here must round-trip through functionForEventType's extractors.
-  // listenerCount() misses addEventListener-only listeners (pre-existing gap).
+  // init dicts here must round-trip through functionForEventType's extractors
   function emit(event, arg) {
     const hadListeners = listenerCount.$call(this, event) > 0;
     switch (event) {

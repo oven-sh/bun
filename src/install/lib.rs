@@ -754,11 +754,27 @@ impl RunCommand {
             let need_npx = bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
 
             let image_path = win::exe_path_w();
-            for (name, wanted) in [
-                (strings::w!("\\node.exe\0"), true),
-                (strings::w!("\\bun.exe\0"), true),
-                (strings::w!("\\npm.exe\0"), need_npm),
-                (strings::w!("\\npx.exe\0"), need_npx),
+            for (name, stale_name, wanted) in [
+                (
+                    strings::w!("\\node.exe\0"),
+                    strings::w!("\\node.exe.stale\0"),
+                    true,
+                ),
+                (
+                    strings::w!("\\bun.exe\0"),
+                    strings::w!("\\bun.exe.stale\0"),
+                    true,
+                ),
+                (
+                    strings::w!("\\npm.exe\0"),
+                    strings::w!("\\npm.exe.stale\0"),
+                    need_npm,
+                ),
+                (
+                    strings::w!("\\npx.exe\0"),
+                    strings::w!("\\npx.exe.stale\0"),
+                    need_npx,
+                ),
             ] {
                 if !wanted {
                     // A real one exists in PATH. Remove any stale shim left by
@@ -770,7 +786,26 @@ impl RunCommand {
                         &target_path_buffer[..],
                         dir_slice_len + name.len() - 1,
                     );
-                    let _ = bun_sys::unlink_w(path_w);
+                    if bun_sys::unlink_w(path_w).is_err() {
+                        // Deleting fails with ERROR_ACCESS_DENIED while the
+                        // link's image is mapped by a running process (the
+                        // link targets this very binary). A mapped image can
+                        // still be renamed, and `npm.exe.stale` never matches
+                        // PATH resolution, so rename it out of the way.
+                        let mut stale_buf = bun_paths::w_path_buffer_pool::get();
+                        stale_buf[..dir_slice_len]
+                            .copy_from_slice(&target_path_buffer[..dir_slice_len]);
+                        stale_buf[dir_slice_len..][..stale_name.len()].copy_from_slice(stale_name);
+                        // SAFETY: both paths are NUL-terminated (the name
+                        // literals end in NUL).
+                        let _ = unsafe {
+                            win::kernel32::MoveFileExW(
+                                target_path_buffer.as_ptr(),
+                                stale_buf.as_ptr(),
+                                win::MOVEFILE_REPLACE_EXISTING,
+                            )
+                        };
+                    }
                     continue;
                 }
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);

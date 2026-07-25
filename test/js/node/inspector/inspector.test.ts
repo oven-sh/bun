@@ -1057,54 +1057,56 @@ test("concurrent inspector.open() clients never receive another client's Runtime
   const clients: Client[] = [];
   const allResponded = Promise.withResolvers<void>();
   const failed = Promise.withResolvers<never>();
+  failed.promise.catch(() => {});
   let totalOutstanding = CLIENTS * EVALS_PER_CLIENT;
 
-  for (let i = 0; i < CLIENTS; i++) {
-    const ws = new WebSocket(wsUrl!);
-    const client: Client = { ws, marker: `client-${i}:`, own: 0, foreign: 0, outstanding: new Set() };
-    ws.onmessage = event => {
-      const msg = JSON.parse(String(event.data));
-      if (msg.id === undefined || !client.outstanding.has(msg.id)) return;
-      client.outstanding.delete(msg.id);
-      const value = msg.result?.result?.value;
-      if (typeof value === "string" && value.startsWith(client.marker)) client.own++;
-      else client.foreign++;
-      if (--totalOutstanding === 0) allResponded.resolve();
-    };
-    const opened = Promise.withResolvers<void>();
-    ws.onopen = () => opened.resolve();
-    ws.onerror = e => {
-      opened.reject(e);
-      failed.reject(e);
-    };
-    ws.onclose = () => {
-      if (totalOutstanding === 0) return;
-      const err = new Error(`client ${i} closed early; stderr: ${stderrText}`);
-      opened.reject(err);
-      failed.reject(err);
-    };
-    await opened.promise;
-    clients.push(client);
-  }
-
-  // Interleave sends round-robin so every adapter has backend commands in
-  // flight while the others' responses broadcast; then wait for every response.
-  for (let j = 0; j < EVALS_PER_CLIENT; j++) {
-    for (const client of clients) {
-      const id = j + 1;
-      client.outstanding.add(id);
-      client.ws.send(
-        JSON.stringify({ id, method: "Runtime.evaluate", params: { expression: `"${client.marker}${j}"` } }),
-      );
-    }
-  }
-
   try {
+    for (let i = 0; i < CLIENTS; i++) {
+      const ws = new WebSocket(wsUrl!);
+      const client: Client = { ws, marker: `client-${i}:`, own: 0, foreign: 0, outstanding: new Set() };
+      clients.push(client);
+      ws.onmessage = event => {
+        const msg = JSON.parse(String(event.data));
+        if (msg.id === undefined || !client.outstanding.has(msg.id)) return;
+        client.outstanding.delete(msg.id);
+        const value = msg.result?.result?.value;
+        if (typeof value === "string" && value.startsWith(client.marker)) client.own++;
+        else client.foreign++;
+        if (--totalOutstanding === 0) allResponded.resolve();
+      };
+      const opened = Promise.withResolvers<void>();
+      ws.onopen = () => opened.resolve();
+      ws.onerror = e => {
+        opened.reject(e);
+        failed.reject(e);
+      };
+      ws.onclose = () => {
+        if (totalOutstanding === 0) return;
+        const err = new Error(`client ${i} closed early; stderr: ${stderrText}`);
+        opened.reject(err);
+        failed.reject(err);
+      };
+      await opened.promise;
+    }
+
+    // Interleave sends round-robin so every adapter has backend commands in
+    // flight while the others' responses broadcast; then wait for every response.
+    for (let j = 0; j < EVALS_PER_CLIENT; j++) {
+      for (const client of clients) {
+        const id = j + 1;
+        client.outstanding.add(id);
+        client.ws.send(
+          JSON.stringify({ id, method: "Runtime.evaluate", params: { expression: `"${client.marker}${j}"` } }),
+        );
+      }
+    }
+
     await Promise.race([allResponded.promise, failed.promise]);
     const own = clients.reduce((n, c) => n + c.own, 0);
     const foreign = clients.reduce((n, c) => n + c.foreign, 0);
     expect({ own, foreign }).toEqual({ own: CLIENTS * EVALS_PER_CLIENT, foreign: 0 });
   } finally {
+    totalOutstanding = 0;
     for (const { ws } of clients) ws.close();
     proc.kill("SIGKILL");
     await stderrDrained;

@@ -337,11 +337,11 @@ impl OutputFile {
                 let mut rel_path: &[u8] = &self.dest_path;
                 if self.dest_path.len() > root_dir_path.len() {
                     rel_path = resolve_path::relative(root_dir_path, &self.dest_path);
-                    // `dirname` returns `b""` when there's no separator.
-                    let parent = resolve_path::dirname::<platform::Auto>(rel_path);
-                    if !parent.is_empty() {
-                        bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
-                    }
+                }
+                // `dirname` returns `b""` when there's no separator.
+                let parent = resolve_path::dirname::<platform::Auto>(rel_path);
+                if !parent.is_empty() && parent != b"." {
+                    bun_sys::Dir::borrow(&root_dir).make_path(parent)?;
                 }
 
                 let mut path_buf = PathBuffer::uninit();

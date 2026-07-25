@@ -1795,6 +1795,60 @@ describe("Worker buffers messages while there is no 'message' listener", () => {
     }
   });
 
+  test("a throwing listener does not drop later buffered messages", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { Worker } = require("node:worker_threads");
+         const sab = new SharedArrayBuffer(4);
+         const flag = new Int32Array(sab);
+         const w = new Worker(
+           \`const { parentPort, workerData } = require("node:worker_threads");
+            const flag = new Int32Array(workerData.sab);
+            setInterval(() => {}, 1e6);
+            parentPort.on("message", () => {
+              parentPort.postMessage("a");
+              parentPort.postMessage("b");
+              Atomics.store(flag, 0, 1);
+              Atomics.notify(flag, 0);
+            });
+            parentPort.postMessage("ready");\`,
+           { eval: true, workerData: { sab } },
+         );
+         process.on("uncaughtException", e => console.log("thrown:" + e.message));
+         (async () => {
+           await new Promise(r => w.once("message", r));
+           const done = Atomics.waitAsync(flag, 0, 0).value;
+           w.postMessage("go");
+           await done;
+           w.on("message", m => {
+             if (m === "a") throw new Error("boom");
+             console.log("got:" + m);
+           });
+           await new Promise(r => setImmediate(r));
+           await new Promise(r => setImmediate(r));
+           await w.terminate();
+         })();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.trim()).toBe("");
+    expect(stdout.trim().split("\n")).toEqual(["thrown:boom", "got:b"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("messages buffered before exit are dropped, not delivered after 'exit'", async () => {
+    const w = new Worker(`require("node:worker_threads").parentPort.postMessage("x")`, { eval: true });
+    await once(w, "exit");
+    const got: unknown[] = [];
+    w.on("message", m => got.push(m));
+    await new Promise(r => setImmediate(r));
+    expect(got).toEqual([]);
+  });
+
   test("postMessageToThread main->worker: reply via parentPort survives the listener gap", async () => {
     await using proc = Bun.spawn({
       cmd: [

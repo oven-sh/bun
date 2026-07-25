@@ -776,6 +776,8 @@ impl<'a> LinkerContext<'a> {
             let parse_graph: *mut Graph<'a> = self.parse_graph;
             let import_records_list: *const [bun_ast::import_record::List<'a>] =
                 self.graph.ast.items_import_records();
+            let glob_imports_list: *const [bun_ast::ast_result::GlobImportList] =
+                self.graph.ast.items_glob_imports();
             let flags: *mut [crate::js_meta::Flags] = self.graph.meta.items_flags_mut();
             let css_asts: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
             let files_len = self.graph.files.len();
@@ -783,12 +785,21 @@ impl<'a> LinkerContext<'a> {
             // from `*self`, stable SoA slabs; `validate_tla` neither
             // reallocates the slabs nor forms a competing `&mut` to any
             // read-only column. All seven derefs share that invariant.
-            let (tla_keywords, tla_checks, input_files, import_records_list, css_asts, flags) = unsafe {
+            let (
+                tla_keywords,
+                tla_checks,
+                input_files,
+                import_records_list,
+                glob_imports_list,
+                css_asts,
+                flags,
+            ) = unsafe {
                 (
                     (*parse_graph).ast.items_top_level_await_keyword(),
                     (*parse_graph).ast.items_tla_check_mut(),
                     (*parse_graph).input_files.items_source(),
                     &*import_records_list,
+                    &*glob_imports_list,
                     &*css_asts,
                     &mut *flags,
                 )
@@ -823,6 +834,7 @@ impl<'a> LinkerContext<'a> {
                     input_files,
                     flags,
                     import_records_list,
+                    glob_imports_list,
                 );
 
                 source_index += 1;
@@ -1891,6 +1903,7 @@ impl<'a> LinkerContext<'a> {
         input_files: &[Source],
         meta_flags: &mut [crate::js_meta::Flags],
         ast_import_records: &[bun_ast::import_record::List<'a>],
+        glob_imports: &[bun_ast::ast_result::GlobImportList],
     ) {
         // Explicit-stack postorder DFS (was per-edge recursive). `Enter`
         // seeds a file and queues each followed import paired with an
@@ -1904,6 +1917,11 @@ impl<'a> LinkerContext<'a> {
             AfterChild {
                 source_index: crate::IndexInt,
                 import_record_index: u32,
+            },
+            AfterGlobChild {
+                source_index: crate::IndexInt,
+                child_source_index: crate::IndexInt,
+                parent_import_record_index: u32,
             },
             Leave(crate::IndexInt),
         }
@@ -1943,6 +1961,22 @@ impl<'a> LinkerContext<'a> {
                             });
                         }
                     }
+                    for glob in glob_imports[source_index as usize].iter() {
+                        let mut last_child = crate::IndexInt::MAX;
+                        for entry in glob.entries.iter() {
+                            let child = entry.source_index;
+                            if !child.is_valid() || child.get() == last_child {
+                                continue;
+                            }
+                            last_child = child.get();
+                            stack.push(Frame::Enter(child.get()));
+                            stack.push(Frame::AfterGlobChild {
+                                source_index,
+                                child_source_index: child.get(),
+                                parent_import_record_index: glob.import_record_index,
+                            });
+                        }
+                    }
                     stack.push(Frame::Leave(source_index));
                     stack[mark..].reverse();
                 }
@@ -1953,6 +1987,35 @@ impl<'a> LinkerContext<'a> {
                     if Index::is_valid(Index::init(tla_checks[source_index as usize].parent)) {
                         meta_flags[source_index as usize].is_async_or_has_async_dependency = true;
                     }
+                }
+                Frame::AfterGlobChild {
+                    source_index,
+                    child_source_index,
+                    parent_import_record_index,
+                } => {
+                    let parent = tla_checks[child_source_index as usize];
+                    if Index::is_invalid(Index::init(parent.parent)) {
+                        continue;
+                    }
+                    let source: &Source = &input_files[source_index as usize];
+                    let child_path = &input_files[child_source_index as usize].path.pretty;
+                    let range = ast_import_records[source_index as usize].as_slice()
+                        [parent_import_record_index as usize]
+                        .range;
+                    let mut text = Vec::new();
+                    use std::io::Write;
+                    write!(
+                        &mut text,
+                        "This require call is not allowed because the matched file \"{}\" contains a top-level await",
+                        bstr::BStr::new(child_path)
+                    )
+                    .expect("infallible: in-memory write");
+                    self.log_disjoint().add_range_error_with_notes(
+                        Some(source),
+                        range,
+                        text,
+                        Box::new([]),
+                    );
                 }
                 Frame::AfterChild {
                     source_index,

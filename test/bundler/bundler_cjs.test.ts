@@ -617,6 +617,19 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("salut");
     },
   });
+  itBundled("cjs/GlobRequireTopLevelAwaitTarget", {
+    files: {
+      "/entry.js": /* js */ `
+        const name = process.env.NAME;
+        console.log(require("./mods/" + name).value);
+      `,
+      "/mods/a.js": /* js */ `export const value = await Promise.resolve("x");`,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": ['This require call is not allowed because the matched file "mods/a.js" contains a top-level await'],
+    },
+  });
   itBundled("cjs/GlobRequireEsmTarget", {
     files: {
       "/app/entry.js": /* js */ `

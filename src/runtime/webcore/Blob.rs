@@ -1224,12 +1224,9 @@ impl BlobExt for Blob {
         Ok(stream)
     }
 
-    /// For an fd-backed Blob (the same condition under which `.stream()`
-    /// de-duplicates via the wrapper's cached slot), return that cached
-    /// ReadableStream so `.text()/.json()/.arrayBuffer()/.bytes()` can route
-    /// through it instead of reading the fd directly. This makes a second
-    /// consumer reject with `ERR_INVALID_STATE` when e.g. `process.stdin`
-    /// already holds the reader, rather than silently splitting the bytes.
+    /// The de-duplicated `.stream()` result, if this wrapper has one (only
+    /// fd-backed stores do). `text()`/`arrayBuffer()`/... route through it so
+    /// they reject `ERR_INVALID_STATE` instead of reading the fd concurrently.
     fn fd_cached_stream(&self, this_value: JSValue) -> Option<JSValue> {
         let store = self.store.get().as_deref()?;
         let store::Data::File(f) = &store.data else {

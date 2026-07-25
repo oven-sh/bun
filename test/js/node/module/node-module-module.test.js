@@ -227,23 +227,24 @@ describe.concurrent("node-module-module", () => {
         const Module = require("module");
         const orig = Module.prototype._compile;
         let hits = 0;
-        Module.prototype._compile = function (code, filename) {
+        const override = function (code, filename) {
           hits++;
           return orig.call(this, code.replace("ORIGINAL", "PATCHED"), filename);
         };
+        Module.prototype._compile = override;
+        // A module instance must reflect the prototype override while it's active.
+        const reflects = new Module("x")._compile === override;
         const v1 = require("./t.js");
         // Restoring the original re-enables the fast path.
         Module.prototype._compile = orig;
         delete require.cache[require.resolve("./t.js")];
         const v2 = require("./t.js");
-        // A module instance reflects the prototype override.
-        const m = new Module("x");
         console.log(JSON.stringify({
           present: typeof orig === "function",
           hits,
           v1,
           v2,
-          reflects: m._compile === orig,
+          reflects,
         }));
       `,
       "t.js": `module.exports = "ORIGINAL";`,

@@ -1579,11 +1579,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         }
     }
 
-    // Bun.serve({ unix }) in a node:cluster worker: SO_REUSEPORT does not
-    // apply to AF_UNIX, so instead of each worker binding independently (the
-    // last bind wins and every other worker EADDRINUSEs), ask the primary for
-    // a single shared listen descriptor and adopt it. The IPC round-trip
-    // pumps the event loop so Bun.serve() stays synchronous to callers.
+    // Cluster workers adopt one shared AF_UNIX listen fd from the primary (SO_REUSEPORT is TCP-only).
     #[cfg(not(windows))]
     if config.reuse_port && global_object.bun_vm().ipc.is_some() {
         if let crate::server::server_config::Address::Unix(path) = &config.address {
@@ -1610,7 +1606,10 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                     if result.is_number() {
                         let fd = result.to_int32();
                         if fd >= 0 {
-                            config.cluster_unix_fd = Some(fd);
+                            // `File` closes the fd on drop if `Bun.serve` fails before adopting it.
+                            config.cluster_unix_fd =
+                                Some(bun_sys::File::from_fd(bun_sys::Fd::from_native(fd)));
+                            config.cluster_owns_unix_path = true;
                         }
                     }
                 }

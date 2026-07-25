@@ -407,11 +407,7 @@ unsafe extern "C" {
     ) -> core::ffi::c_int;
 }
 
-/// Bind+listen an AF_UNIX stream socket at `path` without attaching it to an
-/// event loop. Used by the cluster primary to create a shared listen
-/// descriptor that is handed to every worker over SCM_RIGHTS so `Bun.serve`
-/// in the workers can adopt it (SO_REUSEPORT does not apply to AF_UNIX).
-/// Returns the fd on success, or the negative errno on failure.
+/// Bind+listen an AF_UNIX socket at `path`; returns the fd, or the negative errno on failure.
 #[bun_jsc::host_fn]
 pub(crate) fn bind_unix_listen_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]

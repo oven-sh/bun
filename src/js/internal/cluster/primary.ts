@@ -294,35 +294,33 @@ function queryServer(worker, message) {
   });
 }
 
-// path -> { fd, workers: Set<id> }
-const bunServeUnixHandles = new Map();
+const bunServeUnixHandles = new Map(); // path -> { fd, workers: Set<id> }
 
-// Bun.serve({ unix }) in a worker asks the primary for a shared listen fd so
-// every worker accepts on the same AF_UNIX socket (SO_REUSEPORT is TCP-only).
+// Shared AF_UNIX listen fds for Bun.serve({ unix }) in workers (SO_REUSEPORT is TCP-only).
 function bunServeUnix(worker, message) {
-  const path = message.path;
-  const key = `bunServeUnix:${path}`;
-  if (typeof path !== "string" || process.platform === "win32") {
+  const sockPath = message.path;
+  const key = `bunServeUnix:${sockPath}`;
+  if (typeof sockPath !== "string" || process.platform === "win32") {
     send(worker, { errno: -22 /* EINVAL */, key, ack: message.seq });
     return;
   }
-  let entry = bunServeUnixHandles.get(path);
+  let entry = bunServeUnixHandles.get(sockPath);
   if (entry === undefined) {
-    const result = bindUnixListenFd(path);
+    const result = bindUnixListenFd(sockPath);
     if (result < 0) {
       send(worker, { errno: result, key, ack: message.seq });
       return;
     }
     entry = { fd: result, workers: new Set() };
-    bunServeUnixHandles.set(path, entry);
+    bunServeUnixHandles.set(sockPath, entry);
     handles.set(key, {
       remove(w) {
         if (!entry!.workers.delete(w.id)) return false;
         if (entry!.workers.size !== 0) return false;
-        bunServeUnixHandles.delete(path);
+        bunServeUnixHandles.delete(sockPath);
         require("node:fs").closeSync(entry!.fd);
         try {
-          if (path.charCodeAt(0) !== 0) require("node:fs").unlinkSync(path);
+          if (sockPath.charCodeAt(0) !== 0) require("node:fs").unlinkSync(sockPath);
         } catch {}
         return true;
       },

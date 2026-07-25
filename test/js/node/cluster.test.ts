@@ -200,7 +200,7 @@ test.skipIf(isWindows)(
         }
         async function go() {
           // Every worker returned from Bun.serve without throwing: on an
-          // unpatched build 3 of 4 workers EADDRINUSE and exit before this
+          // unpatched build 2 of 3 workers EADDRINUSE and exit before this
           // prints.
           console.log("listening=" + WORKERS);
           // accept() on a shared fd is kernel-scheduled across the epoll set,
@@ -208,7 +208,10 @@ test.skipIf(isWindows)(
           // answered. Without the fix this never passes because only one
           // worker ever bound.
           const seen = new Set<string>();
-          for (let i = 0; i < 100 && seen.size < 2; i++) seen.add(await request());
+          for (let i = 0; i < 100 && seen.size < 2; i++) {
+            const body = await request();
+            if (body) seen.add(body);
+          }
           console.log("distinct=" + seen.size);
           // One worker stopping must not unlink the primary-owned socket file
           // or break the remaining workers' accepts.

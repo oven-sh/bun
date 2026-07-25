@@ -196,6 +196,39 @@ plugin({
   },
 });
 
+plugin({
+  name: "typed array contents",
+  setup(builder) {
+    // UTF-8 source with a non-ASCII literal. The UTF-8 bytes for "é" are
+    // [0xC3, 0xA9]; if those bytes were (wrongly) Latin-1 decoded and then
+    // re-encoded as UTF-8 the parser would see "Ã©" instead.
+    const jsWithUtf8 = Buffer.from('export default "é";\n', "utf8");
+
+    builder.module("buffer-module-sync", () => ({
+      contents: jsWithUtf8,
+      loader: "js",
+    }));
+
+    builder.module("buffer-module-async", async () => {
+      await 1;
+      return { contents: new Uint8Array(jsWithUtf8), loader: "js" };
+    });
+
+    builder.onResolve({ filter: /.*/, namespace: "buffer-contents" }, ({ path }) => ({
+      path,
+      namespace: "buffer-contents",
+    }));
+    builder.onLoad({ filter: /^sync$/, namespace: "buffer-contents" }, () => ({
+      contents: jsWithUtf8,
+      loader: "js",
+    }));
+    builder.onLoad({ filter: /^async$/, namespace: "buffer-contents" }, async () => {
+      await 1;
+      return { contents: jsWithUtf8, loader: "js" };
+    });
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import { bunEnv, bunExe, tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
@@ -300,6 +333,19 @@ describe("module", () => {
       expect(hello).toBeUndefined();
       expect(there).toBeUndefined();
     }
+  });
+});
+
+describe("typed array contents", () => {
+  it.each([
+    ["build.module sync", "buffer-module-sync"],
+    ["build.module async", "buffer-module-async"],
+    ["onLoad sync", "buffer-contents:sync"],
+    ["onLoad async", "buffer-contents:async"],
+  ])("passes raw bytes through for %s", async (_, specifier) => {
+    const { default: value } = await import(specifier);
+    expect(value).toBe("é");
+    expect([...Buffer.from(value, "utf8")]).toEqual([0xc3, 0xa9]);
   });
 });
 

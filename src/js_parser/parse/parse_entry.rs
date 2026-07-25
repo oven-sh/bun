@@ -1515,85 +1515,20 @@ impl<'a> Parser<'a> {
             if p.options.features.commonjs_at_runtime {
                 wrap_mode = WrapMode::BunCommonjs;
 
-                let import_record: Option<&ImportRecord> = 'brk: {
-                    for import_record in p.import_records.items() {
-                        if import_record.flags.intersects(
-                            ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
-                        ) {
-                            continue;
-                        }
-                        if import_record.kind == bun_ast::ImportKind::Stmt {
-                            break 'brk Some(import_record);
-                        }
+                // If the file has import statements alongside module.exports/exports,
+                // convert the imports to require() calls so they work inside the CJS
+                // function wrapper. Import statements cannot appear inside a function
+                // body, but require() can.
+                // See: https://github.com/oven-sh/bun/issues/20718
+                for import_record in p.import_records.items_mut() {
+                    if import_record.flags.intersects(
+                        ImportRecordFlags::IS_INTERNAL | ImportRecordFlags::IS_UNUSED,
+                    ) {
+                        continue;
                     }
-
-                    None
-                };
-
-                // make it an error to use an import statement with a commonjs exports usage
-                if let Some(record) = import_record {
-                    // find the usage of the export symbol
-
-                    let mut notes = BumpVec::<bun_ast::Data>::new_in(p.arena);
-
-                    notes.push(bun_ast::Data {
-                        text: {
-                            use std::io::Write;
-                            let mut v = Vec::<u8>::new();
-                            let _ = write!(
-                                &mut v,
-                                "Try require({}) instead",
-                                bun_core::fmt::QuotedFormatter {
-                                    text: record.path.text
-                                }
-                            );
-                            std::borrow::Cow::Owned(v)
-                        },
-                        ..Default::default()
-                    });
-
-                    if uses_module_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'module' was used",
-                            ),
-                            ..Default::default()
-                        });
+                    if import_record.kind == bun_ast::ImportKind::Stmt {
+                        import_record.kind = bun_ast::ImportKind::Require;
                     }
-
-                    if uses_exports_ref {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because 'exports' was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_top_level_return {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because top-level return was used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    if p.has_with_scope {
-                        notes.push(bun_ast::Data {
-                            text: std::borrow::Cow::Borrowed(
-                                b"This file is CommonJS because a \"with\" statement is used",
-                            ),
-                            ..Default::default()
-                        });
-                    }
-
-                    p.log().add_range_error_with_notes(
-                        Some(p.source),
-                        record.range,
-                        b"Cannot use import statement with CommonJS-only features".as_slice(),
-                        notes.into_iter().collect::<Vec<_>>().into_boxed_slice(),
-                    );
                 }
             }
         } else {

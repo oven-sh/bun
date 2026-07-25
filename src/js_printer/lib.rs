@@ -5843,6 +5843,110 @@ pub mod __gated_printer {
                         return Ok(());
                     }
 
+                    // When an import statement was converted to require (e.g. in a CJS
+                    // file that also has module.exports), print as:
+                    //   const { x, y } = require("path")
+                    //   const { default: name } = require("path")
+                    //   const ns = require("path")
+                    // See: https://github.com/oven-sh/bun/issues/20718
+                    if record.kind == ImportKind::Require {
+                        if s.default_name.is_some()
+                            || !slice_of(s.items).is_empty()
+                            || record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                        {
+                            self.print(b"const ");
+                            if record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && s.default_name.is_none()
+                            {
+                                // import * as ns from 'y' -> const ns = require("y")
+                                self.print_symbol(s.namespace_ref);
+                            } else if record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR)
+                                && s.default_name.is_some()
+                            {
+                                // import def, * as ns from 'y'
+                                // -> const ns = require("y"), def = ("default" in ns?ns.default:ns)
+                                self.print_symbol(s.namespace_ref);
+                                self.print_equals();
+                                self.print_require_call_start();
+                                self.print_import_record_path(record);
+                                self.print(b"), ");
+                                self.print_symbol(
+                                    s.default_name.as_ref().unwrap().ref_.unwrap(),
+                                );
+                                self.print_equals();
+                                self.print(b"(\"default\" in ");
+                                self.print_symbol(s.namespace_ref);
+                                self.print(b"?");
+                                self.print_symbol(s.namespace_ref);
+                                self.print(b".default:");
+                                self.print_symbol(s.namespace_ref);
+                                self.print(b")");
+                                self.print_semicolon_after_statement();
+                                self.prev_stmt_tag = new_tag;
+                                return Ok(());
+                            } else if let Some(default_name) = &s.default_name {
+                                if slice_of(s.items).is_empty() {
+                                    // import def from 'y' -> const def = ((m)=>"default" in m?m.default:m)(require("y"))
+                                    self.print_symbol(default_name.ref_.unwrap());
+                                    self.print_equals();
+                                    self.print(b"((m)=>\"default\" in m?m.default:m)(");
+                                    self.print_require_call_start();
+                                    self.print_import_record_path(record);
+                                    self.print(b"))");
+                                } else {
+                                    // import def, { x, y } from 'mod'
+                                    // -> const [def, { x, y }] = ((m)=>["default" in m?m.default:m,m])(require("mod"))
+                                    self.print(b"[");
+                                    self.print_symbol(default_name.ref_.unwrap());
+                                    self.print(b", { ");
+                                    for (i, item) in slice_of(s.items).iter().enumerate() {
+                                        self.print_clause_item_as(item, ClauseItemAs::Var);
+                                        if i < slice_of(s.items).len() - 1 {
+                                            self.print(b", ");
+                                        }
+                                    }
+                                    self.print(b" }]");
+                                    self.print_equals();
+                                    self.print(b"((m)=>[\"default\" in m?m.default:m,m])(");
+                                    self.print_require_call_start();
+                                    self.print_import_record_path(record);
+                                    self.print(b"))");
+                                }
+                                self.print_semicolon_after_statement();
+                                self.prev_stmt_tag = new_tag;
+                                return Ok(());
+                            } else {
+                                // import { x } from 'y' -> const { x } = require("y")
+                                self.print(b"{ ");
+                                for (i, item) in slice_of(s.items).iter().enumerate() {
+                                    self.print_clause_item_as(item, ClauseItemAs::Var);
+                                    if i < slice_of(s.items).len() - 1 {
+                                        self.print(b", ");
+                                    }
+                                }
+                                self.print(b" }");
+                            }
+                            self.print_equals();
+                            self.print_require_call_start();
+                            self.print_import_record_path(record);
+                            self.print(b")");
+                        } else {
+                            // Bare import: import 'foo' -> require('foo')
+                            self.print_require_call_start();
+                            self.print_import_record_path(record);
+                            self.print(b")");
+                        }
+                        self.print_semicolon_after_statement();
+                        self.prev_stmt_tag = new_tag;
+                        return Ok(());
+                    }
+
                     self.print(b"import");
 
                     // `import defer` grammatically requires `* as ns`; if a
@@ -6177,6 +6281,16 @@ pub mod __gated_printer {
         #[inline]
         pub fn print_module_export_symbol(&mut self) {
             self.print(b"module.exports");
+        }
+
+        /// Prints `require(` using the aliased require symbol if available.
+        fn print_require_call_start(&mut self) {
+            if let Some(ref_) = self.options.require_ref {
+                self.print_symbol(ref_);
+            } else {
+                self.print(b"require");
+            }
+            self.print(b"(");
         }
 
         pub fn print_import_record_path(&mut self, import_record: &ImportRecord) {

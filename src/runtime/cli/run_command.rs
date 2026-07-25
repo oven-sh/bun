@@ -1843,18 +1843,11 @@ impl RunCommand {
                 &temp_path_buffer[..len as usize],
             );
 
-            const FILE_NAME: &str = const_format::concatcp!(
-                "bun-node",
-                if Environment::GIT_SHA_SHORT.len() > 0 {
-                    const_format::concatcp!("-", Environment::GIT_SHA_SHORT)
-                } else {
-                    ""
-                },
-                "\\node.exe"
-            );
+            let dir_name = bun_install::bun_node_dir_name(sys::windows::user_unique_id());
             let conv_len = converted.len();
-            let total = conv_len + FILE_NAME.len();
-            target_path_buffer[conv_len..total].copy_from_slice(FILE_NAME.as_bytes());
+            let total = conv_len + dir_name.len() + b"\\node.exe".len();
+            target_path_buffer[conv_len..][..dir_name.len()].copy_from_slice(dir_name.as_bytes());
+            target_path_buffer[conv_len + dir_name.len()..total].copy_from_slice(b"\\node.exe");
             target_path_buffer[total] = 0;
 
             // Park the

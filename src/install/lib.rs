@@ -406,13 +406,39 @@ pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
 
 use bun_core::ZStr;
 
+/// `bun-node-<uid>-<sha>` / `bun-node-<uid>-debug` / `bun-node-<uid>`.
+/// Shared by the POSIX `bun_node_dir()` accessor and the Windows branch of
+/// `create_fake_temporary_node_executable`; `uid` is `getuid()` on POSIX and
+/// `user_unique_id()` (a username hash) on Windows — same scheme `bunx` uses
+/// for its `bunx-<uid>-*` cache so users on a multi-user host don't share a
+/// shim directory (#7504).
+pub fn bun_node_dir_name(uid: u32) -> String {
+    if bun_core::env::IS_DEBUG {
+        format!("bun-node-{uid}-debug")
+    } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
+        format!("bun-node-{uid}")
+    } else {
+        format!("bun-node-{uid}-{}", bun_core::env::GIT_SHA_SHORT)
+    }
+}
+
 impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
+    #[cfg(not(windows))]
+    const BUN_NODE_TMP: &'static str = if cfg!(target_os = "macos") {
+        "/private/tmp"
+    } else if cfg!(target_os = "android") {
+        "/data/local/tmp"
+    } else {
+        "/tmp"
+    };
+
     /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Windows builds compute
-    /// the path at runtime via GetTempPathW (already per-user), so this is
-    /// POSIX-only.
+    /// the temp prefix at runtime via GetTempPathW and use
+    /// `bun_sys::windows::user_unique_id()` in place of the uid, so this
+    /// accessor is POSIX-only.
     ///
     /// The uid keeps each user on a multi-user host in their own directory
     /// (#7504) — the same scheme `bunx` uses for its cache. Without it the
@@ -427,21 +453,11 @@ impl RunCommand {
     pub fn bun_node_dir() -> &'static str {
         static ONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
         ONCE.get_or_init(|| {
-            let tmp = if cfg!(target_os = "macos") {
-                "/private/tmp"
-            } else if cfg!(target_os = "android") {
-                "/data/local/tmp"
-            } else {
-                "/tmp"
-            };
-            let uid = bun_sys::c::getuid();
-            if bun_core::env::IS_DEBUG {
-                format!("{tmp}/bun-node-{uid}-debug")
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                format!("{tmp}/bun-node-{uid}")
-            } else {
-                format!("{tmp}/bun-node-{uid}-{}", bun_core::env::GIT_SHA_SHORT)
-            }
+            format!(
+                "{}/{}",
+                Self::BUN_NODE_TMP,
+                bun_node_dir_name(bun_sys::c::getuid() as u32),
+            )
         })
         .as_str()
     }
@@ -583,16 +599,18 @@ impl RunCommand {
                 }
             };
 
-            #[cfg(bun_debug)]
-            {
-                // Debug-only cleanup; failures are ignored. The EEXIST branch
-                // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(dir);
-            }
-
-            // `<tmp>/bun-node-<uid>-<sha>` + `/node` + NUL. The longest prefix
-            // is android's `/data/local/tmp` (15); with a 10-digit uid and
-            // 9-char sha the whole thing is 51 bytes, so 64 is plenty.
+            // `<tmp>/bun-node-<uid>-<sha>` + `/node` + NUL fits in 64 bytes.
+            // Every component but the uid is const-evaluable; uid is u32, so
+            // at most 10 digits.
+            const _: () = assert!(
+                RunCommand::BUN_NODE_TMP.len()
+                    + "/bun-node-".len()
+                    + 10 // u32::MAX digits
+                    + "-".len()
+                    + bun_core::env::GIT_SHA_SHORT.len()
+                    + "/node\0".len()
+                    <= 64
+            );
             debug_assert!(dir.len() + b"/node\0".len() <= 64);
             let mut dir_buf = [0u8; 64];
             dir_buf[..dir.len()].copy_from_slice(dir);
@@ -631,7 +649,7 @@ impl RunCommand {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on GIT_SHA_SHORT, so two
+                            // The dir is keyed on (uid, GIT_SHA_SHORT), so two
                             // different binaries built at the same commit (e.g.
                             // side-by-side local builds being benchmarked)
                             // collide here. Blindly reusing the existing link
@@ -690,16 +708,13 @@ impl RunCommand {
 
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
 
-            // The dir name is ASCII-only, so widen the const `&str` byte-by-
-            // byte into a small stack buffer at runtime (Rust macros require a
-            // single string *literal* token, which `concatcp!` doesn't yield).
-            let dir_name_str: &str = if bun_core::env::IS_DEBUG {
-                "bun-node-debug"
-            } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-                "bun-node"
-            } else {
-                const_format::concatcp!("bun-node-", bun_core::env::GIT_SHA_SHORT)
-            };
+            // Keyed by user (same scheme as `bunx-<uid>-*`, using
+            // `user_unique_id()` as the Windows uid stand-in) so accounts that
+            // share a temp dir — SYSTEM / services without a loaded profile
+            // fall back to `C:\Windows\Temp` — don't reuse each other's
+            // hardlinks (#7504). ASCII-only, so widen byte-by-byte into a
+            // small stack buffer.
+            let dir_name_str = bun_node_dir_name(win::user_unique_id());
             let mut dir_name_buf = [0u16; 64];
             for (i, b) in dir_name_str.bytes().enumerate() {
                 debug_assert!(b < 0x80, "dir_name is ASCII-only");

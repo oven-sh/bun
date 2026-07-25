@@ -1378,7 +1378,9 @@ impl JSValkeyClient {
         this_jsvalue.ensure_still_alive();
 
         let error_value = match self.client_mut().close_reason.take() {
-            Some((message, err)) => protocol_jsc::valkey_error_to_js(&global_object, &*message, err),
+            Some((message, err)) => {
+                protocol_jsc::valkey_error_to_js(&global_object, &*message, err)
+            }
             None => protocol_jsc::valkey_error_to_js(
                 &global_object,
                 b"Connection closed",

@@ -744,6 +744,48 @@ describe("bundler", () => {
     },
     target: "bun",
   });
+  itBundled("edgecase/ExternalDynamicImportDoesNotEmitRequire#12615", {
+    files: {
+      "/entry.js": /* js */ `
+        import("external-pkg", { with: { type: "text" } });
+      `,
+    },
+    format: "esm",
+    external: ["external-pkg"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__require");
+      api.expectFile("/out.js").not.toContain("Dynamic require");
+      api.expectFile("/out.js").toContain('import("external-pkg"');
+    },
+  });
+  itBundled("edgecase/ExternalDynamicImportDoesNotEmitRequireIIFE#12615", {
+    files: {
+      "/entry.js": /* js */ `
+        import("external-pkg");
+      `,
+    },
+    format: "iife",
+    external: ["external-pkg"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__require");
+      api.expectFile("/out.js").not.toContain("Dynamic require");
+      api.expectFile("/out.js").toContain('import("external-pkg")');
+    },
+  });
+  itBundled("edgecase/ExternalDynamicImportWithRequireStillEmitsRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        console.log(require("external-pkg").x);
+        import("external-pkg");
+      `,
+    },
+    format: "esm",
+    external: ["external-pkg"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__require");
+      api.expectFile("/out.js").toContain('import("external-pkg")');
+    },
+  });
   itBundled("edgecase/RuntimeExternalRequire", {
     files: {
       "/entry.ts": /* ts */ `

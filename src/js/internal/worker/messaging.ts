@@ -5,9 +5,7 @@
 //
 // Differences from node: thread info comes from initThreadInfo (Bun assigns threadId
 // differently); createMainThreadPort is split into createMessagingChannel (before
-// `new Worker`) + registerMainThreadPort (after the threadId exists); and the
-// `workerMessage` listeners are invoked directly because Bun's process.emit cannot
-// report no-listeners or a throwing listener (see receiveMessageFromWorker).
+// `new Worker`) + registerMainThreadPort (after the threadId exists).
 
 const { validateNumber } = require("internal/validators");
 const { SafeMap } = require("internal/primordials");

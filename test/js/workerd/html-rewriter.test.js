@@ -1208,6 +1208,49 @@ describe("tagName, endTag.name, and comment.text setters", () => {
     expect(out).toBe("<p>hi</div>");
   });
 
+  it.each([
+    ["", "Tag name can't be empty."],
+    ["a b", "` ` character is forbidden in the tag name"],
+    ["a>b", "`>` character is forbidden in the tag name"],
+    ["a/b", "`/` character is forbidden in the tag name"],
+    ["a\nb", "`\n` character is forbidden in the tag name"],
+    ["1ab", "The first character of the tag name should be an ASCII alphabetical character."],
+    ["\0", "The first character of the tag name should be an ASCII alphabetical character."],
+  ])("endTag.name = %j throws the same error as element.tagName", (value, message) => {
+    const setEndTagName = () =>
+      new HTMLRewriter()
+        .on("div", {
+          element(el) {
+            el.onEndTag(end => {
+              end.name = value;
+            });
+          },
+        })
+        .transform("<div>hi</div>");
+    expect(setEndTagName).toThrow(message);
+    expect(setEndTagName).toThrow(expect.objectContaining({ name: "HTMLRewriterError" }));
+  });
+
+  it("endTag.name rejects the invalid name and leaves the output unchanged", async () => {
+    let caught;
+    const out = await new HTMLRewriter()
+      .on("div", {
+        element(el) {
+          el.onEndTag(end => {
+            try {
+              end.name = "a b>c";
+            } catch (e) {
+              caught = e;
+            }
+          });
+        },
+      })
+      .transform(new Response("<div>hi</div>"))
+      .text();
+    expect(caught?.message).toBe("` ` character is forbidden in the tag name");
+    expect(out).toBe("<div>hi</div>");
+  });
+
   it("the assigned value is coerced with ToString, which may re-enter the wrapper", () => {
     const out = new HTMLRewriter()
       .on("p", {

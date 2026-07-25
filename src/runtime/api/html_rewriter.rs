@@ -1457,6 +1457,29 @@ fn setter_utf8_arg(global: &JSGlobalObject, value: JSValue) -> JsResult<String> 
     Ok(utf8_or_throw(global, slice.slice())?.to_owned())
 }
 
+/// Same checks `Element::set_tag_name` applies, for setters lol-html exposes
+/// without validation (`EndTag::set_name_str`). Keeps the error text identical
+/// to `element.tagName = ...` by reusing lol-html's `TagNameError`.
+fn validate_tag_name(name: &str) -> Result<(), lol_html::errors::TagNameError> {
+    use lol_html::errors::TagNameError;
+    match name.as_bytes().first() {
+        None => Err(TagNameError::Empty),
+        Some(ch) if !ch.is_ascii_alphabetic() => Err(TagNameError::InvalidFirstCharacter),
+        Some(_) => {
+            if let Some(ch) = name
+                .as_bytes()
+                .iter()
+                .copied()
+                .find(|&ch| matches!(ch, b' ' | b'\n' | b'\r' | b'\t' | b'\x0C' | b'/' | b'>'))
+            {
+                Err(TagNameError::ForbiddenCharacter(ch as char))
+            } else {
+                Ok(())
+            }
+        }
+    }
+}
+
 fn string_to_js(s: &str, global: &JSGlobalObject) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, s.as_bytes())
 }
@@ -1790,6 +1813,9 @@ impl EndTag {
             return Ok(());
         }
         let name = setter_utf8_arg(global, value)?;
+        if let Err(e) = validate_tag_name(&name) {
+            return Err(global.throw_value(create_lolhtml_error(global, &e)));
+        }
         let Some(end_tag) = cell_get(&self.end_tag) else {
             return Ok(());
         };

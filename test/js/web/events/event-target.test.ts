@@ -1,4 +1,4 @@
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 describe("EventTarget addEventListener", () => {
   test("registering N distinct listeners for one type scales linearly", () => {

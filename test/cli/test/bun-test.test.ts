@@ -1673,10 +1673,9 @@ describe.concurrent("test file discovery (scanner)", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain(" 1 pass");
-    expect(stdout).toContain("OPEN_SUBDIR_FDS=");
     // Before #3833 was fixed the scanner left N subdirectory fds open; the
     // resolver parked the same again when loading mod.ts from each one.
-    expect(Number(stdout.match(/OPEN_SUBDIR_FDS=(\d+)/)![1])).toBeLessThan(5);
+    expect(stdout).toContain("OPEN_SUBDIR_FDS=0\n");
     expect(exitCode).toBe(0);
   });
 });

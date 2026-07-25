@@ -29,6 +29,11 @@ pub struct Scanner<'a> {
     pub options: &'a BundleOptions<'a>,
     pub has_iterated: bool,
     pub search_count: usize,
+    /// Mirrors `resolver.store_fd`. When true (only under `--watch`/`--hot`),
+    /// scanned directories park their fd in the resolver's `DirEntry` cache so
+    /// later module resolution reuses it instead of opening a fresh one that
+    /// `dir_info_cached_miss` would then orphan.
+    store_fd: bool,
 }
 
 // FIFO queue of scan entries (pop_front / push_back).
@@ -87,6 +92,7 @@ impl<'a> Scanner<'a> {
             open_dir_buf: PathBuffer::uninit(),
             has_iterated: false,
             search_count: 0,
+            store_fd: transpiler.resolver.store_fd,
         })
     }
 
@@ -193,9 +199,9 @@ impl<'a> Scanner<'a> {
                 .append_slice(&self.open_dir_buf[..path2_len])
                 .map_err(|_| ScanError::OutOfMemory)?;
             // `read_directory_with_iterator` opens the directory itself and,
-            // because we pass `store_fd=false` and no handle, closes it before
-            // returning, so the walk does not accumulate one open fd per
-            // visited subdirectory (#3833). Open failures come back as
+            // because we pass no handle, closes it before returning unless
+            // `store_fd` is set, so the walk does not accumulate one open fd
+            // per visited subdirectory (#3833). Open failures come back as
             // `EntriesOption::Err`, which we ignore like the old open-then-skip.
             let _ = self
                 .read_dir_with_name(path2)
@@ -207,10 +213,11 @@ impl<'a> Scanner<'a> {
 
     fn read_dir_with_name(&mut self, name: &[u8]) -> crate::Result<&'static mut EntriesOption> {
         let fs_ptr = self.fs;
+        let store_fd = self.store_fd;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, None, 0, false, iter)
+            .read_directory_with_iterator(name, None, 0, store_fd, iter)
             .map_err(Into::into)
     }
 
@@ -312,7 +319,7 @@ impl<'a> Scanner<'a> {
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
         // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, true) } {
+        match unsafe { entry.kind(real_fs, self.store_fd) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

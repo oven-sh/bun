@@ -892,7 +892,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         if payload_len >= 2 {
             let received_code = u16::from_be_bytes([payload[0], payload[1]]);
             let (echo_code, dispatch_code) = received_close_codes(received_code);
-            self.send_close_with_body(echo_code, Some(dispatch_code), &payload[2..payload_len]);
+            self.send_close_with_body(Some(echo_code), Some(dispatch_code), &payload[2..payload_len]);
         } else {
             self.send_close();
         }
@@ -900,9 +900,11 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn send_close(&self) {
-        // Received a bodyless Close: echo a normal-closure frame on the wire,
-        // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
-        self.send_close_with_body(1000, Some(1005), &[]);
+        // Received a bodyless Close: echo a bodyless Close frame on the wire
+        // (RFC 6455 §5.5.1 — the peer distinguishes "no status" from an
+        // explicit 1000), and report 1005 ("no status received") to JS per
+        // §7.1.5.
+        self.send_close_with_body(None, Some(1005), &[]);
     }
 
     fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
@@ -1144,13 +1146,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.enqueue_encoded_bytes(&ping_frame_bytes[..CONTROL_HEADER_SIZE + ping_len])
     }
 
-    /// `code` is the status code written to the wire frame. `dispatch_code`
-    /// overrides the code reported to JS (`CloseEvent.code`) when it differs
-    /// from the wire code — e.g. a received bodyless Close echoes 1000 but
-    /// reports 1005; when `None`, JS sees `code`.
-    fn send_close_with_body(&self, code: u16, dispatch_code: Option<u16>, body: &[u8]) {
+    /// `code` is the status code written to the wire frame; `None` writes a
+    /// bodyless Close frame (payload length 0). `dispatch_code` overrides the
+    /// code reported to JS (`CloseEvent.code`) when it differs from the wire
+    /// code — e.g. a received bodyless Close echoes bodyless but reports 1005;
+    /// when `None`, JS sees `code` (or 1005 if `code` is also `None`).
+    fn send_close_with_body(&self, code: Option<u16>, dispatch_code: Option<u16>, body: &[u8]) {
         let body_len = body.len().min(MAX_CLOSE_REASON);
-        log!("Sending close with code {}", code);
+        log!("Sending close with code {:?}", code);
         if self.has_pending_close_dispatch() {
             // A close is already mid-flush (user-initiated ws.close() under
             // backpressure); don't enqueue a second close frame on top of it.
@@ -1167,35 +1170,39 @@ impl<const SSL: bool> WebSocket<SSL> {
         // → terminate → cancel(Failure) would RST and discard the buffered
         // frame.
         let mut frame = [0u8; CONTROL_HEADER_SIZE + 2 + MAX_CLOSE_REASON];
-        let header = WebsocketHeader::new(((body_len + 2) & 0x7F) as u8, true, Opcode::Close);
+        // A bodyless echo (`code` is None) carries no code and no reason.
+        let payload_len = code.map_or(0, |_| 2 + body_len);
+        let header = WebsocketHeader::new((payload_len & 0x7F) as u8, true, Opcode::Close);
         frame[..2].copy_from_slice(&header.slice());
         // the 4-byte masking key lives at frame[2..6]
-        frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
 
         let mut reason = bun_core::String::empty();
-        if body_len > 0 {
-            let body = &body[..body_len];
-            // close is always utf8
-            if !strings::is_valid_utf8(body) {
-                self.terminate(ErrorCode::InvalidUtf8);
-                return;
+        if let Some(code) = code {
+            frame[CONTROL_HEADER_SIZE..][..2].copy_from_slice(&code.to_be_bytes());
+            if body_len > 0 {
+                let body = &body[..body_len];
+                // close is always utf8
+                if !strings::is_valid_utf8(body) {
+                    self.terminate(ErrorCode::InvalidUtf8);
+                    return;
+                }
+                reason = bun_core::String::clone_utf8(body);
+                frame[CONTROL_HEADER_SIZE + 2..][..body_len].copy_from_slice(body);
             }
-            reason = bun_core::String::clone_utf8(body);
-            frame[CONTROL_HEADER_SIZE + 2..][..body_len].copy_from_slice(body);
         }
 
         // we must mask the code (and the reason, if any)
-        let frame_len = CONTROL_HEADER_SIZE + 2 + body_len;
+        let frame_len = CONTROL_HEADER_SIZE + payload_len;
         {
             let (head, payload) = frame.split_at_mut(CONTROL_HEADER_SIZE);
             let mask_buf: &mut [u8; 4] = (&mut head[2..CONTROL_HEADER_SIZE])
                 .try_into()
                 .expect("infallible: size matches");
-            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..2 + body_len]);
+            Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..payload_len]);
         }
 
         if self.enqueue_encoded_bytes(&frame[..frame_len]) {
-            let dispatch_code = dispatch_code.unwrap_or(code);
+            let dispatch_code = dispatch_code.or(code).unwrap_or(1005);
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
                 self.clear_data();
@@ -1487,7 +1494,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             .and_then(|str| encode_close_reason(str, &mut reason_buf))
             .unwrap_or(0);
 
-        this.send_close_with_body(code, None, &reason_buf[..reason_len]);
+        this.send_close_with_body(Some(code), None, &reason_buf[..reason_len]);
     }
 
     /// Allocate a client with `ref_count == 1` (the I/O-layer ref, released by
@@ -2117,16 +2124,14 @@ enum Step {
 /// pair. RFC 6455 §7.4.1-§7.4.2: codes outside the legal on-wire set (`<1000`,
 /// the reserved `1004`–`1006` and `1015`–`2999`, and the undefined `>4999`) are
 /// a protocol error, so JS sees 1002. §7.1.5: the JS-visible code is otherwise
-/// the received one. The wire echo acknowledges a 1001 ("going away") with a
-/// normal-closure frame.
+/// the received one. §5.5.1: the wire echo repeats the received code verbatim.
 fn received_close_codes(received: u16) -> (u16, u16) {
     let is_invalid = received < 1000
         || (1004..1007).contains(&received)
         || (1015..=2999).contains(&received)
         || received > 4999;
     let dispatch = if is_invalid { 1002 } else { received };
-    let echo = if dispatch == 1001 { 1000 } else { dispatch };
-    (echo, dispatch)
+    (dispatch, dispatch)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

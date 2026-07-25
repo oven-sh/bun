@@ -228,3 +228,89 @@ describe.concurrent("WebSocket client and server-sent close frames", () => {
     });
   });
 });
+
+// RFC 6455 §5.5.1: when a client receives a Close frame it echoes one back,
+// "typically" with the received status code. The WIRE echo is what the peer
+// sees; it's distinct from the JS-visible CloseEvent.code (which §7.1.5
+// governs). Node/undici echo the received code verbatim and answer a bodyless
+// Close with a bodyless Close.
+describe.concurrent("WebSocket client echoes the received close code on the wire", () => {
+  type Echo = { wireCode: number | "EMPTY"; jsCode: number };
+
+  async function serverSendsCloseAndReadsEcho(sent: number | "EMPTY"): Promise<Echo> {
+    const sentFrame =
+      sent === "EMPTY" ? Buffer.from([0x88, 0]) : Buffer.from([0x88, 2, (sent >> 8) & 0xff, sent & 0xff]);
+    const gotEcho = Promise.withResolvers<number | "EMPTY">();
+    const listening = Promise.withResolvers<void>();
+
+    const server = createServer(sock => {
+      let buf = Buffer.alloc(0);
+      let upgraded = false;
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (!upgraded) {
+          const head = buf.toString("latin1");
+          if (!head.includes("\r\n\r\n")) return;
+          const key = /Sec-WebSocket-Key:\s*(.*)\r\n/i.exec(head)![1].trim();
+          const accept = crypto
+            .createHash("sha1")
+            .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+            .digest("base64");
+          sock.write(
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+              `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+          );
+          upgraded = true;
+          buf = Buffer.alloc(0);
+          sock.write(sentFrame);
+          return;
+        }
+        // Client frames are masked: 2-byte header + 4-byte mask key, then the
+        // payload XOR'd with the key. A close frame's opcode is 8.
+        if (buf.length < 2 || (buf[0] & 0x0f) !== 8) return;
+        const len = buf[1] & 0x7f;
+        if (buf.length < 6 + len) return;
+        const key = buf.subarray(2, 6);
+        const wireCode = len >= 2 ? ((buf[6] ^ key[0]) << 8) | (buf[7] ^ key[1]) : "EMPTY";
+        gotEcho.resolve(wireCode);
+        sock.end();
+      });
+      sock.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1", () => listening.resolve());
+    await listening.promise;
+
+    try {
+      const address = server.address() as import("node:net").AddressInfo;
+      const ws = new WebSocket(`ws://127.0.0.1:${address.port}`);
+      const jsClose = Promise.withResolvers<number>();
+      ws.addEventListener("close", e => jsClose.resolve(e.code));
+      ws.addEventListener("error", () => {});
+      const [wireCode, jsCode] = await Promise.all([gotEcho.promise, jsClose.promise]);
+      return { wireCode, jsCode };
+    } finally {
+      await new Promise(r => server.close(r));
+    }
+  }
+
+  // `sent` is what the server puts on the wire; `wireCode` is what the client
+  // must echo back; `jsCode` is CloseEvent.code. Every legal code echoes
+  // verbatim, including 1001 (going away). A bodyless Close echoes bodyless
+  // (so the peer can still distinguish "no status" from an explicit 1000) and
+  // JS sees the reserved 1005.
+  const cases: { sent: number | "EMPTY"; wireCode: number | "EMPTY"; jsCode: number }[] = [
+    { sent: "EMPTY", wireCode: "EMPTY", jsCode: 1005 },
+    { sent: 1000, wireCode: 1000, jsCode: 1000 },
+    { sent: 1001, wireCode: 1001, jsCode: 1001 },
+    { sent: 1002, wireCode: 1002, jsCode: 1002 },
+    { sent: 1003, wireCode: 1003, jsCode: 1003 },
+    { sent: 3000, wireCode: 3000, jsCode: 3000 },
+    { sent: 4999, wireCode: 4999, jsCode: 4999 },
+  ];
+
+  describe.each(cases)("server sends $sent", ({ sent, wireCode, jsCode }) => {
+    it(`client echoes ${wireCode} on the wire and JS sees ${jsCode}`, async () => {
+      expect(await serverSendsCloseAndReadsEcho(sent)).toEqual({ wireCode, jsCode });
+    });
+  });
+});

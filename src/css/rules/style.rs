@@ -389,12 +389,12 @@ impl<R> StyleRule<R> {
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
+        let copies = context
+            .selector_expansion_multiplier
+            .saturating_mul(self.selectors.v.len().max(1));
         if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
+            context.selector_expansion_total =
+                context.selector_expansion_total.saturating_add(copies);
             if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
                 context.err = Some(crate::error::MinifyError {
                     kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
@@ -402,6 +402,24 @@ impl<R> StyleRule<R> {
                 });
                 return Err(MinifyErr::minify_err);
             }
+        }
+        // Same fan-out multiplies this rule's unparsed/custom property token
+        // lists. A large raw value under the selector cap still deep-clones
+        // into gigabytes of `TokenOrValue`, so budget the token payload
+        // separately. Gate on `copies > 1` so a flat top-level rule with
+        // N > 1 selectors that `minify_style_arm` partitions is charged even
+        // while the enclosing multiplier is still 1, and on
+        // `should_compile_selectors()` because with no selector compilation
+        // configured the partition never runs and nothing is cloned.
+        if copies > 1
+            && context.targets.should_compile_selectors()
+            && context.charge_token_expansion(copies, self.declarations.token_weight())
+        {
+            context.err = Some(crate::error::MinifyError {
+                kind: crate::error::MinifyErrorKind::token_expansion_limit_exceeded,
+                loc: self.loc,
+            });
+            return Err(MinifyErr::minify_err);
         }
         Ok(())
     }

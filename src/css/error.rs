@@ -491,6 +491,10 @@ pub enum MinifyErrorKind {
     /// Compiling nested rules for the configured browser targets would expand to
     /// more than [`crate::css_rules::MAX_SELECTOR_EXPANSION`] selectors.
     selector_expansion_limit_exceeded,
+    /// Compiling nested rules for the configured browser targets would clone
+    /// unparsed property values totalling more than
+    /// [`crate::css_rules::MAX_TOKEN_EXPANSION`] raw tokens.
+    token_expansion_limit_exceeded,
     /// Rule minification failed without recording a more specific diagnostic on
     /// `MinifyContext::err`. Defensive fallback — every failing path is expected
     /// to record one before returning an error.
@@ -515,6 +519,11 @@ impl fmt::Display for MinifyErrorKind {
                 f,
                 "Nested CSS rules expand to more than {} selectors when compiled for the configured browser targets. Reduce the nesting depth or the number of selectors per rule, or target browsers that support CSS nesting.",
                 crate::css_rules::MAX_SELECTOR_EXPANSION,
+            ),
+            Self::token_expansion_limit_exceeded => write!(
+                f,
+                "Nested CSS rules expand to more than {} raw property tokens when compiled for the configured browser targets. Reduce the nesting depth, the number of selectors per rule, or the size of unparsed property values, or target browsers that support CSS nesting.",
+                crate::css_rules::MAX_TOKEN_EXPANSION,
             ),
             Self::unknown => write!(f, "CSS minification failed"),
         }

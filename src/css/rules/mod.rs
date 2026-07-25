@@ -607,6 +607,29 @@ impl<R> CssRuleList<R> {
                     }
                     CssRule::FontPaletteValues(_) => {}
                     CssRule::Property(_) => {}
+                    CssRule::Unknown(unk) => {
+                        // An unknown at-rule nested inside a style rule is
+                        // deep-cloned once per enclosing selector combination
+                        // along with the rest of the nested subtree, and its
+                        // prelude + block are raw `TokenList`s. Charge them
+                        // against the token-expansion cap so a large unknown
+                        // block under the selector cap can't still clone
+                        // into gigabytes of `TokenOrValue`.
+                        if context.selector_expansion_multiplier > 1 {
+                            let weight = unk.prelude.token_weight()
+                                + unk.block.as_ref().map_or(0, |b| b.token_weight());
+                            if context.charge_token_expansion(
+                                context.selector_expansion_multiplier,
+                                weight,
+                            ) {
+                                context.err = Some(crate::error::MinifyError {
+                                    kind: crate::error::MinifyErrorKind::token_expansion_limit_exceeded,
+                                    loc: unk.loc,
+                                });
+                                return Err(MinifyErr::minify_err);
+                            }
+                        }
+                    }
                     _ => {}
                 }
 
@@ -1221,6 +1244,21 @@ pub struct StyleContext<'a> {
 /// instead.
 pub const MAX_SELECTOR_EXPANSION: u32 = 65_536;
 
+/// Upper bound on the number of raw `TokenOrValue` nodes that compiling
+/// nested rules for the configured targets may clone across a stylesheet.
+///
+/// Companion to [`MAX_SELECTOR_EXPANSION`]: that cap counts expanded rules,
+/// this one counts the raw-token payload those rules carry. A rule split
+/// for an incompatible selector deep-clones its declarations (and the
+/// already-expanded nested tree), so a large unparsed property value under
+/// a handful of split levels is duplicated once per expanded rule. The
+/// selector cap alone permits up to 65,536 copies, which for a
+/// multi-thousand-token value is gigabytes of `TokenOrValue` allocations
+/// long before that cap is reached. One million tokens is on the order of
+/// 100 MB of in-memory `TokenOrValue` and a few MB of printed output;
+/// real stylesheets stay far below it.
+pub const MAX_TOKEN_EXPANSION: usize = 1 << 20;
+
 /// Per-stylesheet minification state threaded through `CssRuleList::minify`
 /// and every leaf rule's `minify`.
 ///
@@ -1256,4 +1294,23 @@ pub struct MinifyContext<'a, 'bump> {
     /// Running total of selectors that compiling nested rules for the targets
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
+    /// Running total of raw `TokenOrValue` nodes that compiling nested rules
+    /// for the targets will clone, checked against [`MAX_TOKEN_EXPANSION`].
+    pub token_expansion_total: usize,
+}
+
+impl MinifyContext<'_, '_> {
+    /// Charge `copies * weight` raw `TokenOrValue` nodes against
+    /// [`MAX_TOKEN_EXPANSION`]. Returns `true` when the cap is exceeded, in
+    /// which case the caller records a `token_expansion_limit_exceeded`
+    /// error at its own location.
+    pub(crate) fn charge_token_expansion(&mut self, copies: u32, weight: usize) -> bool {
+        if weight == 0 {
+            return false;
+        }
+        self.token_expansion_total = self
+            .token_expansion_total
+            .saturating_add((copies as usize).saturating_mul(weight));
+        self.token_expansion_total > MAX_TOKEN_EXPANSION
+    }
 }

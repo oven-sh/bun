@@ -116,6 +116,7 @@ struct HttpResponseData;
         HTTP_HEADER_PARSER_ERROR_INVALID_METHOD = 3,
         HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE = 4,
         HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE = 5,
+        HTTP_HEADER_PARSER_ERROR_REQUEST_URI_TOO_LONG = 6,
     };
 
     struct HttpParserResult {
@@ -596,6 +597,15 @@ struct HttpResponseData;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
+        /* Distinguish 414 from 431 when an unparsed request head exceeds the
+         * limit: no LF in the buffered bytes means the request-line itself has
+         * not ended. */
+        static unsigned int headOverflowStatus(const char *data, size_t length) {
+            return memchr(data, '\n', length) == nullptr
+                ? HTTP_ERROR_414_URI_TOO_LONG
+                : HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE;
+        }
+
         /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
          * kMaxChunkExtensionsSize (16 KiB). Enforced for every server
          * personality so a client cannot stream unbounded extension bytes. */
@@ -826,12 +836,12 @@ struct HttpResponseData;
                     uint64_t word;
                     memcpy(&word, data, sizeof(uint64_t));
                     if(maxHeaderSize && (uintptr_t)(data - start) > maxHeaderSize) {
-                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                        return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_URI_TOO_LONG);
                     }
                     if (hasLess(word, 33)) {
                         while (*(unsigned char *)data > 32) data++;
                         if(maxHeaderSize && (uintptr_t)(data - start) > maxHeaderSize) {
-                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                            return ConsumeRequestLineResult::error(HTTP_HEADER_PARSER_ERROR_REQUEST_URI_TOO_LONG);
                         }
                         /* Now we stand on space */
                         header.value = {start, (size_t) (data - start)};
@@ -951,6 +961,11 @@ struct HttpResponseData;
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_METHOD);
                     case HTTP_HEADER_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                    case HTTP_HEADER_PARSER_ERROR_REQUEST_URI_TOO_LONG:
+                        /* 414 for the response status; the clientError code stays
+                         * HEADER_FIELDS_TOO_LARGE (llhttp reports HPE_HEADER_OVERFLOW
+                         * for an oversize request line too). */
+                        return HttpParserResult::error(HTTP_ERROR_414_URI_TOO_LONG, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     case HTTP_HEADER_PARSER_ERROR_PAUSED_H2_UPGRADE:
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_PAUSED_H2_UPGRADE);
                     default: {
@@ -1149,6 +1164,10 @@ struct HttpResponseData;
             /* Even if we could parse it, check for length here as well */
             const uint64_t maxBufferedHeaderSize = maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE;
             if (consumed > maxBufferedHeaderSize) {
+                /* RFC 9110 15.5.15: 414 when the request-target itself is the overflow. */
+                if (req->headers[0].value.length() > maxBufferedHeaderSize) {
+                    return HttpParserResult::error(HTTP_ERROR_414_URI_TOO_LONG, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                }
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
 
@@ -1518,7 +1537,7 @@ public:
 
             } else {
                 if (fallback.length() == maxFallbackSize) {
-                    return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                    return HttpParserResult::error(headOverflowStatus(fallback.data(), fallback.length()), HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }
                 return HttpParserResult::success(0, user);
             }
@@ -1539,7 +1558,7 @@ public:
             if (length < maxFallbackSize) {
                 fallback.append(data, length);
             } else {
-                return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+                return HttpParserResult::error(headOverflowStatus(data, maxFallbackSize), HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
         }
 

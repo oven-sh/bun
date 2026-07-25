@@ -17,9 +17,8 @@ import tls from "node:tls";
 // is only emitted by debug builds (Environment.allow_assert).
 //
 // The wss:// endpoint and CONNECT proxy run in THIS process so the debug
-// subprocess only pays for the WebSocket client round-trips (no TLS server
-// startup, no harness import, no scoped-logger lock contention with the
-// server thread under BUN_DEBUG_alloc=1).
+// subprocess only pays for the WebSocket client round-trips — no TLS server
+// startup and no harness import in the BUN_DEBUG_alloc=1 child.
 test.skipIf(!isDebug)(
   "wss:// through HTTP proxy does not leak HTTPUpgradeClient",
   async () => {

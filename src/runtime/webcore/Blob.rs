@@ -5251,6 +5251,7 @@ pub fn write_file_internal(
                                 on_start_buffering(producer_task);
                             }
                         }
+                        locked.on_start_buffering = None;
                         locked.on_start_streaming = None;
                         locked.on_readable_stream_available = None;
                         locked.on_stream_cancelled = None;

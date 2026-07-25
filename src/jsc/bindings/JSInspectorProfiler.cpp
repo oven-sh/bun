@@ -115,8 +115,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
                     return;
                 SourceID sourceID = provider->asID();
                 auto& info = scriptsByID.ensure(sourceID, [&] {
-                    return ScriptInfo { provider, {}, {} };
-                }).iterator->value;
+                                            return ScriptInfo { provider, {}, {} };
+                                        })
+                                 .iterator->value;
                 if (executable->type() != FunctionExecutableType)
                     return;
                 auto* functionExecutable = static_cast<FunctionExecutable*>(executable);

@@ -633,8 +633,7 @@ export function dead() { return 3; }
 exports.cold = function cold() { return 2; };
 exports.dead = function dead() { return 3; };
 `;
-        const load =
-          kind === "mjs" ? `const A = await import("./app.mjs");` : `const A = require("./app.cjs");`;
+        const load = kind === "mjs" ? `const A = await import("./app.mjs");` : `const A = require("./app.cjs");`;
         using dir = tempDir(`inspector-coverage-preloaded-${kind}`, {
           [`app.${kind}`]: appSource,
           "driver.mjs": `import { Session } from "node:inspector/promises";

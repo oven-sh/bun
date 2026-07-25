@@ -1,0 +1,418 @@
+[run] 29 paths × 4 shapes × 3 runtimes = 348 cells (j=4)
+[run] canary  = bun (1.4.0 1.4.0-canary.1+ae4b17de6)
+[run] asan    = /workspace/bun/build/debug/bun-debug (1.4.0-debug 1.4.0-debug+df6c7eed6)
+[run] node    = node (v26.3.0)
+  [  1/348] canary fast-cl      ac.abort                 ok
+  [  2/348] canary fast-cl      ac.abort-reason          ok
+  [  3/348] canary fast-cl      ac.abort-read-pending    ok
+  [  5/348] canary fast-cl      ac.any                   ok
+  [  7/348] canary fast-cl      ac.abort-arraybuffer     ok
+  [  6/348] canary fast-cl      ac.abort-text            ok
+  [  8/348] canary fast-cl      ac.abort-json            ok
+  [  9/348] canary fast-cl      ac.abort-blob            ok
+  [ 10/348] canary fast-cl      ac.abort-bytes           ok
+  [  4/348] canary fast-cl      ac.timeout               ok
+  [ 11/348] canary fast-cl      ac.abort-bunwrite        ok
+  [ 12/348] canary fast-cl      ac.abort-bunwrite-body   ok
+  [ 13/348] canary fast-cl      ac.abort-pipeto          ok
+  [ 14/348] canary fast-cl      ac.abort-forawait        ok
+  [ 15/348] canary fast-cl      rs.body-cancel           ok
+  [ 16/348] canary fast-cl      rs.reader-cancel         ok
+  [ 17/348] canary fast-cl      rs.reader-cancel-reason  ok
+  [ 18/348] canary fast-cl      rs.release-cancel        ok
+  [ 20/348] canary fast-cl      rs.forawait-throw        ok
+  [ 19/348] canary fast-cl      rs.forawait-break        ok
+  [ 21/348] canary fast-cl      rs.pipeto-signal         ok
+  [ 22/348] canary fast-cl      rs.pipeto-sink-error     ok
+  [ 24/348] canary fast-cl      rs.tee-cancel-both       ok
+  [ 23/348] canary fast-cl      rs.pipethrough-cancel    ok
+  [ 28/348] canary fast-cl      ns.destroy               ok
+  [ 29/348] canary fast-cl      ns.destroy-err           ok
+  [ 30/348] canary slow-trickle ac.abort                 ok
+  [ 27/348] canary fast-cl      gc.drop-body             ok
+  [ 31/348] canary slow-trickle ac.abort-reason          ok
+  [ 32/348] canary slow-trickle ac.abort-read-pending    ok
+  [ 34/348] canary slow-trickle ac.any                   ok
+  [ 35/348] canary slow-trickle ac.abort-text            ok
+  [ 36/348] canary slow-trickle ac.abort-arraybuffer     ok
+  [ 37/348] canary slow-trickle ac.abort-json            ok
+  [ 33/348] canary slow-trickle ac.timeout               ok
+  [ 38/348] canary slow-trickle ac.abort-blob            ok
+  [ 39/348] canary slow-trickle ac.abort-bytes           ok
+  [ 40/348] canary slow-trickle ac.abort-bunwrite        ok
+  [ 41/348] canary slow-trickle ac.abort-bunwrite-body   ok
+  [ 42/348] canary slow-trickle ac.abort-pipeto          ok
+  [ 43/348] canary slow-trickle ac.abort-forawait        ok
+  [ 44/348] canary slow-trickle rs.body-cancel           ok
+  [ 45/348] canary slow-trickle rs.reader-cancel         ok
+  [ 46/348] canary slow-trickle rs.reader-cancel-reason  ok
+  [ 47/348] canary slow-trickle rs.release-cancel        ok
+  [ 48/348] canary slow-trickle rs.forawait-break        ok
+  [ 49/348] canary slow-trickle rs.forawait-throw        ok
+  [ 50/348] canary slow-trickle rs.pipeto-signal         ok
+  [ 51/348] canary slow-trickle rs.pipeto-sink-error     ok
+  [ 52/348] canary slow-trickle rs.pipethrough-cancel    ok
+  [ 25/348] canary fast-cl      gc.drop-response         FAIL
+  [ 53/348] canary slow-trickle rs.tee-cancel-both       ok
+  [ 26/348] canary fast-cl      gc.drop-reader           FAIL
+  [ 57/348] canary slow-trickle ns.destroy               ok
+  [ 58/348] canary slow-trickle ns.destroy-err           ok
+  [ 59/348] canary chunked      ac.abort                 ok
+  [ 60/348] canary chunked      ac.abort-reason          ok
+  [ 61/348] canary chunked      ac.abort-read-pending    ok
+  [ 62/348] canary chunked      ac.timeout               ok
+  [ 63/348] canary chunked      ac.any                   ok
+  [ 64/348] canary chunked      ac.abort-text            ok
+  [ 65/348] canary chunked      ac.abort-arraybuffer     ok
+  [ 66/348] canary chunked      ac.abort-json            ok
+  [ 67/348] canary chunked      ac.abort-blob            ok
+  [ 68/348] canary chunked      ac.abort-bytes           ok
+  [ 69/348] canary chunked      ac.abort-bunwrite        ok
+  [ 70/348] canary chunked      ac.abort-bunwrite-body   ok
+  [ 54/348] canary slow-trickle gc.drop-response         FAIL
+  [ 55/348] canary slow-trickle gc.drop-reader           FAIL
+  [ 56/348] canary slow-trickle gc.drop-body             FAIL
+  [ 71/348] canary chunked      ac.abort-pipeto          ok
+  [ 72/348] canary chunked      ac.abort-forawait        ok
+  [ 73/348] canary chunked      rs.body-cancel           ok
+  [ 74/348] canary chunked      rs.reader-cancel         ok
+  [ 75/348] canary chunked      rs.reader-cancel-reason  ok
+  [ 76/348] canary chunked      rs.release-cancel        ok
+  [ 77/348] canary chunked      rs.forawait-break        ok
+  [ 78/348] canary chunked      rs.forawait-throw        ok
+  [ 79/348] canary chunked      rs.pipeto-signal         ok
+  [ 80/348] canary chunked      rs.pipeto-sink-error     ok
+  [ 82/348] canary chunked      rs.tee-cancel-both       ok
+  [ 81/348] canary chunked      rs.pipethrough-cancel    ok
+  [ 86/348] canary chunked      ns.destroy               ok
+  [ 87/348] canary chunked      ns.destroy-err           ok
+  [ 88/348] canary mid-close    ac.abort                 ok
+  [ 89/348] canary mid-close    ac.abort-reason          ok
+  [ 90/348] canary mid-close    ac.abort-read-pending    ok
+  [ 91/348] canary mid-close    ac.timeout               ok
+  [ 92/348] canary mid-close    ac.any                   ok
+  [ 93/348] canary mid-close    ac.abort-text            ok
+  [ 94/348] canary mid-close    ac.abort-arraybuffer     ok
+  [ 95/348] canary mid-close    ac.abort-json            ok
+  [ 96/348] canary mid-close    ac.abort-blob            ok
+  [ 97/348] canary mid-close    ac.abort-bytes           ok
+  [ 98/348] canary mid-close    ac.abort-bunwrite        ok
+  [ 99/348] canary mid-close    ac.abort-bunwrite-body   ok
+  [100/348] canary mid-close    ac.abort-pipeto          ok
+  [101/348] canary mid-close    ac.abort-forawait        ok
+  [102/348] canary mid-close    rs.body-cancel           ok
+  [103/348] canary mid-close    rs.reader-cancel         ok
+  [ 83/348] canary chunked      gc.drop-response         FAIL
+  [ 84/348] canary chunked      gc.drop-reader           FAIL
+  [ 85/348] canary chunked      gc.drop-body             FAIL
+  [104/348] canary mid-close    rs.reader-cancel-reason  ok
+  [105/348] canary mid-close    rs.release-cancel        ok
+  [106/348] canary mid-close    rs.forawait-break        ok
+  [107/348] canary mid-close    rs.forawait-throw        ok
+  [108/348] canary mid-close    rs.pipeto-signal         ok
+  [109/348] canary mid-close    rs.pipeto-sink-error     ok
+  [110/348] canary mid-close    rs.pipethrough-cancel    ok
+  [111/348] canary mid-close    rs.tee-cancel-both       ok
+  [115/348] canary mid-close    ns.destroy               ok
+  [116/348] canary mid-close    ns.destroy-err           ok
+  [114/348] canary mid-close    gc.drop-body             ok
+  [112/348] canary mid-close    gc.drop-response         FAIL
+  [113/348] canary mid-close    gc.drop-reader           FAIL
+  [118/348] asan   fast-cl      ac.abort-reason          ok
+  [117/348] asan   fast-cl      ac.abort                 ok
+  [120/348] asan   fast-cl      ac.timeout               ok
+  [119/348] asan   fast-cl      ac.abort-read-pending    ok
+  [121/348] asan   fast-cl      ac.any                   ok
+  [122/348] asan   fast-cl      ac.abort-text            ok
+  [124/348] asan   fast-cl      ac.abort-json            ok
+  [123/348] asan   fast-cl      ac.abort-arraybuffer     ok
+  [125/348] asan   fast-cl      ac.abort-blob            ok
+  [126/348] asan   fast-cl      ac.abort-bytes           ok
+  [127/348] asan   fast-cl      ac.abort-bunwrite        ok
+  [128/348] asan   fast-cl      ac.abort-bunwrite-body   ok
+  [129/348] asan   fast-cl      ac.abort-pipeto          ok
+  [130/348] asan   fast-cl      ac.abort-forawait        ok
+  [132/348] asan   fast-cl      rs.reader-cancel         ok
+  [131/348] asan   fast-cl      rs.body-cancel           ok
+  [133/348] asan   fast-cl      rs.reader-cancel-reason  ok
+  [134/348] asan   fast-cl      rs.release-cancel        ok
+  [136/348] asan   fast-cl      rs.forawait-throw        ok
+  [135/348] asan   fast-cl      rs.forawait-break        ok
+  [137/348] asan   fast-cl      rs.pipeto-signal         ok
+  [138/348] asan   fast-cl      rs.pipeto-sink-error     ok
+  [139/348] asan   fast-cl      rs.pipethrough-cancel    ok
+  [140/348] asan   fast-cl      rs.tee-cancel-both       ok
+  [141/348] asan   fast-cl      gc.drop-response         FAIL
+  [142/348] asan   fast-cl      gc.drop-reader           FAIL
+  [143/348] asan   fast-cl      gc.drop-body             ok
+  [144/348] asan   fast-cl      ns.destroy               ok
+  [145/348] asan   fast-cl      ns.destroy-err           ok
+  [146/348] asan   slow-trickle ac.abort                 ok
+  [147/348] asan   slow-trickle ac.abort-reason          ok
+  [148/348] asan   slow-trickle ac.abort-read-pending    ok
+  [149/348] asan   slow-trickle ac.timeout               ok
+  [150/348] asan   slow-trickle ac.any                   ok
+  [151/348] asan   slow-trickle ac.abort-text            ok
+  [152/348] asan   slow-trickle ac.abort-arraybuffer     ok
+  [154/348] asan   slow-trickle ac.abort-blob            ok
+  [153/348] asan   slow-trickle ac.abort-json            ok
+  [155/348] asan   slow-trickle ac.abort-bytes           ok
+  [156/348] asan   slow-trickle ac.abort-bunwrite        ok
+  [157/348] asan   slow-trickle ac.abort-bunwrite-body   ok
+  [158/348] asan   slow-trickle ac.abort-pipeto          ok
+  [159/348] asan   slow-trickle ac.abort-forawait        ok
+  [160/348] asan   slow-trickle rs.body-cancel           ok
+  [161/348] asan   slow-trickle rs.reader-cancel         ok
+  [162/348] asan   slow-trickle rs.reader-cancel-reason  ok
+  [163/348] asan   slow-trickle rs.release-cancel        ok
+  [164/348] asan   slow-trickle rs.forawait-break        ok
+  [165/348] asan   slow-trickle rs.forawait-throw        ok
+  [166/348] asan   slow-trickle rs.pipeto-signal         ok
+  [167/348] asan   slow-trickle rs.pipeto-sink-error     ok
+  [168/348] asan   slow-trickle rs.pipethrough-cancel    ok
+  [169/348] asan   slow-trickle rs.tee-cancel-both       ok
+  [170/348] asan   slow-trickle gc.drop-response         FAIL
+  [171/348] asan   slow-trickle gc.drop-reader           FAIL
+  [173/348] asan   slow-trickle ns.destroy               ok
+  [172/348] asan   slow-trickle gc.drop-body             FAIL
+  [175/348] asan   chunked      ac.abort                 ok
+  [174/348] asan   slow-trickle ns.destroy-err           ok
+  [176/348] asan   chunked      ac.abort-reason          ok
+  [177/348] asan   chunked      ac.abort-read-pending    ok
+  [179/348] asan   chunked      ac.any                   ok
+  [178/348] asan   chunked      ac.timeout               ok
+  [180/348] asan   chunked      ac.abort-text            ok
+  [181/348] asan   chunked      ac.abort-arraybuffer     ok
+  [182/348] asan   chunked      ac.abort-json            ok
+  [183/348] asan   chunked      ac.abort-blob            ok
+  [184/348] asan   chunked      ac.abort-bytes           ok
+  [185/348] asan   chunked      ac.abort-bunwrite        ok
+  [187/348] asan   chunked      ac.abort-pipeto          ok
+  [186/348] asan   chunked      ac.abort-bunwrite-body   ok
+  [188/348] asan   chunked      ac.abort-forawait        ok
+  [189/348] asan   chunked      rs.body-cancel           ok
+  [190/348] asan   chunked      rs.reader-cancel         ok
+  [192/348] asan   chunked      rs.release-cancel        ok
+  [191/348] asan   chunked      rs.reader-cancel-reason  ok
+  [193/348] asan   chunked      rs.forawait-break        ok
+  [194/348] asan   chunked      rs.forawait-throw        ok
+  [195/348] asan   chunked      rs.pipeto-signal         ok
+  [196/348] asan   chunked      rs.pipeto-sink-error     ok
+  [197/348] asan   chunked      rs.pipethrough-cancel    ok
+  [198/348] asan   chunked      rs.tee-cancel-both       ok
+  [199/348] asan   chunked      gc.drop-response         FAIL
+  [201/348] asan   chunked      gc.drop-body             FAIL
+  [200/348] asan   chunked      gc.drop-reader           FAIL
+  [202/348] asan   chunked      ns.destroy               ok
+  [203/348] asan   chunked      ns.destroy-err           ok
+  [204/348] asan   mid-close    ac.abort                 ok
+  [205/348] asan   mid-close    ac.abort-reason          ok
+  [206/348] asan   mid-close    ac.abort-read-pending    ok
+  [209/348] asan   mid-close    ac.abort-text            ok
+  [208/348] asan   mid-close    ac.any                   ok
+  [207/348] asan   mid-close    ac.timeout               ok
+  [210/348] asan   mid-close    ac.abort-arraybuffer     ok
+  [211/348] asan   mid-close    ac.abort-json            ok
+  [213/348] asan   mid-close    ac.abort-bytes           ok
+  [212/348] asan   mid-close    ac.abort-blob            ok
+  [214/348] asan   mid-close    ac.abort-bunwrite        ok
+  [215/348] asan   mid-close    ac.abort-bunwrite-body   ok
+  [216/348] asan   mid-close    ac.abort-pipeto          ok
+  [217/348] asan   mid-close    ac.abort-forawait        ok
+  [218/348] asan   mid-close    rs.body-cancel           ok
+  [219/348] asan   mid-close    rs.reader-cancel         ok
+  [220/348] asan   mid-close    rs.reader-cancel-reason  ok
+  [222/348] asan   mid-close    rs.forawait-break        ok
+  [221/348] asan   mid-close    rs.release-cancel        ok
+  [223/348] asan   mid-close    rs.forawait-throw        ok
+  [224/348] asan   mid-close    rs.pipeto-signal         ok
+  [226/348] asan   mid-close    rs.pipethrough-cancel    ok
+  [225/348] asan   mid-close    rs.pipeto-sink-error     ok
+  [227/348] asan   mid-close    rs.tee-cancel-both       ok
+  [228/348] asan   mid-close    gc.drop-response         FAIL
+  [230/348] asan   mid-close    gc.drop-body             ok
+  [229/348] asan   mid-close    gc.drop-reader           FAIL
+  [233/348] node   fast-cl      ac.abort                 ok
+  [234/348] node   fast-cl      ac.abort-reason          ok
+  [235/348] node   fast-cl      ac.abort-read-pending    ok
+  [237/348] node   fast-cl      ac.any                   ok
+  [236/348] node   fast-cl      ac.timeout               ok
+  [231/348] asan   mid-close    ns.destroy               ok
+  [239/348] node   fast-cl      ac.abort-arraybuffer     ok
+  [238/348] node   fast-cl      ac.abort-text            ok
+  [241/348] node   fast-cl      ac.abort-blob            ok
+  [240/348] node   fast-cl      ac.abort-json            ok
+  [242/348] node   fast-cl      ac.abort-bytes           ok
+  [245/348] node   fast-cl      ac.abort-pipeto          ok
+  [246/348] node   fast-cl      ac.abort-forawait        ok
+  [247/348] node   fast-cl      rs.body-cancel           ok
+  [248/348] node   fast-cl      rs.reader-cancel         ok
+  [249/348] node   fast-cl      rs.reader-cancel-reason  ok
+  [250/348] node   fast-cl      rs.release-cancel        ok
+  [251/348] node   fast-cl      rs.forawait-break        ok
+  [232/348] asan   mid-close    ns.destroy-err           ok
+  [243/348] node   fast-cl      ac.abort-bunwrite        skip
+  [252/348] node   fast-cl      rs.forawait-throw        ok
+  [244/348] node   fast-cl      ac.abort-bunwrite-body   skip
+  [253/348] node   fast-cl      rs.pipeto-signal         ok
+  [254/348] node   fast-cl      rs.pipeto-sink-error     ok
+  [256/348] node   fast-cl      rs.tee-cancel-both       ok
+  [255/348] node   fast-cl      rs.pipethrough-cancel    ok
+  [260/348] node   fast-cl      ns.destroy               ok
+  [257/348] node   fast-cl      gc.drop-response         ok
+  [261/348] node   fast-cl      ns.destroy-err           ok
+  [259/348] node   fast-cl      gc.drop-body             ok
+  [262/348] node   slow-trickle ac.abort                 ok
+  [263/348] node   slow-trickle ac.abort-reason          ok
+  [264/348] node   slow-trickle ac.abort-read-pending    ok
+  [266/348] node   slow-trickle ac.any                   ok
+  [265/348] node   slow-trickle ac.timeout               ok
+  [267/348] node   slow-trickle ac.abort-text            ok
+  [268/348] node   slow-trickle ac.abort-arraybuffer     ok
+  [270/348] node   slow-trickle ac.abort-blob            ok
+  [269/348] node   slow-trickle ac.abort-json            ok
+  [271/348] node   slow-trickle ac.abort-bytes           ok
+  [274/348] node   slow-trickle ac.abort-pipeto          ok
+  [258/348] node   fast-cl      gc.drop-reader           FAIL
+  [275/348] node   slow-trickle ac.abort-forawait        ok
+  [276/348] node   slow-trickle rs.body-cancel           ok
+  [277/348] node   slow-trickle rs.reader-cancel         ok
+  [278/348] node   slow-trickle rs.reader-cancel-reason  ok
+  [279/348] node   slow-trickle rs.release-cancel        ok
+  [280/348] node   slow-trickle rs.forawait-break        ok
+  [281/348] node   slow-trickle rs.forawait-throw        ok
+  [282/348] node   slow-trickle rs.pipeto-signal         ok
+  [283/348] node   slow-trickle rs.pipeto-sink-error     ok
+  [285/348] node   slow-trickle rs.tee-cancel-both       ok
+  [284/348] node   slow-trickle rs.pipethrough-cancel    ok
+  [272/348] node   slow-trickle ac.abort-bunwrite        skip
+  [273/348] node   slow-trickle ac.abort-bunwrite-body   skip
+  [289/348] node   slow-trickle ns.destroy               ok
+  [288/348] node   slow-trickle gc.drop-body             ok
+  [286/348] node   slow-trickle gc.drop-response         ok
+  [290/348] node   slow-trickle ns.destroy-err           ok
+  [292/348] node   chunked      ac.abort-reason          ok
+  [291/348] node   chunked      ac.abort                 ok
+  [293/348] node   chunked      ac.abort-read-pending    ok
+  [295/348] node   chunked      ac.any                   ok
+  [296/348] node   chunked      ac.abort-text            ok
+  [294/348] node   chunked      ac.timeout               ok
+  [298/348] node   chunked      ac.abort-json            ok
+  [297/348] node   chunked      ac.abort-arraybuffer     ok
+  [299/348] node   chunked      ac.abort-blob            ok
+  [300/348] node   chunked      ac.abort-bytes           ok
+  [287/348] node   slow-trickle gc.drop-reader           FAIL
+  [303/348] node   chunked      ac.abort-pipeto          ok
+  [305/348] node   chunked      rs.body-cancel           ok
+  [304/348] node   chunked      ac.abort-forawait        ok
+  [306/348] node   chunked      rs.reader-cancel         ok
+  [307/348] node   chunked      rs.reader-cancel-reason  ok
+  [308/348] node   chunked      rs.release-cancel        ok
+  [309/348] node   chunked      rs.forawait-break        ok
+  [310/348] node   chunked      rs.forawait-throw        ok
+  [311/348] node   chunked      rs.pipeto-signal         ok
+  [312/348] node   chunked      rs.pipeto-sink-error     ok
+  [313/348] node   chunked      rs.pipethrough-cancel    ok
+  [301/348] node   chunked      ac.abort-bunwrite        skip
+  [314/348] node   chunked      rs.tee-cancel-both       ok
+  [302/348] node   chunked      ac.abort-bunwrite-body   skip
+  [315/348] node   chunked      gc.drop-response         ok
+  [318/348] node   chunked      ns.destroy               ok
+  [317/348] node   chunked      gc.drop-body             ok
+  [320/348] node   mid-close    ac.abort                 ok
+  [319/348] node   chunked      ns.destroy-err           ok
+  [321/348] node   mid-close    ac.abort-reason          ok
+  [323/348] node   mid-close    ac.timeout               ok
+  [322/348] node   mid-close    ac.abort-read-pending    ok
+  [324/348] node   mid-close    ac.any                   ok
+  [325/348] node   mid-close    ac.abort-text            ok
+  [326/348] node   mid-close    ac.abort-arraybuffer     ok
+  [327/348] node   mid-close    ac.abort-json            ok
+  [329/348] node   mid-close    ac.abort-bytes           ok
+  [328/348] node   mid-close    ac.abort-blob            ok
+  [332/348] node   mid-close    ac.abort-pipeto          ok
+  [316/348] node   chunked      gc.drop-reader           FAIL
+  [333/348] node   mid-close    ac.abort-forawait        ok
+  [334/348] node   mid-close    rs.body-cancel           ok
+  [335/348] node   mid-close    rs.reader-cancel         ok
+  [336/348] node   mid-close    rs.reader-cancel-reason  ok
+  [337/348] node   mid-close    rs.release-cancel        ok
+  [338/348] node   mid-close    rs.forawait-break        ok
+  [339/348] node   mid-close    rs.forawait-throw        ok
+  [340/348] node   mid-close    rs.pipeto-signal         ok
+  [341/348] node   mid-close    rs.pipeto-sink-error     ok
+  [343/348] node   mid-close    rs.tee-cancel-both       ok
+  [330/348] node   mid-close    ac.abort-bunwrite        skip
+  [342/348] node   mid-close    rs.pipethrough-cancel    ok
+  [331/348] node   mid-close    ac.abort-bunwrite-body   skip
+  [344/348] node   mid-close    gc.drop-response         ok
+  [347/348] node   mid-close    ns.destroy               ok
+  [346/348] node   mid-close    gc.drop-body             ok
+  [348/348] node   mid-close    ns.destroy-err           ok
+  [345/348] node   mid-close    gc.drop-reader           FAIL
+
+path                      cana cana cana cana asan asan asan asan node node node node 
+                          fast slow chun mid- fast slow chun mid- fast slow chun mid- 
+--------------------------------------------------------------------------------------
+ac.abort                  ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-reason           ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-read-pending     ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.timeout                ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.any                    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-text             ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-arraybuffer      ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-json             ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-blob             ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-bytes            ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-bunwrite         ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ·    ·    ·    ·    
+ac.abort-bunwrite-body    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ·    ·    ·    ·    
+ac.abort-pipeto           ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ac.abort-forawait         ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.body-cancel            ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.reader-cancel          ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.reader-cancel-reason   ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.release-cancel         ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.forawait-break         ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.forawait-throw         ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.pipeto-signal          ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.pipeto-sink-error      ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.pipethrough-cancel     ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+rs.tee-cancel-both        ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+gc.drop-response          s    s    s    s    s    s    s    s    ✓    ✓    ✓    ✓    
+gc.drop-reader            s    s    s    s    s    s    s    s    s    s    s    s    
+gc.drop-body              ✓    s    s    ✓    ✓    s    s    ✓    ✓    ✓    ✓    ✓    
+ns.destroy                ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+ns.destroy-err            ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    ✓    
+
+legend: ✓ pass · skip ✗ both-fail s settle-only c close-only ⏱ timeout 💥 fault
+canary : 106/116 pass, 0 faults, 0 timeouts
+asan   : 106/116 pass, 0 faults, 0 timeouts
+node   : 104/108 pass, 0 faults, 0 timeouts
+
+--- 24 FAILURES ---
+canary/fast-cl/gc.drop-response: settled=true(249ms) closed=false(-1ms) bp=true fd+4 exit=1
+canary/fast-cl/gc.drop-reader: settled=true(280ms) closed=false(-1ms) bp=true fd+4 exit=1
+canary/slow-trickle/gc.drop-response: settled=true(228ms) closed=false(-1ms) bp=false fd+4 exit=1
+canary/slow-trickle/gc.drop-reader: settled=true(241ms) closed=false(-1ms) bp=false fd+4 exit=1
+canary/slow-trickle/gc.drop-body: settled=true(237ms) closed=false(-1ms) bp=false fd+4 exit=1
+canary/chunked/gc.drop-response: settled=true(238ms) closed=false(-1ms) bp=true fd+4 exit=1
+canary/chunked/gc.drop-reader: settled=true(237ms) closed=false(-1ms) bp=true fd+4 exit=1
+canary/chunked/gc.drop-body: settled=true(234ms) closed=false(-1ms) bp=true fd+4 exit=1
+canary/mid-close/gc.drop-response: settled=true(234ms) closed=false(-1ms) bp=false fd+4 exit=1
+canary/mid-close/gc.drop-reader: settled=true(234ms) closed=false(-1ms) bp=false fd+4 exit=1
+asan/fast-cl/gc.drop-response: settled=true(979ms) closed=false(-1ms) bp=true fd+4 exit=1
+asan/fast-cl/gc.drop-reader: settled=true(1084ms) closed=false(-1ms) bp=true fd+4 exit=1
+asan/slow-trickle/gc.drop-response: settled=true(1160ms) closed=false(-1ms) bp=false fd+4 exit=1
+asan/slow-trickle/gc.drop-reader: settled=true(1233ms) closed=false(-1ms) bp=false fd+4 exit=1
+asan/slow-trickle/gc.drop-body: settled=true(1267ms) closed=false(-1ms) bp=false fd+4 exit=1
+asan/chunked/gc.drop-response: settled=true(1104ms) closed=false(-1ms) bp=true fd+4 exit=1
+asan/chunked/gc.drop-body: settled=true(2145ms) closed=false(-1ms) bp=true fd+4 exit=1
+asan/chunked/gc.drop-reader: settled=true(1395ms) closed=false(-1ms) bp=true fd+4 exit=1
+asan/mid-close/gc.drop-response: settled=true(1254ms) closed=false(-1ms) bp=false fd+4 exit=1
+asan/mid-close/gc.drop-reader: settled=true(1267ms) closed=false(-1ms) bp=false fd+4 exit=1
+node/fast-cl/gc.drop-reader: settled=true(331ms) closed=false(-1ms) bp=true fd+2 exit=1
+node/slow-trickle/gc.drop-reader: settled=true(337ms) closed=false(-1ms) bp=false fd+2 exit=1
+node/chunked/gc.drop-reader: settled=true(351ms) closed=false(-1ms) bp=true fd+2 exit=1
+node/mid-close/gc.drop-reader: settled=true(407ms) closed=false(-1ms) bp=false fd+2 exit=1
+
+full results: /workspace/bun/scratch/abortpause/out/results-2026-07-25T18-42-11-696Z.jsonl

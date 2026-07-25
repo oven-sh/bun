@@ -129,6 +129,8 @@ fn collect_body_directives(stmts: &[Stmt]) -> Vec<&[u8]> {
     for s in stmts {
         match &s.data {
             StmtData::SDirective(d) => out.push(d.value.slice()),
+            // Preserved legal comments don't terminate the prologue.
+            StmtData::SComment(_) => continue,
             _ => break,
         }
     }

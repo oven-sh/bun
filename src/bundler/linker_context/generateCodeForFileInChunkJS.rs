@@ -88,11 +88,22 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 }
             }
 
-            let main_stmts_len =
-                stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len();
+            // The HMR closure body is the module's top level: its directive
+            // prologue goes first (post_process_js_chunk skips directives for
+            // this format).
+            let directives = ast.directives.slice();
+            let main_stmts_len = directives.len()
+                + stmts.inside_wrapper_prefix.stmts.len()
+                + stmts.inside_wrapper_suffix.len();
             let all_stmts_len = main_stmts_len + stmts.outside_wrapper_prefix.len() + 1;
 
             stmts.all_stmts.reserve(all_stmts_len);
+            for directive in directives {
+                stmts.all_stmts.push(Stmt::alloc(
+                    S::Directive { value: *directive },
+                    bun_ast::Loc::EMPTY,
+                ));
+            }
             stmts
                 .all_stmts
                 .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());

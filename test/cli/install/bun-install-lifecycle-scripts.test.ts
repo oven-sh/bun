@@ -140,6 +140,35 @@ test.concurrent("ignore-scripts is read from npmrc", async () => {
   expect(await checkScripts()).toEqual([true, true]);
 });
 
+describe.concurrent.each([
+  ["npm_config_ignore_scripts", "true"],
+  ["NPM_CONFIG_IGNORE_SCRIPTS", "true"],
+  ["BUN_CONFIG_IGNORE_SCRIPTS", "1"],
+])("ignore-scripts is read from the %s environment variable", (key, value) => {
+  test(`${key}=${value} skips lifecycle scripts`, async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.2.3",
+        scripts: {
+          postinstall: `${bunExe()} -e 'await Bun.write("postinstall.txt", "postinstall!!")'`,
+        },
+      }),
+    );
+
+    const marker = join(packageDir, "postinstall.txt");
+
+    await runBunInstall({ ...env, [key]: value }, packageDir, { savesLockfile: false });
+    expect(await exists(marker)).toBe(false);
+
+    await runBunInstall({ ...env, [key]: "false" }, packageDir, { savesLockfile: false });
+    expect(await exists(marker)).toBe(true);
+  });
+});
+
 test.concurrent("trustedDependencies matches the resolved package name, not the dependency alias", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

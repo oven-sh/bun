@@ -1,6 +1,7 @@
+// https://github.com/oven-sh/bun/issues/14604
 import { tls as COMMON_CERT } from "harness";
 import { randomBytes } from "node:crypto";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import tls from "node:tls";
 
 import { describe, expect, test } from "bun:test";
@@ -92,6 +93,51 @@ describe("tls.Server ticketKeys", () => {
     }
   });
 
+  test("getTicketKeys first called after listen() returns stable 48 bytes", async () => {
+    const server = tls.createServer({ ...COMMON_CERT });
+    await listen(server);
+    try {
+      const k = server.getTicketKeys();
+      expect(Buffer.isBuffer(k)).toBe(true);
+      expect(k.length).toBe(48);
+      expect(server.getTicketKeys().equals(k)).toBe(true);
+    } finally {
+      server.close();
+    }
+  });
+
+  test("setTicketKeys accepts Buffer, Uint8Array and DataView", async () => {
+    const server = tls.createServer({ ...COMMON_CERT });
+    await listen(server);
+    try {
+      const buf = Buffer.alloc(48);
+      for (let i = 0; i < 48; i++) buf[i] = i;
+      server.setTicketKeys(buf);
+      expect(Buffer.compare(server.getTicketKeys(), buf)).toBe(0);
+
+      const u8 = new Uint8Array(48).fill(0xab);
+      server.setTicketKeys(u8);
+      const afterU8 = server.getTicketKeys();
+      expect({ len: afterU8.byteLength, first: afterU8[0], last: afterU8[47] }).toEqual({
+        len: 48,
+        first: 0xab,
+        last: 0xab,
+      });
+
+      const ab = new ArrayBuffer(48);
+      new Uint8Array(ab).fill(0xcd);
+      server.setTicketKeys(new DataView(ab));
+      const afterDV = server.getTicketKeys();
+      expect({ len: afterDV.byteLength, first: afterDV[0], last: afterDV[47] }).toEqual({
+        len: 48,
+        first: 0xcd,
+        last: 0xcd,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
   test("two servers sharing ticketKeys resume each other's sessions", async () => {
     const keys = Buffer.alloc(48, 7);
     const mk = () => {
@@ -177,19 +223,56 @@ describe("tls.Server ticketKeys", () => {
     }
   });
 
-  test("setTicketKeys validates its argument with the Node error codes", () => {
+  test("ticketKeys reach injected connections (server.emit('connection') without listen)", async () => {
+    // Mirrors node's test/parallel/test-tls-ticket.js: one net.Server fronts
+    // two tls.Servers that never .listen(); sockets are fed via
+    // .emit('connection'). The shared ticketKeys must reach the SSL_CTX
+    // backing those upgrades.
+    const keys = randomBytes(48);
+    const mk = () => {
+      const s = tls.createServer({ ...COMMON_CERT, ticketKeys: keys });
+      s.on("secureConnection", socket => socket.end("ok"));
+      return s;
+    };
+    const a = mk();
+    const b = mk();
+    let turn = 0;
+    await using front = net.createServer(socket => {
+      (turn++ % 2 === 0 ? a : b).emit("connection", socket);
+    });
+    await new Promise<void>((resolve, reject) => {
+      front.once("error", reject);
+      front.listen(0, "127.0.0.1", () => resolve());
+    });
+    const port = (front.address() as AddressInfo).port;
+
+    expect(a.getTicketKeys().equals(keys)).toBe(true);
+    expect(b.getTicketKeys().equals(keys)).toBe(true);
+
+    const first = await connectOnce(port, null);
+    expect(first.reused).toBe(false);
+    expect(first.session).not.toBeNull();
+
+    // Second connect hits `b`; with shared keys B decrypts A's ticket.
+    const second = await connectOnce(port, first.session);
+    expect(second.reused).toBe(true);
+  });
+
+  test("setTicketKeys validation matches Node", () => {
     const server = tls.createServer({ ...COMMON_CERT });
     expect(() => server.setTicketKeys("not a buffer" as any)).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
     );
-    expect(() => server.setTicketKeys(Buffer.alloc(0))).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
-    expect(() => server.setTicketKeys(Buffer.alloc(47))).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
-    expect(() => server.setTicketKeys(Buffer.alloc(49))).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
-    );
+    expect(() => server.setTicketKeys(123 as any)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    // Node's length check is internal/assert, not validateInteger:
+    for (const len of [0, 47, 49]) {
+      expect(() => server.setTicketKeys(Buffer.alloc(len))).toThrow(
+        expect.objectContaining({
+          code: "ERR_INTERNAL_ASSERTION",
+          name: "Error",
+          message: expect.stringContaining("Session ticket keys must be a 48-byte buffer"),
+        }),
+      );
+    }
   });
 });

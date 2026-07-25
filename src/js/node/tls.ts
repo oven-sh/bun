@@ -6,7 +6,7 @@ const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const _getTicketKeys = $newRustFunction("Listener.rs", "jsGetTicketKeys", 1);
 const _setTicketKeys = $newRustFunction("Listener.rs", "jsSetTicketKeys", 2);
-const { throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented, kInternalAssertionSuffix } = require("internal/shared");
 const {
   throwOnInvalidTLSArray,
   tlsStringToProtocolVersion,
@@ -1139,7 +1139,8 @@ let CLIENT_RENEG_LIMIT = 3,
   CLIENT_RENEG_WINDOW = 600;
 
 function buildSharedCreds(server) {
-  return (server._sharedCreds = new InternalSecureContext(
+  const ticketKeys = server._ticketKeys;
+  const sc = (server._sharedCreds = new InternalSecureContext(
     {
       ...server[ksharedCredsOptions],
       pfx: undefined,
@@ -1159,8 +1160,13 @@ function buildSharedCreds(server) {
       minVersion: server.minVersion,
       maxVersion: server.maxVersion,
     },
-    true,
+    // A server with ticketKeys needs its own SSL_CTX — the digest-interned
+    // cache shares one SSL_CTX* across consumers, so setting per-server
+    // ticket key material on it would leak into unrelated servers.
+    ticketKeys === undefined,
   ));
+  if (ticketKeys !== undefined && sc.context) _setTicketKeys(sc.context, ticketKeys);
+  return sc;
 }
 
 function Server(options, secureConnectionListener): void {
@@ -1406,16 +1412,16 @@ function Server(options, secureConnectionListener): void {
       this.secureProtocol = next.secureProtocol;
       this.minVersion = next.minVersion;
       this.maxVersion = next.maxVersion;
-
-      // validateSecureContextOptions already checked type + 48-byte length.
-      const ticketKeys = options.ticketKeys;
-      if (ticketKeys != null) this.setTicketKeys(ticketKeys);
     }
     this._sharedCreds = serverTLSOptions instanceof InternalSecureContext ? serverTLSOptions : null;
     this[ksharedCredsOptions] =
       serverTLSOptions == null || serverTLSOptions instanceof InternalSecureContext
         ? serverTLSOptions
         : { ...serverTLSOptions };
+    // After _sharedCreds is assigned so the keys reach the new context.
+    // validateSecureContextOptions already checked type + 48-byte length.
+    const ticketKeys = options?.ticketKeys;
+    if (ticketKeys != null) this.setTicketKeys(ticketKeys);
   };
 
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
@@ -1424,20 +1430,34 @@ function Server(options, secureConnectionListener): void {
   Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
   Server.prototype.getTicketKeys = function () {
+    // Prefer the live SSL_CTX: the Listener's when listening, or the
+    // SecureContext backing server.emit('connection') upgrades.
     const { _handle } = this;
     if (_handle) {
       const keys = _getTicketKeys(_handle);
-      if (keys !== undefined) return keys;
+      if (keys !== undefined) {
+        if (this._ticketKeys === undefined) {
+          // BoringSSL auto-rotates its default key every ~48h until
+          // SSL_CTX_set_tlsext_ticket_keys is called; Node/OpenSSL fixes the
+          // bytes at ctx creation. Pin what we just read so future calls
+          // return the same bytes and tickets stay decryptable.
+          this._ticketKeys = Buffer.from(keys);
+          _setTicketKeys(_handle, keys);
+        }
+        return keys;
+      }
     }
-    // Not listening yet: the SSL_CTX only exists once listen() creates the
-    // native Listener. Node builds the SSL_CTX in the constructor and returns
-    // its keys here, so return the recorded key material instead of throwing,
-    // generating it on first access (the way BoringSSL's lazy default-key
-    // rotation does). `kRealListen` applies these exact bytes to the SSL_CTX.
+    // No SSL_CTX yet (before listen() / first injected connection). Node
+    // builds the SSL_CTX in the constructor and returns its keys here, so
+    // return the recorded key material instead of throwing, generating it on
+    // first access. kRealListen/buildSharedCreds apply these exact bytes.
     let stored = this._ticketKeys;
     if (stored === undefined) {
       stored = (_randomBytes ??= require("node:crypto").randomBytes)(48);
       this._ticketKeys = stored;
+      if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
+        this._sharedCreds = null;
+      }
     }
     return Buffer.from(stored);
   };
@@ -1447,15 +1467,23 @@ function Server(options, secureConnectionListener): void {
       throw $ERR_INVALID_ARG_TYPE("buffer", ["Buffer", "TypedArray", "DataView"], keys);
     }
     if (keys.byteLength !== 48) {
-      throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
+      // Node: validateBuffer(keys); assert(keys.byteLength === 48, …) — where
+      // `assert` is internal/assert, so the length failure surfaces as
+      // ERR_INTERNAL_ASSERTION (Error), not a TypeError.
+      throw $ERR_INTERNAL_ASSERTION("Session ticket keys must be a 48-byte buffer" + kInternalAssertionSuffix);
     }
     // Buffer.from(Uint8Array) copies, so later mutation of the caller's
     // buffer cannot change what is applied to the SSL_CTX at listen time.
     // The intermediate Uint8Array view also accepts a DataView input.
-    this._ticketKeys = Buffer.from(new Uint8Array(keys.buffer, keys.byteOffset, keys.byteLength));
+    const copy = (this._ticketKeys = Buffer.from(new Uint8Array(keys.buffer, keys.byteOffset, keys.byteLength)));
     const { _handle } = this;
-    if (_handle) {
-      _setTicketKeys(_handle, this._ticketKeys);
+    if (_handle) _setTicketKeys(_handle, copy);
+    // For the emit('connection') path, drop the cached creds so the next
+    // injected socket rebuilds them with the new keys. buildSharedCreds opts
+    // out of the digest cache when _ticketKeys is set, so the rebuilt ctx is
+    // private to this server.
+    if (this._sharedCreds && !(this[ksharedCredsOptions] instanceof InternalSecureContext)) {
+      this._sharedCreds = null;
     }
   };
 

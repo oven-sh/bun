@@ -305,31 +305,35 @@ describe("spawn()", () => {
     using dir = tempDir("child-process-timeout-unref", {
       "parent.js": `
         const { spawn } = require("node:child_process");
+        const t0 = performance.now();
         const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 100)"], {
           timeout: 500,
           stdio: "ignore",
+          detached: true,
         });
-        process.stdout.write(String(child.pid));
         child.unref();
+        process.on("exit", () => {
+          process.stdout.write(JSON.stringify({ pid: child.pid, elapsed: performance.now() - t0 }));
+        });
       `,
     });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(String(dir), "parent.js")],
-      env: bunEnv,
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const pid = parseInt(stdout, 10);
+    const { pid, elapsed } = JSON.parse(stdout);
     expect(pid).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
 
     // The parent has exited. The timeout timer must have kept its event loop
-    // alive long enough to send the kill signal, so the grandchild should be
-    // dead (or dying) now rather than orphaned.
+    // alive until the deadline, then sent the kill signal, so the grandchild
+    // should be dead (or dying) now rather than orphaned.
     let alive = true;
     for (let i = 0; alive && i < 100; i++) {
       try {
@@ -344,7 +348,10 @@ describe("spawn()", () => {
         process.kill(pid);
       } catch {}
     }
-    expect(alive).toBe(false);
+    expect({ grandchildAlive: alive, parentWaitedForTimeout: elapsed >= 400 }).toEqual({
+      grandchildAlive: false,
+      parentWaitedForTimeout: true,
+    });
   });
 
   it("should allow us to set env", async () => {

@@ -280,11 +280,11 @@ pub fn for_each_multipart_entry<C>(
         buf[4 + boundary.len()..need].copy_from_slice(b"--");
         let final_boundary = &buf[..need];
 
-        if let Some(i) = strings::index_of(slice, final_boundary) {
-            slice = &slice[..i];
-        } else if slice.starts_with(&final_boundary[2..]) {
-            // `--{boundary}--` at offset 0: an empty form with no preamble.
+        if slice.starts_with(&final_boundary[2..]) {
+            // `--{boundary}--` at offset 0: everything after is epilogue.
             return Ok(());
+        } else if let Some(i) = strings::index_of(slice, final_boundary) {
+            slice = &slice[..i];
         } else {
             return Err(crate::Error::MissingFinalBoundary);
         }

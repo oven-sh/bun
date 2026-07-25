@@ -1539,6 +1539,74 @@ impl Diff {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn warn_linked_peer_dependencies(
+    pm: &PackageManager,
+    source: &bun_ast::Source,
+    json: &Expr,
+    bump: &bun_alloc::Arena,
+) {
+    let Some(peer_deps) = json.as_property(b"peerDependencies") else {
+        return;
+    };
+    if peer_deps.expr.property_count() == 0 {
+        return;
+    }
+
+    let peer_meta = json.as_property(b"peerDependenciesMeta");
+    let linked_dir = source.path.name().dir;
+
+    let mut unresolved: Vec<(&[u8], &[u8], bool)> = Vec::new();
+    peer_deps.expr.for_each_property(|key, _loc, value| {
+        let installed = resolve_path::join_abs_string_z::<path::platform::Auto>(
+            linked_dir,
+            &[b"node_modules", key, b"package.json"],
+        );
+        if bun_sys::exists(installed.as_bytes()) {
+            return;
+        }
+        let ver = value.as_utf8(bump).unwrap_or(b"");
+        let is_optional = peer_meta
+            .as_ref()
+            .and_then(|m| m.expr.as_property(key))
+            .and_then(|m| m.expr.as_property(b"optional"))
+            .map(|o| matches!(&o.expr.data, ExprData::EBoolean(b) if b.value))
+            .unwrap_or(false);
+        unresolved.push((bump.alloc_slice_copy(key), ver, is_optional));
+    });
+    if unresolved.is_empty() {
+        return;
+    }
+
+    let name = json
+        .as_property(b"name")
+        .and_then(|q| q.expr.as_utf8(bump))
+        .unwrap_or(b"");
+    bun_core::warn!(
+        "Linked package <b>\"{}\"<r> declares peerDependencies that may not resolve from this project:",
+        bstr::BStr::new(name),
+    );
+    for (key, ver, is_optional) in &unresolved {
+        bun_core::pretty_errorln!(
+            "  <d>-<r> {}<d>@{}{}<r>",
+            bstr::BStr::new(key),
+            bstr::BStr::new(ver),
+            if *is_optional { " (optional)" } else { "" },
+        );
+    }
+    if pm.options.node_linker == crate::package_manager::Options::NodeLinker::Isolated {
+        bun_core::pretty_errorln!(
+            "  Linked packages resolve modules from their real location on disk. Install these peers in the linked package's own node_modules.",
+        );
+    } else {
+        bun_core::pretty_errorln!(
+            "  Linked packages resolve modules from their real location on disk.\n  Install these peers in the linked package's own node_modules, or run bun with <cyan>--preserve-symlinks<r>.",
+        );
+    }
+    Output::flush();
+}
+
 impl Package<u64> {
     pub fn hash(name: &[u8], version: SemverVersion) -> u64 {
         let mut hasher = bun_wyhash::Wyhash::init(0);
@@ -2169,38 +2237,7 @@ impl Package<u64> {
         if FEATURES == Features::LINK
             && pm.options.log_level != crate::package_manager::LogLevel::Silent
         {
-            if let Some(peer_deps) = json.as_property(b"peerDependencies") {
-                if peer_deps.expr.property_count() > 0 {
-                    let name = json
-                        .as_property(b"name")
-                        .and_then(|q| q.expr.as_utf8(&bump))
-                        .unwrap_or(b"");
-                    let peer_meta = json.as_property(b"peerDependenciesMeta");
-                    bun_core::warn!(
-                        "Linked package <b>\"{}\"<r> declares peerDependencies that will not resolve from this project:",
-                        bstr::BStr::new(name),
-                    );
-                    peer_deps.expr.for_each_property(|key, _loc, value| {
-                        let ver = value.as_utf8(&bump).unwrap_or(b"");
-                        let is_optional = peer_meta
-                            .as_ref()
-                            .and_then(|m| m.expr.as_property(key))
-                            .and_then(|m| m.expr.as_property(b"optional"))
-                            .map(|o| matches!(&o.expr.data, ExprData::EBoolean(b) if b.value))
-                            .unwrap_or(false);
-                        bun_core::pretty_errorln!(
-                            "  <d>-<r> {}<d>@{}{}<r>",
-                            bstr::BStr::new(key),
-                            bstr::BStr::new(ver),
-                            if is_optional { " (optional)" } else { "" },
-                        );
-                    });
-                    bun_core::pretty_errorln!(
-                        "  Linked packages resolve modules from their real location on disk.\n  Run bun with <cyan>--preserve-symlinks<r> to resolve peers from this project's node_modules.",
-                    );
-                    Output::flush();
-                }
-            }
+            warn_linked_peer_dependencies(pm, source, &json, &bump);
         }
 
         let mut workspace_names = workspace_map::WorkspaceMap::init();

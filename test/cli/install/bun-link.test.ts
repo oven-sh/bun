@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { access, mkdir, writeFile } from "fs/promises";
+import { access, mkdir, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -484,11 +484,19 @@ it("should warn when linked package has peerDependencies", async () => {
       peerDependencies: {
         "peer-one": "^1.0.0",
         "peer-two": "*",
+        "peer-three": "^2.0.0",
       },
       peerDependenciesMeta: {
         "peer-two": { optional: true },
       },
     }),
+  );
+  // peer-three is already installed in the linked package's own node_modules,
+  // so it resolves from there and should not be listed in the warning.
+  await mkdir(join(link_dir, "node_modules", "peer-three"), { recursive: true });
+  await writeFile(
+    join(link_dir, "node_modules", "peer-three", "package.json"),
+    JSON.stringify({ name: "peer-three", version: "2.0.0" }),
   );
   await writeFile(
     join(package_dir, "package.json"),
@@ -498,44 +506,66 @@ it("should warn when linked package has peerDependencies", async () => {
     }),
   );
 
-  // Registering the link (no args) should not warn: nothing is being resolved.
-  {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "link"],
-      cwd: link_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const err = stderrForInstall(await stderr.text());
-    expect(err).not.toContain("peerDependencies");
-    expect(await stdout.text()).toContain(`Success! Registered "${link_name}"`);
-    expect(await exited).toBe(0);
+  async function run(cmd: string[], cwd: string) {
+    const proc = spawn({ cmd, cwd, stdout: "pipe", stdin: "pipe", stderr: "pipe", env });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err: stderrForInstall(err), exitCode };
   }
 
-  // `bun link <name>` should warn, listing every peer and the workaround.
+  const header = `Linked package "${link_name}" declares peerDependencies that may not resolve from this project:`;
+
+  // Registering the link (no args) should not warn: nothing is being resolved.
   {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "link", link_name],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const err = stderrForInstall(await stderr.text());
-    expect(err).toContain(`Linked package "${link_name}" declares peerDependencies`);
+    const { out, err, exitCode } = await run([bunExe(), "link"], link_dir);
+    expect(err).not.toContain("peerDependencies");
+    expect(out).toContain(`Success! Registered "${link_name}"`);
+    expect(exitCode).toBe(0);
+  }
+
+  // `bun link <name>` should warn once, listing peers not installed in the
+  // linked package and the remedy.
+  {
+    const { out, err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
+    expect(err.split(header).length - 1).toBe(1);
     expect(err).toContain("peer-one@^1.0.0");
     expect(err).not.toContain("peer-one@^1.0.0 (optional)");
     expect(err).toContain("peer-two@* (optional)");
+    expect(err).not.toContain("peer-three");
+    expect(err).toContain("resolve modules from their real location on disk");
     expect(err).toContain("--preserve-symlinks");
-    expect(await stdout.text()).toContain(`installed ${link_name}@link:${link_name}`);
-    expect(await exited).toBe(0);
+    expect(out).toContain(`installed ${link_name}@link:${link_name}`);
+    expect(exitCode).toBe(0);
+  }
+
+  // Under the isolated linker, --preserve-symlinks would break the store
+  // layout, so the warning should not recommend it.
+  {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lock"), { force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    const { err, exitCode } = await run([bunExe(), "link", link_name, "--linker", "isolated"], package_dir);
+    expect(err.split(header).length - 1).toBe(1);
+    expect(err).not.toContain("--preserve-symlinks");
+    expect(err).toContain("own node_modules");
+    expect(exitCode).toBe(0);
+  }
+
+  // --silent suppresses the warning.
+  {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lock"), { force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    const { err, exitCode } = await run([bunExe(), "link", link_name, "--silent"], package_dir);
+    expect(err).not.toContain("peerDependencies");
+    expect(err).not.toContain("--preserve-symlinks");
+    expect(exitCode).toBe(0);
   }
 
   // `bun install` with a `link:` dependency in package.json should warn too.
   {
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lock"), { force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
     await writeFile(
       join(package_dir, "package.json"),
       JSON.stringify({
@@ -547,25 +577,9 @@ it("should warn when linked package has peerDependencies", async () => {
       }),
     );
     const { err } = await runBunInstall(env, package_dir, { allowWarnings: true });
-    expect(err).toContain(`Linked package "${link_name}" declares peerDependencies`);
+    expect(err.split(header).length - 1).toBe(1);
     expect(err).toContain("peer-one@^1.0.0");
+    expect(err).not.toContain("peer-three");
     expect(err).toContain("--preserve-symlinks");
-  }
-
-  // --silent suppresses the warning.
-  {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "link", link_name, "--silent"],
-      cwd: package_dir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    const err = stderrForInstall(await stderr.text());
-    expect(err).not.toContain("peerDependencies");
-    expect(err).not.toContain("--preserve-symlinks");
-    await stdout.text();
-    expect(await exited).toBe(0);
   }
 });

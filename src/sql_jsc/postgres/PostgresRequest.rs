@@ -118,9 +118,7 @@ pub fn write_bind<Context: WriterContext>(
                     // sent as text when PG inferred a non-float8 target, so PG
                     // parses the exact decimal instead of us lossily coercing.
                     break 'brk value.is_string()
-                        || (tag != types::Tag::float8
-                            && value.is_number()
-                            && !value.is_any_int());
+                        || (tag != types::Tag::float8 && value.is_number() && !value.is_any_int());
                 }
                 if iter.any_failed() {
                     return Err(AnyPostgresError::InvalidQueryBinding);

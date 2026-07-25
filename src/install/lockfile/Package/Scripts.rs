@@ -40,23 +40,21 @@ fn registry_href_without_userinfo(href: &[u8]) -> Box<[u8]> {
 
 fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
     let bun_exe = bun_core::self_exe_path().ok()?;
-    let href = crate::package_manager_real::PackageManager::get()
-        .options
-        .scope
-        .url
-        .href();
-    let registry = registry_href_without_userinfo(href);
-    let mut cmd: Vec<u8> = Vec::with_capacity(bun_exe.len() + registry.len() + 64);
+    let options = &crate::package_manager_real::PackageManager::get().options;
+    let mut cmd: Vec<u8> = Vec::with_capacity(bun_exe.len() + 128);
     bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
         bun_exe.as_bytes(),
         &mut cmd,
     ));
     cmd.extend_from_slice(b" install --ignore-scripts --no-save --no-summary --no-progress");
-    if !registry.is_empty() {
-        cmd.extend_from_slice(b" --registry ");
-        bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
-            &registry, &mut cmd,
-        ));
+    if options.did_override_default_scope {
+        let registry = registry_href_without_userinfo(options.scope.url.href());
+        if !registry.is_empty() {
+            cmd.extend_from_slice(b" --registry ");
+            bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
+                &registry, &mut cmd,
+            ));
+        }
     }
     Some(cmd.into_boxed_slice())
 }

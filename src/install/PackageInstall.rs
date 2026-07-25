@@ -795,9 +795,6 @@ impl<'a> PackageInstall<'a> {
         true
     }
 
-    /// Build `<destination_dir_subpath>/.bun-tag` as a NUL-terminated slice
-    /// inside `destination_dir_subpath_buf` for the body of `f`, restoring the
-    /// original terminator on return.
     fn with_bun_tag_path<R>(&mut self, f: impl FnOnce(&mut Self, &ZStr) -> R) -> R {
         let dest_len = self.destination_dir_subpath.len();
         let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
@@ -837,10 +834,7 @@ impl<'a> PackageInstall<'a> {
         })
     }
 
-    /// For `LocalTarball` / `RemoteTarball` the resolution formats as the
-    /// tarball path/URL, which never matches the installed package.json
-    /// `"version"`. Compare against the `.bun-tag` written by `install()`
-    /// instead so a second `bun install` with the same resolution is a no-op.
+    // package_version for a tarball is the path/URL; compare against the .bun-tag we wrote.
     fn verify_tarball_resolution(&mut self, root_node_modules_dir: &Dir) -> bool {
         self.with_bun_tag_path(|this, bun_tag_path| {
             let Ok(bun_tag_file) = this
@@ -2432,9 +2426,7 @@ impl<'a> PackageInstall<'a> {
                 resolution::Tag::LocalTarball | resolution::Tag::RemoteTarball
             )
         {
-            // Record the resolution (tarball path or URL) so `verify()` can
-            // recognise this install on the next run. Written after the copy so
-            // it is present even when the cache folder predates this change.
+            // Written post-copy so existing cache extractions get the tag too.
             self.with_bun_tag_path(|this, bun_tag_path| {
                 if sys::File::openat(
                     destination_dir.fd(),
@@ -2443,7 +2435,7 @@ impl<'a> PackageInstall<'a> {
                         | sys::O::CREAT
                         | sys::O::TRUNC
                         | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
-                    0o644,
+                    0o664,
                 )
                 .and_then(|f| f.write_all(this.package_version))
                 .is_err()

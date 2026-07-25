@@ -1521,6 +1521,9 @@ fn create_new_lockfile_and_enqueue(
             bun_core::pretty_errorln!(
                 "<r><red>error<r>: lockfile had changes, but lockfile is frozen"
             );
+            bun_core::note!(
+                "try re-running without <d>--frozen-lockfile<r> or <d>--production<r> and commit the updated lockfile"
+            );
         }
         Global::crash();
     }

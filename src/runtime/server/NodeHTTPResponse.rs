@@ -1610,6 +1610,10 @@ impl NodeHTTPResponse {
         if last {
             self.capture_request_trailers();
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
+            // Mirror on_data_or_aborted: the body has been fully received, so
+            // should_request_be_pending() must observe Done (not Pending) for
+            // mark_request_as_done_if_necessary() below to release the request.
+            self.body_read_state.set(BodyReadState::Done);
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.mark_request_as_done_if_necessary();

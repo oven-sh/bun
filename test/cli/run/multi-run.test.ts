@@ -1975,14 +1975,23 @@ describe("workspace integration", () => {
   });
 
   test("--filter errors distinguishing no-match from missing script (#13966)", async () => {
-    using dir = makeWorkspace("mr-ws-missing-vs-nomatch", {
-      "pkg-a": { build: `echo a` },
-      "pkg-b": { build: `echo b` },
+    using dir = tempDir("mr-ws-missing-vs-nomatch", {
+      "package.json": JSON.stringify({ name: "monorepo", private: true, workspaces: ["packages/*"] }),
+      "packages/pkg-a/package.json": JSON.stringify({ name: "pkg-a", scripts: { build: `echo a` } }),
+      "packages/pkg-b/package.json": JSON.stringify({ name: "pkg-b", scripts: { build: `echo b` } }),
+      "packages/no-scripts/package.json": JSON.stringify({ name: "no-scripts" }),
     });
     {
       // matched, but no package has the script
       const r = await runMulti(["run", "--parallel", "--filter", "*", "nonexistent"], String(dir));
       expect(r.stderr).toContain('None of the selected packages has a "nonexistent" script');
+      expect(r.stderr).not.toContain("No packages matched the filter");
+      expect(r.exitCode).not.toBe(0);
+    }
+    {
+      // matched a package that has no `scripts` block at all
+      const r = await runMulti(["run", "--parallel", "--filter", "no-scripts", "lint"], String(dir));
+      expect(r.stderr).toContain('None of the selected packages has a "lint" script');
       expect(r.stderr).not.toContain("No packages matched the filter");
       expect(r.exitCode).not.toBe(0);
     }

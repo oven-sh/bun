@@ -74,6 +74,19 @@ fn is_bare_esm_specifier(s: &[u8]) -> bool {
         [d, b':', b, ..] if d.is_ascii_alphabetic() && is_sep(*b) => return false,
         _ => {}
     }
+    // A leading URL scheme (`[A-Za-z][A-Za-z0-9+.-]*:`) is URL-like, not a
+    // package: Node reports those as scheme/URL errors, never "Cannot find
+    // package 'file:'". `':://x'` stays a package — ':' cannot start a scheme
+    // (Node says "Cannot find package '::'").
+    if s[0].is_ascii_alphabetic() {
+        for (i, &b) in s.iter().enumerate() {
+            match b {
+                b':' if i > 0 => return false,
+                b if b.is_ascii_alphanumeric() || b == b'+' || b == b'.' || b == b'-' => {}
+                _ => break,
+            }
+        }
+    }
     true
 }
 
@@ -267,7 +280,14 @@ impl ResolveMessage {
         // cases.
         let node_message = self.node_message();
         let message: &[u8] = node_message.as_deref().unwrap_or(&self.msg.data.text);
-        if write!(&mut text, "ResolveMessage: {}", bstr::BStr::new(message)).is_err() {
+        if write!(
+            &mut text,
+            "{}: {}",
+            bstr::BStr::new(self.node_display_name().unwrap_or(b"ResolveMessage")),
+            bstr::BStr::new(message)
+        )
+        .is_err()
+        {
             return global.throw_out_of_memory_value();
         }
         let mut str = ZigString::init(&text);
@@ -324,7 +344,7 @@ impl ResolveMessage {
         object.put(
             global,
             b"name",
-            bun_core::String::static_str(b"ResolveMessage").to_js(global)?,
+            bun_core::String::static_str(this.js_name()).to_js(global)?,
         );
         object.put(global, b"position", Self::get_position(this, global)?);
         object.put(global, b"message", Self::get_message(this, global)?);
@@ -396,9 +416,56 @@ impl ResolveMessage {
         Some((resolve.import_kind, specifier, referrer))
     }
 
+    /// Whether this is Node's ERR_UNKNOWN_BUILTIN_MODULE (`require('node:x')`
+    /// / `import('node:x')` for a builtin that doesn't exist).
+    fn is_unknown_builtin(&self) -> bool {
+        let bun_ast::Metadata::Resolve(resolve) = &self.msg.metadata else {
+            return false;
+        };
+        matches!(
+            resolve.import_kind,
+            ImportKind::Require | ImportKind::Stmt | ImportKind::Dynamic
+        ) && self
+            .msg
+            .data
+            .text
+            .starts_with(b"No such built-in module:")
+    }
+
+    /// `err.name` — Node throws module-resolution failures as plain `Error`.
+    pub(crate) fn js_name(&self) -> &'static [u8] {
+        if self.node_display_name().is_some() {
+            b"Error"
+        } else {
+            b"ResolveMessage"
+        }
+    }
+
+    /// The `<name>` used by `toString()` / `.stack`, or `None` when the error
+    /// keeps Bun's ResolveMessage rendering. Node renders the code in brackets
+    /// for its `E()`-constructed errors (`Error [ERR_MODULE_NOT_FOUND]: ...`),
+    /// while CJS MODULE_NOT_FOUND is a plain `Error: ...`.
+    pub(crate) fn node_display_name(&self) -> Option<&'static [u8]> {
+        if self.is_unknown_builtin() {
+            return Some(b"Error [ERR_UNKNOWN_BUILTIN_MODULE]");
+        }
+        match self.node_error_shape() {
+            Some((ImportKind::Require | ImportKind::RequireResolve, ..)) => Some(b"Error"),
+            Some((ImportKind::Stmt | ImportKind::Dynamic, ..)) => {
+                Some(b"Error [ERR_MODULE_NOT_FOUND]")
+            }
+            _ => None,
+        }
+    }
+
+    #[crate::host_fn(getter)]
+    pub fn get_name(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(ZigString::init(this.js_name()).to_js(global))
+    }
+
     /// Node's message for a module-not-found error, or `None` when the
     /// original text should be kept.
-    fn node_message(&self) -> Option<Vec<u8>> {
+    pub(crate) fn node_message(&self) -> Option<Vec<u8>> {
         use bstr::BStr;
         let (kind, specifier, referrer) = self.node_error_shape()?;
         let mut out = Vec::new();
@@ -466,7 +533,8 @@ impl ResolveMessage {
     #[crate::host_fn(getter)]
     pub fn get_stack(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         let mut out = Vec::new();
-        out.extend_from_slice(b"ResolveMessage: ");
+        out.extend_from_slice(this.node_display_name().unwrap_or(b"ResolveMessage"));
+        out.extend_from_slice(b": ");
         match this.node_message() {
             Some(text) => out.extend_from_slice(&text),
             None => out.extend_from_slice(&this.msg.data.text),

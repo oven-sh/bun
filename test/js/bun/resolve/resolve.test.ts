@@ -615,7 +615,7 @@ describe("package.json exports target percent-encoding", () => {
 
     expect(Bun.resolveSync("test-pkg/ok", root)).toBe(join(root, "node_modules/test-pkg/lib/ok.js"));
     // lib/index.js exists; rejection must come from the directory-target check, not a missing file.
-    expect(resolveError("test-pkg/dir", root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+    expect(resolveError("test-pkg/dir", root)).toEqual({ name: "Error", code: "ERR_MODULE_NOT_FOUND" });
   });
 
   it.concurrent("decodes a percent-encoded target and rejects encoded path separators", () => {
@@ -641,7 +641,7 @@ describe("package.json exports target percent-encoding", () => {
 
     expect(Bun.resolveSync("test-pkg/space", root)).toBe(join(root, "node_modules/test-pkg/lib/with space.js"));
     for (const sub of ["sep-2f", "sep-2F", "sep-5c", "sep-5C", "bad"]) {
-      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "ResolveMessage", code: "ERR_MODULE_NOT_FOUND" });
+      expect(resolveError(`test-pkg/${sub}`, root)).toEqual({ name: "Error", code: "ERR_MODULE_NOT_FOUND" });
     }
   });
 });

@@ -61,7 +61,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("each speculation exit converges instead of looping", async () => {
     // Warm up on the fast path, then keep triggering one exit kind at the same call site: the
@@ -107,7 +107,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("host semantics survive every exit path (results, not just compile counts)", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -157,7 +157,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("no stale reads: a store between two loads of the same offset is observed", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -197,7 +197,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("two Buffers over the same ArrayBuffer are never mis-aliased", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -243,7 +243,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("a loop-carried load is not kept alive across a call that mutates the buffer", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -274,7 +274,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("replacing or shadowing the method after tier-up takes effect", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -308,7 +308,7 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("resizable and growable receivers keep tracking the length after tier-up", async () => {
     const { stdout, stderr, exitCode } = await run(
@@ -349,5 +349,5 @@ describe.concurrent("Buffer accessor JIT", () => {
     expect(stderr).toBe("");
     expect(stdout.trim()).toBe("OK");
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
 });

@@ -320,6 +320,18 @@ describe("FormData", () => {
       expect([...fd]).toEqual([]);
     });
 
+    it("treats the offset-0 close delimiter as final even when more parts follow", async () => {
+      const body =
+        `--${B}--${CRLF}` +
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` +
+        `admin${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([]);
+      expect(fd.get("role")).toBeNull();
+    });
+
     it("parses a headers-only part (no body octets) as an empty value", async () => {
       const fd = await make(
         `--${B}${CRLF}` + `Content-Disposition: form-data; name="a"${CRLF}` + `${CRLF}--${B}--${CRLF}`,

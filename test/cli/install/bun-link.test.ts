@@ -522,64 +522,71 @@ it("should warn when linked package has peerDependencies", async () => {
     expect(exitCode).toBe(0);
   }
 
-  // `bun link <name>` should warn once, listing peers not installed in the
-  // linked package and the remedy.
-  {
-    const { out, err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
-    expect(err.split(header).length - 1).toBe(1);
-    expect(err).toContain("peer-one@^1.0.0");
-    expect(err).not.toContain("peer-one@^1.0.0 (optional)");
-    expect(err).toContain("peer-two@* (optional)");
-    expect(err).not.toContain("peer-three");
-    expect(err).toContain("resolve modules from their real location on disk");
-    expect(err).toContain("Install these peers in the linked package's own node_modules");
-    expect(out).toContain(`installed ${link_name}@link:${link_name}`);
-    expect(exitCode).toBe(0);
-  }
-
-  // --silent suppresses the warning.
-  {
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    await rm(join(package_dir, "bun.lock"), { force: true });
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    const { err, exitCode } = await run([bunExe(), "link", link_name, "--silent"], package_dir);
-    expect(err).not.toContain("peerDependencies");
-    expect(exitCode).toBe(0);
-  }
-
-  // `bun install` with a `link:` dependency in package.json should warn too.
-  {
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    await rm(join(package_dir, "bun.lock"), { force: true });
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    await writeFile(
-      join(package_dir, "package.json"),
-      JSON.stringify({
-        name: "consumer",
-        version: "0.0.2",
-        dependencies: {
-          [link_name]: `link:${link_name}`,
-        },
-      }),
-    );
-    const { err } = await runBunInstall(env, package_dir, { allowWarnings: true });
-    expect(err.split(header).length - 1).toBe(1);
-    expect(err).toContain("peer-one@^1.0.0");
-    expect(err).not.toContain("peer-three");
-  }
-
-  // With every peer installed under the linked package, nothing is left to
-  // warn about.
-  {
-    for (const name of ["peer-one", "peer-two"]) {
-      await mkdir(join(link_dir, "node_modules", name), { recursive: true });
-      await writeFile(join(link_dir, "node_modules", name, "package.json"), JSON.stringify({ name, version: "1.0.0" }));
+  try {
+    // `bun link <name>` should warn once, listing peers not installed in the
+    // linked package and the remedy.
+    {
+      const { out, err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
+      expect(err.split(header).length - 1).toBe(1);
+      expect(err).toContain("peer-one@^1.0.0");
+      expect(err).not.toContain("peer-one@^1.0.0 (optional)");
+      expect(err).toContain("peer-two@* (optional)");
+      expect(err).not.toContain("peer-three");
+      expect(err).toContain("resolve modules from their real location on disk");
+      expect(err).toContain("Install these peers in the linked package's own node_modules");
+      expect(out).toContain(`installed ${link_name}@link:${link_name}`);
+      expect(exitCode).toBe(0);
     }
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    await rm(join(package_dir, "bun.lock"), { force: true });
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    const { err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
-    expect(err).not.toContain("peerDependencies");
-    expect(exitCode).toBe(0);
+
+    // --silent suppresses the warning.
+    {
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(package_dir, "bun.lock"), { force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      const { err, exitCode } = await run([bunExe(), "link", link_name, "--silent"], package_dir);
+      expect(err).not.toContain("peerDependencies");
+      expect(exitCode).toBe(0);
+    }
+
+    // `bun install` with a `link:` dependency in package.json should warn too.
+    {
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(package_dir, "bun.lock"), { force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      await writeFile(
+        join(package_dir, "package.json"),
+        JSON.stringify({
+          name: "consumer",
+          version: "0.0.2",
+          dependencies: {
+            [link_name]: `link:${link_name}`,
+          },
+        }),
+      );
+      const { err } = await runBunInstall(env, package_dir, { allowWarnings: true });
+      expect(err.split(header).length - 1).toBe(1);
+      expect(err).toContain("peer-one@^1.0.0");
+      expect(err).not.toContain("peer-three");
+    }
+
+    // With every peer installed under the linked package, nothing is left to
+    // warn about.
+    {
+      for (const name of ["peer-one", "peer-two"]) {
+        await mkdir(join(link_dir, "node_modules", name), { recursive: true });
+        await writeFile(
+          join(link_dir, "node_modules", name, "package.json"),
+          JSON.stringify({ name, version: "1.0.0" }),
+        );
+      }
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+      await rm(join(package_dir, "bun.lock"), { force: true });
+      await rm(join(package_dir, "bun.lockb"), { force: true });
+      const { err, exitCode } = await run([bunExe(), "link", link_name], package_dir);
+      expect(err).not.toContain("peerDependencies");
+      expect(exitCode).toBe(0);
+    }
+  } finally {
+    await run([bunExe(), "unlink"], link_dir);
   }
 });

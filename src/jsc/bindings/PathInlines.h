@@ -55,9 +55,6 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
 #undef IS_LETTER
 #undef IS_SLASH
 
-/// Index of the last path separator, or WTF::notFound. On Windows both `\` and
-/// `/` count: standalone-executable module keys are forward-slashed
-/// (e.g. "B:/~BUN/root/app.js"), and mixed-separator paths are legal.
 ALWAYS_INLINE size_t lastPathSeparatorIndex(const WTF::String& path)
 {
 #if OS(WINDOWS)

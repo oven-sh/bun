@@ -509,18 +509,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         });
                     }
 
-                    // CJS output has no syntactic `import.meta`; Bake wants
-                    // per-source-file paths in either format. Both need the
-                    // `import.meta` property access replaced here.
+                    // Inline import.meta properties for Bake
                     if p.options.framework.is_some()
                         || (p.options.bundle
                             && p.options.output_format == js_parser::options::Format::Cjs)
                     {
-                        // For `--format=cjs --target=bun|node` (and not Bake),
-                        // `__dirname`/`__filename` fall through to the CJS
-                        // wrapper at runtime. Keep `import.meta.dir`/`.path`
-                        // consistent by rewriting them to those wrapper params
-                        // instead of inlining the build-time path. (#4216)
                         if p.options.framework.is_none()
                             && (p.options.target.is_bun() || p.options.target.is_node())
                         {

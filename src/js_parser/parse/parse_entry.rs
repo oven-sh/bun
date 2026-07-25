@@ -93,10 +93,6 @@ pub struct Options<'a> {
     pub import_meta_main_value: Option<bool>,
     pub lower_import_meta_main_for_node_js: bool,
 
-    /// The bundle target. Controls whether `__dirname` / `__filename` are
-    /// inlined as build-time string literals (browser) or lowered to
-    /// `import.meta.dir` / `import.meta.path` so they resolve at runtime
-    /// (Bun / Node ESM output). Only consulted when `bundle` is set.
     pub target: js_ast::Target,
 
     /// When using react fast refresh or server components, the framework is
@@ -1022,23 +1018,8 @@ impl<'a> Parser<'a> {
         //    var __dirname = "foo/bar"
         //    var __filename = "foo/bar/baz.js"
         //
-        // When bundling for Bun or Node, the build machine's absolute source
-        // path is the wrong value: the bundle will typically run from a
-        // different location (and on a different machine). For ESM output we
-        // instead emit `var __dirname = import.meta.dir` (Bun) or
-        // `import.meta.dirname` (Node), so it resolves to the output file's
-        // directory at runtime. For CJS output on those targets the runtime
-        // already provides `__dirname`/`__filename` via the module wrapper, so
-        // we emit nothing and let references fall through.
-        //
-        // https://github.com/oven-sh/bun/issues/4216
         if p.options.bundle || !p.options.features.commonjs_at_runtime {
             if uses_dirname || uses_filename {
-                // `(dir_property, path_property)` — `Some` when the target
-                // runtime exposes these on `import.meta`, `None` to fall back
-                // to the build-time string literal. Bake (`framework.is_some()`)
-                // inlines user-written `import.meta.dir` as a source-path string
-                // during visitation, so keep `__dirname` consistent with that.
                 let import_meta_names: Option<(&'static [u8], &'static [u8])> = if p.options.bundle
                     && p.options.output_format == options::Format::Esm
                     && p.options.framework.is_none()
@@ -2198,8 +2179,6 @@ struct PragmaState {
     seen_bytecode: bool,
 }
 
-/// `import.meta.<name>`, marked side-effect-free so the declaration it
-/// initializes can be dropped if the symbol ends up unused.
 fn import_meta_dot<const TS: bool, const SCAN_ONLY: bool>(
     p: &mut P<'_, TS, SCAN_ONLY>,
     name: &'static [u8],
@@ -2217,10 +2196,6 @@ fn import_meta_dot<const TS: bool, const SCAN_ONLY: bool>(
     )
 }
 
-/// Injects `var __dirname = ..., __filename = ...` as its own
-/// `PartTag::DirnameFilename` part. Shared by the bundle-time and runtime
-/// lowering paths so their declaration metadata cannot drift; each caller
-/// supplies only the value expressions (`None` = symbol unused, no decl).
 fn inject_dirname_filename_part<'a, const TS: bool, const SCAN_ONLY: bool>(
     p: &mut P<'a, TS, SCAN_ONLY>,
     before: &mut BumpVec<'a, js_ast::Part>,

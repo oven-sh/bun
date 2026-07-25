@@ -2,12 +2,9 @@ use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskab
 use bun_io::{self as Async, KeepAlive};
 use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
-use crate::event_loop::EventLoop;
 use crate::js_global_object::ScriptExecutionContextIdentifier;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JsTerminated};
-use bun_ptr::BackRef;
 
 /// The `Context` type parameter for [`ConcurrentPromiseTask`] must implement this trait:
 /// - `run(&mut self)` — performs the work on the thread pool
@@ -32,8 +29,6 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
-    /// BACKREF — JS-thread only; pool-thread completion goes through `context_id`.
-    pub event_loop: BackRef<EventLoop>,
     /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     pub context_id: ScriptExecutionContextIdentifier,
     pub promise: JSPromiseStrong,
@@ -59,11 +54,7 @@ impl<Context: ConcurrentPromiseTaskContext> Taskable for ConcurrentPromiseTask<'
 
 impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Context> {
     pub fn create_on_js_thread(global_this: &'a JSGlobalObject, value: Box<Context>) -> Box<Self> {
-        // `VirtualMachine::get()` returns the JS-thread singleton; the VM and
-        // its `EventLoop` outlive every task scheduled on it.
-        let event_loop = BackRef::new(VirtualMachine::get().as_mut().event_loop_shared());
         let mut this = Box::new(Self {
-            event_loop,
             context_id: global_this.script_execution_context_identifier(),
             ctx: value,
             task: WorkPoolTask {

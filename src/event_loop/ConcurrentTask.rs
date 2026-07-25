@@ -309,6 +309,21 @@ impl ConcurrentTask {
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
+    /// Reclaim a node produced by [`Self::from_callback`] that was never
+    /// enqueued. Frees both the outer `ConcurrentTask` and the inner
+    /// `ManagedTask` box; does not call the callback.
+    ///
+    /// # Safety
+    /// `node` must be a `from_callback`-allocated node whose ownership was not
+    /// transferred to a queue.
+    pub unsafe fn destroy_from_callback(node: core::ptr::NonNull<ConcurrentTask>) {
+        // SAFETY: caller contract — `from_callback` wraps a heap `ManagedTask`.
+        let outer = unsafe { bun_core::heap::take(node.as_ptr()) };
+        debug_assert!(outer.task.tag == task_tag::ManagedTask);
+        // SAFETY: `ManagedTask::new` produced the inner box via `heap::into_raw`.
+        drop(unsafe { bun_core::heap::take(outer.task.ptr.cast::<ManagedTask::ManagedTask>()) });
+    }
+
     pub fn from<T: Taskable>(
         &mut self,
         of: *mut T,

@@ -1698,9 +1698,10 @@ mod _async_tasks {
                     unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
                 });
                 if !this_ref.context_id.post_concurrent_task(node) {
-                    // Abandon: JSC handles cannot drop off-thread, leak the box.
-                    // SAFETY: ownership not transferred; `node` was `from_callback`-allocated above.
-                    drop(unsafe { bun_core::heap::take(node.as_ptr()) });
+                    // SAFETY: ownership not transferred; `node` is a `from_callback` allocation.
+                    unsafe {
+                        bun_event_loop::ConcurrentTask::ConcurrentTask::destroy_from_callback(node)
+                    };
                 }
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {

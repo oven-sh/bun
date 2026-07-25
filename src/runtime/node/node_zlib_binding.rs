@@ -475,12 +475,16 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // `ref_()` in `write()`); bodies use the `&self` accessor surface
         // (R-2). `ParentRef` Deref collapses the per-site raw deref.
         let this_ref = ParentRef::from(NonNull::new(this).expect("async_job_run: this"));
+        let context_id = this_ref.context_id();
 
-        this_ref.stream().with_mut(|s| s.do_work());
+        // `do_work()` writes into the pinned JS ArrayBuffer; best-effort skip on shutdown.
+        if context_id.is_alive() {
+            this_ref.stream().with_mut(|s| s.do_work());
+        }
 
         // `this` is the heap `m_ctx` payload; the `ref()` in `write()` keeps it alive.
         let node = ConcurrentTask::create(Task::init(this));
-        if !this_ref.context_id().post_concurrent_task(node) {
+        if !context_id.post_concurrent_task(node) {
             // Abandon: `deref()` is not safe off-thread, leak `this`.
             // SAFETY: ownership not transferred; `node` was `create`-allocated above.
             drop(unsafe { bun_core::heap::take(node.as_ptr()) });

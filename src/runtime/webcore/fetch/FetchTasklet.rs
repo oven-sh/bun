@@ -406,8 +406,8 @@ impl FetchTasklet {
         // takes ownership of it.
         let node = ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback);
         if !Self::enqueue_concurrent(self_.context_id, node) {
-            // Raced with teardown; drop the fresh node and take the shutdown dealloc path.
-            drop(unsafe { bun_core::heap::take(node.as_ptr()) });
+            // SAFETY: ownership not transferred; `node` is a `from_callback` allocation.
+            unsafe { ConcurrentTask::destroy_from_callback(node) };
             // SAFETY: last ref; see the `!is_alive()` branch above.
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
         }
@@ -2142,8 +2142,8 @@ impl FetchTasklet {
         // takes ownership of it.
         let node = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
         if !Self::enqueue_concurrent(this_ref.context_id, node) {
-            // Raced with teardown; drop the fresh node and undo the ref.
-            drop(unsafe { bun_core::heap::take(node.as_ptr()) });
+            // SAFETY: ownership not transferred; `node` is a `from_callback` allocation.
+            unsafe { ConcurrentTask::destroy_from_callback(node) };
             FetchTasklet::deref_from_thread(this);
         }
     }

@@ -4,7 +4,6 @@ use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
-use crate::event_loop::EventLoop;
 use crate::js_global_object::ScriptExecutionContextIdentifier;
 use bun_ptr::BackRef;
 
@@ -35,8 +34,6 @@ pub trait WorkTaskContext: Sized {
 pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub task: WorkPoolTask,
-    /// BACKREF — JS-thread only; pool-thread completion goes through `context_id`.
-    pub event_loop: BackRef<EventLoop>,
     /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     pub context_id: ScriptExecutionContextIdentifier,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
@@ -63,9 +60,7 @@ impl<Context: WorkTaskContext> Taskable for WorkTask<Context> {
 impl<Context: WorkTaskContext> WorkTask<Context> {
     pub fn create_on_js_thread(global_this: &JSGlobalObject, value: *mut Context) -> *mut Self {
         let vm = global_this.bun_vm().as_mut();
-        let event_loop = BackRef::new(vm.event_loop_shared());
         let mut this = Box::new(Self {
-            event_loop,
             context_id: global_this.script_execution_context_identifier(),
             ctx: value,
             global_this: BackRef::new(global_this),

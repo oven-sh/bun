@@ -422,6 +422,11 @@ static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE
 
 static void rebindNodeExeImports(HMODULE addon)
 {
+    // Workers share one mapped image per HMODULE; serialize so concurrent
+    // loads can't interleave VirtualProtect on the same IAT page.
+    static WTF::Lock rebindLock;
+    WTF::Locker locker { rebindLock };
+
     auto* base = reinterpret_cast<BYTE*>(addon);
     auto* dos = reinterpret_cast<PIMAGE_DOS_HEADER>(base);
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;

@@ -249,8 +249,8 @@ export const primordials = {
       ReflectOwnKeys: $ReflectOwnKeys({ a: 1 }),
       JSONStringify: $JSONStringify({ a: 1 }),
       TypedArrayPrototypeGetLength: $TypedArrayPrototypeGetLength.$call(u8),
-      TypedArrayPrototypeSubarray: $TypedArrayPrototypeSubarray.$call(u8, 1, 3).length,
-      DataViewPrototypeGetByteLength: $DataViewPrototypeGetByteLength.$call(new DataView(u8.buffer)),
+      TypedArrayPrototypeSubarray: $TypedArrayPrototypeGetLength.$call($TypedArrayPrototypeSubarray.$call(u8, 1, 3)),
+      DataViewPrototypeGetByteLength: $DataViewPrototypeGetByteLength.$call(new DataView($TypedArrayPrototypeGetBuffer.$call(u8))),
       PromiseResolve: $PromiseResolve.$call($Promise, 1) instanceof $Promise,
     };
   },

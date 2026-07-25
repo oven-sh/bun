@@ -12,6 +12,8 @@ const { primordials } = require("bun:internal-for-testing");
 // Harness values that must survive the tamper block below.
 const stringify = JSON.stringify;
 const write = process.stdout.write.bind(process.stdout);
+const defineProperty = Object.defineProperty;
+const originalPush = Array.prototype.push;
 const map = new Map([["k", "v"]]);
 const u8 = new Uint8Array(4);
 u8[0] = 1; u8[1] = 2; u8[2] = 3; u8[3] = 4;
@@ -34,10 +36,15 @@ if (process.env.TAMPER === "1") {
   JSON.stringify = () => { throw new Error("tampered JSON.stringify"); };
   const TA = Reflect.getPrototypeOf(Uint8Array.prototype);
   TA.subarray = () => { throw new Error("tampered %TypedArray%.prototype.subarray"); };
+  defineProperty(Map.prototype, "size", { get() { throw new Error("tampered Map.prototype.size"); } });
+  defineProperty(TA, "length", { get() { throw new Error("tampered %TypedArray%.prototype.length"); } });
+  defineProperty(DataView.prototype, "byteLength", { get() { throw new Error("tampered DataView.prototype.byteLength"); } });
+  defineProperty(RegExp.prototype, "source", { get() { throw new Error("tampered RegExp.prototype.source"); } });
   Promise.resolve = () => { throw new Error("tampered Promise.resolve"); };
 }
 
 const out = primordials.run([], "hello", map, u8, /ell/);
+out.tampered = Array.prototype.push !== originalPush;
 
 const refs = primordials.refs();
 const names = ["ArrayPrototypePush", "StringPrototypeSlice", "ObjectDefineProperty",
@@ -92,14 +99,14 @@ describe.concurrent("link-time constant primordials", () => {
   test("are captured and callable via .@call", async () => {
     const { stdout, stderr, exitCode } = await run(false);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(JSON.parse(stdout)).toEqual({ ...expected, tampered: false });
     expect(exitCode).toBe(0);
   });
 
   test("are tamper-proof", async () => {
     const { stdout, stderr, exitCode } = await run(true);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(expected);
+    expect(JSON.parse(stdout)).toEqual({ ...expected, tampered: true });
     expect(exitCode).toBe(0);
   });
 

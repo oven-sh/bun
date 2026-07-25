@@ -1420,10 +1420,7 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
 });
 
 test("env: {} scrubs the launch environment from the worker's process.env", async () => {
-  // Spawn so the launch environ we're scrubbing is known and not the test
-  // runner's own. The worker reads the vars as literal dot accesses, which is
-  // the form the worker transpiler was previously inlining from the parent's
-  // env loader even when `env: {}` installed an empty plain object.
+  // https://github.com/oven-sh/bun/issues/34210
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

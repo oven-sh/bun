@@ -236,10 +236,9 @@ describe("transpiler cache", () => {
     expect(a.stdout).toBe("first");
     expect(newCacheCount()).toBe(1);
 
-    // A second process with a different env must not observe the first
-    // process's value through the shared cache entry.
     const b = bunRun(join(temp_dir, "worker-main.js"), { ...env, TRANSPILER_CACHE_TEST_ID: "second" });
     expect(b.stdout).toBe("second");
+    expect(newCacheCount()).toBe(0);
   });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it

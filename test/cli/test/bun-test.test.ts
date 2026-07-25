@@ -444,7 +444,11 @@ describe("bun test", () => {
       ["GITHUB_ACTIONS without CI", { GITHUB_ACTIONS: "true" }, false],
       ["CI + GITHUB_ACTIONS + NO_COLOR=1", { CI: "true", GITHUB_ACTIONS: "true", NO_COLOR: "1" }, false],
       ["CI + GITHUB_ACTIONS + FORCE_COLOR=0", { CI: "true", GITHUB_ACTIONS: "true", FORCE_COLOR: "0" }, false],
-      ["CI + GITHUB_ACTIONS + NODE_DISABLE_COLORS=1", { CI: "true", GITHUB_ACTIONS: "true", NODE_DISABLE_COLORS: "1" }, false],
+      [
+        "CI + GITHUB_ACTIONS + NODE_DISABLE_COLORS=1",
+        { CI: "true", GITHUB_ACTIONS: "true", NODE_DISABLE_COLORS: "1" },
+        false,
+      ],
       ["CI + GITHUB_ACTIONS + TERM=dumb", { CI: "true", GITHUB_ACTIONS: "true", TERM: "dumb" }, false],
     ];
 

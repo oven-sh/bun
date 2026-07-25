@@ -49,6 +49,15 @@
 test/js/node/test/parallel/test-net-connect-keepalive.js [ FAIL ] # asserts _handle.setKeepAlive gets seconds; Bun's _handle is Bun.Socket (ms)
 test/js/node/test/parallel/test-net-server-keepalive.js [ FAIL ] # asserts _handle.setKeepAlive gets seconds; Bun's _handle is Bun.Socket (ms)
 
+# Both vendored tests carry an upstream `process.features.openssl_is_boringssl`
+# branch that asserts ML-KEM-512 is rejected, which is true for stock BoringSSL
+# but not for Bun's patched BoringSSL (patches/boringssl/ml-kem-512.patch).
+# Equivalent generate/import/export coverage for all three ML-KEM parameter
+# sets lives in test/js/node/crypto/crypto-pqc.test.ts and
+# test/js/web/crypto/web-crypto.test.ts.
+test/js/node/test/parallel/test-crypto-pqc-keygen-ml-kem.js [ FAIL ] # asserts ML-KEM-512 is rejected under BoringSSL; Bun's patched BoringSSL supports it
+test/js/node/test/parallel/test-crypto-pqc-key-objects-ml-kem.js [ FAIL ] # asserts ML-KEM-512 is rejected under BoringSSL; Bun's patched BoringSSL supports it
+
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
 test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)

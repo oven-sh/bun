@@ -562,9 +562,6 @@ pub(crate) fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // Each field may contribute zero or many records, so start empty and let
-    // `put_index` grow the array instead of precomputing a length that can
-    // overshoot and leave trailing holes.
     let array = JSValue::create_empty_array(global_this, 0)?;
     let mut i: u32 = 0;
 

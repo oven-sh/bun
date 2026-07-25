@@ -429,9 +429,7 @@ impl struct_hostent {
         unsafe { ares_free_hostent(this) };
     }
 
-    /// True when `h_aliases` has at least one entry. After
-    /// `ares_parse_a_reply`/`ares_parse_aaaa_reply` this indicates the answer
-    /// section contained at least one CNAME record.
+    /// True when `h_aliases` has at least one entry (a CNAME was present).
     pub fn has_aliases(&self) -> bool {
         // SAFETY: h_aliases is either null or a NULL-terminated array of C strings.
         !self.h_aliases.is_null() && unsafe { !(*self.h_aliases).is_null() }
@@ -525,8 +523,7 @@ impl hostent_with_ttls {
         if self.hostent.is_null() {
             return false;
         }
-        // SAFETY: hostent is non-null (checked); h_addr_list is null or a
-        // NULL-terminated array.
+        // SAFETY: hostent non-null; h_addr_list is null or NULL-terminated.
         let h = unsafe { &*self.hostent };
         !h.h_addr_list.is_null() && unsafe { !(*h.h_addr_list).is_null() }
     }
@@ -1515,9 +1512,7 @@ impl struct_any_reply {
         let abuf = buffer.as_ptr();
         let alen = c_int::try_from(buffer.len()).unwrap_or(c_int::MAX);
 
-        // Node's `ns_t_cname_or_a`: when the answer section carries a CNAME,
-        // report it as a CNAME record and do not emit A records.
-        // `ares_parse_a_reply` surfaces CNAMEs via `h_aliases`.
+        // Node's `ns_t_cname_or_a`: a CNAME in the answer is reported as CNAME, not A.
         match hostent_with_ttls::parse_a(buffer) {
             Ok(result) => {
                 // SAFETY: parse_a succeeded → hostent is non-null.
@@ -1535,9 +1530,6 @@ impl struct_any_reply {
 
         match hostent_with_ttls::parse_aaaa(buffer) {
             Ok(result) => {
-                // `ares_parse_aaaa_reply` also succeeds on a CNAME-only answer
-                // with zero AAAA addresses; skip that case so it does not
-                // contribute an empty slot.
                 if result.has_addresses() {
                     reply.aaaa_reply = Some(result);
                     any_success = true;

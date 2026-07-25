@@ -708,7 +708,8 @@ describe("dns.resolveAny with CNAME records", () => {
       const hdr = Buffer.from([m[0], m[1], 0x81, 0x80, 0, 1, 0, ans.length, 0, 0, 0, 0]);
       server.send(Buffer.concat([hdr, q, ...ans]), ri.port, ri.address);
     });
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.once("error", reject);
     server.bind(0, "127.0.0.1", resolve);
     await promise;
     resolver = new dns.promises.Resolver({ timeout: 2000, tries: 1 });

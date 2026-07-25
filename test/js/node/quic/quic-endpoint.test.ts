@@ -231,8 +231,9 @@ describe("QuicEndpoint validateAddress", () => {
   };
 
   const bind = () =>
-    new Promise<dgram.Socket>(resolve => {
+    new Promise<dgram.Socket>((resolve, reject) => {
       const s = dgram.createSocket("udp4");
+      s.once("error", reject);
       s.bind(0, "127.0.0.1", () => resolve(s));
     });
 

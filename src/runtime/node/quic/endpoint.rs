@@ -141,14 +141,15 @@ pub(super) fn stored_addr_from_sockaddr(ptr: *const c_void) -> StoredAddr {
     StoredAddr::from_raw(ptr.cast(), len)
 }
 
-/// RFC 9000 §17.2.2 Initial: SCID-len, SCID, then the token-length varint.
+/// RFC 9000 §17.2.2 Initial: SCID-len, SCID, then the token-length varint (§16).
 fn initial_has_token(payload: &[u8], scid_off: usize) -> bool {
     payload
         .get(scid_off)
         .map(|&l| l as usize)
         .filter(|&l| l <= MAX_CID_LEN)
-        .and_then(|l| payload.get(scid_off + 1 + l))
-        .is_some_and(|&b| b != 0)
+        .and_then(|scid_len| payload.get(scid_off + 1 + scid_len..))
+        .and_then(|p| p.get(..1usize << (p.first()? >> 6)))
+        .is_some_and(|v| v[0] & 0x3F != 0 || v[1..].iter().any(|&b| b != 0))
 }
 
 fn conn_peer_addr(conn: *mut lsquic::lsquic_conn) -> Option<StoredAddr> {

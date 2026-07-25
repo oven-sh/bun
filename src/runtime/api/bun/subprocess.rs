@@ -211,10 +211,22 @@ const _: () = {
 };
 
 impl<'a> Subprocess<'a> {
+    /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any)
+    /// for the caller to `deref()`. Clears `started` so `StaticPipeWriter::
+    /// on_write`'s own release site becomes a no-op if a queued write-complete
+    /// callback still fires after the caller closes the pipe (Windows: a
+    /// `uv_write` whose I/O already completed is delivered with its real
+    /// status after `uv_close`, not `ECANCELED`).
     fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
         match self.stdin.get() {
-            Writable::Buffer(buffer) if Writable::buffer_writer_mut(buffer).started => {
-                Some(buffer.as_ptr())
+            Writable::Buffer(buffer) => {
+                let writer = Writable::buffer_writer_mut(buffer);
+                if writer.started {
+                    writer.started = false;
+                    Some(buffer.as_ptr())
+                } else {
+                    None
+                }
             }
             _ => None,
         }
@@ -731,10 +743,10 @@ impl Subprocess<'_> {
         this.this_value
             .with_mut(|v| v.update(global_this, callframe.this()));
 
-        let arguments = callframe.arguments_old::<1>();
+        let [signal_arg] = callframe.arguments_as_array::<1>();
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(arguments.ptr[0], global_this)?;
+        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
 
         if global_this.has_exception() {
             return Ok(JSValue::ZERO);

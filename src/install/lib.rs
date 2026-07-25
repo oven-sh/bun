@@ -802,7 +802,7 @@ impl RunCommand {
     pub fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
-        env: Option<*mut bun_dotenv::Loader<'static>>,
+        env: Option<*mut bun_dotenv::Loader>,
         _log_errors: bool,
         store_root_fd: bool,
     ) -> Result<*mut (), crate::Error> {

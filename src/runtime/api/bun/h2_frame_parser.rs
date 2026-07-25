@@ -756,13 +756,12 @@ pub fn js_assert_settings(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    let args_list = callframe.arguments_old::<1>();
-    if args_list.len < 1 {
+    let [options] = callframe.arguments_as_array::<1>();
+    if callframe.arguments_count() < 1 {
         return Err(global_object.throw(format_args!("Expected settings to be a object")));
     }
 
-    if args_list.len > 0 && !args_list.ptr[0].is_empty_or_undefined_or_null() {
-        let options = args_list.ptr[0];
+    if callframe.arguments_count() > 0 && !options.is_empty_or_undefined_or_null() {
         if !options.is_object() {
             return Err(global_object.throw(format_args!("Expected settings to be a object")));
         }
@@ -6434,12 +6433,10 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [options] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected settings argument")));
         }
-
-        let options = args_list.ptr[0];
 
         this.load_settings_from_js_value(global_object, options)?;
 
@@ -6452,13 +6449,12 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [window_size] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(
                 global_object.throw_invalid_arguments(format_args!("Expected windowSize argument"))
             );
         }
-        let window_size = args_list.ptr[0];
         if !window_size.is_number() {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected windowSize to be a number")));
@@ -6579,12 +6575,11 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<3>();
-        if args_list.len < 1 {
+        let [error_code_arg, last_stream_arg, opaque_data_arg] =
+            callframe.arguments_as_array::<3>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected errorCode argument")));
         }
-
-        let error_code_arg = args_list.ptr[0];
 
         if !error_code_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
@@ -6592,8 +6587,7 @@ impl H2FrameParser {
         let error_code = error_code_arg.to_int32();
 
         let mut last_stream_id = this.last_peer_stream_id.get();
-        if args_list.len >= 2 {
-            let last_stream_arg = args_list.ptr[1];
+        if callframe.arguments_count() >= 2 {
             if !last_stream_arg.is_empty_or_undefined_or_null() {
                 if !last_stream_arg.is_number() {
                     return Err(
@@ -6610,8 +6604,7 @@ impl H2FrameParser {
                     last_stream_id = u32::try_from(id).expect("int cast");
                 }
             }
-            if args_list.len >= 3 {
-                let opaque_data_arg = args_list.ptr[2];
+            if callframe.arguments_count() >= 3 {
                 if !opaque_data_arg.is_empty_or_undefined_or_null() {
                     if let Some(array_buffer) = opaque_data_arg.as_array_buffer(global_object) {
                         let slice = array_buffer.byte_slice();
@@ -6638,8 +6631,8 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [payload_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected payload argument")));
         }
 
@@ -6650,7 +6643,7 @@ impl H2FrameParser {
             return Ok(JSValue::FALSE);
         }
 
-        if let Some(array_buffer) = args_list.ptr[0].as_array_buffer(global_object) {
+        if let Some(array_buffer) = payload_arg.as_array_buffer(global_object) {
             let slice = array_buffer.slice();
             this.send_ping(false, slice);
             return Ok(JSValue::TRUE);
@@ -6820,11 +6813,10 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [stream_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
         }
-        let stream_arg = args_list.ptr[0];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid stream id")));
@@ -6849,11 +6841,10 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [stream_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
         }
-        let stream_arg = args_list.ptr[0];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid stream id")));
@@ -6885,11 +6876,10 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [stream_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected stream argument")));
         }
-        let stream_arg = args_list.ptr[0];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid stream id")));
@@ -6948,12 +6938,10 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<2>();
-        if args_list.len < 2 {
+        let [stream_arg, options] = callframe.arguments_as_array::<2>();
+        if callframe.arguments_count() < 2 {
             return Err(global_object.throw(format_args!("Expected stream and options arguments")));
         }
-        let stream_arg = args_list.ptr[0];
-        let options = args_list.ptr[1];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid stream id")));
@@ -7061,12 +7049,10 @@ impl H2FrameParser {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "rstStream");
-        let args_list = callframe.arguments_old::<2>();
-        if args_list.len < 2 {
+        let [stream_arg, error_arg] = callframe.arguments_as_array::<2>();
+        if callframe.arguments_count() < 2 {
             return Err(global_object.throw(format_args!("Expected stream and code arguments")));
         }
-        let stream_arg = args_list.ptr[0];
-        let error_arg = args_list.ptr[1];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid stream id")));
@@ -7434,14 +7420,12 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [stream_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!(
                 "Expected stream, headers and sensitiveHeaders arguments"
             )));
         }
-
-        let stream_arg = args_list.ptr[0];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
@@ -7482,18 +7466,17 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<2>();
-        if args_list.len < 2 {
+        let [stream_arg, reading_arg] = callframe.arguments_as_array::<2>();
+        if callframe.arguments_count() < 2 {
             return Err(
                 global_object.throw(format_args!("Expected streamId and reading arguments"))
             );
         }
-        let stream_arg = args_list.ptr[0];
         if !stream_arg.is_number() {
             return Ok(JSValue::UNDEFINED);
         }
         let stream_id = stream_arg.to_u32();
-        let reading = args_list.ptr[1].to_boolean();
+        let reading = reading_arg.to_boolean();
         let Some(stream) = this.streams.get().get(&stream_id).copied() else {
             // The stream already finished (or never reached the wire); nothing to backpressure.
             return Ok(JSValue::UNDEFINED);
@@ -7595,16 +7578,12 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<3>();
-        if args_list.len < 3 {
+        let [stream_arg, headers_arg, sensitive_arg] = callframe.arguments_as_array::<3>();
+        if callframe.arguments_count() < 3 {
             return Err(global_object.throw(format_args!(
                 "Expected stream, headers and sensitiveHeaders arguments"
             )));
         }
-
-        let stream_arg = args_list.ptr[0];
-        let headers_arg = args_list.ptr[1];
-        let sensitive_arg = args_list.ptr[2];
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
@@ -8106,16 +8085,15 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Push streams can only be created by servers"))
             );
         }
-        let args_list = callframe.arguments_old::<4>();
-        if args_list.len < 4 {
+        let [parent_id_arg, promised_id_arg, headers_arg, sensitive_arg] =
+            callframe.arguments_as_array::<4>();
+        if callframe.arguments_count() < 4 {
             return Err(global_object.throw(format_args!(
                 "Expected parentId, promisedId, headers and sensitiveHeaders arguments"
             )));
         }
-        let parent_id = args_list.ptr[0].to_u32();
-        let promised_id = args_list.ptr[1].to_u32();
-        let headers_arg = args_list.ptr[2];
-        let sensitive_arg = args_list.ptr[3];
+        let parent_id = parent_id_arg.to_u32();
+        let promised_id = promised_id_arg.to_u32();
         if promised_id > MAX_STREAM_ID {
             return Ok(JSValue::js_number(-1.0));
         }
@@ -8281,12 +8259,11 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [stream_id_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected stream_id argument")));
         }
 
-        let stream_id_arg = args_list.ptr[0];
         if !stream_id_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
@@ -8305,18 +8282,16 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<2>();
-        if args_list.len < 2 {
+        let [stream_id_arg, context_arg] = callframe.arguments_as_array::<2>();
+        if callframe.arguments_count() < 2 {
             return Err(
                 global_object.throw(format_args!("Expected stream_id and context arguments"))
             );
         }
 
-        let stream_id_arg = args_list.ptr[0];
         if !stream_id_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
-        let context_arg = args_list.ptr[1];
         let stream_id = stream_id_arg.to_u32();
         if context_arg.is_empty_or_undefined_or_null() {
             // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
@@ -8426,14 +8401,13 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [error_arg] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected error argument")));
         }
 
         // Like `goaway`: only numbers reach `to_u32` (it requires one), and the code is read
         // once before any `&mut Stream` exists instead of once per stream inside the loop.
-        let error_arg = args_list.ptr[0];
         if !error_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         }
@@ -8475,17 +8449,18 @@ impl H2FrameParser {
     ) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "request");
 
-        let args_list = callframe.arguments_old::<5>();
-        if args_list.len < 4 {
+        let [
+            stream_id_arg,
+            stream_ctx_arg,
+            headers_arg,
+            sensitive_arg,
+            options_arg,
+        ] = callframe.arguments_as_array::<5>();
+        if callframe.arguments_count() < 4 {
             return Err(global_object.throw(format_args!(
                 "Expected stream_id, stream_ctx, headers and sensitiveHeaders arguments"
             )));
         }
-
-        let stream_id_arg = args_list.ptr[0];
-        let stream_ctx_arg = args_list.ptr[1];
-        let headers_arg = args_list.ptr[2];
-        let sensitive_arg = args_list.ptr[3];
 
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -8917,8 +8892,8 @@ impl H2FrameParser {
         let mut silent: bool = false;
         let mut wait_for_trailers: bool = false;
         let mut end_stream: bool = false;
-        if args_list.len > 4 && !args_list.ptr[4].is_empty_or_undefined_or_null() {
-            let options = args_list.ptr[4];
+        if callframe.arguments_count() > 4 && !options_arg.is_empty_or_undefined_or_null() {
+            let options = options_arg;
             if !options.is_object() {
                 stream.state = StreamState::CLOSED;
                 stream.rst_code = ErrorCode::INTERNAL_ERROR.0;
@@ -9326,11 +9301,10 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [buffer] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected 1 argument")));
         }
-        let buffer = args_list.ptr[0];
         buffer.ensure_still_alive();
         // Same engine-driven inbound path as on_native_read (JS-fed sockets / proxied streams).
         // The engine dispatches into JS between frames, and a handler can detach/transfer this
@@ -9385,12 +9359,11 @@ impl H2FrameParser {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [socket_js] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected socket argument")));
         }
 
-        let socket_js = args_list.ptr[0];
         this.detach_native_socket();
         if let Some(socket) = TLSSocket::from_js(socket_js) {
             bun_output::scoped_log!(H2FrameParser, "TLSSocket attached");
@@ -9468,12 +9441,11 @@ impl H2FrameParser {
         callframe: &CallFrame,
         this_value: JSValue,
     ) -> JsResult<*mut H2FrameParser> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
+        let [options] = callframe.arguments_as_array::<1>();
+        if callframe.arguments_count() < 1 {
             return Err(global_object.throw(format_args!("Expected 1 argument")));
         }
 
-        let options = args_list.ptr[0];
         if options.is_empty_or_undefined_or_null() || options.is_boolean() || !options.is_object() {
             return Err(
                 global_object.throw_invalid_arguments(format_args!("expected options as argument"))

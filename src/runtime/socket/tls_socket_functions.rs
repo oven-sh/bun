@@ -312,12 +312,11 @@ pub(super) fn set_servername(
         )));
     }
 
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [server_name] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!("Expected 1 argument")));
     }
 
-    let server_name = args.ptr[0];
     if !server_name.is_string() {
         return Err(global.throw(format_args!("Expected \"serverName\" to be a string")));
     }
@@ -408,17 +407,16 @@ pub(super) fn set_max_send_fragment(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
 
-    if args.len < 1 {
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
 
-    let arg = args.ptr[0];
     if !arg.is_number() {
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
-    let size = args.ptr[0].coerce_to_int64(global)?;
+    let size = arg.coerce_to_int64(global)?;
     if !(512..=16384).contains(&size) {
         return Ok(JSValue::FALSE);
     }
@@ -441,10 +439,9 @@ pub(super) fn get_peer_certificate(
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
 
-    let args = frame.arguments_old::<1>();
+    let [arg] = frame.arguments_as_array::<1>();
     let mut abbreviated: bool = true;
-    if args.len > 0 {
-        let arg = args.ptr[0];
+    if frame.arguments_count() > 0 {
         if !arg.is_boolean() {
             return Err(global.throw(format_args!("Expected abbreviated to be a boolean")));
         }
@@ -872,11 +869,11 @@ pub(crate) fn set_key_cert(
     if this.socket.get().is_detached() {
         return Ok(JSValue::UNDEFINED);
     }
-    let args = frame.arguments_old::<1>();
-    if args.len < 1 {
+    let [arg] = frame.arguments_as_array::<1>();
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
     }
-    let Some(sc) = SecureContext::from_js(args.ptr[0]) else {
+    let Some(sc) = SecureContext::from_js(arg) else {
         return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
     };
     let Some(ssl_ptr) = this.socket.get().ssl() else {
@@ -919,11 +916,10 @@ pub(crate) fn export_keying_material(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old::<3>();
-    if args.len < 2 {
+    let [length_arg, label_arg, context_arg] = frame.arguments_as_array::<3>();
+    if frame.arguments_count() < 2 {
         return Err(global.throw(format_args!("Expected length and label to be provided")));
     }
-    let length_arg = args.ptr[0];
     if !length_arg.is_number() {
         return Err(global.throw(format_args!("Expected length to be a number")));
     }
@@ -933,7 +929,6 @@ pub(crate) fn export_keying_material(
         return Err(global.throw(format_args!("Expected length to be a positive number")));
     }
 
-    let label_arg = args.ptr[1];
     if !label_arg.is_string() {
         return Err(global.throw(format_args!("Expected label to be a string")));
     }
@@ -944,9 +939,7 @@ pub(crate) fn export_keying_material(
         return Ok(JSValue::UNDEFINED);
     };
 
-    if args.len > 2 {
-        let context_arg = args.ptr[2];
-
+    if frame.arguments_count() > 2 {
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
@@ -1144,15 +1137,13 @@ pub(super) fn set_session(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old::<1>();
+    let [session_arg] = frame.arguments_as_array::<1>();
 
-    if args.len < 1 {
+    if frame.arguments_count() < 1 {
         return Err(global.throw(format_args!(
             "Expected session to be a string, Buffer or TypedArray"
         )));
     }
-
-    let session_arg = args.ptr[0];
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
@@ -1272,15 +1263,13 @@ pub(super) fn set_verify_mode(
         return Ok(JSValue::UNDEFINED);
     }
 
-    let args = frame.arguments_old::<2>();
+    let [request_cert_js, reject_unauthorized_js] = frame.arguments_as_array::<2>();
 
-    if args.len < 2 {
+    if frame.arguments_count() < 2 {
         return Err(global.throw(format_args!(
             "Expected requestCert and rejectUnauthorized arguments"
         )));
     }
-    let request_cert_js = args.ptr[0];
-    let reject_unauthorized_js = args.ptr[1];
     if !request_cert_js.is_boolean() || !reject_unauthorized_js.is_boolean() {
         return Err(global.throw(format_args!(
             "Expected requestCert and rejectUnauthorized arguments to be boolean"

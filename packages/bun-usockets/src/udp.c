@@ -67,7 +67,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
                 us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
                 return total_sent;
             }
-            return sent;
+            return total_sent > 0 ? total_sent : sent;
         }
         total_sent += sent;
         if (sent < count) {
@@ -184,6 +184,10 @@ struct us_udp_socket_t *us_create_udp_socket(
     void *user
 ) {
 
+    /* IP_RECVERR is only useful when there is an on_recv_error handler to
+     * drain the error queue; without one it only poisons subsequent sends. */
+    if (recv_error_cb) flags |= LIBUS_UDP_LINUX_RECVERR;
+    else flags &= ~LIBUS_UDP_LINUX_RECVERR;
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_udp_socket(host, port, flags, err);
     if (fd == LIBUS_SOCKET_ERROR) {
         return 0;

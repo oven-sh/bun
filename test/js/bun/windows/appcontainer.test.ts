@@ -128,16 +128,20 @@ if (isWindows) {
     const sizeOut = Buffer.alloc(8);
     kernel32.InitializeProcThreadAttributeList(null, 1, 0, ptr(sizeOut));
     const attrList = Buffer.alloc(Number(sizeOut.readBigUInt64LE(0)));
-    if (kernel32.InitializeProcThreadAttributeList(ptr(attrList), 1, 0, ptr(sizeOut)) === 0)
-      throw new Error("InitializeProcThreadAttributeList");
-    // PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x20009
-    if (
-      kernel32.UpdateProcThreadAttribute(ptr(attrList), 0, 0x20009n as any, ptr(secCaps), 24n as any, null, null) === 0
-    )
-      throw new Error("UpdateProcThreadAttribute");
-    keepAlive = [attrList, secCaps];
+    keepAlive = [attrList, secCaps, sizeOut];
 
     launchInContainer = (cmdline: string, cwd: string, timeoutMs: number): number => {
+      // The attribute list is rebuilt on each call (same backing buffers):
+      // reusing a module-load-time list across later event-loop turns proved
+      // fragile (CreateProcessW started returning ERROR_INVALID_PARAMETER).
+      if (kernel32.InitializeProcThreadAttributeList(ptr(attrList), 1, 0, ptr(sizeOut)) === 0)
+        throw new Error("InitializeProcThreadAttributeList");
+      // PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x20009
+      if (
+        kernel32.UpdateProcThreadAttribute(ptr(attrList), 0, 0x20009n as any, ptr(secCaps), 24n as any, null, null) ===
+        0
+      )
+        throw new Error("UpdateProcThreadAttribute");
       // STARTUPINFOEXW: 104-byte STARTUPINFOW (cb=112) + lpAttributeList.
       const siex = Buffer.alloc(112);
       siex.writeUInt32LE(112, 0);

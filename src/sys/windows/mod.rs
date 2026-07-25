@@ -1210,6 +1210,42 @@ pub const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
 pub const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 pub const MS_VC_EXCEPTION: u32 = 0x406d1388;
 
+/// `EXCEPTION_DISPOSITION` (excpt.h): return type of a `PEXCEPTION_ROUTINE`
+/// language-specific handler. A different enum from the filter/VEH constants
+/// above (`EXCEPTION_CONTINUE_SEARCH == 0` there, `ExceptionContinueSearch ==
+/// 1` here); mixing the two turns "continue search" into "resume at fault".
+#[allow(nonstandard_style)]
+pub mod disposition {
+    use core::ffi::c_long;
+    pub const ExceptionContinueExecution: c_long = 0;
+    pub const ExceptionContinueSearch: c_long = 1;
+}
+
+/// `EXCEPTION_UNWIND` (winnt.h): mask of `ExceptionFlags` bits set during the
+/// unwind (not search) phase of frame-based dispatch.
+pub const EXCEPTION_UNWIND: u32 = 0x66;
+
+/// `[base, base + SizeOfImage)` of the process executable, read once from the
+/// mapped PE header. The crash handler uses this to tell first-chance
+/// exceptions raised inside Bun's own code from those raised inside foreign
+/// modules.
+pub fn exe_image_range() -> core::ops::Range<usize> {
+    // SAFETY: null module name returns the exe's HMODULE, which on Windows is
+    // its mapped base address. The IMAGE_DOS_HEADER at `base` and
+    // IMAGE_NT_HEADERS at `base + e_lfanew` are part of the loader-mapped
+    // image and remain valid for the process lifetime.
+    unsafe {
+        let base = bun_windows_sys::kernel32::GetModuleHandleW(ptr::null()) as usize;
+        let e_lfanew = *(base as *const u8).add(0x3C).cast::<u32>() as usize;
+        // IMAGE_NT_HEADERS64: Signature(4) + IMAGE_FILE_HEADER(20) +
+        // IMAGE_OPTIONAL_HEADER64.SizeOfImage at offset 56.
+        let size_of_image = *(base as *const u8)
+            .add(e_lfanew + 4 + 20 + 56)
+            .cast::<u32>() as usize;
+        base..base + size_of_image
+    }
+}
+
 // `STATUS_*` values surfaced as `ExceptionCode` (winnt.h).
 pub const EXCEPTION_ACCESS_VIOLATION: u32 = 0xC0000005;
 pub const EXCEPTION_DATATYPE_MISALIGNMENT: u32 = 0x80000002;

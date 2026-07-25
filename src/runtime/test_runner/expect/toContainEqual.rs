@@ -38,8 +38,7 @@ pub(crate) fn to_contain_equal(
     let this_value = frame.this();
     let (this, value, not) =
         this.matcher_prelude(global, this_value, "toContainEqual", "<green>expected<r>")?;
-    let arguments_ = frame.arguments_old::<1>();
-    let arguments = arguments_.slice();
+    let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toContainEqual() takes 1 argument")));

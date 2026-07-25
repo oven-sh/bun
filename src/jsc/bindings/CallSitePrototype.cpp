@@ -27,6 +27,7 @@ JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetMethodName);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetFileName);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber);
+JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetScriptId);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetEvalOrigin);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncGetScriptNameOrSourceURL);
 JSC_DECLARE_HOST_FUNCTION(callSiteProtoFuncIsToplevel);
@@ -69,6 +70,7 @@ static const HashTableValue CallSitePrototypeTableValues[]
           { "getFileName"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetFileName, 0 } },
           { "getLineNumber"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetLineNumber, 0 } },
           { "getColumnNumber"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetColumnNumber, 0 } },
+          { "getScriptId"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetScriptId, 0 } },
           { "getEvalOrigin"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetEvalOrigin, 0 } },
           { "getScriptNameOrSourceURL"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncGetScriptNameOrSourceURL, 0 } },
           { "isToplevel"_s, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function, NoIntrinsic, { HashTableValue::NativeFunctionType, callSiteProtoFuncIsToplevel, 0 } },
@@ -143,6 +145,12 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * glo
     ENTER_PROTO_FUNC();
     // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L488-L489
     return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetScriptId, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    ENTER_PROTO_FUNC();
+    return JSC::JSValue::encode(jsNumber(static_cast<double>(callSite->sourceID())));
 }
 
 // TODO:

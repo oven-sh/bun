@@ -263,6 +263,8 @@ JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMIteratorPrototype<JSWrapper, I
 
     auto iterator = dynamicDowncast<JSDOMIteratorBase<JSWrapper, IteratorTraits>>(callFrame->thisValue());
     if (!iterator) {
+        // Node names the iterator interface, e.g. "URLSearchParamsIterator".
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1585
         return Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Value of \"this\" must be of type "_s, JSWrapper::info()->className, "Iterator"_s));
     }
 

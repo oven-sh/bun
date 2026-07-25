@@ -723,7 +723,7 @@ macro_rules! from_field_ptr {
 /// bun_core::impl_field_parent! { Assets => DevServer.assets; pub fn owner; fn owner_mut; }
 ///
 /// // (2) ref-only                   (&self -> &P)
-/// bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
+/// bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent; }
 ///
 /// // (3) mut-only                   (&mut self -> *mut P)
 /// bun_core::impl_field_parent! { DirectoryWatchStore => DevServer.directory_watchers; fn mut owner; }
@@ -745,6 +745,14 @@ macro_rules! from_field_ptr {
 /// `$Parent.$field` for its entire lifetime. If `$Child` can exist
 /// standalone, the generated accessors are unsound; keep a hand-rolled
 /// `pub unsafe fn` instead.
+///
+/// The ref-only form derives `&$Parent` from `core::ptr::from_ref(self)`, so
+/// its provenance is that of `&$Child`. Use it for **reads only**: if `$Child`
+/// is `Freeze` the argument is `noalias readonly` and a write to any parent
+/// field through the result is UB the optimizer will exploit. When the parent
+/// must be written through, store an explicit `BackRef<$Parent>` on the child
+/// (constructed from the allocation's raw pointer) instead of using this
+/// macro.
 #[macro_export]
 macro_rules! impl_field_parent {
     // ref + raw-mut pair

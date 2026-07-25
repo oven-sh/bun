@@ -66,6 +66,15 @@ type Socket = uws::AnySocket;
 
 #[derive(Default)]
 pub struct SubscriptionCtx {
+    /// Back-reference to the owning client. Constructed from the Box's raw
+    /// `*mut JSValkeyClient` so reads through it carry the allocation's full
+    /// provenance; the previous `container_of` recovery from `&self` (three
+    /// `bool`s, a Freeze type) produced a pointer LLVM may mark
+    /// `noalias readonly`, making the refcount write in
+    /// `on_new_subscription_callback_insert` a dead store at O2+ while the
+    /// paired `ScopedRef` drop survived as an opaque call. `None` only between
+    /// `JSValkeyClient::new` and `SubscriptionCtx::init`.
+    parent: Option<BackRef<JSValkeyClient>>,
     pub is_subscriber: bool,
     pub original_enable_offline_queue: bool,
     pub original_enable_auto_pipelining: bool,
@@ -76,34 +85,39 @@ pub struct SubscriptionCtx {
 /// free-fns plus `to_js`/`from_js`. Re-exported here as `Js`.
 pub use crate::generated_classes::js_RedisClient as Js;
 
-// SAFETY: `SubscriptionCtx` lives at `JSValkeyClient._subscription_ctx`
-// (intrusive backref). `JsCell<SubscriptionCtx>` is `#[repr(transparent)]`.
-bun_core::impl_field_parent! { SubscriptionCtx => JSValkeyClient._subscription_ctx; fn parent; }
-
 impl SubscriptionCtx {
-    pub fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
-        let callback_map = JSMap::create(&valkey_parent.global_object);
-        let parent_this = valkey_parent
-            .this_value
-            .get()
-            .try_get()
-            .expect("unreachable");
+    /// `valkey_parent` must be the `heap::into_raw` pointer for the owning
+    /// `JSValkeyClient` (full-allocation provenance), not a pointer derived
+    /// from a narrower borrow.
+    pub fn init(valkey_parent: *mut JSValkeyClient) -> JsResult<Self> {
+        // SAFETY: freshly heap-allocated by `JSValkeyClient::new`; caller
+        // owns the +1 and has not yet handed it to any path that could free
+        // it.
+        let parent = unsafe { BackRef::from_raw(valkey_parent) };
+        let callback_map = JSMap::create(&parent.global_object);
+        let parent_this = parent.this_value.get().try_get().expect("unreachable");
 
-        Js::subscription_callback_map_set_cached(
-            parent_this,
-            &valkey_parent.global_object,
-            callback_map,
-        );
+        Js::subscription_callback_map_set_cached(parent_this, &parent.global_object, callback_map);
 
         Ok(SubscriptionCtx {
-            original_enable_offline_queue: valkey_parent.client.get().flags.enable_offline_queue,
-            original_enable_auto_pipelining: valkey_parent
-                .client
-                .get()
-                .flags
-                .enable_auto_pipelining,
+            parent: Some(parent),
+            original_enable_offline_queue: parent.client.get().flags.enable_offline_queue,
+            original_enable_auto_pipelining: parent.client.get().flags.enable_auto_pipelining,
             is_subscriber: false,
         })
+    }
+
+    #[inline]
+    fn parent(&self) -> &JSValkeyClient {
+        self.parent
+            .as_ref()
+            .expect("SubscriptionCtx used before init()")
+            .get()
+    }
+
+    #[inline]
+    fn parent_backref(&self) -> BackRef<JSValkeyClient> {
+        self.parent.expect("SubscriptionCtx used before init()")
     }
 
     fn subscription_callback_map(&self) -> &mut JSMap {
@@ -202,10 +216,7 @@ impl SubscriptionCtx {
         channel_name: JSValue,
         callback: JSValue,
     ) -> JsResult<()> {
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
-        let _guard = scopeguard::guard(parent_br, |p| {
+        let _guard = scopeguard::guard(self.parent_backref(), |p| {
             p.on_new_subscription_callback_insert();
         });
         let map = self.subscription_callback_map();
@@ -283,10 +294,7 @@ impl SubscriptionCtx {
 
         // After we go through every single callback, we will have to update the poll ref.
         // The user may, for example, unsubscribe in the callbacks, or even stop the client.
-        // `BackRef` (Copy + Deref) detaches the borrow so the guard closure is
-        // safe even though intervening JS may re-enter `&self`.
-        let parent_br = BackRef::new(self.parent());
-        let _update = scopeguard::guard(parent_br, |p| p.update_poll_ref());
+        let _update = scopeguard::guard(self.parent_backref(), |p| p.update_poll_ref());
 
         // If callbacks is an array, iterate and call each one
         let mut iter = callbacks.array_iterator(global_object)?;
@@ -835,7 +843,7 @@ impl JSValkeyClient {
         // Need to associate the subscription context, after the JS ref has been populated.
         new_client
             ._subscription_ctx
-            .set(SubscriptionCtx::init(new_client)?);
+            .set(SubscriptionCtx::init(new_client_ptr)?);
 
         Ok(new_client_ptr)
     }
@@ -1437,9 +1445,8 @@ impl JSValkeyClient {
         self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
         struct Holder {
-            // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
-            // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
-            // in run() keep it alive across the task hop.
+            // The `self.ref_()` above / `(*ctx).deref()` in run() keep the
+            // intrusively ref-counted client alive across the task hop.
             ctx: *const JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }
@@ -1490,11 +1497,11 @@ impl JSValkeyClient {
         this.this_value.with_mut(|t| t.finalize());
         this.client_mut().flags.finalized = true;
         this.close_socket_next_tick();
-        // `_subscription_ctx` is three inline bools (no allocation, no GC
-        // ref); `is_subscriber` can legitimately still be set here if the
-        // server never confirmed UNSUBSCRIBE before disconnect, since
-        // `update_poll_ref()` gates on the JS handler map, not this flag.
-        // Nothing to release.
+        // `_subscription_ctx` owns no allocation and no GC ref (the backref is
+        // non-owning, the rest are inline bools); `is_subscriber` can
+        // legitimately still be set here if the server never confirmed
+        // UNSUBSCRIBE before disconnect, since `update_poll_ref()` gates on
+        // the JS handler map, not this flag. Nothing to release.
     }
 
     pub fn stop_timers(&self) {

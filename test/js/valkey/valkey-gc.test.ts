@@ -127,6 +127,93 @@ test.concurrent(
 // on_writable/update_poll_ref before send() takes its own ref, so a
 // connect/close fault path inside could free the client under the live
 // `&self`. This variant races a server-side RST against subscribe()+close().
+// subscribe() used to release one more intrusive ref than it took:
+// SubscriptionCtx.parent() recovered &JSValkeyClient via container_of on
+// &SubscriptionCtx (three plain bools, a Freeze type). The shared-ref argument
+// is lowered as noalias readonly, so at O2+ LLVM may drop the refcount .set()
+// reached through it while the paired ScopedRef drop (an opaque call)
+// survives. After close() releases the socket ref, only the connection-timeout
+// timer holds the allocation; when it fires the count reaches zero and deinit
+// frees the Box under the still-live JS wrapper. The next GC finalize (or any
+// property read) is a heap-use-after-free.
+//
+// Debug cargo builds are opt-level=0 and do not perform this elision, so this
+// test exercises the fault only on optimized ASAN builds. It still asserts the
+// healthy-server subscribe/close/GC path stays balanced everywhere.
+test.concurrent(
+  "RedisClient survives subscribe() + close() against a healthy server across connection-timeout + GC",
+  async () => {
+    const src = `
+    const CRLF = "\\r\\n";
+    const blk = s => "$" + s.length + CRLF + s + CRLF;
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { buf: "" }; },
+        data(s, d) {
+          s.data.buf += d.toString("latin1");
+          if (s.data.buf.includes("HELLO")) {
+            s.write("%1" + CRLF + blk("proto") + ":3" + CRLF);
+            s.data.buf = "";
+          }
+        },
+        close() {},
+      },
+    });
+    const url = "redis://127.0.0.1:" + server.port;
+    const timeoutMs = 1000;
+    const clients = [];
+    for (let i = 0; i < 40; i++) {
+      const c = new Bun.RedisClient(url, {
+        connectionTimeout: timeoutMs,
+        idleTimeout: 0,
+        autoReconnect: false,
+      });
+      c.onconnect = () => {}; c.onclose = () => {};
+      await c.connect();
+      // upsert_receive_handler runs synchronously here; the server never
+      // replies to SUBSCRIBE so the returned promise is discarded.
+      try { c.subscribe("ch" + i, () => {}).catch(() => {}); } catch {}
+      c.close();
+      clients.push(c);
+    }
+    // Let every client's connection-timeout timer (armed at connect()) fire.
+    // This is the condition under test, not an arbitrary wait.
+    const { promise, resolve } = Promise.withResolvers();
+    setTimeout(resolve, timeoutMs + 200);
+    await promise;
+    Bun.gc(true);
+    for (const c of clients) {
+      // Any native read on the wrapper is a heap-UAF once the backing Box is
+      // freed under it.
+      if (typeof c.bufferedAmount !== "number") throw new Error("bufferedAmount");
+      if (c.connected !== false) throw new Error("connected");
+    }
+    clients.length = 0;
+    server.stop(true);
+    Bun.gc(true);
+    await 1;
+    Bun.gc(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    expect(stdout.trim()).toBe("OK");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("RedisClient survives subscribe() + close() against a server that resets the connection", async () => {
   const src = `
     const CRLF = "\\r\\n";

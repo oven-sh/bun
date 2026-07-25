@@ -1422,6 +1422,36 @@ test("MessagePort emitter and EventTarget registrations share one registry", () 
     p.close();
   }
 
+  // Aborting after remove-then-re-add of the same function removes the re-added
+  // listener too (node's abort handler is removeEventListener by identity), and
+  // the registry stays consistent with the native map.
+  {
+    const { port1: p } = new MessageChannel();
+    const ac = new AbortController();
+    let n = 0;
+    const f = () => n++;
+    p.addEventListener("s", f, { signal: ac.signal });
+    p.removeEventListener("s", f);
+    p.addEventListener("s", f);
+    ac.abort();
+    p.dispatchEvent(new Event("s"));
+    expect({ calls: n, count: p.listenerCount("s") }).toEqual({ calls: 0, count: 0 });
+    p.close();
+  }
+
+  // A failed native add (bad signal) must not leave a phantom registry entry.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    const f = () => n++;
+    expect(() => p.addEventListener("t", f, { signal: {} as any })).toThrow(TypeError);
+    const afterThrow = p.listenerCount("t");
+    p.addEventListener("t", f);
+    p.dispatchEvent(new Event("t"));
+    expect({ afterThrow, calls: n, count: p.listenerCount("t") }).toEqual({ afterThrow: 0, calls: 1, count: 1 });
+    p.close();
+  }
+
   // EventTarget identity is (type, listener, capture): the same function can be
   // registered once per capture flag, and removeEventListener only removes the
   // entry whose capture flag matches.

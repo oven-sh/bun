@@ -116,16 +116,14 @@ function injectFakeEmitter(Class) {
     return map;
   }
 
-  // The native EventTarget methods are on the prototype chain above the
-  // intermediate prototype we insert below; capture them so the overrides can
-  // call through without re-entering themselves.
+  // Captured so the addEventListener/removeEventListener overrides below can
+  // call through to EventTarget without re-entering themselves.
   const eventTargetProto = Object.getPrototypeOf(Class.prototype);
   const nativeAddEventListener = eventTargetProto.addEventListener;
   const nativeRemoveEventListener = eventTargetProto.removeEventListener;
 
-  // on()/once() store a wrapper in the native map; mark it so the
-  // addEventListener override recognises the call as internal and does not
-  // record the wrapper itself in the registry (the user's listener is).
+  // Marks the wrapper on()/once() pass to addEventListener so the override
+  // forwards it to native instead of recording it a second time.
   const kWrapped = Symbol("wrappedListener");
 
   function messageEventHandler(event: MessageEvent) {
@@ -173,13 +171,9 @@ function injectFakeEmitter(Class) {
     return MessageEvent;
   }
 
-  // EventTarget dedupes on (type, callback, capture), so in node the FIRST
-  // registration wins outright — including its once-ness — and later adds of
-  // the same function with the same capture flag are no-ops. The registry entry
-  // per listener is a two-slot pair [bubble, capture] holding what was handed
-  // to the native map (the listener itself for addEventListener(), a wrapper
-  // for on()/once() and {once:true}); a slot is vacated by setting it back to
-  // undefined and the listener key is dropped once both are.
+  // EventTarget identity is (type, callback, capture): the registry entry per
+  // listener is a two-slot [bubble, capture] pair holding what was handed to
+  // the native map (the listener itself, or a wrapper for on()/once()/{once}).
   function captureSlot(options) {
     return options === true || (typeof options === "object" && options !== null && options.capture) ? 1 : 0;
   }
@@ -213,8 +207,7 @@ function injectFakeEmitter(Class) {
   }
 
   function off(event, listener) {
-    // Node's removeListener is bubble-only; a capture-phase addEventListener()
-    // listener is only removed via removeEventListener() with a matching flag.
+    // node's removeListener is bubble-only (capture-phase stays for removeEventListener).
     const actual = forgetListener(this, event, listener, 0) ?? listener;
     this.removeEventListener(event, actual);
     return this;
@@ -236,22 +229,16 @@ function injectFakeEmitter(Class) {
     return this;
   }
 
-  // Overridden so EventTarget-style registration shares the registry with
-  // on()/once(): node's NodeEventTarget has one listener map, so the same
-  // function added via both APIs registers once, listenerCount()/eventNames()
-  // see addEventListener()-added listeners, and removeEventListener() removes
-  // an on()-added listener (and vice versa).
+  // Overridden so EventTarget-style registration shares the on()/once()
+  // registry, like node's single-map NodeEventTarget.
   function addEventListener(type, listener, options) {
-    // on()/once() call through here with their wrapper; it is already recorded
-    // under the user's listener, so pass it straight to the native method.
     if (typeof listener === "function" && listener[kWrapped])
       return nativeAddEventListener.$call(this, type, listener, options);
     if (listener == null || (typeof listener !== "function" && typeof listener !== "object"))
       return nativeAddEventListener.$call(this, type, listener, options);
     const opts = typeof options === "object" && options !== null ? options : undefined;
     const signal = opts?.signal;
-    // Native addEventListener no-ops on an already-aborted signal; don't record
-    // a listener that will never be in the native map.
+    // native is a no-op on an already-aborted signal; don't record a phantom entry.
     if (signal?.aborted) return;
     const slot = captureSlot(options);
     const target = this;
@@ -263,10 +250,27 @@ function injectFakeEmitter(Class) {
       };
     }
     if (!recordListener(this, type, listener, actual, slot)) return;
-    nativeAddEventListener.$call(this, type, actual, options);
-    // Native removes via a C++ abort algorithm that never re-enters this
-    // override, so purge the registry entry from here when the signal fires.
-    if (signal) signal.addEventListener("abort", () => forgetListener(target, type, listener, slot), { once: true });
+    try {
+      nativeAddEventListener.$call(this, type, actual, options);
+    } catch (e) {
+      forgetListener(this, type, listener, slot);
+      throw e;
+    }
+    if (signal) {
+      // The native abort algorithm is C++ and never re-enters this override, so
+      // mirror node: remove via the override on abort so registry and native stay
+      // in step. WeakRef the port because the native algorithm holds it weakly.
+      const weak = new WeakRef(this);
+      const capture = slot === 1;
+      signal.addEventListener(
+        "abort",
+        () => {
+          const t = weak.deref();
+          if (t) removeEventListener.$call(t, type, listener, capture);
+        },
+        { once: true },
+      );
+    }
   }
 
   function removeEventListener(type, listener, options) {

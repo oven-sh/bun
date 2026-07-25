@@ -165,8 +165,7 @@ jobs:
 
             const bodyFor = g =>
               `<!-- comment-cop:${keyFor(g)} -->\n` +
-              `Delete this added comment block.\n\n` +
-              `Once removed, resolve this review thread.`;
+              `If you need a paragraph-long comment to justify why the workaround is OK, the code is wrong — fix the code\n\n`;
 
             let posted = 0;
             for (const g of fresh) {

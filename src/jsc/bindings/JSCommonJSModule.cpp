@@ -1677,7 +1677,8 @@ std::optional<JSC::SourceCode> createCommonJSModuleForCustomExtension(
     auto* moduleObject = getOrCreateCommonJSModule(
         globalObject, requireMapKey, sourceURL, JSC::SourceCode());
     RETURN_IF_EXCEPTION(scope, {});
-    moduleObject->m_pendingCustomExtension.set(vm, moduleObject, extension);
+    if (!moduleObject->hasEvaluated)
+        moduleObject->m_pendingCustomExtension.set(vm, moduleObject, extension);
 
     return commonJSModuleSyntheticSourceCode(sourceOrigin, sourceURL);
 }

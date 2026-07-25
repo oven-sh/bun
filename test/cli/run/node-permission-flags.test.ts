@@ -75,9 +75,7 @@ describe("Node.js permission-model flags", () => {
       expect(stderr).toBe("");
       // The read of __filename succeeds (no sandbox), process.permission stays undefined,
       // and the flags remain visible in execArgv.
-      expect(stdout).toBe(
-        'read OK permission=undefined execArgv=["--permission","--allow-fs-read=/nope"]\n',
-      );
+      expect(stdout).toBe('read OK permission=undefined execArgv=["--permission","--allow-fs-read=/nope"]\n');
       expect(exitCode).toBe(0);
     },
   );

@@ -980,7 +980,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 None
             };
             if let Some(flag) = permission_flag {
-                if !env_var::BUN_IGNORE_NODE_PERMISSION_FLAGS.get().unwrap_or(false) {
+                if !env_var::BUN_IGNORE_NODE_PERMISSION_FLAGS
+                    .get()
+                    .unwrap_or(false)
+                {
                     Output::err_generic(
                         "Bun does not implement the Node.js permission model, so {} would run without the requested restrictions. Refusing to run.\n       Set BUN_IGNORE_NODE_PERMISSION_FLAGS=1 to ignore this flag and run without a sandbox.",
                         format_args!("{}", BStr::new(flag)),

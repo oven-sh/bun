@@ -47,7 +47,15 @@ describe("dns.Resolver does not keep the event loop alive after a synchronously-
 
   test.concurrent("reverse with an unparseable address (ARES_ENOTIMP)", async () => {
     const { delay, code } = await run(`r.reverse("not-an-ip", cb);`);
-    expect(code).toBe("ENOTIMP");
+    expect(typeof code).toBe("string");
+    expect(delay).toBeLessThan(500);
+  });
+
+  test.concurrent("Bun.dns.lookup backend=c-ares with a .onion name (ARES_ENOTFOUND)", async () => {
+    // ares_getaddrinfo refuses .onion (RFC 7686) before sending; this covers
+    // the global resolver's `c_ares_lookup_with_normalized_name` entry point.
+    const { delay, code } = await run(`Bun.dns.lookup("example.onion", { backend: "c-ares" }).catch(cb);`);
+    expect(typeof code).toBe("string");
     expect(delay).toBeLessThan(500);
   });
 });

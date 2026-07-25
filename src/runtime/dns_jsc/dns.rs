@@ -2143,9 +2143,11 @@ impl Resolver {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
-        // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
-        // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
-        // this resolver plus the uws active-handle bump) can still be linked.
+        // Native-backend lookups (libinfo/libc/libuv) occupy
+        // `pending_host_cache_native` and are not cancelled by `ares_destroy`,
+        // so every EDESTRUCTION callback's `request_completed()` takes the
+        // `add_timer` branch while one is in flight; drop the timer (and its
+        // +1 ref / uws active-handle) explicitly.
         self.remove_timer();
     }
 }
@@ -4160,15 +4162,16 @@ impl Resolver {
         false
     }
 
-    /// Arm the retransmit timer for a just-dispatched c-ares query.
+    /// Arm the retransmit timer for a just-dispatched query.
     ///
-    /// Callers must invoke this *before* handing the request to c-ares
-    /// (`Channel::resolve` / `get_host_by_addr` / `get_addr_info` /
+    /// c-ares callers must invoke this *before* handing the request to the
+    /// channel (`Channel::resolve` / `get_host_by_addr` / `get_addr_info` /
     /// `get_name_info`): those entry points may invoke the completion callback
     /// synchronously (e.g. `ARES_EBADNAME` for a malformed name, `ARES_ENOTIMP`
     /// for an unparseable IP), and that callback's `request_completed()` →
     /// `remove_timer()` must see the timer as ACTIVE so the `ref_()`/`deref()`
-    /// pair on this resolver stays balanced.
+    /// pair on this resolver stays balanced. Native backends (libinfo/libc/
+    /// libuv) are truly async so ordering does not matter there.
     fn request_sent(&self, _vm: &VirtualMachine) {
         let _ = self.add_timer(None);
     }

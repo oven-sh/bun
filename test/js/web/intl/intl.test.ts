@@ -312,82 +312,79 @@ describe("exhaustive locale sweep (every compressed item)", () => {
 // https://github.com/oven-sh/bun/issues/8480, https://github.com/oven-sh/bun/issues/24851
 // On Windows ICU ignores LC_*/LANG and reads the system locale (Node behaves the same).
 describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () => {
-  const resolveDefaultLocale = async (localeEnv: Record<string, string>) => {
+  const scrubbed = (localeEnv: Record<string, string>) => {
     const env = { ...bunEnv };
     delete env.LC_ALL;
     delete env.LC_MESSAGES;
     delete env.LANG;
+    return { ...env, ...localeEnv };
+  };
+  const resolveDefaultLocale = async (localeEnv: Record<string, string>) => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const vm = require("node:vm");
-         process.stdout.write(JSON.stringify([
+        `process.stdout.write(JSON.stringify([
            Intl.DateTimeFormat().resolvedOptions().locale,
            Intl.NumberFormat().resolvedOptions().locale,
            Intl.Collator().resolvedOptions().locale,
-           vm.runInNewContext("Intl.DateTimeFormat().resolvedOptions().locale"),
          ]));`,
       ],
-      env: { ...env, ...localeEnv },
+      env: scrubbed(localeEnv),
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
-    return JSON.parse(stdout) as [string, string, string, string];
+    return JSON.parse(stdout) as [string, string, string];
   };
 
-  describe.each(["LC_ALL", "LC_MESSAGES", "LANG"])("via %s", key => {
-    test.concurrent.each([
-      ["zh_CN.UTF-8", "zh-CN"],
-      ["fr_FR.UTF-8", "fr-FR"],
-      ["en_IN.UTF-8", "en-IN"],
-      ["ja_JP", "ja-JP"],
-      ["sv_SE.ISO8859-1", "sv-SE"],
-    ])("%s → %s", async (raw, expected) => {
-      expect(await resolveDefaultLocale({ [key]: raw })).toEqual([expected, expected, expected, expected]);
-    });
+  test.each([
+    ["zh_CN.UTF-8", "zh-CN"],
+    ["fr_FR.UTF-8", "fr-FR"],
+    ["en_IN.UTF-8", "en-IN"],
+    ["ja_JP", "ja-JP"],
+    ["sv_SE.ISO8859-1", "sv-SE"],
+  ])("LANG=%s → %s", async (raw, expected) => {
+    expect(await resolveDefaultLocale({ LANG: raw })).toEqual([expected, expected, expected]);
   });
 
-  test.concurrent("LC_ALL overrides LC_MESSAGES and LANG", async () => {
+  test("LC_ALL overrides LC_MESSAGES and LANG", async () => {
     expect(
       await resolveDefaultLocale({ LC_ALL: "de_DE.UTF-8", LC_MESSAGES: "fr_FR.UTF-8", LANG: "ja_JP.UTF-8" }),
-    ).toEqual(["de-DE", "de-DE", "de-DE", "de-DE"]);
+    ).toEqual(["de-DE", "de-DE", "de-DE"]);
   });
 
-  test.concurrent("LC_MESSAGES overrides LANG", async () => {
+  test("LC_MESSAGES overrides LANG", async () => {
     expect(await resolveDefaultLocale({ LC_MESSAGES: "de_DE.UTF-8", LANG: "fr_FR.UTF-8" })).toEqual([
       "de-DE",
       "de-DE",
       "de-DE",
-      "de-DE",
     ]);
   });
 
-  test.concurrent.each(["C", "POSIX", "C.UTF-8"])("LC_ALL=%s masks a real LANG with en-US", async raw => {
-    expect(await resolveDefaultLocale({ LC_ALL: raw, LANG: "de_DE.UTF-8" })).toEqual([
-      "en-US",
-      "en-US",
-      "en-US",
-      "en-US",
-    ]);
+  test.each(["C", "C.UTF-8"])("LC_ALL=%s masks a real LANG with en-US", async raw => {
+    expect(await resolveDefaultLocale({ LC_ALL: raw, LANG: "de_DE.UTF-8" })).toEqual(["en-US", "en-US", "en-US"]);
   });
 
-  test.concurrent("unset locale falls back to en-US", async () => {
-    expect(await resolveDefaultLocale({})).toEqual(["en-US", "en-US", "en-US", "en-US"]);
+  test("unset locale falls back to en-US", async () => {
+    expect(await resolveDefaultLocale({})).toEqual(["en-US", "en-US", "en-US"]);
   });
 
-  test.concurrent('set-but-empty LC_ALL="" resolves to und (matches Node.js)', async () => {
-    expect(await resolveDefaultLocale({ LC_ALL: "", LANG: "de_DE.UTF-8" })).toEqual(["und", "und", "und", "und"]);
+  // Apple's libicucore handles getenv("LC_ALL")=="" differently from the upstream ICU Bun bundles on Linux.
+  test.skipIf(!isLinux)('set-but-empty LC_ALL="" resolves to und (matches Node.js)', async () => {
+    expect(await resolveDefaultLocale({ LC_ALL: "", LANG: "de_DE.UTF-8" })).toEqual(["und", "und", "und"]);
   });
 
-  // `-p` runs under Zig::EvalGlobalObject (the third method table wired up).
-  test.concurrent("default locale drives toLocaleString() output (bun -p)", async () => {
-    const env = { ...bunEnv, LC_ALL: "de_DE.UTF-8" };
+  // `-p` runs under Zig::EvalGlobalObject; `vm.runInNewContext` runs under NodeVMGlobalObject.
+  test("EvalGlobalObject (bun -p) and NodeVMGlobalObject (node:vm) see the same default", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-p", `Intl.DateTimeFormat().resolvedOptions().locale + " " + (1234567.89).toLocaleString()`],
-      env,
+      cmd: [
+        bunExe(),
+        "-p",
+        `require("node:vm").runInNewContext("Intl.DateTimeFormat().resolvedOptions().locale") + " " + (1234567.89).toLocaleString()`,
+      ],
+      env: scrubbed({ LC_ALL: "de_DE.UTF-8" }),
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

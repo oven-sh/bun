@@ -57,7 +57,6 @@ const StringPrototypeReplaceAllFn = String.prototype.replaceAll;
 const StringPrototypeSliceFn = String.prototype.slice;
 const StringPrototypeSplitFn = String.prototype.split;
 const StringPrototypeStartsWithFn = String.prototype.startsWith;
-const StringPrototypeToLocaleLowerCaseFn = String.prototype.toLocaleLowerCase;
 const StringPrototypeToLowerCaseFn = String.prototype.toLowerCase;
 const StringPrototypeTrimFn = String.prototype.trim;
 const StringPrototypeTrimStartFn = String.prototype.trimStart;
@@ -146,7 +145,6 @@ export default {
   StringPrototypeSlice: (s, b, e) => StringPrototypeSliceFn.$call(s, b, e),
   StringPrototypeSplit: (s, sep, limit) => StringPrototypeSplitFn.$call(s, sep, limit),
   StringPrototypeStartsWith: (s, v, i) => StringPrototypeStartsWithFn.$call(s, v, i),
-  StringPrototypeToLocaleLowerCase: s => StringPrototypeToLocaleLowerCaseFn.$call(s),
   StringPrototypeToLowerCase: s => StringPrototypeToLowerCaseFn.$call(s),
   StringPrototypeTrim: s => StringPrototypeTrimFn.$call(s),
   StringPrototypeTrimStart: s => StringPrototypeTrimStartFn.$call(s),

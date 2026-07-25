@@ -3580,7 +3580,12 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                keyZ = Bun::toStringRef(url.fileSystemPath());
+                // Keep the ?query so the resolver returns it as part of the
+                // module key; fileSystemPath() drops it.
+                auto query = url.queryWithLeadingQuestionMark();
+                keyZ = query.isEmpty()
+                    ? Bun::toStringRef(url.fileSystemPath())
+                    : Bun::toStringRef(makeString(url.fileSystemPath(), query));
             } else {
                 keyZ = Bun::toStringRef(moduleName);
             }
@@ -3716,7 +3721,12 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
-                moduleStringHolder = url.fileSystemPath();
+                // Keep the ?query so the resolver returns it as part of the
+                // module key; fileSystemPath() drops it.
+                auto query = url.queryWithLeadingQuestionMark();
+                moduleStringHolder = query.isEmpty()
+                    ? url.fileSystemPath()
+                    : makeString(url.fileSystemPath(), query);
                 moduleNameZ = Bun::toStringRef(moduleStringHolder);
             } else {
                 moduleNameZ = Bun::toStringRef(moduleName);

@@ -1,5 +1,6 @@
 import { beforeEach, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import path from "node:path";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -214,6 +215,78 @@ test("import of an extension mapped to the napi loader throws instead of crashin
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// #13391: a file:// URL specifier with a ?query must produce a distinct module
+// instance per distinct query, the same as a relative or absolute path
+// specifier does. Tools such as `astro dev` rely on
+// `await import(pathToFileURL(p) + "?t=" + Date.now())` to re-read a config
+// file after it changes on disk.
+test("dynamic import of a file:// URL keeps the query string in the module key", async () => {
+  using dir = tempDir("import-query-file-url-dynamic", {
+    "config.mjs": `export default { port: 4321 };\nexport const url = import.meta.url;`,
+    "entry.mjs": `
+      import { pathToFileURL } from "node:url";
+      import { writeFileSync } from "node:fs";
+      const base = pathToFileURL("./config.mjs").href;
+      const m1 = await import(base + "?t=1");
+      writeFileSync("./config.mjs", "export default { port: 2000 };\\nexport const url = import.meta.url;");
+      const m2 = await import(base + "?t=2");
+      const m2Again = await import(base + "?t=2");
+      console.log(JSON.stringify({
+        first: m1.default.port,
+        second: m2.default.port,
+        sameForDifferentQuery: m1 === m2,
+        sameForSameQuery: m2 === m2Again,
+        url1: m1.url.slice(m1.url.lastIndexOf("/") + 1),
+        url2: m2.url.slice(m2.url.lastIndexOf("/") + 1),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    first: 4321,
+    second: 2000,
+    sameForDifferentQuery: false,
+    sameForSameQuery: true,
+    url1: "config.mjs?t=1",
+    url2: "config.mjs?t=2",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("static import of a file:// URL keeps the query string in the module key", async () => {
+  using dir = tempDir("import-query-file-url-static", {
+    "target.mjs": `(globalThis.hits ??= []).push(import.meta.url);`,
+  });
+  const base = Bun.pathToFileURL(path.join(String(dir), "target.mjs")).href;
+  await Bun.write(
+    path.join(String(dir), "entry.mjs"),
+    [
+      `import ${JSON.stringify(base + "?a")};`,
+      `import ${JSON.stringify(base + "?b")};`,
+      `console.log(JSON.stringify(globalThis.hits.map(u => u.slice(u.lastIndexOf("/") + 1))));`,
+    ].join("\n"),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(["target.mjs?a", "target.mjs?b"]);
+  expect(exitCode).toBe(0);
 });
 
 test("Bun.resolveSync with non-ASCII specifier and query string", async () => {

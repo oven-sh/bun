@@ -54,7 +54,9 @@ fn is_valid_h3_field_name(name: &[u8]) -> bool {
 fn is_valid_h3_field_value(value: &[u8]) -> bool {
     !matches!(value.first(), Some(b' ' | b'\t'))
         && !matches!(value.last(), Some(b' ' | b'\t'))
-        && !value.iter().any(|&c| matches!(c, 0..=8 | 0x0a..=0x1f | 0x7f))
+        && !value
+            .iter()
+            .any(|&c| matches!(c, 0..=8 | 0x0a..=0x1f | 0x7f))
 }
 
 /// RFC 9114 §4.2.1.

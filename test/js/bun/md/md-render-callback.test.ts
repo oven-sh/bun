@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const Markdown = Bun.markdown;
 
@@ -425,5 +426,25 @@ describe("Bun.markdown buffer input", () => {
 
     input.buffer.transfer();
     expect((input.buffer as ArrayBuffer).detached).toBe(true);
+  });
+
+  test("a resizable input is read at call time even if an option getter resizes it to 0", async () => {
+    // `StringOrBuffer::from_js` used to borrow the view; the `autolinks` getter
+    // runs before the parser touches the bytes and can `resize(0)` the backing
+    // store out from under the borrow, mprotecting the trimmed pages. The
+    // funnel now snapshots resizable non-shared inputs.
+    const script = `
+      const bytes = new TextEncoder().encode("# Hello\\n\\nworld\\n" + Buffer.alloc(1 << 16, 0x20).toString());
+      const input = new Uint8Array(new ArrayBuffer(bytes.length, { maxByteLength: bytes.length }));
+      input.set(bytes);
+      const fixed = Bun.markdown.html(Buffer.from(bytes), { autolinks: false });
+      const out = Bun.markdown.html(input, { get autolinks() { input.buffer.resize(0); return false; } });
+      console.log(out === fixed ? "OK" : "MISMATCH " + JSON.stringify(out.slice(0, 200)));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK");
+    expect(exitCode).toBe(0);
   });
 });

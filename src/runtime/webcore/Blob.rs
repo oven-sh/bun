@@ -4032,15 +4032,8 @@ impl FormDataContext<'_> {
                                     let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }
-                                Ok(mut result) => {
+                                Ok(result) => {
                                     joiner.push_cloned(result.slice());
-                                    // StringOrBuffer::Drop is a no-op for Buffer; release
-                                    // the readFile allocation explicitly.
-                                    if let crate::node::types::StringOrBuffer::Buffer(buf) =
-                                        &mut result
-                                    {
-                                        buf.destroy();
-                                    }
                                 }
                             }
                         }

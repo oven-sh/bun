@@ -281,6 +281,21 @@ impl Drop for StringOrBuffer {
     }
 }
 
+#[cold]
+#[inline(never)]
+fn snapshot_resizable(global: &JSGlobalObject, ab: &jsc::ArrayBuffer) -> Buffer {
+    let bytes = ab.byte_slice();
+    let mut owned = if bytes.is_empty() {
+        Buffer::EMPTY
+    } else {
+        global.vm().report_extra_memory(bytes.len());
+        bun_core::handle_oom(Buffer::from_string(bytes))
+    };
+    owned.buffer.value = ab.value;
+    owned.buffer.typed_array_type = ab.typed_array_type;
+    owned
+}
+
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
     /// JS-side half of cleanup — owned
     /// payloads are released by `Drop` (which runs next when held in a
@@ -383,20 +398,22 @@ impl StringOrBuffer {
     /// into an owned `Buffer` so variant dispatch (CryptoHasher output,
     /// `fs.write`) stays intact; growable `SharedArrayBuffer` only grows
     /// in-place so the captured extent remains readable.
+    ///
+    /// `snapshot_volatile = false` skips the resizable copy for callers that
+    /// have already evaluated every later argument (e.g. `NodeHTTPResponse`,
+    /// which resolves `encoding`/`callback` before capturing and carries its
+    /// own tail-only resizable spill).
     #[inline]
-    fn array_buffer_into(out: &mut Self, global: &JSGlobalObject, value: JSValue, is_async: bool) {
+    fn array_buffer_into(
+        out: &mut Self,
+        global: &JSGlobalObject,
+        value: JSValue,
+        is_async: bool,
+        snapshot_volatile: bool,
+    ) {
         let ab = value.as_array_buffer(global).unwrap_or_default();
-        let buffer = if ab.resizable && !ab.shared {
-            let bytes = ab.byte_slice();
-            let mut owned = if bytes.is_empty() {
-                Buffer::EMPTY
-            } else {
-                global.vm().report_extra_memory(bytes.len());
-                bun_core::handle_oom(Buffer::from_string(bytes))
-            };
-            owned.buffer.value = value;
-            owned.buffer.typed_array_type = ab.typed_array_type;
-            owned
+        let buffer = if snapshot_volatile && ab.resizable && !ab.shared {
+            snapshot_resizable(global, &ab)
         } else if is_async {
             Buffer::from_js_pinned(global, value).unwrap_or(Buffer {
                 buffer: ab,
@@ -482,7 +499,7 @@ impl StringOrBuffer {
             | JSType::BigInt64Array
             | JSType::BigUint64Array
             | JSType::DataView => {
-                Self::array_buffer_into(out, global, value, is_async);
+                Self::array_buffer_into(out, global, value, is_async, true);
                 Ok(true)
             }
             _ => Ok(false),
@@ -518,7 +535,9 @@ impl StringOrBuffer {
         Self::from_js_with_encoding_maybe_async(global, value, encoding, false, true)
     }
 
-    /// Out-param convenience wrapper — see [`from_js_with_encoding_maybe_async_into`].
+    /// Out-param convenience wrapper for `NodeHTTPResponse::write_or_end`:
+    /// encoding/callback are resolved before the buffer is captured and the
+    /// write path spills resizable tails itself, so skip the upfront copy.
     #[inline]
     pub fn from_js_with_encoding_into(
         out: &mut StringOrBuffer,
@@ -526,7 +545,9 @@ impl StringOrBuffer {
         value: JSValue,
         encoding: Encoding,
     ) -> JsResult<bool> {
-        Self::from_js_with_encoding_maybe_async_into(out, global, value, encoding, false, true)
+        Self::from_js_with_encoding_maybe_async_into(
+            out, global, value, encoding, false, true, false,
+        )
     }
 
     /// Out-param core of [`from_js_with_encoding_maybe_async`]. Writes into
@@ -540,9 +561,10 @@ impl StringOrBuffer {
         encoding: Encoding,
         is_async: bool,
         allow_string_object: bool,
+        snapshot_volatile: bool,
     ) -> JsResult<bool> {
         if value.is_cell() && value.js_type().is_array_buffer_like() {
-            Self::array_buffer_into(out, global, value, is_async);
+            Self::array_buffer_into(out, global, value, is_async, snapshot_volatile);
             return Ok(true);
         }
 
@@ -595,6 +617,7 @@ impl StringOrBuffer {
             encoding,
             is_async,
             allow_string_object,
+            true,
         )? {
             Ok(Some(out))
         } else {

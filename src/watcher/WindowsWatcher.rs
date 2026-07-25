@@ -15,10 +15,10 @@ use std::sync::Arc;
 
 use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, WatchList, Watcher};
 use bun_core::strings;
-use bun_threading::Mutex;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
+use bun_threading::Mutex;
 
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;

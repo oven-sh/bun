@@ -406,12 +406,9 @@ pub static PRETEND_TO_BE_NODE: core::sync::atomic::AtomicBool =
 
 use bun_core::ZStr;
 
-/// `bun-node-<uid>-<sha>` / `bun-node-<uid>-debug` / `bun-node-<uid>`.
-/// Shared by the POSIX `bun_node_dir()` accessor and the Windows branch of
-/// `create_fake_temporary_node_executable`; `uid` is `getuid()` on POSIX and
-/// `user_unique_id()` (a username hash) on Windows — same scheme `bunx` uses
-/// for its `bunx-<uid>-*` cache so users on a multi-user host don't share a
-/// shim directory (#7504).
+/// `bun-node-<uid>[-<sha>|-debug]` — same per-user scheme as the
+/// `bunx-<uid>-*` cache (#7504). `uid` = `getuid()` on POSIX,
+/// `user_unique_id()` on Windows.
 pub fn bun_node_dir_name(uid: u32) -> String {
     if bun_core::env::IS_DEBUG {
         format!("bun-node-{uid}-debug")
@@ -435,20 +432,10 @@ impl RunCommand {
         "/tmp"
     };
 
-    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Windows builds compute
-    /// the temp prefix at runtime via GetTempPathW and use
-    /// `bun_sys::windows::user_unique_id()` in place of the uid, so this
-    /// accessor is POSIX-only.
-    ///
-    /// The uid keeps each user on a multi-user host in their own directory
-    /// (#7504) — the same scheme `bunx` uses for its cache. Without it the
-    /// first user to run `--bun` owns the shared `/tmp/bun-node-<sha>` (mode
-    /// 0700) and every other user's `--bun` silently falls through to the real
-    /// `node`.
-    ///
-    /// NOTE: the SHA alone does not uniquely identify a binary — two local
-    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
-    /// therefore re-points a stale link on EEXIST instead of trusting it.
+    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). POSIX-only; Windows
+    /// computes the temp prefix at runtime via GetTempPathW. The SHA alone
+    /// does not uniquely identify a binary, so the EEXIST branch below
+    /// re-points a stale link instead of trusting it.
     #[cfg(not(windows))]
     pub fn bun_node_dir() -> &'static str {
         static ONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -599,9 +586,7 @@ impl RunCommand {
                 }
             };
 
-            // `<tmp>/bun-node-<uid>-<sha>` + `/node` + NUL fits in 64 bytes.
-            // Every component but the uid is const-evaluable; uid is u32, so
-            // at most 10 digits.
+            // `<tmp>/bun-node-<uid>-<sha>` + `/node\0` fits in 64 bytes.
             const _: () = assert!(
                 RunCommand::BUN_NODE_TMP.len()
                     + "/bun-node-".len()
@@ -708,12 +693,8 @@ impl RunCommand {
 
             target_path_buffer[..prefix.len()].copy_from_slice(prefix);
 
-            // Keyed by user (same scheme as `bunx-<uid>-*`, using
-            // `user_unique_id()` as the Windows uid stand-in) so accounts that
-            // share a temp dir — SYSTEM / services without a loaded profile
-            // fall back to `C:\Windows\Temp` — don't reuse each other's
-            // hardlinks (#7504). ASCII-only, so widen byte-by-byte into a
-            // small stack buffer.
+            // Keyed by `user_unique_id()` (see `bun_node_dir_name`);
+            // ASCII-only, so widen byte-by-byte into a small stack buffer.
             let dir_name_str = bun_node_dir_name(win::user_unique_id());
             let mut dir_name_buf = [0u16; 64];
             for (i, b) in dir_name_str.bytes().enumerate() {

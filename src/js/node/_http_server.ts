@@ -3227,9 +3227,10 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this._header = " ";
   const req = this.req;
   const reqSocket = req?.socket;
-  if (reqSocket && reqSocket._writableState?.corked) {
+  const reqSocketWritableState = reqSocket?._writableState;
+  if (reqSocketWritableState && reqSocketWritableState.corked) {
     // Like Node's OutgoingMessage.prototype.end: fully uncork the connection.
-    reqSocket._writableState.corked = 1;
+    reqSocketWritableState.corked = 1;
     reqSocket.uncork();
   }
   if (!req._consuming && !req?._readableState?.resumeScheduled) {

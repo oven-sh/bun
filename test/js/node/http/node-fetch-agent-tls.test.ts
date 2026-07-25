@@ -23,7 +23,9 @@ describe("node-fetch honors TLS options from agent", () => {
       port: 0,
       fetch: () => new Response("OK"),
     });
-    await expect(nodeFetch(`https://localhost:${server.port}/`)).rejects.toThrow();
+    await expect(nodeFetch(`https://localhost:${server.port}/`)).rejects.toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/SELF_SIGNED|UNABLE_TO_VERIFY/) }),
+    );
   });
 
   test("verifies server via agent.options.ca", async () => {
@@ -91,6 +93,21 @@ describe("node-fetch honors TLS options from agent", () => {
       fetch: () => new Response("OK"),
     });
     const agent = new https.Agent({ rejectUnauthorized: false });
+    try {
+      const res = await nodeFetch(`https://localhost:${server.port}/`, { agent });
+      expect(await res.text()).toBe("OK");
+    } finally {
+      agent.destroy();
+    }
+  });
+
+  test("converts string minVersion/maxVersion from agent options", async () => {
+    using server = Bun.serve({
+      tls: harnessTls,
+      port: 0,
+      fetch: () => new Response("OK"),
+    });
+    const agent = new https.Agent({ ca: harnessTls.cert, minVersion: "TLSv1.2", maxVersion: "TLSv1.3" });
     try {
       const res = await nodeFetch(`https://localhost:${server.port}/`, { agent });
       expect(await res.text()).toBe("OK");

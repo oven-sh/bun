@@ -29,9 +29,7 @@ impl Default for ObjectURLRegistry {
 pub struct Entry {
     blob: Blob,
     /// `VirtualMachine::initial_script_execution_context_identifier` of the
-    /// registering context. `WebWorker::shutdown` sweeps entries owned by the
-    /// dying context so a worker that never calls `revokeObjectURL` does not
-    /// pin its blob payloads for the lifetime of the process.
+    /// registering context; see [`ObjectURLRegistry::sweep_owner`].
     owner: i32,
 }
 

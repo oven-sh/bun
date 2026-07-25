@@ -1314,10 +1314,9 @@ impl WebWorker {
                 rare.release_js_handles();
             }
             if let Some(hooks) = runtime_hooks() {
-                // The process-global blob-URL registry has no per-context
-                // teardown path of its own; without this sweep a worker that
-                // calls URL.createObjectURL and exits without revoking pins
-                // the blob payload for the lifetime of the process.
+                // Drop this worker's URL.createObjectURL entries from the
+                // process-global registry; nothing else revokes them once the
+                // worker is gone.
                 (hooks.sweep_object_urls_for_owner)(vm.initial_script_execution_context_identifier);
             }
             exit_code = i32::from(vm.exit_handler.exit_code);

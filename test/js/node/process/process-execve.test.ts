@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { existsSync, readFileSync } from "node:fs";
 
 describe.concurrent("process.execve", () => {
   test("is a function", () => {
@@ -175,6 +176,33 @@ describe.concurrent("process.execve", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  let ownThp;
+  try {
+    ownThp = isLinux ? readFileSync("/proc/self/status", "utf8").match(/^THP_enabled:\s*(\d)/m)?.[1] : undefined;
+  } catch {}
+
+  test.if(ownThp === "0" && existsSync("/sys/kernel/mm/transparent_hugepage"))(
+    "clears PR_SET_THP_DISABLE for the replacement image",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `process.execve("/bin/grep", ["grep", "THP_enabled", "/proc/self/status"], process.env);`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout.match(/^THP_enabled:\s*(\d)/m)?.[1]).toBe("1");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.skipIf(!isWindows)("throws ERR_FEATURE_UNAVAILABLE_ON_PLATFORM on Windows", () => {
     expect(() => process.execve(process.execPath, [process.execPath], {})).toThrow(

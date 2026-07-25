@@ -401,7 +401,10 @@ impl Cmd {
         }
     }
 
-    fn on_redirect_body_received(ctx: *mut core::ffi::c_void, value: *mut crate::webcore::body::Value) {
+    fn on_redirect_body_received(
+        ctx: *mut core::ffi::c_void,
+        value: *mut crate::webcore::body::Value,
+    ) {
         // SAFETY: `ctx` is the `heap::alloc`'d `RedirectBodyBufferCtx`
         // installed by `try_buffer_redirect_body`; consumed here.
         let mut ctx = unsafe { bun_core::heap::take(ctx.cast::<RedirectBodyBufferCtx>()) };

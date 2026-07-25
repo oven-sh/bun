@@ -16,6 +16,11 @@ const DateNow = Date.now;
 // errors as plain objects, not Error instances).
 const kProtocolError = Symbol("kProtocolError");
 
+// #handleMethod marker: deliver via setImmediate, not queueMicrotask. The
+// native side scheduled VM::whenIdle work (deleteAllCode) and microtasks drain
+// inside the same VMEntryScope, so a microtask callback would run too early.
+const kDeferToImmediate = Symbol("kDeferToImmediate");
+
 // Native profiler functions exposed via $newCppFunction
 const startCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startCPUProfiler", 0);
 const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopCPUProfiler", 0);
@@ -272,19 +277,16 @@ function removeConsoleHooks() {
   hookedConsoleMethods.length = 0;
 }
 
-// Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
-// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
-// each function gets an entry whose first range spans the whole function with its
-// call count, followed by the basic-block ranges inside it; blocks outside any
-// function go on a synthetic whole-script entry.
+// Reshapes jsFunction_collectPreciseCoverage output ([{ url, scriptId,
+// sourceLength, blocks: [[start,end,count]], functions: [[start,end,name]] }])
+// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage.
 function buildScriptCoverageList(
   rawScripts: Array<{
     url: string;
     scriptId: number;
     sourceLength: number;
     blocks: Array<[number, number, number]>;
-    functions: Array<[number, number, boolean]>;
+    functions: Array<[number, number, string]>;
   }>,
   callCount: boolean,
   detailed: boolean,
@@ -363,31 +365,28 @@ function buildScriptCoverageList(
     });
 
     for (let i = 0; i < functions.length; i++) {
-      const [startOffset, endOffset, executed] = functions[i];
-      if (!executed) {
+      const [startOffset, endOffset, name] = functions[i];
+      const ownBlocks = blocksPerFunction[i];
+      if (ownBlocks.length === 0) {
         entries.push({
-          functionName: "",
+          functionName: name,
           ranges: [{ startOffset, endOffset, count: 0 }],
           isBlockCoverage: false,
         });
         continue;
       }
 
-      const ownBlocks = blocksPerFunction[i];
       // Approximate the call count from the entry block (the one with the
       // smallest start offset). Diverges from V8 for generators/async
       // functions, which JSC compiles as two nested CodeBlocks whose body
       // entry counts state-0 resumes rather than user-visible calls.
-      let count = 1;
-      if (ownBlocks.length > 0) {
-        let entryBlock = ownBlocks[0];
-        for (const block of ownBlocks) {
-          if (block[0] < entryBlock[0]) entryBlock = block;
-        }
-        count = entryBlock[2];
+      let entryBlock = ownBlocks[0];
+      for (const block of ownBlocks) {
+        if (block[0] < entryBlock[0]) entryBlock = block;
       }
+      const count = entryBlock[2];
       entries.push({
-        functionName: "",
+        functionName: name,
         ranges: [
           { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
           ...(detailed ? ownBlocks.map(toRange) : []),
@@ -484,30 +483,35 @@ class Session extends EventEmitter {
     }
 
     const result = this.#handleMethod(method, params as object | undefined);
+    const deferred = result !== null && typeof result === "object" && kDeferToImmediate in result;
+    const payload = deferred ? result[kDeferToImmediate] : result;
 
     if (callback) {
-      // Callback API - async
-      queueMicrotask(() => {
-        if (result instanceof Error) {
-          callback(result, undefined);
-        } else if (result !== null && typeof result === "object" && kProtocolError in result) {
-          callback(result[kProtocolError], undefined);
+      // Callback API - async. Deferred results (start/stop precise coverage)
+      // wait one event-loop turn so deleteAllCode's whenIdle work has run.
+      const deliver = () => {
+        if (payload instanceof Error) {
+          callback(payload, undefined);
+        } else if (payload !== null && typeof payload === "object" && kProtocolError in payload) {
+          callback(payload[kProtocolError], undefined);
         } else {
-          callback(null, result);
+          callback(null, payload);
         }
-      });
+      };
+      if (deferred) setImmediate(deliver);
+      else queueMicrotask(deliver);
     } else {
       // Sync throw for errors when no callback
-      if (result instanceof Error) {
-        throw result;
+      if (payload instanceof Error) {
+        throw payload;
       }
-      if (result !== null && typeof result === "object" && kProtocolError in result) {
-        const protocolError = result[kProtocolError];
+      if (payload !== null && typeof payload === "object" && kProtocolError in payload) {
+        const protocolError = payload[kProtocolError];
         const error = new Error(protocolError.message);
         error.code = protocolError.code;
         throw error;
       }
-      return result;
+      return payload;
     }
   }
 
@@ -565,25 +569,24 @@ class Session extends EventEmitter {
 
       case "Profiler.startPreciseCoverage": {
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (!this.#preciseCoverageEnabled) {
-          startPreciseCoverage();
-          this.#preciseCoverageEnabled = true;
-        }
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
         this.#coverageBaseline.$clear();
         // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
-        return { timestamp: performance.now() / 1000 };
+        const response = { timestamp: performance.now() / 1000 };
+        if (this.#preciseCoverageEnabled) return response;
+        startPreciseCoverage();
+        this.#preciseCoverageEnabled = true;
+        return { [kDeferToImmediate]: response };
       }
 
       case "Profiler.stopPreciseCoverage": {
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
-        if (this.#preciseCoverageEnabled) {
-          stopPreciseCoverage();
-          this.#preciseCoverageEnabled = false;
-        }
         this.#coverageBaseline.$clear();
-        return {};
+        if (!this.#preciseCoverageEnabled) return {};
+        stopPreciseCoverage();
+        this.#preciseCoverageEnabled = false;
+        return { [kDeferToImmediate]: {} };
       }
 
       case "Profiler.takePreciseCoverage": {

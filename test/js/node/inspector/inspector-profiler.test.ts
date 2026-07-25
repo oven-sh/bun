@@ -446,15 +446,29 @@ describe("node:inspector", () => {
       session.disconnect();
     });
 
-    test("Profiler.disable stops precise coverage, like V8", () => {
-      const session = new inspector.Session();
-      session.connect();
-      session.post("Profiler.enable");
-      session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
-      session.post("Profiler.disable");
-      session.post("Profiler.enable");
-      expect(() => session.post("Profiler.takePreciseCoverage")).toThrow("Precise coverage has not been started.");
-      session.disconnect();
+    // startPreciseCoverage deletes all compiled code VM-wide so already-loaded
+    // functions recompile instrumented; run it in a child, never in this VM.
+    test.concurrent("Profiler.disable stops precise coverage, like V8", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const s = new (require("node:inspector").Session)();
+s.connect();
+s.post("Profiler.enable");
+s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+s.post("Profiler.disable");
+s.post("Profiler.enable");
+s.post("Profiler.takePreciseCoverage", (err) =>
+  process.stdout.write(err?.message ?? "no error"));
+`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(stdout).toContain("Precise coverage has not been started.");
     });
 
     // Unlike V8 (which has always-on invocation counters), JSC has none, so
@@ -549,7 +563,7 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // neverCalled() reports a single function-granularity range with count 0.
       const neverCalledEntry = entryCoveringOffset(entry.functions, offsets.neverCalledBody);
       expect(neverCalledEntry).toEqual({
-        functionName: "",
+        functionName: "neverCalled",
         isBlockCoverage: false,
         ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
       });
@@ -606,6 +620,59 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(functionCounts).toContain(2);
       expect(functionCounts).toContain(0);
     });
+
+    for (const kind of ["mjs", "cjs"] as const) {
+      test.concurrent(`counts calls in a ${kind} module loaded before start`, async () => {
+        const appSource =
+          kind === "mjs"
+            ? `export function warm() { return 1; }
+export function cold() { return 2; }
+export function dead() { return 3; }
+`
+            : `exports.warm = function warm() { return 1; };
+exports.cold = function cold() { return 2; };
+exports.dead = function dead() { return 3; };
+`;
+        const load =
+          kind === "mjs" ? `const A = await import("./app.mjs");` : `const A = require("./app.cjs");`;
+        using dir = tempDir(`inspector-coverage-preloaded-${kind}`, {
+          [`app.${kind}`]: appSource,
+          "driver.mjs": `import { Session } from "node:inspector/promises";
+${load} // loaded BEFORE coverage starts
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+await s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+for (let i = 0; i < 5; i++) A.warm();
+for (let i = 0; i < 3; i++) A.cold();
+const { result } = await s.post("Profiler.takePreciseCoverage");
+await s.post("Profiler.stopPreciseCoverage");
+const app = result.find(sc => /app\\.${kind}$/.test(sc.url));
+const driver = result.find(sc => /driver\\.mjs$/.test(sc.url));
+process.stdout.write(JSON.stringify({
+  counts: Object.fromEntries(
+    (app?.functions ?? []).filter(f => f.functionName).map(f => [f.functionName, f.ranges[0].count]),
+  ),
+  driverPresent: !!driver,
+}));
+`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "driver.mjs"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+        const out = JSON.parse(stdout);
+        // warm and cold were compiled before startPreciseCoverage but called
+        // after; their call counts must be exact. dead was never called.
+        expect(out.counts).toEqual({ warm: 5, cold: 3, dead: 0 });
+        // The entry module itself appears in the report.
+        expect(out.driverPresent).toBe(true);
+      });
+    }
   });
 
   describe("exports", () => {

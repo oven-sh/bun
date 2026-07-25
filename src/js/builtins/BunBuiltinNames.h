@@ -105,7 +105,6 @@ using namespace JSC;
     macro(headers) \
     macro(highWaterMark) \
     macro(host) \
-    macro(hostDefinedImportType) \
     macro(hostname) \
     macro(httpOnly) \
     macro(ignoreBOM) \

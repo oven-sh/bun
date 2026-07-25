@@ -5,6 +5,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
+#include "wtf/HashMap.h"
 #include "wtf/HashSet.h"
 #include "wtf/Scope.h"
 
@@ -214,28 +215,26 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const auto& builtinNames = WebCore::clientData(vm)->builtinNames();
     const Identifier& specifierIdentifier = builtinNames.specifierPublicName();
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
-    const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
 
-    WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
-    attributesNodes.reserveInitialCapacity(requests.size());
+    // `requestedModules()` is deduplicated by (specifier, phase) with the first
+    // occurrence winning (see ModuleAnalyzer::appendRequestedModule), so the
+    // import statements can outnumber the requests and positional alignment
+    // breaks on any repeated specifier. The request already carries the winning
+    // statement's parsed `type`, so derive `type` from it directly. The parser
+    // discards any non-`type` attributes, so recover those from the matching
+    // import statement, keyed by specifier (first occurrence wins, mirroring the
+    // deduplication).
+    WTF::UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, ImportAttributesListNode*, IdentifierRepHash> attributesNodesBySpecifier;
 
     for (StatementNode* statement = node->statements()->firstStatement(); statement; statement = statement->next()) {
-        // Assumption: module declarations occur here in the same order they occur in `requestedModules`.
-        if (statement->isModuleDeclarationNode()) {
-            ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
-            if (moduleDeclaration->isImportDeclarationNode()) {
-                ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
-                ASSERT_WITH_MESSAGE(attributesNodes.size() < requests.size(), "More attributes nodes than requests");
-                ASSERT_WITH_MESSAGE(importDeclaration->moduleName()->moduleName().string().string() == requests.at(attributesNodes.size()).m_specifier.string(), "Module name mismatch");
-                attributesNodes.append(importDeclaration->attributesList());
-            } else if (moduleDeclaration->hasAttributesList()) {
-                // Necessary to make the indices of `attributesNodes` and `requests` match up
-                attributesNodes.append(nullptr);
-            }
-        }
+        if (!statement->isModuleDeclarationNode())
+            continue;
+        ModuleDeclarationNode* moduleDeclaration = static_cast<ModuleDeclarationNode*>(statement);
+        if (!moduleDeclaration->isImportDeclarationNode())
+            continue;
+        ImportDeclarationNode* importDeclaration = static_cast<ImportDeclarationNode*>(moduleDeclaration);
+        attributesNodesBySpecifier.add(importDeclaration->moduleName()->moduleName().impl(), importDeclaration->attributesList());
     }
-
-    ASSERT_WITH_MESSAGE(attributesNodes.size() >= requests.size(), "Attributes node count doesn't match request count (%zu < %zu)", attributesNodes.size(), requests.size());
 
     for (unsigned i = 0; i < requests.size(); ++i) {
         const auto& request = requests[i];
@@ -245,48 +244,45 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
-        WTF::String attributesTypeString = "unknown"_str;
-
         WTF::HashMap<WTF::String, WTF::String> attributeMap;
         JSObject* attributesObject = constructEmptyObject(globalObject);
 
+        // `type` is authoritative from the deduplicated request. A host-defined
+        // type (e.g. css) surfaces as the `type` value, never as a separate
+        // internal field.
         if (request.m_attributes) {
-            JSValue attributesType {};
+            WTF::String attributesTypeString;
             switch (request.m_attributes->type()) {
                 using AttributeType = decltype(request.m_attributes->type());
                 using enum AttributeType;
-            case None:
-                attributesTypeString = "none"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
-                break;
             case JavaScript:
                 attributesTypeString = "javascript"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
                 break;
             case WebAssembly:
                 attributesTypeString = "webassembly"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
                 break;
             case JSON:
                 attributesTypeString = "json"_str;
-                attributesType = JSC::jsString(vm, attributesTypeString);
+                break;
+            case None:
                 break;
             default:
-                attributesType = JSC::jsNumber(static_cast<uint8_t>(request.m_attributes->type()));
+                attributesTypeString = request.m_attributes->hostDefinedImportType();
                 break;
             }
 
-            attributeMap.set("type"_s, WTF::move(attributesTypeString));
-            attributesObject->putDirect(vm, JSC::Identifier::fromString(vm, "type"_s), attributesType);
-
-            if (const String& hostDefinedImportType = request.m_attributes->hostDefinedImportType(); !hostDefinedImportType.isEmpty()) {
-                attributesObject->putDirect(vm, hostDefinedImportTypeIdentifier, JSC::jsString(vm, hostDefinedImportType));
-                attributeMap.set("hostDefinedImportType"_s, hostDefinedImportType);
+            if (!attributesTypeString.isEmpty()) {
+                attributeMap.set("type"_s, attributesTypeString);
+                attributesObject->putDirect(vm, vm.propertyNames->type, JSC::jsString(vm, attributesTypeString));
             }
         }
 
-        if (ImportAttributesListNode* attributesNode = attributesNodes.at(i)) {
+        // Surface any non-`type` attributes the user wrote; the parser keeps only
+        // `type` on the request, so they are recovered from the import statement.
+        if (ImportAttributesListNode* attributesNode = attributesNodesBySpecifier.get(request.m_specifier.impl())) {
             for (auto [key, value] : attributesNode->attributes()) {
+                if (*key == vm.propertyNames->type)
+                    continue;
                 attributeMap.set(key->string(), value->string());
                 attributesObject->putDirect(vm, *key, JSC::jsString(vm, value->string()));
             }

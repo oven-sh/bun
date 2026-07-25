@@ -107,6 +107,7 @@ pub fn scan_imports_and_exports(
     let flags: *mut [js_meta::Flags] = meta.flags;
     let ast_flags_list: *mut [AstFlags] = ast.flags;
     let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
+    let glob_imports_list: *mut [bun_ast::ast_result::GlobImportList] = ast.glob_imports;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -247,6 +248,24 @@ pub fn scan_imports_and_exports(
                         }
                     }
                     _ => {}
+                }
+            }
+
+            for glob in col_ref!(glob_imports_list)[id].iter() {
+                for entry in glob.entries.iter() {
+                    if !entry.source_index.is_valid() {
+                        continue;
+                    }
+                    let other = entry.source_index.get() as usize;
+                    if other >= col_ref!(exports_kind).len() {
+                        continue;
+                    }
+                    if col_ref!(exports_kind)[other] == ExportsKind::Esm {
+                        col!(flags)[other].wrap = WrapKind::Esm;
+                    } else {
+                        col!(flags)[other].wrap = WrapKind::Cjs;
+                        col!(exports_kind)[other] = ExportsKind::Cjs;
+                    }
                 }
             }
 
@@ -870,6 +889,7 @@ pub fn scan_imports_and_exports(
                 let mut to_esm_uses: u32 = 0;
                 let mut to_common_js_uses: u32 = 0;
                 let mut runtime_require_uses: u32 = 0;
+                let mut glob_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
                 // Iterate by index so each iteration re-borrows
@@ -897,6 +917,45 @@ pub fn scan_imports_and_exports(
                         this.is_external_dynamic_import(record, source_index)
                     };
                     if !rec_source_index.is_valid() || is_external_dyn {
+                        if rec_flags.contains(ImportRecordFlags::GLOB_PATTERN) {
+                            glob_uses += 1;
+                            for glob in col_ref!(glob_imports_list)[id].iter() {
+                                if glob.import_record_index != import_record_index {
+                                    continue;
+                                }
+                                for entry in glob.entries.iter() {
+                                    if !entry.source_index.is_valid() {
+                                        continue;
+                                    }
+                                    let other = entry.source_index.get() as usize;
+                                    let other_flags = col_ref!(flags)[other];
+                                    if other_flags.wrap == WrapKind::None {
+                                        continue;
+                                    }
+                                    let wrapper_ref = col_ref!(wrapper_refs)[other];
+                                    if wrapper_ref.is_valid() {
+                                        this.graph.generate_symbol_import_and_use(
+                                            source_index,
+                                            part_index as u32,
+                                            wrapper_ref,
+                                            1,
+                                            Index::source(other as u32),
+                                        )?;
+                                    }
+                                    if other_flags.wrap == WrapKind::Esm {
+                                        this.graph.generate_symbol_import_and_use(
+                                            source_index,
+                                            part_index as u32,
+                                            col_ref!(exports_refs)[other],
+                                            1,
+                                            Index::source(other as u32),
+                                        )?;
+                                        to_common_js_uses += 1;
+                                    }
+                                }
+                            }
+                            continue;
+                        }
                         if output_format == Format::InternalBakeDev {
                             continue;
                         }
@@ -1147,6 +1206,13 @@ pub fn scan_imports_and_exports(
                         Index::part(part_index as u32),
                         b"__reExport",
                         re_export_uses,
+                    )?;
+
+                    this.graph.generate_runtime_symbol_import_and_use(
+                        source_index,
+                        Index::part(part_index as u32),
+                        b"__glob",
+                        glob_uses,
                     )?;
                 }
             }

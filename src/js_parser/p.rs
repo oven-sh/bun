@@ -395,6 +395,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub import_records: ImportRecordList<'a>,
     pub import_records_for_current_part: List<'a, u32>,
     pub export_star_import_records: List<'a, u32>,
+    pub glob_imports: bun_ast::ast_result::GlobImportList,
     pub import_symbol_property_uses: SymbolPropertyUseMap,
 
     // These are for handling ES6 imports and exports
@@ -795,6 +796,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     /// Extracts a matchable "shape" from a dynamic import argument.
     /// Template literals: static parts joined by \x00 placeholders.
+    /// String concatenation (`"./a" + x`) is treated the same way.
     /// Everything else: empty string.
     fn extract_dynamic_specifier_shape<'b>(
         &mut self,
@@ -822,7 +824,108 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             return Ok(buf.as_slice());
         }
+        // Flatten a chain of string concatenations so that `"./a/" + x + ".js"`
+        // produces the same shape as the template form. A non-string operand
+        // becomes a `\x00` placeholder; if no string literal is involved the
+        // result stays opaque (empty).
+        if self.flatten_string_concat_shape(arg, buf)? {
+            return Ok(buf.as_slice());
+        }
         Ok(b"")
+    }
+
+    fn flatten_string_concat_shape<'b>(
+        &mut self,
+        arg: Expr,
+        buf: &'b mut BumpVec<'a, u8>,
+    ) -> Result<bool, crate::Error> {
+        let Some(bin) = arg.data.e_binary() else {
+            return Ok(false);
+        };
+        if bin.op != js_ast::OpCode::BinAdd {
+            return Ok(false);
+        }
+        let mut saw_string = false;
+        let mut push = |p: &mut Self, side: Expr| -> Result<bool, crate::Error> {
+            if let Some(mut s) = side.data.as_e_string() {
+                s.resolve_rope_if_needed(p.arena);
+                buf.extend_from_slice(s.string(p.arena)?);
+                saw_string = true;
+                return Ok(true);
+            }
+            if p.flatten_string_concat_shape(side, buf)? {
+                saw_string = true;
+                return Ok(true);
+            }
+            buf.push(0);
+            Ok(true)
+        };
+        push(self, bin.left)?;
+        push(self, bin.right)?;
+        Ok(saw_string)
+    }
+
+    /// If `arg` is a relative glob-shaped specifier (starts with `./` or `../`
+    /// and contains at least one wildcard placeholder), record it as a glob
+    /// import and return the `E::RequireString` that refers to it. Otherwise
+    /// returns `None` and leaves state untouched.
+    pub fn try_glob_require(&mut self, arg: Expr, kind: ImportKind) -> Option<Expr> {
+        if !self.options.bundle {
+            return None;
+        }
+        let mut shape_buf = BumpVec::new_in(self.arena);
+        let shape = self
+            .extract_dynamic_specifier_shape(arg, &mut shape_buf)
+            .ok()?;
+        if shape.is_empty() || !shape.contains(&0) {
+            return None;
+        }
+        let is_relative = shape.starts_with(b"./") || shape.starts_with(b"../");
+        if !is_relative {
+            return None;
+        }
+        // The directory to scan is everything up to the last '/' before the
+        // first wildcard; require at least one literal path segment beyond the
+        // leading "./" or "../" so we never glob the importing file's own
+        // directory (which would pull in unrelated siblings).
+        let first_wild = shape.iter().position(|&b| b == 0).unwrap();
+        let after_dots = shape
+            .iter()
+            .position(|&b| b != b'.' && b != b'/')
+            .unwrap_or(shape.len());
+        if after_dots >= first_wild || !shape[after_dots..first_wild].contains(&b'/') {
+            return None;
+        }
+
+        let owned: &'a [u8] = self.arena.alloc_slice_copy(shape);
+        let path = fs::Path::init(owned);
+        let import_record_index = self.add_import_record_by_range_and_path(
+            kind,
+            js_lexer::range_of_identifier(self.source, arg.loc),
+            &path,
+        );
+        let flags = &mut self.import_records.items_mut()[import_record_index as usize].flags;
+        flags.insert(bun_ast::ImportRecordFlags::GLOB_PATTERN);
+        flags.set(
+            bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+            self.fn_or_arrow_data_visit.try_body_count != 0,
+        );
+        self.import_records_for_current_part
+            .push(import_record_index);
+        self.glob_imports.push(bun_ast::ast_result::GlobImport {
+            import_record_index,
+            arg,
+            is_require: kind == ImportKind::Require,
+            entries: Vec::new(),
+        });
+
+        Some(self.new_expr(
+            E::RequireString {
+                import_record_index,
+                ..Default::default()
+            },
+            arg.loc,
+        ))
     }
 
     pub fn check_dynamic_specifier(
@@ -1223,6 +1326,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 )
             }
             _ => {
+                if !self.is_control_flow_dead {
+                    if let Some(glob) = self.try_glob_require(arg, ImportKind::Require) {
+                        return glob;
+                    }
+                }
                 let _ = self.check_dynamic_specifier(arg, arg.loc, "require()");
                 self.record_usage_of_runtime_require();
                 self.new_expr(
@@ -8447,6 +8555,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_lazy_export: false,
             redirect_import_record_index: None,
             target: js_ast::Target::Browser,
+            glob_imports: core::mem::replace(&mut self.glob_imports, bun_alloc::AstAlloc::vec()),
         }))
     }
 
@@ -8778,6 +8887,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),
             export_star_import_records: BumpVec::new_in(arena),
+            glob_imports: bun_alloc::AstAlloc::vec(),
             import_symbol_property_uses: Default::default(),
             esm_import_keyword: bun_ast::Range::NONE,
             esm_export_keyword: bun_ast::Range::NONE,

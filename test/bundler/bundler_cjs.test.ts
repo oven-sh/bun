@@ -577,6 +577,64 @@ describe("bundler", () => {
     },
   });
 
+  // require("./dir/" + x) should bundle every file under ./dir/ and pick the
+  // right one at runtime. This is the pattern shelljs uses to load its
+  // per-command modules (https://github.com/oven-sh/bun/issues/12302).
+  itBundled("cjs/GlobRequireStringConcat", {
+    files: {
+      "/entry.js": /* js */ `
+        var exports = {};
+        for (const name of ["cat", "ls"]) {
+          exports[name] = require("./src/" + name);
+        }
+        console.log(exports.cat(), exports.ls());
+      `,
+      "/src/cat.js": /* js */ `module.exports = () => "cat";`,
+      "/src/ls.js": /* js */ `module.exports = () => "ls";`,
+      "/src/rm.js": /* js */ `module.exports = () => "rm";`,
+    },
+    target: "bun",
+    run: { stdout: "cat ls" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__glob");
+      api.expectFile("/out.js").toContain("./src/rm.js");
+    },
+  });
+  itBundled("cjs/GlobRequireTemplate", {
+    files: {
+      "/app/entry.js": /* js */ `
+        const pick = name => require(\`./lang/\${name}.json\`);
+        console.log(pick("en").hello, pick("fr").hello);
+      `,
+      "/app/lang/en.json": /* json */ `{ "hello": "hi" }`,
+      "/app/lang/fr.json": /* json */ `{ "hello": "salut" }`,
+    },
+    entryPoints: ["/app/entry.js"],
+    outfile: "/out.js",
+    target: "bun",
+    run: { stdout: "hi salut" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("salut");
+    },
+  });
+  itBundled("cjs/GlobRequireMissing", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          require("./src/" + process.env.MISSING);
+        } catch (e) {
+          console.log(e.code, /nope/.test(e.message));
+        }
+      `,
+      "/src/a.js": /* js */ `module.exports = 1;`,
+    },
+    target: "bun",
+    run: { stdout: "MODULE_NOT_FOUND true", env: { MISSING: "nope" } },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain("__glob");
+    },
+  });
+
   // Test 28: export * from an external package whose module.exports is null.
   // CJS output emits __reExport(exports, require("ext"), module.exports) with
   // the raw require() result, so __reExport itself must tolerate null.

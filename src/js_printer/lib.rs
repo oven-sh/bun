@@ -1062,6 +1062,9 @@ pub struct Options<'a> {
 
     pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
 
+    pub glob_ref: Ref,
+    pub glob_imports: Option<&'a [bun_ast::ast_result::GlobImport]>,
+
     /// The module type of the importing file (after linking), used to determine interop helper behavior.
     /// Controls whether __toESM uses Node ESM semantics (isNodeMode=1 for .esm) or respects __esModule markers.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1132,6 +1135,8 @@ impl<'a> Default for Options<'a> {
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            glob_ref: Ref::NONE,
+            glob_imports: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -2432,6 +2437,14 @@ pub mod __gated_printer {
             let record = self.import_record(import_record_index as usize);
             let module_type = self.options.module_type;
 
+            if record.flags.contains(ImportRecordFlags::GLOB_PATTERN) {
+                self.print_glob_require(import_record_index, record.kind, level_);
+                if wrap {
+                    self.print(b")");
+                }
+                return;
+            }
+
             if IS_BUN_PLATFORM {
                 // "bun" is not a real module. It's just globalThis.Bun.
                 //
@@ -2689,6 +2702,96 @@ pub mod __gated_printer {
             if wrap {
                 self.print(b")");
             }
+        }
+
+        fn print_glob_require(
+            &mut self,
+            import_record_index: u32,
+            kind: ImportKind,
+            level: Level,
+        ) {
+            let Some((arg, is_require, entries)) =
+                self.options.glob_imports.and_then(|list| {
+                    list.iter()
+                        .find(|g| g.import_record_index == import_record_index)
+                        .map(|g| (g.arg, g.is_require, g.entries.as_slice()))
+                })
+            else {
+                // No glob data: fall back to a plain map that throws at
+                // runtime. This keeps non-bundling callers safe.
+                self.print_space_before_identifier();
+                self.print_symbol(self.options.glob_ref);
+                self.print(b"({})()");
+                return;
+            };
+
+            let is_dynamic = kind == ImportKind::Dynamic || !is_require;
+            if is_dynamic {
+                self.print_space_before_identifier();
+                self.print(b"Promise.resolve().then(");
+                if !self.options.minify_whitespace {
+                    self.print(b"() => ");
+                } else {
+                    self.print(b"()=>");
+                }
+            }
+
+            self.print_space_before_identifier();
+            self.print_symbol(self.options.glob_ref);
+            self.print(b"({");
+            self.print_newline();
+            self.options.indent.count += 1;
+            let mut first = true;
+            for entry in entries {
+                if !entry.source_index.is_valid() {
+                    continue;
+                }
+                if !first {
+                    self.print(b",");
+                    self.print_newline();
+                }
+                first = false;
+                self.print_indent();
+                self.print_string_literal_utf8(entry.key, false);
+                self.print(b":");
+                self.print_space();
+                if !self.options.minify_whitespace {
+                    self.print(b"() => ");
+                } else {
+                    self.print(b"()=>");
+                }
+                let meta = self
+                    .options
+                    .require_or_import_meta_for_source(entry.source_index.get(), false);
+                if meta.wrapper_ref.is_valid() {
+                    self.print_symbol(meta.wrapper_ref);
+                    self.print(b"()");
+                    if meta.exports_ref.is_valid() {
+                        self.print(b",");
+                        self.print_space();
+                    }
+                }
+                if meta.exports_ref.is_valid() {
+                    self.print_symbol(self.options.to_commonjs_ref);
+                    self.print(b"(");
+                    self.print_symbol(meta.exports_ref);
+                    self.print(b")");
+                } else if !meta.wrapper_ref.is_valid() {
+                    self.print(b"{}");
+                }
+            }
+            self.options.indent.count -= 1;
+            if !first {
+                self.print_newline();
+                self.print_indent();
+            }
+            self.print(b"})(");
+            self.print_expr(arg, Level::Comma, ExprFlag::none());
+            self.print(b")");
+            if is_dynamic {
+                self.print(b")");
+            }
+            let _ = level;
         }
 
         #[inline]

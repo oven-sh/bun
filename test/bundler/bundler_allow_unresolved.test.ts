@@ -127,12 +127,14 @@ describe("bundler", () => {
     },
   });
 
-  // 10. require() variant
+  // 10. require() variant. A relative prefix with a single wildcard is
+  // bundled as a glob require, so allowUnresolved does not reject it; a
+  // bare-package dynamic specifier is still rejected.
   itBundled("allow-unresolved/RequireVariant", {
     files: {
       "/entry.js": /* js */ `
         const x = "foo";
-        require(\`./a/\${x}.js\`);
+        require(\`pkg/\${x}.js\`);
       `,
     },
     outdir: "/out",

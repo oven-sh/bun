@@ -905,6 +905,8 @@ impl<'a> LinkerContext<'a> {
         let parts_live: *mut [bun_collections::AutoBitSet] = self.graph.parts_live.as_mut_slice();
         let import_records: *const [bun_ast::import_record::List<'a>] =
             self.graph.ast.items_import_records();
+        let glob_imports: *const [bun_ast::ast_result::GlobImportList] =
+            self.graph.ast.items_glob_imports();
         let css_reprs: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
         let side_effects: *const [SideEffects] =
             self.parse_graph().input_files.items_side_effects();
@@ -923,6 +925,7 @@ impl<'a> LinkerContext<'a> {
             entry_points,
             side_effects,
             import_records,
+            glob_imports,
             entry_point_kinds,
             css_reprs,
             parts,
@@ -934,6 +937,7 @@ impl<'a> LinkerContext<'a> {
                 &*entry_points,
                 &*side_effects,
                 &*import_records,
+                &*glob_imports,
                 &*entry_point_kinds,
                 &*css_reprs,
                 &mut *parts,
@@ -952,6 +956,7 @@ impl<'a> LinkerContext<'a> {
                 parts,
                 parts_live,
                 import_records,
+                glob_imports,
                 entry_point_kinds,
                 css_reprs,
                 worklist: Vec::new(),
@@ -981,6 +986,7 @@ impl<'a> LinkerContext<'a> {
                 distances,
                 parts,
                 import_records,
+                glob_imports,
                 file_entry_bits,
                 css_reprs,
                 queue: std::collections::VecDeque::new(),
@@ -2279,6 +2285,21 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
+            glob_ref: if ast.glob_imports.is_empty() {
+                Ref::NONE
+            } else {
+                self.graph
+                    .symbols
+                    .follow(self.graph.runtime_function(b"__glob"))
+            },
+            glob_imports: if ast.glob_imports.is_empty() {
+                None
+            } else {
+                // SAFETY: `ast` is borrowed for the duration of this call and
+                // the printer only reads from it; detach the lifetime so
+                // Options can coexist with the `&mut self` callback below.
+                Some(unsafe { bun_ptr::detach_lifetime_ref(ast.glob_imports.as_slice()) })
+            },
             require_or_import_meta_for_source_callback:
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),
@@ -2640,6 +2661,7 @@ pub struct TreeShakeCtx<'a, 'r> {
     pub parts: &'r [bun_ast::PartList<'a>],
     pub parts_live: &'r mut [bun_collections::AutoBitSet],
     pub import_records: &'r [bun_ast::import_record::List<'a>],
+    pub glob_imports: &'r [bun_ast::ast_result::GlobImportList],
     pub entry_point_kinds: &'r [EntryPoint::Kind],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
     pub worklist: Vec<TreeShakeWork>,
@@ -2658,6 +2680,7 @@ pub struct CodeSplitCtx<'a, 'r> {
     pub distances: &'r mut [u32],
     pub parts: &'r [bun_ast::PartList<'a>],
     pub import_records: &'r [bun_ast::import_record::List<'a>],
+    pub glob_imports: &'r [bun_ast::ast_result::GlobImportList],
     pub file_entry_bits: &'r mut [AutoBitSet],
     pub css_reprs: &'r [crate::bundled_ast::CssCol],
     pub queue: std::collections::VecDeque<(crate::IndexInt, u32)>,
@@ -2727,6 +2750,17 @@ impl<'a> LinkerContext<'a> {
                         .is_set(entry_points_count)
                 {
                     ctx.queue.push_back((record.source_index.get(), out_dist));
+                }
+            }
+
+            for glob in ctx.glob_imports[source_index as usize].iter() {
+                for entry in glob.entries.iter() {
+                    if entry.source_index.is_valid()
+                        && !ctx.file_entry_bits[entry.source_index.get() as usize]
+                            .is_set(entry_points_count)
+                    {
+                        ctx.queue.push_back((entry.source_index.get(), out_dist));
+                    }
                 }
             }
 

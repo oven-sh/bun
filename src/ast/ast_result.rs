@@ -20,6 +20,31 @@ type ImportRecordList<'a> = crate::import_record::List<'a>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
+/// A `require()`/`import()` call whose argument is a glob pattern such as
+/// `require("./src/" + name)`. The parser records the parent import record and
+/// the original argument expression; the bundler later scans the directory and
+/// fills `entries` with one entry per runtime lookup key.
+pub struct GlobImport {
+    pub import_record_index: u32,
+    pub arg: Expr,
+    pub is_require: bool,
+    /// Filled by the bundler after resolution. Uses the global allocator
+    /// because glob expansion runs on the bundle thread while the AST arena is
+    /// owned by a parse worker; the list is tiny (one entry per matched file
+    /// plus its extensionless alias).
+    pub entries: Vec<GlobImportEntry>,
+}
+
+#[derive(Clone, Copy)]
+pub struct GlobImportEntry {
+    /// Lookup key as it appears at runtime, e.g. `"./src/cat"` or
+    /// `"./src/cat.js"`. Interned in the resolver's process-lifetime store.
+    pub key: &'static [u8],
+    pub source_index: crate::Index,
+}
+
+pub type GlobImportList = AstVec<GlobImport>;
+
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
@@ -70,6 +95,7 @@ pub struct Ast<'a> {
     pub named_imports: NamedImports,
     pub named_exports: NamedExports,
     pub export_star_import_records: AstVec<u32>,
+    pub glob_imports: GlobImportList,
 
     pub top_level_symbols_to_parts: TopLevelSymbolToParts,
 
@@ -121,6 +147,7 @@ impl<'a> Ast<'a> {
             named_imports: Default::default(),
             named_exports: Default::default(),
             export_star_import_records: AstAlloc::vec(),
+            glob_imports: AstAlloc::vec(),
             top_level_symbols_to_parts: Default::default(),
             commonjs_named_exports: Default::default(),
             redirect_import_record_index: None,

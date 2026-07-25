@@ -535,6 +535,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                 self.bump,
             ),
             export_star_import_records: bun_alloc::AstAlloc::vec(),
+            glob_imports: bun_alloc::AstAlloc::vec(),
             approximate_newline_count: 1,
             exports_kind: ExportsKind::Esm,
             named_imports: core::mem::take(&mut self.named_imports),

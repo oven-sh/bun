@@ -71,12 +71,6 @@ pub struct SubscriptionCtx {
     pub original_enable_auto_pipelining: bool,
 }
 
-/// Selects which of the two listener maps a pub/sub operation targets:
-/// `subscribe`/`unsubscribe` route by literal channel name, while
-/// `psubscribe`/`punsubscribe` route by glob pattern. The maps are kept
-/// separate so a pattern like `"news.*"` cannot collide with a literal channel
-/// of the same name, and so `punsubscribe()` with no arguments clears only
-/// pattern listeners.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SubscriptionKind {
     Channel,
@@ -140,8 +134,6 @@ impl SubscriptionCtx {
         JSMap::opaque_mut(JSMap::from_js(value_js).unwrap().as_ptr())
     }
 
-    /// Get the total number of channels and patterns that this subscription
-    /// context is subscribed to.
     pub fn channels_subscribed_to_count(&self, global_object: &JSGlobalObject) -> JsResult<u32> {
         let channels = self
             .callback_map(SubscriptionKind::Channel)
@@ -1346,10 +1338,6 @@ impl JSValkeyClient {
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();
 
-        // `message` push data is [channel, payload]; `pmessage` is
-        // [pattern, channel, payload]. The listener-map key is the first
-        // element in both cases (channel name or pattern), and the listener
-        // always receives `(payload, channel)`.
         let (channel_idx, message_idx) = match kind {
             SubscriptionKind::Channel => (0, 1),
             SubscriptionKind::Pattern => (1, 2),

@@ -809,9 +809,6 @@ impl SubscriptionPushMessage {
         SUBSCRIPTION_PUSH_MESSAGES.get(bytes).copied()
     }
 
-    /// Sharded (`s`-prefixed) `Subscribe`/`Unsubscribe` push kinds; the
-    /// unprefixed and `p`-prefixed kinds are matched by `from_bytes` before
-    /// this is consulted.
     #[inline]
     pub fn is_reply_kind(kind: &[u8]) -> bool {
         match kind.split_first() {

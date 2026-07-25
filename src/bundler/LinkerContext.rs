@@ -2041,8 +2041,12 @@ impl<'a> LinkerContext<'a> {
                     } else {
                         Box::new([])
                     };
-                    self.log_disjoint()
-                        .add_range_error_with_notes(Some(source), range, text, notes);
+                    self.log_disjoint().add_range_error_with_notes(
+                        Some(source),
+                        range,
+                        text,
+                        notes,
+                    );
                 }
                 Frame::AfterChild {
                     source_index,

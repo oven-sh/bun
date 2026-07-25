@@ -8,6 +8,10 @@ const path = require('path');
 const util = require('util');
 
 const VENDORED = new Set([
+  'internal/encoding',
+  'internal/encoding/single-byte',
+  'internal/encoding/util',
+  'internal/errors',
   'internal/webidl',
   'internal/socket_list',
   'internal/fs/utils',
@@ -18,7 +22,7 @@ const VENDORED = new Set([
 
 // ---------------- primordials emulator ----------------
 const globalsMap = {
-  Array, ArrayBuffer, BigInt, Boolean, DataView, Date, Error, EvalError,
+  AggregateError, Array, ArrayBuffer, BigInt, Boolean, DataView, Date, Error, EvalError,
   FinalizationRegistry, Function, JSON, Map, Math, Number, Object, Promise,
   Proxy, RangeError, ReferenceError, Reflect, RegExp, Set, String, Symbol,
   SyntaxError, TypeError, URIError, WeakMap, WeakRef, WeakSet,
@@ -111,6 +115,13 @@ function computePrimordial(name) {
   if (name === 'TypedArray') return TypedArray;
   if (name.startsWith('TypedArrayPrototype')) {
     return resolveOnProto(TypedArray.prototype, name.slice('TypedArrayPrototype'.length), name);
+  }
+  if (name.startsWith('TypedArray')) {
+    // %TypedArray% statics are uncurried over the concrete constructor:
+    // TypedArrayOf(Uint16Array, 1, 2) === Uint16Array.of(1, 2).
+    const method = lowerFirst(name.slice('TypedArray'.length));
+    if (typeof TypedArray[method] === 'function') return uncurryThis(TypedArray[method]);
+    throw new Error(`nodeinternals primordials: cannot resolve ${name}`);
   }
 
   for (const g of Object.keys(globalsMap)) {
@@ -455,6 +466,7 @@ function getOverrides() {
         return result;
       };
     },
+    customInspectSymbol: Symbol.for('nodejs.util.inspect.custom'),
     isWindows: process.platform === 'win32',
     deprecate: util.deprecate,
     lazyDOMException: (message, name) => new DOMException(message, name),
@@ -498,6 +510,18 @@ function getOverrides() {
       UVException,
     },
     'internal/util': iuExtended,
+    'internal/buffer': (() => {
+      class FastBuffer extends Uint8Array {
+        constructor(bufferOrLength, byteOffset, length) {
+          if (bufferOrLength === undefined) super(0);
+          else if (typeof bufferOrLength === 'number') super(bufferOrLength);
+          else super(bufferOrLength, byteOffset, length);
+        }
+      }
+      FastBuffer.prototype.constructor = Buffer;
+      Object.setPrototypeOf(FastBuffer.prototype, Buffer.prototype);
+      return { FastBuffer };
+    })(),
     'internal/util/types': require('util/types'),
     'internal/util/inspect': X['internal/util/inspect'],
     'internal/validators': X['internal/validators'],

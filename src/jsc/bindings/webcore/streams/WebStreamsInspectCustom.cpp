@@ -108,8 +108,10 @@ WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisV
 void installInspectCustom(VM& vm, JSObject* prototype, NativeFunction nativeFunction)
 {
     auto* globalObject = prototype->globalObject();
-    prototype->putDirectNativeFunction(vm, globalObject, WebCore::builtinNames(vm).inspectCustomPublicName(), 2,
-        nativeFunction, ImplementationVisibility::Public, NoIntrinsic,
+    // Node names this method "[nodejs.util.inspect.custom]" (V8's symbol-keyed
+    // method naming); user code and node's own tests read fn.name.
+    auto* function = JSFunction::create(vm, globalObject, 2, "[nodejs.util.inspect.custom]"_s, nativeFunction, ImplementationVisibility::Public);
+    prototype->putDirect(vm, WebCore::builtinNames(vm).inspectCustomPublicName(), function,
         static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum));
 }
 

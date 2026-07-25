@@ -1443,10 +1443,20 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "unhandledRejection"_s);
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        // Dispatch through a JS trampoline (which forwards to process.emit and
+        // the same listener store) so listeners run with JS caller frames, as
+        // in node; Error.captureStackTrace(err, listener) inside a listener
+        // must leave a non-empty stack. Listener exceptions are reported by
+        // the emitter itself, same as the direct wrapped.emit() path.
+        JSC::JSFunction* emitter = JSC::JSFunction::create(vm, globalObject, processObjectInternalsEmitUnhandledRejectionFromNativeCodeGenerator(vm), globalObject);
         MarkedArgumentBuffer args;
         args.append(reason);
         args.append(promise);
-        wrapped.emit(eventType, args);
+        auto callData = JSC::getCallData(emitter);
+        JSC::profiledCall(globalObject, JSC::ProfilingReason::API, emitter, callData, process, args);
+        CLEAR_IF_EXCEPTION(scope);
         return true;
     }
 
@@ -1465,16 +1475,19 @@ extern "C" bool Bun__emitHandledPromiseEvent(JSC::JSGlobalObject* lexicalGlobalO
 
     auto eventType = Identifier::fromString(JSC::getVM(globalObject), "rejectionHandled"_s);
 
-    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
-        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
-        CLEAR_IF_EXCEPTION(scope);
-    }
     auto& wrapped = process->wrapped();
     if (wrapped.listenerCount(eventType) > 0) {
         MarkedArgumentBuffer args;
         args.append(promise);
         wrapped.emit(eventType, args);
         return true;
+    }
+
+    // Node only warns when nothing handled the 'rejectionHandled' event
+    // (processPromiseRejections: `if (!process.emit('rejectionHandled', ...))`).
+    if (Bun__VM__allowRejectionHandledWarning(globalObject->bunVM())) {
+        Process::emitWarning(globalObject, jsString(globalObject->vm(), String("Promise rejection was handled asynchronously"_s)), jsString(globalObject->vm(), String("PromiseRejectionHandledWarning"_s)), jsUndefined(), jsUndefined());
+        CLEAR_IF_EXCEPTION(scope);
     }
 
     return false;
@@ -2038,6 +2051,24 @@ JSValue Process::emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue w
         auto s = warning.getString(globalObject);
         errorInstance = createError(globalObject, !s.isEmpty() ? s : "Warning"_s);
         errorInstance->putDirect(vm, vm.propertyNames->name, type, JSC::PropertyAttribute::DontEnum | 0);
+        // With no JS frames on the stack (native emission) the created error
+        // has no `stack` at all; node always produces at least the
+        // "<name>: <message>" header line and warning handlers read it.
+        JSValue existingStack = errorInstance->get(globalObject, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool stackMissing = existingStack.isUndefinedOrNull();
+        if (!stackMissing && existingStack.isString()) {
+            auto stackString = existingStack.getString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            stackMissing = stackString.isEmpty();
+        }
+        if (stackMissing) {
+            auto typeString = type.isString() ? type.getString(globalObject) : String("Warning"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorInstance->putDirect(vm, vm.propertyNames->stack,
+                jsString(vm, makeString(typeString, ": "_s, !s.isEmpty() ? s : String("Warning"_s))),
+                static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        }
     } else if (warning.isCell() && warning.asCell()->type() == ErrorInstanceType) {
         errorInstance = warning.getObject();
     } else {

@@ -90,8 +90,35 @@ function internalBinding(name: string) {
       return { UDP: require("internal/dgram").UDP };
     case "tcp_wrap":
       return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
+    // Just what vendored modules destructure at load; Bun always builds with ICU.
+    case "config":
+      return { hasIntl: true };
+    // node's C++ encoding binding, backed by the runtime's own encoders.
+    case "encoding_binding": {
+      const utf8Encoder = new TextEncoder();
+      const encodeIntoResults = new Uint32Array(2);
+      return {
+        encodeInto(source: string, dest: Uint8Array) {
+          const { read, written } = utf8Encoder.encodeInto(source, dest);
+          encodeIntoResults[0] = read;
+          encodeIntoResults[1] = written;
+        },
+        encodeIntoResults,
+        encodeUtf8String(source: string) {
+          return utf8Encoder.encode(source);
+        },
+        decodeUTF8(input: ArrayBufferView, ignoreBOM: boolean, fatal: boolean) {
+          return new TextDecoder("utf-8", { ignoreBOM, fatal }).decode(input);
+        },
+      };
+    }
     case "util":
-      return { isInsideNodeModules };
+      return {
+        isInsideNodeModules,
+        // node's util binding exposes engine-private symbols; vendored
+        // internal/errors.js stores its arrow message under this one.
+        privateSymbols: { arrow_message_private_symbol: Symbol("node:arrowMessage") },
+      };
     // Vendored tls engine tests construct binding.SecureContext (or replace it)
     // before requiring node:tls; Bun's SecureContext class is the equivalent
     // native surface.

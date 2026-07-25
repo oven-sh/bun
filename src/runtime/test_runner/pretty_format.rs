@@ -1951,14 +1951,15 @@ impl<'a> Formatter<'a> {
                             pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                         ));
 
-                        let message_value =
-                            match value.fast_get(self.global_this, jsc::BuiltinName::Message) {
-                                Ok(v) => v,
-                                Err(_) => {
-                                    self.global_this.clear_exception();
-                                    None
-                                }
-                            };
+                        let message_value = match value
+                            .fast_get(self.global_this, jsc::BuiltinName::Message)
+                        {
+                            Ok(v) => v,
+                            Err(_) => {
+                                self.global_this.clear_exception();
+                                None
+                            }
+                        };
                         if let Some(message_value) = message_value {
                             if message_value.is_string() {
                                 self.write_indent(writer.ctx).expect("unreachable");
@@ -1986,14 +1987,15 @@ impl<'a> Formatter<'a> {
                                     pretty_fmt_const::<ENABLE_ANSI_COLORS>("<d>"),
                                     pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r>"),
                                 ));
-                                let data: JSValue =
-                                    match value.fast_get(self.global_this, jsc::BuiltinName::Data) {
-                                        Ok(v) => v.unwrap_or(JSValue::UNDEFINED),
-                                        Err(_) => {
-                                            self.global_this.clear_exception();
-                                            JSValue::UNDEFINED
-                                        }
-                                    };
+                                let data: JSValue = match value
+                                    .fast_get(self.global_this, jsc::BuiltinName::Data)
+                                {
+                                    Ok(v) => v.unwrap_or(JSValue::UNDEFINED),
+                                    Err(_) => {
+                                        self.global_this.clear_exception();
+                                        JSValue::UNDEFINED
+                                    }
+                                };
                                 let tag = Tag::get(data, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -2002,14 +2004,15 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b", \n");
                             }
                             EventType::ErrorEvent => {
-                                let error_value =
-                                    match value.fast_get(self.global_this, jsc::BuiltinName::Error) {
-                                        Ok(v) => v,
-                                        Err(_) => {
-                                            self.global_this.clear_exception();
-                                            None
-                                        }
-                                    };
+                                let error_value = match value
+                                    .fast_get(self.global_this, jsc::BuiltinName::Error)
+                                {
+                                    Ok(v) => v,
+                                    Err(_) => {
+                                        self.global_this.clear_exception();
+                                        None
+                                    }
+                                };
                                 if let Some(data) = error_value {
                                     self.write_indent(writer.ctx).expect("unreachable");
                                     writer.print(format_args!(

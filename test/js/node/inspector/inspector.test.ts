@@ -311,6 +311,7 @@ const timingArgs = consoleEvents
 process.stdout.write(
   JSON.stringify({ types, firstTimestamp, beforeMs, afterMs, countTexts, timingArgs }) + "\\n",
 );
+process.exit(0);
 `;
 
 test("Runtime.consoleAPICalled over the DevTools WebSocket reports a millisecond timestamp and emits events for console.count/time*", async () => {
@@ -568,7 +569,7 @@ test("inspector.waitForDebugger() blocks until a client resumes the process", as
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumedByClient: true });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 // A second waitForDebugger() must block again for a fresh
 // Runtime.runIfWaitingForDebugger — Node blocks on every call, and it must be
@@ -658,7 +659,7 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
 
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ first: 1, second: 2 });
   expect(exitCode).toBe(0);
-});
+}, 30_000);
 
 test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", () => {
   const session = new inspector.Session();

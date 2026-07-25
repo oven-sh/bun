@@ -1,22 +1,19 @@
 const delta = 1;
-const initialRuns = 10_000;
+const initialRuns = 1_000;
 let runs = initialRuns;
 // ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
-// run far higher under bun-asan; widen the threshold to avoid false positives.
-const isASAN = process.execPath.includes("bun-asan");
+// run higher under ASAN; widen the threshold to avoid false positives. Detect
+// ASAN from the runtime (the debug build is ASAN-instrumented but named
+// `bun-debug`, so the name check alone is wrong for local runs).
+let isASAN = false;
+try {
+  isASAN = require("bun:internal-for-testing").isASANEnabled();
+} catch {}
+isASAN ||= process.execPath.includes("-asan");
 
 function usage() {
   return process.memoryUsage.rss();
 }
-
-Promise.withResolvers ??= () => {
-  let promise, resolve, reject;
-  promise = new Promise((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-};
 
 function gc() {
   if (typeof Bun !== "undefined") {
@@ -35,7 +32,7 @@ function iterate() {
     huge: {
       wow: {
         big: {
-          data: runs.toString().repeat(50),
+          data: Buffer.alloc(32 * 1024, runs & 0xff),
         },
       },
     },
@@ -66,15 +63,15 @@ async function batch(iterations) {
 
 {
   // Warmup
-  for (let i = 0; i < 50; i++) {
-    await batch(1_000);
+  for (let i = 0; i < 3; i++) {
+    await batch(200);
   }
   // Measure memory usage after the warmup
   const initial = usage();
-  // Run batch 300 more times, each time creating 1,000 timers, waiting for them to finish, and
+  // Run batch 20 more times, each time creating 200 timers, waiting for them to finish, and
   // clearing them.
-  for (let i = 0; i < 300; i++) {
-    await batch(1_000);
+  for (let i = 0; i < 20; i++) {
+    await batch(200);
   }
   // Measure memory usage again, to check that cleared timers and the objects allocated inside each
   // callback have not bloated it
@@ -92,7 +89,9 @@ async function batch(iterations) {
       }
     }
 
-    if (delta > (isASAN ? 256 : 20)) {
+    // With a 32 KiB payload pinned on each timer, a leaked batch of timers costs ~6 MB; 20 batches
+    // would add well over 100 MB, so both thresholds are comfortably below the leak signal.
+    if (delta > (isASAN ? 50 : 20)) {
       throw new Error("Memory leak detected");
     }
   }

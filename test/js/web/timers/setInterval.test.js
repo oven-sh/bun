@@ -1,5 +1,5 @@
 import { expect, it } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 it("setInterval", async () => {
@@ -28,7 +28,7 @@ it("setInterval", async () => {
   });
 
   expect(result).toBe(10);
-  expect(performance.now() - start > 9).toBe(true);
+  expect(performance.now() - start).toBeGreaterThanOrEqual(9);
 });
 
 it("clearInterval", async () => {
@@ -38,8 +38,9 @@ it("clearInterval", async () => {
     expect.unreachable();
   }, 1);
   clearInterval(id);
-  await new Promise((resolve, reject) => {
-    setInterval(() => {
+  await new Promise(resolve => {
+    const id2 = setInterval(() => {
+      clearInterval(id2);
       resolve();
     }, 10);
   });
@@ -60,70 +61,116 @@ it("async setInterval", async () => {
       }, 1);
     });
   });
+  expect(remaining).toBe(0);
 });
 
 it("refreshed setInterval should not reschedule again", async () => {
   let relative = performance.now();
   let runCount = 0;
-  let timer = setInterval(() => {
-    let end = performance.now();
+  await new Promise((resolve, reject) => {
+    const timer = setInterval(() => {
+      let end = performance.now();
 
-    // loop for 100
-    const spinloop = end;
-    while (performance.now() - spinloop < 100) {
-      end = performance.now();
-    }
-
-    timer.refresh();
-
-    const elapsed = Math.round(end - relative);
-    console.log("Time since last run", elapsed);
-
-    runCount++;
-
-    switch (runCount) {
-      case 1: {
-        if (elapsed < 180) {
-          throw new Error("Expected elapsed time to be greater than 180");
-        }
-        break;
+      // spin for 100ms so the next scheduled tick is already due by the time we return
+      const spinloop = end;
+      while (performance.now() - spinloop < 100) {
+        end = performance.now();
       }
-      case 3:
-      case 2: {
-        if (elapsed > 180) {
-          throw new Error("Expected elapsed time to be less than 180");
+
+      timer.refresh();
+
+      const elapsed = Math.round(end - relative);
+      runCount++;
+
+      try {
+        switch (runCount) {
+          case 1:
+            // initial 100ms delay + 100ms spinloop
+            expect(elapsed).toBeGreaterThanOrEqual(180);
+            break;
+          case 2:
+          case 3:
+            // refresh() inside the callback must not push the next tick out: since the
+            // spinloop already consumed the interval, the next fire happens immediately
+            expect(elapsed).toBeLessThan(180);
+            break;
         }
-        break;
+      } catch (err) {
+        clearInterval(timer);
+        reject(err);
+        return;
       }
-    }
 
-    relative = end;
+      relative = end;
 
-    if (runCount === 3) {
-      clearInterval(timer);
-    }
-  }, 100);
+      if (runCount === 3) {
+        clearInterval(timer);
+        resolve();
+      }
+    }, 100);
+  });
+  expect(runCount).toBe(3);
 });
 
-it("setInterval runs with at least the delay time", () => {
-  expect([`run`, join(import.meta.dir, "setInterval-fixture.js")]).toRun();
-});
+async function runFixture(args) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    env: bunEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
 
-it("setInterval canceling with unref, close, _idleTimeout, and _onTimeout", () => {
-  expect([join(import.meta.dir, "timers-fixture-unref.js"), "setInterval"]).toRun();
-});
+it.concurrent(
+  "setInterval runs with at least the delay time",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture(["run", join(import.meta.dir, "setInterval-fixture.js")]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("PASS");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
-it(
+it.concurrent(
+  "setInterval canceling with unref, close, _idleTimeout, and _onTimeout",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture([
+      join(import.meta.dir, "timers-fixture-unref.js"),
+      "setInterval",
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+it.concurrent(
   "setInterval doesn't leak memory",
-  () => {
-    expect([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]).toRun();
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture([
+      "run",
+      join(import.meta.dir, "setInterval-leak-fixture.js"),
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^RSS \d+ MB\nDelta -?\d+ MB\nTimeout object count: \d+\n$/);
+    expect(exitCode).toBe(0);
   },
   !isWindows ? 30_000 : 90_000,
 );
-// ✓ setInterval doesn't leak memory [9930.00ms]
-// ✓ setInterval doesn't leak memory [80188.00ms]
-// TODO: investigate this discrepancy further
 
-it("setInterval doesn't run when cancelled after being scheduled", () => {
-  expect([`run`, join(import.meta.dir, "setInterval-cancel-fixture.js")]).toRun();
-}, 30_000);
+it.concurrent(
+  "setInterval doesn't run when cancelled after being scheduled",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture([
+      "run",
+      join(import.meta.dir, "setinterval-cancel-fixture.js"),
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toMatch(/^RSS: \d+ MB\n$/);
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

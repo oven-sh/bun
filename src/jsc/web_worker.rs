@@ -1135,8 +1135,7 @@ impl WebWorker {
             }
         }
 
-        // terminate() may have landed during load_entry_point_for_web_worker;
-        // don't reach dispatchOnline/fireEarlyMessages/tick() in that case.
+        // terminate() may have landed during load_entry_point_for_web_worker; skip dispatchOnline/tick().
         if self.has_requested_terminate() {
             self.flush_logs(vm);
             return self.shutdown();

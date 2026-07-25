@@ -1214,10 +1214,7 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
 
-    // Stopped == a worker with has_requested_terminate() set; skip the
-    // process->get / emit / call walk (asserts under a terminate() race) and
-    // return handled so the Rust caller dispatches no more JS either. The
-    // main-thread node:vm watchdog does not set this.
+    // Stopped == a worker with has_requested_terminate(); the process->get / emit / call walk below asserts under a terminate() race.
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != JSC::ScriptExecutionStatus::Running) [[unlikely]]
         return true;
 

@@ -1944,7 +1944,12 @@ describe.concurrent("node:repl inspector-backed features", () => {
       await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
-      expect(stdout.trim().split("\n").map(l => JSON.parse(l))).toEqual([
+      expect(
+        stdout
+          .trim()
+          .split("\n")
+          .map(l => JSON.parse(l)),
+      ).toEqual([
         { input: "3+4", preview: "7" },
         { input: "[9,8].length", preview: "2" },
         { input: "bump()", preview: null },

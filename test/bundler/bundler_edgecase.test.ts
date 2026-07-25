@@ -2153,6 +2153,11 @@ describe("bundler", () => {
     },
     target: "bun",
     run: { stdout: "function function string" },
+    onAfterBundle(api) {
+      // target=bun supports import.meta.require natively; it must be left alone
+      // (lowering it changes .resolve semantics under --compile, see #14279).
+      api.expectFile("/out.js").toContain("import.meta.require");
+    },
   });
   itBundled("edgecase/ImportMetaRequireRebundle#9416", {
     // A target=bun bundle emits `var __require = import.meta.require`; re-bundling

@@ -528,9 +528,6 @@ describe.concurrent("bun pm version", () => {
     });
 
     it("indents single-line nested objects correctly when expanding", async () => {
-      // A single-line nested object (`"scripts": { "test": "true" }`) used to be
-      // reprinted with the inner property and closing brace at column 0, and that
-      // bad unindent cascaded to every following sibling key.
       const originalJson = `{
   "name": "test",
   "version": "1.0.0",

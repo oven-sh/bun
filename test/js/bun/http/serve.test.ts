@@ -3054,6 +3054,160 @@ server.listen(0, "127.0.0.1", () => {
   expect(exitCode).toBe(0);
 });
 
+// A pipelined request that arrives while the previous response is still in flight
+// (async handler) must be buffered and dispatched once that response completes,
+// not abort the connection. Previously uWS closed the socket the moment it saw a
+// second request head while HTTP_RESPONSE_PENDING was set, so the first response
+// was discarded and the second never dispatched.
+describe("dispatches a pipelined request after the previous async response completes", () => {
+  // Count HTTP/1.1 responses in the raw wire bytes and pull each body by
+  // Content-Length so back-to-back responses with no interleaving newline
+  // (body "A" immediately followed by "HTTP/1.1 ...") are split correctly.
+  const wireResponses = (raw: string) => {
+    const out: { status: string; body: string }[] = [];
+    while (raw.startsWith("HTTP/1.1 ")) {
+      const headEnd = raw.indexOf("\r\n\r\n");
+      const head = raw.slice(0, headEnd);
+      const cl = Number(/content-length: (\d+)/i.exec(head)?.[1] ?? 0);
+      out.push({ status: head.slice(0, head.indexOf("\r\n")), body: raw.slice(headEnd + 4, headEnd + 4 + cl) });
+      raw = raw.slice(headEnd + 4 + cl);
+    }
+    return out;
+  };
+
+  const readPipeline = (port: number, payload: string, expected: number) =>
+    new Promise<{ responses: { status: string; body: string }[] }>(resolve => {
+      let raw = "";
+      const s = net.connect(port, "127.0.0.1", () => s.write(payload));
+      s.on("data", d => {
+        raw += d.toString("latin1");
+        // Resolve as soon as the expected number of responses have arrived, so the
+        // test waits on the condition rather than a timer.
+        if (wireResponses(raw).length >= expected) {
+          s.destroy();
+          resolve({ responses: wireResponses(raw) });
+        }
+      });
+      s.on("close", () => resolve({ responses: wireResponses(raw) }));
+    });
+
+  it("request body forwarded to fetch(), pipelined GET behind it", async () => {
+    const events: string[] = [];
+    // Upstream that the relay forwards the body to; its result is irrelevant to
+    // the bug, but a real server avoids depending on connect-refused timing.
+    await using upstream = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        return new Response(await req.text());
+      },
+    });
+    await using relay = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        events.push("handler " + path);
+        if (path === "/b") return new Response("B");
+        const up = await fetch(upstream.url, { method: "POST", body: req.body, duplex: "half" });
+        events.push("done " + path + " " + (await up.text()));
+        return new Response("A");
+      },
+    });
+
+    const { responses } = await readPipeline(
+      relay.port,
+      "POST /a HTTP/1.1\r\nHost: x\r\nContent-Length: 4\r\n\r\nabcd" + "GET /b HTTP/1.1\r\nHost: x\r\n\r\n",
+      2,
+    );
+    expect({ responses, events }).toEqual({
+      responses: [
+        { status: "HTTP/1.1 200 OK", body: "A" },
+        { status: "HTTP/1.1 200 OK", body: "B" },
+      ],
+      events: ["handler /a", "done /a abcd", "handler /b"],
+    });
+  });
+
+  it("three async GETs pipelined in one write, served in order", async () => {
+    const events: string[] = [];
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        events.push("in " + path);
+        await Bun.sleep(10);
+        events.push("out " + path);
+        return new Response(path.slice(1));
+      },
+    });
+
+    const { responses } = await readPipeline(
+      server.port,
+      "GET /a HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /b HTTP/1.1\r\nHost: x\r\n\r\n" +
+        "GET /c HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+      3,
+    );
+    // Each request is dispatched only after the previous response is written, so
+    // responses (and handler entry/exit) are strictly ordered.
+    expect({ responses, events }).toEqual({
+      responses: [
+        { status: "HTTP/1.1 200 OK", body: "a" },
+        { status: "HTTP/1.1 200 OK", body: "b" },
+        { status: "HTTP/1.1 200 OK", body: "c" },
+      ],
+      events: ["in /a", "out /a", "in /b", "out /b", "in /c", "out /c"],
+    });
+  });
+
+  it("pipelined request sent in a separate write while the first is pending", async () => {
+    const inflight = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        const path = new URL(req.url).pathname;
+        if (path === "/b") return new Response("B");
+        inflight.resolve();
+        await release.promise;
+        return new Response("A");
+      },
+    });
+
+    const raw = await new Promise<string>(resolve => {
+      let got = "";
+      const s = net.connect(server.port, "127.0.0.1", () => {
+        s.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\n");
+      });
+      s.on("data", d => {
+        got += d.toString("latin1");
+        if (wireResponses(got).length >= 2) {
+          s.destroy();
+          resolve(got);
+        }
+      });
+      s.on("close", () => resolve(got));
+      inflight.promise.then(async () => {
+        // /a's handler is parked; /b arrives now in its own TCP segment and must
+        // be buffered (not abort the connection) until /a responds. A fetch on a
+        // second connection round-trips through the same event loop poll, so once
+        // it resolves the server has definitely read /b from C1.
+        s.write("GET /b HTTP/1.1\r\nHost: x\r\n\r\n");
+        await fetch(`http://127.0.0.1:${server.port}/b`).then(r => r.text());
+        release.resolve();
+      });
+    });
+
+    expect(wireResponses(raw)).toEqual([
+      { status: "HTTP/1.1 200 OK", body: "A" },
+      { status: "HTTP/1.1 200 OK", body: "B" },
+    ]);
+  });
+});
+
 it("only serves /bun:info to loopback clients in development mode", async () => {
   using server = Bun.serve({
     port: 0,

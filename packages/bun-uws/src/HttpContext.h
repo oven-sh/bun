@@ -472,6 +472,14 @@ private:
                 ((HttpResponse<SSL> *) s)->resetTimeout();
             }
 
+            /* Bun.serve: an async handler left the response pending, so any
+             * pipelined request in this TCP read must be buffered and replayed
+             * once this response completes (markDone). node:http dispatches
+             * pipelined requests immediately and queues their responses above. */
+            if constexpr (!IsNodeHttp) {
+                httpResponseData->deferPipeline = !((HttpResponse<SSL> *) s)->hasResponded();
+            }
+
             /* Continue parsing */
             return s;
 
@@ -543,6 +551,16 @@ private:
                     httpResponseData->inStream = nullptr;
                 }
             }
+
+            /* Bun.serve: the handler may have responded synchronously inside
+             * the body fin callback (e.g. `await req.text()` drains microtasks
+             * and renders), so re-derive from HTTP_RESPONSE_PENDING here. */
+            if constexpr (!IsNodeHttp) {
+                if (fin) {
+                    httpResponseData->deferPipeline =
+                        (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) != 0;
+                }
+            }
             return user;
         });
 
@@ -596,6 +614,16 @@ private:
                     && httpResponseData->hasBufferedPartialRequestHeaders()) {
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
+                }
+            }
+
+            /* Bun.serve async pipelining: pipelined request bytes were buffered
+             * because the current response is still pending. Pause reads so the
+             * buffer stays bounded by this single recv; markDone() resumes and
+             * replays once the response completes. */
+            if constexpr (!IsNodeHttp) {
+                if (!httpResponseData->pipelinedBuffer.empty()) {
+                    ((HttpResponse<SSL> *) s)->pause();
                 }
             }
 

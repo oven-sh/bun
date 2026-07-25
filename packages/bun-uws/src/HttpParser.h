@@ -589,6 +589,17 @@ struct HttpResponseData;
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
+
+    public:
+        /* Bun.serve async pipelining: while a response on this connection is
+         * still in flight (HTTP_RESPONSE_PENDING), the parse loop must stop
+         * BEFORE getHeaders mutates the next request's bytes; those bytes are
+         * held in pipelinedBuffer and replayed from markDone() once the
+         * in-flight response completes. node:http uses its own queue and
+         * never sets this. */
+        bool deferPipeline = false;
+        std::string pipelinedBuffer;
+    private:
         /* node:http compat: a completed request on this connection forbade keep-alive
          * (Connection: close, or HTTP/1.0), so no further message may be dispatched
          * (llhttp parses nothing after such a message: HPE_CLOSED_CONNECTION). */
@@ -1102,6 +1113,12 @@ struct HttpResponseData;
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* A response on this connection is still in flight (async handler).
+             * Stop before getHeaders mutates the next request's bytes so the
+             * caller can buffer them verbatim for replay. */
+            if (deferPipeline) {
+                break;
+            }
             /* node:http server compat: an accepted Upgrade request whose body just
              * finished parsing switched this connection into tunnel mode (the data
              * handler set isConnectRequest when it saw the body fin). Everything
@@ -1536,7 +1553,16 @@ public:
         length -= consumedBytes;
 
         if (length) {
-            if (length < maxFallbackSize) {
+            if (deferPipeline) {
+                /* Pipelined request bytes held until the in-flight response
+                 * completes; replayed from markDone(). Reads are paused by the
+                 * caller while this buffer is non-empty, so it is bounded by a
+                 * single recv buffer's worth. Reserve post-padding so replay
+                 * can hand this buffer straight back to getHeaders. */
+                pipelinedBuffer.reserve(pipelinedBuffer.length() + length
+                    + std::max<unsigned int>(MINIMUM_HTTP_POST_PADDING, sizeof(std::string)));
+                pipelinedBuffer.append(data, length);
+            } else if (length < maxFallbackSize) {
                 fallback.append(data, length);
             } else {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);

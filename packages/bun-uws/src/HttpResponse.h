@@ -455,6 +455,44 @@ public:
         return this;
     }
 
+    /* Dispatch pipelined request bytes that were buffered while the previous
+     * response was still in flight (Bun.serve's async-pipelining path). Called
+     * from markDone(), i.e. after the in-flight response has been fully
+     * written. node:http never buffers here (it dispatches immediately and
+     * queues responses), so replay is always the IsNodeHttp=false onData. */
+    void replayPipelinedRequests() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+        if (httpResponseData->pipelinedBuffer.empty()) {
+            return;
+        }
+        /* Connection is being torn down after this response; the buffered
+         * request is discarded and the close path proceeds unchanged. */
+        if (httpResponseData->shouldCloseConnection()
+            || us_socket_is_closed((us_socket_t *) this)
+            || us_socket_is_shut_down((us_socket_t *) this)) {
+            httpResponseData->pipelinedBuffer.clear();
+            return;
+        }
+        /* Re-entering onData from inside onData would stomp the per-context
+         * isParsingHttp/upgradedWebSocket state; the pathological case is two
+         * connections whose handlers synchronously resolve each other. Leave
+         * the buffer and reads paused; the connection idles out rather than
+         * corrupting the outer parse. */
+        HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);
+        if (httpContextData->flags.isParsingHttp) {
+            return;
+        }
+
+        std::string buffer = std::move(httpResponseData->pipelinedBuffer);
+        httpResponseData->pipelinedBuffer.clear();
+        /* Reads were paused when the buffer became non-empty. */
+        this->resume();
+        /* getHeaders writes post-padding bytes; the buffer reserved them at
+         * append time (see consumePostPadded). */
+        buffer.reserve(buffer.length() + MINIMUM_HTTP_POST_PADDING);
+        HttpContext<SSL>::template onData<false>((us_socket_t *) this, buffer.data(), (int) buffer.length());
+    }
+
     /* Note: Headers are not checked in regards to timeout.
      * We only check when you actively push data or end the request */
 

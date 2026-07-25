@@ -57,9 +57,16 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
+        /* The parse loop may dispatch the next request on this connection. */
+        this->deferPipeline = false;
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
+
+        /* Pipelined request bytes that arrived while this response was in
+         * flight can be dispatched now. HttpResponse is only forward-declared
+         * here; template instantiation defers the call until both are defined. */
+        uwsRes->replayPipelinedRequests();
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */

@@ -3768,10 +3768,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // plain form there.
             let name: &'a [u8] =
                 if self.options.features.emit_decorator_metadata && !self.options.bundle {
-                    let hash = bun_wyhash::hash_with_seed(
-                        u64::from(stmt.import_record_index),
-                        path.text,
-                    );
+                    let hash =
+                        bun_wyhash::hash_with_seed(u64::from(stmt.import_record_index), path.text);
                     bun_alloc::arena_format!(
                         in self.arena,
                         "import_{}_{}",

@@ -2167,7 +2167,6 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
     let header = WebsocketHeader::from_slice(bytes);
     let opcode = header.opcode();
     let payload_len = header.len() as usize;
-    let is_data_frame = matches!(opcode, Opcode::Text | Opcode::Binary);
     let mut parsed = ParsedHeader {
         opcode,
         payload_len,
@@ -2177,8 +2176,11 @@ fn parse_websocket_header(bytes: [u8; 2]) -> ParsedHeader {
         next: ReceiveState::Fail,
     };
 
-    // A server must not mask data frames it sends to a client.
-    if header.mask() && is_data_frame {
+    // RFC 6455 §5.1: a server MUST NOT mask any frame, and a client MUST fail
+    // the connection on any masked server frame. This is not limited to data
+    // frames; a masked control frame's 4-byte masking key would otherwise be
+    // parsed as payload (for Close, as the close code).
+    if header.mask() {
         parsed.next = ReceiveState::NeedMask;
         return parsed;
     }

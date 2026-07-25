@@ -619,6 +619,91 @@ describe.concurrent("WebSocket ping()/pong() payload size limit", () => {
   });
 });
 
+// RFC 6455 §5.1: a server MUST NOT mask any frame it sends to the client, and a
+// client MUST fail the connection on any masked server frame. Bun enforced this
+// for Text/Binary but not for control frames, so a masked Close frame's 4-byte
+// masking key was parsed as the close payload: JS saw a clean close whose code
+// was the first two mask-key bytes, and that code was echoed back on the wire.
+describe.concurrent("WebSocket client rejects masked server frames", () => {
+  const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+  const EXPECTED_CLOSE = {
+    code: 1002,
+    wasClean: false,
+    reason: "Protocol error - unexpected mask from server",
+  };
+
+  function maskedFrame(opcode: number, payload: Buffer, maskKey: Buffer) {
+    const masked = Buffer.from(payload);
+    for (let i = 0; i < masked.length; i++) masked[i] ^= maskKey[i & 3];
+    return Buffer.concat([Buffer.from([0x80 | opcode, 0x80 | payload.length]), maskKey, masked]);
+  }
+
+  async function run(frame: Buffer) {
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer(sock => {
+      sockets.add(sock);
+      let buf = Buffer.alloc(0);
+      sock.on("error", () => {});
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        const i = buf.indexOf("\r\n\r\n");
+        if (i < 0) return;
+        const key = /sec-websocket-key: *([^\r\n]+)/i.exec(buf.toString("latin1"))![1];
+        const accept = createHash("sha1")
+          .update(key + GUID)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        sock.write(frame);
+        sock.removeAllListeners("data");
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const port = (server.address() as import("node:net").AddressInfo).port;
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const closed = await new Promise<CloseEvent>(resolve => {
+        ws.onerror = () => {};
+        ws.onclose = resolve;
+      });
+      return { code: closed.code, wasClean: closed.wasClean, reason: closed.reason };
+    } finally {
+      for (const s of sockets) s.destroy();
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  }
+
+  // Before the fix each of these produced a CloseEvent whose code was the
+  // big-endian u16 of the first two mask-key bytes (0x1122 → 4386, 0x03ea →
+  // 1002, 0x03e8 → 1000) with wasClean = true.
+  it.each(["11223344", "03ea0000", "03e80000"])("fails a masked Close frame (mask key %s)", async maskKey => {
+    const frame = maskedFrame(0x8, Buffer.from([0x03, 0xe8]), Buffer.from(maskKey, "hex"));
+    expect(await run(frame)).toEqual(EXPECTED_CLOSE);
+  });
+
+  it.each([
+    ["Ping", 0x9],
+    ["Pong", 0xa],
+  ])("fails a masked %s frame", async (_name, opcode) => {
+    const frame = maskedFrame(opcode, Buffer.from("hi"), Buffer.from("aabbccdd", "hex"));
+    expect(await run(frame)).toEqual(EXPECTED_CLOSE);
+  });
+
+  it("fails a masked Close frame with a reason body", async () => {
+    // With a reason body the still-masked reason bytes previously tripped the
+    // UTF-8 check (1007) instead of the mask check; the failure was accidental
+    // and misdiagnosed.
+    const frame = maskedFrame(
+      0x8,
+      Buffer.concat([Buffer.from([0x03, 0xe8]), Buffer.from("bye")]),
+      Buffer.from("aabbccdd", "hex"),
+    );
+    expect(await run(frame)).toEqual(EXPECTED_CLOSE);
+  });
+});
+
 async function listen(): Promise<URL> {
   const pathname = path.join(import.meta.dir, "./websocket-server-echo.mjs");
   const { promise, resolve, reject } = Promise.withResolvers();

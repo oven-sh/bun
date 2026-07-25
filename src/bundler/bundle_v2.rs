@@ -4641,8 +4641,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
-                    if !result.external
-                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                    if !result.external && resolve.import_record.kind != ImportKind::EntryPointBuild
                     {
                         let handles_import_errors = this.graph.ast.items_import_records()
                             [resolve.import_record.importer_source_index as usize]

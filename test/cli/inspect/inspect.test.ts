@@ -385,10 +385,12 @@ describe("http metadata endpoint", () => {
 // `Debugger.setBreakpoint` replies "Could not resolve breakpoint".
 // See oven-sh/WebKit#345.
 describe("Debugger domain with BunTranspiledModule source providers", () => {
-  async function runDebuggerProbe(extraArgs: readonly string[]) {
+  async function runDebuggerProbe(extraArgs: readonly string[], expectedSourceType: string | null) {
     using dir = tempDir("inspect-buntranspiledmodule", {
       "mod.test.ts": `import { test, expect } from "bun:test";
+import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
 export const x = 1;
+globalThis.__providerSourceType = isolatedModuleCacheSourceType(import.meta.path);
 debugger;
 test("t", () => { expect(x).toBe(1); });
 `,
@@ -523,22 +525,38 @@ test("t", () => { expect(x).toBe(1); });
         throw new Error(`No Debugger.scriptParsed for mod.test.ts; stderr=${JSON.stringify(stderrBuf)}`);
       }
 
-      const setBreakpoint = await send("Debugger.setBreakpoint", {
-        location: { scriptId: userScript.scriptId, lineNumber: 3, columnNumber: 0 },
+      // Self-check the premise: the --isolate run must actually be exercising
+      // a BunTranspiledModule provider. Without this, a refactor that stops
+      // attaching module_info to the entrypoint would leave both cases as
+      // Module-vs-Module and the regression guard would evaporate. The fixture
+      // stashed the value on globalThis because evaluateOnCallFrame parses its
+      // expression as a Program (no `import.meta`) and module scope has no
+      // `require`.
+      const sourceTypeEval = await send("Debugger.evaluateOnCallFrame", {
+        callFrameId: paused.callFrames?.[0]?.callFrameId,
+        expression: `globalThis.__providerSourceType`,
+        returnByValue: true,
       });
-      // Assert the inspector-visible shape (breakpoint + module flag) together
-      // so a failure shows the full picture.
+
+      const setBreakpoint = await send("Debugger.setBreakpoint", {
+        location: { scriptId: userScript.scriptId, lineNumber: 5, columnNumber: 0 },
+      });
+      // Assert the inspector-visible shape (breakpoint + module flag + the
+      // provider-type self-check) together so a failure shows the full
+      // picture.
       expect({
+        providerSourceType: sourceTypeEval?.result?.result?.value ?? null,
         setBreakpoint,
         scriptParsedModule: userScript.module,
       }).toEqual({
+        providerSourceType: expectedSourceType,
         setBreakpoint: {
           id: expect.any(Number),
           result: {
             breakpointId: expect.any(String),
             actualLocation: {
               scriptId: userScript.scriptId,
-              lineNumber: 3,
+              lineNumber: 5,
               columnNumber: expect.any(Number),
             },
           },
@@ -551,11 +569,11 @@ test("t", () => { expect(x).toBe(1); });
       // above doesn't collide.
       const setBreakpointByUrl = await send("Debugger.setBreakpointByUrl", {
         url: userScript.url,
-        lineNumber: 1,
+        lineNumber: 2,
         columnNumber: 0,
       });
       expect(setBreakpointByUrl?.result?.locations).toEqual([
-        { scriptId: userScript.scriptId, lineNumber: 1, columnNumber: expect.any(Number) },
+        { scriptId: userScript.scriptId, lineNumber: 2, columnNumber: expect.any(Number) },
       ]);
 
       await send("Debugger.resume").catch(() => {});
@@ -567,14 +585,15 @@ test("t", () => { expect(x).toBe(1); });
   }
 
   test("bun test --isolate: Debugger.scriptParsed reports module and breakpoints resolve", async () => {
-    await runDebuggerProbe(["--isolate"]);
+    await runDebuggerProbe(["--isolate"], "BunTranspiledModule");
   });
 
-  // Sanity: without --isolate the provider is plain Module and this has always
-  // worked; pinning it alongside ensures the --isolate case is being compared
-  // against the correct baseline.
+  // Sanity: without --isolate the provider is plain Module, the isolation
+  // cache is empty (hence null), and this has always worked; pinning it
+  // alongside ensures the --isolate case is being compared against the
+  // correct baseline.
   test("bun test (no --isolate): Debugger.scriptParsed reports module and breakpoints resolve", async () => {
-    await runDebuggerProbe([]);
+    await runDebuggerProbe([], null);
   });
 });
 

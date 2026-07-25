@@ -3672,6 +3672,17 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"internal:test/binding", specifier))
         }
+        HardcodedModule::InternalWorkerIo => {
+            // Same `--expose-internals` gate as `internal/test/binding`.
+            if !bun_core::env::IS_DEBUG {
+                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                    .load(core::sync::atomic::Ordering::Relaxed);
+                if !allowed {
+                    return None;
+                }
+            }
+            Some(js_synthetic_module(b"internal:worker/io", specifier))
+        }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.

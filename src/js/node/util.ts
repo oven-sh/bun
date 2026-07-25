@@ -47,7 +47,7 @@ const formatWithOptions = utl.formatWithOptions;
 const format = utl.format;
 const stripVTControlCharacters = utl.stripVTControlCharacters;
 
-var debugs = {};
+var debugs = { __proto__: null };
 var debugEnvRegex = /^$/;
 const NODE_DEBUG = process.env.NODE_DEBUG;
 if (NODE_DEBUG) {
@@ -75,21 +75,87 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
-  set = set.toUpperCase();
-  if (!debugs[set]) {
-    if (debugEnvRegex.test(set)) {
-      var pid = process.pid;
+const debuglogNoop = () => {};
+
+// Port of node's debuglogImpl + debuglog (lib/internal/util/debuglog.js):
+// lazy init, an `enabled` accessor on the returned logger, and the optional
+// callback receiving the optimized debug function.
+function debuglogImpl(enabled, set) {
+  if (debugs[set] === undefined) {
+    if (enabled) {
+      const pid = process.pid;
       emitWarningIfNeeded(set);
-      debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
-        console.error("%s %d: %s", set, pid, msg);
+      debugs[set] = function debug(...args) {
+        lazyUtilColors ??= require("internal/util/colors");
+        const colors = lazyUtilColors.shouldColorize(process.stderr);
+        const msg = formatWithOptions({ colors }, ...args);
+        const coloredPID = inspect(pid, { colors });
+        process.stderr.write(format("%s %s: %s\n", set, coloredPID, msg));
       };
     } else {
-      debugs[set] = function () {};
+      debugs[set] = debuglogNoop;
     }
   }
   return debugs[set];
+}
+
+function debuglog(set, cb) {
+  function init() {
+    set = set.toUpperCase();
+    enabled = debugEnvRegex.test(set);
+  }
+  let debug = (...args) => {
+    init();
+    // Only invokes debuglogImpl() when the debug function is
+    // called for the first time.
+    debug = debuglogImpl(enabled, set);
+    if (typeof cb === "function") {
+      Object.defineProperty(debug, "enabled", {
+        __proto__: null,
+        get() {
+          return enabled;
+        },
+        configurable: true,
+        enumerable: true,
+      });
+      cb(debug);
+    }
+    switch (args.length) {
+      case 1:
+        return debug(args[0]);
+      case 2:
+        return debug(args[0], args[1]);
+      default:
+        return debug(...args);
+    }
+  };
+  let enabled;
+  let test = () => {
+    init();
+    test = () => enabled;
+    return enabled;
+  };
+  const logger = (...args) => {
+    // Improve performance when debug is disabled.
+    if (enabled === false) return;
+    switch (args.length) {
+      case 1:
+        return debug(args[0]);
+      case 2:
+        return debug(args[0], args[1]);
+      default:
+        return debug(...args);
+    }
+  };
+  Object.defineProperty(logger, "enabled", {
+    __proto__: null,
+    get() {
+      return test();
+    },
+    configurable: true,
+    enumerable: true,
+  });
+  return logger;
 }
 
 function isBoolean(arg) {

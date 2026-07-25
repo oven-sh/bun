@@ -361,5 +361,6 @@ const errors: ErrorCodeMapping = [
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],
   ["ERR_NOT_BUILDING_SNAPSHOT", Error],
+  ["ERR_WORKER_UNSERIALIZABLE_ERROR", Error],
 ];
 export default errors;

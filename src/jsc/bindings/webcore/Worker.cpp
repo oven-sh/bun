@@ -767,9 +767,8 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
 
     if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(messagePort->wrapped().tryTakeMessage(lexicalGlobalObject)));
-    } else if (dynamicDowncast<JSBroadcastChannel>(port)) {
-        // TODO: support broadcast channels
-        return JSC::JSValue::encode(jsUndefined());
+    } else if (auto* broadcastChannel = dynamicDowncast<JSBroadcastChannel>(port)) {
+        RELEASE_AND_RETURN(scope, JSC::JSValue::encode(broadcastChannel->wrapped().tryTakeMessage(lexicalGlobalObject)));
     }
 
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);

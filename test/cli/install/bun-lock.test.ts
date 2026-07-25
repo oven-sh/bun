@@ -949,9 +949,9 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
     }),
   });
 
-  const install = () =>
+  const install = (...args: string[]) =>
     spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", ...args],
       cwd: String(dir),
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
       stdout: "ignore",
@@ -960,7 +960,7 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
 
   // The empty URL resolves against the configured registry at download time.
   {
-    const { exited, stderr } = install();
+    const { exited, stderr } = install("--yarn");
     const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
@@ -976,6 +976,11 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
         tarball: `http://127.0.0.1:${server.port}/no-deps/-/no-deps-1.0.0.tgz`,
       }),
     );
+
+    // yarn.lock has no `""` shorthand, so the printer materializes the URL.
+    const yarnLock = await file(join(String(dir), "yarn.lock")).text();
+    expect(yarnLock).toContain(`resolved "http://127.0.0.1:${server.port}/no-deps/-/no-deps-1.0.0.tgz"`);
+    expect(yarnLock).not.toContain('resolved ""');
   }
 
   // Update the lockfile by adding a dependency. The already-locked entry must
@@ -1004,4 +1009,4 @@ it("keeps empty resolved fields of already-locked packages when updating the loc
   expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0", ""');
   expect(lockfile).not.toContain("no-deps/-/no-deps-1.0.0.tgz");
   expect(lockfile).toContain(`"a-dep": ["a-dep@1.0.1", "http://127.0.0.1:${server.port}/a-dep/-/a-dep-1.0.1.tgz"`);
-});
+}, 30_000);

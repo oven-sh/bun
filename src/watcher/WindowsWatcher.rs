@@ -333,7 +333,9 @@ impl WindowsWatcher {
         let rc = unsafe {
             w::ntdll::NtCreateFile(
                 &mut handle,
-                w::FILE_LIST_DIRECTORY,
+                // SYNCHRONIZE lets stop()'s GetOverlappedResult(bWait) wait on
+                // this handle; NtCreateFile grants exactly what is asked.
+                w::FILE_LIST_DIRECTORY | w::SYNCHRONIZE,
                 &mut attr,
                 &mut io,
                 ptr::null_mut(),

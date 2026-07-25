@@ -289,6 +289,21 @@ describe("FormData", () => {
       expect([...fd]).toEqual([["comment", value]]);
     });
 
+    it("stops at the first close delimiter and discards the epilogue", async () => {
+      const body =
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
+        `foo${CRLF}` +
+        `--${B}--${CRLF}` +
+        `--${B}${CRLF}` +
+        `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` +
+        `admin${CRLF}` +
+        `--${B}--${CRLF}`;
+      const fd = await make(body);
+      expect([...fd]).toEqual([["comment", "foo"]]);
+      expect(fd.get("role")).toBeNull();
+    });
+
     it("keeps a value that ends in CRLF", async () => {
       const value = `line1${CRLF}line2${CRLF}`;
       const body =

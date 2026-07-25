@@ -945,6 +945,12 @@ pub fn defines_from_transform_options(
         }
     }
 
+    // `Bun.env` is an alias for `process.env` at runtime; Node has the latter
+    // but not the former, so rewrite it so the bundle runs there.
+    if target == Target::Node {
+        user_defines.get_or_put_value(b"Bun.env", Box::from(b"process.env".as_slice()))?;
+    }
+
     let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");

@@ -4731,9 +4731,8 @@ pub mod bv2_impl {
                                 // SAFETY: `result.path` is moved into `free_list`
                                 // below and thus outlives `BundleV2`; erase to
                                 // `'static` so the import record can borrow it.
-                                let result_path_static: &'static [u8] = unsafe {
-                                    &*std::ptr::from_ref::<[u8]>(result.path.as_ref())
-                                };
+                                let result_path_static: &'static [u8] =
+                                    unsafe { &*std::ptr::from_ref::<[u8]>(result.path.as_ref()) };
                                 source_import_records.as_mut_slice()
                                     [resolve.import_record.import_record_index as usize]
                                     .path = bun_paths::fs::Path::init(result_path_static);

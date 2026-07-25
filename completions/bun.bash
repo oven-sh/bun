@@ -53,11 +53,10 @@ _bun_completions() {
 
     case "${prev}" in
         help|--help|-h|-v|--version) return;;
-        -c|--config) _file_arguments "!*.toml" && return;;
         --backend)
             COMPREPLY=( $(compgen -W "clonefile copyfile hardlink clonefile_each_dir symlink" -- "${cur_word}") );
             return;;
-        --cwd|--coverage-dir|--outdir|--public-dir|--cache-dir|--root)
+        --cwd|--coverage-dir|--outdir|--cache-dir|--root)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
             return;;
         --jsx-runtime)

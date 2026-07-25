@@ -914,6 +914,15 @@ impl FileSink {
         // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
         // must not touch live JS cells.
 
+        // The JS side abandoned this sink. If bytes are still buffered below
+        // the writer's chunk threshold, flush them now so they reach the fd
+        // before `deinit` closes it; otherwise a GC between `write()` and the
+        // deferred-microtask drain drops the data on the floor.
+        if !self.done.get() && self.writer.get().has_pending_data() {
+            // SAFETY(JsCell): `IOWriter::flush` is pure I/O; no JS while held.
+            let _ = self.writer.with_mut(|w| w.flush());
+        }
+
         // Shutdown never unwinds the writer: the loop stops ticking, so the
         // `onWrite`/`onClose`/EOF callbacks that balance these refs can no
         // longer arrive, and a queued FlushPendingFileSinkTask never runs.

@@ -1,6 +1,6 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
-import { once } from "node:events";
+import { getEventListeners, once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
@@ -1310,6 +1310,91 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.removeAllListeners("message");
   expect(port1.listenerCount("message")).toBe(0);
   port1.close();
+});
+
+// Node's NodeEventTarget has one listener map serving both the EventEmitter-
+// style methods and addEventListener/removeEventListener. The emitter methods
+// here are backed by a JS-side registry (the native EventTarget map is
+// opaque), so the EventTarget methods must be routed through it too.
+test("MessagePort emitter and EventTarget registrations share one registry", () => {
+  // (a) the same function registered via on() then addEventListener() is one
+  // listener: fires once per dispatch, counted once.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    const f = () => n++;
+    p.on("x", f);
+    p.addEventListener("x", f);
+    p.dispatchEvent(new Event("x"));
+    expect({ calls: n, count: p.listenerCount("x"), gel: getEventListeners(p, "x").length }).toEqual({
+      calls: 1,
+      count: 1,
+      gel: 1,
+    });
+    p.close();
+  }
+
+  // (b) an addEventListener()-registered listener is visible to
+  // listenerCount()/eventNames(), and off() can remove it.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    const f = () => n++;
+    p.addEventListener("y", f);
+    expect({ count: p.listenerCount("y"), named: p.eventNames().includes("y") }).toEqual({ count: 1, named: true });
+    p.off("y", f);
+    p.dispatchEvent(new Event("y"));
+    expect({ calls: n, count: p.listenerCount("y") }).toEqual({ calls: 0, count: 0 });
+    p.close();
+  }
+
+  // (c) removeEventListener() removes an on()-registered listener.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    const f = () => n++;
+    p.on("z", f);
+    p.removeEventListener("z", f);
+    p.dispatchEvent(new Event("z"));
+    expect({ calls: n, count: p.listenerCount("z") }).toEqual({ calls: 0, count: 0 });
+    p.close();
+  }
+
+  // (d) removeAllListeners() removes addEventListener()-registered listeners.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    p.addEventListener("w", () => n++);
+    p.removeAllListeners("w");
+    p.dispatchEvent(new Event("w"));
+    expect({ calls: n, count: p.listenerCount("w") }).toEqual({ calls: 0, count: 0 });
+    p.close();
+  }
+
+  // addEventListener({once:true}) drops from the registry after firing.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    p.addEventListener("o", () => n++, { once: true });
+    const before = p.listenerCount("o");
+    p.dispatchEvent(new Event("o"));
+    expect({ before, calls: n, after: p.listenerCount("o") }).toEqual({ before: 1, calls: 1, after: 0 });
+    p.close();
+  }
+
+  // first registration wins regardless of which API added it.
+  {
+    const { port1: p } = new MessageChannel();
+    let got: unknown;
+    const f = (arg: unknown) => (got = arg);
+    p.addEventListener("m", f);
+    p.on("m", f);
+    p.dispatchEvent(new Event("m"));
+    // addEventListener was first: listener receives the Event, not event.detail.
+    expect(got).toBeInstanceOf(Event);
+    expect(p.listenerCount("m")).toBe(1);
+    p.close();
+  }
 });
 
 // jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed

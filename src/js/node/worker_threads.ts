@@ -116,6 +116,18 @@ function injectFakeEmitter(Class) {
     return map;
   }
 
+  // The native EventTarget methods are on the prototype chain above the
+  // intermediate prototype we insert below; capture them so the overrides can
+  // call through without re-entering themselves.
+  const eventTargetProto = Object.getPrototypeOf(Class.prototype);
+  const nativeAddEventListener = eventTargetProto.addEventListener;
+  const nativeRemoveEventListener = eventTargetProto.removeEventListener;
+
+  // on()/once() store a wrapper in the native map; mark it so the
+  // addEventListener override recognises the call as internal and does not
+  // record the wrapper itself in the registry (the user's listener is).
+  const kWrapped = Symbol("wrappedListener");
+
   function messageEventHandler(event: MessageEvent) {
     return event.data;
   }
@@ -129,9 +141,11 @@ function injectFakeEmitter(Class) {
   }
 
   function wrapped(run, listener) {
-    return function (event) {
+    const w = function (event) {
       return listener(run(event));
     };
+    w[kWrapped] = true;
+    return w;
   }
 
   function functionForEventType(event, listener) {
@@ -199,8 +213,44 @@ function injectFakeEmitter(Class) {
       registryFor(target, false)?.get(event)?.delete(listener);
       return wrapper(ev);
     }
+    onceWrapper[kWrapped] = true;
     register(this, event, listener, onceWrapper, { once: true });
     return this;
+  }
+
+  // Overridden so EventTarget-style registration shares the registry with
+  // on()/once(): node's NodeEventTarget has one listener map, so the same
+  // function added via both APIs registers once, listenerCount()/eventNames()
+  // see addEventListener()-added listeners, and removeEventListener() removes
+  // an on()-added listener (and vice versa).
+  function addEventListener(type, listener, options) {
+    // on()/once() call through here with their wrapper; it is already recorded
+    // under the user's listener, so pass it straight to the native method.
+    if (typeof listener === "function" && listener[kWrapped])
+      return nativeAddEventListener.$call(this, type, listener, options);
+    if (listener == null || (typeof listener !== "function" && typeof listener !== "object"))
+      return nativeAddEventListener.$call(this, type, listener, options);
+    let actual = listener;
+    if (typeof options === "object" && options !== null && options.once) {
+      const target = this;
+      actual = function (ev) {
+        registryFor(target, false)?.get(type)?.delete(listener);
+        return typeof listener === "function" ? listener.$call(this, ev) : listener.handleEvent?.(ev);
+      };
+    }
+    const map = registryFor(this, true)!;
+    let byListener = map.get(type);
+    if (!byListener) map.set(type, (byListener = new SafeMap()));
+    if (byListener.has(listener)) return;
+    nativeAddEventListener.$call(this, type, actual, options);
+    byListener.set(listener, actual);
+  }
+
+  function removeEventListener(type, listener) {
+    const byListener = registryFor(this, false)?.get(type);
+    const actual = byListener?.get(listener) ?? listener;
+    nativeRemoveEventListener.$call(this, type, actual);
+    byListener?.delete(listener);
   }
 
   function emit(event, ...args) {
@@ -261,7 +311,7 @@ function injectFakeEmitter(Class) {
   // EventEmitter, not EventEmitter itself); use an intermediate prototype so
   // Object.getOwnPropertyNames(MessagePort.prototype) matches node.
   const proto = Class.prototype;
-  const inherited = Object.create(Object.getPrototypeOf(proto));
+  const inherited = Object.create(eventTargetProto);
   const emitterMethods: [string, Function][] = [
     ["on", on],
     ["off", off],
@@ -269,6 +319,8 @@ function injectFakeEmitter(Class) {
     ["emit", emit],
     ["addListener", on],
     ["removeListener", off],
+    ["addEventListener", addEventListener],
+    ["removeEventListener", removeEventListener],
     ["listenerCount", listenerCount],
     ["eventNames", eventNames],
     ["removeAllListeners", removeAllListeners],

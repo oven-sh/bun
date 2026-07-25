@@ -64,7 +64,7 @@ process.env.FOO = "hello";
 
 ## `.env` files and `package.json` scripts
 
-When you run a `package.json` script with `bun run <script>` (or `bun --filter`, or `bunx`), Bun loads `.env` and `.env.local` and exports their values to the script's subprocess. Values whose winning source is `.env.development`, `.env.production`, or `.env.test` (or their `.local` variants), or whose `$VAR` expansion resolved against one of those files, are **not** exported, because a script may set its own `NODE_ENV` and needs to re-derive those itself:
+When you run a `package.json` script with `bun run <script>` (or `bun --filter`, or `bunx`), Bun loads `.env` and `.env.local` (`.env.local` is skipped when `NODE_ENV`/`BUN_ENV` is `test`) and exports their values to the script's subprocess. Values whose winning source is `.env.development`, `.env.production`, or `.env.test` (or their `.local` variants), or whose `$VAR` expansion referenced a key not supplied by process env or `.env`/`.env.local`, are **not** exported, because a script may set its own `NODE_ENV` and needs to re-derive those itself:
 
 ```json package.json icon="file-json"
 "scripts": {

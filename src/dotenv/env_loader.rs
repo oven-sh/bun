@@ -777,12 +777,19 @@ impl Loader {
         self.env_development_local = None;
         self.env_production_local = None;
         self.env_test_local = None;
+        self.custom_files_loaded.clear_retaining_capacity();
     }
 
     /// `Map::create_null_delimited_env_map` plus [`Self::script_forward`].
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
         self.map
             .create_null_delimited_env_map_with_extra(&self.script_forward)
+    }
+
+    /// `Map::write_windows_env_block` plus [`Self::script_forward`].
+    pub fn write_windows_env_block(&mut self) -> Vec<u16> {
+        self.map
+            .write_windows_env_block_with_extra(&self.script_forward)
     }
 
     pub fn print_loaded(&self, start: i128) {
@@ -1235,7 +1242,12 @@ impl<'a> Parser<'a> {
                             }
                             Some(&*entry.value)
                         }
-                        None => None,
+                        None => {
+                            if key_start < end {
+                                *touched_conditional = true;
+                            }
+                            None
+                        }
                     };
                     let default_value: &[u8] = if value[end..].starts_with(b":-") {
                         end += b":-".len();
@@ -1465,6 +1477,15 @@ impl Map {
     /// Unicode block has no documented size limit, so this sizes the buffer to
     /// the actual contents instead of failing when the environment is large.
     pub fn write_windows_env_block(&mut self) -> Vec<u16> {
+        self.write_windows_env_block_with_extra(&[])
+    }
+
+    /// [`Self::write_windows_env_block`] plus an `extra` tail appended after
+    /// the map's own entries; keys already in `self` are skipped.
+    pub fn write_windows_env_block_with_extra(
+        &mut self,
+        extra: &[(Box<[u8]>, Box<[u8]>)],
+    ) -> Vec<u16> {
         // UTF-16 output is at most one code unit per UTF-8 input byte (ASCII
         // is 1:1; multi-byte sequences shrink; surrogate pairs are 2 units
         // from 4 bytes), so the UTF-8 byte length is a safe upper bound.
@@ -1475,22 +1496,29 @@ impl Map {
                 capacity += pair.key_ptr.len() + 1 + pair.value_ptr.value.len() + 1;
             }
         }
+        for (k, v) in extra {
+            capacity += k.len() + 1 + v.len() + 1;
+        }
 
         let mut result = vec![0u16; capacity];
         let mut i: usize = 0;
+        let mut push = |result: &mut [u16], key: &[u8], value: &[u8]| {
+            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], key).len();
+            result[i] = b'=' as u16;
+            i += 1;
+            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], value).len();
+            result[i] = 0;
+            i += 1;
+        };
         {
             let mut it = self.map.iterator();
             while let Some(pair) = it.next() {
-                i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
-                result[i] = b'=' as u16;
-                i += 1;
-                i += strings::convert_utf8_to_utf16_in_buffer(
-                    &mut result[i..],
-                    &pair.value_ptr.value,
-                )
-                .len();
-                result[i] = 0;
-                i += 1;
+                push(&mut result, pair.key_ptr, &pair.value_ptr.value);
+            }
+        }
+        for (k, v) in extra {
+            if !self.map.contains(k) {
+                push(&mut result, k, v);
             }
         }
         // Terminator: four trailing NUL u16s (already zero-initialized above).

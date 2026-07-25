@@ -897,18 +897,23 @@ for (const shell of ["system", "bun"]) {
       );
     });
 
-    test.skipIf(isWindowsCMD)("e2e: .env expansion re-derives under the script's NODE_ENV", () => {
-      const tmp = tempDirWithFiles("script-runner-dotenv", {
-        "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
-        "index.ts": "console.log('DATABASE_URL=' + process.env.DATABASE_URL);",
-        ".env": "DATABASE_URL=postgres://$DB_HOST/app",
-        ".env.development": "DB_HOST=localhost",
-        ".env.production": "DB_HOST=prod.internal",
-      });
-      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
-        "DATABASE_URL=postgres://prod.internal/app",
+    for (const withDevFile of [true, false]) {
+      test.skipIf(isWindowsCMD)(
+        `e2e: .env expansion re-derives under the script's NODE_ENV${withDevFile ? "" : " (key absent under this NODE_ENV)"}`,
+        () => {
+          const tmp = tempDirWithFiles("script-runner-dotenv", {
+            "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+            "index.ts": "console.log('DATABASE_URL=' + process.env.DATABASE_URL);",
+            ".env": "DATABASE_URL=postgres://$DB_HOST/app",
+            ...(withDevFile ? { ".env.development": "DB_HOST=localhost" } : {}),
+            ".env.production": "DB_HOST=prod.internal",
+          });
+          expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+            "DATABASE_URL=postgres://prod.internal/app",
+          );
+        },
       );
-    });
+    }
 
     test("--no-env-file disables .env loading for scripts", () => {
       const tmp = tempDirWithFiles("script-runner-dotenv", {
@@ -986,21 +991,38 @@ for (const shell of ["system", "bun"]) {
 // `bun run ./<file>` fast path.
 test("bun run <bare-file> and bun run ./<file> agree when .env sets NODE_ENV", () => {
   const tmp = tempDirWithFiles("script-runner-nodeenv", {
+    "package.json": "{}",
     "index.ts": "console.log('API=' + process.env.API + ', NODE_ENV=' + process.env.NODE_ENV);",
     ".env": "NODE_ENV=production",
     ".env.development": "API=dev",
     ".env.production": "API=prod",
   });
-  const run = (target: string) =>
-    Bun.spawnSync([bunExe(), "run", target], {
+  const run = (target: string) => {
+    const r = Bun.spawnSync([bunExe(), "run", target], {
       cwd: tmp,
       env: { ...bunEnv, NODE_ENV: undefined },
-    })
-      .stdout.toString("utf8")
-      .trim();
+    });
+    return { stdout: r.stdout.toString("utf8").trim(), exitCode: r.exitCode };
+  };
   const fast = run("./index.ts");
-  const slow = run("index");
-  expect({ fast, slow }).toEqual({ fast: slow, slow });
+  expect(fast).toEqual({ stdout: "API=dev, NODE_ENV=production", exitCode: 0 });
+  expect(run("index")).toEqual(fast);
+});
+
+test("bun --env-file run <bare-file> sees the --env-file values (slow path)", () => {
+  const tmp = tempDirWithFiles("script-runner-envfile-slow", {
+    "package.json": "{}",
+    "index.ts": "console.log('X=' + process.env.BUNTEST_ENVFILE_X);",
+    "custom.env": "BUNTEST_ENVFILE_X=from-custom",
+  });
+  const r = Bun.spawnSync([bunExe(), "--env-file=custom.env", "run", "index"], {
+    cwd: tmp,
+    env: { ...bunEnv, NODE_ENV: undefined },
+  });
+  expect({ stdout: r.stdout.toString("utf8").trim(), exitCode: r.exitCode }).toEqual({
+    stdout: "X=from-custom",
+    exitCode: 0,
+  });
 });
 
 const todoOnPosix = process.platform !== "win32" ? test.todo : test;

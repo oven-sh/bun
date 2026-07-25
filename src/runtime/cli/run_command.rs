@@ -4077,7 +4077,7 @@ impl BunXFastPath {
         // contract is that *this* `passthrough` wins.
         ctx.passthrough = passthrough.to_vec();
 
-        let env_block = env.map.write_windows_env_block();
+        let env_block = env.write_windows_env_block();
 
         let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
             handle,

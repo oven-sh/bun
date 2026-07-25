@@ -959,6 +959,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
+        vm.transpiler.resolver.opts.preserve_symlinks_main =
+            ctx.runtime_options.preserve_symlinks_main
+                || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                    .get()
+                    .unwrap_or(false);
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -2870,9 +2875,35 @@ impl RunCommand {
             ..Default::default()
         });
 
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false);
+
         // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks).
-        let absolute_script_path: Box<[u8]> = {
+        // symlinks). With `--preserve-symlinks-main`, Node.js keeps the
+        // symlink spelling for the entry module's `__filename`, so skip the
+        // realpath and resolve `target` against cwd instead.
+        let absolute_script_path: Box<[u8]> = if preserve_symlinks_main {
+            let mut cwd_buf = PathBuffer::uninit();
+            let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {
+                let _ = bun_sys::close(fd);
+                return false;
+            };
+            let cwd_len = cwd.as_bytes().len();
+            cwd_buf[cwd_len] = paths::SEP;
+            let joined = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+                &cwd_buf[..cwd_len + 1],
+                &mut script_name_buf.0,
+                &[target],
+            );
+            let joined = strings::without_trailing_slash(joined);
+            if joined.is_empty() {
+                let _ = bun_sys::close(fd);
+                return false;
+            }
+            joined.to_vec().into_boxed_slice()
+        } else {
             let resolved = match bun_sys::get_fd_path(fd, &mut script_name_buf) {
                 Ok(p) => p,
                 Err(_) => {

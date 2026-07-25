@@ -2304,7 +2304,9 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
+            arg.starts_with(b"--trace-")
+                || arg.starts_with(b"--stack-trace-limit")
+                || arg.starts_with(b"--heapsnapshot-signal")
         }
         let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
@@ -4048,7 +4050,8 @@ impl VirtualMachine {
             return Err(crate::CrateError::ModuleNotFound);
         }
 
-        let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
+        let is_main_entry_resolve = source == MAIN_FILE_NAME;
+        let is_special_source = is_main_entry_resolve || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
         let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
         let top_level_dir = self.top_level_dir();
@@ -4157,10 +4160,23 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // SAFETY: `result_path.text` borrows the resolver's arena, which
-        // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
-        // note).
-        ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+        // `--preserve-symlinks-main`: the synthetic `bun:main` wrapper resolving
+        // the entry module must keep the symlink spelling. `finalize_result`
+        // stores the pre-realpath text in `.pretty` when it rewrites `.text`
+        // (see `Path::set_realpath`), so read it back for this one resolve.
+        let path_text = if is_main_entry_resolve
+            && self.transpiler.resolver.opts.preserve_symlinks_main
+            && result_path.is_symlink
+            && !result_path.pretty.is_empty()
+        {
+            result_path.pretty
+        } else {
+            result_path.text
+        };
+        // SAFETY: `result_path.text`/`.pretty` borrow the resolver's arena,
+        // which outlives `ResolveFunctionResult` (see the struct's
+        // lifetime-erasure note).
+        ret.path = unsafe { bun_ptr::detach_lifetime(path_text) };
         ret.result = Some(result);
 
         Ok(())

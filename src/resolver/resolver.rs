@@ -1665,8 +1665,16 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            if let Some(entries) = dir.get_entries_ref(self.generation) {
-                if let Some(query) = entries.get(name.filename) {
+            // `--preserve-symlinks` (Node.js semantics): keep the symlink
+            // spelling as the resolved path so `__filename` / the module
+            // cache key is the link, not the realpath. `dir.abs_real_path`
+            // is already left empty under this flag (see `dir_info_uncached`),
+            // so skipping this block is the only remaining realpath source.
+            if !self.opts.preserve_symlinks
+                && let Some(entries) = dir.get_entries_ref(self.generation)
+                && let Some(query) = entries.get(name.filename)
+            {
+                {
                     // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
                     let symlink_path =
                         unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };

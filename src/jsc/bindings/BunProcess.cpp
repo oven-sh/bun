@@ -1395,6 +1395,9 @@ extern "C" bool Bun__shouldIgnoreOneDisconnectEventListener(JSC::JSGlobalObject*
 extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
+#if !OS(WINDOWS)
+extern "C" void Bun__noopSignalHandler(int);
+#endif
 
 __attribute__((noinline)) static void forwardSignal(int signalNumber)
 {
@@ -1587,7 +1590,10 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
-                        if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+                        // SIGUSR1 is reserved (inert) by default; restoring SIG_DFL would
+                        // make it fatal. Restore the startup no-op handler instead.
+                        void (*restoreTo)(int) = signalNumber == SIGUSR1 ? Bun__noopSignalHandler : SIG_DFL;
+                        if (void (*oldHandler)(int) = signal(signalNumber, restoreTo); oldHandler != forwardSignal) {
                             // Don't uninstall the old handler if it's not the one we installed.
                             signal(signalNumber, oldHandler);
                         }

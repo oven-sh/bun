@@ -377,20 +377,90 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
-  it("Bun.write(path, fetch()) with a streaming body", async () => {
-    using tmpbase = tempDir("bun-write-fetch-streaming", {});
-    const out = join(String(tmpbase), "dl.out");
-    const body = Buffer.alloc(300_000, "x").toString();
-    await using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response(body),
+  describe("Bun.write(path, fetch()) with a streaming body", () => {
+    it("Content-Length body settles", async () => {
+      using dir = tempDir("bun-write-fetch-cl", {});
+      const out = join(String(dir), "dl.bin");
+      const body = Buffer.alloc(500_000, "x");
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+      const res = await fetch(server.url);
+      expect(res.headers.get("content-length")).toBe(String(body.length));
+      const written = await Bun.write(out, res);
+      expect(written).toBe(body.length);
+      expect(await Bun.file(out).bytes()).toEqual(new Uint8Array(body));
     });
-    const resp = await fetch(server.url);
-    expect(resp.status).toBe(200);
-    const written = await Bun.write(out, resp);
-    expect(written).toBe(body.length);
-    expect((await Bun.file(out).bytes()).length).toBe(body.length);
-    expect(await Bun.file(out).text()).toBe(body);
+
+    it("chunked body settles", async () => {
+      using dir = tempDir("bun-write-fetch-chunked", {});
+      const out = join(String(dir), "dl.bin");
+      const chunk = Buffer.alloc(80_000, "y");
+      const chunks = 4;
+      const { promise: fetched, resolve: markFetched } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(async function* () {
+            yield chunk;
+            await fetched;
+            for (let i = 1; i < chunks; i++) yield chunk;
+          }),
+      });
+      const res = await fetch(server.url);
+      markFetched();
+      expect(res.headers.get("content-length")).toBeNull();
+      const written = await Bun.write(out, res);
+      expect(written).toBe(chunk.length * chunks);
+      expect((await Bun.file(out).bytes()).length).toBe(chunk.length * chunks);
+    });
+
+    it.each([
+      ["AbortError", undefined],
+      ["TimeoutError", new DOMException("The operation timed out.", "TimeoutError")],
+    ])("rejects with %s when the signal aborts mid-transfer", async (name, reason) => {
+      using dir = tempDir("bun-write-fetch-abort", {});
+      const { promise: gate, resolve: openGate } = Promise.withResolvers();
+      await using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(async function* () {
+            yield Buffer.alloc(200_000, "z");
+            await gate;
+          }),
+      });
+      try {
+        const ac = new AbortController();
+        // Scope the Response so it is collectible once Bun.write has
+        // registered on the body; on an unfixed build the finalizer then drops
+        // the body and the abort never reaches the write promise.
+        async function start() {
+          const res = await fetch(server.url, { signal: ac.signal });
+          return { write: Bun.write(join(String(dir), "dl.bin"), res) };
+        }
+        const { write } = await start();
+        await gcTick();
+        Bun.gc(true);
+        ac.abort(reason);
+        let caught;
+        await write.catch(e => (caught = e));
+        expect(caught).toBeInstanceOf(DOMException);
+        expect(caught.name).toBe(name);
+      } finally {
+        openGate();
+      }
+    });
+
+    it("settles when aborted after the body has been fully received", async () => {
+      using dir = tempDir("bun-write-fetch-late-abort", {});
+      const out = join(String(dir), "dl.bin");
+      const body = Buffer.alloc(500_000, "q");
+      await using server = Bun.serve({ port: 0, fetch: () => new Response(body) });
+      const ac = new AbortController();
+      const res = await fetch(server.url, { signal: ac.signal });
+      const written = await Bun.write(out, res);
+      ac.abort();
+      expect(written).toBe(body.length);
+      expect((await Bun.file(out).bytes()).length).toBe(body.length);
+    });
   });
 
   it.skipIf(!isASAN)("Bun.write(path, fetch()) then resp.body does not crash", async () => {

@@ -295,6 +295,25 @@ impl PendingValue {
         bun_opaque::opaque_deref(self.global)
     }
 
+    /// A consumer that wants the complete body (not a stream) is about to
+    /// overwrite `task`/`on_receive_value`. Fire the producer's
+    /// `on_start_buffering` handshake with the producer's own `task` so it
+    /// switches to `BufferAll` (matching `set_promise` / `ValueBufferer`),
+    /// then clear the remaining producer hooks so they can't be invoked
+    /// against the consumer's `task` after it's been repurposed.
+    pub(crate) fn take_over_as_buffering_consumer(&mut self) {
+        if let (Some(on_start_buffering), Some(producer_task)) =
+            (self.on_start_buffering.take(), self.task)
+        {
+            on_start_buffering(producer_task);
+        }
+        self.on_start_buffering = None;
+        self.on_start_streaming = None;
+        self.on_readable_stream_available = None;
+        self.on_stream_cancelled = None;
+        self.on_stream_drained = None;
+    }
+
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
     /// If chunked encoded this will represent the total received size (ignoring the chunk headers)

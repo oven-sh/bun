@@ -5244,18 +5244,7 @@ pub fn write_file_internal(
                         let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                             unreachable!()
                         };
-                        if locked.on_start_streaming.is_some() {
-                            if let (Some(on_start_buffering), Some(producer_task)) =
-                                (locked.on_start_buffering.take(), locked.task)
-                            {
-                                on_start_buffering(producer_task);
-                            }
-                        }
-                        locked.on_start_buffering = None;
-                        locked.on_start_streaming = None;
-                        locked.on_readable_stream_available = None;
-                        locked.on_stream_cancelled = None;
-                        locked.on_stream_drained = None;
+                        locked.take_over_as_buffering_consumer();
                         locked.task = Some(task.cast::<c_void>());
                         locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
                         // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.

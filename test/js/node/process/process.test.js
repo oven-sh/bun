@@ -1711,3 +1711,106 @@ describe("NODE_NO_WARNINGS", () => {
     expect(await warn("1")).not.toMatch(/Warning: foo/);
   });
 });
+
+describe("process.emit propagates listener exceptions to the caller", () => {
+  // A listener's synchronous throw must propagate out of process.emit() like any
+  // EventEmitter. Previously Bun's native EventEmitter routed the throw through
+  // Bun__reportUnhandledError, so `try { process.emit(...) } catch {}` never caught
+  // and the process exited 1.
+
+  async function run(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it.concurrent("propagates for custom and built-in event names", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const res = {};
+      for (const name of ["custom-event", "message", "SIGUSR2", "warning", "exit", "beforeExit"]) {
+        const l = () => { throw new Error("T:" + name); };
+        process.on(name, l);
+        try {
+          process.emit(name, name === "warning" ? new Error("w") : undefined);
+          res[name] = "swallowed";
+        } catch (e) {
+          res[name] = e.message === "T:" + name ? "propagated" : "wrong:" + e.message;
+        }
+        process.removeListener(name, l);
+      }
+      console.log(JSON.stringify(res));
+    `);
+    expect(stderr).not.toContain("error:");
+    expect(JSON.parse(stdout.trim())).toEqual({
+      "custom-event": "propagated",
+      "message": "propagated",
+      "SIGUSR2": "propagated",
+      "warning": "propagated",
+      "exit": "propagated",
+      "beforeExit": "propagated",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("stops at the first throwing listener", async () => {
+    const { stdout, exitCode } = await run(`
+      const ran = [];
+      process.on("foo", () => { ran.push(1); throw new Error("first"); });
+      process.on("foo", () => { ran.push(2); });
+      let caught;
+      try { process.emit("foo"); } catch (e) { caught = e.message; }
+      process.removeAllListeners("foo");
+      console.log(JSON.stringify({ ran, caught }));
+    `);
+    expect(JSON.parse(stdout.trim())).toEqual({ ran: [1], caught: "first" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("emit('error', err) with no error listener throws synchronously", async () => {
+    const { stdout, exitCode } = await run(`
+      process.on("unused", () => {});
+      let caught;
+      try {
+        process.emit("error", new Error("no-listener"));
+      } catch (e) {
+        caught = e.message;
+      }
+      console.log(JSON.stringify({ caught }));
+    `);
+    expect(JSON.parse(stdout.trim())).toEqual({ caught: "no-listener" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("newListener throw propagates out of process.on()", async () => {
+    const { stdout, exitCode } = await run(`
+      const nl = () => { throw new Error("nl"); };
+      process.on("newListener", nl);
+      let caught;
+      try {
+        process.on("foo", () => {});
+      } catch (e) {
+        caught = e.message;
+      }
+      process.removeListener("newListener", nl);
+      console.log(JSON.stringify({ caught }));
+    `);
+    expect(JSON.parse(stdout.trim())).toEqual({ caught: "nl" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("uncaught throw still reaches uncaughtException when emit() is not wrapped", async () => {
+    const { stdout, exitCode } = await run(`
+      process.on("uncaughtException", e => { console.log("uncaught:" + e.message); });
+      process.on("foo", () => { throw new Error("boom"); });
+      process.emit("foo");
+      console.log("after");
+    `);
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["uncaught:boom"]);
+    expect(exitCode).toBe(0);
+  });
+});

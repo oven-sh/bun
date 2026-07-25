@@ -6,6 +6,7 @@
 #include "EventNames.h"
 #include "JSErrorHandler.h"
 #include "JSEventListener.h"
+#include <JavaScriptCore/ThrowScope.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/Ref.h>
@@ -116,12 +117,12 @@ bool EventEmitter::emitForBindings(const Identifier& eventType, const MarkedArgu
     if (!scriptExecutionContext())
         return false;
 
-    return emit(eventType, arguments);
+    return fireEventListeners(eventType, arguments, /* propagateExceptions */ true);
 }
 
 bool EventEmitter::emit(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
 {
-    return fireEventListeners(eventType, arguments);
+    return fireEventListeners(eventType, arguments, /* propagateExceptions */ false);
 }
 
 void EventEmitter::uncaughtExceptionInEventHandler()
@@ -175,7 +176,7 @@ Vector<JSObject*> EventEmitter::getListeners(const Identifier& eventType)
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
-bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedArgumentBuffer& arguments, bool propagateExceptions)
 {
 
     auto* data = eventTargetData();
@@ -190,7 +191,13 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
             if (!thisObject)
                 return false;
 
-            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
+            auto* globalObject = thisObject->globalObject();
+            if (propagateExceptions) {
+                auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+                scope.throwException(globalObject, arguments.at(0));
+                return false;
+            }
+            Bun__reportUnhandledError(globalObject, JSValue::encode(arguments.at(0)));
             return false;
         }
         return false;
@@ -198,7 +205,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
-    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments);
+    auto fired = innerInvokeEventListeners(eventType, *listenersVector, arguments, propagateExceptions);
     data->isFiringEventListeners = prevFiringEventListeners;
     return fired;
 }
@@ -206,7 +213,7 @@ bool EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.
 // Note that removal still has an effect due to the removed field in RegisteredEventListener.
 // https://dom.spec.whatwg.org/#concept-event-listener-inner-invoke
-bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments)
+bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, SimpleEventListenerVector listeners, const MarkedArgumentBuffer& arguments, bool propagateExceptions)
 {
     Ref<EventEmitter> protectedThis(*this);
     ASSERT(!listeners.isEmpty());
@@ -252,6 +259,13 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (exception) [[unlikely]] {
+            if (propagateExceptions) {
+                // Node.js EventEmitter semantics: a listener's synchronous throw propagates
+                // out of emit() to the caller, and subsequent listeners do not run.
+                auto scope = DECLARE_THROW_SCOPE(vm);
+                scope.throwException(lexicalGlobalObject, exception);
+                return fired;
+            }
             auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
@@ -264,7 +278,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
                     errorValue = JSC::jsUndefined();
                 }
                 expcep.append(errorValue);
-                fireEventListeners(errorIdentifier, WTF::move(expcep));
+                fireEventListeners(errorIdentifier, WTF::move(expcep), false);
             }
         }
     }

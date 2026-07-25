@@ -863,7 +863,6 @@ describe("node:inspector Runtime.consoleAPICalled", () => {
     `);
     const byType = (t: string) => events.filter(e => e.type === t);
 
-    // count
     const counts = byType("count");
     expect(counts.map(e => e.args[0].value)).toEqual(["cnt: 1", "cnt: 2", "cnt: 1"]);
 
@@ -881,7 +880,6 @@ describe("node:inspector Runtime.consoleAPICalled", () => {
     expect(asserts).toHaveLength(1);
     expect(asserts[0].args).toEqual([{ type: "string", value: "loud" }]);
 
-    // dirxml carries the argument as a RemoteObject.
     const dirxml = byType("dirxml");
     expect(dirxml).toHaveLength(1);
     expect(dirxml[0].args[0]).toMatchObject({ type: "object", className: "Object" });
@@ -897,12 +895,9 @@ describe("node:inspector Runtime.consoleAPICalled", () => {
       process.stderr.write("reached\\n");
     `);
     expect(events).toHaveLength(1);
-    expect(events[0].args).toHaveLength(3);
-    // Revoked proxy: classification fell back but a RemoteObject was still produced.
-    expect(events[0].args[0].type).toBe("object");
-    // Null-prototype object.
-    expect(events[0].args[1]).toMatchObject({ type: "object", className: "Object", description: "Object" });
-    // Proxy over an array.
-    expect(events[0].args[2]).toMatchObject({ type: "object", subtype: "proxy" });
+    const [revoked, nullProto, arrayProxy] = events[0].args;
+    expect(revoked.type).toBe("object");
+    expect(nullProto).toMatchObject({ type: "object", className: "Object", description: "Object" });
+    expect(arrayProxy).toMatchObject({ type: "object", subtype: "proxy" });
   });
 });

@@ -15,6 +15,7 @@ const PerformanceNow = performance.now.bind(performance);
 const ObjectKeys = Object.keys;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectPrototypeToString = Object.prototype.toString;
+const ArrayPrototypeSlice = Array.prototype.slice;
 const FunctionPrototypeToString = Function.prototype.toString;
 const DatePrototypeToString = Date.prototype.toString;
 const RegExpPrototypeToString = RegExp.prototype.toString;
@@ -195,9 +196,12 @@ function constructorName(value: object): string | undefined {
     let proto: object | null = value;
     while (proto !== null) {
       const descriptor = Object.getOwnPropertyDescriptor(proto, "constructor");
-      if (descriptor !== undefined && $isCallable(descriptor.value)) {
-        const name = descriptor.value.name;
-        if (typeof name === "string" && name.length > 0) return name;
+      if (descriptor !== undefined) {
+        const ctor = descriptor.value;
+        if ($isCallable(ctor)) {
+          const name = ctor.name;
+          if (typeof name === "string" && name.length > 0) return name;
+        }
       }
       proto = ObjectGetPrototypeOf(proto);
     }
@@ -206,7 +210,11 @@ function constructorName(value: object): string | undefined {
 }
 
 function truncate(text: string): string {
-  return text.length > MAX_DESCRIPTION_LENGTH ? text.slice(0, MAX_DESCRIPTION_LENGTH) + "…" : text;
+  if (text.length <= MAX_DESCRIPTION_LENGTH) return text;
+  let end = MAX_DESCRIPTION_LENGTH;
+  const code = text.charCodeAt(end - 1);
+  if (code >= 0xd800 && code <= 0xdbff) end--;
+  return text.slice(0, end) + "…";
 }
 
 function classifyObject(value: object): { subtype?: string; className: string; description: string } {
@@ -324,20 +332,21 @@ function previewValue(value: unknown): { type: string; value: string; subtype?: 
       } catch {
         return { type: "object", value: "Object" };
       }
+      const { subtype, description } = info;
       const entry: { type: string; value: string; subtype?: string } = {
         type: "object",
-        value: truncate(info.description),
+        value: truncate(description),
       };
-      if (info.subtype !== undefined) entry.subtype = info.subtype;
+      if (subtype !== undefined) entry.subtype = subtype;
       return entry;
     }
   }
 }
 
 function entryPreview(value: unknown): object {
-  const p = previewValue(value);
-  const out: AnyRecord = { type: p.type, description: p.value, overflow: false, properties: [] };
-  if (p.subtype !== undefined) out.subtype = p.subtype;
+  const { type, value: description, subtype } = previewValue(value);
+  const out: AnyRecord = { type, description, overflow: false, properties: [] };
+  if (subtype !== undefined) out.subtype = subtype;
   return out;
 }
 
@@ -455,14 +464,15 @@ function toRemoteObject(arg: unknown): object {
       } catch {
         info = { className: "Object", description: ObjectPrototypeToString.$call(arg) };
       }
+      const { subtype, className, description } = info;
       const remote: AnyRecord = {
         type: "object",
-        className: info.className,
-        description: info.description,
+        className,
+        description,
         objectId: `bun.1.${nextRemoteObjectId++}`,
-        preview: buildPreview(arg, info.subtype, info.description),
+        preview: buildPreview(arg, subtype, description),
       };
-      if (info.subtype !== undefined) remote.subtype = info.subtype;
+      if (subtype !== undefined) remote.subtype = subtype;
       return remote;
     }
   }
@@ -487,28 +497,38 @@ function prepareCDPCallFrames(_err: unknown, callSites: any[]): object[] {
   return frames;
 }
 
-function captureCDPStackTrace(skipAbove: Function): object | undefined {
+const CONSOLE_STACK_TRACE_LIMIT = 30;
+
+function captureCDPStackTrace(skipAbove: Function): object[] | undefined {
+  // User code can install throwing getters/setters or make these non-writable
+  // in strict mode; best-effort at every touch so console.* itself never
+  // throws from the hook.
   const target: { stack?: object[] } = {};
-  const savedPrepare = Error.prepareStackTrace;
-  const savedLimit = Error.stackTraceLimit;
+  let savedPrepare: unknown;
+  let savedLimit: unknown;
+  try {
+    savedPrepare = Error.prepareStackTrace;
+    savedLimit = Error.stackTraceLimit;
+  } catch {
+    return undefined;
+  }
   try {
     Error.prepareStackTrace = prepareCDPCallFrames;
     try {
-      Error.stackTraceLimit = 200;
+      Error.stackTraceLimit = CONSOLE_STACK_TRACE_LIMIT;
     } catch {}
     ErrorCaptureStackTrace(target, skipAbove);
-    const callFrames = target.stack;
-    if ($isArray(callFrames)) return { callFrames };
   } catch {
-    // Best-effort: a user-installed prepareStackTrace setter or a non-writable
-    // stackTraceLimit must not make console.* itself throw.
   } finally {
-    Error.prepareStackTrace = savedPrepare;
     try {
-      Error.stackTraceLimit = savedLimit;
+      Error.prepareStackTrace = savedPrepare as any;
+    } catch {}
+    try {
+      Error.stackTraceLimit = savedLimit as number;
     } catch {}
   }
-  return undefined;
+  const callFrames = target.stack;
+  return $isArray(callFrames) ? callFrames : undefined;
 }
 
 // Node delivers consoleAPICalled through V8's message pump, so a listener
@@ -522,7 +542,7 @@ function emitConsoleAPICalled(type: string, args: unknown[], hook: Function) {
   emittingConsoleAPI = true;
   try {
     const timestamp = DateNow();
-    const stackTrace = captureCDPStackTrace(hook);
+    const callFrames = captureCDPStackTrace(hook);
     for (const session of runtimeEnabledSessions) {
       // Neither a throwing listener nor a throwing argument serialization
       // (toRemoteObject reads user-controlled getters) may make the console
@@ -537,7 +557,7 @@ function emitConsoleAPICalled(type: string, args: unknown[], hook: Function) {
           executionContextId: 1,
           timestamp,
         };
-        if (stackTrace !== undefined) params.stackTrace = stackTrace;
+        if (callFrames !== undefined) params.stackTrace = { callFrames: ArrayPrototypeSlice.$call(callFrames) };
         const message = { method: "Runtime.consoleAPICalled", params };
         // Node's Session#onMessage emits the method-specific event first,
         // then the generic "inspectorNotification".
@@ -584,7 +604,7 @@ function makeSpecialConsoleHook(method: string, original: Function): Function {
   switch (method) {
     case "assert": {
       const hook = function (this: unknown, ...args: unknown[]) {
-        if (!args[0]) emitConsoleAPICalled("assert", args.slice(1), hook);
+        if (!args[0]) emitConsoleAPICalled("assert", ArrayPrototypeSlice.$call(args, 1), hook);
         return original.$apply(this, args);
       };
       return hook;

@@ -36,6 +36,9 @@ pub struct StructuralIndex<'c> {
     pub flags: u32,
     /// First comment seen (scalar indexer only).
     pub first_comment: Option<Range>,
+    /// Every comment range, in source order (scalar indexer only; the SIMD
+    /// kernel falls back to scalar on seeing a `/`).
+    pub comments: Vec<Range>,
     /// Set when the indexer hit an error.
     pub index_error: Option<IndexError>,
     done: bool,
@@ -78,6 +81,7 @@ impl<'c> StructuralIndex<'c> {
             dirty: Vec::new(),
             flags: 0,
             first_comment: None,
+            comments: Vec::new(),
             index_error: None,
             done: false,
             src_off: 0,
@@ -270,12 +274,14 @@ impl<'c> StructuralIndex<'c> {
                         }
                         _ => return self.fail(IndexError::UnexpectedSlash { pos: i }),
                     }
+                    let range = Range {
+                        loc: bun_ast::usize2loc(start),
+                        len: (i - start) as i32,
+                    };
                     if self.first_comment.is_none() {
-                        self.first_comment = Some(Range {
-                            loc: bun_ast::usize2loc(start),
-                            len: (i - start) as i32,
-                        });
+                        self.first_comment = Some(range);
                     }
+                    self.comments.push(range);
                 }
                 _ => {
                     let cls = JSON_BYTE_CLASS[c as usize];
@@ -461,6 +467,11 @@ mod tests {
         let first = x.first_comment.expect("comment recorded");
         assert_eq!(first.loc.start, 0);
         assert_eq!(first.len, 8);
+        assert_eq!(x.comments.len(), 2);
+        assert_eq!(x.comments[0].loc.start, 0);
+        assert_eq!(x.comments[0].len, 8);
+        assert_eq!(x.comments[1].loc.start, 14);
+        assert_eq!(x.comments[1].len, 7);
         let expected: Vec<u32> = vec![9, 10, 12, 22, 24, 25];
         assert_eq!(v, expected);
     }

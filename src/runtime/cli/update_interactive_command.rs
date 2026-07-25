@@ -204,6 +204,7 @@ impl UpdateInteractiveCommand {
             PrintJsonOptions {
                 indent: package_json.indentation,
                 mangled_props: None,
+                preserve_comments: &package_json.comments,
                 ..Default::default()
             },
         ) {

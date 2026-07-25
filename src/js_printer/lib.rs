@@ -1082,6 +1082,11 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// Comment byte-ranges (into `json_comment_source`) to interleave back into
+    /// the output when re-printing JSONC. See [`print_json`].
+    pub json_preserve_comments: &'a [bun_ast::Range],
+    pub json_comment_source: &'a [u8],
 }
 
 impl<'a> Options<'a> {
@@ -1137,6 +1142,8 @@ impl<'a> Default for Options<'a> {
             ts_enums: None,
             line_offset_tables: None,
             mangled_props: None,
+            json_preserve_comments: &[],
+            json_comment_source: &[],
         }
     }
 }
@@ -1150,6 +1157,10 @@ pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
     pub minify_whitespace: bool,
+    /// Comment byte-ranges into `source.contents` to re-emit at their original
+    /// positions relative to surviving AST nodes. Preserves JSONC comments
+    /// across a parse → edit → print round-trip.
+    pub preserve_comments: &'a [bun_ast::Range],
 }
 
 // `print_json` lives below the `Printer` impl (after `__gated_printer`) so it
@@ -1406,6 +1417,11 @@ pub mod __gated_printer {
         pub was_lazy_export: bool,
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
+
+        /// Index into `options.json_preserve_comments` of the next comment to
+        /// emit; advanced by [`Self::flush_json_comments_before`].
+        pub json_comment_cursor: usize,
+        pub json_comment_watermark: i32,
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
@@ -1666,6 +1682,52 @@ pub mod __gated_printer {
                 let amt = i.min(indentation_buf.len());
                 self.print(&indentation_buf[..amt]);
                 i -= amt;
+            }
+        }
+
+        /// Emit every preserved JSONC comment whose source start precedes
+        /// `before`, maintaining a monotonic cursor so each comment is printed
+        /// once. `leading_break` selects whether the separator newline/indent
+        /// goes before or after the comment text (before-close-brace vs
+        /// before-property callers are positioned differently).
+        #[inline]
+        pub fn flush_json_comments_before(&mut self, before: i32, leading_break: bool) {
+            if !IS_JSON {
+                return;
+            }
+            let comments = self.options.json_preserve_comments;
+            if self.json_comment_cursor >= comments.len() {
+                return;
+            }
+            // `Loc::EMPTY` is -1; nodes spliced in by the editor carry it.
+            if before <= 0 || before < self.json_comment_watermark {
+                return;
+            }
+            self.json_comment_watermark = before;
+            let source = self.options.json_comment_source;
+            while self.json_comment_cursor < comments.len() {
+                let range = comments[self.json_comment_cursor];
+                if range.loc.start >= before {
+                    break;
+                }
+                self.json_comment_cursor += 1;
+                if range.loc.start < 0 || range.len <= 0 {
+                    continue;
+                }
+                let start = range.loc.start as usize;
+                let end = start + range.len as usize;
+                if end > source.len() {
+                    continue;
+                }
+                if leading_break {
+                    self.print_newline();
+                    self.print_indent();
+                }
+                self.print(&source[start..end]);
+                if !leading_break {
+                    self.print_newline();
+                    self.print_indent();
+                }
             }
         }
 
@@ -3572,6 +3634,15 @@ pub mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"[");
                     let items = e.items.slice();
+                    let close_loc = e.close_bracket_loc.start;
+                    let had_comments = IS_JSON
+                        && items.is_empty()
+                        && close_loc > 0
+                        && self
+                            .options
+                            .json_preserve_comments
+                            .get(self.json_comment_cursor)
+                            .is_some_and(|r| r.loc.start < close_loc);
                     if !items.is_empty() {
                         if !e.is_single_line {
                             self.indent();
@@ -3588,6 +3659,9 @@ pub mod __gated_printer {
                                 self.print_newline();
                                 self.print_indent();
                             }
+                            if IS_JSON {
+                                self.flush_json_comments_before(item.loc.start, false);
+                            }
                             self.print_expr(*item, Level::Comma, ExprFlag::none());
 
                             if i == items.len() - 1 && matches!(item.data, ExprData::EMissing(_)) {
@@ -3597,10 +3671,19 @@ pub mod __gated_printer {
                         }
 
                         if !e.is_single_line {
+                            if IS_JSON {
+                                self.flush_json_comments_before(close_loc, true);
+                            }
                             self.unindent();
                             self.print_newline();
                             self.print_indent();
                         }
+                    } else if had_comments {
+                        self.indent();
+                        self.flush_json_comments_before(close_loc, true);
+                        self.unindent();
+                        self.print_newline();
+                        self.print_indent();
                     }
 
                     if e.close_bracket_loc.start > expr.loc.start {
@@ -3623,6 +3706,15 @@ pub mod __gated_printer {
                     self.add_source_mapping(expr.loc);
                     self.print(b"{");
                     let props = e.properties.slice();
+                    let close_loc = e.close_brace_loc.start;
+                    let had_comments = IS_JSON
+                        && props.is_empty()
+                        && close_loc > 0
+                        && self
+                            .options
+                            .json_preserve_comments
+                            .get(self.json_comment_cursor)
+                            .is_some_and(|r| r.loc.start < close_loc);
                     if !props.is_empty() {
                         if !e.is_single_line {
                             self.indent();
@@ -3633,6 +3725,11 @@ pub mod __gated_printer {
                         } else {
                             self.print_newline();
                             self.print_indent();
+                        }
+                        if IS_JSON {
+                            if let Some(key) = &props[0].key {
+                                self.flush_json_comments_before(key.loc.start, false);
+                            }
                         }
                         self.print_property(&props[0]);
 
@@ -3645,6 +3742,11 @@ pub mod __gated_printer {
                                     self.print_newline();
                                     self.print_indent();
                                 }
+                                if IS_JSON {
+                                    if let Some(key) = &property.key {
+                                        self.flush_json_comments_before(key.loc.start, false);
+                                    }
+                                }
                                 self.print_property(property);
                             }
                         }
@@ -3652,10 +3754,19 @@ pub mod __gated_printer {
                         if e.is_single_line && !IS_JSON {
                             self.print_space();
                         } else {
+                            if IS_JSON {
+                                self.flush_json_comments_before(close_loc, true);
+                            }
                             self.unindent();
                             self.print_newline();
                             self.print_indent();
                         }
+                    } else if had_comments {
+                        self.indent();
+                        self.flush_json_comments_before(close_loc, true);
+                        self.unindent();
+                        self.print_newline();
+                        self.print_indent();
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
@@ -6725,6 +6836,8 @@ pub mod __gated_printer {
                 stack_overflowed: false,
                 was_lazy_export: false,
                 module_info: None,
+                json_comment_cursor: 0,
+                json_comment_watermark: 0,
             };
             // The `Builder` field is `&'static [u32]` pending lifetime threading,
             // so instead of caching a self-borrow here,
@@ -7782,6 +7895,8 @@ pub fn print_json<W: WriterTrait>(
         indent: opts.indent,
         mangled_props: opts.mangled_props,
         minify_whitespace: opts.minify_whitespace,
+        json_preserve_comments: opts.preserve_comments,
+        json_comment_source: &source.contents,
         ..Default::default()
     };
     let mut printer = PrinterType::<W>::init(
@@ -7795,6 +7910,9 @@ pub fn print_json<W: WriterTrait>(
     printer.binary_expression_stack = Vec::new();
 
     printer.print_expr(expr, js_ast::op::Level::Lowest, ExprFlagSet::empty());
+    if !opts.preserve_comments.is_empty() {
+        printer.flush_json_comments_before(source.contents.len() as i32 + 1, true);
+    }
     printer.check_stack_overflow()?;
     printer.writer.get_error()?;
     printer.writer.done()?;

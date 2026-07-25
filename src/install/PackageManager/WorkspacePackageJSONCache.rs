@@ -24,6 +24,9 @@ pub struct MapEntry {
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
+    /// Comment byte-ranges into `source.contents`, threaded into
+    /// `PrintJsonOptions.preserve_comments` so edits don't strip them.
+    pub comments: Vec<bun_ast::Range>,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.
     /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
@@ -49,6 +52,7 @@ impl Default for MapEntry {
             root: Expr::default(),
             source: Source::default(),
             indentation: Indentation::default(),
+            comments: Vec::new(),
             _path_storage: bun_core::ZBox::default(),
             json_arena: bun_alloc::Arena::new(),
             stale_contents: Vec::new(),
@@ -66,6 +70,7 @@ impl MapEntry {
         let json_bump = bun_alloc::Arena::new();
         let parsed = parse_package_json(&self.source, log, &json_bump, false)?;
         self.root = bun_core::handle_oom(parsed.root.deep_clone(&json_bump));
+        self.comments = parsed.comments;
         self.json_arena = json_bump;
         Ok(())
     }
@@ -192,6 +197,7 @@ impl WorkspacePackageJSONCache {
             root: bun_core::handle_oom(parsed.root.deep_clone(&json_bump)),
             source,
             indentation: parsed.indentation,
+            comments: parsed.comments,
             // `source.path` borrows this allocation; the `Box<[u8]>` heap
             // address is stable across the move into the map.
             _path_storage: key,

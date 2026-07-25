@@ -46,6 +46,7 @@ struct PackageJson {
     contents: Box<[u8]>,
     source: Source,
     indentation: bun_ast::Indentation,
+    comments: Vec<bun_ast::Range>,
 }
 
 impl PmPkgCommand {
@@ -184,6 +185,7 @@ impl PmPkgCommand {
             contents,
             source,
             indentation: result.indentation,
+            comments: result.comments,
         })
     }
 
@@ -845,6 +847,7 @@ impl PmPkgCommand {
             js_printer::PrintJsonOptions {
                 indent: pkg.indentation,
                 mangled_props: None,
+                preserve_comments: &pkg.comments,
                 ..Default::default()
             },
         ) {

@@ -93,6 +93,127 @@ it("should add existing package", async () => {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/11536
+it("should preserve comments in package.json on add", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    `{
+  // the name
+  "name": "foo",
+  /* scripts go here */
+  "scripts": {
+    // run the thing
+    "start": "node ."
+    // trailing note
+  }
+}
+`,
+  );
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "bar"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  const out = await file(join(package_dir, "package.json")).text();
+  expect(out).toContain("// the name");
+  expect(out).toContain("/* scripts go here */");
+  expect(out).toContain("// run the thing");
+  expect(out).toContain("// trailing note");
+  expect(out).toContain('"bar": "^0.0.2"');
+  expect(JSON.parse(out.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, ""))).toEqual({
+    name: "foo",
+    scripts: { start: "node ." },
+    dependencies: { bar: "^0.0.2" },
+  });
+});
+
+it("should preserve comments in package.json on update", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    `{
+  "name": "foo",
+  "dependencies": {
+    // bar: primary dependency
+    "bar": "^0.0.2"
+    /* trailing after bar */
+  },
+  // end-of-file note
+  "private": true
+}
+`,
+  );
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "update"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  const out = await file(join(package_dir, "package.json")).text();
+  expect(out).toContain("// bar: primary dependency");
+  expect(out).toContain("/* trailing after bar */");
+  expect(out).toContain("// end-of-file note");
+  expect(out).toContain('"bar": "^0.0.2"');
+  // comment still precedes the property it documented
+  const barIdx = out.indexOf('"bar"');
+  const barCommentIdx = out.indexOf("// bar: primary");
+  expect(barCommentIdx).toBeGreaterThan(-1);
+  expect(barCommentIdx).toBeLessThan(barIdx);
+});
+
+it("should preserve comments in package.json on remove", async () => {
+  await writeFile(
+    join(add_dir, "package.json"),
+    JSON.stringify({ name: "pkg-a", version: "0.0.1" }),
+  );
+  const add_path = relative(package_dir, add_dir).replace(/\\/g, "/");
+  await writeFile(
+    join(package_dir, "package.json"),
+    `{
+  // project manifest
+  "name": "foo",
+  "dependencies": {
+    // local workspace dep
+    "pkg-a": "file:${add_path}"
+  },
+  // scripts below
+  "scripts": {
+    "test": "echo ok"
+  }
+}
+`,
+  );
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "remove", "pkg-a"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const err = await stderr.text();
+  expect(err).not.toContain("error:");
+  expect(await exited).toBe(0);
+  const out = await file(join(package_dir, "package.json")).text();
+  expect(out).toContain("// project manifest");
+  expect(out).toContain("// scripts below");
+  expect(out).not.toContain('"pkg-a"');
+});
+
 it("should reject missing package", async () => {
   await writeFile(
     join(package_dir, "package.json"),

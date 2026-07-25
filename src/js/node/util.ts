@@ -34,7 +34,7 @@ function isFunction(value) {
 
 const deepEquals = Bun.deepEquals;
 function isDeepStrictEqual(a, b, skipPrototype) {
-  return deepEquals(a, b, true, skipPrototype);
+  return deepEquals(a, b, true, !!skipPrototype);
 }
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);

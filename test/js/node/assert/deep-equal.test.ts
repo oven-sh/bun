@@ -729,6 +729,25 @@ describe("util.isDeepStrictEqual", () => {
       expect(util.isDeepStrictEqual(new String("a"), new S("a"), true)).toBe(true);
     });
 
+    test("ignores a foreign prototype on a plain object", () => {
+      const fake = Object.assign(Object.create(Array.prototype), { a: 1 });
+      expect(util.isDeepStrictEqual(fake, { a: 1 })).toBe(false);
+      expect(util.isDeepStrictEqual(fake, { a: 1 }, true)).toBe(true);
+    });
+
+    test("accepts any truthy value", () => {
+      for (const truthy of [1, "yes", {}, []]) {
+        expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), truthy)).toBe(true);
+      }
+      for (const falsy of [0, "", null, undefined, false]) {
+        expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), falsy)).toBe(false);
+      }
+    });
+
+    test("has length 3", () => {
+      expect(util.isDeepStrictEqual.length).toBe(3);
+    });
+
     test("does not leak into assert.deepStrictEqual", () => {
       expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
     });

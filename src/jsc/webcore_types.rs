@@ -517,8 +517,7 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
-        /// JS-thread-only. `*mut ReadFile` currently draining an fd-backed
-        /// store; concurrent blob reads attach to it instead of racing the fd.
+        /// JS-thread-only `*mut ReadFile`; see `ReadFile::try_coalesce_fd_read`.
         pub in_flight_blob_reader: core::sync::atomic::AtomicPtr<core::ffi::c_void>,
     }
 

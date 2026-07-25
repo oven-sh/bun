@@ -203,8 +203,7 @@ pub struct ReadFile {
     pub errno: Option<Error>,
     pub on_complete_ctx: *mut c_void,
     pub on_complete_callback: ReadFileOnReadFileCallback,
-    /// Completions attached via `Store::in_flight_blob_reader`; pushed and
-    /// drained on the JS thread only.
+    /// JS-thread-only; attached via `Store::in_flight_blob_reader`.
     pub extra_completions: bun_threading::Guarded<Vec<(ReadFileOnReadFileCallback, *mut c_void)>>,
     pub io_task: Option<*mut ReadFileTask>,
     pub io_poll: io::Poll,

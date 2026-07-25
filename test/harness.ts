@@ -1879,7 +1879,8 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    this.process?.removeAllListeners("exit");
+    this.process?.kill();
   }
 
   /**

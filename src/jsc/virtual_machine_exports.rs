@@ -142,10 +142,7 @@ pub fn queue_task_concurrently(global: &JSGlobalObject, task: *mut crate::cpp_ta
 }
 
 /// Called from C++ `ScriptExecutionContext__postConcurrentTask` with the
-/// contexts-map lock held, so `global`'s VM and its embedded `EventLoop` are
-/// guaranteed live for the duration of this call (worker `markTerminating()`
-/// serializes on the same lock before any VM dealloc). `task` is the
-/// heap-allocated `ConcurrentTaskItem` the Rust caller passed in.
+/// contexts-map lock held, so `global`'s VM/`EventLoop` are live for this call.
 // HOST_EXPORT(Bun__EventLoop__enqueueConcurrentTask, c)
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn event_loop_enqueue_concurrent_task(

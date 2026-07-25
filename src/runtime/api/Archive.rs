@@ -748,11 +748,7 @@ impl<C: TaskContext> AsyncTask<C> {
             let ct = core::ptr::NonNull::from(
                 (*this).concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            // Post by stable context id so the target VM is only dereferenced
-            // under the contexts-map lock. If the context is gone the box is
-            // leaked — its `JSPromiseStrong` lives in the dead JSC heap and
-            // cannot be released off-thread; `ct` is a field of `*this`, so no
-            // separate free.
+            // Abandon: JSC handles cannot drop off-thread, leak the box (ct is intrusive).
             let _ = context_id.post_concurrent_task(ct);
         }
     }

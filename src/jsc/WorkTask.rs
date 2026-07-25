@@ -35,14 +35,9 @@ pub trait WorkTaskContext: Sized {
 pub struct WorkTask<Context: WorkTaskContext> {
     pub ctx: *mut Context,
     pub task: WorkPoolTask,
-    /// BACKREF — captured from the JS-thread VM at create time. Only
-    /// dereferenced on the JS thread; the pool-thread completion goes through
-    /// [`Self::context_id`] so a worker VM freed by `terminate()` is never
-    /// touched.
+    /// BACKREF — JS-thread only; pool-thread completion goes through `context_id`.
     pub event_loop: BackRef<EventLoop>,
-    /// Stable `u32` id for the originating `ScriptExecutionContext`. The
-    /// pool-thread `on_finish` posts the completion via this id under the C++
-    /// contexts-map lock (serializing with worker `markTerminating()`).
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     pub context_id: ScriptExecutionContextIdentifier,
     // allocator field dropped — global mimalloc (see PORTING.md §Allocators)
     pub global_this: BackRef<JSGlobalObject>,
@@ -143,13 +138,7 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
             this.concurrent_task
                 .from(this_ptr, AutoDeinit::ManualDeinit),
         );
-        // Post by stable context id: the enqueue dereferences the target VM
-        // only under the contexts-map lock (serializes with worker
-        // `markTerminating()`). When the context is gone, `run_from_js` will
-        // never fire; `*this` (and its JSC-heap `global_this` / `ctx`
-        // `Strong` handles) cannot be reclaimed off-thread, so the box is
-        // leaked. The intrusive `task` is a field of `*this`, so no separate
-        // free is needed.
+        // Abandon: JSC handles cannot drop off-thread, leak the box (task is intrusive).
         let _ = context_id.post_concurrent_task(task);
     }
 }

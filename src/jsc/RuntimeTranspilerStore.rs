@@ -489,12 +489,9 @@ impl TranspilerJob {
 
     pub(crate) fn dispatch_to_main_thread(&mut self) {
         let context_id = self.context_id;
-        // The VM owns both `transpiler_store.queue` and the event loop; touch
-        // neither once the target context has begun teardown. `is_alive()`
-        // serializes with `markTerminating()` on the contexts-map lock.
+        // VM owns both `transpiler_store.queue` and the event loop; touch neither after teardown.
         if !context_id.is_alive() {
-            // Reclaim pure-Rust heap owned by this job; leak the JSC-heap
-            // handles (`promise`, `fetcher`, specifiers, `resolved_source`).
+            // Reclaim pure-Rust heap; leak JSC-heap handles.
             let old_path = core::mem::take(&mut self.path);
             if !old_path.text.is_empty() {
                 // SAFETY: `text` is the `Box<[u8]>` produced by
@@ -508,8 +505,10 @@ impl TranspilerJob {
             return;
         }
         let vm = self.vm;
-        // SAFETY: `is_alive()` held the contexts-map lock; the VM is live for
-        // this queue push (BACKREF — VM owns the store).
+        // SAFETY: `is_alive()` is best-effort (lock released before this deref);
+        // `transpiler_store` is a VM field, so this and the push race the narrow
+        // is_alive→dealloc window, same as every `(*vm).*` read in `run()`. The
+        // authoritative fence is `post_concurrent_task` below.
         let transpiler_store: *mut RuntimeTranspilerStore =
             unsafe { ptr::addr_of_mut!((*vm).transpiler_store) };
         let job = NonNull::from(&mut *self);
@@ -518,11 +517,8 @@ impl TranspilerJob {
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
         let task = ConcurrentTask::create_from(transpiler_store);
         if !context_id.post_concurrent_task(task) {
-            // Raced with `markTerminating()`; the job is already in
-            // `transpiler_store.queue` (inside the VM being freed). Reclaim
-            // only the freshly-allocated node.
-            // SAFETY: ownership was not transferred; `task` is the
-            // `ConcurrentTask::create_from` heap node above.
+            // Raced with teardown; job already in the VM-owned queue, reclaim only the node.
+            // SAFETY: ownership not transferred; `task` is the `create_from` heap node above.
             drop(unsafe { bun_core::heap::take(task.as_ptr()) });
         }
     }

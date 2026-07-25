@@ -588,9 +588,7 @@ impl<Op: PasswordOp> PasswordJob<Op> {
         // SAFETY: `result.task` is an intrusive field at a stable heap address.
         let node = ConcurrentTask::create_from(unsafe { core::ptr::addr_of_mut!((*result).task) });
         if !self.context_id.post_concurrent_task(node) {
-            // Target context is gone. Free the queue node and the result box;
-            // leak the JSPromiseStrong (its JSC heap is dead and cannot be
-            // released off-thread).
+            // Abandon: free node + result box; leak the `JSPromiseStrong` (JSC heap is dead).
             drop(unsafe { bun_core::heap::take(node.as_ptr()) });
             let mut r = unsafe { bun_core::heap::take(result) };
             core::mem::forget(core::mem::take(&mut r.promise));

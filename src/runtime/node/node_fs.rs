@@ -1307,18 +1307,11 @@ mod _async_tasks {
             // `sys::Error::path` is `Box<[u8]>` boxed at the
             // `errno_sys_p` construction site, so no clone is needed — `node_fs` may drop.
 
-            // Post by stable context id: the enqueue dereferences the target VM
-            // only under the contexts-map lock (serializes with worker
-            // `markTerminating()`).
             let context_id = this.context_id;
             let node = ConcurrentTask::create_from(std::ptr::from_mut::<Self>(this));
             if !context_id.post_concurrent_task(node) {
-                // Target context gone or terminating. `run_from_js_thread` will
-                // never fire; reclaim the heap `ConcurrentTask` node. `*this`
-                // holds `JSPromiseStrong`/`ThreadSafe<A>` handles into the dead
-                // JSC heap and cannot be released off-thread, so the box is leaked.
-                // SAFETY: `post_concurrent_task` returned false so ownership was
-                // not transferred; `node` was `ConcurrentTask::create_from`-allocated above.
+                // Abandon: JSC handles cannot drop off-thread, leak the box.
+                // SAFETY: ownership not transferred; `node` was `create_from`-allocated above.
                 drop(unsafe { bun_core::heap::take(node.as_ptr()) });
             }
         }
@@ -1705,10 +1698,8 @@ mod _async_tasks {
                     unsafe { (&mut *p).run_from_js_thread().map_err(Into::into) }
                 });
                 if !this_ref.context_id.post_concurrent_task(node) {
-                    // Target context is gone; reclaim the node. `this` holds
-                    // `JSPromiseStrong` into the dead JSC heap, so it is leaked.
-                    // SAFETY: ownership was not transferred; `node` was
-                    // `ConcurrentTask::from_callback`-allocated just above.
+                    // Abandon: JSC handles cannot drop off-thread, leak the box.
+                    // SAFETY: ownership not transferred; `node` was `from_callback`-allocated above.
                     drop(unsafe { bun_core::heap::take(node.as_ptr()) });
                 }
             } else {
@@ -2548,18 +2539,11 @@ mod _async_tasks {
                 }
             }
 
-            // Post by stable context id: the enqueue dereferences the target VM
-            // only under the contexts-map lock (serializes with worker
-            // `markTerminating()`).
             let context_id = self.context_id;
             let node = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
             if !context_id.post_concurrent_task(node) {
-                // Target context gone or terminating. `run_from_js_thread` will
-                // never fire; reclaim the heap `ConcurrentTask` node. `*self`
-                // holds `JSPromiseStrong` into the dead JSC heap and cannot be
-                // released off-thread, so the box is leaked.
-                // SAFETY: `post_concurrent_task` returned false so ownership was
-                // not transferred; `node` was `ConcurrentTask::create`-allocated above.
+                // Abandon: JSC handles cannot drop off-thread, leak the box.
+                // SAFETY: ownership not transferred; `node` was `create`-allocated above.
                 drop(unsafe { bun_core::heap::take(node.as_ptr()) });
             }
         }

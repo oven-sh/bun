@@ -32,14 +32,9 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     // Owned here so dropping the task frees the context.
     pub ctx: Box<Context>,
     pub task: WorkPoolTask,
-    /// BACKREF — captured from the JS-thread VM at create time. Only
-    /// dereferenced on the JS thread; the pool-thread completion goes through
-    /// [`Self::context_id`] so a worker VM freed by `terminate()` is never
-    /// touched.
+    /// BACKREF — JS-thread only; pool-thread completion goes through `context_id`.
     pub event_loop: BackRef<EventLoop>,
-    /// Stable `u32` id for the originating `ScriptExecutionContext`. The
-    /// pool-thread `on_finish` posts the completion via this id under the C++
-    /// contexts-map lock (serializing with worker `markTerminating()`).
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     pub context_id: ScriptExecutionContextIdentifier,
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
@@ -122,12 +117,7 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
                 .concurrent_task
                 .from(this, AutoDeinit::ManualDeinit),
         );
-        // Post by stable context id: the enqueue dereferences the target VM
-        // only under the contexts-map lock (serializes with worker
-        // `markTerminating()`). When the context is gone the box is leaked
-        // (its `JSPromiseStrong` and `global_this` point into the dead JSC
-        // heap and cannot be released off-thread); `task` is a field of
-        // `*this`, so no separate free.
+        // Abandon: JSC handles cannot drop off-thread, leak the box (task is intrusive).
         let _ = context_id.post_concurrent_task(task);
     }
 

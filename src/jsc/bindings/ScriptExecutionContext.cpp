@@ -302,10 +302,10 @@ extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObjec
     return context->globalObject();
 }
 
-// True while the context exists and has not been marked terminating. Checked
-// under the contexts-map lock so it serializes with markTerminating().
+// True while the context exists and has not been marked terminating.
 extern "C" bool ScriptExecutionContext__isAlive(ScriptExecutionContextIdentifier id)
 {
+    if (!id) return false;
     Locker locker { allScriptExecutionContextsMapLock };
     auto* context = allScriptExecutionContextsMap().get(id);
     return context && !context->isTerminating();
@@ -325,6 +325,7 @@ extern "C" void Bun__EventLoop__enqueueConcurrentTask(JSC::JSGlobalObject*, void
 // ordering argument.
 extern "C" bool ScriptExecutionContext__postConcurrentTask(ScriptExecutionContextIdentifier id, void* task)
 {
+    if (!id) return false;
     Locker locker { allScriptExecutionContextsMapLock };
     auto* context = allScriptExecutionContextsMap().get(id);
     if (!context || context->isTerminating())
@@ -333,12 +334,11 @@ extern "C" bool ScriptExecutionContext__postConcurrentTask(ScriptExecutionContex
     return true;
 }
 
-// Decrement the target context's event-loop concurrent refcount, under the
-// contexts-map lock so the bunVM pointer is dereferenced only while the
-// context is known live. No-op (and no VM dereference) when the context is
-// gone or terminating.
+// Decrement the target context's event-loop concurrent refcount under the
+// contexts-map lock; no-op when the context is gone or terminating.
 extern "C" void ScriptExecutionContext__unrefEventLoopConcurrently(ScriptExecutionContextIdentifier id)
 {
+    if (!id) return;
     Locker locker { allScriptExecutionContextsMapLock };
     auto* context = allScriptExecutionContextsMap().get(id);
     if (!context || context->isTerminating())

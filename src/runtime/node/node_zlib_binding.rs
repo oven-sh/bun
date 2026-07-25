@@ -211,8 +211,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
     /// deref lives in `BackRef::get`, so callers and impls are safe.
     fn global_this(&self) -> &JSGlobalObject;
-    /// Captured on the JS thread at construction; used off-thread to post the
-    /// completion so a freed worker VM/global is never dereferenced.
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     fn context_id(&self) -> ScriptExecutionContextIdentifier;
     fn stream(&self) -> &JsCell<Self::Stream>;
 
@@ -479,18 +478,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_ref.stream().with_mut(|s| s.do_work());
 
-        // Post by stable context id: the enqueue dereferences the target VM
-        // only under the contexts-map lock (serializes with worker
-        // `markTerminating()`). `this` is the heap-allocated `m_ctx` payload —
-        // the matching `ref()` in `write()` keeps it alive until
-        // `run_from_js_thread` runs and calls `deref()`.
+        // `this` is the heap `m_ctx` payload; the `ref()` in `write()` keeps it alive.
         let node = ConcurrentTask::create(Task::init(this));
         if !this_ref.context_id().post_concurrent_task(node) {
-            // Target context gone or terminating. `run_from_js_thread` will
-            // never fire. `this` is the JSC-owned m_ctx holding `Strong`/
-            // `KeepAlive`; its `deref()` is not safe off-thread, so leak it.
-            // SAFETY: ownership was not transferred; `node` was
-            // `ConcurrentTask::create`-allocated above.
+            // Abandon: `deref()` is not safe off-thread, leak `this`.
+            // SAFETY: ownership not transferred; `node` was `create`-allocated above.
             drop(unsafe { bun_core::heap::take(node.as_ptr()) });
         }
     }

@@ -50,12 +50,10 @@ pub trait AnyTaskJobCtx: Sized {
 /// e.g. a `JSPromiseStrong` field after scheduling.
 pub struct AnyTaskJob<C> {
     vm: bun_ptr::BackRef<VirtualMachine>,
-    /// Stable `u32` id for the originating `ScriptExecutionContext`. The
-    /// pool-thread [`Self::run_task`] posts the completion back via this id
-    /// under the C++ contexts-map lock, so `vm` (which embeds the target
-    /// `EventLoop`) is never dereferenced off-thread once a worker's
-    /// `markTerminating()` has returned.
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     context_id: ScriptExecutionContextIdentifier,
+    /// Captured on the JS thread so the pool thread never derefs `vm`.
+    global: *mut JSGlobalObject,
     task: WorkPoolTask,
     any_task: AnyTask,
     poll: KeepAlive,
@@ -83,6 +81,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let job = bun_core::heap::into_raw(Box::new(Self {
             vm,
             context_id: global.script_execution_context_identifier(),
+            global: core::ptr::from_ref(global).cast_mut(),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_task,
@@ -148,29 +147,17 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         // `run_from_js` reclaims it (or is leaked on abandon below).
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let context_id = job.context_id;
-        // Skip the work body when the owning context has already begun
-        // shutdown: several ctxs (e.g. `Scrypt`) write their output into a
-        // JSC-heap-backed `ArrayBuffer` that is freed by `teardownJSCVM`.
-        // `is_alive()` serializes with `markTerminating()` on the contexts-map
-        // lock. This is a fast-path drop only; the authoritative gate is the
-        // `post_concurrent_task` below.
+        // Skip the work body on shutdown: some ctxs write into JSC-heap-backed
+        // `ArrayBuffer`s. Fast-path only; `post_concurrent_task` below is the gate.
         if context_id.is_alive() {
-            let vm = job.vm;
-            job.ctx.run(vm.global);
+            job.ctx.run(job.global);
         }
-        // Post by stable context id: the enqueue dereferences the target VM
-        // only under the contexts-map lock (serializes with worker
-        // `markTerminating()`).
         let task = ConcurrentTask::create(job.any_task.task());
         if context_id.post_concurrent_task(task) {
             return;
         }
-        // Target context gone or terminating. `run_from_js` will never fire;
-        // reclaim the heap `ConcurrentTaskItem`. The job box itself (and its
-        // `ctx`, which typically holds `JSPromiseStrong`/`Strong` handles into
-        // the dead JSC heap) cannot be released off-thread and is leaked.
-        // SAFETY: `post_concurrent_task` returned false so ownership was not
-        // transferred; `task` was `ConcurrentTask::create`-allocated above.
+        // Abandon: JSC handles cannot drop off-thread, leak the job box.
+        // SAFETY: ownership not transferred; `task` was `ConcurrentTask::create`-allocated above.
         drop(unsafe { bun_core::heap::take(task.as_ptr()) });
     }
 

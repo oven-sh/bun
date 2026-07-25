@@ -297,13 +297,7 @@ impl FetchTasklet {
         unsafe { &*this }
     }
 
-    /// Enqueue a concurrent task on the JS-thread event loop.
-    ///
-    /// Routes through the contexts-map lock so the target `EventLoop` is only
-    /// dereferenced while its VM is known live. Returns `false` (caller keeps
-    /// ownership of `task`) when the context is gone or terminating. `task` is
-    /// a live `ConcurrentTaskItem` that the queue takes ownership of via its
-    /// intrusive `next` link on success.
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     #[inline]
     fn enqueue_concurrent(
         context_id: ScriptExecutionContextIdentifier,
@@ -412,8 +406,7 @@ impl FetchTasklet {
         // takes ownership of it.
         let node = ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback);
         if !Self::enqueue_concurrent(self_.context_id, node) {
-            // Target VM raced to teardown between the check and the post; drop
-            // the freshly heap-allocated node and take the shutdown dealloc path.
+            // Raced with teardown; drop the fresh node and take the shutdown dealloc path.
             drop(unsafe { bun_core::heap::take(node.as_ptr()) });
             // SAFETY: last ref; see the `!is_alive()` branch above.
             unsafe { FetchTasklet::dealloc_for_shutdown(this) };
@@ -2149,8 +2142,7 @@ impl FetchTasklet {
         // takes ownership of it.
         let node = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
         if !Self::enqueue_concurrent(this_ref.context_id, node) {
-            // Target VM raced to teardown; drop the fresh node and undo the ref
-            // via the thread-safe path (which takes the shutdown dealloc branch).
+            // Raced with teardown; drop the fresh node and undo the ref.
             drop(unsafe { bun_core::heap::take(node.as_ptr()) });
             FetchTasklet::deref_from_thread(this);
         }
@@ -2463,11 +2455,8 @@ impl FetchTasklet {
             }
         }
         // will deinit when done with the http client (when is_done = true)
-        // Shared cleanup for the "target VM is gone/terminating" path. Runs
-        // only the Rust-side work the JS-thread on_progress_update would never
-        // get to: free the body buffer, release the parked socket, undo the
-        // CAS flag, unlock, and (on the final result) drop both refs so the
-        // 1→0 transition takes `dealloc_for_shutdown`.
+        // Abandon path: Rust-side cleanup the JS-thread `on_progress_update` would
+        // never reach (body buffer, parked socket, CAS flag, unlock, final derefs).
         let abandon = |task_ref: &mut FetchTasklet| {
             task_ref.scheduled_response_buffer = MutableString::default();
             if task_ref.result.certificate_info.take().is_some() {

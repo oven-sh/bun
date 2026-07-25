@@ -121,9 +121,7 @@ pub struct S3HttpSimpleTask {
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
     pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
-    /// Stable id of the originating `ScriptExecutionContext`. The HTTP-thread
-    /// completion posts back via this id under the C++ contexts-map lock so a
-    /// worker VM freed by `terminate()` is never dereferenced.
+    /// See [`ScriptExecutionContextIdentifier::post_concurrent_task`].
     pub context_id: ScriptExecutionContextIdentifier,
     pub sign_result: SignResult,
     pub headers: Headers,
@@ -493,12 +491,7 @@ impl S3HttpSimpleTask {
                 this.concurrent_task
                     .from(this_ptr, AutoDeinit::ManualDeinit),
             );
-            // Post by stable context id under the C++ contexts-map lock so a
-            // worker VM freed by `terminate()` is never dereferenced. On
-            // abandon the heap task is leaked: `Drop` touches the VM event
-            // loop and must not run off-thread against a dead VM. `task` is
-            // the inline `concurrent_task` field of this heap request; the
-            // queue takes ownership of its `next` link.
+            // Abandon: `Drop` touches the VM event loop, leak the box (task is intrusive).
             let _ = this.context_id.post_concurrent_task(task);
         }
     }

@@ -984,12 +984,9 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn complete_on_bundle_thread(&mut self) {
         let task = jsc::ConcurrentTask::create(self.task.task());
         if !self.context_id.post_concurrent_task(task) {
-            // SAFETY: ownership was not transferred; `task` is the fresh heap
-            // node from `ConcurrentTask::create` above.
+            // Abandon: JSC handles cannot drop off-thread, leak the box.
+            // SAFETY: ownership not transferred; `task` is the fresh `create` heap node above.
             drop(unsafe { bun_core::heap::take(task.as_ptr()) });
-            // `on_complete_anytask` will never run; the box (promise/plugins/
-            // KeepAlive) points into the dead VM and cannot be reclaimed
-            // off-thread. Bounded leak on worker terminate.
         }
     }
     fn set_result(&mut self, result: BundleV2Result) {

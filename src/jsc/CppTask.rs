@@ -58,10 +58,7 @@ impl EventLoopTaskNoContext {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }
 
-    /// Stable `u32` id of the `ScriptExecutionContext` that created this task,
-    /// captured on the JS thread at construction. Safe to use off-thread via
-    /// [`ScriptExecutionContextIdentifier::unref_event_loop_concurrently`] so
-    /// the VM is dereferenced only under the contexts-map lock.
+    /// See [`ScriptExecutionContextIdentifier::unref_event_loop_concurrently`].
     pub fn context_id(&self) -> ScriptExecutionContextIdentifier {
         ScriptExecutionContextIdentifier(Bun__EventLoopTaskNoContext__contextId(self))
     }
@@ -88,10 +85,8 @@ impl ConcurrentCppTask {
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        // The task body (e.g. a WebCrypto crypto-thread lambda) posts its own
-        // result back via `ScriptExecutionContext::postTaskTo`, which already
-        // serializes with `markTerminating()`. The trailing `concurrent_ref`
-        // decrement dereferences the VM, so route it through the same lock.
+        // Task body posts its own result via `postTaskTo`; route the trailing
+        // `concurrent_ref` decrement through the same lock.
         context_id.unref_event_loop_concurrently();
     }
 }

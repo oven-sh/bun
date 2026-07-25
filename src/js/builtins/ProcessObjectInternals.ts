@@ -283,8 +283,19 @@ export function getStdinStream(
   }
   stream._read = triggerRead;
 
+  // fs.ReadStream's _destroy only closes the fd; stdin never closes fd 0 and
+  // needs the native reader released so the event loop can exit.
+  stream._destroy = function (err, cb) {
+    stream_destroyed = true;
+    disown();
+    cb(err);
+  };
+
   stream.on("resume", () => {
     if (stream.isPaused()) return; // fake resume
+    // 'resume' is emitted from a nextTick scheduled by resume(); a destroy()
+    // that raced in before it fires must not be reverted here.
+    if (stream.destroyed) return;
     $debug('on("resume");');
     own();
     stream._undestroy();

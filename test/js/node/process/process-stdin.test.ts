@@ -418,3 +418,31 @@ test.concurrent("pause() and resume() churn while data is in flight never destro
   expect(stdout.trim()).toBe(`TOTAL ${20 * 1024}`);
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each([`process.stdin.on("data", () => {})`, `process.stdin.resume()`])(
+  "destroy() after %s releases the event-loop ref while stdin is still open",
+  async arm => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        ${arm};
+        process.stdin.destroy();
+        console.log("destroyed=" + process.stdin.destroyed);
+        const t = setTimeout(() => { console.log("STILL_ALIVE"); process.exit(1); }, 1500);
+        t.unref();
+        process.on("exit", () => console.log("destroyed=" + process.stdin.destroyed));
+        `,
+      ],
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    // Keep the pipe open: the child must exit on destroy() alone, not on EOF.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "destroyed=true\ndestroyed=true\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);

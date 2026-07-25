@@ -3243,13 +3243,20 @@ impl TestCommand {
             // into the next file. Spies installed during --preload are kept.
             // Runs as a guard so the early `return Ok(())` when the entry
             // point rejects is covered too. Under --isolate the global (and
-            // its mockModule) is swapped out between files, so skip it.
+            // its mockModule) is swapped out between files, so skip the
+            // restore, but always clear `is_running_preload_hook`: it lives
+            // on the VM (not the global) and the next file's top level
+            // evaluates before any `step_sequence_one` call overwrites it.
             unsafe extern "C" {
                 fn JSMock__restoreTransientSpies(global: *mut jsc::JSGlobalObject);
             }
             let restore_isolation = vm.test_isolation_enabled;
             let restore_global = vm.global().as_ptr();
+            let restore_vm = core::ptr::from_mut::<VirtualMachine>(vm);
             scopeguard::defer! {
+                // SAFETY: single-threaded; `restore_vm` is the process-global
+                // VM with root provenance from this frame's `&mut vm`.
+                unsafe { (*restore_vm).is_running_preload_hook = false };
                 if !restore_isolation {
                     // SAFETY: `restore_global` is a live Zig::GlobalObject for
                     // the whole process; the C++ side opens a top-level

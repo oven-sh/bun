@@ -9,8 +9,10 @@ async function runTests(
   tests: string[],
   extraArgs: string[] = [],
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  // Bare names are treated as filter patterns and run in discovery order;
+  // explicit paths run in the order given, which these tests depend on.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", ...extraArgs, ...tests],
+    cmd: [bunExe(), "test", ...extraArgs, ...tests.map(t => "./" + t)],
     env: bunEnv,
     cwd: dir,
     stdout: "pipe",
@@ -188,6 +190,40 @@ describe.concurrent("spyOn is scoped to the test file that installed it", () => 
     });
 
     const { stderr, exitCode } = await runTests(String(dir), ["a.test.ts", "b.test.ts"], ["--preload", "./preload.ts"]);
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a preload beforeAll on a file with no runnable tests does not mark the next file's spies persistent", async () => {
+    using dir = tempDir("spyon-preload-stale-flag", {
+      "MyModule.ts": moduleSource,
+      "preload.ts": `
+        import { beforeAll } from "bun:test";
+        beforeAll(() => {});
+      `,
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test.skip("a", () => {});
+      `,
+      "b.test.ts": `
+        import { test, expect, spyOn } from "bun:test";
+        import { MyClass } from "./MyModule";
+        spyOn(MyClass.prototype, "myMethod").mockImplementation(() => "Hola");
+        test("b", () => expect(new MyClass().myMethod()).toBe("Hola"));
+      `,
+      "c.test.ts": `
+        import { test, expect } from "bun:test";
+        import { MyClass } from "./MyModule";
+        test("c sees real", () => expect(new MyClass().myMethod()).toBe("Hello"));
+      `,
+    });
+
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["a.test.ts", "b.test.ts", "c.test.ts"],
+      ["--preload", "./preload.ts"],
+    );
     expect(stderr).toContain("2 pass");
     expect(stderr).toContain("0 fail");
     expect(exitCode).toBe(0);

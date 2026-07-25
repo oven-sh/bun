@@ -13,23 +13,22 @@ const types = require("node:util/types");
 const DateNow = Date.now;
 const PerformanceNow = performance.now.bind(performance);
 const ObjectKeys = Object.keys;
+const ObjectIs = Object.is;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectPrototypeToString = Object.prototype.toString;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const FunctionPrototypeToString = Function.prototype.toString;
 const DatePrototypeToString = Date.prototype.toString;
 const RegExpPrototypeToString = RegExp.prototype.toString;
 const ErrorPrototypeToString = Error.prototype.toString;
-const MapPrototypeGetSize = Object.getOwnPropertyDescriptor(Map.prototype, "size")!.get!;
-const SetPrototypeGetSize = Object.getOwnPropertyDescriptor(Set.prototype, "size")!.get!;
+const MapPrototypeGetSize = ObjectGetOwnPropertyDescriptor(Map.prototype, "size")!.get!;
+const SetPrototypeGetSize = ObjectGetOwnPropertyDescriptor(Set.prototype, "size")!.get!;
 const MapPrototypeEntries = Map.prototype.entries;
 const SetPrototypeValues = Set.prototype.values;
 const TypedArrayPrototype = ObjectGetPrototypeOf(Uint8Array.prototype);
-const TypedArrayPrototypeGetLength = Object.getOwnPropertyDescriptor(TypedArrayPrototype, "length")!.get!;
-const TypedArrayPrototypeGetToStringTag = Object.getOwnPropertyDescriptor(
-  TypedArrayPrototype,
-  Symbol.toStringTag,
-)!.get!;
+const TypedArrayPrototypeGetLength = ObjectGetOwnPropertyDescriptor(TypedArrayPrototype, "length")!.get!;
+const TypedArrayPrototypeGetToStringTag = ObjectGetOwnPropertyDescriptor(TypedArrayPrototype, Symbol.toStringTag)!.get!;
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 
 // #handleMethod return marker for inspector-protocol errors: the callback
@@ -189,7 +188,7 @@ function constructorName(value: object): string | undefined {
     let proto: object | null = value;
     // Bounded: a Proxy getPrototypeOf trap may return itself (legal ES), which would loop forever.
     for (let i = 0; proto !== null && i < 100; i++) {
-      const descriptor = Object.getOwnPropertyDescriptor(proto, "constructor");
+      const descriptor = ObjectGetOwnPropertyDescriptor(proto, "constructor");
       if (descriptor !== undefined) {
         const ctor = descriptor.value;
         if ($isCallable(ctor)) {
@@ -305,7 +304,7 @@ function previewValue(value: unknown): { type: string; value: string; subtype?: 
     case "string":
       return { type: "string", value: truncate(value) };
     case "number":
-      return { type: "number", value: Object.is(value, -0) ? "-0" : `${value}` };
+      return { type: "number", value: ObjectIs(value, -0) ? "-0" : `${value}` };
     case "boolean":
       return { type: "boolean", value: `${value}` };
     case "undefined":
@@ -411,7 +410,7 @@ function toRemoteObject(arg: unknown): object {
     case "string":
       return { type: "string", value: arg };
     case "number":
-      if (Object.is(arg, -0)) return { type: "number", unserializableValue: "-0", description: "-0" };
+      if (ObjectIs(arg, -0)) return { type: "number", unserializableValue: "-0", description: "-0" };
       return Number.isFinite(arg)
         ? { type: "number", value: arg, description: String(arg) }
         : {

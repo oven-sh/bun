@@ -104,21 +104,26 @@ describe("HTTP/3 malformed message is a stream error, not a connection error", (
   });
 
   // verify_cl_on_new_data_frame fires while DATA is still arriving (no FIN
-  // yet); lsquic_stream_msg_error must therefore queue STOP_SENDING and let
-  // the peer's RESET_STREAM reply finish the stream instead of leaking it.
+  // yet), so lsquic_stream_msg_error must queue STOP_SENDING and let the
+  // peer's RESET_STREAM reply finish the stream instead of leaking it.  The
+  // write side is left open (no endSync) so the server's lsquic sees the
+  // oversize DATA frame before STREAM_FIN_RECVD can mask the pre-FIN branch.
   test("request body exceeding content-length resets that stream, innocent completes", async () => {
-    const { completed, poisonedReset, sessionClose } = await blastRadius(async client =>
-      client.createBidirectionalStream({
-        headers: {
+    const { completed, poisonedReset, sessionClose } = await blastRadius(async client => {
+      const st = await client.createBidirectionalStream();
+      st.sendHeaders(
+        {
           ":method": "POST",
           ":path": "/poison",
           ":scheme": "https",
           ":authority": "localhost",
           "content-length": "3",
         },
-        body: new TextEncoder().encode(Buffer.alloc(100, "a").toString()),
-      }),
-    );
+        { terminal: false },
+      );
+      st.writer.writeSync(new TextEncoder().encode(Buffer.alloc(100, "a").toString()));
+      return st;
+    });
     expect(completed).toBeGreaterThan(0);
     expect(sessionClose).toBeNull();
     expect((poisonedReset as any)?.errorCode).toBe(0x10en);

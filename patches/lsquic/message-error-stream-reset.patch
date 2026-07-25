@@ -126,13 +126,17 @@
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" exceeds "
              "content-length limit of %llu", stream->id, stream->sm_cont_len);
-@@ -5139,6 +5209,16 @@
+@@ -5139,6 +5209,20 @@
                      goto end;
                  default:
                      assert(LQRHS_ERROR == rhs);
 +                    if (stream->conn_pub->enpub
 +                                ->enp_settings.es_message_error_is_stream)
 +                    {
++                        stream->sm_qflags &= ~SMQF_QPACK_DEC;
++                        /* hq_filter_df needs HQFI_FLAG_ERROR to force-drain
++                         * the frame; lsqpack may have left p == prev. */
++                        filter->hqfi_flags |= HQFI_FLAG_ERROR;
 +                        /* bun: qdec already reset this stream for the peer-
 +                         * triggerable cases; the fallback covers the handful
 +                         * of LQRHS_ERROR paths (OOM, !QDH_INITIALIZED) that
@@ -197,7 +201,7 @@
              {
                  LSQ_DEBUG("finishing hset failed");
                  free(uh);
-@@ -696,10 +706,18 @@
+@@ -696,10 +706,19 @@
      {
          qdh_maybe_destroy_hblock_ctx(qdh, stream);
          qerr = lsqpack_dec_get_err_info(&qdh->qdh_decoder);
@@ -205,11 +209,12 @@
 -            HEC_QPACK_DECOMPRESSION_FAILED, "QPACK decompression error; "
 -            "stream %"PRIu64", offset %"PRIu64", line %d", qerr->stream_id,
 -            qerr->off, qerr->line);
-+        /* bun: a QPACK decode failure on a request stream is confined to that
-+         * stream's field section (RFC 9114 sec 4.1.2 / RFC 9204 sec 6); the
-+         * dynamic table state is only touched by the encoder stream, whose
-+         * errors are handled in qdh_read_encoder_stream and remain
-+         * connection-fatal. */
++        /* bun: RFC 9204 sec 2.2.3/4.5.1 mandate CONNECTION_CLOSE for a bad
++         * dynamic-table reference or Required Insert Count, but bun advertises
++         * es_qpack_dec_max_size=0 so there is no cross-stream decoder state a
++         * per-stream reset could desynchronize; that leaves the local-limit
++         * case (need > LSXPACK_MAX_STRLEN, RFC 9114 sec 4.2.2) which is
++         * stream-scoped.  qdh_read_encoder_stream stays connection-fatal. */
 +        if (qdh->qdh_enpub->enp_settings.es_message_error_is_stream)
 +            lsquic_stream_msg_error(stream, HEC_QPACK_DECOMPRESSION_FAILED);
 +        else

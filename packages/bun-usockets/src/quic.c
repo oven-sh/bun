@@ -724,7 +724,11 @@ us_quic_socket_context_t *us_create_quic_socket_context(
      * stream-hash walk on every write. */
     ctx->settings.es_ext_http_prio = 0;
     /* RFC 9114 sec 4.1.2: one malformed request is a stream error, not a
-     * CONNECTION_CLOSE that takes every concurrent request down with it. */
+     * CONNECTION_CLOSE that takes every concurrent request down with it.
+     * A zero QPACK dynamic table keeps the RFC 9204 sec 2.2.3 connection-
+     * error class unreachable, so decode failures are stream-local. */
+    ctx->settings.es_qpack_dec_max_size = 0;
+    ctx->settings.es_qpack_dec_max_blocked = 0;
     ctx->settings.es_message_error_is_stream = 1;
     if (idle_timeout_s) ctx->settings.es_idle_timeout = idle_timeout_s > 600 ? 600 : idle_timeout_s;
 
@@ -1177,6 +1181,8 @@ us_quic_socket_context_t *us_create_quic_client_context(
     ctx->settings.es_ecn = 0;
     ctx->settings.es_max_header_list_size = 64 * 1024;
     ctx->settings.es_ext_http_prio = 0;
+    ctx->settings.es_qpack_dec_max_size = 0;
+    ctx->settings.es_qpack_dec_max_blocked = 0;
     ctx->settings.es_message_error_is_stream = 1;
 
     struct lsquic_engine_api api;

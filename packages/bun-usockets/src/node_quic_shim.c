@@ -451,7 +451,11 @@ void us_nq_settings_init(struct lsquic_engine_settings *s, int is_server,
     s->es_qpack_enc_max_blocked = 0;
     /* RFC 9114 sec 4.1.2: one malformed request is a stream error, not a
      * CONNECTION_CLOSE that takes every concurrent request down with it
-     * (patches/lsquic/message-error-stream-reset.patch). */
+     * (patches/lsquic/message-error-stream-reset.patch).  Advertising a zero
+     * QPACK dynamic table keeps the RFC 9204 sec 2.2.3 connection-error class
+     * unreachable, so a field-section decode failure is stream-local. */
+    s->es_qpack_dec_max_size = 0;
+    s->es_qpack_dec_max_blocked = 0;
     s->es_message_error_is_stream = 1;
 }
 

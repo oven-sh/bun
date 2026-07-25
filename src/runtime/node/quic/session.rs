@@ -1982,8 +1982,7 @@ impl QuicSession {
                                     .unwrap_or(c"close");
                                 c.abort_error(app, code.min(u32::MAX as u64) as c_uint, r);
                             } else {
-                                // abort() is lsquic's immediate-close NO_ERROR;
-                                // close() defers until server bidi streams drain.
+                                // close() defers on server bidi streams; abort() emits NO_ERROR now.
                                 c.abort();
                             }
                         }

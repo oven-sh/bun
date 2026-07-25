@@ -1080,7 +1080,8 @@ pub mod command {
             Some(b"version" | b"verison") => &[b"message"],
             _ => &[],
         };
-        let mut tail: Vec<&'static ZStr> = Vec::with_capacity(argv.len().saturating_sub(rest_start));
+        let mut tail: Vec<&'static ZStr> =
+            Vec::with_capacity(argv.len().saturating_sub(rest_start));
         copy_translating_npm_flags(argv, &mut tail, &mut hoisted, rest_start, false, keep);
 
         let mut out: Vec<&'static ZStr> = Vec::with_capacity(

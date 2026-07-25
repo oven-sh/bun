@@ -631,10 +631,8 @@ impl RunCommand {
             }
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
-            let need_npm =
-                bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
-            let need_npx =
-                bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
+            let need_npm = bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
+            let need_npx = bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
 
             for (dest, wanted) in [
                 (NODE_LINK, true),
@@ -752,10 +750,8 @@ impl RunCommand {
             }
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
-            let need_npm =
-                bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
-            let need_npx =
-                bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
+            let need_npm = bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
+            let need_npx = bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
 
             let image_path = win::exe_path_w();
             for (name, wanted) in [

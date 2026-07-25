@@ -57,6 +57,80 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/33957
+test("lcov does not emit DA records for comment-only or blank lines in uncovered functions", () => {
+  const dir = tempDirWithFiles("cov", {
+    "mod.ts": `export function add(a: number, b: number): number {
+  // this is a comment line that is never executed
+
+  return a + b;
+}
+`,
+    "load-only.test.ts": `
+import { test, expect } from "bun:test";
+import * as mod from "./mod.ts";
+test("imports the module but never calls add", () => {
+  expect(typeof mod.add).toBe("function");
+});
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "--coverage-reporter", "lcov", "./load-only.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  expect(result.exitCode).toBe(0);
+  expect(result.signalCode).toBeUndefined();
+
+  const lcov = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  const modRecord = lcov.split("TN:").find(record => record.includes("SF:mod.ts"));
+  // Line 2 (comment) and line 3 (blank) must not appear; line 1 (declaration)
+  // and line 4 (return) are the executable lines, both unexecuted.
+  expect(modRecord).toBe(
+    `
+SF:mod.ts
+FNF:1
+FNH:0
+DA:1,0
+DA:4,0
+LF:2
+LH:0
+end_of_record
+`,
+  );
+});
+
+test("text reporter prints sparse uncovered lines, including a trailing single line", () => {
+  const dir = tempDirWithFiles("cov", {
+    "mod.ts": `export function add(a: number, b: number): number {
+  // this is a comment line that is never executed
+
+  return a + b;
+}
+`,
+    "load-only.test.ts": `
+import { test, expect } from "bun:test";
+import * as mod from "./mod.ts";
+test("imports the module but never calls add", () => {
+  expect(typeof mod.add).toBe("function");
+});
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage", "./load-only.test.ts"], {
+    cwd: dir,
+    env: {
+      ...bunEnv,
+    },
+    stdio: [null, null, "pipe"],
+  });
+  // Uncovered lines 1 and 4 are two single-line runs; the old run tracker
+  // dropped line 1 (index 0) and never flushed the trailing single line.
+  expect(result.stderr.toString("utf-8")).toMatch(/ mod\.ts\s+\|\s+0\.00\s+\|\s+0\.00\s+\| 1,4\n/);
+  expect(result.exitCode).toBe(0);
+});
+
 test("coverage excludes node_modules directory", () => {
   const dir = tempDirWithFiles("cov", {
     "node_modules/pi/index.js": `
@@ -192,8 +266,8 @@ test("should call only some functions", () => {
 ---------------|---------|---------|-------------------
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
-All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+All files      |   75.00 |   75.00 |
+ include-me.ts |   50.00 |   50.00 | 6-7
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 

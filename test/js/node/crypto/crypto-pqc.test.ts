@@ -195,6 +195,42 @@ describe("PKCS#8 private-key CHOICE forms", () => {
     const sig = sign(undefined, data, priv);
     expect(verify(undefined, data, pub, sig)).toBe(true);
   });
+
+  describe.each([
+    ["ml_dsa_44", "ml-dsa-44"],
+    ["ml_kem_768", "ml-kem-768"],
+  ] as const)("encrypted `both` form (%s)", (stem, type) => {
+    const encPem = fixture(`${stem}_private_both_encrypted.pem`);
+    const encDer = Buffer.from(
+      encPem.toString("ascii").replace(/-----(BEGIN|END) ENCRYPTED PRIVATE KEY-----|\s/g, ""),
+      "base64",
+    );
+    const reference = createPrivateKey(fixture(`${stem}_private_seed_only.pem`));
+
+    test("createPrivateKey accepts an encrypted `both`-form key (PEM and DER)", () => {
+      const fromPem = createPrivateKey({ key: encPem, passphrase: "password" });
+      const fromDer = createPrivateKey({ key: encDer, format: "der", type: "pkcs8", passphrase: "password" });
+      expect({
+        pemType: fromPem.asymmetricKeyType,
+        derType: fromDer.asymmetricKeyType,
+        pemEqualsSeedOnly: fromPem.equals(reference),
+        derEqualsSeedOnly: fromDer.equals(reference),
+      }).toEqual({ pemType: type, derType: type, pemEqualsSeedOnly: true, derEqualsSeedOnly: true });
+    });
+
+    test("missing passphrase on an encrypted `both`-form key still reports ERR_MISSING_PASSPHRASE", () => {
+      expect(() => createPrivateKey(encPem)).toThrow(expect.objectContaining({ code: "ERR_MISSING_PASSPHRASE" }));
+    });
+
+    test("wrong passphrase on an encrypted `both`-form key still surfaces the decrypt error", () => {
+      expect(() => createPrivateKey({ key: encPem, passphrase: "wrong" })).toThrow(
+        expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }),
+      );
+      expect(() =>
+        createPrivateKey({ key: encDer, format: "der", type: "pkcs8", passphrase: "wrong" }),
+      ).toThrow(expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_/) }));
+    });
+  });
 });
 
 describe("encrypted PKCS#8", () => {

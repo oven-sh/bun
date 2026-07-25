@@ -2626,10 +2626,48 @@ EVPKeyPointer EVPKeyPointer::TryParsePqcBothFormPkcs8(
     return key;
 }
 
+} // namespace ncrypto
+
+// BoringSSL has no public API that decrypts an EncryptedPrivateKeyInfo to the
+// plaintext PrivateKeyInfo bytes without also routing them through
+// EVP_parse_private_key (which is the call that rejects the "both" form). This
+// internal helper does exactly the decrypt-to-bytes step; it has external
+// linkage in the object file so we can reach it from the static link here.
+namespace bssl {
+int pkcs8_pbe_decrypt(uint8_t** out, size_t* out_len, CBS* algorithm,
+    const char* pass, size_t pass_len, const uint8_t* in, size_t in_len);
+}
+
+namespace ncrypto {
 namespace {
 bool isPrivateKeyWasNotSeedError(int err)
 {
     return ERR_GET_LIB(err) == ERR_LIB_EVP && ERR_GET_REASON(err) == EVP_R_PRIVATE_KEY_WAS_NOT_SEED;
+}
+
+EVPKeyPointer tryRecoverPqcBothFormEncrypted(
+    const Buffer<const unsigned char>& der, const Buffer<char>& pass)
+{
+    // EncryptedPrivateKeyInfo ::= SEQUENCE { algorithm, encryptedData }
+    CBS cbs, epki, algorithm, ciphertext;
+    CBS_init(&cbs, der.data, der.len);
+    if (!CBS_get_asn1(&cbs, &epki, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&epki, &algorithm, CBS_ASN1_SEQUENCE)
+        || !CBS_get_asn1(&epki, &ciphertext, CBS_ASN1_OCTETSTRING)
+        || CBS_len(&epki) != 0) {
+        return {};
+    }
+
+    uint8_t* plain = nullptr;
+    size_t plainLen = 0;
+    if (!bssl::pkcs8_pbe_decrypt(&plain, &plainLen, &algorithm, pass.data, pass.len,
+            CBS_data(&ciphertext), CBS_len(&ciphertext))) {
+        return {};
+    }
+    Buffer<const unsigned char> plainBuf { .data = plain, .len = plainLen };
+    auto key = EVPKeyPointer::TryParsePqcBothFormPkcs8(plainBuf);
+    OPENSSL_free(plain);
+    return key;
 }
 } // namespace
 
@@ -2661,16 +2699,27 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
             PasswordCallback,
             config.passphrase.has_value() ? &passphrase : nullptr);
         if (!key && isPrivateKeyWasNotSeedError(ERR_peek_error())) {
+            // The PEM could have been either PRIVATE KEY (plaintext
+            // PrivateKeyInfo) or ENCRYPTED PRIVATE KEY (EncryptedPrivateKeyInfo
+            // wrapping one). Either way BoringSSL decrypted successfully and
+            // then rejected the inner encoding; re-read whichever block it was
+            // to recover the plaintext PrivateKeyInfo for the "both"-form
+            // retry.
             auto pemBio = BIOPointer::New(buffer);
             uint8_t* der = nullptr;
             long derLen = 0;
             char* name = nullptr;
-            if (pemBio
-                && PEM_bytes_read_bio(&der, &derLen, &name, PEM_STRING_PKCS8INF, pemBio.get(),
-                    PasswordCallback, config.passphrase.has_value() ? &passphrase : nullptr)) {
-                OPENSSL_free(name);
+            char* header = nullptr;
+            if (pemBio && PEM_read_bio(pemBio.get(), &name, &header, &der, &derLen)) {
                 Buffer<const unsigned char> derBuf { .data = der, .len = static_cast<size_t>(derLen) };
-                auto recovered = TryParsePqcBothFormPkcs8(derBuf);
+                EVPKeyPointer recovered;
+                if (strcmp(name, PEM_STRING_PKCS8INF) == 0) {
+                    recovered = TryParsePqcBothFormPkcs8(derBuf);
+                } else if (strcmp(name, PEM_STRING_PKCS8) == 0 && config.passphrase.has_value()) {
+                    recovered = tryRecoverPqcBothFormEncrypted(derBuf, passphrase);
+                }
+                OPENSSL_free(name);
+                OPENSSL_free(header);
                 OPENSSL_free(der);
                 if (recovered) {
                     ERR_clear_error();
@@ -2697,6 +2746,13 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
                 nullptr,
                 PasswordCallback,
                 config.passphrase.has_value() ? &passphrase : nullptr);
+            if (!key && isPrivateKeyWasNotSeedError(ERR_peek_error())
+                && config.passphrase.has_value()) {
+                if (auto recovered = tryRecoverPqcBothFormEncrypted(buffer, passphrase)) {
+                    ERR_clear_error();
+                    return ParseKeyResult(WTF::move(recovered));
+                }
+            }
             return keyOrError(EVPKeyPointer(key), config.passphrase.has_value());
         }
 

@@ -2562,10 +2562,11 @@ impl RunCommand {
             bstr::BStr::new(target_name),
             bstr::BStr::new(fs_top_level_dir),
         );
-        // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
-        // for this one resolve.
         let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_effective();
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
+            // Suppress `DirInfo.abs_real_path` population (resolver.rs
+            // `dir_info_uncached`) for the entry's directory; the entry path
+            // itself is recovered from `.pretty` below.
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks_main;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.

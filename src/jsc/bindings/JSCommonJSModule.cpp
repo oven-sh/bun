@@ -1463,6 +1463,7 @@ void JSCommonJSModule::evaluateWithPotentiallyOverriddenCompile(
         arguments.append(keyJSString);
         JSC::profiledCall(globalObject, ProfilingReason::API, compileFunction, callData, this, arguments);
         RETURN_IF_EXCEPTION(scope, );
+        this->hasEvaluated = true;
         return;
     }
     this->evaluate(globalObject, key, source, false);

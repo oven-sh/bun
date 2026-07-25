@@ -273,6 +273,37 @@ describe.concurrent("node-module-module", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("non-chaining Module.prototype._compile override still marks the module loaded", async () => {
+    using dir = tempDir("module-prototype-compile-vm", {
+      "package.json": JSON.stringify({ type: "commonjs" }),
+      "main.cjs": `
+        const Module = require("module"), vm = require("vm"), path = require("path");
+        Module.prototype._compile = function (code, filename) {
+          const wrapped = vm.runInThisContext(Module.wrap(code));
+          return wrapped.call(this.exports, this.exports, require, this, filename, path.dirname(filename));
+        };
+        const v = require("./t.cjs");
+        const loaded = require.cache[require.resolve("./t.cjs")].loaded;
+        import("./t.cjs").then(
+          m => console.log(JSON.stringify({ v, loaded, importOk: true, default: m.default })),
+          e => console.log(JSON.stringify({ v, loaded, importOk: false, err: String(e) })),
+        );
+      `,
+      "t.cjs": `module.exports = 42;`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ v: 42, loaded: true, importOk: true, default: 42 });
+    expect(exitCode).toBe(0);
+  });
+
   test.each([
     "/file/name/goes/here.js",
     "file/here.js",

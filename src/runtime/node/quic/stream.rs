@@ -120,9 +120,7 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
                     if bit != PSEUDO_STATUS {
                         return Err(());
                     }
-                    if value.len() != 3
-                        || !value.iter().all(u8::is_ascii_digit)
-                        || value[0] == b'0'
+                    if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) || value[0] == b'0'
                     {
                         return Err(());
                     }
@@ -140,7 +138,9 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
                 b"content-length" => {
                     if value.is_empty()
                         || !value.iter().all(u8::is_ascii_digit)
-                        || content_length.replace(value).is_some_and(|prev| prev != value)
+                        || content_length
+                            .replace(value)
+                            .is_some_and(|prev| prev != value)
                     {
                         return Err(());
                     }

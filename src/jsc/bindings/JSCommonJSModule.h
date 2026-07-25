@@ -70,6 +70,11 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
+    // When a CJS module is reached via the ESM loader (entrypoint or
+    // `import` of CJS) and a `Module._extensions` handler applies, the
+    // handler is stashed here so the deferred synthetic-module evaluation
+    // can invoke it instead of evaluating pre-transpiled source.
+    mutable JSC::WriteBarrier<Unknown> m_pendingCustomExtension;
 
     bool ignoreESModuleAnnotation { false };
     JSC::SourceCode sourceCode = JSC::SourceCode();
@@ -183,6 +188,11 @@ inline std::optional<JSC::SourceCode> createCommonJSModule(
 {
     return createCommonJSModule(globalObject, specifierValue, source, false);
 }
+
+std::optional<JSC::SourceCode> createCommonJSModuleForCustomExtension(
+    Zig::GlobalObject* globalObject,
+    JSC::JSString* specifierValue,
+    JSC::JSValue extension);
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:

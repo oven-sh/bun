@@ -4229,40 +4229,6 @@ unsafe fn transpile_file(
         }
     });
 
-    // ── force_loader / require.extensions override ──────────────────────────
-    if let Some(loader_type) = force_loader_type {
-        // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
-        debug_assert!(!is_commonjs_require);
-        lr.loader = Some(loader_type);
-    } else if is_commonjs_require
-        // SAFETY: per fn contract.
-        && unsafe { &*jsc_vm }.has_mutated_built_in_extensions > 0
-    {
-        use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
-        if let Some(entry) =
-            // SAFETY: per fn contract.
-            find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
-        {
-            match entry {
-                CustomLoader::Loader(loader) => lr.loader = Some(*loader),
-                CustomLoader::Custom(strong) => {
-                    // SAFETY: `ret` is a valid out-param per fn contract.
-                    unsafe {
-                        *ret = ErrorableResolvedSource::ok(ResolvedSource {
-                            source_code: bun_core::String::empty(),
-                            specifier: bun_core::String::empty(),
-                            source_url: bun_core::String::empty(),
-                            cjs_custom_extension_index: strong.get(),
-                            tag: ResolvedSourceTag::CommonJsCustomExtension,
-                            ..Default::default()
-                        });
-                    }
-                    return ptr::null_mut();
-                }
-            }
-        }
-    }
-
     // ── module_type sniff from extension / package.json ─────────────────────
     let module_type: ModuleType = 'brk: {
         let ext = lr.path.name().ext;
@@ -4292,6 +4258,47 @@ unsafe fn transpile_file(
         // For JSX/TSX and other extensions, let the file contents decide.
         ModuleType::Unknown
     };
+
+    // ── force_loader / require.extensions override ──────────────────────────
+    if let Some(loader_type) = force_loader_type {
+        // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
+        debug_assert!(!is_commonjs_require);
+        lr.loader = Some(loader_type);
+    } else if (is_commonjs_require || module_type != ModuleType::Esm)
+        && lr.virtual_source.is_none()
+        // SAFETY: per fn contract.
+        && unsafe { &*jsc_vm }.has_mutated_built_in_extensions > 0
+    {
+        // Node.js routes every CJS-loader load (the entrypoint, nested
+        // require(), and a CJS module reached from ESM import) through
+        // `Module._extensions[ext]`. `is_commonjs_require` alone covers only
+        // nested require(); gating on `module_type != Esm` adds the entrypoint
+        // and ESM-imports-CJS paths while still skipping `.mjs`/`.mts` and
+        // `.js` under `"type": "module"`.
+        use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
+        if let Some(entry) =
+            // SAFETY: per fn contract.
+            find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
+        {
+            match entry {
+                CustomLoader::Loader(loader) => lr.loader = Some(*loader),
+                CustomLoader::Custom(strong) => {
+                    // SAFETY: `ret` is a valid out-param per fn contract.
+                    unsafe {
+                        *ret = ErrorableResolvedSource::ok(ResolvedSource {
+                            source_code: bun_core::String::empty(),
+                            specifier: bun_core::String::empty(),
+                            source_url: bun_core::String::empty(),
+                            cjs_custom_extension_index: strong.get(),
+                            tag: ResolvedSourceTag::CommonJsCustomExtension,
+                            ..Default::default()
+                        });
+                    }
+                    return ptr::null_mut();
+                }
+            }
+        }
+    }
     let pkg_name: Option<&[u8]> = lr
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));

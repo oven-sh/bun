@@ -1114,6 +1114,24 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, reject(exception));
     }
 
+    if (res->result.value.tag == SyntheticModuleType::CommonJSCustomExtension) {
+        auto created = Bun::createCommonJSModuleForCustomExtension(
+            globalObject, specifierJS, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
+        EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+        if (created.has_value()) {
+            RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
+        }
+
+        if constexpr (allowPromise) {
+            auto* exception = scope.exception();
+            (void)scope.tryClearException();
+            RELEASE_AND_RETURN(scope, rejectedInternalPromise(globalObject, exception));
+        } else {
+            scope.release();
+            return {};
+        }
+    }
+
     // The JSONForObjectLoader tag is source code returned from Bun that needs
     // to go through the JSON parser in JSC.
     //

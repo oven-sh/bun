@@ -267,3 +267,64 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// connect() that creates its own endpoint (reuseEndpoint:false or an
+// endpoint-options object) must not leave that endpoint rooted in the module's
+// endpointRegistry after the session closes: each one holds a bound UDP fd and
+// a native lsquic engine, so a long-lived client leaked one per connection and
+// hit EMFILE at the nofile limit.
+describe("connect() implicit client endpoint lifecycle", () => {
+  test.each([
+    ["reuseEndpoint:false", { reuseEndpoint: false } as const],
+    ["endpoint:{} options object", { endpoint: {} } as const],
+  ])("%s: the endpoint closes when its only session closes", async (_label, extra) => {
+    await using server = await listen(
+      async s => {
+        s.onerror = () => {};
+        await s.closed.catch(() => {});
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["echo"], transportParams: { maxIdleTimeout: 5 } },
+    );
+
+    const client = await connect(server.address, {
+      alpn: "echo",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+      ...extra,
+    });
+    await client.opened;
+    const endpoint = client.endpoint;
+    expect(endpoint.closing || endpoint.destroyed).toBe(false);
+
+    await client.close();
+
+    // Session.destroy() calls [kRemoveSession] before resolving `closed`, so by
+    // the time the await above returns, auto-close has already run.
+    expect(endpoint.closing || endpoint.destroyed).toBe(true);
+    await endpoint.closed;
+    expect(endpoint.destroyed).toBe(true);
+  });
+
+  test("an explicit QuicEndpoint instance is not auto-closed", async () => {
+    await using server = await listen(
+      async s => {
+        s.onerror = () => {};
+        await s.closed.catch(() => {});
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["echo"], transportParams: { maxIdleTimeout: 5 } },
+    );
+
+    const endpoint = new QuicEndpoint();
+    const client = await connect(server.address, {
+      endpoint,
+      alpn: "echo",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 5 },
+    });
+    await client.opened;
+    await client.close();
+
+    expect({ closing: endpoint.closing, destroyed: endpoint.destroyed }).toEqual({ closing: false, destroyed: false });
+    await endpoint.close();
+  });
+});

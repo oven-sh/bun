@@ -62,6 +62,18 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 # test-http-max-http-headers.js is vendored.
 test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
 
+# The server-side assertion expects serverSession.closed to reject with
+# ERR_QUIC_TRANSPORT_ERROR after the client's onpathvalidation throws. That
+# rejection is a stateless reset FROM the client's endpoint, which only arrives
+# because Node leaks every per-connect client endpoint in endpointRegistry
+# (upstream's [kRemoveSession] only does sessions.delete). Bun auto-closes
+# those endpoints when their last session ends (otherwise each reuseEndpoint:
+# false connect leaks one bound UDP fd for the process lifetime, EMFILE at the
+# nofile limit). The client-side behavior this test was written for (onerror
+# fires with the thrown error, session.closed rejects with it) is unchanged and
+# is exercised by the sibling test-quic-callback-error-* files.
+test/js/node/test/parallel/test-quic-callback-error-onpathvalidation.mjs [ FAIL ] # server-side stateless reset only happens because Node leaks the client endpoint; Bun auto-closes it
+
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 

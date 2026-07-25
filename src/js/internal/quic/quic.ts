@@ -394,6 +394,7 @@ const kNilDatagramId = 0n;
 const endpointRegistry = new SafeSet();
 
 let releaseEndpointSocket;
+let markEndpointCloseOnIdle;
 process.on("exit", () => {
   for (const endpoint of endpointRegistry) {
     releaseEndpointSocket(endpoint);
@@ -3918,6 +3919,7 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
+    closeOnIdle: false,
     clientHttp: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
@@ -3946,6 +3948,10 @@ class QuicEndpoint {
 
     releaseEndpointSocket = function (endpoint) {
       endpoint.#handle?.releaseSocket();
+    };
+
+    markEndpointCloseOnIdle = function (endpoint) {
+      endpoint.#inner.closeOnIdle = true;
     };
 
     assertEndpointNotClosedOrClosing = function (endpoint) {
@@ -4548,16 +4554,29 @@ class QuicEndpoint {
       return;
     }
     // Node parity: idle endpoints are unref'd, not destroyed — see test-quic-endpoint-idle-timeout.
-    if (!inner.idleTimeout) {
+    if (inner.idleTimeout) {
+      const timer = setTimeout(() => {
+        if (!this.destroyed && !inner.listening && inner.sessions.size === 0) {
+          inner.suppressCloseChannels = true;
+          this.destroy();
+        }
+      }, inner.idleTimeout * 1000);
+      if (typeof timer?.unref === "function") timer.unref();
       return;
     }
-    const timer = setTimeout(() => {
-      if (!this.destroyed && !inner.listening && inner.sessions.size === 0) {
-        inner.suppressCloseChannels = true;
-        this.destroy();
-      }
-    }, inner.idleTimeout * 1000);
-    if (typeof timer?.unref === "function") timer.unref();
+    // connect() created this endpoint and the caller holds no reference to it
+    // past session.close(): endpointRegistry is the only root, so without this
+    // the bound UDP fd and native engine leak for the life of the process.
+    // Deferred because session.destroy() calls us before it reaches
+    // #handle.destroy(), which is what queues the session's CONNECTION_CLOSE.
+    if (inner.closeOnIdle) {
+      queueMicrotask(() => {
+        if (!this.destroyed && !inner.isPendingClose && !inner.listening && inner.sessions.size === 0) {
+          inner.suppressCloseChannels = true;
+          this.destroy();
+        }
+      });
+    }
   }
 
   [kInspect](depth, options) {
@@ -4633,13 +4652,17 @@ function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false
     return endpoint;
   }
   if (endpoint !== undefined) {
-    return new QuicEndpoint(endpoint);
+    const created = new QuicEndpoint(endpoint);
+    if (!forServer) markEndpointCloseOnIdle(created);
+    return created;
   }
   if (reuseEndpoint && !forServer) {
     const existing = findSuitableEndpoint(wantHttp);
     if (existing !== undefined) return existing;
   }
-  return new QuicEndpoint();
+  const created = new QuicEndpoint();
+  if (!forServer) markEndpointCloseOnIdle(created);
+  return created;
 }
 
 /**

@@ -2446,9 +2446,9 @@ function stopServerResponsePerf(this: any) {
 // arm keep-alive) runs first because onResponseFinishHandleSocket's guards
 // read pre-detach state, then detach the socket and advance the pipeline.
 function emitResponseFinish() {
-  // Like Node.js's resOnFinish: if nothing is (or is about to be) reading the
-  // request body, dump it. Runs on 'finish' (nextTick after end()) so a
-  // consumer attached between res.end() and this tick is still honoured.
+  // If the user never called req.read(), and didn't pipe() or
+  // .resume() or .on('data'), then we call req._dump() so that the
+  // bytes will be pulled off the wire.
   const req = this.req;
   if (req && !req._consuming && !req._readableState?.resumeScheduled) {
     req._dump();

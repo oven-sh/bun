@@ -418,7 +418,9 @@ pub(crate) fn bind_unix_listen_fd(global: &JSGlobalObject, frame: &CallFrame) ->
     {
         let _ = frame;
         let _ = global;
-        return Ok(JSValue::js_number(-(bun_sys::SystemErrno::ENOTSUP as i32) as f64));
+        return Ok(JSValue::js_number(
+            -(bun_sys::SystemErrno::ENOTSUP as i32) as f64,
+        ));
     }
     #[cfg(not(windows))]
     {

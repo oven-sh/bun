@@ -329,7 +329,11 @@ function bunServeUnix(worker, message) {
     });
   }
   entry.workers.add(worker.id);
-  const reply = { cmd: "NODE_HANDLE", type: "bun.ServeUnixFd", message: { errno: 0, key, ack: message.seq, cmd: "NODE_CLUSTER" } };
+  const reply = {
+    cmd: "NODE_HANDLE",
+    type: "bun.ServeUnixFd",
+    message: { errno: 0, key, ack: message.seq, cmd: "NODE_CLUSTER" },
+  };
   sendHelper(worker.process[kHandle], reply, { fd: entry.fd }, null);
 }
 

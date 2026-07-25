@@ -1031,13 +1031,18 @@ test("two inspector.open() clients each receive their own Runtime.evaluate resul
     stderr: "pipe",
   });
 
+  let stderrText = "";
+  const stderrDrained = (async () => {
+    for await (const chunk of proc.stderr) stderrText += Buffer.from(chunk).toString();
+  })();
+
   const decoder = new TextDecoder();
   const stdoutReader = proc.stdout.getReader();
   let stdoutText = "";
   let wsUrl: string | undefined;
   while (!wsUrl) {
     const { value, done } = await stdoutReader.read();
-    if (done) throw new Error(`child exited before printing its URL; stdout: ${stdoutText}`);
+    if (done) throw new Error(`child exited before printing its URL; stdout: ${stdoutText}; stderr: ${stderrText}`);
     stdoutText += decoder.decode(value);
     wsUrl = stdoutText.match(/URL (ws:\S+)/)?.[1];
   }
@@ -1057,7 +1062,7 @@ test("two inspector.open() clients each receive their own Runtime.evaluate resul
         if (msg.id === id) resolve(msg.result?.result?.value);
       });
       ws.addEventListener("error", reject);
-      ws.addEventListener("close", () => reject(new Error("socket closed before response")));
+      ws.addEventListener("close", () => reject(new Error(`socket closed before response; stderr: ${stderrText}`)));
       ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression } }));
     });
 
@@ -1074,6 +1079,7 @@ test("two inspector.open() clients each receive their own Runtime.evaluate resul
     a.close();
     b.close();
     proc.kill("SIGKILL");
+    await stderrDrained;
   }
 });
 

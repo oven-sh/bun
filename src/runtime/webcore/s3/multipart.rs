@@ -129,9 +129,7 @@ pub struct MultiPartUpload {
 
     pub current_part_number: u16,
     pub ref_count: Cell<u32>, // intrusive refcount — see bun_ptr::IntrusiveRc
-    /// Total payload bytes acknowledged by the server so far. Surfaced as the
-    /// resolved value of `S3File.write()` / `.writer().end()` so callers can
-    /// verify the transfer size.
+    /// Server-acknowledged payload bytes; resolves `S3File.write()` / `.writer().end()`.
     pub uploaded: u64,
     pub ended: bool,
 

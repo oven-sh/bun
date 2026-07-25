@@ -122,7 +122,6 @@ describe("s3 write() resolves with bytes transferred", () => {
     const w = client.file("k").writer({ partSize });
     w.write(Buffer.alloc(total, "a"));
     const n = await w.end();
-    server.stop(true);
     expect({ returned: n, received: partsReceived }).toEqual({ returned: total, received: total });
   });
 

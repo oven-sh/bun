@@ -2047,10 +2047,7 @@ pub struct NetworkSink {
     // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub high_water_mark: BlobSizeType,
-    /// Cumulative payload bytes the server has acknowledged so far, mirrored
-    /// from `MultiPartUpload.uploaded` on each `on_writable` callback. Read by
-    /// the completion callback to resolve `end()`/`flush()` because `task` may
-    /// already be detached (GC of the JS wrapper) by then.
+    /// Mirrors `MultiPartUpload.uploaded`; survives `task` detaching before completion.
     pub wrote: u64,
     pub flush_promise: JSPromiseStrong,
     pub end_promise: JSPromiseStrong,
@@ -2188,7 +2185,7 @@ impl NetworkSink {
         if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
                 global_this,
-                JSValue::js_number(0.0),
+                JSValue::js_number(self.wrote as f64),
             ));
         }
         // flush more
@@ -2200,7 +2197,7 @@ impl NetworkSink {
         // we are done flushing no backpressure
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(0.0),
+            JSValue::js_number(self.wrote as f64),
         ))
     }
 
@@ -2287,10 +2284,7 @@ impl NetworkSink {
             return bun_sys::Result::Ok(self.end_promise.value());
         }
         if self.task.is_some() {
-            // `end()` may run the upload to completion synchronously (local
-            // endpoint / warm connection), which fires `wrapper_callback`
-            // before we return. Create the promise first so the callback has
-            // it to resolve with the byte count.
+            // end() may complete synchronously; the promise must exist before it runs.
             self.end_promise = JSPromiseStrong::init(self.global_this());
             let value = self.end_promise.value();
             let _ = self.end(None);

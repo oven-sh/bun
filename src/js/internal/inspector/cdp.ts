@@ -530,6 +530,11 @@ class InspectorCDPAdapter {
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
+  // Pre-parse breakpoints whose removal was issued during retranslation. The
+  // script starts executing as soon as it parses, so a stale pass-through
+  // breakpoint can fire before the backend processes the removal; V8 has no
+  // such pause (it re-resolves internally), so resume through it silently.
+  #supersededBreakpointIds = new Set<string>();
   // Profiler domain: tracking state plus the deferred Profiler.stop replies,
   // each answered in order when ScriptProfiler.trackingComplete delivers the
   // samples. A FIFO so pipelined start/stop pairs over the remote transport
@@ -704,15 +709,43 @@ class InspectorCDPAdapter {
   // Recover the missing pieces from the exception's own properties (stack,
   // line, column, sourceURL) with one extra backend roundtrip before replying.
   #replyEvaluateLike(clientId: number | string, method: string, jscResult: AnyObject): void {
-    const objectId = jscResult.wasThrown ? jscResult.result?.objectId : undefined;
-    if (!objectId) {
-      this.#replyToClient(clientId, this.#translateResult(method, jscResult));
+    const remote = jscResult.result;
+    const objectId = jscResult.wasThrown ? remote?.objectId : undefined;
+    if (objectId) {
+      this.#sendToBackend("Runtime.getProperties", { objectId, ownProperties: true }, null, method, (props, error) => {
+        const properties = error ? [] : (props.properties ?? []);
+        this.#replyToClient(clientId, this.#translateThrownResult(method, jscResult, properties));
+      });
       return;
     }
-    this.#sendToBackend("Runtime.getProperties", { objectId, ownProperties: true }, null, method, (props, error) => {
-      const properties = error ? [] : (props.properties ?? []);
-      this.#replyToClient(clientId, this.#translateThrownResult(method, jscResult, properties));
-    });
+    // An error VALUE with a preview: JSC caps preview properties at five, and
+    // an error's five JSC location properties crowd `stack` out entirely, so
+    // recover it from the object itself (V8 lists it first).
+    if (remote?.subtype === "error" && remote.preview && remote.objectId) {
+      this.#sendToBackend(
+        "Runtime.getProperties",
+        { objectId: remote.objectId, ownProperties: true },
+        null,
+        method,
+        (props, error) => {
+          const out = this.#translateResult(method, jscResult);
+          const preview = out.result?.preview;
+          if (!error && preview?.properties) {
+            let stack: unknown;
+            for (const property of props.properties ?? []) {
+              if (property?.name === "stack") stack = property.value?.value;
+            }
+            const hasStack = preview.properties.some((property: AnyObject) => property?.name === "stack");
+            if (typeof stack === "string" && !hasStack) {
+              preview.properties.unshift({ name: "stack", type: "string", value: stack });
+            }
+          }
+          this.#replyToClient(clientId, out);
+        },
+      );
+      return;
+    }
+    this.#replyToClient(clientId, this.#translateResult(method, jscResult));
   }
 
   #translateThrownResult(method: string, jscResult: AnyObject, properties: AnyObject[]): AnyObject {
@@ -962,6 +995,7 @@ class InspectorCDPAdapter {
     // one shared pause location; removing one of them after a re-added
     // breakpoint resolved to that same location cleared the re-added one too.
     for (const { bp } of resets) {
+      this.#supersededBreakpointIds.$add(bp.jscId);
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
     }
     for (const { clientBreakpointId, bp, generated } of resets) {
@@ -1544,6 +1578,23 @@ class InspectorCDPAdapter {
       case "Debugger.enable":
         return { debuggerId: "(bun)", ...result };
 
+      // Breakpoint replies carry resolved positions in generated coordinates;
+      // clients print them (the debugger REPL's `breakpoints` list), so they
+      // need the same original-position translation as pause locations.
+      case "Debugger.setBreakpoint": {
+        const out: AnyObject = { ...result };
+        if (out.actualLocation) out.actualLocation = this.#toOriginalLocation(out.actualLocation);
+        return out;
+      }
+
+      case "Debugger.setBreakpointByUrl": {
+        const out: AnyObject = { ...result };
+        if ($isJSArray(out.locations)) {
+          out.locations = out.locations.map((location: AnyObject) => this.#toOriginalLocation(location));
+        }
+        return out;
+      }
+
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":
       case "Debugger.evaluateOnCallFrame": {
@@ -1639,6 +1690,10 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
+        if (params.reason === "Breakpoint" && this.#supersededBreakpointIds.$has(params.data?.breakpointId)) {
+          this.#sendToBackend("Debugger.resume");
+          return;
+        }
         const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",

@@ -257,6 +257,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !p.is_strict_mode()
                 && p.options.module_type != crate::parser::options::ModuleType::Esm
                 && p.is_strict_mode_output_format()
+                && !p.require_ref.eql(result.r#ref)
+                && !p.dirname_ref.eql(result.r#ref)
+                && !p.filename_ref.eql(result.r#ref)
                 && p.define.for_identifier(name).is_none()
                 && !matches!(
                     name,

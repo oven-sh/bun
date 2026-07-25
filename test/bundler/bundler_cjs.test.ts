@@ -749,6 +749,30 @@ describe("bundler", () => {
     },
   });
 
+  itBundled("cjs/ImplicitGlobalAssignRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import v from './lib.cjs';
+        console.log(v);
+      `,
+      "/lib.cjs": /* js */ `
+        if (globalThis.__MOCK__) require = globalThis.__MOCK__;
+        module.exports = require('./dep.cjs');
+      `,
+      "/dep.cjs": /* js */ `
+        module.exports = "dep-value";
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "dep-value",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toContain("dep-value");
+    },
+  });
+
   itBundled("cjs/ImplicitGlobalAssignMJS", {
     files: {
       "/entry.mjs": /* js */ `

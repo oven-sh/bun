@@ -2881,9 +2881,7 @@ impl RunCommand {
                 .unwrap_or(false);
 
         // Re-derive the canonical absolute path from the open fd (resolves
-        // symlinks). With `--preserve-symlinks-main`, Node.js keeps the
-        // symlink spelling for the entry module's `__filename`, so skip the
-        // realpath and resolve `target` against cwd instead.
+        // symlinks), or under `--preserve-symlinks-main` join against cwd.
         let absolute_script_path: Box<[u8]> = if preserve_symlinks_main {
             let mut cwd_buf = PathBuffer::uninit();
             let Ok(cwd) = bun_core::getcwd(&mut cwd_buf) else {

@@ -1590,8 +1590,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                     if (signalToContextIdsMap->find(signalNumber) != signalToContextIdsMap->end() && eventEmitter.listenerCount(eventName) == 0) {
 
 #if !OS(WINDOWS)
-                        // SIGUSR1 is reserved (inert) by default; restoring SIG_DFL would
-                        // make it fatal. Restore the startup no-op handler instead.
+                        // SIGUSR1 stays inert (reserved); SIG_DFL would make it fatal.
                         void (*restoreTo)(int) = signalNumber == SIGUSR1 ? Bun__noopSignalHandler : SIG_DFL;
                         if (void (*oldHandler)(int) = signal(signalNumber, restoreTo); oldHandler != forwardSignal) {
                             // Don't uninstall the old handler if it's not the one we installed.

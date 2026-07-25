@@ -232,9 +232,8 @@ pub struct BundleOptions {
     pub polyfill_node_globals: bool,
     pub prefer_offline_install: bool,
     pub preserve_symlinks: bool,
-    /// `--preserve-symlinks-main`: applies `preserve_symlinks` semantics to
-    /// the main entry module only. Consumed by the VM's `_resolve` when the
-    /// source is the synthetic `bun:main` wrapper.
+    /// `--preserve-symlinks-main`: `preserve_symlinks` for the entry only
+    /// (read by `_resolve` when source is `bun:main`).
     pub preserve_symlinks_main: bool,
     pub rewrite_jest_for_tests: bool,
     pub tsconfig_override: Option<Box<[u8]>>,

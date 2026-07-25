@@ -4158,10 +4158,8 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // `--preserve-symlinks-main`: the synthetic `bun:main` wrapper resolving
-        // the entry module must keep the symlink spelling. `finalize_result`
-        // stores the pre-realpath text in `.pretty` when it rewrites `.text`
-        // (see `Path::set_realpath`), so read it back for this one resolve.
+        // `--preserve-symlinks-main`: `Path::set_realpath` stashed the
+        // pre-realpath spelling in `.pretty`; return that for the entry.
         let path_text = if is_main_entry_resolve
             && self.transpiler.resolver.opts.preserve_symlinks_main
             && result_path.is_symlink

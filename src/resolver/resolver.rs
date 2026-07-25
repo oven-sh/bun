@@ -1665,106 +1665,99 @@ impl<'a> Resolver<'a> {
                     module_type_from_ext(name.ext).unwrap_or(options::ModuleType::Unknown);
             }
 
-            // `--preserve-symlinks` (Node.js semantics): keep the symlink
-            // spelling as the resolved path so `__filename` / the module
-            // cache key is the link, not the realpath. `dir.abs_real_path`
-            // is already left empty under this flag (see `dir_info_uncached`),
-            // so skipping this block is the only remaining realpath source.
+            // `--preserve-symlinks`: keep the link spelling (`__filename`);
+            // `dir.abs_real_path` is already gated in `dir_info_uncached`.
             if !self.opts.preserve_symlinks
                 && let Some(entries) = dir.get_entries_ref(self.generation)
                 && let Some(query) = entries.get(name.filename)
             {
-                {
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    let symlink_path =
-                        unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
-                    if !symlink_path.is_empty() {
-                        path.set_realpath(symlink_path);
-                        if !result.file_fd.is_valid() {
-                            result.file_fd = query.entry().cache().fd;
-                        }
+                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
+                let symlink_path = unsafe { query.entry().symlink(self.rfs_ptr(), self.store_fd) };
+                if !symlink_path.is_empty() {
+                    path.set_realpath(symlink_path);
+                    if !result.file_fd.is_valid() {
+                        result.file_fd = query.entry().cache().fd;
+                    }
 
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(path.text()),
-                                bstr::BStr::new(symlink_path)
-                            ));
-                        }
-                    } else if !dir.abs_real_path.is_empty() {
-                        // When the directory is a symlink, we don't need to call getFdPath.
-                        let parts = [dir.abs_real_path, query.entry().base()];
-                        let mut buf = bun_paths::PathBuffer::uninit();
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(path.text()),
+                            bstr::BStr::new(symlink_path)
+                        ));
+                    }
+                } else if !dir.abs_real_path.is_empty() {
+                    // When the directory is a symlink, we don't need to call getFdPath.
+                    let parts = [dir.abs_real_path, query.entry().base()];
+                    let mut buf = bun_paths::PathBuffer::uninit();
 
-                        // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
-                        // length so `buf` can be re-borrowed for null-termination below.
-                        let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
+                    // NOTE: `abs_buf` returns a borrow of `buf`; capture only the
+                    // length so `buf` can be re-borrowed for null-termination below.
+                    let out_len = self.fs_ref().abs_buf(&parts, &mut buf).len();
 
-                        let store_fd = self.store_fd;
+                    let store_fd = self.store_fd;
 
-                        if !query.entry().cache().fd.is_valid() && store_fd {
-                            buf[out_len] = 0;
-                            // SAFETY: buf[out_len] == 0 written above
-                            let span = bun_core::ZStr::from_buf(&buf[..], out_len);
-                            // I/O errors propagate so `resolveAndAutoInstall` can
-                            // return them as `Result.Union.failure` — never
-                            // panic on EACCES/EMFILE/ELOOP here.
-                            let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
-                                .map_err(Into::<crate::Error>::into)?;
-                            {
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = query.entry().mutex.lock_guard();
-                                query.entry().set_cache_fd(file);
-                            }
-                            Fs::FileSystem::set_max_fd(file.native());
-                        }
-
-                        // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
-                        // the closure captures only Copy values — keeps `self` and
-                        // `query.entry` reborrowable across the guard's lifetime.
-                        let need_close = self.fs_ref().fs.need_to_close_files();
-                        // ARENA — Entry lives in the BSSMap singleton; guard runs before
-                        // the slot is reused (resolver mutex held). Capture as `BackRef`
-                        // (Copy, Deref) so the closure stays Copy-only while the read is
-                        // a safe `BackRef::get()` instead of a raw-ptr deref.
-                        let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
-                            core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
-                        );
-                        scopeguard::defer! {
-                            if need_close {
-                                let e = entry_ref.get();
-                                // Every cached-`Entry` rewrite takes the per-entry mutex.
-                                let _entry_guard = e.mutex.lock_guard();
-                                let fd = e.cache().fd;
-                                if fd.is_valid() {
-                                    fd.close();
-                                    e.set_cache_fd(FD::INVALID);
-                                }
-                            }
-                        }
-
-                        let symlink =
-                            Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
-                        if let Some(debug) = self.debug_logs.as_mut() {
-                            debug.add_note_fmt(format_args!(
-                                "Resolved symlink \"{}\" to \"{}\"",
-                                bstr::BStr::new(symlink),
-                                bstr::BStr::new(path.text())
-                            ));
-                        }
+                    if !query.entry().cache().fd.is_valid() && store_fd {
+                        buf[out_len] = 0;
+                        // SAFETY: buf[out_len] == 0 written above
+                        let span = bun_core::ZStr::from_buf(&buf[..], out_len);
+                        // I/O errors propagate so `resolveAndAutoInstall` can
+                        // return them as `Result.Union.failure` — never
+                        // panic on EACCES/EMFILE/ELOOP here.
+                        let file = bun_sys::open(span, bun_sys::O::RDONLY, 0)
+                            .map_err(Into::<crate::Error>::into)?;
                         {
                             // Every cached-`Entry` rewrite takes the per-entry mutex.
                             let _entry_guard = query.entry().mutex.lock_guard();
-                            query
-                                .entry()
-                                .set_cache_symlink(Interned::from_static(symlink));
+                            query.entry().set_cache_fd(file);
                         }
-                        if !result.file_fd.is_valid() && store_fd {
-                            result.file_fd = query.entry().cache().fd;
-                        }
-
-                        path.set_realpath(symlink);
+                        Fs::FileSystem::set_max_fd(file.native());
                     }
+
+                    // NOTE: snapshot `need_to_close_files` and raw-ptr the entry so
+                    // the closure captures only Copy values — keeps `self` and
+                    // `query.entry` reborrowable across the guard's lifetime.
+                    let need_close = self.fs_ref().fs.need_to_close_files();
+                    // ARENA — Entry lives in the BSSMap singleton; guard runs before
+                    // the slot is reused (resolver mutex held). Capture as `BackRef`
+                    // (Copy, Deref) so the closure stays Copy-only while the read is
+                    // a safe `BackRef::get()` instead of a raw-ptr deref.
+                    let entry_ref = bun_ptr::BackRef::<Fs::file_system::Entry>::from(
+                        core::ptr::NonNull::new(query.entry).expect("EntryStore slot"),
+                    );
+                    scopeguard::defer! {
+                        if need_close {
+                            let e = entry_ref.get();
+                            // Every cached-`Entry` rewrite takes the per-entry mutex.
+                            let _entry_guard = e.mutex.lock_guard();
+                            let fd = e.cache().fd;
+                            if fd.is_valid() {
+                                fd.close();
+                                e.set_cache_fd(FD::INVALID);
+                            }
+                        }
+                    }
+
+                    let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
+                    if let Some(debug) = self.debug_logs.as_mut() {
+                        debug.add_note_fmt(format_args!(
+                            "Resolved symlink \"{}\" to \"{}\"",
+                            bstr::BStr::new(symlink),
+                            bstr::BStr::new(path.text())
+                        ));
+                    }
+                    {
+                        // Every cached-`Entry` rewrite takes the per-entry mutex.
+                        let _entry_guard = query.entry().mutex.lock_guard();
+                        query
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
+                    }
+                    if !result.file_fd.is_valid() && store_fd {
+                        result.file_fd = query.entry().cache().fd;
+                    }
+
+                    path.set_realpath(symlink);
                 }
             }
         }

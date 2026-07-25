@@ -660,11 +660,8 @@ extern "C" void bun_initialize_process()
         sigaction(SIGINT, &sa, nullptr);
     }
 
-    // Node.js reserves SIGUSR1 for the debugger and never lets it terminate
-    // the process by default. Bun does not start an inspector on SIGUSR1, but
-    // still makes the signal inert so ops tooling that signals a node-compatible
-    // process does not kill it. A handler (not SIG_IGN) is used so the
-    // disposition resets to SIG_DFL across exec() for child processes.
+    // Node.js reserves SIGUSR1 (debugger) so it is never fatal by default; a
+    // handler rather than SIG_IGN so exec()'d children revert to SIG_DFL.
     {
         struct sigaction sa;
         memset(&sa, 0, sizeof(sa));

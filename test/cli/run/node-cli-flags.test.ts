@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -105,17 +105,18 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("child processes do not inherit an ignored SIGUSR1", async () => {
-    // Node.js installs a handler (reset to SIG_DFL on exec), not SIG_IGN
-    // (which would be inherited). A spawned `sh` must still be killable by
-    // SIGUSR1.
+  test.concurrent.skipIf(!isLinux)("SIGUSR1 is handled, not SIG_IGN, so exec()'d children revert to SIG_DFL", async () => {
+    // Bun's own spawn path resets every signal to SIG_DFL in the child, so a
+    // spawned-process probe cannot distinguish a handler from SIG_IGN. Read
+    // the parent process's SigIgn mask directly instead.
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
-        `const { spawnSync } = require("node:child_process");
-         const r = spawnSync("sh", ["-c", "kill -USR1 $$; sleep 5"]);
-         console.log(r.signal);`,
+        `const status = require("node:fs").readFileSync("/proc/self/status", "utf8");
+         const sigIgn = BigInt("0x" + status.match(/^SigIgn:\\s+([0-9a-f]+)/m)[1]);
+         const SIGUSR1 = require("node:os").constants.signals.SIGUSR1;
+         console.log(((sigIgn >> BigInt(SIGUSR1 - 1)) & 1n).toString());`,
       ],
       env: bunEnv,
       stdout: "pipe",
@@ -123,7 +124,7 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("SIGUSR1");
+    expect(stdout.trim()).toBe("0");
     expect(exitCode).toBe(0);
   });
 });

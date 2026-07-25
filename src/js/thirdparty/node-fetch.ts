@@ -176,8 +176,7 @@ async function fetch(
   let agent = init && (init as any).agent;
   if (agent != null && (init as any).tls == null) {
     if ($isCallable(agent)) {
-      const href =
-        typeof url === "string" ? url : $isObject(url) ? (url as any).href || (url as any).url : `${url}`;
+      const href = typeof url === "string" ? url : $isObject(url) ? (url as any).href || (url as any).url : `${url}`;
       agent = agent.$call(undefined, require("node:url").parse(href));
     }
     if ($isObject(agent)) {

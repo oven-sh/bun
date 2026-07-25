@@ -297,6 +297,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         updates: &[PackageUpdate],
     ) -> crate::Result<()> {
+        let exact_versions = manager.options.enable.exact_versions();
         // Group updates by workspace
         let mut workspace_groups: StringHashMap<Vec<usize>> = StringHashMap::default();
 
@@ -380,7 +381,7 @@ impl UpdateInteractiveCommand {
 
                 // Preserve the version prefix from the original
                 let version_with_prefix =
-                    preserve_version_prefix(original_version, &update.target_version)?;
+                    preserve_version_prefix(original_version, &update.target_version, exact_versions)?;
 
                 // Update the version using hash map put
                 // `Expr::init` would put the `E.String` *node*
@@ -413,6 +414,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         catalog_updates: &StringHashMap<CatalogUpdate>,
     ) -> crate::Result<()> {
+        let exact_versions = manager.options.enable.exact_versions();
         // Group catalog updates by workspace path
         let mut workspace_catalog_updates: StringHashMap<Vec<CatalogUpdateRequest>> =
             StringHashMap::default();
@@ -482,7 +484,11 @@ impl UpdateInteractiveCommand {
                 };
 
             // Use the PackageJSONEditor to update catalogs
-            edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
+            edit_catalog_definitions(
+                &mut updates_for_workspace[..],
+                &mut package_json.root,
+                exact_versions,
+            )?;
 
             // Save the updated package.json
             Self::save_package_json(package_json, package_json_path)?;
@@ -2246,6 +2252,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
+    exact_versions: bool,
 ) -> crate::Result<()> {
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
@@ -2264,6 +2271,7 @@ pub(crate) fn edit_catalog_definitions(
                 catalog_name,
                 &update.package_name,
                 &update.new_version,
+                exact_versions,
             )?;
         } else {
             update_default_catalog(
@@ -2271,6 +2279,7 @@ pub(crate) fn edit_catalog_definitions(
                 current_package_json,
                 &update.package_name,
                 &update.new_version,
+                exact_versions,
             )?;
         }
     }
@@ -2316,6 +2325,7 @@ fn update_default_catalog(
     package_json: &mut Expr,
     package_name: &[u8],
     new_version: &[u8],
+    exact_versions: bool,
 ) -> crate::Result<()> {
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
@@ -2344,8 +2354,11 @@ fn update_default_catalog(
         if let Some(existing_prop) = catalog_obj.get(package_name) {
             if let Some(e_str) = existing_prop.data.e_string() {
                 let original_version = e_str.data.slice();
-                version_with_prefix =
-                    crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
+                version_with_prefix = crate::cli::cli_dupe(&preserve_version_prefix(
+                    original_version,
+                    new_version,
+                    exact_versions,
+                )?);
             }
         }
 
@@ -2404,6 +2417,7 @@ fn update_named_catalog(
     catalog_name: &[u8],
     package_name: &[u8],
     new_version: &[u8],
+    exact_versions: bool,
 ) -> crate::Result<()> {
     // Get or create the catalogs object
     // First check if catalogs is under workspaces.catalogs (newer structure)
@@ -2438,8 +2452,11 @@ fn update_named_catalog(
         if let Some(existing_prop) = catalog_obj.get(package_name) {
             if let Some(e_str) = existing_prop.data.e_string() {
                 let original_version = e_str.data.slice();
-                version_with_prefix =
-                    crate::cli::cli_dupe(&preserve_version_prefix(original_version, new_version)?);
+                version_with_prefix = crate::cli::cli_dupe(&preserve_version_prefix(
+                    original_version,
+                    new_version,
+                    exact_versions,
+                )?);
             }
         }
 
@@ -2501,6 +2518,7 @@ fn update_named_catalog(
 fn preserve_version_prefix(
     original_version: &[u8],
     new_version: &[u8],
+    exact_versions: bool,
 ) -> crate::Result<Box<[u8]>> {
     if original_version.len() > 1 {
         let mut orig_version: &[u8] = original_version;
@@ -2518,6 +2536,16 @@ fn preserve_version_prefix(
             } else {
                 alias = Some(after_npm);
             }
+        }
+
+        if exact_versions {
+            if let Some(a) = alias {
+                let mut v = Vec::new();
+                write!(&mut v, "npm:{}@{}", BStr::new(a), BStr::new(new_version))
+                    .expect("infallible: in-memory write");
+                return Ok(v.into_boxed_slice());
+            }
+            return Ok(Box::from(new_version));
         }
 
         // Preserve other version prefixes

@@ -317,7 +317,7 @@ for (const flag of ["-E", "--exact"]) {
       const { stderr, exited } = spawn({
         cmd: [bunExe(), "install", "--linker=hoisted"],
         cwd: package_dir,
-        stdout: "pipe",
+        stdout: "ignore",
         stdin: "pipe",
         stderr: "pipe",
         env,
@@ -350,6 +350,57 @@ for (const flag of ["-E", "--exact"]) {
     });
   });
 
+  it(`should accept ${flag} and write exact version on update --interactive`, async () => {
+    const urls: string[] = [];
+    const registry = {
+      "0.0.3": { bin: { "baz-run": "index.js" } },
+      "0.0.5": { bin: { "baz-exec": "index.js" } },
+      latest: "0.0.3",
+    };
+    setHandler(dummyRegistry(urls, registry));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: { baz: "~0.0.3" },
+      }),
+    );
+    {
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--linker=hoisted"],
+        cwd: package_dir,
+        stdout: "ignore",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+    }
+    registry.latest = "0.0.5";
+    setHandler(dummyRegistry(urls, registry));
+    const proc = spawn({
+      cmd: [bunExe(), "update", flag, "-i", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    proc.stdin.write(" ");
+    proc.stdin.write("\r");
+    proc.stdin.end();
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("Invalid Argument");
+    expect(err).not.toContain("error:");
+    expect(code).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: { baz: "0.0.5" },
+    });
+  });
+
   it(`should accept ${flag} and write exact versions on update --latest`, async () => {
     const urls: string[] = [];
     const registry = {
@@ -369,7 +420,7 @@ for (const flag of ["-E", "--exact"]) {
       const { stderr, exited } = spawn({
         cmd: [bunExe(), "install", "--linker=hoisted"],
         cwd: package_dir,
-        stdout: "pipe",
+        stdout: "ignore",
         stdin: "pipe",
         stderr: "pipe",
         env,

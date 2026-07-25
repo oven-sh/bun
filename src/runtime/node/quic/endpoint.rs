@@ -61,6 +61,7 @@ pub(crate) const ENDPOINT_STATS_FIELDS: &[&str] = &[
     "PACKETS_BLOCKED",
 ];
 const IDX_STATS_SERVER_BUSY_COUNT: usize = 8;
+const IDX_STATS_RETRY_COUNT: usize = 9;
 const IDX_STATS_STATELESS_RESET_COUNT: usize = 13;
 const IDX_STATS_STATELESS_RESET_RATE_LIMITED: usize = 14;
 /// QUIC transport error code for CONNECTION_REFUSED (RFC 9000 §20.1).
@@ -223,6 +224,8 @@ pub struct QuicEndpoint {
     disable_stateless_reset: Cell<bool>,
     stateless_reset_burst: Cell<u32>,
     stateless_reset_rate: Cell<f64>,
+    validate_address: Cell<bool>,
+    retry_token_expiration: Cell<u32>,
     /// Pre-encoded HTTP/3 ORIGIN frame payload (RFC 9412). lsquic borrows
     /// the bytes for the engine's lifetime — set before engine creation,
     /// never mutated afterwards.
@@ -1137,6 +1140,8 @@ impl QuicEndpoint {
             origin_blob: JsCell::new(Vec::new()),
             stateless_reset_burst: Cell::new(0),
             stateless_reset_rate: Cell::new(0.0),
+            validate_address: Cell::new(false),
+            retry_token_expiration: Cell::new(0),
             client_is_http: Cell::new(false),
             processing: Cell::new(false),
             followup_due: Cell::new(false),
@@ -1281,6 +1286,21 @@ impl QuicEndpoint {
             {
                 // SAFETY: as above.
                 unsafe { (**raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
+            }
+            if let Some(v) = options
+                .get(global, "validateAddress")?
+                .filter(|v| v.is_boolean())
+            {
+                // SAFETY: as above.
+                unsafe { (**raw).validate_address.set(v.to_boolean()) };
+            }
+            if let Some(v) = read_u64_option(global, options, "retryTokenExpiration")? {
+                // SAFETY: as above.
+                unsafe {
+                    (**raw)
+                        .retry_token_expiration
+                        .set(v.min(c_uint::MAX as u64) as u32)
+                };
             }
         }
 
@@ -1464,6 +1484,9 @@ impl QuicEndpoint {
             };
             self.write_stat(IDX_STATS_STATELESS_RESET_COUNT, sent);
             self.write_stat(IDX_STATS_STATELESS_RESET_RATE_LIMITED, limited);
+            // SAFETY: engine is live while the endpoint is.
+            let retries = unsafe { lsquic::lsquic_engine_retry_count(server_engine) };
+            self.write_stat(IDX_STATS_RETRY_COUNT, retries);
         }
 
         // Every callback below runs user JS that can synchronously destroy
@@ -1660,6 +1683,23 @@ impl QuicEndpoint {
         let dcid = &payload[dcid_start..dcid_start + dcid_len];
         if self.provisional.get().iter().any(|p| p.dcid == dcid) {
             return;
+        }
+        // With address validation on, a tokenless Initial gets a Retry, not a
+        // session — announcing now would surface one that then times out.
+        // Initial layout after DCID (RFC 9000 §17.2.2): 1-byte SCID len, SCID,
+        // then the token-length varint. A single 0x00 byte encodes the empty
+        // token every compliant client sends on first contact.
+        if self.validate_address.get() {
+            let scid_off = dcid_start + dcid_len;
+            let has_token = payload
+                .get(scid_off)
+                .map(|&l| l as usize)
+                .filter(|&l| l <= MAX_CID_LEN)
+                .and_then(|l| payload.get(scid_off + 1 + l))
+                .is_some_and(|&b| b != 0);
+            if !has_token {
+                return;
+            }
         }
         // On a dual-mode endpoint the peer's Initial *response* carries our
         // client's SCID, which only the client engine hashes -- checking the
@@ -1993,6 +2033,13 @@ impl QuicEndpoint {
             let origin_blob = self.origin_blob.get();
             if !origin_blob.is_empty() {
                 settings.origin_blob(origin_blob);
+            }
+            if self.validate_address.get() {
+                settings.force_retry(1);
+            }
+            let retry_exp = self.retry_token_expiration.get();
+            if retry_exp > 0 {
+                settings.retry_token_duration(retry_exp);
             }
         }
         let mut local_tp = lsquic::NqTransportParams::default();

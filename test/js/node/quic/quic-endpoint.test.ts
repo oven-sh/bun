@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
+import dgram from "node:dgram";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint } from "node:quic";
@@ -206,6 +207,82 @@ describe("transportParams.maxIdleTimeout", () => {
     };
 
     expect({ zero: await advertised(0), seven: await advertised(7) }).toEqual({ zero: 0n, seven: 7n });
+  });
+});
+
+// RFC 9000 §8.1: address validation via Retry. node:quic's validateAddress was
+// accepted and validated in JS but never reached the lsquic engine, so the
+// server handshook immediately with zero Retry packets and retryCount stayed 0.
+describe("QuicEndpoint validateAddress", () => {
+  const sniOpt = { "*": { keys: [key], certs: [cert] } };
+  const tp = { maxIdleTimeout: 5 };
+  const onSession = async (s: any) => {
+    s.onerror = () => {};
+    await s.closed.catch(() => {});
+  };
+
+  // Long header with bit7 set and version != 0; Retry type bits are 0b11 (v1)
+  // or 0b00 (v2). RFC 8999 §5.1 / RFC 9000 §17.2 / RFC 9369 §3.2.
+  const isRetry = (m: Buffer) => {
+    if (m.length < 5 || (m[0] & 0x80) === 0) return false;
+    const ver = m.readUInt32BE(1);
+    const type = (m[0] >> 4) & 0x3;
+    return (ver === 1 && type === 0b11) || (ver === 0x6b3343cf && type === 0b00);
+  };
+
+  const bind = () =>
+    new Promise<dgram.Socket>(resolve => {
+      const s = dgram.createSocket("udp4");
+      s.bind(0, "127.0.0.1", () => resolve(s));
+    });
+
+  const handshakeWith = async (validateAddress: boolean) => {
+    const ep = new QuicEndpoint({ validateAddress });
+    const server = await listen(onSession, { endpoint: ep, sni: sniOpt, alpn: ["test"], transportParams: tp });
+    const serverPort = server.address.port;
+
+    // Two-socket relay so we can observe the server→client flight: the client
+    // talks to `front`, the server sees `back` as its peer.
+    const front = await bind();
+    const back = await bind();
+    front.on("error", () => {});
+    back.on("error", () => {});
+    let clientPort = 0;
+    let sawRetry = false;
+    let relaying = true;
+    front.on("message", (m, ri) => {
+      if (!relaying) return;
+      clientPort = ri.port;
+      back.send(m, serverPort, "127.0.0.1");
+    });
+    back.on("message", m => {
+      if (isRetry(m)) sawRetry = true;
+      if (relaying && clientPort) front.send(m, clientPort, "127.0.0.1");
+    });
+
+    await using clientEp = new QuicEndpoint();
+    const client = await connect(
+      { address: "127.0.0.1", port: front.address().port, family: "ipv4" },
+      { endpoint: clientEp, alpn: "test", verifyPeer: "manual", servername: "localhost", transportParams: tp },
+    );
+    await client.opened;
+    const retryCount = ep.stats.retryCount;
+    const serverSessions = ep.stats.serverSessions;
+    client.close();
+    await client.closed.catch(() => {});
+    await server.close();
+    relaying = false;
+    front.close();
+    back.close();
+    return { retryCount, serverSessions, sawRetry };
+  };
+
+  test("true sends a Retry before accepting; false does not", async () => {
+    const [off, on] = await Promise.all([handshakeWith(false), handshakeWith(true)]);
+    expect({ off, on: { ...on, retryCount: on.retryCount > 0n } }).toEqual({
+      off: { retryCount: 0n, serverSessions: 1n, sawRetry: false },
+      on: { retryCount: true, serverSessions: 1n, sawRetry: true },
+    });
   });
 });
 

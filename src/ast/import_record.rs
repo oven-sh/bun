@@ -36,14 +36,9 @@ pub struct ImportRecord {
 bitflags::bitflags! {
     #[derive(Copy, Clone, Eq, PartialEq, Default, Debug)]
     pub struct Flags: u16 {
-        /// True for the following cases:
-        ///
-        ///   try { require('x') } catch { handle }
-        ///   try { ... } catch { require('x') }
-        ///   try { await import('x') } catch { handle }
-        ///   try { require.resolve('x') } catch { handle }
-        ///   import('x').catch(handle)
-        ///   import('x').then(_, handle)
+        /// True for require('x') / await import('x') / require.resolve('x')
+        /// inside the body or catch handler of a try/catch statement, and for
+        /// import('x').catch(handle) / import('x').then(_, handle).
         ///
         /// In these cases we shouldn't generate an error if the path could not be
         /// resolved.
@@ -70,6 +65,13 @@ bitflags::bitflags! {
         /// If true, this "export * from 'path'" statement is evaluated at run-time by
         /// calling the "__reExport()" helper function
         const CALLS_RUNTIME_RE_EXPORT_FN = 1 << 6;
+
+        /// Resolution failed for this path (ModuleNotFound). Distinguishes a
+        /// resolve failure from an intentionally-disabled path (`"browser": false`
+        /// remap, node builtin under `--target=browser`): both end up with
+        /// `path.is_disabled`, but only the former should emit a runtime throw
+        /// when `HANDLES_IMPORT_ERRORS` is set; the latter stays the `{}` stub.
+        const WAS_UNRESOLVED = 1 << 7;
 
         /// If true, this was originally written as a bare "import 'file'" statement
         const WAS_ORIGINALLY_BARE_IMPORT = 1 << 8;

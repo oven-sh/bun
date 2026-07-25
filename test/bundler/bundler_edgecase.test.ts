@@ -2967,6 +2967,7 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         try {
           console.log("ok");
+        } catch (e) {
         } finally {
           require('does-not-exist');
         }
@@ -2976,6 +2977,69 @@ describe("bundler", () => {
     bundleErrors: {
       "/entry.js": [`Could not resolve: "does-not-exist". Maybe you need to "bun install"?`],
     },
+  });
+  itBundled("edgecase/RequireAfterCatchBodyStillErrors", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          require('does-not-exist-a');
+        } catch (e) {
+          require('does-not-exist-b');
+        }
+        require('does-not-exist-c');
+      `,
+    },
+    target: "bun",
+    bundleErrors: {
+      "/entry.js": [`Could not resolve: "does-not-exist-c". Maybe you need to "bun install"?`],
+    },
+  });
+  // A resolved-but-disabled path (node builtin under --target=browser, or a
+  // `"browser": { "pkg": false }` remap) in a try/catch body must keep emitting
+  // the empty-module stub, not a runtime throw.
+  itBundled("edgecase/RequireDisabledInCatchBodyStaysEmpty", {
+    files: {
+      "/entry.js": /* js */ `
+        try {
+          throw 0;
+        } catch (e) {
+          const a = require('fs');
+          const b = require('mapped-false');
+          if (a instanceof Error || b instanceof Error) throw new Error("unreachable");
+          console.log("ok");
+        }
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false } }),
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": `module.exports = "real";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Cannot require module");
+    },
+    run: { stdout: "ok" },
+  });
+  itBundled("edgecase/RequireDisabledInTryBodyStaysEmpty", {
+    files: {
+      "/entry.js": /* js */ `
+        let hit = "";
+        try {
+          const x = require('mapped-false');
+          hit = "try:" + (x instanceof Error);
+        } catch (e) {
+          hit = "catch:" + e.message;
+        }
+        console.log(hit);
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false } }),
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": `module.exports = "real";`,
+    },
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("Cannot require module");
+    },
+    run: { stdout: "try:false" },
   });
 });
 

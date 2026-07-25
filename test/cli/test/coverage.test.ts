@@ -57,6 +57,78 @@ export class Y {
   );
 });
 
+// https://github.com/oven-sh/bun/issues/9008
+// The text reporter would show "% Lines" < 100% but leave "Uncovered Line #s" empty (or
+// truncated) because its run-tracker used 0 as a sentinel and only flushed the trailing
+// pending run when it was a multi-line range.
+test("coverage text reporter prints every uncovered line", () => {
+  const dir = tempDirWithFiles("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    // three non-adjacent uncovered lines (3, 6, 9): previously the trailing one was dropped.
+    "many.ts": `export function check(n: number): string {
+  if (n === 1) {
+    throw new Error("one");
+  }
+  if (n === 2) {
+    throw new Error("two");
+  }
+  if (n === 3) {
+    throw new Error("three");
+  }
+  return "ok";
+}
+`,
+    // exactly one uncovered line (3): previously the column was blank.
+    "one.ts": `export function only(n: number): string {
+  if (n < 0) {
+    throw new Error("negative");
+  }
+  return "ok";
+}
+`,
+    // a run followed by an isolated line (3-4, then 8).
+    "mix.ts": `export function mix(n: number): string {
+  if (n === 1) {
+    n += 1;
+    throw new Error("a");
+  }
+  const x = n * 2;
+  if (x === -1) {
+    throw new Error("b");
+  }
+  return "ok";
+}
+`,
+    "demo.test.ts": `import { test, expect } from "bun:test";
+import { check } from "./many";
+import { only } from "./one";
+import { mix } from "./mix";
+test("paths", () => {
+  expect(check(0)).toBe("ok");
+  expect(only(1)).toBe("ok");
+  expect(mix(2)).toBe("ok");
+});
+`,
+  });
+
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, null, "pipe"],
+  });
+
+  let stderr = result.stderr.toString("utf-8");
+  const table = stderr.split("\n").filter(l => l.includes(" | "));
+  expect(normalizeBunSnapshot(table.join("\n"), dir)).toMatchInlineSnapshot(`
+"File       | % Funcs | % Lines | Uncovered Line #s
+All files  |  100.00 |   74.24 |
+ many.ts   |  100.00 |   72.73 | 3,6,9
+ mix.ts    |  100.00 |   70.00 | 3-4,8
+ one.ts    |  100.00 |   80.00 | 3"
+`);
+  expect(result.exitCode).toBe(0);
+});
+
 test("coverage excludes node_modules directory", () => {
   const dir = tempDirWithFiles("cov", {
     "node_modules/pi/index.js": `
@@ -193,7 +265,7 @@ test("should call only some functions", () => {
 File           | % Funcs | % Lines | Uncovered Line #s
 ---------------|---------|---------|-------------------
 All files      |   75.00 |   83.33 |
- include-me.ts |   50.00 |   66.67 | 
+ include-me.ts |   50.00 |   66.67 | 6
  test.test.ts  |  100.00 |  100.00 | 
 ---------------|---------|---------|-------------------
 

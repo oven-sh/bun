@@ -1,50 +1,21 @@
 // https://github.com/oven-sh/bun/issues/29253
-//
-// `new Module(id, parent)` produced an instance whose prototype
-// did not expose `Module.prototype.load(filename)`, so packages
-// that construct a module by hand and then call `.load()` on it
-// (the same pattern Node's internal cjs loader uses) threw:
-//
-//   TypeError: targetModule.load is not a function
-//
-// `requizzle` — a dependency of `jsdoc` — does exactly this
-// inside its `exports.load` helper, so `bun run .../jsdoc.js`
-// crashed before jsdoc got a chance to run.
-//
-// The fix adds `Module.prototype.load` as a real method on the
-// prototype backing `new Module(...)` instances, and also puts it
-// on `require("module").prototype` so Node-compat property lookups
-// see a function in both places. (The two objects are still
-// distinct — full prototype unification is deferred because the
-// existing `_compile` CustomAccessor depends on the instance cast.)
+// `new Module(id, parent).load(filename)` threw "m.load is not a function"
+// because the instance prototype lacked `load` (and `isPreloading`). Packages
+// like requizzle/jsdoc and import-fresh hit this.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import Module from "node:module";
 
 test("new Module() instances inherit load() (#29253)", () => {
-  // The ticket: `targetModule.load(targetModule.id)` on a freshly
-  // constructed Module was throwing "load is not a function" because
-  // the instance prototype had no `load` method.
   const m = new Module("/tmp/does-not-matter-29253.js", null);
   expect(typeof m.load).toBe("function");
-
-  // And it should be inherited from the prototype chain, not an own
-  // property on every instance (which would be wasteful).
   expect(Object.prototype.hasOwnProperty.call(m, "load")).toBe(false);
   expect(typeof Object.getPrototypeOf(m).load).toBe("function");
 
-  // `require("module").prototype` is a separate disposable object from
-  // the instance prototype (see the header comment). It also needs to
-  // expose `load` so code that does `typeof Module.prototype.load` or
-  // `Module.prototype.load = wrapper` sees a function. If the C++
-  // registration in getModulePrototypeObject were reverted, the other
-  // assertions above would still pass — so guard that code path too.
+  // `require("module").prototype` is a separate object from the instance
+  // prototype; both must expose `load`.
   expect(typeof Module.prototype.load).toBe("function");
 
-  // `.name` is set via the `$overriddenName = "load"` annotation on
-  // the builtin. Without that annotation, JSC derives the name from
-  // the source identifier ("modulePrototypeLoad"), which matters for
-  // any code that introspects function names.
   expect(m.load.name).toBe("load");
   expect(Module.prototype.load.name).toBe("load");
 });

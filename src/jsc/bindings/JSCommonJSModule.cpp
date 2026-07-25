@@ -949,9 +949,6 @@ public:
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
 
-        // `Module.prototype.load(filename)` — needed for packages like
-        // `requizzle` that construct `new Module(...)` directly and call
-        // `.load()` on it. Mirrors Node's cjs loader semantics.
         this->putDirectBuiltinFunction(
             vm,
             this->globalObject(),

@@ -143,7 +143,7 @@ Bun reads `.env` files automatically, so `dotenv` and `dotenv-expand` are unnece
 
 Values that Bun auto-loads from `.env` files are readable via `process.env.NAME` but are **not enumerable**: `Object.keys(process.env)`, `for..in`, and `{ ...process.env }` list only variables from the OS environment and from explicit `--env-file` arguments. This keeps `process.env` enumeration Node-compatible so tools with their own `.env.{mode}` loading (such as Vite's `loadEnv`) do not mistake Bun's auto-loaded values for shell-provided overrides. Assigning to such a key from JavaScript promotes it to an enumerable own property. `Object.getOwnPropertyNames(process.env)` lists all keys including the auto-loaded ones.
 
-Default inherited environments (`Bun.spawn` with no `env`, `child_process` with no `options.env`, `Bun.$`, and `worker_threads`) still receive auto-loaded values. Once a `worker_threads` `SHARE_ENV` tree is founded, `process.env` becomes a shared string map and auto-loaded values enumerate like any other entry on the threads in that tree.
+Default inherited environments (`Bun.spawn` with no `env`, `child_process` with no `options.env`, `Bun.$`, `worker_threads`, `cluster.fork`, and the WASI runner) still receive auto-loaded values. Once a `worker_threads` `SHARE_ENV` tree is founded, `process.env` becomes a shared string map and auto-loaded values enumerate like any other entry on the threads in that tree.
 
 ## Reading environment variables
 

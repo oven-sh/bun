@@ -161,7 +161,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
         newEnv = defaultEnv;
       }
 
-      this.#args!.setEnv(newEnv);
+      this.#args!.setEnv(newEnv === originalDefaultEnv ? snapshotProcessEnv(newEnv) : newEnv);
       return this;
     }
 

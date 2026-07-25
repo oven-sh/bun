@@ -78,7 +78,14 @@ function setupSettingsNT(settings) {
 }
 
 function createWorkerProcess(id, env) {
-  const workerEnv = { ...process.env, ...env, NODE_UNIQUE_ID: `${id}` };
+  // Auto-loaded .env values are DontEnum on process.env; spread would drop
+  // them. getOwnPropertyNames includes them so workers inherit .env values.
+  const workerEnv = {};
+  for (const k of $Object.getOwnPropertyNames(process.env)) {
+    const v = process.env[k];
+    if (v !== undefined && typeof v !== "function") workerEnv[k] = v;
+  }
+  Object.assign(workerEnv, env, { NODE_UNIQUE_ID: `${id}` });
   const execArgv = [...cluster.settings.execArgv];
 
   // if (cluster.settings.inspectPort === null) {

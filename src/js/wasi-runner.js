@@ -19,7 +19,13 @@ var {
   WASM_USE_ASYNC_INIT = "1",
 } = process.env;
 
-var env = process.env;
+// Auto-loaded .env values are DontEnum on process.env; WASI's environ_get
+// enumerates via Object.entries, so snapshot via getOwnPropertyNames here.
+var env = {};
+for (const k of Object.getOwnPropertyNames(process.env)) {
+  const v = process.env[k];
+  if (v !== undefined && typeof v !== "function") env[k] = v;
+}
 if (WASM_ENV_STR?.length) {
   env = JSON.parse(WASM_ENV_STR);
 }

@@ -17,7 +17,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, stderrForInstall, tempDir } from "harness";
-import { spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -36,8 +35,7 @@ describe.skipIf(!isWindows)("bun install with a scanner holding an extracted fil
     writeFileSync(join(pkgSrc, "bin.exe"), randomBytes(2 * 1024 * 1024));
     writeFileSync(join(pkgSrc, "package.json"), JSON.stringify({ name: "av-test-pkg", version: "1.0.0" }));
     const tgz = join(root, "pkg-src", "av-test-pkg-1.0.0.tgz");
-    const tarRc = spawnSync("tar", ["-czf", tgz, "-C", join(root, "pkg-src"), "package"], { stdio: "inherit" });
-    expect(tarRc.status).toBe(0);
+    await Bun.$`tar -czf ${tgz} -C ${join(root, "pkg-src")} package`.quiet();
     const tgzBytes = readFileSync(tgz);
     const sha1 = createHash("sha1").update(tgzBytes).digest("hex");
 

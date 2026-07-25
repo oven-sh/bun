@@ -9,7 +9,7 @@
 // regular file inside it via CreateFileW with dwShareMode =
 // FILE_SHARE_READ | FILE_SHARE_WRITE (no DELETE), prints "HELD", holds the
 // handle for holdMs, closes it, prints "RELEASED", exits 0.
-// Prints "MISSED" and exits 0 if no extraction dir appears within 30s.
+// Prints "MISSED" and exits 0 if no extraction dir appears within 15s.
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { readdirSync } from "node:fs";

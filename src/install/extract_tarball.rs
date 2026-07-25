@@ -522,18 +522,10 @@ impl ExtractTarball {
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
             {
-                // Windows EBUSY/SHARING_VIOLATION/ACCESS_DENIED on
-                // `NtSetInformationFile` are transient when a concurrent process
-                // holds a handle into the tree being renamed: another `bun
-                // install` sharing the cache, antivirus, the Search Indexer, or
-                // an MDM agent scanning a just-extracted file. An open handle
-                // on any file inside the directory that lacks
-                // FILE_SHARE_DELETE fails the directory rename with
-                // STATUS_ACCESS_DENIED, which scanners routinely trigger on
-                // freshly written executables. Back off and retry; the retry
-                // budget (10 attempts, ~1.4s of total sleep) follows SQLite's
-                // winIoerrRetry, which is tuned for exactly this class of
-                // interference.
+                // Windows returns STATUS_ACCESS_DENIED/SHARING_VIOLATION when a
+                // scanner (AV, Search Indexer, MDM) holds a handle without
+                // FILE_SHARE_DELETE on a file inside the directory. Retry with
+                // SQLite's winIoerrRetry schedule (~1.4s total).
                 const MAX_RETRIES: u32 = 10;
                 let mut retries: u32 = 0;
                 let mut path2_buf = WPathBuffer::uninit();

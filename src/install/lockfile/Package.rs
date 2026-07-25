@@ -2165,8 +2165,7 @@ impl Package<u64> {
             out
         };
 
-        // Linked packages are symlinks; node_modules lookup realpath's them
-        // first, so peers installed here are invisible. Match pnpm and warn.
+        // Symlinked packages realpath before node_modules lookup, so peers here are invisible; warn like pnpm.
         if FEATURES == Features::LINK
             && pm.options.log_level != crate::package_manager::LogLevel::Silent
         {

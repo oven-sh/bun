@@ -536,20 +536,19 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 // may have been replaced with the file-local `__require`
                 // polyfill symbol when the body also contains a dynamic
                 // `require(expr)` or bare `require` reference.
-                let require_arg_ref = if ast.module_scope.contains_direct_eval
-                    && runtime_require_ref.is_some()
-                {
-                    ast.module_scope.members.get(&b"require"[..]).and_then(|m| {
-                        match c.graph.symbols.get_const(m.ref_).map(|s| s.kind) {
-                            Some(bun_ast::symbol::Kind::Unbound) => Some(m.ref_),
-                            // User declared their own `var require`; it already
-                            // shadows whatever we would pass.
-                            _ => None,
-                        }
-                    })
-                } else {
-                    None
-                };
+                let require_arg_ref =
+                    if ast.module_scope.contains_direct_eval && runtime_require_ref.is_some() {
+                        ast.module_scope.members.get(&b"require"[..]).and_then(|m| {
+                            match c.graph.symbols.get_const(m.ref_).map(|s| s.kind) {
+                                Some(bun_ast::symbol::Kind::Unbound) => Some(m.ref_),
+                                // User declared their own `var require`; it already
+                                // shadows whatever we would pass.
+                                _ => None,
+                            }
+                        })
+                    } else {
+                        None
+                    };
                 let needs_require_arg = require_arg_ref.is_some();
 
                 // Only include the arguments that are actually used

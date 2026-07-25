@@ -1593,6 +1593,10 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
+            if let Some(rare) = self.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -3248,6 +3252,7 @@ impl VirtualMachine {
             // Only allowed for testing
             if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
                 ModuleLoader::set_is_allowed_to_use_internal_testing_apis(true);
+                bun_resolve_builtins::set_expose_internals_enabled(true);
             }
             if gc_level == b"1" {
                 self.aggressive_garbage_collection = GCLevel::Mild;
@@ -4262,6 +4267,12 @@ impl VirtualMachine {
             return Ok(());
         }
 
+        // Node's `--expose-internals`.
+        if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
+            *res = ErrorableString::ok(specifier.dupe_ref());
+            return Ok(());
+        }
+
         // Swap in a fresh log so resolver errors don't pollute the VM's main log.
         // `vm.log` is set unconditionally in `init` and never cleared,
         // so the `Option` is purely a
@@ -4663,6 +4674,11 @@ impl VirtualMachine {
         }
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.listening_sockets_for_watch_mode.lock().clear();
+            // `setCallbacks` is once-only (node/src/quic/bindingdata.cc
+            // `BindingData::SetCallbacks`), so a holder left by the outgoing
+            // global makes the next file's call a no-op and dispatches
+            // node:quic events into the dead realm.
+            rare.node_quic_callbacks.deinit();
         }
         let _ = self.event_loop_mut().drain_microtasks();
 

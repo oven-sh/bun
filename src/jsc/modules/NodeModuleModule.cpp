@@ -532,7 +532,9 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
             auto len = parent.paths->length();
             for (size_t i = 0; i < len; i++) {
                 auto path = parent.paths->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
                 array->push(globalObject, path);
+                RETURN_IF_EXCEPTION(scope, {});
             }
             RELEASE_AND_RETURN(scope, array);
         } else if (parent.pathsArrayLazy && parent.filename) {

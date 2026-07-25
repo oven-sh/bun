@@ -5383,9 +5383,6 @@ impl Resolver {
         name: &[u8],
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        let mut ascii_buf = [0u8; 1024];
-        let name = hostname_to_ascii(name, &mut ascii_buf);
-
         let channel: *mut c_ares::Channel = match self.get_channel() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
@@ -5425,11 +5422,17 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
+        // Node.js sets `req.hostname` to the caller's argument before
+        // `ada::idna::to_ascii` runs in cares_wrap, so `err.hostname` always
+        // echoes the original spelling. Encode only the wire name here.
+        let mut ascii_buf = [0u8; 1024];
+        let ascii_name = hostname_to_ascii(name, &mut ascii_buf);
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; `request`
         // is the freshly heap-allocated ResolveInfoRequest. c-ares stores the ctx
         // pointer and calls `T::RAW_CALLBACK` (→ `on_cares_complete`) which
         // consumes the request, so the `&mut` borrow is not held past this call.
-        unsafe { (*channel).resolve(name, &mut *request) };
+        unsafe { (*channel).resolve(ascii_name, &mut *request) };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());

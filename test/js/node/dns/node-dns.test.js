@@ -1018,7 +1018,8 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
       const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 1, 44, 0, 4, 10, 7, 7, 7]);
       server.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
     });
-    const { promise, resolve } = Promise.withResolvers();
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.once("error", reject);
     server.bind(0, "127.0.0.1", resolve);
     await promise;
 
@@ -1070,5 +1071,15 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
     callbackResolver.resolve("例え.jp", "A", (err, addrs) => (err ? reject(err) : resolve(addrs)));
     const result = await promise;
     expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--r8jz45g.jp"] });
+  });
+
+  it("err.hostname on failure preserves the caller's original spelling", async () => {
+    const r = new dns.promises.Resolver({ timeout: 100, tries: 1 });
+    r.setServers(["127.0.0.1:1"]);
+    const err = await r.resolve4("bücher.example").then(
+      () => ({}),
+      e => e,
+    );
+    expect(err.hostname).toBe("bücher.example");
   });
 });

@@ -578,6 +578,8 @@ describe("bundler", async () => {
     });
   }
 
+  // No node_modules/bindings here: the import record is repurposed before
+  // resolution, so the package itself never needs to be installed.
   itBundled("bun/napi-require-bindings-debug-dir#8895", {
     target: "bun",
     outdir: "/out",
@@ -589,8 +591,6 @@ describe("bundler", async () => {
       "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./index.js"}`,
       "/node_modules/mypkg/index.js": `module.exports = require('bindings')('mypkg_native');`,
       "/node_modules/mypkg/build/Debug/mypkg_native.node": "debug build",
-      "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
-      "/node_modules/bindings/bindings.js": "module.exports = () => {};",
     },
     onAfterBundle(api) {
       const addon = readdirSync(api.outdir).find(x => x.endsWith(".node"));

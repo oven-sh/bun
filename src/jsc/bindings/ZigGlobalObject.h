@@ -402,6 +402,8 @@ public:
         Bun__FileStreamWrapper__onResolveRequestStream,
         Bun__FileSink__onResolveStream,
         Bun__FileSink__onRejectStream,
+        Bun__FileSinkPipe__onResolve,
+        Bun__FileSinkPipe__onReject,
         Bun__CronJob__onPromiseResolve,
         Bun__CronJob__onPromiseReject,
         Bun__HTTPRequestContextH3__onReject,
@@ -413,7 +415,7 @@ public:
         Bun__HTTPRequestContextDebugH3__onResolve,
         Bun__HTTPRequestContextDebugH3__onResolveStream,
     };
-    static constexpr size_t promiseFunctionsSize = 42;
+    static constexpr size_t promiseFunctionsSize = 44;
 
     static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 

@@ -418,4 +418,33 @@ console.log("survived", require("./late.js"));`,
    ./k.cjs (seen)`);
     expect(await proc.exited).toBe(0);
   });
+
+  test("module.register() emits DEP0205 exactly once per process", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { register } = require("node:module");
+         register("./nonexistent-loader.mjs");
+         register("./nonexistent-loader.mjs");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr.split("DEP0205").length - 1).toBe(1);
+    expect(stderr).toContain("`module.register()` is deprecated. Use `module.registerHooks()` instead.");
+    expect(exitCode).toBe(0);
+  });
+
+  test("module.register() deprecation respects --no-deprecation", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--no-deprecation", "-e", `require("node:module").register("./nonexistent-loader.mjs");`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("DEP0205");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -23,6 +23,7 @@
 
 #include "GeneratedNodeModuleModule.h"
 #include "ZigGeneratedClasses.h"
+#include "InternalModuleRegistry.h"
 
 namespace Bun {
 
@@ -861,9 +862,65 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSyncBuiltinESMExports,
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRegister, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+// Calls an export of `internal/modules/customization_hooks.ts` with the given
+// arguments. Used by the native resolver/module loader to run the
+// `module.registerHooks()` hook chains.
+static JSC::JSValue callCustomizationHooksExport(Zig::GlobalObject* globalObject, ASCIILiteral exportName, JSC::MarkedArgumentBuffer& args)
 {
-    return JSC::JSValue::encode(JSC::jsUndefined());
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue mod = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::Field::InternalModulesCustomizationHooks);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* modObject = mod.getObject();
+    if (!modObject) [[unlikely]]
+        return JSC::jsUndefined();
+    JSValue fn = modObject->get(globalObject, JSC::Identifier::fromString(vm, exportName));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::CallData callData = JSC::getCallData(fn);
+    if (callData.type == JSC::CallData::Type::None) [[unlikely]]
+        return JSC::jsUndefined();
+    JSValue result = JSC::call(globalObject, fn, callData, JSC::jsUndefined(), args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
+}
+
+// Runs the `module.registerHooks()` resolve hook chain. Returns a string (the
+// resolved specifier for Bun's pipeline), `undefined` for "use the native
+// resolution", or empty (exception pending).
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__runModuleResolveHooks(Zig::GlobalObject* globalObject, const BunString* specifier, const BunString* referrer, bool isESM, bool isUserRequireResolve)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer args;
+    args.append(Bun::toJS(globalObject, *specifier));
+    RETURN_IF_EXCEPTION(scope, {});
+    args.append(Bun::toJS(globalObject, *referrer));
+    RETURN_IF_EXCEPTION(scope, {});
+    args.append(JSC::jsBoolean(isESM));
+    args.append(JSC::jsBoolean(isUserRequireResolve));
+    ASSERT(!args.hasOverflowed());
+    JSValue result = callCustomizationHooksExport(globalObject, "runResolveHooksBun"_s, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
+}
+
+// Runs the `module.registerHooks()` load hook chain. Returns an object
+// `{ source, loader, moduleType }`, `undefined` for "load natively", or empty
+// (exception pending).
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__runModuleLoadHooks(Zig::GlobalObject* globalObject, const BunString* path, uint8_t loaderHint, uint8_t moduleTypeHint, bool isCommonJSRequire)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::MarkedArgumentBuffer args;
+    args.append(Bun::toJS(globalObject, *path));
+    RETURN_IF_EXCEPTION(scope, {});
+    args.append(JSC::jsNumber(loaderHint));
+    args.append(JSC::jsNumber(moduleTypeHint));
+    args.append(JSC::jsBoolean(isCommonJSRequire));
+    ASSERT(!args.hasOverflowed());
+    JSValue result = callCustomizationHooksExport(globalObject, "runLoadHooksBun"_s, args);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSC::JSValue::encode(result);
 }
 
 extern "C" int32_t Bun__NodeCompileCache__enable(const BunString* dir, int32_t portable, BunString* outDirectory, BunString* outMessage);
@@ -975,7 +1032,8 @@ getSourceMapsSupport    JSBuiltin                         Function|Builtin 0
 globalPaths             getGlobalPathsObject              PropertyCallback
 isBuiltin               jsFunctionIsBuiltinModule         Function 1
 prototype               getModulePrototypeObject          PropertyCallback
-register                jsFunctionRegister                Function 1
+register                JSBuiltin                         Function|Builtin 1
+registerHooks           JSBuiltin                         Function|Builtin 1
 runMain                 moduleRunMain                        CustomAccessor
 setSourceMapsSupport    JSBuiltin                         Function|Builtin 1
 SourceMap               getSourceMapFunction              PropertyCallback

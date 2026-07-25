@@ -562,6 +562,13 @@ declare function $ERR_MISSING_ARGS(...args: [string, ...string[]]): TypeError;
  */
 declare function $ERR_MISSING_ARGS(oneOf: string[]): TypeError;
 declare function $ERR_INVALID_RETURN_VALUE(expected_type: string, name: string, actual_value: any): TypeError;
+declare function $ERR_INVALID_RETURN_PROPERTY_VALUE(
+  expected_type: string,
+  hook_name: string,
+  property: string,
+  actual_value: any,
+): TypeError;
+declare function $ERR_UNKNOWN_MODULE_FORMAT(format: string, url: string): RangeError;
 declare function $ERR_TLS_INVALID_PROTOCOL_VERSION(a: string, b: string): TypeError;
 declare function $ERR_TLS_PROTOCOL_VERSION_CONFLICT(a: string, b: string): TypeError;
 declare function $ERR_INVALID_IP_ADDRESS(ip: any): TypeError;

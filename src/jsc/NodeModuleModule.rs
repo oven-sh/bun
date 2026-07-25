@@ -270,3 +270,58 @@ pub(crate) extern "C" fn NodeModuleModule__onRequireExtensionModifyNonFunction(
         bun_core::out_of_memory();
     }
 }
+
+/// True when `module.registerHooks()` hooks should observe this specifier.
+/// Bun-internal synthetic specifiers stay on the native path.
+pub fn module_hooks_should_intercept(specifier: &[u8]) -> bool {
+    !(specifier.starts_with(b"bun:")
+        || specifier.starts_with(b"macro:")
+        || specifier.starts_with(b"builtin:")
+        || specifier.starts_with(crate::module_loader::node_fallbacks::IMPORT_PATH))
+}
+
+/// Reads the `{ source, loader, moduleType }` object returned by
+/// `runLoadHooksBun` in `internal/modules/customization_hooks.ts`.
+pub fn module_hooks_read_load_result(
+    global: &JSGlobalObject,
+    value: JSValue,
+) -> JsResult<(BunString, u8, u8)> {
+    let source = value.get(global, b"source")?.unwrap_or(JSValue::UNDEFINED);
+    let source = crate::bun_string_jsc::from_js(source, global)?;
+    let loader = value
+        .get(global, b"loader")?
+        .map(|v| v.to_int32())
+        .unwrap_or(254)
+        .clamp(0, u8::MAX as i32) as u8;
+    let module_type = value
+        .get(global, b"moduleType")?
+        .map(|v| v.to_int32())
+        .unwrap_or(0)
+        .clamp(0, 2) as u8;
+    Ok((source, loader, module_type))
+}
+
+/// True when `specifier` is a scheme-prefixed virtual id that only
+/// `module.registerHooks()` hooks can produce (e.g. `test://x`,
+/// `virtual:entry`) — as opposed to a filesystem path, a Windows drive path,
+/// or a builtin id.
+pub fn module_hooks_virtual_specifier(specifier: &[u8]) -> bool {
+    let Some(colon) = specifier.iter().position(|&b| b == b':') else {
+        return false;
+    };
+    // A single-letter "scheme" is a Windows drive path.
+    if colon < 2 {
+        return false;
+    }
+    if !specifier[0].is_ascii_alphabetic() {
+        return false;
+    }
+    if !specifier[1..colon]
+        .iter()
+        .all(|&b| b.is_ascii_alphanumeric() || b == b'+' || b == b'-' || b == b'.')
+    {
+        return false;
+    }
+    // Builtins and Bun-internal namespaces are not virtual hook ids.
+    !(specifier.starts_with(b"node:") || specifier.starts_with(b"file:"))
+}

@@ -3724,6 +3724,44 @@ unsafe fn fetch_builtin_module(
 
     // ── HardcodedModule fast path ───────────────────────────────────────
     if let Some(&hardcoded) = HardcodedModule::MAP.get(spec) {
+        // `module.registerHooks()` load hooks observe builtin loads (with the
+        // `node:`-prefixed URL and a null default source). Node ignores
+        // hook-provided source for the `builtin` format; format overrides for
+        // builtins are not supported here.
+        // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+        if unsafe { &*jsc_vm }.module_hooks_load_count > 0
+            && !unsafe { &*jsc_vm }.module_hooks_skip
+            && !_global.is_null()
+            && spec.starts_with(b"node:")
+        {
+            // SAFETY: `_global` is non-null (checked above) and live.
+            let global_ref = unsafe { &*_global };
+            // SAFETY: `specifier` is live for the call.
+            match unsafe {
+                bun_jsc::cpp::Bun__runModuleLoadHooks(
+                    global_ref,
+                    specifier,
+                    bun_options_types::schema::api::Loader::_none as u8,
+                    0,
+                    true,
+                )
+            } {
+                // Overrides are ignored for builtins (Node parity for the
+                // `builtin` format; format overrides unsupported).
+                Ok(_) => {}
+                Err(e) => {
+                    let exc = global_ref.take_error(e);
+                    // SAFETY: per fn contract — `out` is a valid out-param.
+                    unsafe {
+                        *out = ErrorableResolvedSource::err(
+                            ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                            exc,
+                        );
+                    }
+                    return FetchBuiltinResult::Errored;
+                }
+            }
+        }
         return match get_hardcoded_module(jsc_vm, specifier, hardcoded) {
             Some(resolved) => {
                 // SAFETY: per fn contract — `out` is a valid out-param.
@@ -4237,6 +4275,12 @@ unsafe fn transpile_file(
     let type_attribute_str: Option<&[u8]> =
         unsafe { type_attribute.as_ref() }.and_then(|s| s.as_utf8());
 
+    // `module.registerHooks()` load-hook result storage. Declared before
+    // `virtual_source_to_use` so `lr.virtual_source` may borrow it for the
+    // same region.
+    let hook_source_string: bun_core::OwnedString;
+    let hook_source_utf8: bun_core::ZigStringSlice;
+    let hook_virtual_source: bun_ast::Source;
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut blob_to_deinit: Option<crate::webcore::Blob> = None;
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -4310,7 +4354,7 @@ unsafe fn transpile_file(
     }
 
     // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
+    let mut module_type: ModuleType = 'brk: {
         let ext = lr.path.name().ext;
         // regex /\.[cm][jt]s$/
         if ext.len() == b".cjs".len() {
@@ -4342,6 +4386,91 @@ unsafe fn transpile_file(
         .package_json
         .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
 
+    // ── `module.registerHooks()` load hooks ─────────────────────────────────
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    let module_hooks_active = unsafe {
+        (*jsc_vm).module_hooks_resolve_count > 0 || (*jsc_vm).module_hooks_load_count > 0
+    };
+    if module_hooks_active
+        && !unsafe { &*jsc_vm }.module_hooks_skip
+        && lr.virtual_source.is_none()
+        && !had_blob
+        && force_loader_type.is_none()
+        && bun_jsc::node_module_module::module_hooks_should_intercept(lr.path.text)
+        && !lr.path.text.starts_with(b"node:")
+    {
+        let path_str = bun_core::String::borrow_utf8(lr.path.text);
+        let loader_hint: u8 = lr
+            .loader
+            .map(|l| l.to_api() as u8)
+            .unwrap_or(bun_options_types::schema::api::Loader::_none as u8);
+        let module_type_hint: u8 = match module_type {
+            ModuleType::Cjs => 1,
+            ModuleType::Esm => 2,
+            _ => 0,
+        };
+        // SAFETY: `&path_str` is live for the call.
+        match unsafe {
+            bun_jsc::cpp::Bun__runModuleLoadHooks(
+                global_ref,
+                &path_str,
+                loader_hint,
+                module_type_hint,
+                is_commonjs_require,
+            )
+        } {
+            Ok(v) if v.is_undefined_or_null() => {}
+            Ok(v) => {
+                match bun_jsc::node_module_module::module_hooks_read_load_result(global_ref, v) {
+                    Ok((source, loader_u8, module_type_u8)) => {
+                        hook_source_string = bun_core::OwnedString::new(source);
+                        hook_source_utf8 = hook_source_string.get().to_utf8();
+                        // SAFETY: `hook_source_utf8` / `lr.path.text` outlive the
+                        // synchronous transpile below (same erasure as the blob
+                        // virtual source in `get_loader_and_virtual_source`).
+                        let contents: &'static [u8] =
+                            unsafe { bun_ptr::detach_lifetime(hook_source_utf8.slice()) };
+                        let path_text: &'static [u8] =
+                            unsafe { bun_ptr::detach_lifetime(lr.path.text) };
+                        hook_virtual_source = bun_ast::Source {
+                            path: bun_paths::fs::Path::init(path_text),
+                            contents: std::borrow::Cow::Borrowed(contents),
+                            ..Default::default()
+                        };
+                        lr.virtual_source = Some(&hook_virtual_source);
+                        if let Some(loader) = force_loader_from_api_u8(loader_u8) {
+                            lr.loader = Some(loader);
+                        }
+                        match module_type_u8 {
+                            1 => module_type = ModuleType::Cjs,
+                            2 => module_type = ModuleType::Esm,
+                            _ => {}
+                        }
+                    }
+                    Err(e) => {
+                        let exc = global_ref.take_error(e);
+                        // SAFETY: per fn contract — `ret` is a valid out-param.
+                        unsafe {
+                            *ret = ErrorableResolvedSource::err(
+                                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                                exc,
+                            );
+                        }
+                        return ptr::null_mut();
+                    }
+                }
+            }
+            Err(e) => {
+                let exc = global_ref.take_error(e);
+                // SAFETY: per fn contract — `ret` is a valid out-param.
+                unsafe {
+                    *ret = ErrorableResolvedSource::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
+                }
+                return ptr::null_mut();
+            }
+        }
+    }
+
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can.
     // Today that's: import statements (`import 'foo'`) and import expressions
@@ -4368,6 +4497,8 @@ unsafe fn transpile_file(
             // Plugins make this complicated.
             // TODO: allow running concurrently when no onLoad handlers match a plugin.
             && plugin_runner_is_none
+            // The registerHooks() load chain already ran on-thread.
+            && !module_hooks_active
             && store_enabled
             // With the Node compile cache enabled, transpile on-thread so the
             // fetch hook sees every module.
@@ -5195,6 +5326,57 @@ unsafe fn resolve_hook(
                 // JS exception was thrown; caller observes it via the
                 // global's exception state, so bail without writing `res`.
                 Err(_) => return false,
+            }
+        }
+    }
+
+    // `module.registerHooks()` resolve hooks. Runs before the builtin alias
+    // fast path: Node's hooks observe builtin specifiers too. Kept in sync
+    // with `VirtualMachine::resolve_maybe_needs_trailing_slash`.
+    // SAFETY: `vm` is the live per-thread VM.
+    if unsafe { &*vm }.module_hooks_resolve_count > 0
+        && !unsafe { &*vm }.module_hooks_skip
+        && bun_jsc::node_module_module::module_hooks_should_intercept(specifier_utf8.slice())
+    {
+        // SAFETY: `vm` is the live per-thread VM.
+        if source_utf8.slice().is_empty() && unsafe { &*vm }.has_loaded {
+            // A referrer-less resolution after startup is an internal
+            // re-resolution of an already-resolved key, which Node's hooks
+            // never observe. Virtual hook-produced ids resolve to themselves;
+            // real paths fall through to the native resolver.
+            if bun_jsc::node_module_module::module_hooks_virtual_specifier(specifier_utf8.slice()) {
+                // SAFETY: per fn contract.
+                unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };
+                return true;
+            }
+        } else {
+            // SAFETY: `&specifier` / `&source` are live for the call.
+            match unsafe {
+                bun_jsc::cpp::Bun__runModuleResolveHooks(
+                    global_ref,
+                    &specifier,
+                    &source,
+                    is_esm,
+                    is_user_require_resolve,
+                )
+            } {
+                Ok(v) if v.is_undefined_or_null() => {}
+                Ok(v) => match bun_jsc::bun_string_jsc::from_js(v, global_ref) {
+                    Ok(path) => {
+                        // SAFETY: per fn contract.
+                        unsafe { *res = ErrorableString::ok(path) };
+                        return true;
+                    }
+                    Err(_) => return false,
+                },
+                Err(e) => {
+                    let exc = global_ref.take_error(e);
+                    // SAFETY: per fn contract.
+                    unsafe {
+                        *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc)
+                    };
+                    return true;
+                }
             }
         }
     }

@@ -375,6 +375,15 @@ pub struct VirtualMachine {
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
     pub has_mutated_built_in_extensions: u32,
 
+    /// Counts of active `module.registerHooks()` resolve/load hooks, mirrored
+    /// from `internal/modules/customization_hooks.ts` so the resolver and
+    /// module loader can gate the JS hook chain with a plain integer check.
+    pub module_hooks_resolve_count: u32,
+    pub module_hooks_load_count: u32,
+    /// True while the hook chain's default step runs its native resolution,
+    /// so that resolution does not re-enter the hooks.
+    pub module_hooks_skip: bool,
+
     pub initial_script_execution_context_identifier: i32,
 
     pub test_isolation_generation: u32,
@@ -4446,6 +4455,48 @@ impl VirtualMachine {
                 )? {
                     *res = resolved_path;
                     return Ok(());
+                }
+            }
+        }
+
+        // `module.registerHooks()` resolve hooks. Runs before the builtin
+        // alias fast path: Node's hooks observe builtin specifiers too.
+        if jsc_vm.module_hooks_resolve_count > 0
+            && !jsc_vm.module_hooks_skip
+            && crate::node_module_module::module_hooks_should_intercept(specifier_utf8.slice())
+        {
+            if source_utf8.slice().is_empty() && jsc_vm.has_loaded {
+                // A referrer-less resolution after startup is an internal
+                // re-resolution of an already-resolved key (e.g. require()
+                // delegating an ES module to the ESM loader), which Node's
+                // hooks never observe. Virtual hook-produced ids resolve to
+                // themselves; real paths fall through to the native resolver.
+                if crate::node_module_module::module_hooks_virtual_specifier(specifier_utf8.slice())
+                {
+                    *res = ErrorableString::ok(specifier.dupe_ref());
+                    return Ok(());
+                }
+            } else {
+                // SAFETY: `&specifier` / `&source` are live for the call.
+                match unsafe {
+                    crate::cpp::Bun__runModuleResolveHooks(
+                        global,
+                        &specifier,
+                        &source,
+                        is_esm,
+                        is_user_require_resolve,
+                    )
+                } {
+                    Ok(v) if v.is_undefined_or_null() => {}
+                    Ok(v) => {
+                        *res = ErrorableString::ok(crate::bun_string_jsc::from_js(v, global)?);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        let exc = global.take_error(e);
+                        *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), exc);
+                        return Ok(());
+                    }
                 }
             }
         }

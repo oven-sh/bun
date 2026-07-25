@@ -2110,6 +2110,67 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         }
     }
 
+    case Bun::ErrorCode::ERR_INVALID_RETURN_PROPERTY_VALUE: {
+        // `Expected ${input} to be returned for the "${prop}" from the
+        // "${name}" hook but got ${determineSpecificType(value)}.`
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view0 = str0->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view1 = str1->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto arg2 = callFrame->argument(3);
+        auto str2 = arg2.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view2 = str2->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto arg3 = callFrame->argument(4);
+
+        WTF::StringBuilder messageBuilder;
+        messageBuilder.append("Expected "_s);
+        messageBuilder.append(view0);
+        messageBuilder.append(" to be returned for the \""_s);
+        messageBuilder.append(view2);
+        messageBuilder.append("\" from the \""_s);
+        messageBuilder.append(view1);
+        messageBuilder.append("\" hook but got "_s);
+        determineSpecificType(JSC::getVM(globalObject), globalObject, messageBuilder, arg3);
+        RETURN_IF_EXCEPTION(scope, {});
+        messageBuilder.append('.');
+
+        return JSC::JSValue::encode(createError(globalObject, error, messageBuilder.toString()));
+    }
+
+    case Bun::ErrorCode::ERR_UNKNOWN_MODULE_FORMAT: {
+        // `Unknown module format: ${format} for URL ${url}`
+        auto arg0 = callFrame->argument(1);
+        auto str0 = arg0.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view0 = str0->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        auto arg1 = callFrame->argument(2);
+        auto str1 = arg1.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto view1 = str1->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        WTF::StringBuilder messageBuilder;
+        messageBuilder.append("Unknown module format: "_s);
+        messageBuilder.append(view0);
+        messageBuilder.append(" for URL "_s);
+        messageBuilder.append(view1);
+
+        return JSC::JSValue::encode(createError(globalObject, error, messageBuilder.toString()));
+    }
+
     case Bun::ErrorCode::ERR_INVALID_RETURN_VALUE: {
         auto arg0 = callFrame->argument(1);
         auto str0 = arg0.toString(globalObject);

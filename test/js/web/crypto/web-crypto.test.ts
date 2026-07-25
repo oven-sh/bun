@@ -1078,25 +1078,39 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
     });
   });
 
-  it("RSA/EC pkcs8 imported as Ed25519 reports 'Invalid key type'", async () => {
+  it("RSA/EC keys imported as Ed25519 report 'Invalid key type'", async () => {
     const rsa = await crypto.subtle.generateKey(
       { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
       true,
       ["sign", "verify"],
     );
     const ec = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+    const importAsEd25519 = async (format: "pkcs8" | "spki", key: CryptoKey) =>
+      rejection(
+        crypto.subtle.importKey(format, await crypto.subtle.exportKey(format, key), "Ed25519", true, [
+          format === "pkcs8" ? "sign" : "verify",
+        ]),
+      );
     expect({
-      rsa: await rejection(
-        crypto.subtle.importKey("pkcs8", await crypto.subtle.exportKey("pkcs8", rsa.privateKey), "Ed25519", true, [
-          "sign",
-        ]),
-      ),
-      ec: await rejection(
-        crypto.subtle.importKey("pkcs8", await crypto.subtle.exportKey("pkcs8", ec.privateKey), "Ed25519", true, [
-          "sign",
-        ]),
-      ),
-    }).toEqual({ rsa: "DataError: Invalid key type", ec: "DataError: Invalid key type" });
+      rsaPkcs8: await importAsEd25519("pkcs8", rsa.privateKey),
+      rsaSpki: await importAsEd25519("spki", rsa.publicKey),
+      ecPkcs8: await importAsEd25519("pkcs8", ec.privateKey),
+      ecSpki: await importAsEd25519("spki", ec.publicKey),
+    }).toEqual({
+      rsaPkcs8: "DataError: Invalid key type",
+      rsaSpki: "DataError: Invalid key type",
+      ecPkcs8: "DataError: Invalid key type",
+      ecSpki: "DataError: Invalid key type",
+    });
+  });
+
+  it("rejects an Ed25519 spki with trailing bytes", async () => {
+    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const spki = new Uint8Array(await crypto.subtle.exportKey("spki", ed.publicKey));
+    const withTrailing = new Uint8Array([...spki, 0xff]);
+    expect(await rejection(crypto.subtle.importKey("spki", withTrailing, "Ed25519", true, ["verify"]))).toBe(
+      "DataError: Invalid keyData",
+    );
   });
 });
 

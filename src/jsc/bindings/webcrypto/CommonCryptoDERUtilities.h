@@ -46,7 +46,6 @@ inline constexpr unsigned char Version[] = { 0x02, 0x01, 0x00 };
 inline constexpr unsigned char InitialOctet = 0x00;
 inline constexpr size_t MaxLengthInOneByte = 128;
 
-size_t bytesUsedToEncodedLength(uint8_t);
 size_t extraBytesNeededForEncodedLength(size_t);
 void addEncodedASN1Length(Vector<uint8_t>&, size_t);
 size_t bytesNeededForEncodedLength(size_t);

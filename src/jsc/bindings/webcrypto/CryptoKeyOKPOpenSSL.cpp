@@ -176,9 +176,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 // For all of the OIDs, the parameters MUST be absent.
 RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
-    // The PKCS8_PRIV_KEY_INFO template accepts both v1 PrivateKeyInfo and v2
-    // OneAsymmetricKey with the optional attributes [0] and publicKey [1]
-    // fields (oven-sh/boringssl#10), validating attribute bodies as OpenSSL does.
+    // RFC 5958 v2 OneAsymmetricKey support comes from oven-sh/boringssl#10
     const uint8_t* ptr = keyData.begin();
     auto p8 = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
     if (!p8 || ptr != keyData.end())

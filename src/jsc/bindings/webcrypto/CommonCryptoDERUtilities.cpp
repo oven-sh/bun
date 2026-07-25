@@ -30,13 +30,6 @@
 
 namespace WebCore {
 
-size_t bytesUsedToEncodedLength(uint8_t octet)
-{
-    if (octet < MaxLengthInOneByte)
-        return 1;
-    return octet - MaxLengthInOneByte + 1;
-}
-
 size_t extraBytesNeededForEncodedLength(size_t length)
 {
     if (!length)

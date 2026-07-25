@@ -1831,17 +1831,23 @@ describe("createPrivateKey with RFC 5958 v2 OneAsymmetricKey", () => {
     ).toBe(true);
   });
 
-  const rejects: [string, Buffer][] = [
-    ["v1 with publicKey", der(0, pubField)],
-    ["version > v2", der(2, pubField)],
-    ["empty publicKey BIT STRING", der(1, "8100")],
-    ["publicKey BIT STRING with bad padding octet", der(1, "810108")],
-    ["duplicate publicKey", der(1, "a000" + "810100" + "810100")],
-    ["publicKey before attributes", der(1, "810100" + "a000")],
-    ["unknown trailing [2]", der(1, "a000" + "810100" + "820100")],
-    ["malformed attribute body", der(1, "a001ff")],
+  const rejects: [string, Buffer, string][] = [
+    ["v1 with publicKey", der(0, pubField), "ERR_OSSL_DECODE_ERROR"],
+    ["version > v2", der(2, pubField), "ERR_OSSL_DECODE_ERROR"],
+    ["empty publicKey BIT STRING", der(1, "8100"), "ERR_OSSL_ASN1_STRING_TOO_SHORT"],
+    ["publicKey BIT STRING with bad padding octet", der(1, "810108"), "ERR_OSSL_ASN1_INVALID_BIT_STRING_BITS_LEFT"],
+    ["duplicate publicKey", der(1, "a000" + "810100" + "810100"), "ERR_OSSL_ASN1_SEQUENCE_LENGTH_MISMATCH"],
+    ["publicKey before attributes", der(1, "810100" + "a000"), "ERR_OSSL_ASN1_SEQUENCE_LENGTH_MISMATCH"],
+    ["unknown trailing [2]", der(1, "a000" + "810100" + "820100"), "ERR_OSSL_ASN1_SEQUENCE_LENGTH_MISMATCH"],
+    ["malformed attribute body", der(1, "a001ff"), "ERR_OSSL_ASN1_DECODE_ERROR"],
   ];
-  it.each(rejects)("rejects %s", (_name, key) => {
-    expect(() => createPrivateKey({ key, format: "der", type: "pkcs8" })).toThrow();
+  it.each(rejects)("rejects %s", (_name, key, code) => {
+    let error: any;
+    try {
+      createPrivateKey({ key, format: "der", type: "pkcs8" });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe(code);
   });
 });

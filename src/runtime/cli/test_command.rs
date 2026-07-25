@@ -2464,9 +2464,7 @@ impl TestCommand {
                     // in the pattern as the native separator, and rewriting to
                     // `\` would turn `\*` into an escaped literal.
                     if !bun_glob::detect_glob_syntax(in_) {
-                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(
-                            &mut to_normalize,
-                        );
+                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
                     }
                     normalized.push(to_normalize.into_boxed_slice());
                 }

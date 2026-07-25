@@ -299,12 +299,12 @@ function buildScriptCoverageList(
     }
 
     // Keyed by (functionStart, functionEnd): the same key FunctionHasExecutedCache uses.
-    const execByRange = new Map<string, { end: number; sourceEnd: number; name: string; skip: boolean }>();
+    const execByRange = new Map<string, { sourceEnd: number; name: string; skip: boolean }>();
     for (const [start, end, sourceEnd, name, skip] of script.executables) {
       const key = `${start}:${end}`;
       const prev = execByRange.$get(key);
       if (prev === undefined || (prev.skip && !skip)) {
-        execByRange.$set(key, { end, sourceEnd, name, skip });
+        execByRange.$set(key, { sourceEnd, name, skip });
       }
     }
 

@@ -77,9 +77,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject * globa
 }
 
 // Returns a JSON string describing every script the control flow profiler has
-// data for: [{ url, scriptId, sourceLength, blocks: [[start, end, count]],
-// functions: [[start, end, executed]] }]. The JS layer in node/inspector.ts
-// reshapes this into the V8 ScriptCoverage format.
+// data for; the shape is buildScriptCoverageList's parameter type in node/inspector.ts.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_collectPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {

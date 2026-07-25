@@ -823,13 +823,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             [kRejectNonStandardBodyWrites]: server.rejectNonStandardBodyWrites,
           });
         }
-        // Node.js's parserOnIncoming: `res.shouldKeepAlive = keepAlive`, where
-        // keepAlive is llhttp_should_keep_alive (HTTP/1.1: true unless
-        // Connection: close; HTTP/1.0: false unless Connection: keep-alive).
-        // Overwrites the constructor's HTTP/1.0 `shouldKeepAlive = false` so
-        // middleware that branches on res.shouldKeepAlive reads the same value
-        // Node.js exposes. kReqShouldKeepAlive (the transport decision) is
-        // separate and still forces close-on-finish for HTTP/1.0.
         http_res.shouldKeepAlive = isAncientHTTP
           ? (dispatchBits & DISPATCH_CONN_KEEPALIVE) !== 0
           : (dispatchBits & DISPATCH_CONN_CLOSE) === 0;

@@ -6038,9 +6038,7 @@ pub mod bv2_impl {
                         }
                         None => {
                             // Leave the record disabled so the build still
-                            // succeeds; the call will throw at runtime, which
-                            // is what bundling the `bindings` package already
-                            // produced before this rewrite existed.
+                            // succeeds; the require prints as an empty stub.
                             import_record.path.is_disabled = true;
                             continue;
                         }

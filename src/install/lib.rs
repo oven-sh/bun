@@ -631,8 +631,17 @@ impl RunCommand {
             }
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
-            let need_npm = bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
-            let need_npx = bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
+            // A nested `--bun` inherits a PATH with `BUN_NODE_DIR` already
+            // prepended, so a probe hit inside the shim dir is our own link,
+            // not a real npm; treating it as real would delete the only npm
+            // on PATH mid-script.
+            let mut real_in_path = |bin: &[u8]| -> bool {
+                bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
+                    !bun_core::strings::starts_with(p.as_bytes(), Self::BUN_NODE_DIR.as_bytes())
+                })
+            };
+            let need_npm = !real_in_path(b"npm");
+            let need_npx = !real_in_path(b"npx");
 
             for (dest, wanted) in [
                 (NODE_LINK, true),
@@ -750,8 +759,24 @@ impl RunCommand {
             }
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
-            let need_npm = bun_which::which(&mut which_buf, original_path, b".", b"npm").is_none();
-            let need_npx = bun_which::which(&mut which_buf, original_path, b".", b"npx").is_none();
+            // Same nested-`--bun` guard as the POSIX arm: a probe hit inside
+            // the shim dir is our own hardlink, not a real npm. Compare
+            // case-insensitively; Windows paths are.
+            let shim_dir_utf8 = bun_core::strings::to_utf8_alloc_with_type(
+                &target_path_buffer[prefix.len()..dir_slice_len],
+            );
+            let mut real_in_path = |bin: &[u8]| -> bool {
+                bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
+                    let pb = p.as_bytes();
+                    !(pb.len() >= shim_dir_utf8.len()
+                        && strings::eql_case_insensitive_asciii_check_length(
+                            &pb[..shim_dir_utf8.len()],
+                            &shim_dir_utf8,
+                        ))
+                })
+            };
+            let need_npm = !real_in_path(b"npm");
+            let need_npx = !real_in_path(b"npx");
 
             let image_path = win::exe_path_w();
             for (name, stale_name, wanted) in [

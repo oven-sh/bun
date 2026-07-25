@@ -219,6 +219,11 @@ describe("fake npm/npx cli", () => {
       const r = await fakePmRun(String(dir), "npm", ["pack", "--pack-destination", "./tarballs"]);
       expect(r.exitCode).toBe(0);
       expect(existsSync(join(String(dir), "tarballs", "fake-npm-pack-1.0.0.tgz"))).toBe(true);
+      // `-w` is dropped here (bun pm pack has no --filter); the workspace
+      // name must not leak into the pm subcommand position.
+      const ws = await fakePmRun(String(dir), "npm", ["pack", "-w", "whatever"]);
+      expect(ws.exitCode).toBe(0);
+      expect(existsSync(join(String(dir), "fake-npm-pack-1.0.0.tgz"))).toBe(true);
     });
 
     test.concurrent("npm --version prints a version", async () => {
@@ -265,6 +270,12 @@ describe("fake npm/npx cli", () => {
       // A value-flag's value is not an initializer.
       const flags = await fakePmRun(String(dir), "npm", ["init", "--loglevel", "error", "--help"]);
       expect(flags.stdout + flags.stderr).toContain("bun init");
+      // `-w client` must not become the template: `bun create`'s scanner
+      // takes the first non-flag token, so translated flags are not hoisted
+      // into it.
+      const ws = await fakePmRun(String(dir), "npm", ["init", "nonexistent-template", "-w", "client"]);
+      expect(ws.stdout + ws.stderr).toContain("create-nonexistent-template");
+      expect(ws.stdout + ws.stderr).not.toContain("create-client");
     });
 
     test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {

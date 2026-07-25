@@ -864,8 +864,10 @@ pub mod command {
     /// together with their value so the value is not mistaken for a positional
     /// (e.g. `npm install --loglevel error react` must not try to install a
     /// package called `error`). Options that change the *target* of the
-    /// operation (`--workspace`/`--prefix`) are translated instead; see
-    /// `translate_npm_value_flag`. Kept sorted for `binary_search`.
+    /// operation are translated instead of dropped where bun can express
+    /// them: `--prefix` always (`--cwd`), `--workspace` only for subcommands
+    /// whose parser accepts `--filter`; see `translate_npm_value_flag` and
+    /// the per-subcommand `renames`. Kept sorted for `binary_search`.
     const NPM_VALUE_FLAGS_IGNORED: &[&[u8]] = &[
         b"access",
         b"before",
@@ -901,6 +903,7 @@ pub mod command {
         b"tag",
         b"userconfig",
         b"viewer",
+        b"workspace",
     ];
 
     #[derive(Clone, Copy)]
@@ -943,7 +946,6 @@ pub mod command {
             return Some(NpmFlag::Rename(to));
         }
         match name {
-            b"workspace" => Some(NpmFlag::Rename(zstr!("--filter"))),
             b"prefix" => Some(NpmFlag::Rename(zstr!("--cwd"))),
             _ if NPM_VALUE_FLAGS_IGNORED.binary_search(&name).is_ok() => Some(NpmFlag::Drop),
             _ => None,
@@ -1083,11 +1085,21 @@ pub mod command {
 
         // npm flags bun's own parser accepts for the mapped subcommand must
         // reach it instead of being dropped, either as-is (`keep`) or under
-        // bun's spelling (`renames`).
+        // bun's spelling (`renames`). `--workspace` becomes `--filter` only
+        // where the mapped command parses `--filter` (run scripts, install,
+        // update, outdated); elsewhere it stays dropped, since an unknown
+        // `--filter` would not consume its value and the workspace name would
+        // leak as a positional.
         let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
             Some(b"publish") => (&[b"access", b"otp", b"tag"], &[]),
             Some(b"version" | b"verison") => (&[b"message"], &[]),
             Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
+            Some(
+                b"test" | b"t" | b"tst" | b"start" | b"stop" | b"restart" | b"run-script" | b"rum"
+                | b"urn" | b"run" | b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta"
+                | b"instal" | b"install" | b"ci" | b"clean-install" | b"ic" | b"install-clean"
+                | b"isntall-clean" | b"update" | b"upgrade" | b"up" | b"udpate" | b"outdated",
+            ) => (&[], &[(b"workspace", zstr!("--filter"))]),
             _ => (&[], &[]),
         };
 
@@ -1189,10 +1201,11 @@ pub mod command {
             None => {}
         }
 
-        // The bunx parser skips flags it does not know without consuming
-        // their value, so a hoisted `--cwd <dir>` would make `<dir>` the
-        // package name; drop renamed flags for the bunx-mapped subcommands.
-        if matches!(sub_bytes, Some(b"exec" | b"x")) {
+        // The bunx and `bun create` parsers skip flags they do not know
+        // without consuming their value, so a hoisted `--cwd <dir>` would
+        // become the package or template name; drop renamed flags for the
+        // subcommands mapped to them.
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
             hoisted.clear();
         }
 

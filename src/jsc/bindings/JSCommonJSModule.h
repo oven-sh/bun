@@ -70,8 +70,7 @@ public:
     // If compile is overridden, it is assigned to this field. The default
     // compile function is not stored here, but in
     mutable JSC::WriteBarrier<Unknown> m_overriddenCompile;
-    // `Module._extensions` handler to run at deferred synthetic-module eval
-    // time (set when a CJS file is reached via the ESM loader).
+    // `Module._extensions` handler to invoke at deferred synthetic-module eval time.
     mutable JSC::WriteBarrier<Unknown> m_pendingCustomExtension;
 
     bool ignoreESModuleAnnotation { false };

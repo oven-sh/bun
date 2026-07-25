@@ -948,16 +948,12 @@ pub struct Block {
 }
 
 /// Remap ControlFlowProfiler byte offsets (which index the runtime-transpiled
-/// source JSC compiled) back to byte offsets into the original file on disk,
-/// so `Profiler.takePreciseCoverage` output matches what Node/V8 produce for
-/// the same file. Scripts with no saved sourcemap (vm.Script, eval, modules
-/// the transpiler passed through untouched) return false and keep their
-/// offsets unchanged.
+/// source JSC compiled) to byte offsets into the original file on disk, so
+/// `Profiler.takePreciseCoverage` matches Node/V8 for the same file. Returns
+/// false (offsets unchanged) for scripts with no saved sourcemap.
 ///
-/// # Safety
-/// `offsets` must point to `count` writable `i32`s and `out_original_len` to a
-/// writable `u32`. Must be called on the JS thread (touches the per-VM
-/// `SavedSourceMap`).
+/// SAFETY: `offsets` points to `count` writable `i32`s and `out_original_len`
+/// to a writable `u32`; JS-thread-only (touches the per-VM `SavedSourceMap`).
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
     source_url: bun_core::String,
@@ -967,8 +963,7 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
     out_original_len: *mut u32,
 ) -> bool {
     let path = source_url.to_utf8();
-    // Only filesystem-backed modules have a saved sourcemap AND a file to read
-    // the original text from. vm.Script / eval / builtins fall through here.
+    // vm.Script / eval / builtins: no file on disk, no saved sourcemap.
     if !bun_paths::is_absolute(path.slice()) {
         return false;
     }
@@ -982,12 +977,8 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
         return false;
     };
 
-    // The original text is what external consumers (c8, v8-to-istanbul) read
-    // from disk; we need its line-start table to turn the sourcemap's
-    // (line, column) answers back into byte offsets. The `OwnedLineOffsetTables`
-    // wrapper runs `MultiArrayList::drop_elements` so each line's
-    // `columns_for_non_ascii` box is freed (the bare list's `Drop` is
-    // slab-only by design).
+    // `OwnedLineOffsetTables` runs `drop_elements` so each non-ASCII line's
+    // `columns_for_non_ascii` box is freed (`MultiArrayList::Drop` is slab-only).
     let original = match bun_sys::File::read_from(bun_core::Fd::cwd(), path.slice()) {
         Ok(bytes) => bytes,
         Err(_) => return false,
@@ -1040,14 +1031,11 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
             if orig_line < 0 || (orig_line as usize) >= original_starts.len() {
                 return if is_end { original_len } else { 0 };
             }
-            // The nearest-at-or-before mapping's original position. No byte-delta
-            // carry: the builder inserts a synthetic column-0 mapping on every
-            // output line that would otherwise start past column 0
-            // (`cover_lines_without_mappings` in `sourcemap::Chunk`), so bytes
-            // between a mapping and the target do not line up 1:1.
-            // Sourcemap columns are UTF-16 code units; invert `add_source_mapping`'s
-            // byte->code-unit table when this original line has non-ASCII before
-            // the mapped position so the code-unit column becomes a byte column.
+            // Use the nearest mapping's original position as-is (no byte-delta
+            // carry: `cover_lines_without_mappings` inserts synthetic column-0
+            // mappings, so bytes between a mapping and the target do not line
+            // up 1:1). Sourcemap columns are UTF-16 code units, so invert the
+            // line's `columns_for_non_ascii` table back to a byte column.
             let orig_col_units = m.original.columns.zero_based();
             let first_na = original_first_na[orig_line as usize];
             let orig_col_bytes = if orig_col_units >= 0 && (orig_col_units as u32) >= first_na {
@@ -1062,10 +1050,9 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
                 orig_col_units
             };
             let mut remapped = original_starts[orig_line as usize] as i32 + orig_col_bytes;
-            // Closing `}` has no explicit mapping (FnBody carries no
-            // close_brace_loc), so an end offset lands on the last statement's
-            // start. Extend to the end of that original line so the range still
-            // encloses the function body for line-based coverage consumers.
+            // A closing `}` has no mapping of its own (FnBody has no
+            // close_brace_loc), so extend end offsets to the end of the mapped
+            // original line so the range still encloses the function body.
             if is_end {
                 let next_line = orig_line as usize + 1;
                 let line_end = if next_line < original_starts.len() {

@@ -272,13 +272,10 @@ function removeConsoleHooks() {
   hookedConsoleMethods.length = 0;
 }
 
-// Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count, rStart?, rEnd?]],
-// functions: [[start, end, executed, name, rStart?, rEnd?]] }]) into the V8
-// ScriptCoverage list returned by Profiler.takePreciseCoverage.
-// Block→function assignment is done on the raw (transpiled) start/end so
-// containment holds; the emitted CoverageRange uses the remapped start/end
-// (original-file bytes) when present, so offsets address the file the url names.
+// Reshapes jsFunction_collectPreciseCoverage's output into V8 ScriptCoverage.
+// Block-to-function assignment uses raw (transpiled) offsets so containment
+// holds across the transpiler's class hoisting; the emitted CoverageRange uses
+// the remapped (original-file byte) offsets when present.
 type RawBlock = [number, number, number, number?, number?];
 type RawFunction = [number, number, boolean, string, number?, number?];
 function buildScriptCoverageList(

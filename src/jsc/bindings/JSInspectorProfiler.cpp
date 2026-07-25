@@ -89,15 +89,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     if (!profiler)
         return JSValue::encode(jsNull());
 
-    // Enumerate SourceIDs by walking only the four ScriptExecutable subspaces
-    // (not the whole heap). Providers whose executables were all GC'd are not
-    // reported. FunctionHasExecutedCache carries no names, so also index every
-    // live FunctionExecutable's ecmaName by its (sourceID, start offset) to
-    // fill FunctionCoverage.functionName.
+    // FunctionHasExecutedCache carries no names, so also index each live
+    // FunctionExecutable's ecmaName by (functionStart, functionEnd) during the
+    // same ScriptExecutable-subspace walk that enumerates SourceIDs. The key
+    // packs both offsets so it is never 0 (WTF's empty integer hash key).
     Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
-    // Key packs (functionStart, functionEnd) so it is never 0 (WTF's empty
-    // hash key for integers) even for a function at byte 0.
     UncheckedKeyHashMap<SourceID, UncheckedKeyHashMap<uint64_t, String>> functionNames;
     auto rangeKey = [](unsigned start, unsigned end) -> uint64_t {
         return (static_cast<uint64_t>(start) << 32) | static_cast<uint64_t>(end);
@@ -115,9 +112,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
                     providers.append(*provider);
                 if (executable->type() == FunctionExecutableType) {
                     auto* fn = static_cast<FunctionExecutable*>(executable);
-                    // functionStart()/functionEnd() equal typeProfilingStart/End,
-                    // which are what FunctionHasExecutedCache stores, so the
-                    // (start, end) pair keys the join.
+                    // functionStart()/End() == typeProfilingStart/End(), the same offsets FunctionHasExecutedCache stores.
                     functionNames.add(sourceID, UncheckedKeyHashMap<uint64_t, String> {})
                         .iterator->value.add(rangeKey(fn->functionStart(), fn->functionEnd()), fn->ecmaName().string());
                 }
@@ -133,13 +128,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         if (blocks.isEmpty() && functionRanges.isEmpty())
             continue;
 
-        // JSC's offsets index the text the VM compiled, which for Bun-loaded
-        // modules is the runtime-transpiled output (comments stripped, class
-        // declarations hoisted, TS lowered). V8-coverage consumers slice the
-        // on-disk file by offset, so remap every offset back through the saved
-        // sourcemap to original-file bytes. vm.Script / eval / builtins have no
-        // saved sourcemap; the remap call reports false for those and their
-        // offsets already index the text the caller gave.
+        // JSC's offsets index the runtime-transpiled text for Bun-loaded modules
+        // (comments stripped, classes hoisted, TS lowered); remap them through
+        // the saved sourcemap to original-file bytes so V8-coverage consumers
+        // that slice the on-disk file see the right text. vm.Script/eval have
+        // no saved sourcemap, so the remap call returns false for those.
         Vector<int32_t> remap;
         remap.reserveInitialCapacity(blocks.size() * 2 + functionRanges.size() * 2);
         for (const auto& block : blocks) {
@@ -169,9 +162,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
         auto namesForSource = functionNames.find(sourceID);
         size_t i = 0;
-        // Blocks and functions carry the raw (transpiled) start/end for the JS
-        // layer's containment sort and, when the source was remapped, the
-        // original-file start/end for the emitted CoverageRange.
+        // Emit raw offsets (for the JS layer's containment sort) and, when remapped, original-file offsets.
         auto blockArray = JSON::Array::create();
         for (const auto& block : blocks) {
             auto range = JSON::Array::create();

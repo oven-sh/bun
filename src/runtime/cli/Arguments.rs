@@ -366,7 +366,6 @@ const UNSUPPORTED_SECURITY_FLAGS: &[(&[u8], SecurityFlagKind)] = &[
 
 /// Refuse to start when any flag in [`UNSUPPORTED_SECURITY_FLAGS`] was passed.
 /// Exit code 9 matches Node's "invalid argument" code for a bad CLI option.
-#[cold]
 fn reject_unsupported_security_flags(args: &clap::Args<clap::Help>, cmd: CommandTag) {
     for &(name, kind) in UNSUPPORTED_SECURITY_FLAGS {
         let present = match kind {
@@ -378,13 +377,19 @@ fn reject_unsupported_security_flags(args: &clap::Args<clap::Help>, cmd: Command
             }
         };
         if present {
-            Output::err_generic(
-                "{} is not supported in Bun. Refusing to start because silently ignoring it would run without the security restriction it requests.",
-                format_args!("{}", BStr::new(name)),
-            );
-            Global::exit(9);
+            refuse_security_flag(name);
         }
     }
+}
+
+#[cold]
+#[inline(never)]
+fn refuse_security_flag(name: &[u8]) -> ! {
+    Output::err_generic(
+        "{} is not supported in Bun. Refusing to start because silently ignoring it would run without the security restriction it requests.",
+        format_args!("{}", BStr::new(name)),
+    );
+    Global::exit(9);
 }
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[

@@ -177,6 +177,13 @@ if (process.argv.length === 2 &&
         // does not exist, so don't re-spawn just to pass the flag through.
         continue;
       }
+      if ((flag === "--permission" || flag === "--experimental-permission") && process.versions.bun) {
+        // Bun has no permission model and refuses to start with --permission
+        // rather than running unrestricted, so a test written to exercise
+        // permission-model behaviour cannot run meaningfully here.
+        console.log(`1..0 # Skipped: Bun does not implement ${flag}`);
+        process.exit(0);
+      }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;

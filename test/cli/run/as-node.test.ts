@@ -139,24 +139,29 @@ describe("unsupported Node.js security flags are refused at startup", () => {
     ["--experimental-permission", `"ran"`, "ran"],
   ];
 
-  async function run(cmd: string[], cwd: string) {
-    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+  async function run(cmd: string[], cwd: string, env: Record<string, string | undefined> = {}) {
+    await using proc = Bun.spawn({ cmd, env: { ...bunEnv, ...env }, cwd, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
 
+  type Invocation = (flag: string, app: string) => { cmd: string[]; env?: Record<string, string> };
   describe.each([
-    ["bun", (flag: string, app: string) => [bunExe(), flag, app]],
-    ["bun run", (flag: string, app: string) => [bunExe(), "run", flag, app]],
-    ["bun-as-node", (flag: string, app: string) => [bunExe(), "--bun", "node", flag, app]],
-  ] as const)("%s", (_, cmd) => {
+    ["bun", (flag, app) => ({ cmd: [bunExe(), flag, app] })],
+    ["bun run", (flag, app) => ({ cmd: [bunExe(), "run", flag, app] })],
+    ["bun-as-node", (flag, app) => ({ cmd: [bunExe(), "--bun", "node", flag, app] })],
+    ["bun test", (flag, app) => ({ cmd: [bunExe(), "test", flag, app] })],
+    ["BUN_OPTIONS", (flag, app) => ({ cmd: [bunExe(), app], env: { BUN_OPTIONS: flag } })],
+  ] satisfies [string, Invocation][])("%s", (label, inv) => {
     test.concurrent.each(cases)("%s refuses to start", async (flag, probe, failOpenMarker) => {
       const flagName = flag.split("=")[0];
       using dir = tempDir("security-flag", {
         "app.mjs": `console.log(${probe}, JSON.stringify(process.execArgv));`,
+        "app.test.mjs": `import {test} from "bun:test"; test("probe", () => console.log(${probe}, JSON.stringify(process.execArgv)));`,
         "hooks.mjs": `throw new Error("loader hooks file should not have been executed as the entrypoint");`,
       });
-      const { stdout, stderr, exitCode } = await run(cmd(flag, "app.mjs"), String(dir));
+      const { cmd, env } = inv(flag, label === "bun test" ? "app.test.mjs" : "app.mjs");
+      const { stdout, stderr, exitCode } = await run(cmd, String(dir), env);
       // The application must not have started: no fail-open marker on stdout,
       // and the flag must not appear in a printed execArgv receipt.
       expect(stdout).not.toContain(failOpenMarker);

@@ -201,6 +201,8 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "uppercase field name", pairs: [...valid, "X-Upper", "v"] },
     { name: "non-token field name", pairs: [...valid, "bad name", "v"] },
     { name: "CR in field value", pairs: [...valid, "x-crlf", "a\r\nb"] },
+    { name: "C0 control in field value", pairs: [...valid, "x-ctl", "a\x01b"] },
+    { name: "DEL in field value", pairs: [...valid, "x-ctl", "a\x7fb"] },
     { name: "leading SP in field value", pairs: [...valid, "x-ws", " v"] },
     { name: "trailing HTAB in field value", pairs: [...valid, "x-ws", "v\t"] },
     { name: "transfer-encoding", pairs: [...valid, "transfer-encoding", "chunked"] },

@@ -427,14 +427,11 @@ public:
     WriteBarrier<JSObject> esmOriginalExports;
     WriteBarrier<JSObject> cjsModule;
     WriteBarrier<Unknown> cjsOriginalExports;
-    // Non-JSModuleMock virtualModules entry (e.g. Bun.plugin build.module)
-    // that this mock.module() call overwrote; reinstated on restore.
+    // Bun.plugin build.module() callback this mock overwrote; reinstated on restore.
     WriteBarrier<JSObject> priorVirtualModuleEntry;
-    // The namespace/module.exports that exists now came from a mock factory, not
-    // the real source; restore should evict rather than replay.
+    // Namespace came from a mock factory, not the real source: evict on restore.
     bool mustEvictOnRestore = false;
-    // Preload-installed mocks survive mock.restore() so that
-    // afterEach(mock.restore) doesn't tear down global test setup.
+    // Preload mocks survive mock.restore() so afterEach(mock.restore) keeps global setup.
     bool installedDuringPreload = false;
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
@@ -636,8 +633,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     mock->cjsOriginalExports.set(vm, mock, priorMock->cjsOriginalExports.get());
                 if (priorMock->priorVirtualModuleEntry)
                     mock->priorVirtualModuleEntry.set(vm, mock, priorMock->priorVirtualModuleEntry.get());
-                // A prior mock with no snapshot was installed before the module
-                // loaded; any registry entry seen now came from that mock's factory.
+                // Prior mock had no snapshot: the registry entry came from its factory.
                 mock->mustEvictOnRestore = priorMock->mustEvictOnRestore || (!priorMock->esmNamespace && !priorMock->cjsModule);
             } else {
                 mock->priorVirtualModuleEntry.set(vm, mock, prior.get());
@@ -847,8 +843,7 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
                 }
             }
         } else {
-            // No ESM snapshot; drop any registry entry the mock materialized so the
-            // next import re-loads the real source.
+            // No ESM snapshot: evict so the next import re-loads the real source.
             auto specifierIdent = JSC::Identifier::fromString(vm, entry.key);
             auto* moduleLoader = globalObject->moduleLoader();
             WTF::Locker locker { moduleLoader->cellLock() };

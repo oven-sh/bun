@@ -63,7 +63,6 @@ use crate::node::types::{Encoding, PathOrFileDescriptor};
 use crate::socket::ssl_config::{SSLConfig, SSLConfigFromJs};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::body::{Action as BodyValueLockedAction, InternalBlob, Value as BodyValue};
-use crate::webcore::headers_ref::any_blob_content_type_opt;
 use crate::webcore::s3::client as s3;
 use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
@@ -1392,7 +1391,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
             Some(from_fetch_headers(
                 Some(headers_ref),
-                any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
+                body.implied_content_type(),
             ))
         } else {
             headers
@@ -1624,7 +1623,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // `abort_reason()` is the stored `m_reason` (same object as
             // `signal.reason`), not a reconstructed DOMException.
             let reason = sig.abort_reason();
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
+            if let Some(stream_ref) = body.readable_stream() {
                 if let Some(stream) = stream_ref.get(global_this) {
                     stream.cancel_with_reason(global_this, reason);
                 }
@@ -1639,11 +1638,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    if headers.is_none() && body.has_body() && body.has_content_type_from_user() {
-        headers = Some(from_fetch_headers(
-            None,
-            any_blob_content_type_opt(body.get_any_blob().map(|b| &*b)),
-        ));
+    if headers.is_none() && body.has_body() && body.implied_content_type().is_some() {
+        headers = Some(from_fetch_headers(None, body.implied_content_type()));
+    }
+
+    if let HTTPRequestBody::MultipartFormStream { content_length, .. } = &body {
+        let h = headers.get_or_insert_default();
+        if h.get(b"content-length").is_none() {
+            let mut len_buf = [0u8; 20];
+            let len = bun_core::fmt::buf_print(&mut len_buf, format_args!("{content_length}"))
+                .expect("u64 fits in 20 bytes");
+            h.append(b"Content-Length", len);
+        }
     }
 
     // `body` is mutated in place for the sendfile/readfile paths and then

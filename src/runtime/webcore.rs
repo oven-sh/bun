@@ -11,6 +11,8 @@ pub mod array_buffer_sink;
 pub mod bake_response;
 #[path = "webcore/ByteBlobLoader.rs"]
 pub mod byte_blob_loader;
+#[path = "webcore/MultipartFormLoader.rs"]
+pub mod multipart_form_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
 #[path = "webcore/CookieMap.rs"]

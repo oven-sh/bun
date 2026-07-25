@@ -4060,6 +4060,257 @@ impl FormDataContext<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// Streaming multipart serialization
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Serialized `multipart/form-data` body whose file-backed parts are kept as
+/// references to be read in chunks at send time.
+pub struct MultipartSegments {
+    pub segments: Vec<crate::webcore::multipart_form_loader::Segment>,
+    pub content_type: Box<[u8]>,
+    pub total_size: u64,
+}
+
+struct MultipartSegmentBuilder<'a> {
+    segments: Vec<crate::webcore::multipart_form_loader::Segment>,
+    current: Vec<u8>,
+    total_size: u64,
+    boundary: &'a [u8],
+    failed: bool,
+}
+
+impl MultipartSegmentBuilder<'_> {
+    fn push(&mut self, bytes: &[u8]) {
+        self.current.extend_from_slice(bytes);
+        self.total_size += bytes.len() as u64;
+    }
+
+    fn push_string(&mut self, slice: ZigStringSlice, component: FormDataComponent) {
+        if let Some(encoded) = encode_form_data_component(slice.slice(), component) {
+            self.push(&encoded);
+        } else {
+            self.push(slice.slice());
+        }
+    }
+
+    fn flush_bytes(&mut self) {
+        if !self.current.is_empty() {
+            self.segments
+                .push(crate::webcore::multipart_form_loader::Segment::Bytes {
+                    bytes: core::mem::take(&mut self.current),
+                    offset: 0,
+                });
+        }
+    }
+
+    fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
+        if self.failed {
+            return;
+        }
+        self.push(b"--");
+        self.push(self.boundary);
+        self.push(b"\r\n");
+        self.push(b"Content-Disposition: form-data; name=\"");
+        self.push_string(name.to_slice(), FormDataComponent::Name);
+
+        match entry {
+            FormDataEntry::String(value) => {
+                self.push(b"\"\r\n\r\n");
+                self.push_string(value.to_slice(), FormDataComponent::StringValue);
+            }
+            FormDataEntry::File { blob, filename } => {
+                self.push(b"\"; filename=\"");
+                self.push_string(filename.to_slice(), FormDataComponent::Filename);
+                self.push(b"\"\r\n");
+
+                let blob_ct = blob.content_type_slice();
+                let content_type: &[u8] = if !blob_ct.is_empty()
+                    && !blob_ct.iter().any(|&b| matches!(b, b'\r' | b'\n'))
+                {
+                    blob_ct
+                } else {
+                    b"application/octet-stream"
+                };
+                self.push(b"Content-Type: ");
+                self.push(content_type);
+                self.push(b"\r\n\r\n");
+
+                if blob.store.get().is_some() {
+                    if blob.size.get() == MAX_SIZE {
+                        blob.resolve_size();
+                    }
+                    let store = blob.store.get().as_ref().unwrap().clone();
+                    match store.data_mut().tag() {
+                        store::DataTag::S3 => {
+                            // Not reachable: `needs_streaming_multipart` only selects
+                            // this path for file-backed stores. S3 parts fall through
+                            // to the buffered serializer.
+                        }
+                        store::DataTag::File => {
+                            let size = blob.size.get();
+                            // `resolve_size` leaves `seekable == None` when stat
+                            // failed (missing file) and `size == MAX_SIZE` for a
+                            // non-seekable fd (pipe/FIFO). Both mean we cannot
+                            // emit a valid Content-Length; fall back to the
+                            // buffered path so the synchronous read surfaces the
+                            // error (or drains the pipe) there.
+                            if size == MAX_SIZE || store.data_mut().as_file().seekable.is_none() {
+                                self.failed = true;
+                                return;
+                            }
+                            self.flush_bytes();
+                            self.segments.push(
+                                crate::webcore::multipart_form_loader::Segment::File {
+                                    store,
+                                    pos: blob.offset.get(),
+                                    remain: size,
+                                    fd: Fd::INVALID,
+                                },
+                            );
+                            self.total_size += size;
+                        }
+                        store::DataTag::Bytes => {
+                            self.push(blob.shared_view());
+                        }
+                    }
+                }
+            }
+        }
+
+        self.push(b"\r\n");
+    }
+}
+
+impl MultipartSegments {
+    /// Build the segment representation of a `FormData` multipart body.
+    /// Boundary generation, header formatting and escaping match
+    /// [`Blob::from_dom_form_data`]; the difference is that file-backed parts
+    /// are recorded as `Segment::File` instead of being read into memory.
+    pub fn from_dom_form_data(
+        global_this: &JSGlobalObject,
+        form_data: &mut jsc::DOMFormData,
+    ) -> Option<Self> {
+        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+        let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
+        let boundary: &[u8] = {
+            let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
+            boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
+            bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
+            &boundary_buf
+        };
+
+        let mut ctx = MultipartSegmentBuilder {
+            segments: Vec::with_capacity(form_data.count() * 2 + 1),
+            current: Vec::new(),
+            total_size: 0,
+            boundary,
+            failed: false,
+        };
+
+        extern "C" fn for_each_thunk(
+            ctx_ptr: *mut c_void,
+            name_: *mut ZigString,
+            value_ptr: *mut c_void,
+            filename: *mut ZigString,
+            is_blob: u8,
+        ) {
+            // SAFETY: `ctx_ptr` is the `&mut MultipartSegmentBuilder` passed below.
+            let ctx = unsafe { bun_ptr::callback_ctx::<MultipartSegmentBuilder<'_>>(ctx_ptr) };
+            let entry = if is_blob == 0 {
+                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
+                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+            } else {
+                FormDataEntry::File {
+                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
+                    // valid for the synchronous callback scope.
+                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
+                    filename: if filename.is_null() {
+                        ZigString::EMPTY
+                    } else {
+                        // SAFETY: non-null `filename` is a valid `*ZigString`.
+                        unsafe { *filename }
+                    },
+                }
+            };
+            // SAFETY: `name_` is always a valid non-null `*ZigString`.
+            ctx.on_entry(unsafe { *name_ }, entry);
+        }
+        unsafe extern "C" {
+            safe fn DOMFormData__forEach(
+                this: *mut jsc::DOMFormData,
+                ctx: *mut c_void,
+                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+            );
+        }
+        DOMFormData__forEach(form_data, (&raw mut ctx).cast::<c_void>(), for_each_thunk);
+
+        if ctx.failed {
+            return None;
+        }
+
+        ctx.push(b"--");
+        ctx.push(boundary);
+        ctx.push(b"--\r\n");
+        ctx.flush_bytes();
+
+        const CONTENT_TYPE_PREFIX: &[u8] = b"multipart/form-data; boundary=";
+        let mut ct = Vec::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
+        ct.extend_from_slice(CONTENT_TYPE_PREFIX);
+        ct.extend_from_slice(boundary);
+
+        Some(Self {
+            segments: ctx.segments,
+            content_type: ct.into_boxed_slice(),
+            total_size: ctx.total_size,
+        })
+    }
+
+    /// True when streaming the body instead of buffering it is worthwhile:
+    /// at least one file-backed entry and no S3 or unsized (pipe/FIFO) entry.
+    pub fn needs_streaming_multipart(form_data: &mut jsc::DOMFormData) -> bool {
+        struct Probe {
+            has_file: bool,
+            unsupported: bool,
+        }
+        let mut probe = Probe {
+            has_file: false,
+            unsupported: false,
+        };
+        extern "C" fn thunk(
+            ctx_ptr: *mut c_void,
+            _name: *mut ZigString,
+            value_ptr: *mut c_void,
+            _filename: *mut ZigString,
+            is_blob: u8,
+        ) {
+            // SAFETY: `ctx_ptr` is the `&mut Probe` passed below.
+            let probe = unsafe { bun_ptr::callback_ctx::<Probe>(ctx_ptr) };
+            if probe.unsupported || is_blob == 0 {
+                return;
+            }
+            // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`).
+            let blob = unsafe { &*value_ptr.cast::<Blob>() };
+            if let Some(store) = blob.store.get().as_ref() {
+                match store.data_mut().tag() {
+                    store::DataTag::File => probe.has_file = true,
+                    store::DataTag::S3 => probe.unsupported = true,
+                    store::DataTag::Bytes => {}
+                }
+            }
+        }
+        unsafe extern "C" {
+            safe fn DOMFormData__forEach(
+                this: *mut jsc::DOMFormData,
+                ctx: *mut c_void,
+                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+            );
+        }
+        DOMFormData__forEach(form_data, (&raw mut probe).cast::<c_void>(), thunk);
+        probe.has_file && !probe.unsupported
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // getContentType
 // ──────────────────────────────────────────────────────────────────────────
 

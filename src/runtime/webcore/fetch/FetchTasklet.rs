@@ -135,6 +135,16 @@ pub enum HTTPRequestBody {
     AnyBlob(AnyBlob),
     Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
+    /// `FormData` body whose file-backed parts are streamed in chunks from
+    /// disk. The stream produces the full multipart encoding; `content_type`
+    /// carries the `multipart/form-data; boundary=...` value and
+    /// `content_length` the precomputed total so the request is sent with an
+    /// explicit `Content-Length` instead of chunked transfer-encoding.
+    MultipartFormStream {
+        stream: ReadableStreamStrong,
+        content_type: Box<[u8]>,
+        content_length: u64,
+    },
 }
 
 impl Default for HTTPRequestBody {
@@ -163,7 +173,8 @@ impl HTTPRequestBody {
     pub fn detach(&mut self) {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.detach(),
-            HTTPRequestBody::ReadableStream(stream) => {
+            HTTPRequestBody::ReadableStream(stream)
+            | HTTPRequestBody::MultipartFormStream { stream, .. } => {
                 stream.deinit();
             }
             HTTPRequestBody::Sendfile(sendfile) => {
@@ -176,7 +187,48 @@ impl HTTPRequestBody {
         }
     }
 
+    /// Borrow the streaming `ReadableStream` if this body is one of the
+    /// streaming variants.
+    pub fn readable_stream(&self) -> Option<&ReadableStreamStrong> {
+        match self {
+            HTTPRequestBody::ReadableStream(s)
+            | HTTPRequestBody::MultipartFormStream { stream: s, .. } => Some(s),
+            _ => None,
+        }
+    }
+
     pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<HTTPRequestBody> {
+        if let Some(form_data) = bun_jsc::DOMFormData::from_js(value)
+            && crate::webcore::blob::MultipartSegments::needs_streaming_multipart(form_data)
+            && let Some(segs) =
+                crate::webcore::blob::MultipartSegments::from_dom_form_data(global_this, form_data)
+        {
+            let total_size = segs.total_size;
+            let content_type = segs.content_type;
+            let reader = crate::webcore::readable_stream::NewSource::<
+                crate::webcore::multipart_form_loader::MultipartFormLoader,
+            >::new_mut(crate::webcore::readable_stream::NewSource {
+                global_this: Some(bun_ptr::BackRef::new(global_this)),
+                context: crate::webcore::multipart_form_loader::MultipartFormLoader {
+                    segments: segs.segments,
+                    idx: 0,
+                    done: false,
+                    total_size,
+                },
+                ..Default::default()
+            });
+            let stream_value = reader.to_readable_stream(global_this)?;
+            if let Some(stream) =
+                crate::webcore::ReadableStream::from_js(stream_value, global_this)?
+            {
+                return Ok(HTTPRequestBody::MultipartFormStream {
+                    stream: ReadableStreamStrong::init(stream, global_this),
+                    content_type,
+                    content_length: total_size,
+                });
+            }
+        }
+
         let mut body_value = BodyValue::from_js(global_this, value)?;
         if matches!(body_value, BodyValue::Used)
             || (matches!(&body_value, BodyValue::Locked(l) if !l.action.is_none() || l.is_disturbed2(global_this)))
@@ -229,25 +281,23 @@ impl HTTPRequestBody {
         }
     }
 
-    pub fn has_content_type_from_user(&self) -> bool {
-        match self {
-            HTTPRequestBody::AnyBlob(blob) => blob.has_content_type_from_user(),
-            _ => false,
-        }
-    }
-
-    pub fn get_any_blob(&mut self) -> Option<&mut AnyBlob> {
-        match self {
-            HTTPRequestBody::AnyBlob(blob) => Some(blob),
-            _ => None,
-        }
-    }
-
     pub fn has_body(&mut self) -> bool {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
-            HTTPRequestBody::ReadableStream(stream) => stream.has(),
+            HTTPRequestBody::ReadableStream(stream)
+            | HTTPRequestBody::MultipartFormStream { stream, .. } => stream.has(),
             HTTPRequestBody::Sendfile(_) => true,
+        }
+    }
+
+    /// Content-Type to use when the user did not set one.
+    pub fn implied_content_type(&self) -> Option<&[u8]> {
+        match self {
+            HTTPRequestBody::AnyBlob(blob) if blob.has_content_type_from_user() => {
+                Some(blob.content_type())
+            }
+            HTTPRequestBody::MultipartFormStream { content_type, .. } => Some(content_type),
+            _ => None,
         }
     }
 }
@@ -610,11 +660,8 @@ impl FetchTasklet {
 
     pub(crate) fn start_request_stream(&mut self) {
         self.is_waiting_request_stream_start = false;
-        debug_assert!(matches!(
-            self.request_body,
-            HTTPRequestBody::ReadableStream(_)
-        ));
-        let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
+        let Some(stream_ref) = self.request_body.readable_stream() else {
+            debug_assert!(false, "start_request_stream without a streaming body");
             return;
         };
         if let Some(stream) = stream_ref.get(&self.global_this) {
@@ -2036,10 +2083,7 @@ impl FetchTasklet {
             },
         )));
         // enable streaming the write side
-        let is_stream = matches!(
-            fetch_tasklet.request_body,
-            HTTPRequestBody::ReadableStream(_)
-        );
+        let is_stream = fetch_tasklet.request_body.readable_stream().is_some();
         let http_client = fetch_tasklet.http.as_mut().unwrap();
         http_client.client.flags.is_streaming_request_body = is_stream;
         http_client.client.flags.force_http2 = fetch_options.force_http2;
@@ -2119,7 +2163,7 @@ impl FetchTasklet {
         // the underlying source's cancel(reason) callback still observes the
         // signal's reason (https://fetch.spec.whatwg.org/#abort-fetch step 5).
         if this.is_waiting_request_stream_start {
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
+            if let Some(stream_ref) = this.request_body.readable_stream() {
                 this.is_waiting_request_stream_start = false;
                 if let Some(stream) = stream_ref.get(&this.global_this) {
                     stream.cancel_with_reason(&this.global_this, reason);

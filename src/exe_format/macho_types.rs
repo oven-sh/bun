@@ -18,6 +18,8 @@ pub use bun_sys::macho::{
     cpu_subtype_t, cpu_type_t, load_command, mach_header_64, segment_command_64, vm_prot_t,
 };
 
+pub(crate) const MH_MAGIC_64: u32 = 0xfeed_facf;
+pub(crate) const CPU_TYPE_X86_64: cpu_type_t = 0x0100_0007;
 pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
 
 pub(crate) const S_REGULAR: u32 = 0x0;

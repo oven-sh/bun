@@ -473,10 +473,24 @@ async function runOneFile(
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
 
+  // Auto-loaded .env values are DontEnum on process.env; spread would drop
+  // them. getOwnPropertyNames includes them so child tests inherit .env values.
+  const baseEnv: Record<string, string> = {};
+  if (opts.env) {
+    Object.assign(baseEnv, opts.env);
+  } else {
+    for (const k of $Object.getOwnPropertyNames(process.env)) {
+      const v = process.env[k];
+      if (v !== undefined && typeof v !== "function") baseEnv[k] = v;
+    }
+  }
+  baseEnv.BUN_TEST_DRAIN_EVENT_LOOP = "1";
+  baseEnv[kRunChildEnv] = kRunChildEnvValue;
+
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+    env: baseEnv,
     stdout: "pipe",
     stderr: "pipe",
     signal: opts.signal,

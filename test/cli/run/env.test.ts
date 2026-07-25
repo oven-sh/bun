@@ -311,6 +311,9 @@ describe("dotenv priority", () => {
     expect(result.stdout.toString("utf8").trim()).toBe("true");
   });
 
+  // Worker/subprocess-spawning tests below are slow under debug+ASAN.
+  const spawnTimeout = (isDebug || isASAN ? 6 : 1) * 5000;
+
   test("auto-loaded .env values survive founding a SHARE_ENV worker tree", () => {
     const dir = tempDirWithFiles("dotenv-share-env", {
       ".env": "AUTO_FROM_FILE=secret\n",
@@ -327,7 +330,7 @@ describe("dotenv priority", () => {
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("secret\nsecret");
-  });
+  }, spawnTimeout);
 
   test("auto-loaded .env values survive child_process default env inheritance", () => {
     const dir = tempDirWithFiles("dotenv-cp", {
@@ -347,7 +350,7 @@ describe("dotenv priority", () => {
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("secret true from-js");
-  });
+  }, spawnTimeout);
 
   test("auto-loaded .env values survive Bun.$ default env inheritance", () => {
     const dir = tempDirWithFiles("dotenv-shell", {
@@ -356,11 +359,33 @@ describe("dotenv priority", () => {
         process.env.USER_MUTATION = "from-js";
         const echo = await Bun.$\`echo \${{raw: "$AUTO_FROM_FILE $USER_MUTATION"}}\`.text();
         console.log(echo.trim());
+        const reset = await Bun.$\`echo \${{raw: "$AUTO_FROM_FILE"}}\`.env(undefined).text();
+        console.log(reset.trim());
       `,
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
-    expect(stdout).toBe("secret from-js");
+    expect(stdout).toBe("secret from-js\nsecret");
   });
+
+  test("auto-loaded .env values survive cluster.fork default env inheritance", () => {
+    const dir = tempDirWithFiles("dotenv-cluster", {
+      ".env": "AUTO_FROM_FILE=secret\n",
+      "sub/.keep": "",
+      "index.ts": `
+        const cluster = require("cluster");
+        if (cluster.isPrimary) {
+          cluster.setupPrimary({ cwd: "sub", exec: __filename });
+          cluster.fork().on("exit", () => process.exit(0));
+        } else {
+          const d = Object.getOwnPropertyDescriptor(process.env, "AUTO_FROM_FILE");
+          console.log(process.env.AUTO_FROM_FILE, d?.enumerable);
+          process.exit(0);
+        }
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("secret true");
+  }, spawnTimeout);
 
   test("auto-loaded .env values survive the default worker env snapshot", () => {
     const dir = tempDirWithFiles("dotenv-worker-snap", {
@@ -375,7 +400,7 @@ describe("dotenv priority", () => {
     });
     const { stdout } = bunRun(`${dir}/index.ts`);
     expect(stdout).toBe("secret secret");
-  });
+  }, spawnTimeout);
 
   test("auto-loaded special-cased env keys are not enumerable", () => {
     const dir = tempDirWithFiles("dotenv-special", {

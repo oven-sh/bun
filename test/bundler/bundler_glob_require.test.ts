@@ -90,7 +90,8 @@ describe("bundler", () => {
   });
 
   // A self-referential const must not send the bundler into unbounded
-  // recursion; it falls through to runtime require.
+  // recursion. The self-reference contributes a placeholder, so a map is
+  // still emitted; the entry throws TDZ at runtime before the lookup.
   itBundled("glob-require/SelfReferentialConst", {
     target: "bun",
     files: {
@@ -105,6 +106,30 @@ describe("bundler", () => {
       "/mods/x.js": `module.exports = 1;`,
     },
     run: { stdout: "caught" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('"./mods/x.js"');
+    },
+  });
+
+  // A literal NUL in a template's static content must not be confused with
+  // the placeholder marker.
+  itBundled("glob-require/LiteralNulNotGlobbed", {
+    target: "bun",
+    files: {
+      "/entry.js": /* js */ `
+        const which = process.env.WHICH || "a";
+        try { require(\`./mods/\\0\${which}.js\`); } catch {}
+        console.log("ok");
+      `,
+      "/mods/a.js": `module.exports = 1;`,
+    },
+    run: { stdout: "ok" },
+    onAfterBundle(api) {
+      const out = api.readFile("/out.js");
+      if (out.includes("__glob")) {
+        throw new Error("literal NUL must not be treated as a glob placeholder");
+      }
+    },
   });
 
   // import() with a second argument (import attributes) is not glob-resolved;

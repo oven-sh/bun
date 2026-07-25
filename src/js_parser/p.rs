@@ -817,17 +817,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &self,
         s: &js_ast::e::EString,
         buf: &mut BumpVec<'a, u8>,
-    ) -> Result<(), crate::Error> {
-        if s.next.is_none() {
-            buf.extend_from_slice(s.string(self.arena)?);
-            return Ok(());
-        }
+    ) -> Result<bool, crate::Error> {
         let mut cur: Option<&js_ast::e::EString> = Some(s);
         while let Some(seg) = cur {
-            buf.extend_from_slice(seg.string(self.arena)?);
+            let bytes = seg.string(self.arena)?;
+            // NUL is the in-band placeholder marker; a literal one would be
+            // misread as a wildcard, and filesystem paths cannot contain NUL.
+            if bytes.iter().any(|&b| b == 0) {
+                return Ok(false);
+            }
+            buf.extend_from_slice(bytes);
             cur = seg.next.as_ref().map(|r| r.get());
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Appends `arg`'s static shape to `buf`; `false` means opaque.
@@ -841,17 +843,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(false);
         }
         match &arg.data {
-            js_ast::ExprData::EString(s) => {
-                self.append_estring_rope(s, buf)?;
-                Ok(true)
-            }
+            js_ast::ExprData::EString(s) => self.append_estring_rope(s, buf),
             js_ast::ExprData::ETemplate(tmpl) => {
                 if tmpl.tag.is_some() {
                     return Ok(false);
                 }
                 match &tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
-                        self.append_estring_rope(head, buf)?;
+                        if !self.append_estring_rope(head, buf)? {
+                            return Ok(false);
+                        }
                     }
                     js_ast::e::TemplateContents::Raw(_) => return Ok(false),
                 }
@@ -862,7 +863,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     match &part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
-                            self.append_estring_rope(tail, buf)?;
+                            if !self.append_estring_rope(tail, buf)? {
+                                return Ok(false);
+                            }
                         }
                         js_ast::e::TemplateContents::Raw(_) => return Ok(false),
                     }

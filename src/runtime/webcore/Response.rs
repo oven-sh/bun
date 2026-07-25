@@ -179,6 +179,10 @@ pub struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     pub weak_ptr_data: WeakPtrData,
+    /// `new Response(s3file)` presigns a GET URL into `Location`. Bun.serve
+    /// re-signs that URL with the request's actual method (HEAD) at render
+    /// time, so it needs the backing S3 store (credentials + path) here.
+    s3_presign_store: JsCell<Option<super::blob::store::StoreRef>>,
     js_ref: JsCell<JsRef>,
 
     // We must report a consistent value for this
@@ -194,6 +198,7 @@ impl Default for Response {
             redirected: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
+            s3_presign_store: JsCell::new(None),
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),
         }
@@ -629,6 +634,50 @@ impl Response {
         Ok(this.get_or_create_headers(global_this)?.to_js(global_this))
     }
 
+    /// If this Response was built by `new Response(s3file)`, re-sign the
+    /// `Location` header's presigned URL for `method`. The constructor signs
+    /// for GET; a client following the 302 with HEAD would otherwise present a
+    /// GET-signed URL to S3 and receive 403 SignatureDoesNotMatch.
+    ///
+    /// A sign failure leaves the existing (GET-signed) Location unchanged
+    /// rather than throwing: the constructor already signed these same
+    /// credentials+path for GET, so HEAD signing cannot fail differently.
+    pub(crate) fn resign_s3_location(
+        &self,
+        method: Method,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<()> {
+        let Some(store) = self.s3_presign_store.get() else {
+            return Ok(());
+        };
+        let super::blob::store::Data::S3(s3) = &store.data else {
+            return Ok(());
+        };
+        let Ok(result) = s3.get_credentials().sign_request::<false>(
+            &bun_s3_signing::SignOptions {
+                path: s3.path(),
+                method,
+                content_hash: None,
+                content_md5: None,
+                search_params: None,
+                content_disposition: None,
+                content_type: None,
+                content_encoding: None,
+                acl: None,
+                storage_class: None,
+                request_payer: false,
+            },
+            Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
+        ) else {
+            return Ok(());
+        };
+        self.get_or_create_headers(global_this)?.put(
+            HTTPHeaderName::Location,
+            &BunString::ascii(&result.url),
+            global_this,
+        )
+    }
+
     pub fn get_content_type(&self) -> JsResult<Option<ZigStringSlice>> {
         // R-2 escape hatch via `init_mut()` — `fast_get` (FFI out-param write)
         // does not re-enter JS.
@@ -821,6 +870,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
+            s3_presign_store: JsCell::new(self.s3_presign_store.get().clone()),
             ..Default::default()
         })
     }
@@ -849,6 +899,7 @@ impl Response {
             (*this).init.set(Init::default());
             (*this).body.get_mut().reset();
             (*this).url.set(OwnedString::new(BunString::empty()));
+            (*this).s3_presign_store.set(None);
             (*this).js_ref.set(JsRef::empty());
 
             // Contents are gone; the allocation itself stays until any outstanding
@@ -1194,6 +1245,9 @@ impl Response {
                     };
                     // `defer result.deinit()` — SignResult: Drop frees owned buffers at scope exit.
                     response.redirected.set(true);
+                    response
+                        .s3_presign_store
+                        .set(blob.store.get().as_ref().cloned());
                     let headers = response.get_or_create_headers(global_this)?;
                     headers.put(
                         HTTPHeaderName::Location,

@@ -2467,6 +2467,14 @@ where
         // SAFETY: sole `&mut Response` for this cell in this frame.
         let response = unsafe { &mut *response_ptr };
 
+        // `new Response(s3file)` presigns Location for GET. A HEAD client
+        // following that 302 would send HEAD to a GET-signed URL and get
+        // 403 SignatureDoesNotMatch; re-sign for the actual method.
+        if let Some(server) = this.server {
+            // SAFETY: BACKREF
+            let _ = response.resign_s3_location(this.method, server.global_this());
+        }
+
         // `render` drops the body for a null-body status on GET, so HEAD must
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.

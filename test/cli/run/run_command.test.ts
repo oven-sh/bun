@@ -61,8 +61,7 @@ describe.skipIf(!isPosix)("entry point is a pipe/FIFO", () => {
       await w.close();
     })();
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    await feed;
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited, feed]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ argv: [fifo, "extra"], main: true });
     expect(exitCode).toBe(0);

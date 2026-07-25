@@ -2954,11 +2954,8 @@ impl RunCommand {
         passthrough_list.append(&mut ctx.passthrough);
         ctx.passthrough = passthrough_list;
 
-        // NOT routed through `_boot_and_handle_error` — the
-        // stdin path skips the
-        // `configure_allocator(long_running=true)` / `.md` checks and prints
-        // `basename(target_name)` (= "-"), not `basename(entry_path)`
-        // (= "[stdin]"), in the error message.
+        // NOT routed through `_boot_and_handle_error` — skip its `.md` check
+        // and print `basename(argv1)` rather than `"[stdin]"` on boot failure.
         let owned: Box<[u8]> = entry_path.to_vec().into_boxed_slice();
         if let Err(err) = Self::boot(ctx, owned, None) {
             Self::boot_failed_exit(ctx, argv1, &err);

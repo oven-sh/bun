@@ -144,33 +144,30 @@ describe("AbortSignal", () => {
     expect(exitCode).toBe(0);
   });
 
-  // innerInvokeEventListeners used to call removeEventListener() per once:true
-  // listener before invoking it, so N once-listeners cost N memmoves of the
-  // tail: O(N^2). AbortController.abort() hits this via runAbortSteps ->
-  // dispatchEvent. The assertion is on scaling (time(2N)/time(N)), not wall
-  // time, to survive debug+ASAN.
+  // innerInvokeEventListeners used to call removeEventListener() per fired
+  // once:true listener. With M plain listeners ahead of M once-listeners each
+  // removal's findListener scans M entries and removeAt shifts the tail, so
+  // dispatch was O(M^2); abort() fan-out hits the same path. The assertion is
+  // once-dispatch time relative to an all-plain baseline at the same size,
+  // which is robust across release and debug+ASAN.
   test.concurrent("dispatching N {once:true} listeners scales linearly, not O(N^2)", async () => {
     const src = `
-      function dispatchOnly(n) {
+      function dispatch(m, once) {
         const t = new EventTarget();
-        for (let i = 0; i < n; i++) t.addEventListener("x", () => {}, { once: true });
+        for (let i = 0; i < m; i++) t.addEventListener("x", () => {});
+        for (let i = 0; i < m; i++) t.addEventListener("x", () => {}, once ? { once: true } : undefined);
+        Bun.gc(true);
         const t0 = performance.now();
         t.dispatchEvent(new Event("x"));
         return performance.now() - t0;
       }
-      dispatchOnly(256); // warm up
-      const samples = {};
-      // N kept small because addEventListener is itself O(N^2) (spec dup-check)
-      // and that setup cost dominates under debug+ASAN.
-      for (const n of [1000, 2000]) {
-        let best = Infinity;
-        for (let i = 0; i < 2; i++) best = Math.min(best, dispatchOnly(n));
-        samples[n] = best;
-      }
-      // Quadratic gives ~4x per doubling; linear gives ~2x. Ignore the ratio
-      // entirely when the larger sample is sub-ms (release build noise floor).
-      const ratio = samples[2000] < 1 ? 1 : samples[2000] / samples[1000];
-      console.log(JSON.stringify({ samples, ratio }));
+      dispatch(100, false); dispatch(100, true); // warm up
+      const M = 800;
+      let baseline = Infinity, once = Infinity;
+      for (let i = 0; i < 2; i++) baseline = Math.min(baseline, dispatch(M, false));
+      for (let i = 0; i < 2; i++) once = Math.min(once, dispatch(M, true));
+      const ratio = once / Math.max(baseline, 1);
+      console.log(JSON.stringify({ baseline, once, ratio }));
       if (ratio > 3) process.exit(1);
     `;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });

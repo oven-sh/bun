@@ -562,10 +562,8 @@ JSC::GCClient::IsoSubspace* JSPerformanceTiming::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSPerformanceTiming, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceTiming.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceTiming = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceTiming.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceTiming = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForPerformanceTiming; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForPerformanceTiming; });
 }
 
 void JSPerformanceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

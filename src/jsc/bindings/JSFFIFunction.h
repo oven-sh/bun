@@ -61,10 +61,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSFFIFunction, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForFFIFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForFFIFunction = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForFFIFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForFFIFunction = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForFFIFunction; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForFFIFunction; });
     }
 
     DECLARE_EXPORT_INFO;

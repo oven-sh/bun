@@ -465,10 +465,8 @@ JSC::GCClient::IsoSubspace* JSTextEncoder::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSTextEncoder, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextEncoder = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextEncoder.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextEncoder = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForTextEncoder; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForTextEncoder; });
 }
 
 void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

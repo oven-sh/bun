@@ -250,10 +250,8 @@ JSC::GCClient::IsoSubspace* JSBufferList::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSBufferList, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForBufferList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBufferList = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForBufferList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForBufferList = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForBufferList; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForBufferList; });
 }
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, JSBufferListPrototype::Base);

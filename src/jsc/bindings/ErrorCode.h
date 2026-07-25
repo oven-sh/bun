@@ -43,10 +43,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<ErrorCodeCache, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForErrorCodeCache.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForErrorCodeCache = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForErrorCodeCache.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForErrorCodeCache = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForErrorCodeCache; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForErrorCodeCache; });
     }
 
     static ErrorCodeCache* create(VM& vm, Structure* structure);

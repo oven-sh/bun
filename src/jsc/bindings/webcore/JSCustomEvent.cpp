@@ -302,10 +302,8 @@ JSC::GCClient::IsoSubspace* JSCustomEvent::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSCustomEvent, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCustomEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCustomEvent = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCustomEvent.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCustomEvent = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForCustomEvent; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForCustomEvent; });
 }
 
 template<typename Visitor>

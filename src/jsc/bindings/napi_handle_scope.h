@@ -35,10 +35,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<NapiHandleScopeImpl, WebCore::UseCustomHeapCellType::Yes>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForNapiHandleScopeImpl.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForNapiHandleScopeImpl.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForNapiHandleScopeImpl = std::forward<decltype(space)>(space); },
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNapiHandleScopeImpl; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForNapiHandleScopeImpl; },
             [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForNapiHandleScopeImpl; });
     }
 

@@ -82,10 +82,8 @@ GCClient::IsoSubspace* JSNativeStreamSourceAdapter::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSNativeStreamSourceAdapter, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForNativeStreamSourceAdapter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForNativeStreamSourceAdapter = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForNativeStreamSourceAdapter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForNativeStreamSourceAdapter = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForNativeStreamSourceAdapter; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForNativeStreamSourceAdapter; });
 }
 
 template<typename Visitor>
@@ -142,10 +140,8 @@ GCClient::IsoSubspace* JSDirectSinkCloseState::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSDirectSinkCloseState, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDirectSinkCloseState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDirectSinkCloseState = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDirectSinkCloseState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDirectSinkCloseState = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForDirectSinkCloseState; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForDirectSinkCloseState; });
 }
 
 template<typename Visitor>
@@ -200,10 +196,8 @@ GCClient::IsoSubspace* JSReadStreamIntoSinkOperation::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadStreamIntoSinkOperation, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadStreamIntoSinkOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadStreamIntoSinkOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadStreamIntoSinkOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadStreamIntoSinkOperation = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForReadStreamIntoSinkOperation; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForReadStreamIntoSinkOperation; });
 }
 
 template<typename Visitor>
@@ -260,10 +254,8 @@ GCClient::IsoSubspace* JSResumableSinkPumpOperation::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSResumableSinkPumpOperation, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForResumableSinkPumpOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForResumableSinkPumpOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForResumableSinkPumpOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForResumableSinkPumpOperation = std::forward<decltype(space)>(space); });
+        [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForResumableSinkPumpOperation; },
+        [](auto& spaces) -> auto& { return spaces.m_subspaceForResumableSinkPumpOperation; });
 }
 
 template<typename Visitor>

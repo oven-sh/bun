@@ -24,10 +24,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<Function, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForV8Function.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForV8Function = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForV8Function.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForV8Function = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForV8Function; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForV8Function; });
     }
 
     FunctionTemplate* functionTemplate() const { return m_functionTemplate.get(); }

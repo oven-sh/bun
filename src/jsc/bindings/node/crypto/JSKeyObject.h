@@ -38,10 +38,8 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSKeyObject, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSKeyObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSKeyObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSKeyObject = std::forward<decltype(space)>(space); });
+            [](auto& spaces) -> auto& { return spaces.m_clientSubspaceForJSKeyObject; },
+            [](auto& spaces) -> auto& { return spaces.m_subspaceForJSKeyObject; });
     }
 
     JSKeyObject(JSC::VM& vm, JSC::Structure* structure, KeyObject&& keyObject)

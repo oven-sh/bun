@@ -18,6 +18,164 @@ const QUIC_STREAM_HEADERS_KIND_INITIAL: u32 = 1;
 const QUIC_STREAM_HEADERS_KIND_TRAILING: u32 = 2;
 const QUIC_STREAM_HEADERS_FLAGS_TERMINAL: u32 = 1;
 
+/// RFC 9114 §8.1 H3_MESSAGE_ERROR. Matches lsquic's `HEC_MESSAGE_ERROR`
+/// (lsquic_hq.h:82).
+const H3_MESSAGE_ERROR: u64 = 0x10e;
+
+const PSEUDO_METHOD: u8 = 1 << 0;
+const PSEUDO_SCHEME: u8 = 1 << 1;
+const PSEUDO_AUTHORITY: u8 = 1 << 2;
+const PSEUDO_PATH: u8 = 1 << 3;
+const PSEUDO_PROTOCOL: u8 = 1 << 4;
+const PSEUDO_STATUS: u8 = 1 << 5;
+const PSEUDO_REQUIRED_REQUEST: u8 = PSEUDO_METHOD | PSEUDO_SCHEME | PSEUDO_PATH;
+
+#[derive(Clone, Copy)]
+enum H3HeaderRole {
+    Request,
+    Response,
+    Trailer,
+}
+
+/// RFC 9110 token characters, lowercase-only per RFC 9114 §4.2 ("characters in
+/// field names MUST be converted to lowercase prior to their encoding").
+fn is_valid_h3_field_name(name: &[u8]) -> bool {
+    !name.is_empty()
+        && name.iter().all(|&c| {
+            matches!(
+                c,
+                b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'!' | b'#' | b'$' | b'%' | b'&' | b'\'' | b'*'
+                    | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+            )
+        })
+}
+
+/// RFC 9114 §4.2 applies RFC 9110 §5.5: field values must not contain NUL, CR,
+/// or LF. NUL is checked earlier in `nq_hsi_process_header` (it doubles as the
+/// pair delimiter).
+fn is_valid_h3_field_value(value: &[u8]) -> bool {
+    !value.iter().any(|&c| matches!(c, b'\r' | b'\n'))
+}
+
+/// RFC 9114 §4.2.1 prohibited connection-specific fields. `te` is allowed only
+/// with the value `trailers`.
+fn is_connection_specific(name: &[u8], value: &[u8]) -> bool {
+    match name {
+        b"connection"
+        | b"keep-alive"
+        | b"proxy-connection"
+        | b"transfer-encoding"
+        | b"upgrade" => true,
+        b"te" => value != b"trailers",
+        _ => false,
+    }
+}
+
+fn pseudo_header_bit(name: &[u8]) -> Option<u8> {
+    match name {
+        b":method" => Some(PSEUDO_METHOD),
+        b":scheme" => Some(PSEUDO_SCHEME),
+        b":authority" => Some(PSEUDO_AUTHORITY),
+        b":path" => Some(PSEUDO_PATH),
+        b":protocol" => Some(PSEUDO_PROTOCOL),
+        b":status" => Some(PSEUDO_STATUS),
+        _ => None,
+    }
+}
+
+/// RFC 9114 §4.1.2/§4.2/§4.3 malformed-message checks. nghttp3, which Node
+/// builds on, performs all of these in `nghttp3_http_on_header`; lsquic's
+/// QPACK decoder does not, so every decoded field section passes through here
+/// before reaching `onheaders`. Returns the classified kind on success, or
+/// `Err(())` if the section MUST be treated as a stream error.
+fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u32, ()> {
+    let mut seen_pseudo: u8 = 0;
+    let mut seen_regular = false;
+    let mut method_is_connect = false;
+    let mut is_interim = false;
+    for kv in pairs.chunks_exact(2) {
+        let (name, value) = (kv[0].as_slice(), kv[1].as_slice());
+        if !is_valid_h3_field_value(value) {
+            return Err(());
+        }
+        if let Some((b':', rest)) = name.split_first() {
+            // §4.3: pseudo-headers MUST precede regular fields, and trailers
+            // contain none.
+            if seen_regular || matches!(role, H3HeaderRole::Trailer) {
+                return Err(());
+            }
+            if !is_valid_h3_field_name(rest) {
+                return Err(());
+            }
+            let Some(bit) = pseudo_header_bit(name) else {
+                return Err(());
+            };
+            // §4.3.1/§4.3.2: each defined pseudo-header appears at most once.
+            if seen_pseudo & bit != 0 {
+                return Err(());
+            }
+            seen_pseudo |= bit;
+            match role {
+                H3HeaderRole::Request => {
+                    if bit == PSEUDO_STATUS {
+                        return Err(());
+                    }
+                    if bit == PSEUDO_METHOD {
+                        method_is_connect = value == b"CONNECT";
+                    }
+                }
+                H3HeaderRole::Response => {
+                    if bit != PSEUDO_STATUS {
+                        return Err(());
+                    }
+                    // §4.3.2: `:status` carries the RFC 9110 3-digit code.
+                    if value.len() != 3 || !value.iter().all(u8::is_ascii_digit) {
+                        return Err(());
+                    }
+                    is_interim = value[0] == b'1';
+                }
+                H3HeaderRole::Trailer => unreachable!(),
+            }
+        } else {
+            seen_regular = true;
+            if !is_valid_h3_field_name(name) || is_connection_specific(name, value) {
+                return Err(());
+            }
+        }
+    }
+    match role {
+        H3HeaderRole::Trailer => Ok(QUIC_STREAM_HEADERS_KIND_TRAILING),
+        H3HeaderRole::Response => {
+            if seen_pseudo & PSEUDO_STATUS == 0 {
+                return Err(());
+            }
+            Ok(if is_interim {
+                QUIC_STREAM_HEADERS_KIND_HINTS
+            } else {
+                QUIC_STREAM_HEADERS_KIND_INITIAL
+            })
+        }
+        H3HeaderRole::Request => {
+            // §4.3.1: CONNECT omits :scheme and :path; otherwise all three are
+            // mandatory. :protocol is only defined with CONNECT (RFC 9220).
+            let required = if method_is_connect {
+                PSEUDO_METHOD
+            } else {
+                PSEUDO_REQUIRED_REQUEST
+            };
+            if seen_pseudo & required != required {
+                return Err(());
+            }
+            if !method_is_connect && seen_pseudo & PSEUDO_PROTOCOL != 0 {
+                return Err(());
+            }
+            Ok(QUIC_STREAM_HEADERS_KIND_INITIAL)
+        }
+    }
+}
+
 /// Mirrors Node's `Stream::State` (see `node_quic_binding.rs` for the
 /// `IDX_STATE_STREAM_*` offsets the JS layer reads).
 #[repr(C)]
@@ -435,9 +593,6 @@ impl QuicStream {
 
     pub(super) fn mark_close_reported(&self) -> bool {
         self.close_reported.replace(true)
-    }
-    pub(super) fn mark_headers_received(&self) -> bool {
-        !self.headers_received.replace(true)
     }
     pub(super) fn wants_headers(&self) -> bool {
         self.with_state(|s| s.wants_headers != 0)
@@ -1025,46 +1180,42 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
     if let Some(hset) = stream.take_header_set() {
         let pairs = hset.pairs();
-        /// RFC 9114 §8.1 H3_MESSAGE_ERROR — malformed message (a request
-        /// carrying :status). Matches lsquic's `HEC_MESSAGE_ERROR`
-        /// (lsquic_hq.h:82); 0x105 is H3_FRAME_UNEXPECTED, a different code.
-        const H3_MESSAGE_ERROR: u64 = 0x10e;
-        let has_status = pairs
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .find(|kv| kv[0] == b":status")
-            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // A :status in a request is malformed: node's nghttp3 resets the
-        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
-        // the request unanswered until the idle timeout.
         let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        if peer_is_client && has_status.is_some() {
-            if let Some(s) = qs.ls() {
-                // reset() only ends the read side when the peer already
-                // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
-                // request streaming a body into a stream nothing will answer.
-                s.reset(H3_MESSAGE_ERROR);
-                s.stop_sending(H3_MESSAGE_ERROR);
-            }
-            qs.mark_reset(H3_MESSAGE_ERROR);
-            return;
-        }
-        // 1xx interim responses are HINTS (RFC 9114 §4.1).
-        let is_interim = has_status.unwrap_or(false);
-        let kind = if is_interim {
-            QUIC_STREAM_HEADERS_KIND_HINTS
-        } else if qs.mark_headers_received() {
-            QUIC_STREAM_HEADERS_KIND_INITIAL
+        let role = if qs.headers_received.get() {
+            H3HeaderRole::Trailer
+        } else if peer_is_client {
+            H3HeaderRole::Request
         } else {
-            QUIC_STREAM_HEADERS_KIND_TRAILING
+            H3HeaderRole::Response
         };
-        if let Some(session) = qs.session_ref() {
-            session.push_event(SessionEvent::StreamHeaders {
-                stream: ctx.cast(),
-                pairs,
-                kind,
-            });
+        match validate_h3_field_section(&pairs, role) {
+            Err(()) => {
+                if let Some(s) = qs.ls() {
+                    // reset() only ends the read side when the peer already
+                    // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
+                    // message streaming a body into a stream nothing will
+                    // answer.
+                    s.reset(H3_MESSAGE_ERROR);
+                    s.stop_sending(H3_MESSAGE_ERROR);
+                }
+                qs.mark_reset(H3_MESSAGE_ERROR);
+                if let Some(session) = qs.session_ref() {
+                    session.push_event(SessionEvent::StreamWake { stream: ctx.cast() });
+                }
+                return;
+            }
+            Ok(kind) => {
+                if kind != QUIC_STREAM_HEADERS_KIND_HINTS {
+                    qs.headers_received.set(true);
+                }
+                if let Some(session) = qs.session_ref() {
+                    session.push_event(SessionEvent::StreamHeaders {
+                        stream: ctx.cast(),
+                        pairs,
+                        kind,
+                    });
+                }
+            }
         }
     }
     if stream.received_early_data() {

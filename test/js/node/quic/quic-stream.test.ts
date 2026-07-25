@@ -179,3 +179,238 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+// RFC 9114 §4.1.2/§4.2/§4.3: a peer that sends a malformed field section MUST
+// receive a stream error of type H3_MESSAGE_ERROR (0x10e). Bun's own client
+// validates outbound headers in `buildNgHeaderString`, so the receive-side
+// checks have to be exercised through a raw send hook that bypasses it.
+describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
+  const kSendRaw = Symbol.for("bun.internal.quic.sendRawHeaders");
+  const H3_MESSAGE_ERROR = 0x10en;
+
+  const valid = [":method", "GET", ":scheme", "https", ":authority", "localhost", ":path", "/"];
+
+  type Row = { name: string; pairs: string[] };
+  // Each of these is a MUST-reject per §4.1.2/§4.2/§4.3.
+  const malformedRequests: Row[] = [
+    { name: "duplicate :path", pairs: [...valid, ":path", "/b"] },
+    { name: "duplicate :method", pairs: [":method", "GET", ...valid] },
+    { name: "unknown pseudo-header", pairs: [...valid, ":foo", "bar"] },
+    { name: ":status in request", pairs: [...valid, ":status", "200"] },
+    { name: "pseudo-header after regular", pairs: [...valid, "x-ok", "v", ":path", "/c"] },
+    { name: "uppercase field name", pairs: [...valid, "X-Upper", "v"] },
+    { name: "non-token field name", pairs: [...valid, "bad name", "v"] },
+    { name: "CR in field value", pairs: [...valid, "x-crlf", "a\r\nb"] },
+    { name: "transfer-encoding", pairs: [...valid, "transfer-encoding", "chunked"] },
+    { name: "connection", pairs: [...valid, "connection", "close"] },
+    { name: "keep-alive", pairs: [...valid, "keep-alive", "timeout=5"] },
+    { name: "upgrade", pairs: [...valid, "upgrade", "h2c"] },
+    { name: "te not trailers", pairs: [...valid, "te", "gzip"] },
+    { name: "missing :method", pairs: [":scheme", "https", ":authority", "localhost", ":path", "/"] },
+    { name: "missing :path", pairs: [":method", "GET", ":scheme", "https", ":authority", "localhost"] },
+    { name: "missing :scheme", pairs: [":method", "GET", ":authority", "localhost", ":path", "/"] },
+    { name: ":protocol without CONNECT", pairs: [...valid, ":protocol", "websocket"] },
+  ];
+
+  const malformedResponses: Row[] = [
+    { name: "missing :status", pairs: ["content-type", "text/plain"] },
+    { name: "duplicate :status", pairs: [":status", "200", ":status", "404"] },
+    { name: "non-numeric :status", pairs: [":status", "abc"] },
+    { name: "request pseudo in response", pairs: [":status", "200", ":path", "/"] },
+    { name: "uppercase field name", pairs: [":status", "200", "X-Upper", "v"] },
+    { name: "transfer-encoding", pairs: [":status", "200", "transfer-encoding", "chunked"] },
+    { name: "connection", pairs: [":status", "200", "connection", "close"] },
+    { name: "pseudo after regular", pairs: ["x-ok", "v", ":status", "200"] },
+  ];
+
+  async function withH3({ onServerHeaders }: { onServerHeaders?: (this: any, h: any) => void }) {
+    const seen: unknown[] = [];
+    const server = await listen(
+      async ss => {
+        ss.onstream = (s: any) => s.closed.catch(() => {});
+        await ss.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders:
+          onServerHeaders ??
+          function (this: any, h: any) {
+            seen.push(h);
+            this.sendHeaders({ ":status": "200" });
+            this.writer.endSync();
+          },
+      },
+    );
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    await client.opened;
+    return {
+      server,
+      client,
+      seen,
+      done: async () => {
+        client.close();
+        await server.close();
+      },
+    };
+  }
+
+  test.concurrent.each(malformedRequests)(
+    "server rejects malformed request: $name",
+    async ({ pairs }) => {
+      const { client, seen, done } = await withH3({});
+      const stream = await client.createBidirectionalStream();
+      (stream as any)[kSendRaw](pairs, 1, 1);
+
+      // The server resets the stream with H3_MESSAGE_ERROR; the client learns
+      // it via the RESET_STREAM frame, which rejects `closed`.
+      const err = await stream.closed.then(
+        () => undefined,
+        (e: any) => e,
+      );
+      await done();
+
+      expect({ seen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+        seen: [],
+        code: "ERR_QUIC_APPLICATION_ERROR",
+        errorCode: H3_MESSAGE_ERROR,
+      });
+    },
+  );
+
+  test.concurrent.each(malformedResponses)(
+    "client rejects malformed response: $name",
+    async ({ pairs }) => {
+      const clientSeen: unknown[] = [];
+      const { client, done } = await withH3({
+        onServerHeaders(this: any) {
+          (this as any)[kSendRaw](pairs, 1, 1);
+        },
+      });
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
+        onheaders(h: any) {
+          clientSeen.push(h);
+        },
+      });
+      const err = await stream.closed.then(
+        () => undefined,
+        (e: any) => e,
+      );
+      await done();
+
+      expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+        clientSeen: [],
+        code: "ERR_QUIC_APPLICATION_ERROR",
+        errorCode: H3_MESSAGE_ERROR,
+      });
+    },
+  );
+
+  // Well-formed sections that live near a boundary must still be accepted.
+  test.concurrent.each([
+    { name: "te: trailers", pairs: [...valid, "te", "trailers"] },
+    { name: "CONNECT without :scheme/:path", pairs: [":method", "CONNECT", ":authority", "localhost:443"] },
+  ])("server accepts well-formed request: $name", async ({ pairs }) => {
+    const { client, seen, done } = await withH3({});
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw](pairs, 1, 1);
+    await stream.closed.catch(() => {});
+    const accepted = seen.length;
+    await done();
+    expect(accepted).toBe(1);
+  });
+
+  // These cases go through the public `sendHeaders` path (no raw hook), so
+  // they demonstrate the gap is reachable from the documented API surface:
+  // `buildNgHeaderString` does not enforce role-appropriate pseudo-headers or
+  // the presence of the mandatory ones.
+  test.concurrent("client rejects response missing :status (public sendHeaders)", async () => {
+    const clientSeen: unknown[] = [];
+    const { client, done } = await withH3({
+      onServerHeaders(this: any) {
+        this.sendHeaders({ "content-type": "text/plain" }, { terminal: true });
+      },
+    });
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
+      onheaders: (h: any) => clientSeen.push(h),
+    });
+    const err = await stream.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    await done();
+    expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+      clientSeen: [],
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+
+  test.concurrent("client rejects response carrying :method (public sendHeaders)", async () => {
+    const clientSeen: unknown[] = [];
+    const { client, done } = await withH3({
+      onServerHeaders(this: any) {
+        this.sendHeaders({ ":status": "200", ":method": "GET" }, { terminal: true });
+      },
+    });
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
+      onheaders: (h: any) => clientSeen.push(h),
+    });
+    const err = await stream.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    await done();
+    expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+      clientSeen: [],
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+
+  test.concurrent("server rejects request missing :scheme (public sendHeaders)", async () => {
+    const { client, seen, done } = await withH3({});
+    const stream = await client.createBidirectionalStream();
+    stream.sendHeaders({ ":method": "GET", ":authority": "localhost", ":path": "/" }, { terminal: true });
+    const err = await stream.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    await done();
+    expect({ seen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+      seen: [],
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+
+  test.concurrent("server rejects pseudo-header in trailers", async () => {
+    let trailersSeen = 0;
+    const { client, done } = await withH3({
+      onServerHeaders(this: any) {
+        this.ontrailers = () => trailersSeen++;
+        this.sendHeaders({ ":status": "200" }, { terminal: true });
+      },
+    });
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw](valid, 1, 0);
+    (stream as any)[kSendRaw]([":path", "/t"], 2, 1);
+    const err = await stream.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+    await done();
+    expect({ trailersSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+      trailersSeen: 0,
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+});

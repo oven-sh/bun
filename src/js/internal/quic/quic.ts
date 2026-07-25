@@ -64,6 +64,7 @@ const PromiseWithResolvers = () => Promise.withResolvers();
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const SymbolDispose = Symbol.dispose;
+const SymbolFor = Symbol.for;
 const SymbolIterator = Symbol.iterator;
 const DataViewPrototypeGetByteLength = uncurryThis(
   Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
@@ -2429,6 +2430,15 @@ class QuicStream {
     }
     const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
     return this.#handle.sendHeaders(kind, headerString, flags);
+  }
+
+  // Test hook for RFC 9114 malformed-receive coverage: the public paths all
+  // route through `buildNgHeaderString`, which rejects every malformed shape
+  // the receive-side validator must be shown to catch.
+  [SymbolFor("bun.internal.quic.sendRawHeaders")](pairs, kind = kHeadersKindInitial, flags = kHeadersFlagsNone) {
+    let s = "";
+    for (let i = 0; i + 1 < pairs.length; i += 2) s += `${pairs[i]}\0${pairs[i + 1]}\0\0`;
+    return this.#handle.sendHeaders(kind, [s, pairs.length >> 1], flags);
   }
 
   [kFinishClose](error) {

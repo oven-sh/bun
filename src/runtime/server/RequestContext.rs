@@ -1458,12 +1458,8 @@ where
             return;
         }
 
-        // Source::Bytes pipe (`return fetch(url)`): cancel so the upstream stops
-        // producing. The response_weakref lookup below can't find this stream
-        // (that arm moved the readable out of the body and set it to Used).
-        // Unpipe first so cancel can't re-enter on_pipe; deref balances the
-        // ref that arm took (on_pipe's is_done branch won't fire post-cancel).
         if let Some(byte_stream) = this.byte_stream.take() {
+            // Source::Bytes pipe: cancel upstream; deref balances the pipe ref.
             shim::byte_stream_unpipe(byte_stream);
             if let Some(stream) = this.response_body_readable_stream_ref.get(global_this) {
                 let _keep = jsc::EnsureStillAlive(stream.value);
@@ -3292,9 +3288,7 @@ where
         // Drop one ref only when the stream signals completion.
         let _ref = is_done.then(|| RequestContextRef(std::ptr::from_mut::<Self>(this)));
         if is_done {
-            // Last chunk delivered: nothing left to cancel, and the pipe ref
-            // is released on this scope exit. Clear byte_stream so on_abort's
-            // byte_stream branch (which derefs that same ref) won't be taken.
+            // Invariant for on_abort: byte_stream Some iff the pipe ref is live.
             if let Some(byte_stream) = this.byte_stream.take() {
                 shim::byte_stream_unpipe(byte_stream);
             }

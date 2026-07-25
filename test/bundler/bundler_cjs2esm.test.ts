@@ -278,7 +278,8 @@ describe("bundler", () => {
     },
     onAfterBundle: api => {
       const code = api.readFile("out.js");
-      expect(code).toContain("__toESM(");
+      expect(code).not.toContain("__toESM(");
+      expect(code).toContain("require_react()");
     },
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
@@ -500,5 +501,125 @@ describe("bundler", () => {
     },
     cjs2esm: true,
     run: { stdout: "[1,2]" },
+  });
+  // https://github.com/oven-sh/bun/issues/12463
+  //
+  // react/index.js is the two-branch `module.exports = require('./cjs/react.*.js')`
+  // redirect. `unwrap_commonjs_packages` turns each `require()` into a star import,
+  // but only the single-branch shape can be rewritten to `export *`; with two
+  // branches the file stays a CJS wrapper holding a star import of another CJS
+  // wrapper. Star-importing a CJS module normally needs `__toESM`, but this import
+  // was a `require()`, so the result must be the raw `module.exports` (no synthetic
+  // `default`), matching esbuild.
+  const reactProdDevRedirect = {
+    "/node_modules/react/index.js": /* js */ `
+      if (process.env.NODE_ENV === "production") {
+        module.exports = require("./cjs/react.prod.js");
+      } else {
+        module.exports = require("./cjs/react.dev.js");
+      }
+    `,
+    "/node_modules/react/cjs/react.prod.js": /* js */ `
+      (function () {
+        exports.useState = function () { return "prod"; };
+        exports.version = "18.0.0";
+      })();
+    `,
+    "/node_modules/react/cjs/react.dev.js": /* js */ `
+      (function () {
+        exports.useState = function () { return "dev"; };
+        exports.version = "18.0.0-dev";
+      })();
+    `,
+    "/node_modules/react/package.json": /* json */ `
+      { "name": "react", "version": "18.0.0", "main": "index.js" }
+    `,
+  };
+  itBundled("cjs2esm/UnwrappedRequireOfWrappedCjsNoToESM#12463", {
+    files: {
+      "/entry.js": /* js */ `
+        import react from "react";
+        console.log(JSON.stringify({
+          useState: react.useState(),
+          version: react.version,
+          hasDefault: "default" in react,
+          propKind: Object.getOwnPropertyDescriptor(react, "useState").get ? "getter" : "value",
+        }));
+      `,
+      ...reactProdDevRedirect,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toMatch(/__toESM\(require_react_dev/);
+    },
+    run: {
+      stdout: '{"useState":"dev","version":"18.0.0-dev","hasDefault":false,"propKind":"value"}',
+    },
+  });
+  itBundled("cjs2esm/UnwrappedRequireOfWrappedCjsEntryPoint#12463", {
+    files: {
+      "/entry.js": /* js */ `
+        const compiled = await import("./out/react.js");
+        console.log(JSON.stringify({
+          useState: compiled.default.useState(),
+          hasDefault: "default" in compiled.default,
+        }));
+      `,
+      ...reactProdDevRedirect,
+    },
+    entryPointsRaw: ["./node_modules/react/index.js"],
+    outdir: "/out",
+    entryNaming: "react.[ext]",
+    runtimeFiles: {
+      "/entry.js": /* js */ `
+        const compiled = await import("./out/react.js");
+        console.log(JSON.stringify({
+          useState: compiled.default.useState(),
+          hasDefault: "default" in compiled.default,
+        }));
+      `,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out/react.js")).not.toContain("__toESM(");
+    },
+    run: {
+      file: "/entry.js",
+      stdout: '{"useState":"dev","hasDefault":false}',
+    },
+  });
+  itBundled("cjs2esm/UnwrappedRequireInCjsFunctionBody", {
+    files: {
+      "/entry.js": /* js */ `
+        const loader = require("react/loader");
+        const r = loader.load();
+        console.log(JSON.stringify({
+          useState: r.useState(),
+          hasDefault: "default" in r,
+        }));
+      `,
+      "/node_modules/react/loader.js": /* js */ `
+        exports.load = function () {
+          return require("./cjs/react.dev.js");
+        };
+      `,
+      ...reactProdDevRedirect,
+    },
+    run: {
+      stdout: '{"useState":"dev","hasDefault":false}',
+    },
+  });
+  itBundled("cjs2esm/UnwrappedRequireOfConvertedCjsStillWorks", {
+    files: {
+      "/entry.js": /* js */ `
+        const react = require("react");
+        console.log(react.react);
+      `,
+      ...fakeReactNodeModules,
+    },
+    onAfterBundle: api => {
+      expect(api.readFile("out.js")).not.toContain("__toESM(");
+    },
+    run: {
+      stdout: "react",
+    },
   });
 });

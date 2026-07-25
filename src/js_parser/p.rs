@@ -1149,6 +1149,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
                             handles_import_errors,
                         );
+                    self.import_records.items_mut()[import_record_index as usize]
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::WAS_ORIGINALLY_REQUIRE);
 
                     // Note that this symbol may be completely removed later.
                     let path_name = fs::PathName::init(pathname);

@@ -170,6 +170,104 @@ describe("Bun.Transpiler", () => {
       err("x = a ? b c", 'Expected ":" but found "c"');
     });
 
+    it("disambiguates `a ? (b) : c => d` between ternary and arrow-return-type", () => {
+      // In `a ? (b) : c => d`, `(b) : c => d` could be an arrow with return type
+      // `c`, or a parenthesized `b` followed by the ternary `:` and `c => d`. The
+      // TypeScript compiler picks the arrow only when another `:` follows the body
+      // to pair with the leading `?`.
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      exp("x = a ? (b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? (b = c) : d", "x = a ? b = c : d;\n");
+      exp("x = a ? (b = c) : d => e", "x = a ? b = c : (d) => e;\n");
+      exp("x = a ? (b = c) : T => d : (e = f)", "x = a ? (b = c) => d : e = f;\n");
+      exp("x = a ? (b = c) : T => d : (e = f) : T => g", "x = a ? (b = c) => d : (e = f) => g;\n");
+      exp("x = a ? b ? c : (d = e) : f => g", "x = a ? b ? c : d = e : (f) => g;\n");
+      exp("x = a ? b ? (c = d) => e : (f = g) : h => i", "x = a ? b ? (c = d) => e : f = g : (h) => i;\n");
+      exp("x = a ? b ? (c = d) : T => e : (f = g) : h => i", "x = a ? b ? (c = d) => e : f = g : (h) => i;\n");
+      exp(
+        "x = a ? b ? (c = d) : T => e : (f = g) : (h = i) : T => j",
+        "x = a ? b ? (c = d) => e : f = g : (h = i) => j;\n",
+      );
+      exp("x = a ? (b) : T => c : d", "x = a ? (b) => c : d;\n");
+      exp("x = a ? b - (c) : d => e", "x = a ? b - c : (d) => e;\n");
+      exp("x = a ? b = (c) : T => d : e", "x = a ? b = (c) => d : e;\n");
+      exp("x = a ? (b) : c => { return d } : e", "x = a ? (b) => {\n  return d;\n} : e;\n");
+      exp("x = a ? (b) : c => { return d }", "x = a ? b : (c) => {\n  return d;\n};\n");
+
+      // Old-style <Type> cast before the paren reaches the same check via
+      // parse_prefix's TLessThan -> parse_prefix(flags) recursion.
+      exp("x = a ? <number[]>(b) : c => d", "x = a ? b : (c) => d;\n");
+      exp("x = a ? <number[]>(b) : T => d : e", "x = a ? (b) => d : e;\n");
+
+      // Newlines trigger the same backtracking path.
+      exp("x = (\n  a ? (b = c) : { d: e }\n)", "x = a ? b = c : { d: e };\n");
+
+      // Private identifiers inside the speculatively-parsed body must resolve.
+      exp(
+        "x = class { #y; y = a ? (b : T) : T => this.#y : c }",
+        "x = class {\n  #y;\n  y = a ? (b) => this.#y : c;\n};\n",
+      );
+
+      // "in" inside the speculatively-parsed body inside a for-init must be allowed.
+      exp("for (x = a ? () : T => b in c : d; ; ) ;", "for (x = a ? () => (b in c) : d;; )\n  ;\n");
+
+      // Legal comments scanned between "?" and "(" sit in the lexer's
+      // comments_to_preserve_before buffer; a block/import() arrow body clears
+      // that buffer during the speculative parse, so it is saved and restored
+      // around the speculation.
+      exp("x = a ? /*! L */ (b) : T => { let y = 1 } : c", "x = a ? (b) => {\n  /*! L */\n  let y = 1;\n} : c;\n");
+      exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
+      exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
+
+      // An enum in the speculatively-parsed body inserts a Loc-keyed entry in
+      // scopes_in_order_for_enum; the entry is popped before the real parse
+      // inserts at the same Loc.
+      exp(
+        "x = a ? (b) : T => { enum E { A } } : c",
+        'x = a ? (b) => {\n  let E;\n  ((E) => {\n    E[E["A"] = 0] = "A";\n  })(E ||= {});\n} : c;\n',
+      );
+      exp(
+        "x = a ? (b) : T => { enum E { A } }",
+        'x = a ? b : (T) => {\n  let E;\n  ((E) => {\n    E[E["A"] = 0] = "A";\n  })(E ||= {});\n};\n',
+      );
+
+      // Deeply nested arrow-in-yes-branch is memoized so each ":" is only
+      // speculated once instead of 2^n times. The first shape succeeds at every
+      // level (arrow), the second fails at every level (ternary).
+      {
+        let src = "0";
+        for (let i = 0; i < 25; i++) src = `(a ? (b) : T => ${src} : c)`;
+        let out = "0";
+        for (let i = 0; i < 25; i++) out = `a ? (b) => ${out} : c`;
+        exp(`let z = ${src};`, `let z = ${out};\n`);
+      }
+      {
+        let src = "0";
+        for (let i = 0; i < 25; i++) src = `(a ? (b) : T => ${src})`;
+        let out = "0";
+        for (let i = 0; i < 25; i++) out = `a ? b : (T) => ${out}`;
+        exp(`let z = ${src};`, `let z = ${out};\n`);
+      }
+
+      // scanImports pushes import()/require() records at parse time; speculative
+      // records are truncated so each source occurrence is reported once.
+      expect(transpiler.scanImports('x = a ? (b) : T => import("m") : c', "ts")).toEqual([
+        { kind: "dynamic-import", path: "m" },
+      ]);
+      expect(transpiler.scanImports('x = a ? (b) : T => import("m")', "ts")).toEqual([
+        { kind: "dynamic-import", path: "m" },
+      ]);
+      expect(transpiler.scanImports('x = a ? (b) : T => require("r") : c', "ts")).toEqual([
+        { kind: "require-call", path: "r" },
+      ]);
+
+      err("x = a ? (b = c) : T => d : (e = f) : g", 'Expected ";" but found ":"');
+      err("x = a ? - (b) : c => d : e", 'Expected ";" but found ":"');
+      err("x = a ? b - (c) : d => e : f", 'Expected ";" but found ":"');
+    });
+
     it("contextual keywords used as plain identifiers keep their statements", () => {
       const exp = ts.expectPrinted_;
 

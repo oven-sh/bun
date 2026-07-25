@@ -727,6 +727,7 @@ impl Expr {
 pub enum EFlags {
     None,
     TsDecorator,
+    AfterQuestionAndBeforeColon,
 }
 
 // `is_missing` lives in the `init`/`allocate` impl block below.

@@ -44,7 +44,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(p.new_expr(E::Super {}, loc))
     }
 
-    fn pfx_t_open_paren(p: &mut Self, level: Level) -> PResult<Expr> {
+    fn pfx_t_open_paren(p: &mut Self, level: Level, flags: EFlags) -> PResult<Expr> {
         let loc = p.lexer.loc();
         p.lexer.next()?;
 
@@ -62,7 +62,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(value);
         }
 
-        p.parse_paren_expr(loc, level, ParenExprOpts::default())
+        p.parse_paren_expr(
+            loc,
+            level,
+            ParenExprOpts {
+                is_after_question_and_before_colon: flags == EFlags::AfterQuestionAndBeforeColon,
+                ..Default::default()
+            },
+        )
     }
 
     #[inline]
@@ -1003,7 +1010,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             T::TOpenBrace => Self::pfx_t_open_brace(p, errors),
             T::TLessThan => Self::pfx_t_less_than(p, level, errors, flags),
             T::TImport => Self::pfx_t_import(p, level),
-            T::TOpenParen => Self::pfx_t_open_paren(p, level),
+            T::TOpenParen => Self::pfx_t_open_paren(p, level, flags),
             T::TPrivateIdentifier => Self::pfx_t_private_identifier(p, level),
             T::TIdentifier => Self::pfx_t_identifier(p, level),
             T::TFalse => Self::pfx_t_false(p),

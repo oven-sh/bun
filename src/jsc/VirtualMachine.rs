@@ -6080,7 +6080,33 @@ impl VirtualMachine {
             }
         }
 
-        Self::print_stack_trace(writer, &exception.stack, allow_ansi_color)?;
+        let mut printed_stack_string = false;
+        if exception.stack.frames().is_empty() && is_error_instance && !error_instance.is_error() {
+            // `toZigException` only populates frames for a native
+            // `ErrorInstance` or a `JSC::Exception` wrapper; an error-like
+            // plain object's only trace is its own `.stack` string.
+            if let Ok(Some(stack)) = error_instance.get_own_truthy(global_ref, "stack") {
+                if stack.is_string() {
+                    let stack = bun_core::OwnedString::new(stack.to_bun_string(global_ref)?);
+                    let bytes = stack.to_utf8();
+                    let slice = bytes.slice();
+                    let tail = match slice.iter().position(|&b| b == b'\n') {
+                        Some(i) => bun_core::trim_right(&slice[i + 1..], b"\n"),
+                        None => b"",
+                    };
+                    if !tail.is_empty() {
+                        writer.write_all(tail)?;
+                        writer.write_all(b"\n")?;
+                    }
+                    printed_stack_string = true;
+                }
+            } else if allow_side_effects && global_ref.has_exception() {
+                global_ref.clear_exception();
+            }
+        }
+        if !printed_stack_string {
+            Self::print_stack_trace(writer, &exception.stack, allow_ansi_color)?;
+        }
 
         if !exception.browser_url.is_empty() {
             pretty_write!(

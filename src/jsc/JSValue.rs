@@ -361,11 +361,8 @@ impl JSValue {
     pub fn is_error(self) -> bool {
         self.is_cell() && self.js_type() == JSType::ErrorInstance
     }
-    /// True iff this is a native `ErrorInstance`, or an object whose
-    /// `[[Prototype]]` chain (read directly, without invoking Proxy traps or
-    /// `Symbol.hasInstance`) contains `Error.prototype` or an `ErrorInstance`.
-    /// Matches Node's `isNativeError(e) || e instanceof Error` test used to
-    /// decide whether to render a value as an error.
+    /// `ErrorInstance`, or an object whose `[[Prototype]]` chain (read via
+    /// `getPrototypeDirect`, no traps) reaches `Error.prototype`.
     #[inline]
     pub fn is_error_like(self) -> bool {
         if !self.is_cell() {

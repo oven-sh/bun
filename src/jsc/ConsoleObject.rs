@@ -2330,10 +2330,6 @@ pub mod formatter {
                 }
             }
 
-            // Function-based Error subclasses (`X.prototype =
-            // Object.create(Error.prototype)`) are plain FinalObject cells, not
-            // ErrorInstance. Node renders any `instanceof Error` value as an
-            // error, so check the prototype chain for Error.prototype here.
             if matches!(js_type, jsc::JSType::Object | jsc::JSType::FinalObject)
                 && value.is_error_like()
             {

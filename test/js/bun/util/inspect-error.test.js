@@ -214,11 +214,12 @@ describe("Error-like object (instanceof Error, not a native ErrorInstance)", () 
   // prototype-walking enumerator.
   const objectDump = /toString: \[Function|^\s*name: "JsonWebTokenError"|^\s*stack: /m;
 
-  test("Bun.inspect renders it as an error, not an object dump", () => {
+  test("Bun.inspect renders it as an error with its .stack, not an object dump", () => {
     const err = makeErrorLike();
     expect(err instanceof Error).toBe(true);
     const out = Bun.inspect(err, { colors: false });
     expect(out).toContain("JsonWebTokenError: boom");
+    expect(out).toMatch(/^\s+at .*makeErrorLike/m);
     expect(out).not.toMatch(objectDump);
     expect(out).not.toContain("{");
   });
@@ -239,6 +240,7 @@ describe("Error-like object (instanceof Error, not a native ErrorInstance)", () 
     const out = Bun.inspect(err, { colors: false });
     const inner = out.slice(out.indexOf("error: outer"));
     expect(inner).toContain("JsonWebTokenError: boom");
+    expect(inner).toMatch(/^\s+at .*makeErrorLike/m);
     expect(inner).not.toMatch(objectDump);
   });
 
@@ -279,31 +281,35 @@ describe("Error-like object (instanceof Error, not a native ErrorInstance)", () 
     JsonWebTokenError.prototype.constructor = JsonWebTokenError;
   `;
 
-  test.concurrent("console.error renders it as an error", async () => {
+  test.concurrent("console.error renders it as an error with its .stack", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture + `console.error(new JsonWebTokenError("boom"));`],
       env: { ...bunEnv, NO_COLOR: "1" },
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("JsonWebTokenError: boom");
+    expect(stderr).toMatch(/^\s+at .*\[eval\]/m);
     expect(stderr).not.toMatch(objectDump);
     expect(stderr).not.toContain("{");
+    expect(stdout).toBe("");
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("the uncaught-error printer renders it as an error", async () => {
+  test.concurrent("the uncaught-error printer renders it as an error with a stack", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture + `throw new JsonWebTokenError("boom");`],
       env: { ...bunEnv, NO_COLOR: "1" },
       stderr: "pipe",
       stdout: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("JsonWebTokenError: boom");
     expect(stderr.split("JsonWebTokenError: boom").length - 1).toBe(1);
+    expect(stderr).toMatch(/^\s+at .*\[eval\]/m);
     expect(stderr).not.toMatch(objectDump);
+    expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });
 });

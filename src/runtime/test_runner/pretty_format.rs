@@ -562,6 +562,10 @@ impl Tag {
             }
         }
 
+        if matches!(js_type, JSType::Object | JSType::FinalObject) && value.is_error_like() {
+            return Ok(TagResult { tag: Tag::Error, cell: js_type });
+        }
+
         let tag = match js_type {
             JSType::ErrorInstance => Tag::Error,
             JSType::NumberObject => Tag::Double,

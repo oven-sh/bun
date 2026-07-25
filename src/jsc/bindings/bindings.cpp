@@ -3687,11 +3687,6 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     return type == JSC::ErrorInstanceType;
 }
 
-// True if the value is a native ErrorInstance, or its [[Prototype]] chain
-// (read via getPrototypeDirect, so Proxy traps and Symbol.hasInstance are not
-// consulted) contains Error.prototype or an ErrorInstance. This is the
-// "isNativeError(e) || e instanceof Error" shape Node uses to decide whether to
-// render a value as an error.
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isErrorLike(JSC::EncodedJSValue JSValue0)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);

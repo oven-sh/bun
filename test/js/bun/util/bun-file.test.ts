@@ -211,7 +211,7 @@ describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the e
       expect(out.secondLen).toBeGreaterThan(0);
       expect(out.secondLen).toBeLessThanOrEqual(1024 * 1024);
       expect(out.rssGrowthMB).toBeLessThan(isASAN || isDebug ? 256 : 128);
-    });
+    }, hangGuard + 5_000);
   }
 
   test("Bun.file('/dev/null').stream() EOFs immediately", async () => {

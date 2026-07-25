@@ -82,12 +82,7 @@ pub fn load() {
 // Remove once the bindgen pipeline lands these in the sys crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `#define SSL_DEFAULT_CIPHER_LIST "ALL"`
-pub const SSL_DEFAULT_CIPHER_LIST: &core::ffi::CStr = c"ALL";
-
-use boring::{
-    CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set_cipher_list, SSL_CTX_set0_buffer_pool,
-};
+use boring::{CRYPTO_BUFFER_POOL, CRYPTO_BUFFER_POOL_new, SSL_CTX_set0_buffer_pool};
 
 std::thread_local! {
     // One pool per thread, lazily allocated on the first `ssl_ctx_setup()`
@@ -96,8 +91,13 @@ std::thread_local! {
         const { Cell::new(ptr::null_mut()) };
 }
 
-/// Install the per-thread `CRYPTO_BUFFER_POOL` and set the cipher list to
-/// BoringSSL's `SSL_DEFAULT_CIPHER_LIST` (`"ALL"`).
+/// Install the per-thread `CRYPTO_BUFFER_POOL` on `ctx`.
+///
+/// The cipher list is left as configured by the caller: `SSL_CTX_new`
+/// already initializes it to `SSL_DEFAULT_CIPHER_LIST` (`"ALL"`), and
+/// `create_ssl_context` in openssl.c applies any user-supplied
+/// `ssl_ciphers` on top of that. Reapplying `"ALL"` here would discard
+/// a user's `tls.ciphers` pin.
 ///
 /// # Safety
 /// `ctx` must be a live `SSL_CTX*`.
@@ -105,13 +105,12 @@ pub unsafe fn ssl_ctx_setup(ctx: *mut boring::SSL_CTX) {
     AUTO_CRYPTO_BUFFER_POOL.with(|pool| {
         // SAFETY: caller guarantees `ctx` is a live `SSL_CTX*`; the pool pointer
         // is either freshly returned by `CRYPTO_BUFFER_POOL_new` or a previously
-        // stored thread-local pool, and `SSL_DEFAULT_CIPHER_LIST` is a valid C string.
+        // stored thread-local pool.
         unsafe {
             if pool.get().is_null() {
                 pool.set(CRYPTO_BUFFER_POOL_new());
             }
             SSL_CTX_set0_buffer_pool(ctx, pool.get());
-            let _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST.as_ptr());
         }
     });
 }

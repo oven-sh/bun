@@ -301,6 +301,35 @@ describe("transpiler cache", () => {
     expect(Buffer.from(readFileSync(join(cache_dir, after[0]))).readBigUInt64LE(OUTPUT_HASH)).not.toBe(0n);
   });
 
+  test("rejects a cache entry whose output_hash was recomputed with the fixed seed", () => {
+    const OUTPUT_BYTE_OFFSET = 30;
+    const OUTPUT_BYTE_LENGTH = 38;
+    const OUTPUT_HASH = 46;
+
+    writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "forge2", "GOOD"));
+    const first = bunRun(join(temp_dir, "a.js"), env);
+    expect(first.stdout).toBe("GOOD");
+    const entries = readdirSync(cache_dir);
+    expect(entries.length).toBe(1);
+
+    // Section hashes are keyed on the per-entry input hash, not the fixed
+    // seed, so a wyhash(seed=42) over the tampered output must still be
+    // rejected.
+    const pile = join(cache_dir, entries[0]);
+    const buf = Buffer.from(readFileSync(pile));
+    const outOff = Number(buf.readBigUInt64LE(OUTPUT_BYTE_OFFSET));
+    const outLen = Number(buf.readBigUInt64LE(OUTPUT_BYTE_LENGTH));
+    const region = buf.subarray(outOff, outOff + outLen);
+    const needle = region.indexOf("GOOD");
+    expect(needle).toBeGreaterThanOrEqual(0);
+    region.write("EVIL", needle, "latin1");
+    buf.writeBigUInt64LE(Bun.hash.wyhash(region, 42n), OUTPUT_HASH);
+    writeFileSync(pile, buf);
+
+    const second = bunRun(join(temp_dir, "a.js"), env);
+    expect(second.stdout).toBe("GOOD");
+  });
+
   test.skipIf(!isPosix)("disables the cache when the cache root is writable by other users", () => {
     // An attacker-controlled cache root (group/other-writable) must not be
     // read from or written to: the transpiler cache is disabled for the run.
@@ -333,6 +362,7 @@ test("rejects cached module records containing out-of-range string indices", () 
   // serialize()):
   //   [record_kinds_len u32][record_kinds, 1 byte each][pad to 4]
   //   [buffer_len u32][buffer: u32 string index x buffer_len] ...
+  const INPUT_HASH_AT = 22;
   const ESM_RECORD_BYTE_OFFSET_AT = 78;
   const ESM_RECORD_BYTE_LENGTH_AT = 86;
   const ESM_RECORD_HASH_AT = 94;
@@ -357,10 +387,12 @@ test("rejects cached module records containing out-of-range string indices", () 
     for (let i = 0; i < bufferLen; i++) {
       data.writeUInt32LE(0x7fffffff, off + i * 4);
     }
-    // The esm-record hash is an unkeyed wyhash (seed 42), so whoever writes
-    // the cache file can recompute it and still reach the module-record
-    // deserializer.
-    data.writeBigUInt64LE(Bun.hash.wyhash(data.subarray(esmOff, esmOff + esmLen), 42n), ESM_RECORD_HASH_AT);
+    // Section hashes are keyed on the input hash; recompute it for the
+    // rewritten record so the entry passes the loader's hash check and the
+    // corrupted indices reach the module-record deserializer under test.
+    const inputHash = data.readBigUInt64LE(INPUT_HASH_AT);
+    const esmHash = Bun.hash.wyhash(data.subarray(esmOff, esmOff + esmLen), inputHash);
+    data.writeBigUInt64LE(esmHash, ESM_RECORD_HASH_AT);
     writeFileSync(file, data);
     return true;
   }

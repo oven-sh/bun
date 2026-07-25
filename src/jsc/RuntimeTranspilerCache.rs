@@ -43,9 +43,10 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-/// Version 24: output/sourcemap/esm-record hash checks are mandatory (the
-/// `hash != 0` bypass is gone), so entries whose payload was rewritten with a
-/// zeroed hash field are rejected instead of consumed.
+/// Version 24: output/sourcemap/esm-record hashes are seeded with `input_hash`
+/// instead of the fixed `SEED`, and a stored hash of 0 no longer skips
+/// verification. Entries written before this version have section hashes that
+/// will not match under the new seed.
 const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
@@ -330,11 +331,9 @@ impl Entry {
                     ..Default::default()
                 };
 
-                metadata.output_hash = hash(output_bytes);
-                metadata.sourcemap_hash = hash(sourcemap);
-                if !esm_record.is_empty() {
-                    metadata.esm_record_hash = hash(esm_record);
-                }
+                metadata.output_hash = Wyhash::hash(input_hash, output_bytes);
+                metadata.sourcemap_hash = Wyhash::hash(input_hash, sourcemap);
+                metadata.esm_record_hash = Wyhash::hash(input_hash, esm_record);
 
                 let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
                 metadata.encode(&mut metadata_stream)?;
@@ -437,6 +436,11 @@ impl Entry {
             return Err(crate::CrateError::MissingData);
         }
 
+        // Section hashes are keyed on the input hash so the stored value binds
+        // each payload to the source bytes that produced this entry. The caller
+        // has already verified `metadata.input_hash` against the live source.
+        let section_seed = self.metadata.input_hash;
+
         debug_assert!(
             matches!(&self.output_code, OutputCode::Utf8(b) if b.is_empty()),
             "this should be the default value"
@@ -479,7 +483,7 @@ impl Entry {
                         return Err(crate::CrateError::MissingData);
                     }
 
-                    if hash(bytes) != self.metadata.output_hash {
+                    if Wyhash::hash(section_seed, bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
                     }
 
@@ -508,13 +512,12 @@ impl Entry {
                     // errdefer latin1.deref() — BunString is `Copy`, so guard explicitly.
                     let errdefer = scopeguard::guard(latin1, |s| s.deref());
                     let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-
-                    if hash(latin1.latin1()) != self.metadata.output_hash {
-                        return Err(crate::CrateError::InvalidHash);
-                    }
-
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
+                    }
+
+                    if Wyhash::hash(section_seed, latin1.latin1()) != self.metadata.output_hash {
+                        return Err(crate::CrateError::InvalidHash);
                     }
 
                     scopeguard::ScopeGuard::into_inner(errdefer);
@@ -541,7 +544,7 @@ impl Entry {
                     }
 
                     let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                    if hash(utf16_bytes) != self.metadata.output_hash {
+                    if Wyhash::hash(section_seed, utf16_bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
                     }
 
@@ -563,7 +566,7 @@ impl Entry {
                 self.metadata.sourcemap_byte_length as usize,
                 self.metadata.sourcemap_byte_offset,
             )?;
-            if hash(&self.sourcemap) != self.metadata.sourcemap_hash {
+            if Wyhash::hash(section_seed, &self.sourcemap) != self.metadata.sourcemap_hash {
                 return Err(crate::CrateError::InvalidHash);
             }
         }
@@ -575,7 +578,7 @@ impl Entry {
                 self.metadata.esm_record_byte_offset,
             )?;
 
-            if hash(&esm_record) != self.metadata.esm_record_hash {
+            if Wyhash::hash(section_seed, &esm_record) != self.metadata.esm_record_hash {
                 return Err(crate::CrateError::InvalidHash);
             }
 
@@ -627,29 +630,6 @@ fn current_user_id() -> u32 {
 #[inline]
 fn current_user_id() -> u32 {
     bun_sys::windows::user_unique_id()
-}
-
-/// Trust check for the resolved cache root: on unix the directory must be
-/// owned by the current uid and not writable by group/other. A nonexistent
-/// path is trusted (we will create it with the right mode). Any other shape
-/// (symlink, wrong owner, lax mode) means another uid could plant `.pile`
-/// entries, so the cache is disabled rather than consumed.
-#[cfg(unix)]
-fn is_trusted_cache_dir(path: &ZStr) -> bool {
-    match bun_sys::lstat(path) {
-        Ok(st) => {
-            (st.st_mode & libc::S_IFMT) == libc::S_IFDIR
-                && st.st_uid == bun_sys::c::getuid()
-                && (st.st_mode & (libc::S_IWGRP | libc::S_IWOTH)) == 0
-        }
-        Err(_) => true,
-    }
-}
-
-#[cfg(not(unix))]
-#[inline(always)]
-fn is_trusted_cache_dir(_path: &ZStr) -> bool {
-    true
 }
 
 /// Allocate `len` bytes and fill them via `pread_all` at `offset`, returning
@@ -802,7 +782,12 @@ impl RuntimeTranspilerCache {
             None => {
                 let len = Self::CACHE_DIR_BUF.with_borrow_mut(|tl_buf| {
                     let len = Self::really_get_cache_dir(tl_buf);
-                    if len > 0 && !is_trusted_cache_dir(ZStr::from_buf(&tl_buf[..], len)) {
+                    if len > 0
+                        && !sys::is_trusted_cache_root(
+                            ZStr::from_buf(&tl_buf[..], len),
+                            current_user_id(),
+                        )
+                    {
                         bun_core::scoped_log!(
                             cache,
                             "transpiler cache root failed ownership/mode check, disabling"

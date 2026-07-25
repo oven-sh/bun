@@ -796,11 +796,12 @@ impl JunitReporter {
                 self.contents.extend_from_slice(b">\n");
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"  <skipped type=\"");
-                self.contents.extend_from_slice(if matches!(status, R::Todo) {
-                    b"todo"
-                } else {
-                    b"skipped"
-                });
+                self.contents
+                    .extend_from_slice(if matches!(status, R::Todo) {
+                        b"todo"
+                    } else {
+                        b"skipped"
+                    });
                 self.contents.extend_from_slice(b"\"");
                 if let Some(note) = note.filter(|n| !n.is_empty()) {
                     self.contents.extend_from_slice(b" message=\"");

@@ -718,6 +718,12 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
+        // Suppress runtime onResolve while loading `preload` entries so a plugin
+        // registered in an earlier preload cannot redirect a later preload (or
+        // its static imports, which reach here via the linker).
+        if self.bun_vm().is_in_preload {
+            return Ok(None);
+        }
         let ns = (namespace_.length() > 0).then_some(&namespace_);
         let result = crate::from_js_host_call(self, || {
             Bun__runOnResolvePlugins(self, ns, &path, &source, target)

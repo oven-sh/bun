@@ -748,10 +748,11 @@ describe("preloaded plugins do not intercept other preload files", () => {
   function summarize(stdout: string, stderr: string) {
     const lines = stdout.trim() ? stdout.trim().split("\n") : ["(no stdout)", stderr];
     return {
-      // onLoad/onResolve lines whose target is one of the preload files themselves.
-      hooksOnPreloadFiles: lines.filter(l => /^on(Load|Resolve) .* plugin-\d\.ts$/.test(l)),
+      // onLoad/onResolve lines whose target is one of the preload files (or a
+      // file they statically import).
+      hooksOnPreloadFiles: lines.filter(l => /^on(Load|Resolve) .* (plugin-\d|helper)\.ts$/.test(l)),
       setups: lines.filter(l => l.startsWith("setup ")),
-      loadsForUserFiles: lines.filter(l => l.startsWith("onLoad ") && !/plugin-\d\.ts$/.test(l)),
+      loadsForUserFiles: lines.filter(l => l.startsWith("onLoad ") && !/(plugin-\d|helper)\.ts$/.test(l)),
       output: lines.filter(l => !/^(setup|onLoad|onResolve) /.test(l)),
     };
   }
@@ -759,8 +760,11 @@ describe("preloaded plugins do not intercept other preload files", () => {
   it.concurrent("with bunfig preload", async () => {
     using dir = tempDir("plugin-preload-no-intercept-bunfig", {
       "plugin-1.ts": makePlugin("p1"),
-      "plugin-2.ts": makePlugin("p2"),
+      // plugin-2 has a relative static import so its import records go through
+      // the runtime linker's onResolve dispatch while still in preload.
+      "plugin-2.ts": `import "./helper.ts";\n` + makePlugin("p2"),
       "plugin-3.ts": makePlugin("p3"),
+      "helper.ts": `export {};`,
       "bunfig.toml": `preload = ["./plugin-1.ts", "./plugin-2.ts", "./plugin-3.ts"]`,
       "dep.ts": `export const foo = () => console.log("Foo!");`,
       "entry.ts": `import { foo } from "./dep.ts"; console.log("Hello, world!"); foo();`,
@@ -813,6 +817,9 @@ describe("preloaded plugins do not intercept other preload files", () => {
         Bun.plugin({
           name: "virtual",
           setup(build) {
+            // Registering an onLoad sets vm.plugin_runner, so the is_in_preload
+            // gate in the onLoad/onResolve dispatch is actually reached.
+            build.onLoad({ filter: /\\0never/ }, () => undefined);
             build.module("shared-config", () => ({
               exports: { value: 42 },
               loader: "object",

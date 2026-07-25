@@ -4240,7 +4240,7 @@ impl VirtualMachine {
         let specifier_utf8 = specifier.to_utf8();
         let source_utf8 = source.to_utf8();
 
-        if jsc_vm.plugin_runner.is_some() && !jsc_vm.is_in_preload {
+        if jsc_vm.plugin_runner.is_some() {
             use bun_bundler::transpiler::PluginRunner;
             let spec = specifier_utf8.slice();
             if PluginRunner::could_be_plugin(spec) {

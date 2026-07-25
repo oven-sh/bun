@@ -5134,7 +5134,7 @@ unsafe fn resolve_hook(
 
     // `PluginRunner.onResolveJSC`.
     // SAFETY: `vm` is the live per-thread VM.
-    if unsafe { &*vm }.plugin_runner.is_some() && !unsafe { &*vm }.is_in_preload {
+    if unsafe { &*vm }.plugin_runner.is_some() {
         use bun_bundler_jsc::PluginRunner as plugin_runner;
         if plugin_runner::could_be_plugin(specifier_utf8.slice()) {
             let namespace = plugin_runner::extract_namespace(specifier_utf8.slice());

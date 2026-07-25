@@ -1545,7 +1545,6 @@ describe.concurrent("bundler", () => {
     },
   });
   itBundled("default/TopLevelReturnForbiddenImport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log('A');

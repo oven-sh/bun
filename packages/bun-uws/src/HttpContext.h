@@ -187,15 +187,21 @@ private:
          * HttpResponseData<SSL, true> block; the listen socket was sized for it
          * (see socketExtSize()) and this handler instantiation was installed by
          * enableNodeHttpCompat(). */
+        HttpResponseData<SSL> *httpResponseData;
         if constexpr (IsNodeHttp) {
-            new (us_socket_ext(s)) HttpResponseData<SSL, true>;
+            httpResponseData = new (us_socket_ext(s)) HttpResponseData<SSL, true>;
         } else {
-            new (us_socket_ext(s)) HttpResponseData<SSL>;
+            httpResponseData = new (us_socket_ext(s)) HttpResponseData<SSL>;
         }
-          /* Any connected socket should timeout until it has a request */
-        ((HttpResponse<SSL> *) s)->resetTimeout();
 
         HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+
+        /* Any connected socket should timeout until it has a request. Seed the
+         * per-socket idleTimeout from the context so the configured value
+         * governs the pre-request window too, instead of the compiled-in 10s
+         * default (which would otherwise cap node:http's headersTimeout). */
+        httpResponseData->idleTimeout = httpContextData->idleTimeout;
+        ((HttpResponse<SSL> *) s)->resetTimeout();
 
         /* node:http compat: the headers/request timeout window opens at accept
          * (mirrors the parser-initialize timestamp in Node's ConnectionsList),

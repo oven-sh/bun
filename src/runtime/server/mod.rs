@@ -1511,6 +1511,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     pub fn set_idle_timeout(&mut self, seconds: core::ffi::c_uint) {
         self.config.idle_timeout = seconds.min(255) as u8;
+        if let Some(app) = self.app {
+            // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+            bun_opaque::opaque_deref_mut(app).set_idle_timeout(self.config.idle_timeout);
+        }
     }
 
     pub fn set_flags(
@@ -2097,6 +2101,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
         // set_routes is only called after `self.app = Some(..)` in listen().
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
+        // The uWS context needs the configured idleTimeout up front so onOpen
+        // can seed each accepted socket with it; otherwise the compiled-in 10s
+        // default governs the pre-request window regardless of what the
+        // per-request handler re-arms it to.
+        app.set_idle_timeout(self.config.idle_timeout);
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
         // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;

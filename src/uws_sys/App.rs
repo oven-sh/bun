@@ -143,6 +143,10 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
 
+    pub fn set_idle_timeout(&mut self, seconds: u8) {
+        c::uws_app_set_idle_timeout(Self::SSL_FLAG, self.as_raw(), seconds)
+    }
+
     pub fn clear_routes(&mut self) {
         c::uws_app_clear_routes(Self::SSL_FLAG, self.as_raw())
     }
@@ -490,6 +494,7 @@ pub mod c {
             app: &mut uws_app_t,
             max_header_size: u64,
         );
+        pub(crate) safe fn uws_app_set_idle_timeout(ssl: i32, app: &mut uws_app_t, seconds: u8);
         pub(crate) fn uws_app_get(
             ssl: i32,
             app: *mut uws_app_t,

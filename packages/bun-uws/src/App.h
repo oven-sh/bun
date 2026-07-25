@@ -788,6 +788,11 @@ public:
         return std::move(*this);
     }
 
+    TemplatedApp &&setIdleTimeout(uint8_t seconds) {
+        httpContext->getSocketContextData()->idleTimeout = seconds;
+        return std::move(*this);
+    }
+
 };
 
 typedef TemplatedApp<false> App;

@@ -654,54 +654,60 @@ test("an empty request body chunk does not stall a stream body sent with an expl
 // byte count it declares must be enforced: a stream that produces more bytes is
 // a client-side request-smuggling primitive (the surplus lands at request-line
 // position on a keep-alive connection), and a stream that produces fewer leaves
-// the request unterminated. Node's fetch (undici) rejects both cases.
-test("a streamed body longer than its declared Content-Length is rejected before the surplus reaches the wire", async () => {
-  let recorded = Buffer.alloc(0);
-  const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
-  await using server = net
-    .createServer(sock => {
-      sock.on("error", () => {});
-      sock.on("close", onClose);
-      sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
-        const raw = recorded.toString("latin1");
-        const i = raw.indexOf("\r\n\r\n");
-        // Respond only once body bytes have arrived. A regression writes the
-        // full stream here; the fixed client aborts before buffering, so the
-        // server sees headers only and this branch is never taken.
-        if (i >= 0 && raw.length > i + 4) {
-          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-        }
-      });
-    })
-    .listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
+// the request unterminated. Node's fetch (undici) rejects both cases. The second
+// case pairs the Content-Length with an Upgrade header a server may ignore
+// (RFC 9110 section 7.8): the initial message is still HTTP/1.1-framed, so the
+// count must be enforced regardless of a requested upgrade.
+test.each([{ "content-length": "4" }, { "content-length": "4", "upgrade": "H2c" }])(
+  "a streamed body longer than its declared Content-Length %j is rejected before the surplus reaches the wire",
+  async headers => {
+    let recorded = Buffer.alloc(0);
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("close", onClose);
+        sock.on("data", d => {
+          recorded = Buffer.concat([recorded, d]);
+          const raw = recorded.toString("latin1");
+          const i = raw.indexOf("\r\n\r\n");
+          // Respond only once body bytes have arrived. A regression writes the
+          // full stream here; the fixed client aborts before buffering, so the
+          // server sees headers only and this branch is never taken.
+          if (i >= 0 && raw.length > i + 4) {
+            sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
 
-  const smuggled = "abcdGET /admin HTTP/1.1\r\n\r\n";
-  const outcome = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    duplex: "half",
-    headers: { "content-length": "4" },
-    body: new ReadableStream({
-      start(c) {
-        c.enqueue(new TextEncoder().encode(smuggled));
-        c.close();
-      },
-    }),
-  }).then(
-    r => ({ rejected: false as const, status: r.status }),
-    e => ({ rejected: true as const, code: e?.code }),
-  );
-  await closed;
-  const raw = recorded.toString("latin1");
-  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
-  expect({ outcome, contentLength: /^content-length: (.*)$/im.exec(raw)?.[1], body }).toEqual({
-    outcome: { rejected: true, code: "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH" },
-    contentLength: "4",
-    body: "",
-  });
-});
+    const smuggled = "abcdGET /admin HTTP/1.1\r\n\r\n";
+    const outcome = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      duplex: "half",
+      headers,
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(smuggled));
+          c.close();
+        },
+      }),
+    }).then(
+      r => ({ rejected: false as const, status: r.status }),
+      e => ({ rejected: true as const, code: e?.code }),
+    );
+    await closed;
+    const raw = recorded.toString("latin1");
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect({ outcome, contentLength: /^content-length: (.*)$/im.exec(raw)?.[1], body }).toEqual({
+      outcome: { rejected: true, code: "UND_ERR_REQ_CONTENT_LENGTH_MISMATCH" },
+      contentLength: "4",
+      body: "",
+    });
+  },
+);
 
 test("a streamed body shorter than its declared Content-Length is rejected", async () => {
   await using server = net

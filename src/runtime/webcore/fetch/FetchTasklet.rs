@@ -2198,7 +2198,6 @@ impl FetchTasklet {
             return ResumableSinkBackpressure::WantMore;
         }
         if let Some(declared) = self.declared_request_content_length
-            && !self.upgraded_connection
             && !self.result.is_http2
         {
             self.request_body_bytes_written = self
@@ -2277,7 +2276,6 @@ impl FetchTasklet {
             }
             self.abort_task();
         } else if let Some(declared) = self.declared_request_content_length
-            && !self.upgraded_connection
             && !self.result.is_http2
             && self.request_body_bytes_written != declared
         {

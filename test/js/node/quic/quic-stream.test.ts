@@ -2,7 +2,7 @@
 // `onwanttrailers`, records `trailers_pending` rather than `fin_pending`)
 // must deliver it with a FIN, never retract it with a RESET_STREAM.
 import { quicSendRawHeaders as kSendRaw } from "bun:internal-for-testing";
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -213,6 +213,7 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: ":protocol without CONNECT", pairs: [...valid, ":protocol", "websocket"] },
     { name: "CONNECT without :authority", pairs: [":method", "CONNECT"] },
     { name: "plain CONNECT with :path", pairs: [":method", "CONNECT", ":authority", "h", ":path", "/"] },
+    { name: "no :authority and no Host", pairs: [":method", "GET", ":scheme", "https", ":path", "/"] },
   ];
 
   const malformedResponses: Row[] = [
@@ -226,187 +227,176 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "pseudo after regular", pairs: ["x-ok", "v", ":status", "200"] },
   ];
 
-  async function withH3({ onServerHeaders }: { onServerHeaders?: (this: any, h: any) => void }) {
-    const seen: unknown[] = [];
-    const server = await listen(
+  const wellFormedRequests: Row[] = [
+    { name: "te: trailers", pairs: [...valid, "te", "trailers"] },
+    { name: "te: Trailers (mixed case)", pairs: [...valid, "te", "Trailers"] },
+    { name: "Host without :authority", pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", "localhost"] },
+    { name: "CONNECT without :scheme/:path", pairs: [":method", "CONNECT", ":authority", "localhost:443"] },
+    {
+      name: "extended CONNECT",
+      pairs: [":method", "CONNECT", ":protocol", "websocket", ":scheme", "https", ":authority", "h", ":path", "/"],
+    },
+  ];
+
+  // One shared session: a fresh handshake per row is what made this flake under
+  // concurrent load. The server dispatches on x-case so response-side rows can
+  // pick their own malformed reply.
+  const serverSeen: Record<string, unknown[]> = {};
+  let server: any, client: any, serverSession: any;
+  beforeAll(async () => {
+    server = await listen(
+      ss => {
+        serverSession = ss;
+        ss.closed.catch(() => {});
+        ss.onstream = (s: any) => s.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 30 },
+        onheaders(this: any, h: any) {
+          this.closed.catch(() => {});
+          const tag = h["x-case"];
+          if (tag?.startsWith("resp/")) {
+            (this as any)[kSendRaw](malformedResponses[+tag.slice(5)].pairs, 1, 1);
+          } else {
+            (serverSeen[tag ?? h[":path"]] ??= []).push(h);
+            this.sendHeaders({ ":status": "200" }, { terminal: true });
+          }
+        },
+      },
+    );
+    client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 30 },
+    });
+    client.closed.catch(() => {});
+    await client.opened;
+  });
+  afterAll(() => {
+    client?.close();
+    serverSession?.close();
+    server?.close().catch(() => {});
+  });
+
+  const closedErr = (s: any) =>
+    s.closed.then(
+      () => undefined,
+      (e: any) => e,
+    );
+
+  test.concurrent.each(malformedRequests)("server rejects malformed request: $name", async ({ name, pairs }) => {
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw](pairs, 1, 1);
+    const err = await closedErr(stream);
+    expect({ seen: serverSeen[name], code: err?.code, errorCode: err?.errorCode }).toEqual({
+      seen: undefined,
+      code: "ERR_QUIC_APPLICATION_ERROR",
+      errorCode: H3_MESSAGE_ERROR,
+    });
+  });
+
+  test.concurrent.each(malformedResponses.map((r, i) => ({ ...r, i })))(
+    "client rejects malformed response: $name",
+    async ({ i }) => {
+      const clientSeen: unknown[] = [];
+      const stream = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":authority": "h", ":path": "/", "x-case": `resp/${i}` },
+        onheaders: (h: any) => clientSeen.push(h),
+      });
+      const err = await closedErr(stream);
+      expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+        clientSeen: [],
+        code: "ERR_QUIC_APPLICATION_ERROR",
+        errorCode: H3_MESSAGE_ERROR,
+      });
+    },
+  );
+
+  test.concurrent.each(wellFormedRequests)("server accepts well-formed request: $name", async ({ name, pairs }) => {
+    const stream = await client.createBidirectionalStream();
+    (stream as any)[kSendRaw]([...pairs, "x-case", name], 1, 1);
+    const err = await closedErr(stream);
+    expect({ seen: serverSeen[name]?.length, err }).toEqual({ seen: 1, err: undefined });
+  });
+
+  // These reach the server through public `sendHeaders`, which does not enforce
+  // role-appropriate or mandatory pseudo-headers: the gap was on the API surface.
+  test.concurrent.each([
+    { name: "missing :status", headers: { "content-type": "text/plain" } },
+    { name: ":method in response", headers: { ":status": "200", ":method": "GET" } },
+  ])("client rejects response via public sendHeaders: $name", async ({ headers }) => {
+    const clientSeen: unknown[] = [];
+    await using server = await listen(
       async ss => {
         ss.onstream = (s: any) => s.closed.catch(() => {});
         await ss.closed.catch(() => {});
       },
       {
         sni: { "*": { keys: [key], certs: [cert] } },
-        transportParams: { maxIdleTimeout: 1 },
-        onheaders:
-          onServerHeaders ??
-          function (this: any, h: any) {
-            seen.push(h);
-            this.sendHeaders({ ":status": "200" });
-            this.writer.endSync();
-          },
-      },
-    );
-    try {
-      const client = await connect(server.address, {
-        servername: "localhost",
-        verifyPeer: "manual",
-        transportParams: { maxIdleTimeout: 1 },
-      });
-      await client.opened;
-      return {
-        client,
-        seen,
-        [Symbol.asyncDispose]: async () => {
-          client.close();
-          await server.close();
+        onheaders(this: any) {
+          this.sendHeaders(headers, { terminal: true });
         },
-      };
-    } catch (e) {
-      await server.close();
-      throw e;
+      },
+    );
+    const c = await connect(server.address, { servername: "localhost", verifyPeer: "manual" });
+    await c.opened;
+    try {
+      const stream = await c.createBidirectionalStream({
+        headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
+        onheaders: (h: any) => clientSeen.push(h),
+      });
+      const err = await closedErr(stream);
+      expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
+        clientSeen: [],
+        code: "ERR_QUIC_APPLICATION_ERROR",
+        errorCode: H3_MESSAGE_ERROR,
+      });
+    } finally {
+      c.close();
     }
-  }
-
-  test.concurrent.each(malformedRequests)("server rejects malformed request: $name", async ({ pairs }) => {
-    await using ctx = await withH3({});
-    const stream = await ctx.client.createBidirectionalStream();
-    (stream as any)[kSendRaw](pairs, 1, 1);
-
-    // The server resets the stream with H3_MESSAGE_ERROR; the client learns
-    // it via the RESET_STREAM frame, which rejects `closed`.
-    const err = await stream.closed.then(
-      () => undefined,
-      (e: any) => e,
-    );
-
-    expect({ seen: ctx.seen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-      seen: [],
-      code: "ERR_QUIC_APPLICATION_ERROR",
-      errorCode: H3_MESSAGE_ERROR,
-    });
-  });
-
-  test.concurrent.each(malformedResponses)("client rejects malformed response: $name", async ({ pairs }) => {
-    const clientSeen: unknown[] = [];
-    await using ctx = await withH3({
-      onServerHeaders(this: any) {
-        (this as any)[kSendRaw](pairs, 1, 1);
-      },
-    });
-    const stream = await ctx.client.createBidirectionalStream({
-      headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
-      onheaders(h: any) {
-        clientSeen.push(h);
-      },
-    });
-    const err = await stream.closed.then(
-      () => undefined,
-      (e: any) => e,
-    );
-
-    expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-      clientSeen: [],
-      code: "ERR_QUIC_APPLICATION_ERROR",
-      errorCode: H3_MESSAGE_ERROR,
-    });
-  });
-
-  // Well-formed sections that live near a boundary must still be accepted.
-  test.concurrent.each([
-    { name: "te: trailers", pairs: [...valid, "te", "trailers"] },
-    { name: "te: Trailers (mixed case)", pairs: [...valid, "te", "Trailers"] },
-    { name: "CONNECT without :scheme/:path", pairs: [":method", "CONNECT", ":authority", "localhost:443"] },
-    {
-      name: "extended CONNECT",
-      pairs: [":method", "CONNECT", ":protocol", "websocket", ":scheme", "https", ":authority", "h", ":path", "/"],
-    },
-  ])("server accepts well-formed request: $name", async ({ pairs }) => {
-    await using ctx = await withH3({});
-    const stream = await ctx.client.createBidirectionalStream();
-    (stream as any)[kSendRaw](pairs, 1, 1);
-    await stream.closed.catch(() => {});
-    expect(ctx.seen.length).toBe(1);
-  });
-
-  // These reach the server through public `sendHeaders`, which does not enforce
-  // role-appropriate or mandatory pseudo-headers: the gap was on the API surface.
-  test.concurrent("client rejects response missing :status (public sendHeaders)", async () => {
-    const clientSeen: unknown[] = [];
-    await using ctx = await withH3({
-      onServerHeaders(this: any) {
-        this.sendHeaders({ "content-type": "text/plain" }, { terminal: true });
-      },
-    });
-    const stream = await ctx.client.createBidirectionalStream({
-      headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
-      onheaders: (h: any) => clientSeen.push(h),
-    });
-    const err = await stream.closed.then(
-      () => undefined,
-      (e: any) => e,
-    );
-    expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-      clientSeen: [],
-      code: "ERR_QUIC_APPLICATION_ERROR",
-      errorCode: H3_MESSAGE_ERROR,
-    });
-  });
-
-  test.concurrent("client rejects response carrying :method (public sendHeaders)", async () => {
-    const clientSeen: unknown[] = [];
-    await using ctx = await withH3({
-      onServerHeaders(this: any) {
-        this.sendHeaders({ ":status": "200", ":method": "GET" }, { terminal: true });
-      },
-    });
-    const stream = await ctx.client.createBidirectionalStream({
-      headers: { ":method": "GET", ":scheme": "https", ":authority": "localhost", ":path": "/" },
-      onheaders: (h: any) => clientSeen.push(h),
-    });
-    const err = await stream.closed.then(
-      () => undefined,
-      (e: any) => e,
-    );
-    expect({ clientSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-      clientSeen: [],
-      code: "ERR_QUIC_APPLICATION_ERROR",
-      errorCode: H3_MESSAGE_ERROR,
-    });
   });
 
   test.concurrent("server rejects request missing :scheme (public sendHeaders)", async () => {
-    await using ctx = await withH3({});
-    const stream = await ctx.client.createBidirectionalStream();
+    const stream = await client.createBidirectionalStream();
     stream.sendHeaders({ ":method": "GET", ":authority": "localhost", ":path": "/" }, { terminal: true });
-    const err = await stream.closed.then(
-      () => undefined,
-      (e: any) => e,
-    );
-    expect({ seen: ctx.seen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-      seen: [],
+    const err = await closedErr(stream);
+    expect({ code: err?.code, errorCode: err?.errorCode }).toEqual({
       code: "ERR_QUIC_APPLICATION_ERROR",
       errorCode: H3_MESSAGE_ERROR,
     });
   });
 
   test.concurrent("server rejects pseudo-header in trailers", async () => {
-    let trailersSeen = 0;
-    await using ctx = await withH3({
-      onServerHeaders(this: any) {
-        this.ontrailers = () => trailersSeen++;
-        this.sendHeaders({ ":status": "200" }, { terminal: true });
+    // Dedicated session: the assertion is on the server's stream lifetime,
+    // which the shared session does not surface.
+    const serverStreamDone = Promise.withResolvers<void>();
+    const trailersSeen: unknown[] = [];
+    await using server = await listen(
+      async ss => {
+        ss.onerror = () => {};
+        ss.onstream = (s: any) => s.closed.then(serverStreamDone.resolve, serverStreamDone.resolve);
+        await ss.closed.catch(() => {});
       },
-    });
-    const stream = await ctx.client.createBidirectionalStream();
-    (stream as any)[kSendRaw](valid, 1, 0);
-    (stream as any)[kSendRaw]([":path", "/t"], 2, 1);
-    const err = await stream.closed.then(
-      () => undefined,
-      (e: any) => e,
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        onheaders(this: any) {
+          this.ontrailers = (t: any) => trailersSeen.push(t);
+        },
+      },
     );
-    expect({ trailersSeen, code: err?.code, errorCode: err?.errorCode }).toEqual({
-      trailersSeen: 0,
-      code: "ERR_QUIC_APPLICATION_ERROR",
-      errorCode: H3_MESSAGE_ERROR,
-    });
+    const c = await connect(server.address, { servername: "localhost", verifyPeer: "manual" });
+    c.onerror = () => {};
+    await c.opened;
+    try {
+      const stream = await c.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      (stream as any)[kSendRaw](valid, 1, 0);
+      (stream as any)[kSendRaw]([":path", "/t"], 2, 1);
+      await serverStreamDone.promise;
+    } finally {
+      c.close();
+    }
+    expect(trailersSeen).toEqual([]);
   });
 });

@@ -78,11 +78,11 @@ fn pseudo_header_bit(name: &[u8]) -> Option<u8> {
     }
 }
 
-/// RFC 9114 §4.1.2/§4.2/§4.3. lsquic's QPACK decoder does not validate these
-/// (nghttp3 does), so every inbound field section is checked here.
+/// RFC 9114 §4.1.2/§4.2/§4.3. lsquic's QPACK decoder leaves these to the caller.
 fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u32, ()> {
     let mut seen_pseudo: u8 = 0;
     let mut seen_regular = false;
+    let mut saw_host = false;
     let mut method_is_connect = false;
     let mut is_interim = false;
     for kv in pairs.chunks_exact(2) {
@@ -129,6 +129,7 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
             if !is_valid_h3_field_name(name) || is_connection_specific(name, value) {
                 return Err(());
             }
+            saw_host |= name == b"host";
         }
     }
     match role {
@@ -152,9 +153,9 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
                 // §4.4: plain CONNECT carries only :method and :authority.
                 seen_pseudo == PSEUDO_METHOD | PSEUDO_AUTHORITY
             } else {
-                // §4.3.1; RFC 9220 extended CONNECT also requires :authority.
+                // §4.3.1: one of :authority or Host is required for http/https.
                 let req = PSEUDO_REQUIRED_REQUEST | if extended { PSEUDO_AUTHORITY } else { 0 };
-                seen_pseudo & req == req
+                seen_pseudo & req == req && (seen_pseudo & PSEUDO_AUTHORITY != 0 || saw_host)
             };
             if ok {
                 Ok(QUIC_STREAM_HEADERS_KIND_INITIAL)

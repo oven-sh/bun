@@ -3525,10 +3525,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
-    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
-        // A DataView receiver has no `length`, so boundsError() compares against NaN.
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
-    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3545,6 +3541,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN; checkInt() has
+        // already validated the value's range by this point.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, offsetVal);
+    }
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
@@ -3558,10 +3559,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
-    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
-        // A DataView receiver has no `length`, so boundsError() compares against NaN.
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
-    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3578,6 +3575,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     if (bigint->sign() && limb - 0x8000000000000000 > 0x7fffffffffffffff) return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "value"_s, ">= -(2n ** 63n) and < 2n ** 63n"_s, valueVal);
     int64_t value = static_cast<int64_t>(limb);
 
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN; checkInt() has
+        // already validated the value's range by this point.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, offsetVal);
+    }
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
@@ -3591,10 +3593,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
-    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
-        // A DataView receiver has no `length`, so boundsError() compares against NaN.
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
-    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3610,6 +3608,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN; checkInt() has
+        // already validated the value's range by this point.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, offsetVal);
+    }
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_le(static_cast<uint8_t*>(castedThis->vector()) + offset, value);
@@ -3623,10 +3626,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
 
     auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
     RETURN_IF_EXCEPTION(scope, {});
-    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
-        // A DataView receiver has no `length`, so boundsError() compares against NaN.
-        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, callFrame->argument(1));
-    }
     auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
@@ -3642,6 +3641,11 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     uint64_t value = valueVal.toBigUInt64(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    if (castedThis->type() == JSC::DataViewType) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN; checkInt() has
+        // already validated the value's range by this point.
+        return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, offsetVal);
+    }
     size_t offset = validateOffsetBigInt64(lexicalGlobalObject, scope, offsetVal, byteLength);
     RETURN_IF_EXCEPTION(scope, {});
     write_int64_be(static_cast<uint8_t*>(castedThis->vector()) + offset, value);

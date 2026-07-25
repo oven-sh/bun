@@ -4814,6 +4814,14 @@ describe("read*/write* after JIT tier-up", () => {
     expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(u16, 5n, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
     expect(codeOf(() => Buffer.prototype.readBigInt64LE.call(u16, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
     expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 0n))).toBe("ERR_INVALID_ARG_TYPE");
+    // For the BigInt writers checkInt() validates the value's range before checkBounds() reaches the
+    // receiver, so a bad value wins over the DataView receiver.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0))).toBe(
+      "ERR_OUT_OF_RANGE",
+    );
+    expect(() => Buffer.prototype.writeBigInt64LE.call(new DataView(new ArrayBuffer(16)), 2n ** 64n, 0)).toThrow(
+      'The value of "value" is out of range',
+    );
     // A DataView has no `length`, so as in lib/internal/buffer.js every accessor reports `<= NaN`.
     const dv = new DataView(new ArrayBuffer(8));
     for (const f of [

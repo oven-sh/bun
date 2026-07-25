@@ -474,18 +474,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // output_properties[end] = output_properties[query.i]
-                                    // SAFETY: both indices < object.properties.len; G::Property
-                                    // has no Drop; src/dst may alias when end == query.i.
-                                    unsafe {
-                                        let props_ptr = object.properties.slice_mut().as_mut_ptr();
-                                        core::ptr::copy(
-                                            props_ptr.add(query.i as usize),
-                                            props_ptr.add(end as usize),
-                                            1,
-                                        );
+                                    // Swap (not copy) so the property currently at `end` stays
+                                    // reachable for later lookups when the binding order differs
+                                    // from the object order (#9613). `query.i < end` means the
+                                    // binding repeated a key already placed.
+                                    if query.i >= end {
+                                        object
+                                            .properties
+                                            .slice_mut()
+                                            .swap(end as usize, query.i as usize);
+                                        end += 1;
                                     }
-                                    end += 1;
                                 }
                             }
                         }

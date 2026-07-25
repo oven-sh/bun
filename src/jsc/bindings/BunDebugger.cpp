@@ -33,6 +33,11 @@ using namespace WebCore;
 
 class InProcessInspectorChannel;
 static InProcessInspectorChannel& inProcessInspectorChannel();
+
+// Defined in ZigGlobalObject.cpp; enqueues a native callback on the global's
+// microtask queue.
+using MicrotaskCallback = void (*)(void*);
+extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject*, void* ptr, MicrotaskCallback callback);
 // Deliver the in-process session's buffered events synchronously from a pause
 // loop (a posted drain task cannot run while the thread is parked).
 static void drainInProcessInspectorWhilePaused(Zig::GlobalObject*);
@@ -581,12 +586,20 @@ public:
         // Messages produced outside a synchronous dispatch (e.g.
         // Debugger.scriptParsed during compilation, a deferred awaitPromise
         // reply) would otherwise wait for the next command: wake the JS side
-        // with one same-context task. Not from the pause loop, which delivers
-        // synchronously instead (a task cannot run while the thread is parked).
-        if (!dispatchDepth && !inPauseLoop && !drainPosted && onMessages && scriptExecutionContextIdentifier) {
+        // with one microtask. A posted event-loop task would lose the race
+        // with process exit (V8 hands Node the reply from the resolving
+        // microtask, so nothing else needs to be keeping the loop alive).
+        // Not from the pause loop, which delivers synchronously instead (a
+        // microtask cannot run while the thread is parked).
+        if (!dispatchDepth && !inPauseLoop && !drainPosted && onMessages) {
+            JSC::JSObject* callback = onMessages.get();
+            if (!callback)
+                return;
             drainPosted = true;
-            ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [](ScriptExecutionContext& context) {
-                inProcessDrainTask(context);
+            JSC__JSGlobalObject__queueMicrotaskCallback(static_cast<Zig::GlobalObject*>(callback->globalObject()), this, [](void*) {
+                auto& channel = inProcessInspectorChannel();
+                channel.drainPosted = false;
+                channel.drainSynchronously();
             });
         }
     }

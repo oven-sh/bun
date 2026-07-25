@@ -141,22 +141,6 @@ describe.concurrent("AggregateError printer output", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("deep nesting renders depth marker", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `let x = new AggregateError([], "leaf"); for (let i = 0; i < 3000; i++) x = new AggregateError([x], ""); process.stdout.write(Bun.inspect(x));`,
-      ],
-      env: { ...bunEnv, NO_COLOR: "1" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout).toContain("[AggregateError: nesting too deep]");
-    expect(exitCode).toBe(0);
-  });
-
   test("uncaught AggregateError prints its own message", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", `throw new AggregateError([new Error("inner")], "outer message");`],

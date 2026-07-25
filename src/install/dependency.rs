@@ -1184,6 +1184,27 @@ pub fn parse<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
+    parse_with_registry(
+        alias,
+        alias_hash,
+        dependency,
+        sliced,
+        log,
+        manager.into().map(|m| m as &mut dyn NpmAliasRegistry),
+    )
+}
+
+/// [`parse`] for callers that have already split-borrowed the
+/// `PackageManager` and can only hand over the alias map (or another
+/// `NpmAliasRegistry` impl) as a disjoint field.
+pub fn parse_with_registry<'a>(
+    alias: String,
+    alias_hash: impl Into<Option<PackageNameHash>>,
+    dependency: &[u8],
+    sliced: &SlicedString,
+    log: impl Into<Option<&'a mut bun_ast::Log>>,
+    registry: Option<&mut dyn NpmAliasRegistry>,
+) -> Option<Version> {
     let dep = strings::trim_left(dependency, b" \t\n\r");
     parse_with_tag(
         alias,
@@ -1192,7 +1213,7 @@ pub fn parse<'a, 'b>(
         Tag::infer(dep),
         sliced,
         log.into(),
-        manager.into().map(|m| m as &mut dyn NpmAliasRegistry),
+        registry,
     )
 }
 

@@ -2455,7 +2455,7 @@ pub(crate) fn install_isolated_packages(
                         ResolutionTag::Git => {
                             installer.manager_mut().enqueue_git_for_checkout(
                                 dep_id,
-                                dep.name.slice(string_buf),
+                                dep.name,
                                 &pkg_res,
                                 ctx,
                                 patch_info.name_and_version_hash(),
@@ -2512,11 +2512,7 @@ pub(crate) fn install_isolated_packages(
                         }
                         ResolutionTag::LocalTarball => {
                             installer.manager_mut().enqueue_tarball_for_reading(
-                                dep_id,
-                                pkg_id,
-                                dep.name.slice(string_buf),
-                                &pkg_res,
-                                ctx,
+                                dep_id, pkg_id, dep.name, &pkg_res, ctx,
                             );
                         }
                         ResolutionTag::RemoteTarball => {

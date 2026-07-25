@@ -41,58 +41,52 @@ pub fn assign_root_resolution(
     this.assign_root_resolution(dependency_id, package_id)
 }
 
-impl PackageManager {
-    pub fn format_later_version_in_cache(
-        &mut self,
-        package_name: &[u8],
-        name_hash: PackageNameHash,
-        resolution: &Resolution,
-    ) -> Option<semver::version::Formatter<'_, u64>> {
-        // The `.load_from_memory` arm never reads scope; keep the param for
-        // signature parity.
-        let _ = package_name;
-        match resolution.tag {
-            ResolutionTag::Npm => {
-                let npm_version = resolution.npm().version;
-                if npm_version.tag.has_pre() {
-                    // TODO:
+/// Free fn over the disjoint fields `Tree::print` can supply, so the tree
+/// printer doesn't need `&mut PackageManager` while `Printer` holds
+/// `&lockfile`/`&options`.
+pub fn format_later_version_in_cache<'a>(
+    manifests: &'a mut crate::PackageManifestMap,
+    options: &super::Options,
+    lockfile: &crate::lockfile_real::Lockfile,
+    name_hash: PackageNameHash,
+    resolution: &Resolution,
+) -> Option<semver::version::Formatter<'a, u64>> {
+    match resolution.tag {
+        ResolutionTag::Npm => {
+            let npm_version = resolution.npm().version;
+            if npm_version.tag.has_pre() {
+                // TODO:
+                return None;
+            }
+
+            let manifest = manifests.by_name_hash_in_memory(name_hash)?;
+
+            if let Some(latest_version) = manifest
+                .find_by_dist_tag_with_filter(
+                    b"latest",
+                    options.minimum_release_age_ms,
+                    options.minimum_release_age_excludes,
+                )
+                .unwrap()
+            {
+                if latest_version.version.order(
+                    npm_version,
+                    &manifest.string_buf,
+                    lockfile.buffers.string_bytes.as_slice(),
+                ) != core::cmp::Ordering::Greater
+                {
                     return None;
                 }
-
-                // reshaped for borrowck —
-                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`
-                // would require simultaneous `&mut self.manifests`
-                // (receiver) and `&mut self` (arg). The memory-only path touches
-                // nothing on `PackageManager` besides the map, so use the
-                // disjoint-borrow helper and read `self.options` / `self.lockfile`
-                // alongside the held `&mut self.manifests` field borrow.
-                let manifest = self.manifests.by_name_hash_in_memory(name_hash)?;
-
-                if let Some(latest_version) = manifest
-                    .find_by_dist_tag_with_filter(
-                        b"latest",
-                        self.options.minimum_release_age_ms,
-                        self.options.minimum_release_age_excludes,
-                    )
-                    .unwrap()
-                {
-                    if latest_version.version.order(
-                        npm_version,
-                        &manifest.string_buf,
-                        self.lockfile.buffers.string_bytes.as_slice(),
-                    ) != core::cmp::Ordering::Greater
-                    {
-                        return None;
-                    }
-                    return Some(latest_version.version.fmt(&manifest.string_buf));
-                }
-
-                None
+                return Some(latest_version.version.fmt(&manifest.string_buf));
             }
-            _ => None,
-        }
-    }
 
+            None
+        }
+        _ => None,
+    }
+}
+
+impl PackageManager {
     pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
         self.options.scope_for_package_name(name)
     }

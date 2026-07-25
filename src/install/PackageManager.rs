@@ -264,7 +264,7 @@ pub(crate) type TaskCallbackList = Vec<TaskCallbackContext>;
 pub(crate) type TaskDependencyQueue =
     HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
-type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
+pub(crate) type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
 type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
 type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
 

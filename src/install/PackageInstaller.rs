@@ -1161,16 +1161,14 @@ impl<'a> PackageInstaller<'a> {
         pkg_name: String,
         resolution: &Resolution,
     ) {
-        // reshaped for borrowck — `string_bytes` is not mutated during install,
-        // so capture a raw slice once to avoid repeatedly re-borrowing `self.lockfile`
-        // across `&mut self` method calls below.
-        // SAFETY: `buffers.string_bytes` is append-only and never freed
-        // for the lifetime of this `PackageInstaller`.
-        let string_buf_ptr =
-            bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
+        // `lockfile()` returns `&'a Lockfile` (tied to the struct lifetime, not
+        // `&self`), so this slice is held safely across `&mut self` calls below.
+        // `buffers.string_bytes` is append-only and never freed for the
+        // lifetime of this `PackageInstaller`.
+        let string_buf: &'a [u8] = self.lockfile().buffers.string_bytes.as_slice();
         macro_rules! string_buf {
             () => {
-                string_buf_ptr.slice()
+                string_buf
             };
         }
 
@@ -1521,7 +1519,7 @@ impl<'a> PackageInstaller<'a> {
                         package_manager::enqueue_git_for_checkout(
                             self.manager_mut(),
                             dependency_id,
-                            alias.slice(string_buf!()),
+                            alias,
                             resolution,
                             context,
                             download_patch_hash,
@@ -1556,7 +1554,7 @@ impl<'a> PackageInstaller<'a> {
                             self.manager_mut(),
                             dependency_id,
                             package_id,
-                            alias.slice(string_buf!()),
+                            alias,
                             resolution,
                             context,
                         );

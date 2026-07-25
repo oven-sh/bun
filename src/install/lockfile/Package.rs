@@ -627,7 +627,7 @@ impl Package<u64> {
     }
 
     pub fn from_npm(
-        pm: &mut PackageManager,
+        known_npm_aliases: &mut crate::package_manager_real::NpmAliasMap,
         lockfile: &mut Lockfile,
         log: &mut bun_ast::Log,
         manifest: &Npm::PackageManifest,
@@ -804,13 +804,13 @@ impl Package<u64> {
                         name: name.value,
                         name_hash: name.hash,
                         behavior,
-                        version: Dependency::parse(
+                        version: crate::dependency::parse_with_registry(
                             name.value,
                             Some(name.hash),
                             sliced.slice,
                             &sliced,
                             Some(&mut *log),
-                            Some(&mut *pm),
+                            Some(&mut *known_npm_aliases),
                         )
                         .unwrap_or_default(),
                     };

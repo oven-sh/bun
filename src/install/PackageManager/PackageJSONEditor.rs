@@ -53,12 +53,11 @@ fn copy_property(p: &G::Property) -> G::Property {
 }
 
 pub(crate) fn edit_patched_dependencies(
-    manager: &mut PackageManager,
+    arena: &bun_alloc::Arena,
     package_json: &mut Expr,
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let arena = &manager.ast_arena;
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {

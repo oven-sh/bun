@@ -64,9 +64,11 @@ pub fn install_with_manager(
         }
     }
 
-    // reshaped for borrowck — `loadFromCwd` needs `manager`, `manager.lockfile`,
-    // and `manager.log` simultaneously. Route through a single
-    // raw provenance root so the three reborrows share a tag.
+    // reshaped for borrowck — `LoadResult<'a>` holds `&'a mut Lockfile`
+    // (== `manager.lockfile`) and is used alongside `manager` below, so this
+    // has to go through `load_lockfile_from_cwd`'s raw-ptr split. Dropping
+    // `LoadResultOk.lockfile` (callers already own `manager.lockfile`) would
+    // remove the alias but touches the yarn/pnpm/npm migration constructors.
     let load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile() {
         let mgr: *mut PackageManager = manager;
         // SAFETY: `mgr` is the sole provenance root; `lockfile`, `*mgr`, and
@@ -1104,30 +1106,17 @@ fn print_summary_tree(
     install_summary: &PackageInstallSummary,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // reshaped for borrowck — `Printer` borrows
-    // `this.lockfile` / `this.options` while `this` (the
-    // PackageManager) is also passed to `Tree::print`. Route through a single `*mut
-    // PackageManager` provenance root and reborrow disjoint fields
-    // through it: `Tree::print` only reads
-    // `manager.{updating_packages, workspace_name_hash}` and writes
-    // `manager.track_installed_bin`, none of which overlap `lockfile` /
-    // `options` / `update_requests`.
-    let mgr: *mut PackageManager = this;
-    // `mgr` is the sole provenance root from here through the `Tree::print`
-    // call; the `Printer` reborrows shared `lockfile` / `options` /
-    // `update_requests`, and the `&mut *mgr` passed to `Tree::print` only
-    // touches disjoint `PackageManager` fields. Wrapped once as `ParentRef`
-    // so the three read-only field reborrows go through safe `Deref`
-    // instead of three per-site raw projections. Safe `From<NonNull>`
-    // construction — `mgr` was just derived from `&mut *this`.
-    let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
-        core::ptr::NonNull::new(mgr).expect("derived from &mut, non-null"),
-    );
     let printer = Printer {
-        lockfile: &mgr_ref.lockfile,
-        options: &mgr_ref.options,
-        updates: &mgr_ref.update_requests,
+        lockfile: &this.lockfile,
+        options: &this.options,
+        updates: &this.update_requests,
         successfully_installed: install_summary.successfully_installed.as_ref(),
+    };
+    let mut ctx = LockfilePrinter::Tree::TreePrintCtx {
+        updating_packages: &this.updating_packages,
+        workspace_name_hash: this.workspace_name_hash,
+        track_installed_bin: &mut this.track_installed_bin,
+        manifests: &mut this.manifests,
     };
 
     Output::flush();
@@ -1137,23 +1126,9 @@ fn print_summary_tree(
     let writer = Output::writer_buffered();
     // Runtime bool → const-generic dispatch.
     if Output::enable_ansi_colors_stdout() {
-        LockfilePrinter::Tree::print::<_, true>(
-            &printer,
-            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
-            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
-            unsafe { &mut *mgr },
-            writer,
-            log_level,
-        )?;
+        LockfilePrinter::Tree::print::<_, true>(&printer, &mut ctx, writer, log_level)?;
     } else {
-        LockfilePrinter::Tree::print::<_, false>(
-            &printer,
-            // SAFETY: `mgr` is the sole provenance root; `Tree::print` writes only fields
-            // disjoint from `printer`'s shared `lockfile`/`options`/`update_requests` borrows.
-            unsafe { &mut *mgr },
-            writer,
-            log_level,
-        )?;
+        LockfilePrinter::Tree::print::<_, false>(&printer, &mut ctx, writer, log_level)?;
     }
     Ok(())
 }

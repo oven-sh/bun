@@ -871,11 +871,17 @@ impl Lockfile {
     }
 
     /// Is this a direct dependency of the workspace the install is taking place in?
-    pub fn is_root_dependency(&self, manager: &mut PackageManager, id: DependencyID) -> bool {
-        // `RootPackageId::get` caches into `manager`.
-        let root_id = manager
-            .root_package_id
-            .get(self, manager.workspace_name_hash);
+    ///
+    /// Takes the two `PackageManager` fields it reads instead of a full
+    /// `&mut PackageManager` so callers can hold `&self` (a borrow of
+    /// `manager.lockfile`) alongside the call.
+    pub fn is_root_dependency(
+        &self,
+        root_package_id: &mut crate::package_manager_real::RootPackageId,
+        workspace_name_hash: Option<PackageNameHash>,
+        id: DependencyID,
+    ) -> bool {
+        let root_id = root_package_id.get(self, workspace_name_hash);
         self.packages.items_dependencies()[root_id as usize].contains(id)
     }
 
@@ -1991,26 +1997,6 @@ impl Lockfile {
     #[inline]
     pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
         slicable.slice(self.buffers.string_bytes.as_slice())
-    }
-
-    /// [`str`](Self::str) with the borrow detached from `self`.
-    ///
-    /// The install pipeline frequently needs to read a string out of
-    /// `buffers.string_bytes` and then call back into `&mut PackageManager`
-    /// (which owns the `Lockfile`). The caller would otherwise have to write
-    /// `unsafe { detach_lifetime(self.str(x)) }` at
-    /// every site. Consolidating that here keeps the SAFETY argument in one
-    /// place.
-    ///
-    /// SAFETY (internal): `string_bytes` is append-only for the lifetime of a
-    /// resolve/enqueue pass and is never reallocated while a detached slice is
-    /// live. The returned slice must not outlive the
-    /// `Lockfile`.
-    #[inline]
-    pub fn str_detached<'a, T: bun_semver::Slicable>(&self, slicable: &T) -> &'a [u8] {
-        // SAFETY: see doc comment — same invariant every prior call site
-        // already relied on via `bun_ptr::detach_lifetime`.
-        unsafe { bun_ptr::detach_lifetime(slicable.slice(self.buffers.string_bytes.as_slice())) }
     }
 
     /// Construct an empty Lockfile value in place.

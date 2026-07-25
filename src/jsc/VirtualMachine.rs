@@ -2974,7 +2974,9 @@ fn esm_specifier_decode_buf() -> *mut bun_paths::PathBuffer {
 /// Absolute paths are left to the callers' existing `file://` handling.
 #[cold]
 pub fn decode_esm_specifier(path: &[u8]) -> Option<&'static [u8]> {
-    for sep in [b"%2f".as_slice(), b"%2F", b"%5c", b"%5C"] {
+    // %2F,%5C: Node's ERR_INVALID_MODULE_SPECIFIER. %3F: Bun's module key
+    // re-splits on '?' at fetch time, so a decoded '?' cannot round-trip.
+    for sep in [b"%2f".as_slice(), b"%2F", b"%3f", b"%3F", b"%5c", b"%5C"] {
         if bun_core::strings::contains(path, sep) {
             return None;
         }

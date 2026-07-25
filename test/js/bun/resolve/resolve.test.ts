@@ -728,13 +728,13 @@ describe("ESM import specifier percent-encoding", () => {
     expect(exitCode).toBe(0);
   });
 
-  it.concurrent("rejects encoded path separators and malformed escapes", async () => {
+  it.concurrent("rejects encoded separators, encoded '?' and malformed escapes", async () => {
     using dir = tempDir("esm-specifier-percent-sep", {
       "sub/file.js": "export default 1;",
       "a%ZZ.js": "export default 1;",
       "index.mjs": [
         `const out = {};`,
-        `for (const spec of ['./sub%2Ffile.js', './sub%2ffile.js', './sub%5Cfile.js', './sub%5cfile.js', './a%ZZ.js']) {`,
+        `for (const spec of ['./sub%2Ffile.js', './sub%2ffile.js', './sub%5Cfile.js', './sub%5cfile.js', './q%3Fmark.js', './q%3fmark.js', './a%ZZ.js']) {`,
         `  try { await import(spec); out[spec] = 'resolved'; }`,
         `  catch (e) { out[spec] = e.code ?? e.name; }`,
         `}`,
@@ -757,6 +757,8 @@ describe("ESM import specifier percent-encoding", () => {
       "./sub%2ffile.js": "ERR_MODULE_NOT_FOUND",
       "./sub%5Cfile.js": "ERR_MODULE_NOT_FOUND",
       "./sub%5cfile.js": "ERR_MODULE_NOT_FOUND",
+      "./q%3Fmark.js": "ERR_MODULE_NOT_FOUND",
+      "./q%3fmark.js": "ERR_MODULE_NOT_FOUND",
       "./a%ZZ.js": "ERR_MODULE_NOT_FOUND",
     });
     expect(exitCode).toBe(0);

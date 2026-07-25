@@ -8,7 +8,7 @@ import { join } from "node:path";
 // the ByteStream pipe path resumed the upstream unconditionally after every
 // chunk, so the proxy read the entire upstream body into the uWS send buffer
 // as fast as the origin could produce it.
-test("Bun.serve proxying a fetch() body applies client backpressure to the upstream", async () => {
+test.concurrent("Bun.serve proxying a fetch() body applies client backpressure to the upstream", async () => {
   const CHUNK = 256 * 1024;
   const CAP_CHUNKS = 256; // 64 MiB runaway cap
   const BODY_BYTES = CHUNK * CAP_CHUNKS;
@@ -125,7 +125,7 @@ test("Bun.serve proxying a fetch() body applies client backpressure to the upstr
 // A client that aborts while the proxy is holding the upstream paused must not
 // leave the upstream fetch parked forever: on_abort cancels the piped stream
 // so the proxy tears down its connection to the upstream.
-test("client abort while backpressured cancels the upstream fetch", async () => {
+test.concurrent("client abort while backpressured cancels the upstream fetch", async () => {
   const CHUNK = 256 * 1024;
   const CAP_CHUNKS = 256;
 

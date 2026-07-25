@@ -34,7 +34,7 @@ describe("test.failing", () => {
     expect(stderr).toContain(" 2 fail\n");
     expect(stderr.replaceAll(/ \[[\d.]+ms\]/g, "")).toMatchInlineSnapshot(`
       "
-      failing-test-passes.fixture.ts:
+      (fail) failing-test-passes.fixture.ts:
       (fail) This should fail but it doesnt
         ^ this test is marked as failing but it passed. Remove \`.failing\` if tested behavior now works
       (fail) This should fail but it doesnt (async)

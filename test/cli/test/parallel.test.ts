@@ -224,32 +224,31 @@ test("--parallel prints per-test lines under their file's header", async () => {
   expect(stderr).toMatch(/\(pass\) alpha-two/);
   expect(stderr).toMatch(/\(pass\) bravo-one/);
   expect(stderr).toMatch(/\(pass\) bravo-two/);
-  // Result lines from concurrent workers may interleave; whenever the source
-  // file changes the header is re-emitted, so the nearest preceding header
-  // for any alpha-* line is always a.test.js (and likewise for bravo-*).
+  // Each file's results are buffered and rendered as one block, so the nearest
+  // preceding header for any alpha-* line is always a.test.js (and likewise for
+  // bravo-*). The header carries the file's aggregate status.
   const lines = stderr.split("\n");
   let header = "";
   for (const ln of lines) {
     if (ln.endsWith(".test.js:")) header = ln;
-    else if (ln.includes("alpha-")) expect(header).toBe("a.test.js:");
-    else if (ln.includes("bravo-")) expect(header).toBe("b.test.js:");
+    else if (ln.includes("alpha-")) expect(header).toBe("(pass) a.test.js:");
+    else if (ln.includes("bravo-")) expect(header).toBe("(pass) b.test.js:");
   }
   expect(exitCode).toBe(0);
 });
 
-test("--parallel streams test results in realtime, not buffered per-file", async () => {
+test("--parallel never splits a file's results across workers", async () => {
   // Each file: one fast test then one slow test. With 2 workers running
-  // concurrently the first two results should arrive long before both files
-  // would finish (which is gated on the 600ms slow test). Per-file buffering
-  // would withhold output until ~600ms; per-test streaming surfaces the fast
-  // results within the worker spawn + first-tick latency.
-  using dir = tempDir("parallel-realtime", {
+  // concurrently, per-test streaming would interleave a-fast and b-fast ahead of
+  // both slow results. Buffering per file means each file's block is emitted
+  // whole, so a file's two results are always adjacent.
+  using dir = tempDir("parallel-buffered", {
     "a.test.js": `import {test,expect} from "bun:test";
        test("a-fast",()=>expect(1).toBe(1));
-       test("a-slow",async()=>{await Bun.sleep(600);expect(1).toBe(1);});`,
+       test("a-slow",async()=>{await Bun.sleep(300);expect(1).toBe(1);});`,
     "b.test.js": `import {test,expect} from "bun:test";
        test("b-fast",()=>expect(1).toBe(1));
-       test("b-slow",async()=>{await Bun.sleep(600);expect(1).toBe(1);});`,
+       test("b-slow",async()=>{await Bun.sleep(300);expect(1).toBe(1);});`,
   });
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2"],
@@ -258,26 +257,20 @@ test("--parallel streams test results in realtime, not buffered per-file", async
     stderr: "pipe",
     stdout: "pipe",
   });
-
-  const t0 = performance.now();
-  let firstFastAt = 0;
-  let firstSlowAt = 0;
-  let acc = "";
-  for await (const chunk of proc.stderr) {
-    acc += new TextDecoder().decode(chunk);
-    const now = performance.now() - t0;
-    if (!firstFastAt && /\(pass\) [ab]-fast/.test(acc)) firstFastAt = now;
-    if (!firstSlowAt && /\(pass\) [ab]-slow/.test(acc)) firstSlowAt = now;
-    if (firstFastAt && firstSlowAt) break;
-  }
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout).toContain("PARALLEL");
-  expect(firstFastAt).toBeGreaterThan(0);
-  expect(firstSlowAt).toBeGreaterThan(0);
-  // The slow result cannot arrive before ~600ms, so this proves the fast
-  // result was not held back waiting for it.
-  expect(firstFastAt).toBeLessThan(firstSlowAt - 300);
+  const order = stderr
+    .split("\n")
+    .map(ln => ln.match(/\((?:pass|fail)\) ([ab]-(?:fast|slow))/)?.[1])
+    .filter(Boolean);
+  expect(order.sort()).toEqual(["a-fast", "a-slow", "b-fast", "b-slow"]);
+  // a's two results are adjacent, and so are b's — no interleaving.
+  const raw = stderr
+    .split("\n")
+    .map(ln => ln.match(/\((?:pass|fail)\) ([ab])-(?:fast|slow)/)?.[1])
+    .filter(Boolean);
+  expect(raw.join("")).toMatch(/^(aabb|bbaa)$/);
   expect(exitCode).toBe(0);
 });
 

@@ -510,6 +510,9 @@ impl BunTestRoot {
         debug_assert!(self.active_file.is_none());
         self.file_generation = self.file_generation.wrapping_add(1);
 
+        // Each file renders its own buffered block.
+        reporter.file_block.clear();
+
         // Derive the stored backref from the TestRunner's *stable* storage
         // (the global `Jest::RUNNER` NonNull) rather than `self as *mut _`.
         // A pointer coerced from `&mut self` carries provenance bounded by this
@@ -548,7 +551,13 @@ impl BunTestRoot {
         if let Some(active) = &self.active_file {
             // SAFETY: single-threaded; no other `&mut BunTest` is live during
             // teardown. Write goes through `UnsafeCell` (see `BunTestCell::get`).
-            active.get().reporter = None;
+            let active = active.get();
+            if let Some(reporter) = active.reporter {
+                // SAFETY: reporter outlives every BunTest (owned by
+                // `test_command::exec`); no other borrow is live here.
+                unsafe { (*reporter.as_ptr()).flush_file_block() };
+            }
+            active.reporter = None;
         }
         self.active_file = None; // drops the Rc (deinit)
     }
@@ -565,6 +574,21 @@ impl BunTestRoot {
 
     pub fn clone_active_file(&self) -> Option<BunTestPtr> {
         self.active_file.clone()
+    }
+
+    /// `process.exit()` from inside a test never reaches `exit_file`, so the
+    /// buffered block for the file in flight would be dropped on the floor.
+    pub fn flush_active_file_block(&self) {
+        let Some(active_file) = &self.active_file else {
+            return;
+        };
+        // Raw-ptr field read for the same reason as `on_before_print`.
+        // SAFETY: single-threaded; `active_file` keeps the cell alive.
+        let reporter = unsafe { *core::ptr::addr_of!((*active_file.as_ptr()).reporter) };
+        if let Some(reporter) = reporter {
+            // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
+            unsafe { (*reporter.as_ptr()).flush_file_block() };
+        }
     }
 
     pub fn on_before_print(&self) {

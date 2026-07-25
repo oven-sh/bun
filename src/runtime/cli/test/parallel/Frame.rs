@@ -10,7 +10,9 @@ pub enum Kind {
     Ready,
     /// u32 file_idx
     FileStart,
-    /// u32 file_idx, str formatted_line (ANSI included; printed verbatim)
+    /// u32 file_idx, str scope_path (`\x1f`-separated describe names, outermost
+    /// first), u32 basic_status, str formatted_line (ANSI included; printed
+    /// verbatim). The coordinator buffers these into the file's block.
     TestDone,
     /// 9 × u32: file_idx, pass, fail, skip, todo, expectations, skipped_label, files, unhandled
     FileDone,

@@ -104,8 +104,8 @@ describe("shows first arg name correctly in test output", () => {
 
     const fullOutput = stdout.toString() + stderr.toString();
 
-    expect(fullOutput).toInclude("add > should pass");
-    expect(fullOutput).not.toInclude("[object Object] > should pass");
+    expect(fullOutput).toInclude("add\n  (pass) should pass");
+    expect(fullOutput).not.toInclude("[object Object]");
   });
   test("describe block shows named class correctly in test output", async () => {
     const test_dir = tempDirWithFiles(".", {
@@ -131,9 +131,9 @@ describe("shows first arg name correctly in test output", () => {
 
     const fullOutput = stdout.toString() + stderr.toString();
 
-    expect(fullOutput).toInclude("Rectangle > should pass");
-    expect(fullOutput).not.toInclude("[object Object] > should pass");
-    expect(fullOutput).not.toInclude("MyClass > should pass");
+    expect(fullOutput).toInclude("Rectangle\n  (pass) should pass");
+    expect(fullOutput).not.toInclude("[object Object]");
+    expect(fullOutput).not.toInclude("MyClass\n  (pass) should pass");
   });
 
   test("describe block shows anonymous class correctly in test output", async () => {
@@ -160,8 +160,8 @@ describe("shows first arg name correctly in test output", () => {
 
     const fullOutput = stdout.toString() + stderr.toString();
 
-    expect(fullOutput).toInclude("MyClass > should pass");
-    expect(fullOutput).not.toInclude("[object Object] > should pass");
+    expect(fullOutput).toInclude("MyClass\n  (pass) should pass");
+    expect(fullOutput).not.toInclude("[object Object]");
   });
 });
 

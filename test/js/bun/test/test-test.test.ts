@@ -303,8 +303,6 @@ it("should return non-zero exit code for invalid syntax", async () => {
     expect(err.replaceAll(test_dir.replaceAll("\\", "/"), "<dir>").replaceAll(/\[(.*)\ms\]/g, "[xx ms]"))
       .toMatchInlineSnapshot(`
       "
-      bad.test.js:
-
       # Unhandled error between tests
       -------------------------------
       1 | !!!
@@ -313,6 +311,8 @@ it("should return non-zero exit code for invalid syntax", async () => {
           at <dir>/bad.test.js:1:3
       -------------------------------
 
+
+      bad.test.js:
 
        0 pass
        1 fail

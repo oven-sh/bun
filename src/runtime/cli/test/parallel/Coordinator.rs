@@ -18,7 +18,7 @@ use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
-use crate::test_command::CommandLineReporter;
+use crate::test_command::{self, CommandLineReporter, FileBlock};
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -50,6 +50,11 @@ pub struct Coordinator<'a> {
     /// from concurrent workers interleave; whenever the source file changes the
     /// header is re-emitted so every line has visible context. None at start.
     pub last_header_idx: Option<u32>,
+    /// Buffered blocks for the files currently in flight, keyed by file index.
+    /// Workers interleave, so a file's rows are held until its `FileDone` and
+    /// then rendered as one block — groups never split, and the file/describe
+    /// lines can carry an aggregate glyph.
+    pub blocks: Vec<(u32, FileBlock)>,
     pub frame: Frame,
     pub parallel_limit: u32,
     pub scale_up_after_ms: i64,
@@ -267,6 +272,7 @@ impl<'a> Coordinator<'a> {
             return;
         }
         self.bailed = true;
+        self.flush_all_blocks();
         self.break_dots();
         bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -297,6 +303,49 @@ impl<'a> Coordinator<'a> {
             bun_paths::fs::FileSystem::instance().top_level_dir(),
             self.files[file_idx as usize].as_bytes(),
         )
+    }
+
+    /// Buffered block for `file_idx`, created on first use.
+    fn block_for(&mut self, file_idx: u32) -> &mut FileBlock {
+        if let Some(i) = self.blocks.iter().position(|(idx, _)| *idx == file_idx) {
+            return &mut self.blocks[i].1;
+        }
+        self.blocks.push((file_idx, FileBlock::default()));
+        &mut self.blocks.last_mut().unwrap().1
+    }
+
+    /// Render `file_idx`'s buffered block, led by its `path:` header carrying the
+    /// file's aggregate glyph.
+    fn flush_block(&mut self, file_idx: u32) {
+        let Some(i) = self.blocks.iter().position(|(idx, _)| *idx == file_idx) else {
+            return;
+        };
+        let (_, block) = self.blocks.remove(i);
+        if block.is_empty() {
+            return;
+        }
+        self.break_dots();
+        self.last_header_idx = Some(file_idx);
+        let colors = Output::enable_ansi_colors_stderr();
+        let glyph = test_command::fmt_file_glyph(block.file_status(), colors);
+        let _ = write!(
+            Output::error_writer(),
+            "\n{} {}:\n",
+            bstr::BStr::new(&glyph),
+            bstr::BStr::new(self.rel_path(file_idx))
+        );
+        block.render(Output::error_writer());
+        block.log_peak();
+        Output::flush();
+    }
+
+    /// Bail/crash paths exit without a `FileDone`; emit whatever each in-flight
+    /// file has produced so far rather than dropping it.
+    fn flush_all_blocks(&mut self) {
+        while let Some((idx, _)) = self.blocks.first() {
+            let idx = *idx;
+            self.flush_block(idx);
+        }
     }
 
     fn ensure_header(&mut self, file_idx: u32) {
@@ -344,6 +393,8 @@ impl<'a> Coordinator<'a> {
             }
             frame::Kind::TestDone => {
                 let idx = rd.u32_();
+                let scope_path = rd.str();
+                let status = rd.u32_() as u8;
                 let formatted = rd.str();
                 if w.inflight != Some(idx) {
                     return;
@@ -352,9 +403,14 @@ impl<'a> Coordinator<'a> {
                 if formatted.is_empty() {
                     return; // e.g. pass under --only-failures
                 }
-                // dots-mode failures print a full line (writeTestStatusLine);
-                // dots themselves are unterminated.
-                let is_dot = self.dots && !strings::ends_with_char(formatted, b'\n');
+                if !self.dots {
+                    let status = test_command::basic_result_from_u8(status);
+                    let line = formatted.to_vec();
+                    self.block_for(idx).push(scope_path, status, line);
+                    return;
+                }
+                // dots-mode failures print a full line; dots are unterminated.
+                let is_dot = !strings::ends_with_char(formatted, b'\n');
                 if !is_dot {
                     self.break_dots();
                     self.ensure_header(idx);
@@ -381,6 +437,7 @@ impl<'a> Coordinator<'a> {
                 ] = nums;
 
                 self.flush_captured(w);
+                self.flush_block(idx);
 
                 // A worker can write file_done and crash before the coordinator
                 // reads the frame; onWorkerExit() will already have called
@@ -533,6 +590,9 @@ impl<'a> Coordinator<'a> {
     }
 
     fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
+        // Whatever the worker managed to report before dying still deserves to
+        // be shown, grouped, above the crash line.
+        self.flush_block(file_idx);
         self.break_dots();
         let mut buf = [0u8; 32];
         bun_core::pretty_error!(

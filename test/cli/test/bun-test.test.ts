@@ -985,8 +985,8 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("fs module > has $method");
-        expect(stderr).toContain("path module > has $method");
+        expect(stderr).toContain("fs module\n  (pass) has $method");
+        expect(stderr).toContain("path module\n  (pass) has $method");
         expect(stderr).toContain("2 pass");
       });
 
@@ -1313,9 +1313,11 @@ describe("bun test", () => {
         .replace(/Ran \d+ tests across \d+ files?\.\s*$/, "Ran 2 tests across 1 file.") // Normalize test counts
         .trim(),
     ).toMatchInlineSnapshot(`
-      "bun-test-*.test.ts:
-      (pass) group 1 > should match filter
-      (pass) group 2 > another test that should match filter
+      "(pass) bun-test-*.test.ts:
+      (pass) group 1
+        (pass) should match filter
+      (pass) group 2
+        (pass) another test that should match filter
 
        2 pass
        5 filtered out
@@ -1634,5 +1636,138 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stdout).not.toContain("RAN other");
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("nested describe output", () => {
+  /** Result lines only: drops the banner, blank lines, timings and the summary. */
+  function resultLines(stderr: string, cwd?: string): string {
+    return stderr
+      .split("\n")
+      .map(l => l.replace(/ \[[\d.]+m?s\]$/, ""))
+      .filter(l => /^\s*\((pass|fail|skip|todo)\)|^\s*[^\s(]/.test(l))
+      .filter(l => /^\s*\((pass|fail|skip|todo)\)/.test(l))
+      .map(l => (cwd ? l.replaceAll(cwd, "<cwd>") : l))
+      .join("\n");
+  }
+
+  test("indents tests under their describe scope", () => {
+    const stderr = runTest({
+      input: `
+        import { test, describe } from "bun:test";
+        describe("outer", () => {
+          describe("inner", () => {
+            test("deep", () => {});
+          });
+          test("shallow", () => {});
+        });
+        test("top", () => {});
+      `,
+      args: ["--reporter-outfile=/dev/null"],
+    });
+    expect(resultLines(stderr).split("\n").slice(1).join("\n")).toMatchInlineSnapshot(`
+      "(pass) outer
+        (pass) inner
+          (pass) deep
+        (pass) shallow
+      (pass) top"
+    `);
+  });
+
+  test("file and describe lines carry a worst-case aggregate status", () => {
+    const stderr = runTest({
+      input: `
+        import { test, describe, expect } from "bun:test";
+        describe("has a failure", () => {
+          test("ok", () => {});
+          test("bad", () => { throw new Error("boom"); });
+        });
+        describe("all skipped", () => {
+          test.skip("s", () => {});
+        });
+        describe("all todo", () => {
+          test.todo("t");
+        });
+        describe("passes", () => {
+          test("p", () => {});
+        });
+      `,
+    });
+    const lines = resultLines(stderr).split("\n");
+    // File header rolls up to the worst status of everything below it.
+    expect(lines[0]).toStartWith("(fail) ");
+    expect(lines).toContain("(fail) has a failure");
+    expect(lines).toContain("(skip) all skipped");
+    expect(lines).toContain("(todo) all todo");
+    expect(lines).toContain("(pass) passes");
+  });
+
+  // Groups are ordered by when their first result arrives, but each group's
+  // rows stay together — the property the streaming reporter can't offer.
+  test("keeps a describe group contiguous when tests finish out of order", () => {
+    const stderr = runTest({
+      input: `
+        import { test, describe } from "bun:test";
+        describe("slow group", () => {
+          test.concurrent("late", async () => { await Bun.sleep(50); });
+        });
+        describe("fast group", () => {
+          test.concurrent("early", async () => {});
+        });
+      `,
+    });
+    expect(resultLines(stderr).split("\n").slice(1).join("\n")).toMatchInlineSnapshot(`
+      "(pass) fast group
+        (pass) early
+      (pass) slow group
+        (pass) late"
+    `);
+  });
+
+  test("--parallel never splits a describe group", () => {
+    const body = (name: string, delay: number) => `
+      import { test, describe } from "bun:test";
+      describe("${name}", () => {
+        test("one", async () => { await Bun.sleep(${delay}); });
+        test("two", async () => { await Bun.sleep(${delay}); });
+      });
+    `;
+    const stderr = runTest({
+      input: [
+        { filename: "a.test.ts", contents: body("group-a", 40) },
+        { filename: "b.test.ts", contents: body("group-b", 10) },
+      ],
+      args: ["--parallel=2"],
+    });
+    const groups = resultLines(stderr)
+      .split("\n")
+      .filter(l => l.includes("group-"))
+      .map(l => l.trim());
+    expect(groups).toHaveLength(2);
+    // Each group's two tests must sit together, so a group name never repeats.
+    expect(new Set(groups).size).toBe(2);
+    for (const g of groups) {
+      const at = resultLines(stderr).split("\n").indexOf(g);
+      expect(resultLines(stderr).split("\n")[at + 1]).toContain("one");
+      expect(resultLines(stderr).split("\n")[at + 2]).toContain("two");
+    }
+  });
+
+  test("--only-failures prunes passing groups", () => {
+    const stderr = runTest({
+      input: `
+        import { test, describe } from "bun:test";
+        describe("clean", () => {
+          test("ok", () => {});
+        });
+        describe("dirty", () => {
+          test("bad", () => { throw new Error("boom"); });
+        });
+      `,
+      args: ["--only-failures"],
+    });
+    const lines = resultLines(stderr).split("\n");
+    expect(lines).not.toContain("(pass) clean");
+    expect(lines).toContain("(fail) dirty");
   });
 });

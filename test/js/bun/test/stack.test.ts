@@ -147,6 +147,8 @@ test("Async functions frame should be included in stack trace", async () => {
         at baz (file:NN:NN)
         at async bar (file:NN:NN)
         at async foo (file:NN:NN)
-        at async <anonymous> (file:NN:NN)"
+        at async <anonymous> (file:NN:NN)
+        at unknown
+        at processTicksAndRejections (file:NN:NN)"
   `);
 });

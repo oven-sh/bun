@@ -19,9 +19,7 @@ test("describe/test", async () => {
     {
       "exitCode": 1,
       "stderr": 
-    "test/js/bun/test/bun_test.fixture.ts:
-
-    # Unhandled error between tests
+    "# Unhandled error between tests
     -------------------------------
     45 |     });
     46 |   });
@@ -36,11 +34,33 @@ test("describe/test", async () => {
 
     error: uh oh
     uh oh
-    (fail) actual tests > more functions called after delayed done
-    (pass) actual tests > another test
-    (pass) concurrent describe 1 > item 1
-    (pass) concurrent describe 1 > item 2
-    (pass) concurrent describe 1 > snapshot in concurrent group
+    AssertionError: expected 1 assertion, but test ended with 0 assertions
+    224 |   });
+    225 |   describe("done combined with promise", () => {
+    226 |     let completion = 0;
+    227 |     beforeEach(() => (completion = 0));
+    228 |     afterEach(() => {
+    229 |       if (completion != 2) throw "completion is not 2";
+                                           ^
+    error: completion is not 2
+        at <anonymous> (file:NN:NN)
+    error: test error
+    test error
+    error: promise error
+    promise error
+    error: done error
+    done error
+    error: promise error
+    promise error
+
+    (fail) test/js/bun/test/bun_test.fixture.ts:
+    (fail) actual tests
+      (fail) more functions called after delayed done
+      (pass) another test
+    (pass) concurrent describe 1
+      (pass) item 1
+      (pass) item 2
+      (pass) snapshot in concurrent group
     (pass) LINE 66
     (skip) LINE 67
     (fail) LINE 68
@@ -61,7 +81,6 @@ test("describe/test", async () => {
     (pass) addition 1 + 2 = 3
     (pass) addition 2 + 3 = 5
     (pass) addition 3 + 4 = 7
-    AssertionError: expected 1 assertion, but test ended with 0 assertions
     (fail) expect.assertions
     (pass) expect.assertions not yet supported in concurrent tests
     (pass) expect.assertions not yet supported in concurrent tests
@@ -72,37 +91,25 @@ test("describe/test", async () => {
     (pass) another test
     (pass) misattributed error
     (pass) passes because it catches the misattributed error
-    (pass) hooks > test1
-    (pass) hooks > test2
-    (pass) done parameter > instant done
-    (pass) done parameter > delayed done
-    (pass) done parameter > done combined with promise > done combined with promise, promise resolves first
-    (pass) done parameter > done combined with promise > done combined with promise, done resolves first
-    224 |   });
-    225 |   describe("done combined with promise", () => {
-    226 |     let completion = 0;
-    227 |     beforeEach(() => (completion = 0));
-    228 |     afterEach(() => {
-    229 |       if (completion != 2) throw "completion is not 2";
-                                           ^
-    error: completion is not 2
-        at <anonymous> (file:NN:NN)
-    (fail) done parameter > done combined with promise > fails when completion is not incremented
-    error: test error
-    test error
-    error: promise error
-    promise error
-    (fail) done parameter > done combined with promise error conditions > both error and done resolves first
-    error: done error
-    done error
-    (fail) done parameter > done combined with promise error conditions > done errors only
-    error: promise error
-    promise error
-    (fail) done parameter > done combined with promise error conditions > promise errors only
-    (pass) done parameter > second call of done callback ignores triggers error
+    (pass) hooks
+      (pass) test1
+      (pass) test2
+    (fail) done parameter
+      (pass) instant done
+      (pass) delayed done
+      (fail) done combined with promise
+        (pass) done combined with promise, promise resolves first
+        (pass) done combined with promise, done resolves first
+        (fail) fails when completion is not incremented
+      (fail) done combined with promise error conditions
+        (fail) both error and done resolves first
+        (fail) done errors only
+        (fail) promise errors only
+      (pass) second call of done callback ignores triggers error
     (pass) microtasks and rejections are drained after the test callback is executed
-    (pass) after inside test > the test 1
-    (pass) after inside test > the test 2
+    (pass) after inside test
+      (pass) the test 1
+      (pass) the test 2
     (pass) beforeEach inside test fails
 
     2 tests skipped:

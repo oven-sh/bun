@@ -275,14 +275,14 @@ impl Agg {
         }
     }
 
-    /// any fail → `✗`; else any pass → `✓`; else all todo → `✎`; else `»`.
+    /// any fail → `✗`; else any pass → `✓`; else any todo → `✎`; else `»`.
     fn worst(self) -> bun_test::Execution::Result {
         use bun_test::Execution::Result as R;
         if self.fail {
             R::Fail
         } else if self.pass {
             R::Pass
-        } else if self.todo && !self.skip {
+        } else if self.todo {
             R::Todo
         } else {
             R::Skip
@@ -314,6 +314,8 @@ pub struct FileBlock {
     /// Node 0 is the file root; children always have a higher index than their
     /// parent, which `aggregate` relies on.
     nodes: Vec<GroupNode>,
+    /// Body bytes currently buffered.
+    bytes: usize,
     /// High-water marks, reported by `BUN_DEBUG_TESTREPORTER`.
     peak_bytes: usize,
     peak_rows: usize,
@@ -351,7 +353,12 @@ impl FileBlock {
         }
         self.nodes[cur].items.push(GroupItem::Row(row));
 
+        self.bytes += body.len();
         self.rows.push(TestRow { status, body });
+        // Tracked here, not in `clear`: callers log the peak before clearing,
+        // and the coordinator drops its block without clearing at all.
+        self.peak_bytes = self.peak_bytes.max(self.bytes);
+        self.peak_rows = self.peak_rows.max(self.rows.len());
     }
 
     /// Rollup per node, bottom-up. Children always sit at a higher index than
@@ -420,9 +427,7 @@ impl FileBlock {
     }
 
     pub fn clear(&mut self) {
-        let bytes: usize = self.rows.iter().map(|r| r.body.len()).sum();
-        self.peak_bytes = self.peak_bytes.max(bytes);
-        self.peak_rows = self.peak_rows.max(self.rows.len());
+        self.bytes = 0;
         self.rows.clear();
         self.nodes.clear();
     }

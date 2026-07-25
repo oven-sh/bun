@@ -1651,6 +1651,24 @@ describe("nested describe output", () => {
       .join("\n");
   }
 
+  // Fixture prelude that blocks a file until every peer file has also started,
+  // so `--parallel` output really is produced by overlapping workers.
+  function barrier(me: string, peers: string[]): string {
+    return `
+      {
+        const fs = require("fs");
+        const at = n => import.meta.dir + "/" + n + ".barrier";
+        fs.writeFileSync(at("${me}"), "");
+        const idle = new Int32Array(new SharedArrayBuffer(4));
+        const deadline = Date.now() + 10_000;
+        const peers = ${JSON.stringify(peers)};
+        while (!peers.every(p => fs.existsSync(at(p))) && Date.now() < deadline) {
+          Atomics.wait(idle, 0, 0, 5);
+        }
+      }
+    `;
+  }
+
   test("indents tests under their describe scope", () => {
     const stderr = runTest({
       input: `
@@ -1691,6 +1709,22 @@ describe("nested describe output", () => {
         describe("passes", () => {
           test("p", () => {});
         });
+        describe("fail beats pass", () => {
+          test("p", () => {});
+          test("f", () => { throw new Error("boom"); });
+        });
+        describe("pass beats todo", () => {
+          test("p", () => {});
+          test.todo("t");
+        });
+        describe("pass beats skip", () => {
+          test("p", () => {});
+          test.skip("s", () => {});
+        });
+        describe("todo beats skip", () => {
+          test.todo("t");
+          test.skip("s", () => {});
+        });
       `,
     });
     const lines = resultLines(stderr).split("\n");
@@ -1700,6 +1734,11 @@ describe("nested describe output", () => {
     expect(lines).toContain("(skip) all skipped");
     expect(lines).toContain("(todo) all todo");
     expect(lines).toContain("(pass) passes");
+    // Full precedence matrix: fail > pass > todo > skip.
+    expect(lines).toContain("(fail) fail beats pass");
+    expect(lines).toContain("(pass) pass beats todo");
+    expect(lines).toContain("(pass) pass beats skip");
+    expect(lines).toContain("(todo) todo beats skip");
   });
 
   // Groups are ordered by when their first result arrives, but each group's
@@ -1725,8 +1764,9 @@ describe("nested describe output", () => {
   });
 
   test("--parallel never splits a describe group", () => {
-    const body = (name: string, delay: number) => `
+    const body = (name: string, me: string, peer: string, delay: number) => `
       import { test, describe } from "bun:test";
+      ${barrier(me, [peer])}
       describe("${name}", () => {
         test("one", async () => { await Bun.sleep(${delay}); });
         test("two", async () => { await Bun.sleep(${delay}); });
@@ -1734,22 +1774,21 @@ describe("nested describe output", () => {
     `;
     const stderr = runTest({
       input: [
-        { filename: "a.test.ts", contents: body("group-a", 40) },
-        { filename: "b.test.ts", contents: body("group-b", 10) },
+        { filename: "a.test.ts", contents: body("group-a", "a", "b", 40) },
+        { filename: "b.test.ts", contents: body("group-b", "b", "a", 10) },
       ],
       args: ["--parallel=2"],
     });
-    const groups = resultLines(stderr)
-      .split("\n")
-      .filter(l => l.includes("group-"))
-      .map(l => l.trim());
+    const lines = resultLines(stderr).split("\n");
+    const groups = lines.filter(l => l.includes("group-")).map(l => l.trim());
     expect(groups).toHaveLength(2);
     // Each group's two tests must sit together, so a group name never repeats.
     expect(new Set(groups).size).toBe(2);
     for (const g of groups) {
-      const at = resultLines(stderr).split("\n").indexOf(g);
-      expect(resultLines(stderr).split("\n")[at + 1]).toContain("one");
-      expect(resultLines(stderr).split("\n")[at + 2]).toContain("two");
+      const at = lines.findIndex(l => l.trim() === g);
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(lines[at + 1]).toContain("one");
+      expect(lines[at + 2]).toContain("two");
     }
   });
 

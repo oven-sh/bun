@@ -1,6 +1,24 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tls } from "harness";
 
+// Fixture prelude that blocks a file until every peer file has also started, so
+// the assertions below run against genuinely overlapping workers.
+function barrier(me: string, peers: string[]): string {
+  return `
+    {
+      const fs = require("fs");
+      const at = n => import.meta.dir + "/" + n + ".barrier";
+      fs.writeFileSync(at("${me}"), "");
+      const idle = new Int32Array(new SharedArrayBuffer(4));
+      const deadline = Date.now() + 10_000;
+      const peers = ${JSON.stringify(peers)};
+      while (!peers.every(p => fs.existsSync(at(p))) && Date.now() < deadline) {
+        Atomics.wait(idle, 0, 0, 5);
+      }
+    }
+  `;
+}
+
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
   // remaining files; otherwise one fast worker handles all three.
@@ -238,15 +256,17 @@ test("--parallel prints per-test lines under their file's header", async () => {
 });
 
 test("--parallel never splits a file's results across workers", async () => {
-  // Each file: one fast test then one slow test. With 2 workers running
-  // concurrently, per-test streaming would interleave a-fast and b-fast ahead of
-  // both slow results. Buffering per file means each file's block is emitted
-  // whole, so a file's two results are always adjacent.
+  // Each file: one fast test then one slow test. A barrier ensures both files
+  // are actually in flight; per-test streaming would then interleave a-fast and
+  // b-fast ahead of both slow results. Buffering per file means each file's
+  // block is emitted whole, so a file's two results are always adjacent.
   using dir = tempDir("parallel-buffered", {
     "a.test.js": `import {test,expect} from "bun:test";
+       ${barrier("a", ["b"])}
        test("a-fast",()=>expect(1).toBe(1));
        test("a-slow",async()=>{await Bun.sleep(300);expect(1).toBe(1);});`,
     "b.test.js": `import {test,expect} from "bun:test";
+       ${barrier("b", ["a"])}
        test("b-fast",()=>expect(1).toBe(1));
        test("b-slow",async()=>{await Bun.sleep(300);expect(1).toBe(1);});`,
   });

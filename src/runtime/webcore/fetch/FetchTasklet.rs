@@ -2528,13 +2528,18 @@ impl FetchTasklet {
             }
 
             if let BodyValue::Locked(locked) = body {
-                if let Some(promise) = locked.promise {
-                    if promise.is_empty_or_undefined_or_null() {
-                        // Scenario 2b.
-                        this.ignore_remaining_response_body(true);
-                    }
-                } else {
-                    // Scenario 3.
+                let has_live_promise = locked
+                    .promise
+                    .is_some_and(|p| !p.is_empty_or_undefined_or_null());
+                if !has_live_promise {
+                    // Scenario 2a / 3: the body was never consumed. Close the
+                    // connection (undici destroys on GC) instead of resuming
+                    // the paused transport and draining the rest of the body
+                    // just to pool the socket. Same abort-then-ignore shape as
+                    // on_stream_cancelled_callback; abort_task() only touches
+                    // atomics and the HTTP-thread shutdown queue, so it is safe
+                    // from this Weak finalizer.
+                    this.abort_task();
                     this.ignore_remaining_response_body(true);
                 }
             }

@@ -5,7 +5,9 @@ import { join } from "node:path";
 test("BuildMessage .stack is a string with name, message, and location", async () => {
   let error: any;
   try {
-    await import("../util/inspect-error-fixture-bad.js");
+    // Unique query so this test gets its own BuildMessage instance instead of
+    // the cached one mutated by other tests in this file.
+    await import("../util/inspect-error-fixture-bad.js?stack-test");
     expect.unreachable();
   } catch (e) {
     error = e;

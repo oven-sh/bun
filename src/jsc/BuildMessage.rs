@@ -60,12 +60,15 @@ impl BuildMessage {
             if !location.file.is_empty() && location.line > 0 {
                 write!(
                     &mut text,
-                    "\n    at {}:{}:{}",
+                    "\n    at {}:{}",
                     bstr::BStr::new(&location.file),
                     location.line,
-                    location.column,
                 )
                 .expect("infallible: in-memory write");
+                if location.column > 0 {
+                    write!(&mut text, ":{}", location.column)
+                        .expect("infallible: in-memory write");
+                }
             }
         }
         text

@@ -2969,13 +2969,9 @@ fn esm_specifier_decode_buf() -> *mut bun_paths::PathBuffer {
     p
 }
 
-/// Node's ESM loader resolves relative specifiers as URLs and percent-decodes
-/// the pathname via `fileURLToPath()` before `stat`. Encoded path separators
-/// are rejected (ERR_INVALID_MODULE_SPECIFIER) prior to decoding. Absolute
-/// specifiers are not handled here because `file://` inputs are already
-/// decoded to an absolute filesystem path by the callers (moduleLoaderResolve,
-/// moduleLoaderImportModule, do_resolve_with_args) and we cannot distinguish
-/// that from a user-typed absolute path at this layer.
+/// Node's ESM loader percent-decodes relative specifiers via
+/// `fileURLToPath()` and rejects encoded separators before decoding.
+/// Absolute paths are left to the callers' existing `file://` handling.
 #[cold]
 fn decode_esm_specifier(path: &[u8]) -> Option<&'static [u8]> {
     for sep in [b"%2f".as_slice(), b"%2F", b"%5c", b"%5C"] {

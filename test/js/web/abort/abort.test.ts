@@ -143,4 +143,60 @@ describe("AbortSignal", () => {
     expect(JSON.parse(stdout.trim())).toEqual([0, 1, 2, 3, 4, 5, "t"]);
     expect(exitCode).toBe(0);
   });
+
+  // innerInvokeEventListeners used to call removeEventListener() per once:true
+  // listener before invoking it, so N once-listeners cost N memmoves of the
+  // tail: O(N^2). AbortController.abort() hits this via runAbortSteps ->
+  // dispatchEvent. The assertion is on scaling (time(2N)/time(N)), not wall
+  // time, to survive debug+ASAN.
+  test.concurrent("dispatching N {once:true} listeners scales linearly, not O(N^2)", async () => {
+    const src = `
+      function dispatchOnly(n) {
+        const t = new EventTarget();
+        for (let i = 0; i < n; i++) t.addEventListener("x", () => {}, { once: true });
+        const t0 = performance.now();
+        t.dispatchEvent(new Event("x"));
+        return performance.now() - t0;
+      }
+      dispatchOnly(256); // warm up
+      const samples = {};
+      // N kept small because addEventListener is itself O(N^2) (spec dup-check)
+      // and that setup cost dominates under debug+ASAN.
+      for (const n of [1000, 2000]) {
+        let best = Infinity;
+        for (let i = 0; i < 2; i++) best = Math.min(best, dispatchOnly(n));
+        samples[n] = best;
+      }
+      // Quadratic gives ~4x per doubling; linear gives ~2x. Ignore the ratio
+      // entirely when the larger sample is sub-ms (release build noise floor).
+      const ratio = samples[2000] < 1 ? 1 : samples[2000] / samples[1000];
+      console.log(JSON.stringify({ samples, ratio }));
+      if (ratio > 3) process.exit(1);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect({ ...JSON.parse(stdout.trim()), exitCode }).toMatchObject({ exitCode: 0 });
+  });
+
+  test.concurrent("a {once:true} listener that re-registers itself during dispatch is added, not rejected as a duplicate", async () => {
+    const src = `
+      const t = new EventTarget();
+      let calls = 0;
+      const fn = () => {
+        calls++;
+        if (calls === 1) t.addEventListener("x", fn, { once: true });
+      };
+      t.addEventListener("x", fn, { once: true });
+      t.dispatchEvent(new Event("x"));  // fires fn (calls=1), re-adds fn
+      t.dispatchEvent(new Event("x"));  // fires fn again (calls=2)
+      t.dispatchEvent(new Event("x"));  // no listener left
+      console.log(calls);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("2");
+    expect(exitCode).toBe(0);
+  });
 });

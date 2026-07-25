@@ -95,6 +95,8 @@ static inline size_t findListener(const EventListenerVector& listeners, EventLis
 {
     for (size_t i = 0; i < listeners.size(); ++i) {
         auto& registeredListener = listeners[i];
+        if (registeredListener->wasRemoved())
+            continue;
         if (registeredListener->callback() == listener && registeredListener->useCapture() == useCapture)
             return i;
     }
@@ -161,6 +163,28 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     }
 
     return false;
+}
+
+// Sweep out entries already flagged via markAsRemoved() (used by
+// EventTarget::innerInvokeEventListeners for once:true listeners so they can
+// be dropped in one linear pass instead of N O(N) removeAt() shifts).
+unsigned EventListenerMap::compactRemoved(const AtomString& eventType)
+{
+    releaseAssertOrSetThreadUID();
+    Locker locker { m_lock };
+
+    for (unsigned i = 0; i < m_entries.size(); ++i) {
+        if (m_entries[i].first == eventType) {
+            unsigned removed = m_entries[i].second.removeAllMatching([](auto& listener) {
+                return listener->wasRemoved();
+            });
+            if (m_entries[i].second.isEmpty())
+                m_entries.removeAt(i);
+            return removed;
+        }
+    }
+
+    return 0;
 }
 
 EventListenerVector* EventListenerMap::find(const AtomString& eventType)

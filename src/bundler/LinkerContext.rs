@@ -3224,8 +3224,7 @@ impl<'a> LinkerContext<'a> {
 
                     // Keep `__require` live so the wrapper can bind `require` for direct eval.
                     if self.options.output_format != Format::Cjs {
-                        let scope =
-                            &self.graph.ast.items_module_scope()[source_index as usize];
+                        let scope = &self.graph.ast.items_module_scope()[source_index as usize];
                         if scope.contains_direct_eval
                             && scope.members.get(&b"require"[..]).is_some_and(|m| {
                                 self.graph.symbols.get_const(m.ref_).map(|s| s.kind)

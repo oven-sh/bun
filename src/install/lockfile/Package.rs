@@ -2165,13 +2165,8 @@ impl Package<u64> {
             out
         };
 
-        // `Features::LINK` skips dependencies and peerDependencies: the linked
-        // package is a symlink into its real source tree, so its own install
-        // owns that node_modules. Runtime resolution realpath's the symlink
-        // before walking node_modules, which means peers installed in *this*
-        // project are invisible to the linked package. pnpm prints a warning
-        // in this situation (https://github.com/pnpm/pnpm/pull/5876); do the
-        // same so `bun link` users aren't surprised.
+        // Linked packages are symlinks; node_modules lookup realpath's them
+        // first, so peers installed here are invisible. Match pnpm and warn.
         if FEATURES == Features::LINK
             && pm.options.log_level != crate::package_manager::LogLevel::Silent
         {

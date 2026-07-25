@@ -38,6 +38,23 @@ test.concurrent('"use client" stays above the JSX runtime import with --no-bundl
   expect(exitCode).toBe(0);
 });
 
+test.concurrent('"use client" is hoisted past a preserved legal comment in --no-bundle', async () => {
+  using dir = tempDir("issue-6854-nobundle-lic", {
+    "input.jsx": `/*! @license MIT */\n"use client";\nexport function Button() { return <div>Click</div>; }`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--no-bundle", "input.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toStartWith('"use client";\n');
+  expect(stdout).toContain("@license MIT");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent('"use client" is hoisted above bundler runtime helpers', async () => {
   using dir = tempDir("issue-6854-bundle", {
     "entry.tsx": `"use client";\nconst mod = require("./cjs.cjs");\nexport function C() { return <div>{mod.x}</div>; }`,

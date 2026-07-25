@@ -16,6 +16,11 @@ use bun_jsc::zig_string::ZigString;
 /// `SIGINT`. `alert`/`confirm`/`prompt` all do a blocking read that waits for
 /// `\n`, so without this guard they hang with no visible feedback.
 ///
+/// The guard must be installed before the prompt text is written: the line
+/// discipline applies `ICRNL` at receive time, so a `\r` that arrives in the
+/// window between the prompt becoming visible and `tcsetattr` applying stays a
+/// `\r` in the input queue and the canonical read never sees a line.
+///
 /// On non-TTY stdin `tcgetattr` fails and the guard is inert, so piped input
 /// keeps its existing behaviour.
 #[cfg(unix)]
@@ -31,7 +36,7 @@ impl CookedStdinGuard {
                 let mut cooked = orig;
                 cooked.c_iflag |= libc::ICRNL;
                 cooked.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG | libc::IEXTEN;
-                match bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Drain, &cooked) {
+                match bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, &cooked) {
                     Ok(()) => Some(orig),
                     Err(_) => None,
                 }
@@ -46,7 +51,7 @@ impl CookedStdinGuard {
 impl Drop for CookedStdinGuard {
     fn drop(&mut self) {
         if let Some(orig) = self.saved.as_ref() {
-            let _ = bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Drain, orig);
+            let _ = bun_sys::posix::tcsetattr(0, bun_sys::posix::TCSA::Now, orig);
         }
     }
 }
@@ -94,6 +99,8 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let output = Output::writer();
     let has_message = !arguments.is_empty();
 
+    let _cooked = CookedStdinGuard::new();
+
     // 2. If the method was invoked with no arguments, then let message be the empty string; otherwise, let message be the method's first argument.
     if has_message {
         let message = arguments[0].to_slice(global)?;
@@ -129,8 +136,6 @@ fn alert(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // *  Not pertinent to use their complex system in a server context.
     Output::flush();
 
-    let _cooked = CookedStdinGuard::new();
-
     // 7. Optionally, pause while waiting for the user to acknowledge the message.
     let mut reader = Output::stdin_reader();
     loop {
@@ -151,6 +156,8 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let arguments = frame.arguments();
     let output = Output::writer();
     let has_message = !arguments.is_empty();
+
+    let _cooked = CookedStdinGuard::new();
 
     if has_message {
         // 2. Set message to the result of normalizing newlines given message.
@@ -184,8 +191,6 @@ fn confirm(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     // 5. Invoke WebDriver BiDi user prompt opened with this, "confirm", and message.
     // *  Not relevant in a server context.
     Output::flush();
-
-    let _cooked = CookedStdinGuard::new();
 
     // 6. Pause until the user responds either positively or negatively.
     let mut reader = Output::stdin_reader();
@@ -327,6 +332,8 @@ pub mod prompt {
             JSValue::NULL
         };
 
+        let _cooked = CookedStdinGuard::new();
+
         if has_message {
             // 2. Set message to the result of normalizing newlines given message.
             // *  Not pertinent to a server runtime so we will just let the terminal handle this.
@@ -377,8 +384,6 @@ pub mod prompt {
         // 6. Invoke WebDriver BiDi user prompt opened with this, "prompt" and message.
         // *  Not relevant in a server context.
         Output::flush();
-
-        let _cooked = CookedStdinGuard::new();
 
         // 7. Pause while waiting for the user's response.
         // `bun.Output.buffered_stdin.reader()` — process-global 4 KiB buffered stdin.

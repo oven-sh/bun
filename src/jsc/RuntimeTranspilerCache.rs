@@ -43,7 +43,11 @@ bun_core::declare_scope!(cache, visible);
 /// path reinstates the bug for any previously-cached TLA module (#30887).
 /// Version 23: `jsx.runtime`/`jsx.development` participate in the features hash,
 /// and tsconfig `"jsx": "react-jsx"` now emits the production runtime (#4227).
-const EXPECTED_VERSION: u32 = 23;
+/// Version 24: ModuleInfo is attached on every runtime ESM transpile (not only
+/// under --isolate). Pre-24 entries have `esm_record_byte_length == 0`, so a
+/// cache HIT would fall back to JSC's own analyze and re-raise the type-only
+/// re-export error this version fixes (#7384).
+const EXPECTED_VERSION: u32 = 24;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

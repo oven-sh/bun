@@ -119,6 +119,7 @@ using namespace JSC;
     macro(isUntransferable) \
     macro(join) \
     macro(json) \
+    macro(kIsNodeStyleListener) \
     macro(kResistStopPropagation) \
     macro(key) \
     macro(lazy) \

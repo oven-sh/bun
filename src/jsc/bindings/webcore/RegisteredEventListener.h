@@ -36,11 +36,12 @@ class WeakPtrImplWithEventTargetData;
 class RegisteredEventListener : public RefCounted<RegisteredEventListener> {
 public:
     struct Options {
-        Options(bool capture = false, bool passive = false, bool once = false, bool resistStopPropagation = false)
+        Options(bool capture = false, bool passive = false, bool once = false, bool resistStopPropagation = false, bool isNodeStyleListener = false)
             : capture(capture)
             , passive(passive)
             , once(once)
             , resistStopPropagation(resistStopPropagation)
+            , isNodeStyleListener(isNodeStyleListener)
         {
         }
 
@@ -48,6 +49,7 @@ public:
         bool passive;
         bool once;
         bool resistStopPropagation;
+        bool isNodeStyleListener;
     };
 
     static Ref<RegisteredEventListener> create(Ref<EventListener>&& listener, const Options& options)
@@ -63,6 +65,7 @@ public:
     bool isOnce() const { return m_isOnce; }
     bool wasRemoved() const { return m_wasRemoved; }
     bool resistsStopPropagation() const { return m_resistStopPropagation; }
+    bool isNodeStyleListener() const { return m_isNodeStyleListener; }
 
     void markAsRemoved();
 
@@ -81,6 +84,7 @@ private:
         , m_isOnce(options.once)
         , m_wasRemoved(false)
         , m_resistStopPropagation(options.resistStopPropagation)
+        , m_isNodeStyleListener(options.isNodeStyleListener)
         , m_callback(WTF::move(listener))
     {
     }
@@ -90,6 +94,7 @@ private:
     bool m_isOnce : 1;
     bool m_wasRemoved : 1;
     bool m_resistStopPropagation : 1;
+    bool m_isNodeStyleListener : 1;
     uint32_t m_abortAlgorithmIdentifier { 0 };
     Ref<EventListener> m_callback;
     WeakPtr<AbortSignal, WeakPtrImplWithEventTargetData> m_abortSignal;

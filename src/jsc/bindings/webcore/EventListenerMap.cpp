@@ -163,6 +163,23 @@ bool EventListenerMap::remove(const AtomString& eventType, EventListener& listen
     return false;
 }
 
+bool EventListenerMap::removeAll(const AtomString& eventType)
+{
+    releaseAssertOrSetThreadUID();
+    Locker locker { m_lock };
+
+    for (unsigned i = 0; i < m_entries.size(); ++i) {
+        if (m_entries[i].first == eventType) {
+            for (auto& listener : m_entries[i].second)
+                listener->markAsRemoved();
+            m_entries.removeAt(i);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 EventListenerVector* EventListenerMap::find(const AtomString& eventType)
 {
     for (auto& entry : m_entries) {

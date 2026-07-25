@@ -103,7 +103,7 @@ bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListene
     // if (!passive.has_value() && Quirks::shouldMakeEventListenerPassive(*this, eventType, listener.get()))
     //     passive = true;
 
-    auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once, options.resistStopPropagation });
+    auto* registeredListener = ensureEventTargetData().eventListenerMap.add(eventType, listener.copyRef(), { options.capture, passive.value_or(false), options.once, options.resistStopPropagation, options.isNodeStyleListener });
     if (!registeredListener)
         return false;
 
@@ -340,7 +340,10 @@ void EventTarget::innerInvokeEventListeners(Event& event, EventListenerVector li
 #endif
 
         // InspectorInstrumentation::willHandleEvent(context, event, *registeredListener);
-        registeredListener->callback().handleEvent(context, event);
+        if (registeredListener->isNodeStyleListener()) [[unlikely]]
+            registeredListener->callback().handleEventNodeStyle(context, event);
+        else
+            registeredListener->callback().handleEvent(context, event);
         // InspectorInstrumentation::didHandleEvent(context, event, *registeredListener);
 
         if (registeredListener->isPassive())
@@ -364,6 +367,18 @@ const EventListenerVector& EventTarget::eventListeners(const AtomString& eventTy
     auto* listenerVector = data ? data->eventListenerMap.find(eventType) : nullptr;
     static NeverDestroyed<EventListenerVector> emptyVector;
     return listenerVector ? *listenerVector : emptyVector.get();
+}
+
+void EventTarget::removeAllEventListenersForType(const AtomString& eventType)
+{
+    auto* data = eventTargetData();
+    if (!data)
+        return;
+    if (data->eventListenerMap.removeAll(eventType)) {
+        if (this->onDidChangeListener) [[unlikely]]
+            this->onDidChangeListener(*this, eventType, OnDidChangeListenerKind::Clear);
+        eventListenersDidChange();
+    }
 }
 
 void EventTarget::removeAllEventListeners()

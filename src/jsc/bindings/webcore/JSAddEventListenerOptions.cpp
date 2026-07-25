@@ -96,6 +96,12 @@ template<> AddEventListenerOptions convertDictionary<AddEventListenerOptions>(JS
             result.resistStopPropagation = convert<IDLBoolean>(lexicalGlobalObject, resistStopPropagationValue);
             RETURN_IF_EXCEPTION(throwScope, {});
         }
+        JSValue isNodeStyleListenerValue = object->get(&lexicalGlobalObject, builtinNames(vm).kIsNodeStyleListenerPrivateName());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!isNodeStyleListenerValue.isUndefined()) {
+            result.isNodeStyleListener = convert<IDLBoolean>(lexicalGlobalObject, isNodeStyleListenerValue);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
     }
     return result;
 }

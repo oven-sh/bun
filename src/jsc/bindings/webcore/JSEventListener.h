@@ -78,6 +78,7 @@ protected:
 
     JSEventListener(JSC::JSObject* function, JSC::JSObject* wrapper, bool isAttribute, CreatedFromMarkup, DOMWrapperWorld&);
     void handleEvent(ScriptExecutionContext&, Event&) override;
+    void handleEventNodeStyle(ScriptExecutionContext&, Event&) final;
     void setWrapperWhenInitializingJSFunction(JSC::VM&, JSC::JSObject* wrapper) const { m_wrapper = JSC::Weak<JSC::JSObject>(wrapper); }
 
 private:
@@ -85,6 +86,11 @@ private:
     bool m_wasCreatedFromMarkup : 1;
 
     mutable bool m_isInitialized : 1;
+    // Transient dispatch state: set by handleEventNodeStyle for the duration
+    // of a single handleEvent call so the shared invocation path knows to pass
+    // the event's carried value instead of the Event wrapper. Not a bitfield
+    // because SetForScope takes a reference.
+    bool m_invokeAsNodeStyle { false };
     mutable JSC::Weak<JSC::JSObject> m_jsFunction;
     mutable JSC::Weak<JSC::JSObject> m_wrapper;
 

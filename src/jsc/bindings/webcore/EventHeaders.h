@@ -78,8 +78,8 @@
 #include "JSCloseEvent.h"
 // #include "CompositionEvent.h"
 // #include "JSCompositionEvent.h"
-// #include "CustomEvent.h"
-// #include "JSCustomEvent.h"
+#include "CustomEvent.h"
+#include "JSCustomEvent.h"
 // #if ENABLE(DEVICE_ORIENTATION)
 // #include "DeviceMotionEvent.h"
 // #include "JSDeviceMotionEvent.h"

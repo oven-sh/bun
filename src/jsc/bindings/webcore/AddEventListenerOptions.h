@@ -48,6 +48,11 @@ struct AddEventListenerOptions : EventListenerOptions {
     // modules, mirroring Node.js's kResistStopPropagation: a listener registered
     // with it still runs after another listener called stopImmediatePropagation().
     bool resistStopPropagation { false };
+
+    // Not part of the DOM standard. Mirrors Node.js's kIsNodeStyleListener: when
+    // set, the listener is invoked with the event's underlying value (data/detail/
+    // error) instead of the Event wrapper. MessagePort.prototype.on/.once set it.
+    bool isNodeStyleListener { false };
 };
 
 } // namespace WebCore

@@ -22,6 +22,8 @@
 #include "JSMessagePort.h"
 
 #include "ActiveDOMObject.h"
+#include "AddEventListenerOptions.h"
+#include "CustomEvent.h"
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -32,14 +34,18 @@
 #include "JSDOMConvertAny.h"
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertDictionary.h"
+#include "JSDOMConvertEventListener.h"
+#include "JSDOMConvertNullable.h"
 #include "JSDOMConvertObject.h"
 #include "JSDOMConvertSequences.h"
+#include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSEventListener.h"
 #include "JSStructuredSerializeOptions.h"
+#include "MessageEvent.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 // #include "WebCoreOpaqueRootInlines.h"
@@ -65,6 +71,20 @@ static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef);
+// NodeEventTarget surface (node lib/internal/event_target.js): a curated subset
+// of EventEmitter that reads and writes the same listener list as EventTarget,
+// so .on()/addEventListener() dedupe against each other, listenerCount()/
+// eventNames()/removeAllListeners() see every listener, and emit() returns a
+// boolean while passing the raw argument to node-style listeners.
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_on);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_once);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_off);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_emit);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_listenerCount);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_eventNames);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_removeAllListeners);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_setMaxListeners);
+static JSC_DECLARE_HOST_FUNCTION(jsMessagePortPrototypeFunction_getMaxListeners);
 
 // Attributes
 
@@ -138,6 +158,23 @@ static const HashTableValue JSMessagePortPrototypeTableValues[] = {
     { "hasRef"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_hasRef, 0 } },
 };
 
+// NodeEventTarget methods live on an intermediate prototype between
+// MessagePort.prototype and EventTarget.prototype so that
+// Object.getOwnPropertyNames(MessagePort.prototype) matches node.
+static const HashTableValue JSMessagePortNodeEventTargetTableValues[] = {
+    { "on"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_on, 2 } },
+    { "addListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_on, 2 } },
+    { "once"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_once, 2 } },
+    { "off"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_off, 2 } },
+    { "removeListener"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_off, 2 } },
+    { "emit"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_emit, 1 } },
+    { "listenerCount"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_listenerCount, 1 } },
+    { "eventNames"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_eventNames, 0 } },
+    { "removeAllListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_removeAllListeners, 0 } },
+    { "setMaxListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_setMaxListeners, 1 } },
+    { "getMaxListeners"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsMessagePortPrototypeFunction_getMaxListeners, 0 } },
+};
+
 const ClassInfo JSMessagePortPrototype::s_info = { "MessagePort"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSMessagePortPrototype) };
 
 void JSMessagePortPrototype::finishCreation(VM& vm)
@@ -158,7 +195,13 @@ JSMessagePort::JSMessagePort(Structure* structure, JSDOMGlobalObject& globalObje
 
 JSObject* JSMessagePort::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    auto* structure = JSMessagePortPrototype::createStructure(vm, &globalObject, JSEventTarget::prototype(vm, globalObject));
+    auto* eventTargetPrototype = JSEventTarget::prototype(vm, globalObject);
+    auto* nodeEventTargetStructure = JSC::JSFinalObject::createStructure(vm, &globalObject, eventTargetPrototype, 0);
+    nodeEventTargetStructure->setMayBePrototype(true);
+    auto* nodeEventTargetPrototype = JSC::JSFinalObject::create(vm, nodeEventTargetStructure);
+    reifyStaticProperties(vm, JSMessagePort::info(), JSMessagePortNodeEventTargetTableValues, *nodeEventTargetPrototype);
+
+    auto* structure = JSMessagePortPrototype::createStructure(vm, &globalObject, nodeEventTargetPrototype);
     structure->setMayBePrototype(true);
     return JSMessagePortPrototype::create(vm, &globalObject, structure);
 }
@@ -400,6 +443,181 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_hasRefBody(JSC:
 JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_hasRef, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_hasRefBody>(*lexicalGlobalObject, *callFrame, "hasRef");
+}
+
+// NodeEventTarget ------------------------------------------------------------
+
+static inline JSC::EncodedJSValue messagePortNodeAddListener(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis, bool once)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "MessagePort"_s, "on"_s); });
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (listener) {
+        AddEventListenerOptions options;
+        options.once = once;
+        options.isNodeStyleListener = true;
+        static_cast<EventTarget&>(impl).addEventListener(WTF::move(type), listener.releaseNonNull(), options);
+        vm.writeBarrier(&static_cast<JSObject&>(*castedThis), argument1.value());
+    }
+    return JSValue::encode(castedThis);
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_onBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    return messagePortNodeAddListener(lexicalGlobalObject, callFrame, castedThis, false);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_on, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_onBody>(*lexicalGlobalObject, *callFrame, "on");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_onceBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    return messagePortNodeAddListener(lexicalGlobalObject, callFrame, castedThis, true);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_once, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_onceBody>(*lexicalGlobalObject, *callFrame, "once");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_offBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    auto listener = convert<IDLNullable<IDLEventListener<JSEventListener>>>(*lexicalGlobalObject, argument1.value(), *castedThis, [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeObjectError(lexicalGlobalObject, scope, 1, "listener"_s, "MessagePort"_s, "off"_s); });
+    RETURN_IF_EXCEPTION(throwScope, {});
+    if (listener)
+        static_cast<EventTarget&>(impl).removeEventListener(WTF::move(type), *listener, {});
+    return JSValue::encode(castedThis);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_off, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_offBody>(*lexicalGlobalObject, *callFrame, "off");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_emitBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    bool had = impl.hasEventListeners(type);
+    if (had) {
+        EnsureStillAliveScope argument1 = callFrame->argument(1);
+        JSValue arg = argument1.value();
+        // node's MessagePort[kCreateEvent]: a MessageEvent for message /
+        // messageerror, a CustomEvent for everything else. Node-style
+        // listeners recover the raw argument by identity at invoke time.
+        if (type == eventNames().messageEvent || type == eventNames().messageerrorEvent) {
+            MessageEvent::Init init;
+            init.data = arg;
+            auto event = MessageEvent::create(type, WTF::move(init));
+            impl.dispatchEvent(event.get());
+        } else {
+            CustomEvent::Init init;
+            init.detail = arg;
+            auto event = CustomEvent::create(type, init);
+            impl.dispatchEvent(event.get());
+        }
+    }
+    return JSValue::encode(jsBoolean(had));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_emit, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_emitBody>(*lexicalGlobalObject, *callFrame, "emit");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_listenerCountBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    EnsureStillAliveScope argument0 = callFrame->argument(0);
+    auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    return JSValue::encode(jsNumber(castedThis->wrapped().eventListeners(type).size()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_listenerCount, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_listenerCountBody>(*lexicalGlobalObject, *callFrame, "listenerCount");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_eventNamesBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    UNUSED_PARAM(callFrame);
+    auto types = castedThis->wrapped().eventTypes();
+    MarkedArgumentBuffer values;
+    for (auto& t : types)
+        values.append(jsString(vm, t.string()));
+    return JSValue::encode(constructArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), values));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_eventNames, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_eventNamesBody>(*lexicalGlobalObject, *callFrame, "eventNames");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_removeAllListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto& impl = castedThis->wrapped();
+    if (callFrame->argumentCount() == 0) {
+        impl.removeAllEventListeners();
+    } else {
+        EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
+        auto type = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+        RETURN_IF_EXCEPTION(throwScope, {});
+        impl.removeAllEventListenersForType(type);
+    }
+    return JSValue::encode(castedThis);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_removeAllListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_removeAllListenersBody>(*lexicalGlobalObject, *callFrame, "removeAllListeners");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_setMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    castedThis->wrapped().setNodeMaxListeners(callFrame->argument(0).toUInt32(lexicalGlobalObject));
+    return JSValue::encode(castedThis);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_setMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_setMaxListenersBody>(*lexicalGlobalObject, *callFrame, "setMaxListeners");
+}
+
+static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_getMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
+{
+    UNUSED_PARAM(lexicalGlobalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsNumber(castedThis->wrapped().nodeMaxListeners()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_getMaxListeners, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSMessagePort>::call<jsMessagePortPrototypeFunction_getMaxListenersBody>(*lexicalGlobalObject, *callFrame, "getMaxListeners");
 }
 
 JSC::GCClient::IsoSubspace* JSMessagePort::subspaceForImpl(JSC::VM& vm)

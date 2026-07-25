@@ -114,6 +114,7 @@ public:
     WEBCORE_EXPORT virtual bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions& = {});
 
     WEBCORE_EXPORT virtual void removeAllEventListeners();
+    void removeAllEventListenersForType(const AtomString&);
     WEBCORE_EXPORT virtual void dispatchEvent(Event&);
     WEBCORE_EXPORT virtual void uncaughtExceptionInEventHandler();
 

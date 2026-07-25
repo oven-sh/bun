@@ -32,6 +32,9 @@
 // #include "JSDocument.h"
 #include "JSEvent.h"
 #include "JSEventTarget.h"
+#include "JSMessageEvent.h"
+#include "CustomEvent.h"
+#include "ErrorEvent.h"
 #include "WebCoreJSClientData.h"
 // #include "JSExecState.h"
 // #include "JSExecStateInstrumentation.h"
@@ -43,6 +46,7 @@
 #include <JavaScriptCore/Watchdog.h>
 #include <wtf/Ref.h>
 #include <wtf/Scope.h>
+#include <wtf/SetForScope.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -141,6 +145,43 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionEmitUncaughtExceptionNextTick, (JSC::JSGlobal
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
+// A listener registered with Node.js's kIsNodeStyleListener receives the value
+// the event carries rather than the Event wrapper: MessageEvent → .data,
+// CustomEvent → .detail, ErrorEvent → .error; other events carry no value.
+static JSC::JSValue nodeStyleArgumentForEvent(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Event& event)
+{
+    switch (event.eventInterface()) {
+    case MessageEventInterfaceType: {
+        auto& me = static_cast<MessageEvent&>(event);
+        // Native MessagePort dispatch caches the deserialized payload on the
+        // wrapper; reuse it so node-style and EventTarget-style listeners see
+        // the same value by identity.
+        if (auto cached = me.cachedData().getValue({}))
+            return cached;
+        if (std::holds_alternative<MessageEvent::JSValueTag>(me.data()))
+            return me.jsData().getValue(JSC::jsNull());
+        // Serialized but not yet deserialized (e.g. BroadcastChannel): fall
+        // through to the wrapper's .data getter so the result is cached.
+        JSValue jsEvent = toJS(lexicalGlobalObject, globalObject, &event);
+        if (auto* wrapper = dynamicDowncast<JSMessageEvent>(jsEvent.getObject()))
+            return wrapper->data(*lexicalGlobalObject);
+        return JSC::jsNull();
+    }
+    case CustomEventInterfaceType:
+        return static_cast<CustomEvent&>(event).detail().getValue(JSC::jsNull());
+    case ErrorEventInterfaceType:
+        return static_cast<ErrorEvent&>(event).error(*lexicalGlobalObject);
+    default:
+        return JSC::jsUndefined();
+    }
+}
+
+void JSEventListener::handleEventNodeStyle(ScriptExecutionContext& scriptExecutionContext, Event& event)
+{
+    SetForScope nodeStyle { m_invokeAsNodeStyle, true };
+    handleEvent(scriptExecutionContext, event);
+}
+
 void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext, Event& event)
 {
     if (scriptExecutionContext.isJSExecutionForbidden())
@@ -222,7 +263,7 @@ void JSEventListener::handleEvent(ScriptExecutionContext& scriptExecutionContext
     Ref<JSEventListener> protectedThis(*this);
 
     MarkedArgumentBuffer args;
-    args.append(toJS(lexicalGlobalObject, globalObject, &event));
+    args.append(m_invokeAsNodeStyle ? nodeStyleArgumentForEvent(lexicalGlobalObject, globalObject, event) : toJS(lexicalGlobalObject, globalObject, &event));
     ASSERT(!args.hasOverflowed());
 
     // JSExecState::instrumentFunction(&scriptExecutionContext, callData);

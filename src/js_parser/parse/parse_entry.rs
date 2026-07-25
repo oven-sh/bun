@@ -1520,7 +1520,10 @@ impl<'a> Parser<'a> {
             exports_kind = js_ast::ExportsKind::Cjs;
         } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
             exports_kind = js_ast::ExportsKind::Esm;
-        } else if (uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope)
+        } else if (uses_exports_ref
+            || uses_module_ref
+            || p.has_top_level_return
+            || p.has_with_scope)
             && !force_esm
         {
             exports_kind = js_ast::ExportsKind::Cjs;

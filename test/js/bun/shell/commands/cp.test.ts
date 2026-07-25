@@ -63,7 +63,7 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
 
   // #14595
   describe("recursive flag aliases", () => {
-    for (const flag of ["-r", "-R", "-rv", "--recursive"]) {
+    for (const flag of ["-r", "-R", "--recursive"]) {
       TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
         .ensureTempDir()
         .exitCode(0)
@@ -71,6 +71,17 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         .fileEquals("dest/a.txt", "hi\n")
         .testMini()
         .runAsTest(`cp ${flag} copies a directory`);
+    }
+
+    for (const flag of ["-rv", "-vr", "-Rv", "-vR", "-nrv"]) {
+      TestBuilder.command`mkdir src; echo hi > src/a.txt; cp ${{ raw: flag }} src dest`
+        .ensureTempDir()
+        .exitCode(0)
+        .stderr("")
+        .stdout(s => expect(s).toContain("a.txt"))
+        .fileEquals("dest/a.txt", "hi\n")
+        .testMini()
+        .runAsTest(`cp ${flag} copies a directory verbosely`);
     }
 
     TestBuilder.command`echo hi > a.txt; cp --verbose a.txt b.txt`
@@ -206,7 +217,7 @@ function expectSortedOutput(expected: string) {
 // #14595: the cp builtin is disabled on POSIX (falls through to /bin/cp), so
 // force-enable it via BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS to cover the flag
 // parser on all platforms.
-describe.each(["-r", "-R", "-rv", "--recursive"])("bunshell cp %s (builtin)", flag => {
+describe.each(["-r", "-R", "-rv", "-vr", "-Rv", "-vR", "-nrv", "--recursive"])("bunshell cp %s (builtin)", flag => {
   test.concurrent(`copies a directory`, async () => {
     using dir = tempDir("cp-recursive", {
       "src/a.txt": "hi",
@@ -218,8 +229,13 @@ describe.each(["-r", "-R", "-rv", "--recursive"])("bunshell cp %s (builtin)", fl
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
+    if (flag.startsWith("-") && !flag.startsWith("--") && flag.includes("v")) {
+      expect(stdout).toContain("a.txt");
+    } else {
+      expect(stdout).toBe("");
+    }
     expect(await Bun.file(join(String(dir), "dest", "a.txt")).text()).toBe("hi");
     expect(exitCode).toBe(0);
   });

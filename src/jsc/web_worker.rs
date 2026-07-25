@@ -976,9 +976,7 @@ impl WebWorker {
         unsafe {
             let b = &mut (*vm).transpiler;
             b.resolver.env_loader = NonNull::new(b.env);
-            // Match the main thread (run_command.rs): never inline
-            // `process.env.X` dot-reads as literals — they'd be baked into
-            // the shared on-disk runtime transpiler cache.
+            // Match run_command.rs: no `process.env.X` dot-read inlining at runtime.
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 

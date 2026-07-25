@@ -1532,7 +1532,7 @@ describe("nested describe output", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
     return { stderr: normalizeBunSnapshot(stderr, dir), exitCode };
   }
 

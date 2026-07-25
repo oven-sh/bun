@@ -4264,7 +4264,7 @@ unsafe fn transpile_file(
         // Note: `@branchHint(.unlikely)` dropped (no stable Rust equiv).
         debug_assert!(!is_commonjs_require);
         lr.loader = Some(loader_type);
-    } else if (is_commonjs_require || module_type != ModuleType::Esm)
+    } else if (is_commonjs_require || module_type == ModuleType::Cjs)
         && lr.virtual_source.is_none()
         // SAFETY: per fn contract.
         && unsafe { &*jsc_vm }.has_mutated_built_in_extensions > 0

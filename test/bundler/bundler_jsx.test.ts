@@ -949,6 +949,24 @@ describe("bundler", () => {
       },
     });
 
+    // With jsx.sideEffects: true the lowered calls carry no pure annotation,
+    // so even otherwise-unused JSX keeps the call and therefore the import.
+    itBundledDevAndProd("jsx/AutoImportKeptWhenJsxSideEffectsTrue", {
+      files: {
+        "/index.tsx": /* tsx */ `
+          const unused = <div>dead</div>;
+          export default 'hi';
+        `,
+      },
+      external: ["react", "react/*"],
+      jsx: { runtime: "automatic", sideEffects: true },
+      onAfterBundle(api) {
+        const file = api.readFile("out.js");
+        expect(file).toMatch(/from\s*"react\/jsx-(dev-)?runtime"/);
+        expect(file).toMatch(/jsx(DEV)?\(/);
+      },
+    });
+
     itBundledDevAndProd("jsx/AutoImportKeptWhenJsxUsedExternal", {
       files: {
         "/index.tsx": /* tsx */ `

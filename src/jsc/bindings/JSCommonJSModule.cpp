@@ -707,6 +707,26 @@ JSC_DEFINE_CUSTOM_SETTER(setterUnderscoreCompile,
     return true;
 }
 
+// Node exposes `Module.prototype.require`; the shared overridable require
+// (also reachable via the module-namespace `Module.prototype` object in
+// NodeModuleModule.cpp) already dispatches off `this`, so surface it here for
+// `new Module().require(...)` / `module.require(...)`.
+JSC_DEFINE_CUSTOM_GETTER(getterRequire, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue, JSC::PropertyName))
+{
+    return JSValue::encode(globalObject->getDirect(
+        globalObject->vm(), WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName()));
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setterRequire,
+    (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
+        JSC::EncodedJSValue value, JSC::PropertyName))
+{
+    globalObject->putDirect(globalObject->vm(),
+        WebCore::clientData(globalObject->vm())->builtinNames().overridableRequirePrivateName(),
+        JSValue::decode(value), 0);
+    return true;
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto* moduleObject = dynamicDowncast<JSCommonJSModule>(callframe->thisValue());
@@ -777,6 +797,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
     { "paths"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPaths, setterPaths } },
+    { "require"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterRequire, setterRequire } },
 };
 
 class JSCommonJSModulePrototype final : public JSC::JSNonFinalObject {

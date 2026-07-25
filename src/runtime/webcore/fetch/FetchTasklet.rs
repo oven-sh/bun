@@ -2532,9 +2532,7 @@ impl FetchTasklet {
                     .promise
                     .is_some_and(|p| !p.is_empty_or_undefined_or_null());
                 if !has_live_promise {
-                    // Scenario 2a / 3: body never consumed. Abort so the socket
-                    // closes instead of draining an unread body to pool it
-                    // (same as on_stream_cancelled_callback).
+                    // Scenario 2a / 3: close the socket rather than drain an unread body.
                     this.abort_task();
                     this.ignore_remaining_response_body(true);
                 }

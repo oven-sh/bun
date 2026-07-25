@@ -367,6 +367,22 @@ const IS_UV_FS_COPYFILE_DISABLED =
     await gcTick();
   });
 
+  it("Bun.write(path, fetch()) with a streaming body", async () => {
+    using tmpbase = tempDir("bun-write-fetch-streaming", {});
+    const out = join(String(tmpbase), "dl.out");
+    const body = Buffer.alloc(1_000_000, "x").toString();
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(body),
+    });
+    const resp = await fetch(server.url);
+    expect(resp.status).toBe(200);
+    const written = await Bun.write(out, resp);
+    expect(written).toBe(body.length);
+    expect((await Bun.file(out).bytes()).length).toBe(body.length);
+    expect(await Bun.file(out).text()).toBe(body);
+  });
+
   it("Response -> Bun.file -> Response -> text", async () => {
     await gcTick();
     const file = path.join(import.meta.dir, "fetch.js.txt");

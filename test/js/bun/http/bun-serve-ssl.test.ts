@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { tls as tlsCert } from "harness";
 import { once } from "node:events";
-import { createServer as createHttpsServer, Server as HttpsServer } from "node:https";
 import { Server as HttpServer } from "node:http";
+import { createServer as createHttpsServer, Server as HttpsServer } from "node:https";
 import { connect as tlsConnect } from "node:tls";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };

@@ -56,6 +56,14 @@ pub mod kernel32 {
             lpOverlapped: *mut *mut OVERLAPPED,
             dwMilliseconds: DWORD,
         ) -> BOOL;
+        // safe: by-value args; `dwCompletionKey`/`lpOverlapped` are opaque
+        // payloads the kernel hands back to the dequeuer unchanged.
+        pub safe fn PostQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            dwNumberOfBytesTransferred: DWORD,
+            dwCompletionKey: ULONG_PTR,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
         pub fn ReadDirectoryChangesW(
             hDirectory: HANDLE,
             lpBuffer: *mut c_void,

@@ -388,7 +388,14 @@ impl WindowsWatcher {
         self.live_roots.fetch_add(1, Ordering::AcqRel);
         if ARM {
             if let Err(err) = dw.prepare() {
-                self.live_roots.fetch_sub(1, Ordering::AcqRel);
+                if self.live_roots.fetch_sub(1, Ordering::AcqRel) == 1 {
+                    // Every other root died while this one held the
+                    // provisional count; wake the watch thread (the
+                    // null-overlapped packet takes next()'s error exit) so it
+                    // doesn't wait forever on an IOCP with no pending I/O.
+                    let _ =
+                        w::kernel32::PostQueuedCompletionStatus(self.iocp, 0, 0, ptr::null_mut());
+                }
                 return Err(err.into());
             }
         }
@@ -474,6 +481,11 @@ impl WindowsWatcher {
                     watcher,
                     "GetQueuedCompletionStatus returned no overlapped event"
                 );
+                // A posted wake packet (see `add_root_inner`) that lost a race
+                // with a successful add_root is stale; keep watching.
+                if self.live_roots.load(Ordering::Acquire) > 0 {
+                    continue;
+                }
                 return Err(bun_sys::Error {
                     errno: bun_sys::SystemErrno::EINVAL as _,
                     syscall: bun_sys::Tag::watch,

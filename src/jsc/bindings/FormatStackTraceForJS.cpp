@@ -798,6 +798,8 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
     JSC::JSArray* callSites = nullptr;
     for (JSObject* o = receiver; o;) {
         JSValue v = o->getDirect(vm, privateName);
+        if (v && v.isNull())
+            return JSValue::encode(jsUndefined());
         if (auto* arr = v ? dynamicDowncast<JSC::JSArray>(v) : nullptr) {
             callSites = arr;
             errorObject = o;
@@ -811,7 +813,7 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
 
     JSC::EnsureStillAliveScope keepCallSites(callSites);
 
-    // Sentinel so re-entry through a name/message getter hits !callSites above; restored if the user code throws.
+    // Sentinel so re-entry through a name/message getter hits the isNull check above; restored if the user code throws.
     errorObject->putDirect(vm, privateName, jsNull(), 0);
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -825,7 +827,12 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
         globalObject->isInsideErrorPrepareStackTraceCallback = false;
     }
     if (scope.exception()) [[unlikely]] {
-        errorObject->putDirect(vm, privateName, callSites, 0);
+        unsigned attrs = 0;
+        JSValue currentStack = errorObject->getDirect(vm, vm.propertyNames->stack, attrs);
+        if (currentStack && (attrs & JSC::PropertyAttribute::CustomAccessor))
+            errorObject->putDirect(vm, privateName, callSites, 0);
+        else
+            errorObject->putDirect(vm, privateName, jsUndefined(), 0);
         return {};
     }
 

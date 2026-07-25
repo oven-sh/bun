@@ -842,7 +842,7 @@ impl PosixBufferedReader {
             // `EventLoopCtx::pipe_read_buffer_mut`).
             let event_loop = parent.vtable.event_loop();
             let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
-            if parent._buffer.capacity() == 0 {
+            while parent._buffer.capacity() == 0 {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
@@ -881,14 +881,19 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
-                                if received_hup {
-                                    // HUP: drain to `bytes_read == 0` even if
-                                    // the consumer said stop, so `done()` is
-                                    // reached (shell-blocking-pipe.test.ts).
+                                // HUP drains to `bytes_read == 0` even if the
+                                // consumer said stop (shell-blocking-pipe).
+                                // A non-pollable File consumer that wants
+                                // more keeps draining to EOF; there is no
+                                // poll to re-arm and the consumer is
+                                // push-driven (FileResponseStream).
+                                if received_hup
+                                    || (keep_going && file_type == FileType::File)
+                                {
                                     head_start = 0;
                                     continue;
                                 }
-                                if keep_going && file_type != FileType::File {
+                                if keep_going {
                                     parent.register_poll();
                                 }
                                 return;
@@ -944,8 +949,8 @@ impl PosixBufferedReader {
 
                 if file_type != FileType::File {
                     parent.register_poll();
+                    return;
                 }
-                return;
             }
         } else if parent._buffer.capacity() == 0 && parent._offset == 0 {
             // Avoid a 16 KB dynamic memory allocation when the buffer might very well be empty.

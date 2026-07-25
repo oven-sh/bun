@@ -210,7 +210,7 @@ describe.skipIf(!isPosix)("Bun.file(<infinite chardev>).stream() yields to the e
       expect(out.firstLen).toBeLessThanOrEqual(1024 * 1024);
       expect(out.secondLen).toBeGreaterThan(0);
       expect(out.secondLen).toBeLessThanOrEqual(1024 * 1024);
-      expect(out.rssGrowthMB).toBeLessThan(128);
+      expect(out.rssGrowthMB).toBeLessThan(isASAN || isDebug ? 256 : 128);
     });
   }
 

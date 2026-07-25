@@ -375,7 +375,7 @@ impl FileReader {
                                 self.reader()
                                     .flags
                                     .set(WindowsFlags::NONBLOCKING, opened.nonblocking);
-                                self.reader().flags.set(WindowsFlags::POLLABLE, pollable);
+                                let _ = pollable;
                             }
                         }
                     }

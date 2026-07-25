@@ -35,12 +35,14 @@ function countBunSourceLines(zshrc: string): number {
   return (zshrc.match(/source\s+"[^"]*_bun"/g) ?? []).length;
 }
 
-test.skipIf(!isPosix).each([
-  ['[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"'],
-  ['[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"'],
-  ['[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"'],
-  ['[ -s "$BUN_INSTALL/_bun" ] && source "$BUN_INSTALL/_bun"\n# bun completions\r'],
-])("bun completions leaves existing zsh snippet alone: %s", async snippet => {
+test
+  .skipIf(!isPosix)
+  .each([
+    ['[ -s "$HOME/.bun/_bun" ] && source "$HOME/.bun/_bun"'],
+    ['[ -s "${HOME}/.bun/_bun" ] && source "${HOME}/.bun/_bun"'],
+    ['[ -s "~/.bun/_bun" ] && source "~/.bun/_bun"'],
+    ['[ -s "$BUN_INSTALL/_bun" ] && source "$BUN_INSTALL/_bun"\n# bun completions\r'],
+  ])("bun completions leaves existing zsh snippet alone: %s", async snippet => {
   const zshrcBefore = `export PATH="/usr/local/bin:$PATH"\n\n${snippet}\n`;
   using dir = tempDir("bun-completions-10897", {
     ".bun/.keep": "",

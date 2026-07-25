@@ -7465,13 +7465,8 @@ pub mod bv2_impl {
         Esm,
     }
 
-    /// Note attached to the "Could not resolve" error for a bare package
-    /// specifier, explaining how to keep the path out of the bundle and (for
-    /// `require()` / dynamic `import()`) how to defer the failure to run-time.
-    /// Mirrors the guidance esbuild emits for the same error.
-    ///
-    /// Returns an empty slice under the dev server, which has no `external`
-    /// option for the note to point at.
+    /// esbuild-style "mark as external" hint for "Could not resolve" on a bare
+    /// package path. Empty under the dev server (no `external` option there).
     pub fn could_not_resolve_note(
         path: &[u8],
         kind: ImportKind,

@@ -905,6 +905,7 @@ impl Lockfile {
                                     | dependency::Tag::Git
                                     | dependency::Tag::Github
                                     | dependency::Tag::Folder
+                                    | dependency::Tag::Symlink
                             )
                         {
                             superseding.push((dep.name_hash, dep.behavior, resolutions[i]));

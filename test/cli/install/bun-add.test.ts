@@ -2730,6 +2730,82 @@ it("should update a folder dependency when adding the same package from a differ
   });
 });
 
+it("should replace an existing registry dependency when adding the same package as a URL", async () => {
+  using tmpRoot = tempDir("bun-add-npm-to-url", {});
+  const tmpDir = String(tmpRoot);
+  const pkgDir = join(tmpDir, "package");
+  await mkdir(pkgDir, { recursive: true });
+  await writeFile(join(pkgDir, "package.json"), JSON.stringify({ name: "baz", version: "9.9.9" }));
+  {
+    const { exited } = spawn({
+      cmd: ["tar", "-czf", join(tmpDir, "baz-url.tgz"), "-C", tmpDir, "package"],
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+  }
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response(Bun.file(join(tmpDir, "baz-url.tgz"))),
+  });
+  const baz_url = `${server.url.href.replace(/\/+$/, "")}/baz-url.tgz`;
+
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.3": { bin: { "baz-run": "index.js" } } }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  // Install baz from the registry first.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", "baz"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@0.0.3");
+    expect(exitCode).toBe(0);
+  }
+  expect(await file(join(package_dir, "package.json")).json()).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { baz: "^0.0.3" },
+  });
+
+  // Adding a tarball URL for the same package replaces the registry entry
+  // rather than reporting a dependency loop.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", baz_url],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("dependency loop");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed baz@");
+    expect(exitCode).toBe(0);
+  }
+
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"baz"\s*:/g) ?? []).toHaveLength(1);
+  expect(JSON.parse(raw)).toStrictEqual({
+    name: "foo",
+    version: "0.0.1",
+    dependencies: { baz: baz_url },
+  });
+  expect(await file(join(package_dir, "node_modules", "baz", "package.json")).json()).toMatchObject({
+    name: "baz",
+    version: "9.9.9",
+  });
+});
+
 it("should add multiple dependencies specified on command line", async () => {
   expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({

@@ -8,7 +8,8 @@ const dumpArgvEntry = /* js */ `
   console.log(JSON.stringify({
     execArgv: process.execArgv,
     argv0: process.argv[0],
-    argv1HasBunfs: String(process.argv[1] ?? "").includes("bunfs"),
+    // Standalone argv[1] is "/$bunfs/root/..." on posix and "B:/~BUN/root/..." on Windows.
+    argv1IsVirtual: /(\\$bunfs|~BUN)/.test(String(process.argv[1] ?? "")),
     argvLength: process.argv.length,
     userArgs: process.argv.slice(2),
     title: process.title,
@@ -18,7 +19,7 @@ const dumpArgvEntry = /* js */ `
 type Dump = {
   execArgv: string[];
   argv0: string;
-  argv1HasBunfs: boolean;
+  argv1IsVirtual: boolean;
   argvLength: number;
   userArgs: string[];
   title: string;
@@ -53,7 +54,7 @@ describe.concurrent("bundler", () => {
           expect(out.title).toBe("CompileExecArgvTest");
           expect(out.execArgv).toEqual(["--title=CompileExecArgvTest", "--smol"]);
           expect(out.argv0).toBe("bun");
-          expect(out.argv1HasBunfs).toBe(true);
+          expect(out.argv1IsVirtual).toBe(true);
           expect(out.userArgs).toEqual(["runtime", "test"]);
           expect(out.argvLength).toBe(4);
         },
@@ -104,7 +105,7 @@ describe.concurrent("bundler", () => {
           const out = parse(stdout);
           expect(out.execArgv).toEqual(["--user-agent=test-agent", "--smol"]);
           expect(out.argv0).toBe("bun");
-          expect(out.argv1HasBunfs).toBe(true);
+          expect(out.argv1IsVirtual).toBe(true);
           expect(out.userArgs).toEqual([]);
           expect(out.argvLength).toBe(2);
         },
@@ -117,7 +118,7 @@ describe.concurrent("bundler", () => {
           const out = parse(stdout);
           expect(out.execArgv).toEqual(["--user-agent=test-agent", "--smol"]);
           expect(out.argv0).toBe("bun");
-          expect(out.argv1HasBunfs).toBe(true);
+          expect(out.argv1IsVirtual).toBe(true);
           expect(out.userArgs).toEqual(["user-arg1", "user-arg2"]);
           expect(out.argvLength).toBe(4);
         },

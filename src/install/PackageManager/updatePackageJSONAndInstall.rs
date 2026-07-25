@@ -307,9 +307,6 @@ fn update_package_json_and_install_with_manager_with_updates(
                             if changed {
                                 e_object.properties.truncate(new_len);
 
-                                // If the dependencies list is now empty, remove it from the package.json.
-                                // Use an ordered remove so the remaining top-level keys stay in the
-                                // user's original order (https://github.com/oven-sh/bun/issues/9351).
                                 if e_object.properties.len_u32() == 0 {
                                     let _ = current_package_json_root
                                         .data

@@ -1011,6 +1011,76 @@ export { after };
   expect(await proc.exited).toBe(0);
 });
 
+// JSC's FrontendRouter broadcasts every command response to every connected
+// frontend channel. With a per-connection backend-id counter, two clients'
+// first commands both carry backend id 1 and each adapter claims whichever
+// response arrives first, so one client receives the other's result under its
+// own command id.
+test("two inspector.open() clients each receive their own Runtime.evaluate result", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const inspector = require("node:inspector");
+       inspector.open(0, "127.0.0.1", false);
+       process.stdout.write("URL " + inspector.url() + "\\n");
+       setInterval(() => {}, 1000);`,
+    ],
+    env: injectedScriptChildEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const stdoutReader = proc.stdout.getReader();
+  let stdoutText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await stdoutReader.read();
+    if (done) throw new Error(`child exited before printing its URL; stdout: ${stdoutText}`);
+    stdoutText += decoder.decode(value);
+    wsUrl = stdoutText.match(/URL (ws:\S+)/)?.[1];
+  }
+
+  const attach = async () => {
+    const ws = new WebSocket(wsUrl!);
+    const opened = Promise.withResolvers<void>();
+    ws.onopen = () => opened.resolve();
+    ws.onerror = e => opened.reject(e);
+    await opened.promise;
+    return ws;
+  };
+  const evaluate = (ws: WebSocket, id: number, expression: string) =>
+    new Promise<any>((resolve, reject) => {
+      ws.addEventListener("message", event => {
+        const msg = JSON.parse(String(event.data));
+        if (msg.id === id) resolve(msg.result?.result?.value);
+      });
+      ws.addEventListener("error", reject);
+      ws.addEventListener("close", () => reject(new Error("socket closed before response")));
+      ws.send(JSON.stringify({ id, method: "Runtime.evaluate", params: { expression } }));
+    });
+
+  const a = await attach();
+  const b = await attach();
+  // A short busy loop keeps the inspected thread inside A's evaluate long
+  // enough for B's command to reach the adapter on the debugger thread, so both
+  // adapters have a backend command in flight when the response broadcasts.
+  const aValue = evaluate(
+    a,
+    1,
+    `(() => { let n = 0; for (let i = 0; i < 1e6; i++) n++; return "answer-for-A"; })()`,
+  );
+  const bValue = evaluate(b, 2, `"answer-for-B"`);
+  try {
+    expect({ a: await aValue, b: await bValue }).toEqual({ a: "answer-for-A", b: "answer-for-B" });
+  } finally {
+    a.close();
+    b.close();
+    proc.kill("SIGKILL");
+  }
+});
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

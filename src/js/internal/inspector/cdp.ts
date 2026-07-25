@@ -91,10 +91,18 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
+// JSC's FrontendRouter::sendResponse broadcasts every command response to every
+// connected frontend channel (the FIXME in InspectorFrontendRouter.cpp), so a
+// backend id issued by one adapter also reaches every other adapter's
+// handleBackendMessage. A per-adapter counter would let two clients' first
+// commands share id 1 and each claim the other's response. Allocating ids from
+// one shared counter keeps each backend id unique across adapters; the adapter
+// whose #pending lacks the id simply drops the broadcast.
+let nextBackendId = 1;
+
 class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
-  #nextBackendId = 1;
   #nextExceptionId = 1;
   #pending = new Map<
     number,
@@ -176,7 +184,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#nextBackendId++;
+    const id = nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }

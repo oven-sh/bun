@@ -485,6 +485,9 @@ it("should warn when linked package has peerDependencies", async () => {
         "peer-one": "^1.0.0",
         "peer-two": "*",
       },
+      peerDependenciesMeta: {
+        "peer-two": { optional: true },
+      },
     }),
   );
   await writeFile(
@@ -524,7 +527,8 @@ it("should warn when linked package has peerDependencies", async () => {
     const err = stderrForInstall(await stderr.text());
     expect(err).toContain(`Linked package "${link_name}" declares peerDependencies`);
     expect(err).toContain("peer-one@^1.0.0");
-    expect(err).toContain("peer-two@*");
+    expect(err).not.toContain("peer-one@^1.0.0 (optional)");
+    expect(err).toContain("peer-two@* (optional)");
     expect(err).toContain("--preserve-symlinks");
     expect(await stdout.text()).toContain(`installed ${link_name}@link:${link_name}`);
     expect(await exited).toBe(0);

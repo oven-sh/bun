@@ -2181,16 +2181,24 @@ impl Package<u64> {
                         .as_property(b"name")
                         .and_then(|q| q.expr.as_utf8(&bump))
                         .unwrap_or(b"");
+                    let peer_meta = json.as_property(b"peerDependenciesMeta");
                     bun_core::warn!(
                         "Linked package <b>\"{}\"<r> declares peerDependencies that will not resolve from this project:",
                         bstr::BStr::new(name),
                     );
                     peer_deps.expr.for_each_property(|key, _loc, value| {
                         let ver = value.as_utf8(&bump).unwrap_or(b"");
+                        let is_optional = peer_meta
+                            .as_ref()
+                            .and_then(|m| m.expr.as_property(key))
+                            .and_then(|m| m.expr.as_property(b"optional"))
+                            .map(|o| matches!(&o.expr.data, ExprData::EBoolean(b) if b.value))
+                            .unwrap_or(false);
                         bun_core::pretty_errorln!(
-                            "  <d>-<r> {}<d>@{}<r>",
+                            "  <d>-<r> {}<d>@{}{}<r>",
                             bstr::BStr::new(key),
                             bstr::BStr::new(ver),
+                            if is_optional { " (optional)" } else { "" },
                         );
                     });
                     bun_core::pretty_errorln!(

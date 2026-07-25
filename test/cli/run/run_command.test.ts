@@ -43,10 +43,7 @@ describe("bun", () => {
   });
 });
 
-// #7102: `bun <(cmd)` hands bun a /dev/fd/N path that opens to a pipe. The CLI
-// used to readlink that to `pipe:[inode]` (Linux) or fail F_GETPATH (macOS)
-// and then try to load the module from that non-path. A named FIFO is the same
-// shape without a bash dependency.
+// https://github.com/oven-sh/bun/issues/7102
 describe.skipIf(!isPosix)("entry point is a pipe/FIFO", () => {
   test.concurrent("runs a named FIFO entry point", async () => {
     using dir = tempDir("run-fifo", {});
@@ -62,7 +59,7 @@ describe.skipIf(!isPosix)("entry point is a pipe/FIFO", () => {
       const w = await open(fifo, "w");
       await w.writeFile(`console.log(JSON.stringify({ argv: process.argv.slice(1), main: import.meta.main }));\n`);
       await w.close();
-    })().catch(e => e);
+    })();
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     await feed;
@@ -96,6 +93,7 @@ describe.skipIf(!isPosix)("entry point is a pipe/FIFO", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toBe("");
     expect(stderr).toContain("boom");
+    expect(stderr).toContain("[stdin]:1");
     expect(stderr).not.toMatch(/pipe:\[\d+\]/);
     expect(exitCode).toBe(1);
   });

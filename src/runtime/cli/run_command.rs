@@ -2885,8 +2885,10 @@ impl RunCommand {
             {
                 return false;
             }
-            return Self::boot_stdin_script(ctx, contents.into_boxed_slice(), target)
-                .unwrap_or(false);
+            match Self::boot_stdin_script(ctx, contents.into_boxed_slice(), target) {
+                Ok(booted) => return booted,
+                Err(err) => Self::boot_failed_exit(ctx, target, &err),
+            }
         }
 
         // Re-derive the canonical absolute path from the open fd (resolves

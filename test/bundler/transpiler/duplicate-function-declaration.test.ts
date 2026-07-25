@@ -60,6 +60,18 @@ describe("duplicate function declarations", () => {
         transpileError("import 'x'\n" + "function foo() { return 1 }\n" + "function foo() { return 2 }"),
       ).toContain('"foo" has already been declared');
     });
+
+    test("function + async function", () => {
+      expect(transpileError("function foo() {}\n" + "async function foo() {}\n" + "export {}")).toContain(
+        '"foo" has already been declared',
+      );
+    });
+
+    test("function + function*", () => {
+      expect(transpileError("function foo() {}\n" + "function* foo() {}\n" + "export {}")).toContain(
+        '"foo" has already been declared',
+      );
+    });
   });
 
   describe("rejected inside a block in strict mode", () => {
@@ -80,6 +92,14 @@ describe("duplicate function declarations", () => {
     test("in a script with no ESM syntax", () => {
       // Top-level of a script is like a function body; last declaration wins.
       expect(() => transpiles("function foo() { return 1 }\n" + "function foo() { return 2 }")).not.toThrow();
+    });
+
+    test("at script top level with 'use strict' (no ESM)", () => {
+      // Entry scope in a strict script is still a function-body-like scope,
+      // not a Module; only blocks pick up the strict-mode restriction.
+      expect(() =>
+        transpiles("'use strict'\n" + "function foo() { return 1 }\n" + "function foo() { return 2 }"),
+      ).not.toThrow();
     });
 
     test("inside a function body (even in ESM)", () => {
@@ -136,6 +156,24 @@ describe("duplicate function declarations at runtime", () => {
     // parser to treat the top level as a Module.
     using dir = tempDir("dup-fn", {
       "dup.mjs": "function foo() { return 1 }\n" + "function foo() { return 2 }\n" + "console.log(foo())",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "dup.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('"foo" has already been declared');
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test.concurrent("duplicate block-scoped function in .mjs is a SyntaxError", async () => {
+    // Block scope in an .mjs file with no import/export/TLA is still strict.
+    using dir = tempDir("dup-block-fn", {
+      "dup.mjs": "{ function foo() { return 1 }\n" + "function foo() { return 2 } }\n" + "console.log(typeof foo)",
     });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "dup.mjs"],

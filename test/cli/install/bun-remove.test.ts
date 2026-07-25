@@ -6,8 +6,7 @@ import { bunExe, bunEnv as env, isWindows, readdirSorted, tmpdirSync } from "har
 import { join, relative } from "path";
 import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
 
-const binEntries = (names: string[]) =>
-  isWindows ? names.flatMap(n => [`${n}.bunx`, `${n}.exe`]) : names;
+const binEntries = (names: string[]) => (isWindows ? names.flatMap(n => [`${n}.bunx`, `${n}.exe`]) : names);
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);

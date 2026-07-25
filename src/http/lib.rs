@@ -2409,9 +2409,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Upgrade") => {
-                    // Set regardless of `will_append`: the body framer keys on
-                    // `upgrade_state`, so it must agree with fetch.rs
-                    // `upgraded_connection` even when the header is dropped.
+                    // Always consumed: `upgrade_state` drives body framing.
                     let value = self.header_str(header_values[i]);
                     if !bun_core::strings::eql_any_case_insensitive_ascii(value, &[b"h2", b"h2c"]) {
                         self.flags.upgrade_state = HTTPUpgradeState::Pending;

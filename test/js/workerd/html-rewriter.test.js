@@ -467,6 +467,32 @@ describe("HTMLRewriter", () => {
       await expect(transformed.text()).rejects.toThrow(TypeError);
     });
 
+    it("does not leak a handler's thrown error", async () => {
+      const { heapStats } = require("bun:jsc");
+      const once = async () => {
+        const rw = new HTMLRewriter().on("p", {
+          element() {
+            throw new Error("boom");
+          },
+        });
+        await rw.transform(new Response(streamOf(encode("<p>x</p>")))).text().catch(() => {});
+      };
+      const settle = async () => {
+        for (let i = 0; i < 3; i++) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+      };
+      for (let i = 0; i < 10; i++) await once();
+      await settle();
+      const before = heapStats().objectTypeCounts.Error ?? 0;
+      for (let i = 0; i < 200; i++) await once();
+      await settle();
+      // Pre-fix: the Exception cell was gcProtect()ed in handler_callback and
+      // never unprotected, pinning one Error per transform (grew by ~400).
+      expect((heapStats().objectTypeCounts.Error ?? 0) - before).toBeLessThan(20);
+    });
+
     it("reusing the transformed response's source stream throws", async () => {
       const response = new Response(streamOf(encode("<p>hi</p>")));
       expect(await rewriter().transform(response).text()).toBe("<p>bye</p>");

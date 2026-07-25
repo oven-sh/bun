@@ -1144,36 +1144,27 @@ where
     ) {
         Ok(v) => v,
         Err(_) => {
-            // If there's an exception in the scope, capture it for later retrieval
             if let Some(exc) = scope.exception() {
                 let exc_value = JSValue::from_cell(exc.as_ptr());
-                // Store the exception in the VM's unhandled rejection capture
-                // mechanism if it's available (this is the same mechanism used
-                // by BufferOutputSink)
+                // `err_ptr` is a stack Cell owned by `HandlerErrorScope`'s
+                // caller; that frame is conservatively scanned until
+                // `create_lolhtml_error` reads it back, so no `protect()`.
                 if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+                    // SAFETY: VM-owned pointer set by `HandlerErrorScope`.
                     unsafe { *err_ptr = exc_value };
-                    exc_value.protect();
                 }
             }
-            // Clear the exception from the scope to prevent assertion failures
             scope.clear_exception();
-            // Return true to indicate failure to LOLHTML, which will cause the
-            // write operation to fail and the error handling logic to take over.
             return true;
         }
     };
 
-    // Check if there's an exception that was thrown but not caught by the error union
     if let Some(exc) = scope.exception() {
         let exc_value = JSValue::from_cell(exc.as_ptr());
-        // Store the exception in the VM's unhandled rejection capture mechanism
         if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
-            // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+            // SAFETY: VM-owned pointer set by `HandlerErrorScope`.
             unsafe { *err_ptr = exc_value };
-            exc_value.protect();
         }
-        // Clear the exception to prevent assertion failures
         scope.clear_exception();
         return true;
     }

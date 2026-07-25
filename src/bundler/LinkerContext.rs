@@ -132,6 +132,7 @@ pub use crate::linker_context::static_route_visitor as StaticRouteVisitor;
 // `linker_context/doStep5.rs`), not free functions — no item re-export.
 pub use crate::linker_context::compute_cross_chunk_dependencies::compute_cross_chunk_dependencies;
 pub use crate::linker_context::convert_stmts_for_chunk::convert_stmts_for_chunk;
+pub use crate::linker_context::dedupe_external_esm_imports::dedupe_external_esm_imports;
 pub use crate::linker_context::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 pub use crate::linker_context::do_step5;
 pub use crate::linker_context::generate_chunks_in_parallel::generate_chunks_in_parallel;
@@ -865,6 +866,8 @@ impl<'a> LinkerContext<'a> {
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
         }
+
+        dedupe_external_esm_imports(self, &mut chunks);
 
         self.graph.symbols.follow_all();
 

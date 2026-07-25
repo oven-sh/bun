@@ -102,6 +102,14 @@ pub fn convert_stmts_for_chunk(
                         continue 'stmt_loop;
                     }
 
+                    if let crate::chunk::Content::Javascript(js) = &chunk.content {
+                        let key =
+                            ((source_index as u64) << 32) | (s.import_record_index as u64);
+                        if js.external_import_records_to_skip.contains_key(&key) {
+                            continue 'stmt_loop;
+                        }
+                    }
+
                     // Make sure these don't end up in the wrapper closure
                     if should_extract_esm_stmts_for_wrap {
                         stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);

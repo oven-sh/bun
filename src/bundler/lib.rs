@@ -130,6 +130,9 @@ pub mod linker_context {
     #[path = "convertStmtsForChunkForDevServer.rs"]
     pub mod convert_stmts_for_chunk_for_dev_server;
 
+    #[path = "dedupeExternalESMImports.rs"]
+    pub mod dedupe_external_esm_imports;
+
     #[path = "doStep5.rs"]
     pub mod do_step5;
 

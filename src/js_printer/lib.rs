@@ -2704,19 +2704,12 @@ pub mod __gated_printer {
             }
         }
 
-        fn print_glob_require(
-            &mut self,
-            import_record_index: u32,
-            kind: ImportKind,
-            level: Level,
-        ) {
-            let Some((arg, is_require, entries)) =
-                self.options.glob_imports.and_then(|list| {
-                    list.iter()
-                        .find(|g| g.import_record_index == import_record_index)
-                        .map(|g| (g.arg, g.is_require, g.entries.as_slice()))
-                })
-            else {
+        fn print_glob_require(&mut self, import_record_index: u32, kind: ImportKind, level: Level) {
+            let Some((arg, is_require, entries)) = self.options.glob_imports.and_then(|list| {
+                list.iter()
+                    .find(|g| g.import_record_index == import_record_index)
+                    .map(|g| (g.arg, g.is_require, g.entries.as_slice()))
+            }) else {
                 // No glob data: fall back to a plain map that throws at
                 // runtime. This keeps non-bundling callers safe.
                 self.print_space_before_identifier();

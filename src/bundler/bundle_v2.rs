@@ -5820,10 +5820,7 @@ pub mod bv2_impl {
                 }
                 abs.extend_from_slice(dir_prefix);
 
-                let Some(dir_info) = self
-                    .transpiler
-                    .resolver
-                    .read_dir_info_ignore_error(&abs)
+                let Some(dir_info) = self.transpiler.resolver.read_dir_info_ignore_error(&abs)
                 else {
                     continue;
                 };
@@ -5850,8 +5847,7 @@ pub mod bv2_impl {
                         continue;
                     }
                     if !suffix.is_empty() {
-                        if !base.ends_with(suffix)
-                            || base.len() <= file_prefix.len() + suffix.len()
+                        if !base.ends_with(suffix) || base.len() <= file_prefix.len() + suffix.len()
                         {
                             continue;
                         }
@@ -5869,31 +5865,23 @@ pub mod bv2_impl {
                     rel.extend_from_slice(dir_prefix);
                     rel.extend_from_slice(&base);
 
-                    let Some(source_index) = self.resolve_glob_child(
-                        source_dir,
-                        &rel,
-                        kind,
-                        target,
-                        resolve_queue,
-                    ) else {
+                    let Some(source_index) =
+                        self.resolve_glob_child(source_dir, &rel, kind, target, resolve_queue)
+                    else {
                         continue;
                     };
 
                     let key: &'static [u8] =
                         FilenameStore::instance().append_slice(&rel).expect("oom");
-                    glob.entries.push(bun_ast::ast_result::GlobImportEntry {
-                        key,
-                        source_index,
-                    });
+                    glob.entries
+                        .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
                     if suffix.is_empty() {
                         let stem = &rel[..rel.len() - ext.len()];
                         if stem.len() < rel.len() {
                             let key: &'static [u8] =
                                 FilenameStore::instance().append_slice(stem).expect("oom");
-                            glob.entries.push(bun_ast::ast_result::GlobImportEntry {
-                                key,
-                                source_index,
-                            });
+                            glob.entries
+                                .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
                         }
                     }
                 }
@@ -7149,8 +7137,7 @@ pub mod bv2_impl {
 
                     if !result.ast.glob_imports.is_empty() {
                         let target = result.ast.target;
-                        let source_dir = this.graph.input_files.items_source()
-                            [result_source_index]
+                        let source_dir = this.graph.input_files.items_source()[result_source_index]
                             .path
                             .source_dir()
                             .to_vec();

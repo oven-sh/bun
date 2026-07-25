@@ -123,9 +123,9 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
                     }
                     PSEUDO_SCHEME => {
                         if !value[0].is_ascii_alphabetic()
-                            || !value[1..]
-                                .iter()
-                                .all(|&c| c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.'))
+                            || !value[1..].iter().all(|&c| {
+                                c.is_ascii_alphanumeric() || matches!(c, b'+' | b'-' | b'.')
+                            })
                         {
                             return Err(());
                         }

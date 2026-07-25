@@ -4767,6 +4767,15 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
+
+        // RFC 9112 §9.3: HTTP/1.0 connections are non-persistent unless the
+        // response carries an explicit `Connection: keep-alive`. The header loop
+        // below can flip this back on. h2/h3 reach here with a synthetic
+        // minor_version of 0 but overwrite allow_keepalive afterwards.
+        if response.minor_version == 0 {
+            self.state.flags.allow_keepalive = false;
+        }
+
         for (header_i, header) in response.headers.list.iter().enumerate() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
@@ -4876,19 +4885,19 @@ impl<'a> HTTPClient<'a> {
                     location = header.value();
                 }
                 h if h == hash_header_const(b"Connection") => {
-                    if response.status_code >= 200 && response.status_code <= 299 {
-                        // HTTP headers are case-insensitive (RFC 7230)
-                        if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"close",
-                        ) {
-                            self.state.flags.allow_keepalive = false;
-                        } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
-                            header.value(),
-                            b"keep-alive",
-                        ) {
-                            self.state.flags.allow_keepalive = true;
-                        }
+                    // RFC 9112 §9.6: `close` on a response means the server will
+                    // close after this message regardless of status code; the
+                    // connection MUST NOT be reused.
+                    if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        header.value(),
+                        b"close",
+                    ) {
+                        self.state.flags.allow_keepalive = false;
+                    } else if bun_core::strings::eql_case_insensitive_ascii_check_length(
+                        header.value(),
+                        b"keep-alive",
+                    ) {
+                        self.state.flags.allow_keepalive = true;
                     }
                 }
                 h if h == hash_header_const(b"Last-Modified") => {

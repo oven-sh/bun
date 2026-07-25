@@ -251,6 +251,81 @@ test("an early response to a streaming POST closes the socket instead of pooling
   });
 });
 
+// RFC 9112 §9.3/§9.6: a response carrying `Connection: close` must not be
+// pooled whatever its status code, and an HTTP/1.0 response is non-persistent
+// unless it carries an explicit `Connection: keep-alive`. The server below says
+// `close` but keeps the socket open so reuse is directly observable as the
+// same connection serving more than one request. Subprocess so the pool is
+// empty at the start and doesn't leak between rows.
+test("Connection: close on a non-2xx response and HTTP/1.0 defaults are not pooled", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const rows = [
+        ["1.1 200 close", "HTTP/1.1 200 OK", "Connection: close\\r\\n", 3],
+        ["1.1 404 close", "HTTP/1.1 404 Not Found", "Connection: close\\r\\n", 3],
+        ["1.1 503 close", "HTTP/1.1 503 Unavailable", "Connection: close\\r\\n", 3],
+        ["1.1 302 close", "HTTP/1.1 302 Found", "Connection: close\\r\\nLocation: /x\\r\\n", 3],
+        ["1.0 200 (no keep-alive)", "HTTP/1.0 200 OK", "", 3],
+        ["1.0 404 (no keep-alive)", "HTTP/1.0 404 Not Found", "", 3],
+        ["1.0 200 keep-alive", "HTTP/1.0 200 OK", "Connection: keep-alive\\r\\n", 1],
+        ["1.1 404 (implicit keep-alive)", "HTTP/1.1 404 Not Found", "", 1],
+      ];
+      const result = [];
+      for (const [name, line, hdr, expected] of rows) {
+        let conns = 0;
+        const per = [];
+        const server = net.createServer(s => {
+          const id = ++conns;
+          let buf = "";
+          s.on("error", () => {});
+          s.on("data", d => {
+            buf += d;
+            while (buf.includes("\\r\\n\\r\\n")) {
+              buf = buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4);
+              per.push(id);
+              s.write(line + "\\r\\n" + hdr + "content-length: 2\\r\\n\\r\\nhi");
+            }
+          });
+        });
+        await new Promise(r => server.listen(0, "127.0.0.1", r));
+        const url = "http://127.0.0.1:" + server.address().port + "/";
+        for (let i = 0; i < 3; i++) {
+          const res = await fetch(url, { redirect: "manual" });
+          await res.arrayBuffer();
+        }
+        server.close();
+        result.push({ row: name, connections: conns, per: per.join(","), expected });
+      }
+      console.log(JSON.stringify(result));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("[") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: [
+      { row: "1.1 200 close", connections: 3, per: "1,2,3", expected: 3 },
+      { row: "1.1 404 close", connections: 3, per: "1,2,3", expected: 3 },
+      { row: "1.1 503 close", connections: 3, per: "1,2,3", expected: 3 },
+      { row: "1.1 302 close", connections: 3, per: "1,2,3", expected: 3 },
+      { row: "1.0 200 (no keep-alive)", connections: 3, per: "1,2,3", expected: 3 },
+      { row: "1.0 404 (no keep-alive)", connections: 3, per: "1,2,3", expected: 3 },
+      { row: "1.0 200 keep-alive", connections: 1, per: "1,1,1", expected: 1 },
+      { row: "1.1 404 (implicit keep-alive)", connections: 1, per: "1,1,1", expected: 1 },
+    ],
+    exitCode: 0,
+  });
+});
+
 // Negative contract for the gate above: a streamed POST whose chunked body
 // completed (terminator written) before the response arrived must still hand
 // its connection back to the keep-alive pool.

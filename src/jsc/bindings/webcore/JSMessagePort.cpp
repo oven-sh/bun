@@ -592,8 +592,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMessagePortPrototypeFunction_removeAllListeners, (JSG
 
 static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_setMaxListenersBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSMessagePort>::ClassParameter castedThis)
 {
-    UNUSED_PARAM(lexicalGlobalObject);
-    castedThis->wrapped().setNodeMaxListeners(callFrame->argument(0).toUInt32(lexicalGlobalObject));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto n = callFrame->argument(0).toUInt32(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    castedThis->wrapped().setNodeMaxListeners(n);
     return JSValue::encode(castedThis);
 }
 

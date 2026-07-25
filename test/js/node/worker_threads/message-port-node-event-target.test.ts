@@ -401,4 +401,71 @@ describe.concurrent("MessagePort NodeEventTarget", () => {
     expect(stdout).toBe("0");
     expect(exitCode).toBe(0);
   });
+
+  test("removeAllListeners('message') re-buffers instead of dropping", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        require("node:worker_threads");
+        const { port1, port2 } = new MessageChannel();
+        port1.on("message", () => { throw new Error("should not fire") });
+        port1.removeAllListeners("message");
+        port2.postMessage("x");
+        setImmediate(() => {
+          let got;
+          port1.on("message", v => { got = v });
+          setImmediate(() => {
+            process.stdout.write(String(got));
+            port1.close();
+          });
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("x");
+    expect(exitCode).toBe(0);
+  });
+
+  // Spawns a worker inside a debug subprocess; give it more than the default 5s.
+  test("parentPort.listenerCount / eventNames / removeAllListeners work in a worker", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          "const { parentPort } = require('node:worker_threads');" +
+          "const fn = () => {};" +
+          "parentPort.on('message', fn);" +
+          "const lc = parentPort.listenerCount('message');" +
+          "const en = parentPort.eventNames().includes('message');" +
+          "parentPort.removeAllListeners('message');" +
+          "const after = parentPort.listenerCount('message');" +
+          "const ml = parentPort.getMaxListeners();" +
+          "parentPort.postMessage([lc, en, after, ml]);",
+          { eval: true }
+        );
+        w.on("message", m => {
+          process.stdout.write(JSON.stringify(m));
+          w.terminate();
+        });
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("[1,true,0,10]");
+    expect(exitCode).toBe(0);
+  }, 30_000);
 });

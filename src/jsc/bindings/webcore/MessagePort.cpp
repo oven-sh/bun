@@ -493,10 +493,17 @@ void MessagePort::updateListenerEventLoopRef()
 
 void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& eventType, OnDidChangeListenerKind kind)
 {
+    auto& port = static_cast<MessagePort&>(self);
+    // removeAllListeners() bypasses the removeEventListener override, so the
+    // m_has*EventListener flags are reconciled here for Clear.
+    if (eventType == eventNames().closeEvent) {
+        if (kind == Clear)
+            port.m_hasCloseEventListener.store(false, std::memory_order_release);
+        return;
+    }
     if (eventType != eventNames().messageEvent)
         return;
 
-    auto& port = static_cast<MessagePort&>(self);
     switch (kind) {
     case Add:
         port.m_messageEventCount++;
@@ -507,6 +514,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         break;
     case Clear:
         port.m_messageEventCount = 0;
+        port.m_hasMessageEventListener = false;
         break;
     }
     port.updateListenerEventLoopRef();

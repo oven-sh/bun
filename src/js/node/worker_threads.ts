@@ -4,6 +4,7 @@ declare const self: typeof globalThis;
 type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
+const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
@@ -631,25 +632,73 @@ function fakeParentPort() {
     value: self.removeEventListener.bind(self),
   });
 
-  // MessagePort.prototype.on/etc. require a real MessagePort receiver; forward to self.
+  // MessagePort.prototype.on/etc. require a real MessagePort receiver; shadow
+  // them so calls on this stand-in forward to the global scope. A local map
+  // tracks which listeners were added via parentPort so listenerCount/
+  // eventNames/removeAllListeners see only those (self may carry internal
+  // listeners the user must not touch).
+  const byType = new SafeMap();
   function on(this: any, type: string, listener: any) {
     self.addEventListener(type, listener, { $kIsNodeStyleListener: true } as AddEventListenerOptions);
+    let set = byType.get(type);
+    if (!set) byType.set(type, (set = new Set()));
+    set.add(listener);
     return this;
   }
   function once(this: any, type: string, listener: any) {
     self.addEventListener(type, listener, { once: true, $kIsNodeStyleListener: true } as AddEventListenerOptions);
+    let set = byType.get(type);
+    if (!set) byType.set(type, (set = new Set()));
+    set.add(listener);
     return this;
   }
   function off(this: any, type: string, listener: any) {
     self.removeEventListener(type, listener);
+    byType.get(type)?.delete(listener);
     return this;
   }
+  function listenerCount(type: string) {
+    return byType.get(type)?.size ?? 0;
+  }
+  function eventNames() {
+    const out: string[] = [];
+    for (const [k, v] of byType) if (v.size > 0) out.push(k);
+    return out;
+  }
+  function removeAllListeners(this: any, type?: string) {
+    const clear = (t: string) => {
+      const set = byType.get(t);
+      if (set) {
+        for (const fn of set) self.removeEventListener(t, fn);
+        byType.delete(t);
+      }
+    };
+    if (arguments.length === 0) for (const t of [...byType.keys()]) clear(t);
+    else clear(type!);
+    return this;
+  }
+  function emit(type: string, arg?: any) {
+    const had = (byType.get(type)?.size ?? 0) > 0;
+    const ev =
+      type === "message" || type === "messageerror"
+        ? new MessageEvent(type, { data: arg })
+        : new CustomEvent(type, { detail: arg });
+    self.dispatchEvent(ev);
+    return had;
+  }
+  let maxListeners = 10;
   for (const [name, fn] of [
     ["on", on],
     ["addListener", on],
     ["once", once],
     ["off", off],
     ["removeListener", off],
+    ["listenerCount", listenerCount],
+    ["eventNames", eventNames],
+    ["removeAllListeners", removeAllListeners],
+    ["emit", emit],
+    ["getMaxListeners", () => maxListeners],
+    ["setMaxListeners", n => ((maxListeners = n), fake)],
   ] as const) {
     Object.defineProperty(fake, name, { value: fn, enumerable: false, configurable: true, writable: true });
   }

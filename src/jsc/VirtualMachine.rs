@@ -5596,7 +5596,6 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> crate::CrateResult<()> {
-        use crate::JSType;
         use crate::console_object::formatter::TagOptions;
         use crate::console_object::{self, Tag, TagPayload};
 
@@ -5738,9 +5737,7 @@ impl VirtualMachine {
         let name = exception.name;
         let message = exception.message;
 
-        let is_error_instance = error_instance != JSValue::ZERO
-            && error_instance.is_cell()
-            && error_instance.js_type() == JSType::ErrorInstance;
+        let is_error_instance = error_instance != JSValue::ZERO && error_instance.is_error_like();
         // NOTE: cannot use `self.global()` — `global_ref` outlives a
         // `&mut self` recursion (`print_error_instance_js`) and is passed to
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
@@ -5963,7 +5960,7 @@ impl VirtualMachine {
                 }
 
                 let kind = value.js_type();
-                if kind == JSType::ErrorInstance && !prev_had_errors {
+                if value.is_error_like() && !prev_had_errors {
                     if field.eql_comptime(b"cause") {
                         saw_cause = true;
                     }
@@ -6060,7 +6057,7 @@ impl VirtualMachine {
             if !saw_cause {
                 let key = bun_core::String::static_(b"cause");
                 if let Some(cause) = error_instance.get_own(global_ref, &key)? {
-                    if cause.is_cell() && cause.js_type() == JSType::ErrorInstance {
+                    if cause.is_error_like() {
                         cause.protect();
                         errors_to_append.push(cause);
                     }

@@ -39,6 +39,7 @@
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/ErrorInstance.h"
+#include "JavaScriptCore/ErrorPrototype.h"
 #include "JavaScriptCore/ExceptionHelpers.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/FunctionConstructor.h"
@@ -3684,6 +3685,37 @@ bool JSC__JSValue__isAnyError(JSC::EncodedJSValue JSValue0)
     }
 
     return type == JSC::ErrorInstanceType;
+}
+
+// True if the value is a native ErrorInstance, or its [[Prototype]] chain
+// (read via getPrototypeDirect, so Proxy traps and Symbol.hasInstance are not
+// consulted) contains Error.prototype or an ErrorInstance. This is the
+// "isNativeError(e) || e instanceof Error" shape Node uses to decide whether to
+// render a value as an error.
+[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isErrorLike(JSC::EncodedJSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+
+    JSC::JSCell* cell = value.asCell();
+    if (cell->type() == JSC::ErrorInstanceType)
+        return true;
+
+    JSC::JSObject* object = value.getObject();
+    if (!object)
+        return false;
+
+    JSValue proto = object->getPrototypeDirect();
+    unsigned depth = 0;
+    while (proto.isCell()) {
+        JSC::JSCell* protoCell = proto.asCell();
+        if (protoCell->type() == JSC::ErrorInstanceType || protoCell->inherits<JSC::ErrorPrototype>())
+            return true;
+        JSC::JSObject* protoObject = proto.getObject();
+        if (!protoObject || ++depth == 64)
+            return false;
+        proto = protoObject->getPrototypeDirect();
+    }
+    return false;
 }
 
 // This implementation closely mimics the one in JSC::JSPromise::reject

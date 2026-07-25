@@ -2330,6 +2330,19 @@ pub mod formatter {
                 }
             }
 
+            // Function-based Error subclasses (`X.prototype =
+            // Object.create(Error.prototype)`) are plain FinalObject cells, not
+            // ErrorInstance. Node renders any `instanceof Error` value as an
+            // error, so check the prototype chain for Error.prototype here.
+            if matches!(js_type, jsc::JSType::Object | jsc::JSType::FinalObject)
+                && value.is_error_like()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Error,
+                    cell: js_type,
+                });
+            }
+
             use jsc::JSType as T;
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,

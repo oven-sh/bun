@@ -687,7 +687,11 @@ describe("--filter forwards color to scripts", () => {
     });
   }
 
-  async function runOnPTY(dir: string, extraEnv: Record<string, string | undefined>, args = ["--filter", "*", "probe"]) {
+  async function runOnPTY(
+    dir: string,
+    extraEnv: Record<string, string | undefined>,
+    args = ["--filter", "*", "probe"],
+  ) {
     const decoder = new TextDecoder();
     let output = "";
     const done = Promise.withResolvers<void>();

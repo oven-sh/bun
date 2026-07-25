@@ -2211,9 +2211,7 @@ console.log(<div {...obj} key="after" />);`),
         loader: "tsx",
         define: { "process.env.NODE_ENV": JSON.stringify("development") },
       }).transform("export default <div>hi</div>;");
-      expect(out).toMatch(
-        /^import { jsxDEV as (\w+) } from "react\/jsx-dev-runtime";\nexport default \1\("div",/,
-      );
+      expect(out).toMatch(/^import { jsxDEV as (\w+) } from "react\/jsx-dev-runtime";\nexport default \1\("div",/);
     });
 
     it("production", () => {

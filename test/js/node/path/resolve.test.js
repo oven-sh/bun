@@ -149,7 +149,7 @@ describe("path.resolve", () => {
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
     expect(() => {
       return path.posix.resolve(undefined, "hi");
-    }).toThrow('The "paths[0]" property must be of type string, got undefined');
+    }).toThrow('The "paths[0]" argument must be of type string. Received undefined');
     expect(() => {
       return path.posix.resolve(undefined, "/hi");
     }).not.toThrow();

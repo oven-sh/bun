@@ -587,27 +587,25 @@ impl JSGlobalObject {
         .throw()
     }
 
-    /// `validators.throwErrInvalidArgType` —
-    /// `The "<name>" property must be of type <expected>, got <actual>`
-    /// where `<actual>` is the JS `typeof` (or `"array"` for arrays).
-    pub fn throw_invalid_property_type(
+    /// Node's `ERR_INVALID_ARG_TYPE`:
+    /// `The "<name>" <argument|property> must be of type <expected>. Received <specific type>`
+    pub fn throw_err_invalid_arg_type(
         &self,
         name: impl AsRef<[u8]>,
-        expected_type: &str,
+        expected_type: impl std::fmt::Display,
         value: JSValue,
     ) -> JsError {
-        let actual_type = if value.js_type().is_array() {
-            bun_core::ZigString::static_(b"array")
-        } else {
-            value.js_type_string(self).get_zig_string(self)
+        let actual = match Self::determine_specific_type(self, value) {
+            Ok(s) => s,
+            Err(e) => return e,
         };
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" property must be of type {}, got {}",
-                bstr::BStr::new(name.as_ref()),
+                "The {} must be of type {}. Received {}",
+                ArgumentName(name.as_ref()),
                 expected_type,
-                actual_type,
+                actual,
             ),
         )
         .throw()
@@ -1707,4 +1705,24 @@ impl ScriptExecutionContextIdentifier {
 unsafe extern "C" {
     // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
     safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+}
+
+/// Renders an `ERR_INVALID_ARG_TYPE` parameter name the way Node's `addParameter`
+/// does: a name already ending in `" argument"` is used verbatim, otherwise it is
+/// quoted and labelled `property` when it contains a dot and `argument` when it
+/// does not.
+/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/errors.js#L1407-L1414
+pub struct ArgumentName<'a>(pub &'a [u8]);
+
+impl std::fmt::Display for ArgumentName<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = bstr::BStr::new(self.0);
+        if self.0.ends_with(b" argument") {
+            write!(f, "{}", name)
+        } else if self.0.contains(&b'.') {
+            write!(f, "\"{}\" property", name)
+        } else {
+            write!(f, "\"{}\" argument", name)
+        }
+    }
 }

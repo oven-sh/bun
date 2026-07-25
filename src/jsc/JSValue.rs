@@ -1212,7 +1212,7 @@ impl JSValue {
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {
-                    return Err(global.throw_invalid_property_type(property, "string", v));
+                    return Err(global.throw_err_invalid_arg_type(property, "string", v));
                 }
                 Ok(Some(v.to_slice(global)?))
             }
@@ -1248,7 +1248,19 @@ impl JSValue {
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bool>> {
         let property = property.as_ref();
-        let Some(prop) = self.get(global, property)? else {
+        self.get_boolean_strict_named(global, property, property)
+    }
+
+    /// [`Self::get_boolean_strict`] where the name reported by
+    /// `ERR_INVALID_ARG_TYPE` differs from the property key (Node spells
+    /// options-bag members `options.<key>`).
+    pub fn get_boolean_strict_named(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+        name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<bool>> {
+        let Some(prop) = self.get(global, property.as_ref())? else {
             return Ok(None);
         };
         if prop.is_undefined() {
@@ -1257,7 +1269,7 @@ impl JSValue {
         if prop.is_boolean() {
             return Ok(Some(prop == JSValue::TRUE));
         }
-        Err(global.throw_invalid_property_type(property, "boolean", prop))
+        Err(global.throw_err_invalid_arg_type(name, "boolean", prop))
     }
     /// Validates `is_string`, looks up via the supplied string map, throws
     /// "must be one of …" on miss. Callers pass `one_of` as a `'static`

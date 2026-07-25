@@ -213,7 +213,9 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(str.slice())?;
 
-    let obj = JSValue::create_empty_object(global, p.map.map.count());
+    // Node's binding.parseEnv returns a null-prototype object.
+    // https://github.com/nodejs/node/blob/v26.3.0/src/node_dotenv.cc#L109-L113
+    let obj = JSValue::create_empty_object_with_null_prototype(global);
     for (k, v) in p.map.map.iter() {
         obj.put(
             global,

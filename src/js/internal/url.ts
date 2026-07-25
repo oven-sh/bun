@@ -1,4 +1,10 @@
 function urlToHttpOptions(url) {
+  // Node's validateObject(url, "url", kValidateObjectAllowObjects): arrays and
+  // functions are accepted, null and primitives are not.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/url.js#L1448
+  if (url === null || (typeof url !== "object" && typeof url !== "function")) {
+    throw $ERR_INVALID_ARG_TYPE("url", "object", url);
+  }
   const options = {
     ...url,
     protocol: url.protocol,

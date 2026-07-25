@@ -1654,8 +1654,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // .mjs/.mts are always ESM and .cjs/.cts are always CJS, regardless
-            // of any package.json "type" field.
+            // .mjs/.mts/.cjs/.cts override any package.json "type".
             if !kind.is_from_css() && name.ext.len() == 4 {
                 if let Some(from_ext) = module_type_from_ext(name.ext) {
                     module_type = from_ext;

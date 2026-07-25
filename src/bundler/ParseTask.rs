@@ -2661,11 +2661,8 @@ pub mod parse_worker {
         };
 
         ast.target = target;
+        // Construction sites that bypass the resolver leave module_type Unknown; fall back to extension.
         let module_type_for_print = if task.module_type == options::ModuleType::Unknown {
-            // Some ParseTask construction sites bypass the resolver (plugin
-            // onResolve, server-component re-parse, in-memory entries) and
-            // leave module_type Unknown. Fall back to the file extension so
-            // .mjs/.mts still get Node ESM interop semantics.
             match task.path.name().ext {
                 b".mjs" | b".mts" => options::ModuleType::Esm,
                 b".cjs" | b".cts" => options::ModuleType::Cjs,

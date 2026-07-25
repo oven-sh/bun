@@ -230,7 +230,10 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
   const wellFormedRequests: Row[] = [
     { name: "te: trailers", pairs: [...valid, "te", "trailers"] },
     { name: "te: Trailers (mixed case)", pairs: [...valid, "te", "Trailers"] },
-    { name: "Host without :authority", pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", "localhost"] },
+    {
+      name: "Host without :authority",
+      pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", "localhost"],
+    },
     { name: "CONNECT without :scheme/:path", pairs: [":method", "CONNECT", ":authority", "localhost:443"] },
     {
       name: "extended CONNECT",

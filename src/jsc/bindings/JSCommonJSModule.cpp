@@ -781,8 +781,6 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequire, (JSC::JSGlobalObject * globalObject, JSC
     JSValue decodedValue = JSValue::decode(value);
     auto* zigGlobal = defaultGlobalObject(globalObject);
     if (decodedThis == zigGlobal->CommonJSModuleObjectStructure()->storedPrototypeObject()) {
-        // Assigning on Object.getPrototypeOf(module) replaces the process-wide
-        // override (same slot Module.prototype.require writes to).
         globalObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().overridableRequirePrivateName(), decodedValue, 0);
         return true;
     }

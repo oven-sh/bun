@@ -1121,7 +1121,7 @@ const server = serve({
         const [stdout, , runExit] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
         expect(stdout.trim()).toBe("ran as bun");
         expect(runExit).toBe(0);
-      }, 60_000);
+      }, 30_000);
     }
 
     test("--target=bun does not warn", async () => {
@@ -1140,7 +1140,7 @@ const server = serve({
       expect(stderr).not.toContain("warn:");
       expect(stderr).not.toContain("has no effect");
       expect(exitCode).toBe(0);
-    }, 60_000);
+    }, 30_000);
   });
 });
 

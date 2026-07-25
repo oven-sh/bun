@@ -889,15 +889,16 @@ wcsnlen                     [AVX, AVX2]
 # to an indirect `jmp *table[rbp + rax*4]` where MSVC stores the table as
 # three arrays of 4-byte image-relative RVAs in .text right after the
 # function's `ret`. Those RVAs change with link layout, and linear sweep
-# desyncs into them: entry bytes `C7 F8 xx xx` / `C6 F8 xx` decode as
-# XBEGIN/XABORT (handled in is_impossible_feature), and `C4/C5 xx ..` can
-# decode as stray VEX. The SDE -nhm step in this job calls strcspn
-# (libarchive mtree, sqlite3) and passes, confirming no post-SSE2 code runs.
+# desyncs into them: entry bytes `C7 F8 ..`/`C6 F8 ..` decode as
+# XBEGIN/XABORT (handled in is_impossible_feature); `C4/C5/62/8F ..` can
+# decode as stray VEX/EVEX/XOP. Blanket-pass: the source has no post-SSE2
+# path to grow past, so a ceiling here just means the next layout that
+# decodes as FMA/BMI2/AVX512* re-flakes.
 # (3 symbols)
 # ----------------------------------------------------------------------------
-strcspn                     [AVX, AVX2]
-strpbrk                     [AVX, AVX2]
-strspn                      [AVX, AVX2]
+strcspn
+strpbrk
+strspn
 
 
 # ----------------------------------------------------------------------------

@@ -530,6 +530,55 @@ impl<const SSL: bool> HTTPContext<SSL> {
         self.init_with_opts(&opts)
     }
 
+    /// Swap this context's `SSL_CTX` for one trusting exactly `certs`
+    /// (`tls.setDefaultCACertificates()` bridged from the JS thread). Only
+    /// new connects see the change: live sockets hold their own references
+    /// on the old `SSL_CTX`, and the fresh context also starts with an empty
+    /// client session cache, so resumption cannot skip re-verification
+    /// against the new set. An empty `certs` installs an explicitly empty
+    /// trust store, like Node.
+    pub(crate) fn replace_ssl_ctx_with_default_ca(&mut self, certs: &[std::ffi::CString]) {
+        debug_assert!(SSL, "ssl only");
+        let ptrs: Vec<*const core::ffi::c_char> = certs.iter().map(|c| c.as_ptr()).collect();
+        let mut err = uws::create_bun_socket_error_t::none;
+        let opts = uws::SocketContext::BunSocketContextOptions {
+            ca: if ptrs.is_empty() {
+                core::ptr::null()
+            } else {
+                ptrs.as_ptr().cast()
+            },
+            ca_count: u32::try_from(ptrs.len()).expect("int cast"),
+            request_cert: 1,
+            ..Default::default()
+        };
+        let Some(ctx) = opts.create_ssl_context(&mut err) else {
+            // The PEMs were already validated on the JS side
+            // (parseCACertificates), so this is resource exhaustion. Keep the
+            // previous context: connections still verify against the old
+            // default set instead of silently skipping verification.
+            return;
+        };
+        if ptrs.is_empty() {
+            // ca_count == 0 seeds the shared default root store, but
+            // setDefaultCACertificates([]) means an explicitly empty one.
+            let store = unsafe { bun_boringssl_sys::X509_STORE_new() };
+            if store.is_null() {
+                // SAFETY: ctx was created above and not yet published.
+                unsafe { bun_boringssl_sys::SSL_CTX_free(ctx) };
+                return;
+            }
+            // SAFETY: consumes `store`; ctx owns it from here.
+            unsafe { bun_boringssl_sys::SSL_CTX_set_cert_store(ctx, store) };
+        }
+        // SAFETY: ctx is the fresh SSL_CTX this context is about to own.
+        unsafe { ssl_ctx_setup(ctx) };
+        if let Some(old) = self.secure.replace(ctx) {
+            // SAFETY: releases the one ref this context held; sockets created
+            // from the old ctx keep it alive through their own SSL refs.
+            unsafe { bun_boringssl_sys::SSL_CTX_free(old) };
+        }
+    }
+
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
         self.group

@@ -77,6 +77,32 @@ pub(crate) fn bun_get_use_system_ca(
     Ok(JSValue::js_boolean(v))
 }
 
+/// `tls.setDefaultCACertificates()` bridge for `fetch()`: publishes the
+/// normalized PEM list to `bun_http::default_ca`, and the HTTP client thread
+/// rebuilds its default HTTPS `SSL_CTX` from it on the next connect.
+/// `node:tls`/`node:https` apply the same override in JS
+/// (`_defaultCACertificatesOverride` in src/js/node/tls.ts). The caller has
+/// already validated and re-serialized every entry through
+/// `parseCACertificates`, so each element is a PEM string.
+pub(crate) fn bun_set_default_ca_certificates(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let mut certs: Vec<std::ffi::CString> = Vec::new();
+    let mut iter = frame.argument(0).array_iterator(global)?;
+    while let Some(item) = iter.next()? {
+        let s = bun_core::OwnedString::new(item.to_bun_string(global)?);
+        let bytes = s.to_owned_slice();
+        // PEM re-serialized by parseCACertificates cannot contain NUL.
+        debug_assert!(!bytes.contains(&0));
+        if let Ok(cert) = std::ffi::CString::new(bytes) {
+            certs.push(cert);
+        }
+    }
+    bun_http::default_ca::set(certs);
+    Ok(JSValue::UNDEFINED)
+}
+
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,

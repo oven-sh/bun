@@ -1691,6 +1691,7 @@ function cacheBundledRootCertificates(): string[] {
   return bundledRootCertificates;
 }
 const getUseSystemCA = $newRustFunction("bun.rs", "getUseSystemCA", 0);
+const setDefaultCACertificatesNative = $newRustFunction("bun.rs", "setDefaultCACertificates", 1);
 
 let defaultCACertificates: string[] | undefined;
 function cacheDefaultCACertificates() {
@@ -1801,6 +1802,9 @@ function setDefaultCACertificates(certs: ReadonlyArray<CACertInput>): void {
     throw $ERR_CRYPTO_OPERATION_FAILED("No valid certificates found in the provided array");
   }
   _defaultCACertificatesOverride = normalized;
+  // fetch()'s TLS contexts live on the HTTP client thread; hand it the same
+  // normalized set so its default SSL_CTX is rebuilt on the next connect.
+  setDefaultCACertificatesNative(normalized);
 }
 
 function getCACertificates(type = "default") {

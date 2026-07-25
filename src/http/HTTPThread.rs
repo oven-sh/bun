@@ -105,6 +105,9 @@ pub struct HttpThread {
     /// `Option::take` is the once-guard (no atomics needed — `connect` is never
     /// reentrant).
     lazy_https_init: Option<InitOpts>,
+    /// Last `crate::default_ca::generation()` applied to `https_context`.
+    /// 0 = the override was never installed. HTTP-thread-only.
+    applied_default_ca_generation: u64,
 
     pub queued_tasks: Queue,
     /// Tasks popped from `queued_tasks` that couldn't start because
@@ -172,6 +175,7 @@ impl HttpThread {
                 pending_h2_connects: Vec::new(),
             },
             lazy_https_init: None,
+            applied_default_ca_generation: 0,
             queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
@@ -456,6 +460,21 @@ impl HttpThread {
     fn ensure_https_context_init(&mut self) {
         if let Some(opts) = self.lazy_https_init.take() {
             self.init_https_context_cold(&opts);
+        }
+        // `tls.setDefaultCACertificates()` replaced the default CA set since
+        // the default HTTPS context was built (or since the last replacement):
+        // rebuild its SSL_CTX so new connects verify against the current set.
+        let generation = crate::default_ca::generation();
+        if generation != self.applied_default_ca_generation {
+            self.apply_default_ca_override_cold(generation);
+        }
+    }
+
+    #[cold]
+    fn apply_default_ca_override_cold(&mut self, generation: u64) {
+        self.applied_default_ca_generation = generation;
+        if let Some(certs) = crate::default_ca::snapshot() {
+            self.https_context.replace_ssl_ctx_with_default_ca(&certs);
         }
     }
 

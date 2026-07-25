@@ -1969,16 +1969,24 @@ struct us_socket_t *us_internal_ssl_on_close(struct us_socket_t *s, int code, vo
   return ret;
 }
 
-/* The EOF dispatch below is scoped to uWS HTTP server sockets: their
- * context's onEnd owns the EOF (premature-EOF clientError
- * HPE_INVALID_EOF_STATE, CONNECT/Upgrade half-open, pipeline drain after
- * FIN), and closing without dispatching silently skipped all of it for
- * node:https. Every other TLS socket kind predates the dispatch and
- * synthesizes its JS 'end' from the close event, so they keep the
- * historical force-close (dispatching for them strands sockets whose end
- * handler expects the transport to close underneath it). */
-static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+static int ssl_is_uws_http_tls(struct us_socket_t *s) {
   return us_socket_kind(s) == BUN_SOCKET_KIND_UWS_HTTP_TLS;
+}
+
+/* The EOF dispatch below is scoped to the socket kinds whose user layer
+ * consumes an end event and then honors allow_half_open like the plain-TCP
+ * path in loop.c: uWS HTTP server sockets (their context's onEnd owns the
+ * EOF: premature-EOF clientError, CONNECT/Upgrade half-open, pipeline drain
+ * after FIN) and Bun.connect/Bun.listen sockets (node:tls rides on these
+ * with allow_half_open always set natively; the historical force-close on
+ * the peer's close_notify made an allowHalfOpen client's write-after-'end'
+ * fail instead of flushing). The remaining TLS kinds (HTTP client,
+ * WebSocket, DB drivers) synthesize their EOF handling from the close event
+ * and keep the force-close. */
+static int ssl_wants_eof_dispatch(struct us_socket_t *s) {
+  unsigned char kind = us_socket_kind(s);
+  return kind == BUN_SOCKET_KIND_UWS_HTTP_TLS ||
+         kind == BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 }
 
 /* Deliver the plaintext EOF to the user layer once, like the plain-TCP path
@@ -2099,7 +2107,7 @@ struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {
    * onWritable clears the teardown timeout armed at shutdown. node sockets
    * still get write-completion dispatch after a half-close in either
    * direction. */
-  if (ssl_wants_eof_dispatch(s) && us_internal_ssl_is_shut_down(s)) return s;
+  if (ssl_is_uws_http_tls(s) && us_internal_ssl_is_shut_down(s)) return s;
 
   if (s->ssl_handshake_state == HANDSHAKE_COMPLETED) {
     s = us_dispatch_writable(s);

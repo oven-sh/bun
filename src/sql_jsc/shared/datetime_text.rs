@@ -40,9 +40,6 @@ pub fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
     (consumed == text.len()).then_some(dt)
 }
 
-/// Postgres `timestamptz` text: `YYYY-MM-DD HH:MM:SS[.ffffff][+-]HH[:MM[:SS]]`.
-/// Returns the wall-clock components and the UTC offset in seconds (positive
-/// east of UTC); `None` for anything outside this shape so the caller falls back.
 pub fn parse_postgres_timestamptz(text: &[u8]) -> Option<(DateTimeText, i32)> {
     let (dt, consumed) = parse(text, false, false)?;
     let tail = text.get(consumed..)?;

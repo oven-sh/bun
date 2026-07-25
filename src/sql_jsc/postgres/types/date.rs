@@ -49,9 +49,6 @@ pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) ->
     components_to_ms_utc(global_object, &parsed)
 }
 
-/// Decode a Postgres `timestamptz` text value. The space-separated form
-/// Postgres emits trips JS `Date.parse`'s two-digit-year windowing, so parse
-/// the components and explicit offset directly. Same fallback rules as above.
 pub fn timestamptz_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
     let (parsed, offset_seconds) = crate::shared::datetime_text::parse_postgres_timestamptz(bytes)?;
     let wall_clock_utc = components_to_ms_utc(global_object, &parsed)?;

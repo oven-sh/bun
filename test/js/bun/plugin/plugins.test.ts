@@ -724,7 +724,7 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
 });
 
 // https://github.com/oven-sh/bun/issues/9373
-describe("preloaded plugins do not intercept other preload files", () => {
+describe("preloaded plugins do not intercept other preload entry files", () => {
   function makePlugin(tag: string) {
     return `
       import { plugin } from "bun";
@@ -748,10 +748,9 @@ describe("preloaded plugins do not intercept other preload files", () => {
   function summarize(stdout: string, stderr: string) {
     const lines = stdout.trim() ? stdout.trim().split("\n") : ["(no stdout)", stderr];
     return {
-      // Hook calls whose target is a preload file or one of its static imports.
-      hooksOnPreloadFiles: lines.filter(l => /^on(Load|Resolve) .* (plugin-\d|helper)\.ts$/.test(l)),
+      hooksOnPreloadEntries: lines.filter(l => /^on(Load|Resolve) .* plugin-\d\.ts$/.test(l)),
       setups: lines.filter(l => l.startsWith("setup ")),
-      loadsForUserFiles: lines.filter(l => l.startsWith("onLoad ") && !/(plugin-\d|helper)\.ts$/.test(l)),
+      loads: lines.filter(l => l.startsWith("onLoad ") && !/plugin-\d\.ts$/.test(l)),
       output: lines.filter(l => !/^(setup|onLoad|onResolve) /.test(l)),
     };
   }
@@ -759,10 +758,8 @@ describe("preloaded plugins do not intercept other preload files", () => {
   it.concurrent("with bunfig preload", async () => {
     using dir = tempDir("plugin-preload-no-intercept-bunfig", {
       "plugin-1.ts": makePlugin("p1"),
-      // A relative static import routes plugin-2's link step through onResolve.
-      "plugin-2.ts": `import "./helper.ts";\n` + makePlugin("p2"),
+      "plugin-2.ts": makePlugin("p2"),
       "plugin-3.ts": makePlugin("p3"),
-      "helper.ts": `export {};`,
       "bunfig.toml": `preload = ["./plugin-1.ts", "./plugin-2.ts", "./plugin-3.ts"]`,
       "dep.ts": `export const foo = () => console.log("Foo!");`,
       "entry.ts": `import { foo } from "./dep.ts"; console.log("Hello, world!"); foo();`,
@@ -777,9 +774,9 @@ describe("preloaded plugins do not intercept other preload files", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(summarize(stdout, stderr)).toEqual({
-      hooksOnPreloadFiles: [],
+      hooksOnPreloadEntries: [],
       setups: ["setup p1", "setup p2", "setup p3"],
-      loadsForUserFiles: ["onLoad p1 entry.ts", "onLoad p1 dep.ts"],
+      loads: ["onLoad p1 entry.ts", "onLoad p1 dep.ts"],
       output: ["Hello, world!", "Foo!"],
     });
     expect(exitCode).toBe(0);
@@ -801,11 +798,47 @@ describe("preloaded plugins do not intercept other preload files", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(summarize(stdout, stderr)).toEqual({
-      hooksOnPreloadFiles: [],
+      hooksOnPreloadEntries: [],
       setups: ["setup p1", "setup p2"],
-      loadsForUserFiles: ["onLoad p1 entry.ts"],
+      loads: ["onLoad p1 entry.ts"],
       output: ["done"],
     });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("a later preload can still import through an earlier preload's onLoad", async () => {
+    using dir = tempDir("plugin-preload-cross-onload", {
+      "plugin-1.ts": `
+        Bun.plugin({
+          name: "virt",
+          setup(build) {
+            build.onResolve({ filter: /.*/, namespace: "virt" }, (args) => ({
+              path: args.path,
+              namespace: "virt",
+            }));
+            build.onLoad({ filter: /.*/, namespace: "virt" }, (args) => ({
+              contents: "export default " + JSON.stringify("virt-loaded:" + args.path),
+              loader: "js",
+            }));
+          },
+        });
+      `,
+      "plugin-2.ts": `
+        import v from "virt:shared-thing";
+        console.log(v);
+      `,
+      "entry.ts": `console.log("entry done");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./plugin-1.ts", "--preload", "./plugin-2.ts", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.trim() || stderr).toBe("virt-loaded:shared-thing\nentry done");
     expect(exitCode).toBe(0);
   });
 
@@ -815,7 +848,6 @@ describe("preloaded plugins do not intercept other preload files", () => {
         Bun.plugin({
           name: "virtual",
           setup(build) {
-            // Populates vm.plugin_runner so the is_in_preload gate is reached.
             build.onLoad({ filter: /\\0never/ }, () => undefined);
             build.module("shared-config", () => ({
               exports: { value: 42 },

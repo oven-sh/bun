@@ -718,8 +718,11 @@ impl JSGlobalObject {
         target: BunPluginTarget,
     ) -> JsResult<Option<JSValue>> {
         crate::mark_binding();
-        // Preload files resolve with the default resolver, not earlier preloads' onResolve.
-        if self.bun_vm().is_in_preload {
+        let vm = self.bun_vm();
+        if !vm.currently_loading_preload.is_empty()
+            && namespace_.length() == 0
+            && path.eql_utf8(&vm.currently_loading_preload)
+        {
             return Ok(None);
         }
         let ns = (namespace_.length() > 0).then_some(&namespace_);

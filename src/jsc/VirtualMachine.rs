@@ -183,6 +183,10 @@ pub struct VirtualMachine {
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
+    /// Resolved path of the preload entry currently being imported by
+    /// `load_preloads`, so the runtime plugin dispatch can skip onLoad/onResolve
+    /// for that exact file while still serving its own imports.
+    pub currently_loading_preload: Vec<u8>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
@@ -613,6 +617,14 @@ unsafe impl Sync for VirtualMachine {}
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
+    /// True while `load_preloads` is importing `specifier` as a preload entry,
+    /// so runtime plugin hooks skip that file but still serve its own imports.
+    #[inline]
+    pub fn is_loading_preload_entry(&self, specifier: &[u8]) -> bool {
+        !self.currently_loading_preload.is_empty()
+            && self.currently_loading_preload.as_slice() == specifier
+    }
+
     /// Safe `&'static` accessor for the current thread's VM. The VM is a
     /// per-thread singleton allocated once in [`init`] and never freed until
     /// thread teardown, so the `'static` lifetime is sound. Mutation goes
@@ -2104,6 +2116,7 @@ impl VirtualMachine {
             // their validity invariants even when len/cap are 0. Write the
             // canonical empty value via `ptr::write` (no Drop of zeroed bytes).
             addr_of_mut!((*vm).preload).write(Vec::new());
+            addr_of_mut!((*vm).currently_loading_preload).write(Vec::new());
             addr_of_mut!((*vm).argv).write(Vec::new());
             addr_of_mut!((*vm).resolved_path_dups).write(Vec::new());
             addr_of_mut!((*vm).macros).write(Default::default());

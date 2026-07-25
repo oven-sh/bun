@@ -5,7 +5,7 @@
 // (leading ':', absolute tzfile paths, "std offset" specs) to an IANA name
 // before handing them to JSC so Date offsets match Node.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -41,10 +41,7 @@ describe.concurrent("process.env.TZ POSIX std+offset form", () => {
     expect(intl).toBe(expectedIntl);
   });
 
-  // On Windows the C runtime rejects these forms too, so Node also reports 0;
-  // matching Node there means keeping UTC. The test exercises the normalizer
-  // only on POSIX where the forms are meaningful.
-  test.skipIf(isWindows)("runtime assignment: process.env.TZ = 'MSK-3'", async () => {
+  test("runtime assignment: process.env.TZ = 'MSK-3'", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "process.env.TZ = 'MSK-3'; process.stdout.write(String(new Date().getTimezoneOffset()))"],
       env: { ...bunEnv, TZ: "Etc/UTC" },
@@ -56,12 +53,13 @@ describe.concurrent("process.env.TZ POSIX std+offset form", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Out of Etc/GMT range or not a simple whole-hour offset: Node falls back to
-  // the host zone (UTC here); Bun should too rather than keeping the offset 0
-  // while claiming some other zone.
-  test.each(["XXX+13", "IST-5:30", "FOO4BAR", "XX-3"])("TZ=%s falls through", async tz => {
-    const { offset: off } = await offset(tz);
-    expect(off).toBe(0);
+  // Forms the normalizer must NOT parse as an offset. The fall-through zone is
+  // host-dependent (registry on Windows, /etc/localtime for some of these on
+  // POSIX), so assert the override is not an Etc/GMT* zone rather than a fixed
+  // offset.
+  test.each(["XXX+13", "IST-5:30", "FOO4BAR", "XX-3", "ABC-05:00"])("TZ=%s is not parsed as an offset", async tz => {
+    const { intl } = await offset(tz);
+    expect(intl).not.toMatch(/^Etc\/GMT[+-]/);
   });
 });
 
@@ -114,21 +112,21 @@ test("runtime assignment of an unrecognized TZ clears a prior override", async (
     cmd: [
       bunExe(),
       "-e",
-      `process.env.TZ = 'America/New_York';
+      `const host = new Date().getTimezoneOffset();
+       process.env.TZ = 'Asia/Tokyo';
        const a = new Date().getTimezoneOffset();
        process.env.TZ = 'not a real zone';
        const b = new Date().getTimezoneOffset();
-       process.stdout.write(a + ' ' + b);`,
+       process.stdout.write(host + ' ' + a + ' ' + b);`,
     ],
     env: { ...bunEnv, TZ: "Etc/UTC" },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const [a, b] = stdout.split(" ").map(Number);
-  expect(a).not.toBe(0);
-  // Node resets to the host zone (UTC here) on an unrecognized TZ; previously
-  // Bun kept the last successful override.
-  expect(b).toBe(0);
+  const [host, a, b] = stdout.split(" ").map(Number);
+  expect(a).toBe(-540);
+  expect(b).not.toBe(a);
+  if (isPosix) expect(b).toBe(host);
   expect(exitCode).toBe(0);
 });

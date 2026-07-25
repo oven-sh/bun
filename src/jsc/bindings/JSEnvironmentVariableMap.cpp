@@ -489,22 +489,47 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
-// JSC's DateCache resolves the default time zone by name: it takes the WTF
-// override (or ICU's ucal_getHostTimeZone string), runs it through
-// intlResolveTimeZoneID, and if that lookup fails it collapses to UTC. That
-// loses POSIX TZ forms libc accepts but ICU cannot name, which V8 keeps as a
-// fixed-offset SimpleTimeZone. Normalize those forms to an IANA name JSC's
-// table knows so Date offsets match Node.
-//
-// Handled forms (POSIX / glibc conventions):
-//   ":America/New_York"            leading ':' stripped
-//   ":/etc/localtime"              realpath()'d, zoneinfo suffix extracted
-//   "/usr/share/zoneinfo/Zone"     zoneinfo prefix stripped
-//   "MSK-3", "UTC+5", "ABC5"       POSIX std offset -> Etc/GMT+/-h
-//
-// Anything else falls back to clearing the override so ICU's host detection
-// runs; a stale override from an earlier assignment must not persist past an
-// unrecognized value.
+// POSIX "STD[+|-]hh" -> "Etc/GMT[+|-]h" (both count hours west of UTC, so the
+// sign is preserved). Whole hours in the Etc/GMT range only, matching what
+// Node/V8 honors via ICU's uprv_tzname gate.
+static String posixStdOffsetToEtcGMT(StringView v)
+{
+    size_t i = 0;
+    if (!v.isEmpty() && v[0] == '<') {
+        size_t end = v.find('>');
+        if (end == notFound)
+            return String();
+        i = end + 1;
+    } else {
+        while (i < v.length() && isASCIIAlpha(v[i]))
+            ++i;
+        if (i < 3)
+            return String();
+    }
+    bool negative = false;
+    if (i < v.length() && (v[i] == '+' || v[i] == '-')) {
+        negative = v[i] == '-';
+        ++i;
+    }
+    size_t hstart = i;
+    while (i < v.length() && isASCIIDigit(v[i]))
+        ++i;
+    if (i == hstart || i - hstart > 2 || i != v.length())
+        return String();
+    int hours = 0;
+    for (size_t j = hstart; j < i; ++j)
+        hours = hours * 10 + (v[j] - '0');
+    if (hours == 0)
+        return "UTC"_s;
+    if (negative ? hours > 14 : hours > 12)
+        return String();
+    return makeString("Etc/GMT"_s, negative ? '-' : '+', hours);
+}
+
+// Normalize a process.env.TZ value to an IANA name JSC's intlResolveTimeZoneID
+// accepts; anything that can't be named clears the override so a stale zone
+// from a prior assignment doesn't persist. Handles ":Zone", absolute tzfile
+// paths (realpath + "/zoneinfo/" suffix), and POSIX "STD[+|-]hh" -> Etc/GMT.
 bool setTimeZoneFromEnvValue(JSC::JSGlobalObject* globalObject, const WTF::String& raw)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -550,56 +575,14 @@ bool setTimeZoneFromEnvValue(JSC::JSGlobalObject* globalObject, const WTF::Strin
     if (JSC::intlResolveTimeZoneID(tz))
         return commit(tz);
 
-    // ICU may canonicalize an alias JSC's table filtered out (e.g. legacy
-    // EST5EDT on tzdata that links it to America/New_York).
     if (!tz.isEmpty()) {
         String primary = JSC::toPrimaryIanaTimeZoneIdentifier(StringView(tz));
         if (!primary.isEmpty() && primary != tz && JSC::intlResolveTimeZoneID(primary))
             return commit(primary);
     }
 
-    // POSIX std offset: std is 3+ alpha chars or a quoted <...> name; offset is
-    // [+|-]hh. The sign is hours *west* of UTC, so Etc/GMT keeps it as-is.
-    // Node only honors whole-hour offsets with nothing following (ICU's
-    // uprv_tzname rejects ':' or a trailing dst name, so e.g. IST-5:30 and
-    // FOO4BAR fall back to /etc/localtime there too).
-    {
-        StringView v(tz);
-        size_t i = 0;
-        if (!v.isEmpty() && v[0] == '<') {
-            size_t end = v.find('>');
-            if (end == notFound)
-                goto posix_done;
-            i = end + 1;
-        } else {
-            while (i < v.length() && isASCIIAlpha(v[i]))
-                ++i;
-            if (i < 3)
-                goto posix_done;
-        }
-        bool negative = false;
-        if (i < v.length() && (v[i] == '+' || v[i] == '-')) {
-            negative = v[i] == '-';
-            ++i;
-        }
-        size_t hstart = i;
-        while (i < v.length() && isASCIIDigit(v[i]))
-            ++i;
-        if (i == hstart || i - hstart > 2 || i != v.length())
-            goto posix_done;
-        int hours = 0;
-        for (size_t j = hstart; j < i; ++j)
-            hours = hours * 10 + (v[j] - '0');
-        if (hours == 0)
-            return commit("UTC"_s);
-        // Etc/GMT zones exist for +1..+12 and -1..-14.
-        if (negative ? hours <= 14 : hours <= 12) {
-            String etc = makeString("Etc/GMT"_s, negative ? '-' : '+', hours);
-            if (JSC::intlResolveTimeZoneID(etc))
-                return commit(etc);
-        }
-    }
-posix_done:
+    if (String etc = posixStdOffsetToEtcGMT(tz); !etc.isNull() && JSC::intlResolveTimeZoneID(etc))
+        return commit(etc);
 
     commit(emptyString());
     return false;

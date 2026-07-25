@@ -182,6 +182,15 @@ pub struct Flags {
     pub reject_unauthorized: bool,
     pub is_preconnect_only: bool,
     pub is_streaming_request_body: bool,
+    /// The streaming request body has a non-null Fetch "source" (e.g. a
+    /// FormData) and can be restarted from the beginning on a 307/308
+    /// redirect. When false, the body is a bare ReadableStream and a non-303
+    /// redirect is a network error.
+    pub streaming_body_can_restart: bool,
+    /// One-shot: set by `do_redirect` when the follow-up request must re-send
+    /// a restartable streaming body; consumed by `to_result()` once the
+    /// redirected request reaches the body stage.
+    pub pending_request_stream_restart: bool,
     pub defer_fail_until_connecting_is_complete: bool,
     pub upgrade_state: HTTPUpgradeState,
     pub protocol: Protocol,
@@ -213,6 +222,8 @@ impl Default for Flags {
             reject_unauthorized: true,
             is_preconnect_only: false,
             is_streaming_request_body: false,
+            streaming_body_can_restart: false,
+            pending_request_stream_restart: false,
             defer_fail_until_connecting_is_complete: false,
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
@@ -407,6 +418,9 @@ pub struct HTTPClientResult<'a> {
     pub has_more: bool,
     pub redirected: bool,
     pub can_stream: bool,
+    /// A 307/308 redirect needs the restartable streaming body re-sent from
+    /// the beginning; the JS thread rewinds its source and re-pipes it.
+    pub restart_request_stream: bool,
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
@@ -479,6 +493,7 @@ impl<'a> HTTPClientResult<'a> {
             has_more: self.has_more,
             redirected: self.redirected,
             can_stream: self.can_stream,
+            restart_request_stream: self.restart_request_stream,
             is_http2: self.is_http2,
             fail: self.fail,
             dns_error: self.dns_error,
@@ -2539,14 +2554,8 @@ impl<'a> HTTPClient<'a> {
             return self.do_redirect_multiplexed();
         }
         bun_core::scoped_log!(fetch, "doRedirect");
-        if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
-            // handleResponseMetadata already rejected every non-303 status with a
-            // stream body (RequestBodyNotReusable). Reaching here means the
-            // redirect downgraded to GET with a null body; drop the streaming
-            // flag so the follow-up request goes out without Transfer-Encoding,
-            // and let state.reset() release the ThreadSafeStreamBuffer ref.
-            self.flags.is_streaming_request_body = false;
-        }
+        let restart_stream =
+            Self::prepare_stream_body_for_redirect(&mut self.state, &mut self.flags);
 
         // There is no struct copy-back
         // (`sync_progress_from` skips owned fields) and the original retains
@@ -2555,7 +2564,6 @@ impl<'a> HTTPClient<'a> {
         // double-free when the original later runs `clear_data()`. Forget the
         // clone's view; the original is the sole owner.
         let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.unix_socket_path));
-        // TODO: what we do with stream body?
         let request_body: &[u8] = if self.state.flags.resend_request_body_on_redirect
             && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
         {
@@ -2574,6 +2582,9 @@ impl<'a> HTTPClient<'a> {
         // the request is already terminal; there is nowhere to deliver a
         // redirected response.
         let Some(body_out_str) = self.state.body_out_str else {
+            if let Some(mut s) = restart_stream {
+                s.detach();
+            }
             GenHttpContext::<IS_SSL>::close_socket(socket);
             return;
         };
@@ -2637,6 +2648,9 @@ impl<'a> HTTPClient<'a> {
         // TODO: should this check be before decrementing the redirect count?
         // the current logic will allow one less redirect than requested
         if self.remaining_redirect_count == 0 {
+            if let Some(mut s) = restart_stream {
+                s.detach();
+            }
             self.fail(crate::Error::TooManyRedirects);
             return;
         }
@@ -2648,10 +2662,11 @@ impl<'a> HTTPClient<'a> {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
 
-        self.start(
-            HTTPRequestBody::Bytes(request_body),
-            body_out::as_mut(body_out_str),
-        );
+        let body = match restart_stream {
+            Some(s) => HTTPRequestBody::Stream(s),
+            None => HTTPRequestBody::Bytes(request_body),
+        };
+        self.start(body, body_out::as_mut(body_out_str));
     }
 
     /// Re-resolve `http_proxy` against the post-redirect `self.url`. The
@@ -3232,6 +3247,13 @@ impl<'a> HTTPClient<'a> {
     /// calling `&mut self` methods, then re-acquire only for the detach.
     #[inline]
     fn request_stream_detach(&mut self) {
+        // A restartable body may still be replayed on a 307/308 redirect;
+        // releasing the buffer ref here would leave `do_redirect` nothing to
+        // pass to the follow-up request. The eventual `state.reset()` releases
+        // it when the request is actually done.
+        if self.flags.streaming_body_can_restart {
+            return;
+        }
         if let HTTPRequestBody::Stream(stream) = &mut self.state.original_request_body {
             stream.detach();
         }
@@ -4279,9 +4301,8 @@ impl<'a> HTTPClient<'a> {
             self.state.flags.clear_hostname_on_redirect = false;
             self.hostname = None;
         }
-        if matches!(self.state.original_request_body, HTTPRequestBody::Stream(_)) {
-            self.flags.is_streaming_request_body = false;
-        }
+        let restart_stream =
+            Self::prepare_stream_body_for_redirect(&mut self.state, &mut self.flags);
         // See `do_redirect`: the HTTP-thread clone shares this allocation
         // with the JS-thread original (created via `ptr::read`); dropping it
         // here double-frees once the original runs `clear_data()`.
@@ -4302,6 +4323,9 @@ impl<'a> HTTPClient<'a> {
         // the request is already terminal; there is nowhere to deliver a
         // redirected response.
         let Some(body_out_str) = self.state.body_out_str else {
+            if let Some(mut s) = restart_stream {
+                s.detach();
+            }
             return;
         };
         self.remaining_redirect_count = self.remaining_redirect_count.saturating_sub(1);
@@ -4311,6 +4335,9 @@ impl<'a> HTTPClient<'a> {
         self.connected_url = URL::default();
         self.prev_redirect = Vec::new();
         if self.remaining_redirect_count == 0 {
+            if let Some(mut s) = restart_stream {
+                s.detach();
+            }
             self.fail(crate::Error::TooManyRedirects);
             return;
         }
@@ -4319,10 +4346,11 @@ impl<'a> HTTPClient<'a> {
         self.flags.protocol = Protocol::Http1_1;
         self.reevaluate_proxy_for_redirect();
         // SAFETY: body_out_str points at the caller-owned MutableString.
-        self.start(
-            HTTPRequestBody::Bytes(request_body),
-            body_out::as_mut(body_out_str),
-        );
+        let body = match restart_stream {
+            Some(s) => HTTPRequestBody::Stream(s),
+            None => HTTPRequestBody::Bytes(request_body),
+        };
+        self.start(body, body_out::as_mut(body_out_str));
     }
 
     pub fn progress_update_h3(&mut self) {
@@ -4413,6 +4441,47 @@ impl<'a> HTTPClient<'a> {
     /// the same allocation). With `body` absent the result is fully owned, so
     /// it can be held across the caller's `&mut self` mutations without a
     /// lifetime widen.
+    /// For a restartable streaming body, decide what `do_redirect` does with
+    /// it and return the `Stream` to pass to `start()` when the follow-up
+    /// request must re-send it. The 303/301/302 GET-downgrade path drops the
+    /// body and the streaming flag; 307/308 extracts the stream (so
+    /// `state.reset()` does not release its buffer ref), clears any bytes the
+    /// previous attempt left in the buffer, and arms the JS-side restart
+    /// signal.
+    fn prepare_stream_body_for_redirect(
+        state: &mut InternalState<'a>,
+        flags: &mut Flags,
+    ) -> Option<http_request_body::Stream> {
+        if !matches!(state.original_request_body, HTTPRequestBody::Stream(_)) {
+            return None;
+        }
+        if flags.streaming_body_can_restart && state.flags.resend_request_body_on_redirect {
+            let HTTPRequestBody::Stream(mut stream) = core::mem::replace(
+                &mut state.original_request_body,
+                HTTPRequestBody::Bytes(b""),
+            ) else {
+                unreachable!()
+            };
+            if let Some(buf) = stream.buffer_mut() {
+                // `report_restart` publishes the restart to the JS side (sets
+                // the tasklet's atomic) before the generation bump, so any
+                // JS-side write that observes the new generation has already
+                // observed the restart and will discard itself.
+                buf.report_restart();
+                buf.generation
+                    .fetch_add(1, core::sync::atomic::Ordering::AcqRel);
+                buf.lock().reset();
+            }
+            stream.ended = false;
+            flags.pending_request_stream_restart = true;
+            return Some(stream);
+        }
+        // GET downgrade (or a bare ReadableStream that reached here via 303):
+        // the follow-up request has no body.
+        flags.is_streaming_request_body = false;
+        None
+    }
+
     pub fn to_result(&mut self) -> HTTPClientResult<'static> {
         let body_size: BodySize = if self.state.is_chunked_encoding() {
             BodySize::TotalReceived(self.state.total_body_received)
@@ -4445,10 +4514,16 @@ impl<'a> HTTPClient<'a> {
                     can_stream: (self.state.request_stage == RequestStage::Body
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
+                    restart_request_stream: false,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
                 };
             }
         }
+        let can_stream = (self.state.request_stage == RequestStage::Body
+            || self.state.request_stage == RequestStage::ProxyBody)
+            && self.flags.is_streaming_request_body;
+        let restart_request_stream =
+            can_stream && core::mem::take(&mut self.flags.pending_request_stream_restart);
         HTTPClientResult {
             body: None,
             metadata: None,
@@ -4462,9 +4537,8 @@ impl<'a> HTTPClient<'a> {
             body_size,
             certificate_info,
             // we can stream the request_body at this stage
-            can_stream: (self.state.request_stage == RequestStage::Body
-                || self.state.request_stage == RequestStage::ProxyBody)
-                && self.flags.is_streaming_request_body,
+            can_stream,
+            restart_request_stream,
             is_http2: self.flags.protocol != Protocol::Http1_1,
         }
     }
@@ -5004,6 +5078,7 @@ impl<'a> HTTPClient<'a> {
                                 self.state.original_request_body,
                                 HTTPRequestBody::Stream(_)
                             )
+                            && !self.flags.streaming_body_can_restart
                         {
                             return Err(crate::Error::RequestBodyNotReusable);
                         }

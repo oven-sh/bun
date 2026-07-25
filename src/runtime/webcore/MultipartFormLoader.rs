@@ -14,6 +14,7 @@ pub type Source = readable_stream::NewSource<MultipartFormLoader>;
 
 const CHUNK_SIZE: blob::SizeType = 256 * 1024;
 
+#[derive(Clone)]
 pub enum Segment {
     Bytes {
         bytes: Vec<u8>,

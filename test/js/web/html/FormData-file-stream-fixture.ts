@@ -5,8 +5,9 @@
 // file size). Post-fix, the file is read in fixed-size chunks, so peak RSS
 // stays bounded regardless of the file size.
 //
-// The server runs in a separate subprocess so its request-body buffering is
-// not attributed to this process's RSS.
+// Client and server share this process; node:http hands the body up chunk
+// by chunk without buffering, so server allocations stay bounded and do not
+// mask the client's peak.
 
 import { createServer } from "node:http";
 

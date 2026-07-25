@@ -1206,11 +1206,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     //
     // body: BodyInit | null | undefined;
     //
+    // Features that need a fully buffered body keep FormData on the buffered
+    // serializer: S3 signs over the body length, `compress` acts on the bytes.
+    let prefer_buffered_body = url.is_s3() || compress.is_some();
     let mut body = 'extract_body: {
         if let Some(options) = options_object {
             if let Some(body__) = options.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        ctx,
+                        body__,
+                        prefer_buffered_body,
+                    )?);
                 }
             }
 
@@ -1278,7 +1285,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         if let Some(req) = request_init_object {
             if let Some(body__) = req.fast_get(global_this, jsc::BuiltinName::Body)? {
                 if !body__.is_undefined() {
-                    break 'extract_body Some(HTTPRequestBody::from_js(ctx, body__)?);
+                    break 'extract_body Some(HTTPRequestBody::from_js(
+                        ctx,
+                        body__,
+                        prefer_buffered_body,
+                    )?);
                 }
             }
         }

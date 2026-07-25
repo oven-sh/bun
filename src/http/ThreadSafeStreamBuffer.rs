@@ -12,6 +12,15 @@ pub struct ThreadSafeStreamBuffer {
     /// callback will be called passing the context for the http callback
     /// this is used to report when the buffer is drained and only if end chunk was not sent/reported
     pub callback: Option<Callback>,
+    /// Fired from `do_redirect` when a restartable streaming body must be
+    /// re-sent, so the JS side can quiesce the previous sink before the HTTP
+    /// thread reaches the redirected request's body stage.
+    pub restart_callback: Option<Callback>,
+    /// Incremented on each restart. End/Data messages are stamped with the
+    /// generation they were scheduled for and discarded if a newer one is
+    /// current, so a previous sink's end-of-stream cannot mark a replayed
+    /// request done.
+    pub generation: core::sync::atomic::AtomicU32,
 }
 
 pub struct Callback {
@@ -43,6 +52,8 @@ impl Default for ThreadSafeStreamBuffer {
             // .initExactRefs(2) — 1 for main thread and 1 for http thread
             ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
             callback: None,
+            restart_callback: None,
+            generation: core::sync::atomic::AtomicU32::new(0),
         }
     }
 }
@@ -104,6 +115,18 @@ impl ThreadSafeStreamBuffer {
 
     pub fn clear_drain_callback(&mut self) {
         self.callback = None;
+    }
+
+    pub fn set_restart_callback<T>(&mut self, callback: fn(*mut T), context: *mut T) {
+        self.restart_callback = Some(Callback::init(callback, context));
+    }
+
+    /// Called from the HTTP thread in `do_redirect` for a restartable
+    /// streaming body. The callback runs on the HTTP thread.
+    pub fn report_restart(&self) {
+        if let Some(cb) = &self.restart_callback {
+            cb.call();
+        }
     }
 
     /// This is exclusively called from the http thread.

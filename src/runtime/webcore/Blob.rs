@@ -866,16 +866,8 @@ impl BlobExt for Blob {
     }
 
     fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
-        // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
-        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
-        let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
-        let boundary: &[u8] = {
-            // SAFETY: bun_vm() never returns null for a Bun-owned global.
-            let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
-            boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
-            bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
-            &boundary_buf
-        };
+        let boundary_buf = make_multipart_boundary(global_this);
+        let boundary: &[u8] = &boundary_buf;
 
         let mut context = FormDataContext {
             joiner: bun_core::string_joiner::StringJoiner::default(),
@@ -887,66 +879,7 @@ impl BlobExt for Blob {
         // string entry 8, plus 3 for the closing boundary.
         context.joiner.reserve(form_data.count() * 13 + 3);
 
-        // `bun_jsc::DOMFormData::for_each` yields the
-        // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
-        // field is `&bun_jsc::WebCore::Blob` (the forward-decl). The native
-        // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
-        // as the runtime `&mut Blob` here. Driving the FFI directly (rather
-        // than going through `for_each`'s immutable wrapper) avoids a
-        // `&T → &mut T` cast. Every raw deref is wrapped locally; the safe fn
-        // item coerces to the callback-pointer type at `DOMFormData__forEach`.
-        extern "C" fn for_each_thunk(
-            ctx_ptr: *mut c_void,
-            name_: *mut ZigString,
-            value_ptr: *mut c_void,
-            filename: *mut ZigString,
-            is_blob: u8,
-        ) {
-            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
-            // erased lifetime is the caller's stack frame in `from_dom_form_data`.
-            let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
-            let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
-            } else {
-                FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
-                    // valid for the synchronous callback scope.
-                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
-                    filename: if filename.is_null() {
-                        ZigString::EMPTY
-                    } else {
-                        // SAFETY: non-null `filename` is a valid `*ZigString` for this call.
-                        unsafe { *filename }
-                    },
-                }
-            };
-            // SAFETY: `name_` is always a valid non-null `*ZigString` for this callback.
-            ctx.on_entry(unsafe { *name_ }, entry);
-        }
-        unsafe extern "C" {
-            // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
-            // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains. Kept
-            // `*mut` (not `&mut`) to match the `bun_jsc` decl and avoid
-            // `clashing_extern_declarations`.
-            safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
-                ctx: *mut c_void,
-                // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
-                // body localises every raw deref individually), so the callback
-                // type carries no caller-side precondition. ABI-identical to
-                // `bun_jsc`'s `ForEachFunction` alias.
-                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
-            );
-        }
-        // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
-        // past this call.
-        DOMFormData__forEach(
-            form_data,
-            (&raw mut context).cast::<c_void>(),
-            for_each_thunk,
-        );
+        for_each_form_data_entry(form_data, |name, entry| context.on_entry(name, entry));
         if context.failed {
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
@@ -3829,6 +3762,67 @@ pub enum FormDataEntry<'a> {
     },
 }
 
+unsafe extern "C" {
+    // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are stored
+    // opaquely and only used synchronously. Kept `*mut` (not `&mut`) to match
+    // the `bun_jsc` decl and avoid `clashing_extern_declarations`.
+    safe fn DOMFormData__forEach(
+        this: *mut jsc::DOMFormData,
+        ctx: *mut c_void,
+        cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+    );
+}
+
+/// Drive the C++ `DOMFormData__forEach` and hand each entry to `f` as the
+/// runtime's mutable [`FormDataEntry`]. The C++ side invokes the callback
+/// synchronously and does not retain `ctx`/`cb`.
+fn for_each_form_data_entry<F: FnMut(ZigString, FormDataEntry<'_>)>(
+    form_data: &mut jsc::DOMFormData,
+    mut f: F,
+) {
+    extern "C" fn thunk<F: FnMut(ZigString, FormDataEntry<'_>)>(
+        ctx_ptr: *mut c_void,
+        name_: *mut ZigString,
+        value_ptr: *mut c_void,
+        filename: *mut ZigString,
+        is_blob: u8,
+    ) {
+        // SAFETY: `ctx_ptr` is `&mut F` for the caller's synchronous stack frame.
+        let f = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
+        let entry = if is_blob == 0 {
+            // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
+            FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+        } else {
+            FormDataEntry::File {
+                // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
+                // valid for the synchronous callback scope.
+                blob: unsafe { &mut *value_ptr.cast::<Blob>() },
+                filename: if filename.is_null() {
+                    ZigString::EMPTY
+                } else {
+                    // SAFETY: non-null `filename` is a valid `*ZigString`.
+                    unsafe { *filename }
+                },
+            }
+        };
+        // SAFETY: `name_` is always a valid non-null `*ZigString`.
+        f(unsafe { *name_ }, entry);
+    }
+    DOMFormData__forEach(form_data, (&raw mut f).cast::<c_void>(), thunk::<F>);
+}
+
+/// `----WebKitFormBoundary` + 32 lowercase-hex chars of a fresh UUID.
+pub(crate) const MULTIPART_BOUNDARY_LEN: usize = 22 + 32;
+
+fn make_multipart_boundary(global_this: &JSGlobalObject) -> [u8; MULTIPART_BOUNDARY_LEN] {
+    const PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
+    let mut buf = [0u8; MULTIPART_BOUNDARY_LEN];
+    let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
+    buf[..PREFIX.len()].copy_from_slice(PREFIX);
+    bun_core::fmt::bytes_to_hex_lower(&random, &mut buf[PREFIX.len()..]);
+    buf
+}
+
 /// Carries `Function(ctx, bytes)` at the type level —
 /// a trait impl so `run` can be taken as a
 /// plain `fn(*mut c_void, ReadFileResultType)` thunk, monomorphized per `(C, F)`.
@@ -4025,12 +4019,10 @@ impl FormDataContext<'_> {
                 .as_deref()
                 .expect("infallible: store present");
             match &store.data {
-                store::Data::S3(_) => {
-                    // TODO: s3
-                    // we need to make this async and use download/downloadSlice
-                }
+                // S3 parts are not read here; the body serialiser is
+                // synchronous and download/downloadSlice are async.
+                store::Data::S3(_) => {}
                 store::Data::File(file) => {
-                    // TODO: make this async + lazy
                     let mut node_fs = crate::node::fs::NodeFS::default();
                     let mut rf_args = crate::node::fs::args::ReadFile::default();
                     rf_args.encoding = crate::node::types::Encoding::Buffer;
@@ -4119,10 +4111,14 @@ impl MultipartSegmentBuilder<'_> {
                 // `needs_streaming_multipart` rejects S3; unreachable here.
                 store::DataTag::S3 => {}
                 store::DataTag::File => {
+                    if store.data_mut().as_file().seekable.is_none() {
+                        resolve_file_stat(&store);
+                    }
                     let size = blob.size.get();
-                    // `seekable == None` ⇒ stat failed; `size == MAX_SIZE`
-                    // ⇒ pipe/FIFO. Both lack a Content-Length: fall back
-                    // to the buffered path so the sync read handles it.
+                    // `seekable` is `None` only when stat failed (missing
+                    // file), `size == MAX_SIZE` only for a non-seekable fd
+                    // (pipe/FIFO). Both lack a Content-Length: fall back so
+                    // the buffered path surfaces the error or drains the pipe.
                     if size == MAX_SIZE || store.data_mut().as_file().seekable.is_none() {
                         this.failed = true;
                         return;
@@ -4152,14 +4148,8 @@ impl MultipartSegments {
         global_this: &JSGlobalObject,
         form_data: &mut jsc::DOMFormData,
     ) -> Option<Self> {
-        const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
-        let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
-        let boundary: &[u8] = {
-            let random = global_this.bun_vm().as_mut().rare_data().next_uuid().bytes;
-            boundary_buf[..BOUNDARY_PREFIX.len()].copy_from_slice(BOUNDARY_PREFIX);
-            bun_core::fmt::bytes_to_hex_lower(&random, &mut boundary_buf[BOUNDARY_PREFIX.len()..]);
-            &boundary_buf
-        };
+        let boundary_buf = make_multipart_boundary(global_this);
+        let boundary: &[u8] = &boundary_buf;
 
         let mut ctx = MultipartSegmentBuilder {
             segments: Vec::with_capacity(form_data.count() * 2 + 1),
@@ -4169,42 +4159,7 @@ impl MultipartSegments {
             failed: false,
         };
 
-        extern "C" fn for_each_thunk(
-            ctx_ptr: *mut c_void,
-            name_: *mut ZigString,
-            value_ptr: *mut c_void,
-            filename: *mut ZigString,
-            is_blob: u8,
-        ) {
-            // SAFETY: `ctx_ptr` is the `&mut MultipartSegmentBuilder` passed below.
-            let ctx = unsafe { bun_ptr::callback_ctx::<MultipartSegmentBuilder<'_>>(ctx_ptr) };
-            let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
-            } else {
-                FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
-                    // valid for the synchronous callback scope.
-                    blob: unsafe { &mut *value_ptr.cast::<Blob>() },
-                    filename: if filename.is_null() {
-                        ZigString::EMPTY
-                    } else {
-                        // SAFETY: non-null `filename` is a valid `*ZigString`.
-                        unsafe { *filename }
-                    },
-                }
-            };
-            // SAFETY: `name_` is always a valid non-null `*ZigString`.
-            ctx.on_entry(unsafe { *name_ }, entry);
-        }
-        unsafe extern "C" {
-            safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
-                ctx: *mut c_void,
-                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
-            );
-        }
-        DOMFormData__forEach(form_data, (&raw mut ctx).cast::<c_void>(), for_each_thunk);
+        for_each_form_data_entry(form_data, |name, entry| ctx.on_entry(name, entry));
 
         if ctx.failed {
             return None;
@@ -4229,45 +4184,23 @@ impl MultipartSegments {
 
     /// At least one file-backed entry and no S3 entry.
     pub fn needs_streaming_multipart(form_data: &mut jsc::DOMFormData) -> bool {
-        struct Probe {
-            has_file: bool,
-            unsupported: bool,
-        }
-        let mut probe = Probe {
-            has_file: false,
-            unsupported: false,
-        };
-        extern "C" fn thunk(
-            ctx_ptr: *mut c_void,
-            _name: *mut ZigString,
-            value_ptr: *mut c_void,
-            _filename: *mut ZigString,
-            is_blob: u8,
-        ) {
-            // SAFETY: `ctx_ptr` is the `&mut Probe` passed below.
-            let probe = unsafe { bun_ptr::callback_ctx::<Probe>(ctx_ptr) };
-            if probe.unsupported || is_blob == 0 {
+        let mut has_file = false;
+        let mut unsupported = false;
+        for_each_form_data_entry(form_data, |_name, entry| {
+            if unsupported {
                 return;
             }
-            // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`).
-            let blob = unsafe { &*value_ptr.cast::<Blob>() };
-            if let Some(store) = blob.store.get().as_ref() {
+            if let FormDataEntry::File { blob, .. } = entry
+                && let Some(store) = blob.store.get().as_ref()
+            {
                 match store.data_mut().tag() {
-                    store::DataTag::File => probe.has_file = true,
-                    store::DataTag::S3 => probe.unsupported = true,
+                    store::DataTag::File => has_file = true,
+                    store::DataTag::S3 => unsupported = true,
                     store::DataTag::Bytes => {}
                 }
             }
-        }
-        unsafe extern "C" {
-            safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
-                ctx: *mut c_void,
-                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
-            );
-        }
-        DOMFormData__forEach(form_data, (&raw mut probe).cast::<c_void>(), thunk);
-        probe.has_file && !probe.unsupported
+        });
+        has_file && !unsupported
     }
 }
 

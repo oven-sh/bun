@@ -644,11 +644,7 @@ impl NodeHTTPResponse {
         // A raw 'upgrade'/'connect' tunnel handoff ends the HTTP exchange the
         // same way, except an Upgrade carrying a body keeps parsing as HTTP
         // until the body's fin chunk (the actual tunnel start).
-        if flags.contains(Flags::TUNNELED) {
-            return self.body_read_state.get() == BodyReadState::Pending;
-        }
-
-        if flags.contains(Flags::ENDED) {
+        if flags.contains(Flags::TUNNELED) || flags.contains(Flags::ENDED) {
             return self.body_read_state.get() == BodyReadState::Pending
                 || !self
                     .buffered_request_body_data_during_pause
@@ -2070,6 +2066,8 @@ impl NodeHTTPResponse {
                         && !post_end_flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
                     {
                         raw_response.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+                        #[cfg(not(windows))]
+                        self.pause_socket();
                     } else {
                         raw_response.on_data(on_data_shim, self.as_ctx_ptr());
                     }
@@ -2248,14 +2246,17 @@ impl NodeHTTPResponse {
     fn clear_on_data_callback(&self, this_value: JSValue, global_object: &JSGlobalObject) {
         scoped_log!(NodeHTTPResponse, "clearOnDataCallback");
         if self.body_read_state.get() != BodyReadState::None {
-            if !this_value.is_empty() {
-                js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
-            }
             let flags = self.flags.get();
+            // Once REQUEST_HAS_COMPLETED is set the per-socket HttpResponseData
+            // (and get_this_value()'s currentResponseObject) may belong to the
+            // next keep-alive request; do not touch either.
             if !flags.contains(Flags::SOCKET_CLOSED)
                 && !flags.contains(Flags::UPGRADED)
                 && !flags.contains(Flags::REQUEST_HAS_COMPLETED)
             {
+                if !this_value.is_empty() {
+                    js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
+                }
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
                     raw_response.clear_on_data();
@@ -2305,6 +2306,8 @@ impl NodeHTTPResponse {
                 self.body_read_ref
                     .with_mut(|r| r.unref(bun_vm_mut(global_object)));
             }
+            self.buffered_request_body_data_during_pause
+                .with_mut(|b| b.clear_and_free());
             self.mark_request_as_done_if_necessary();
             return;
         }

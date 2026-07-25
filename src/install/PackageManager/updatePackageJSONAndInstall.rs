@@ -750,10 +750,8 @@ fn update_package_json_and_install_with_manager_with_updates(
                                 node_modules_buf[stem_len..stem_len + b".exe".len()]
                                     .copy_from_slice(b".exe");
                                 node_modules_buf[stem_len + b".exe".len()] = 0;
-                                let exe_name: &ZStr = ZStr::from_buf(
-                                    &node_modules_buf,
-                                    stem_len + b".exe".len(),
-                                );
+                                let exe_name: &ZStr =
+                                    ZStr::from_buf(&node_modules_buf, stem_len + b".exe".len());
                                 let _ = bun_sys::unlinkat(node_modules_bin, exe_name);
                                 continue 'iterator;
                             }
@@ -811,8 +809,7 @@ fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) 
 
     let base = bun_paths::dirname(bin_dir_path.as_bytes()).unwrap_or(b".");
     let mut target_buf = bun_paths::w_path_buffer_pool::get();
-    let base_len =
-        strings::convert_utf8_to_utf16_in_buffer(target_buf.as_mut_slice(), base).len();
+    let base_len = strings::convert_utf8_to_utf16_in_buffer(target_buf.as_mut_slice(), base).len();
 
     let rel_target_units = rel_target_byte_len / 2;
     let total = base_len + 1 + rel_target_units;
@@ -822,8 +819,7 @@ fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) 
 
     target_buf[base_len] = b'\\' as u16;
     for j in 0..rel_target_units {
-        target_buf[base_len + 1 + j] =
-            u16::from_le_bytes([contents[j * 2], contents[j * 2 + 1]]);
+        target_buf[base_len + 1 + j] = u16::from_le_bytes([contents[j * 2], contents[j * 2 + 1]]);
     }
 
     bun_sys::exists_at_type_w(Fd::cwd(), &target_buf[..total]).is_err()

@@ -1036,8 +1036,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             .find(|kv| kv[0] == b":status")
             .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
         let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        // RFC 9114 §4.1.2 malformed message → reset this stream, as nghttp3
-        // does, not the whole connection (the shim flags NUL/empty names).
+        // RFC 9114 §4.1.2: malformed message → stream reset, not conn close.
         if hset.malformed() || (peer_is_client && has_status.is_some()) {
             if let Some(s) = qs.ls() {
                 // reset() only ends the read side when the peer already

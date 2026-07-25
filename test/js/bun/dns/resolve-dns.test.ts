@@ -111,9 +111,7 @@ describe("dns", () => {
     test.concurrent.each(malformedHostnames)("'%s'", async hostname => {
       // @ts-expect-error
       await expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        // The c-ares backend rejects these client-side with DNS_EBADNAME; the
-        // system/libc backends reach getaddrinfo which reports ENOTFOUND/ENOTIMP.
-        code: expect.stringMatching(/^(?:DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP|DNS_EBADNAME)$/),
+        code: expect.stringMatching(/^(?:DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP)$/),
         name: "DNSException",
       });
     });

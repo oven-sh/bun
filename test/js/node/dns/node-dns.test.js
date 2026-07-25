@@ -699,6 +699,11 @@ describe("locally-rejected malformed hostnames report EBADNAME", () => {
 
   afterAll(() => {
     udp?.close();
+    // Drop the describe-scope references so the native Resolver allocations can
+    // be finalized before LeakSanitizer runs its end-of-process check.
+    resolver = undefined;
+    promisesResolver = undefined;
+    Bun.gc(true);
   });
 
   const longLabel = Buffer.alloc(64, "l").toString();

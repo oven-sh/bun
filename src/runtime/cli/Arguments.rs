@@ -780,6 +780,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => 1,
                 _ => 0,
             },
+            reject_bad_negations: matches!(
+                cmd,
+                CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
+            ),
             // Only the paths standing in for `node` get node's aliases.
             short_aliases: match cmd {
                 CommandTag::AutoCommand | CommandTag::RunAsNodeCommand => NODE_SHORT_ALIASES,

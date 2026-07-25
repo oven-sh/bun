@@ -323,17 +323,35 @@ describe("class declaration TDZ is preserved", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    const markerPos = stdout.indexOf("marker");
-    const purePos = stdout.indexOf("class Pure");
-    const namedPos = stdout.indexOf("class Named");
-    expect({ markerPos, purePos, namedPos }).toEqual({
-      markerPos: expect.any(Number),
-      purePos: expect.any(Number),
-      namedPos: expect.any(Number),
+    const tokens = ["marker", "class Pure", "class Named"];
+    const positions = tokens.map(t => [t, stdout.indexOf(t)] as const);
+    const order = [...positions].sort((a, b) => a[1] - b[1]).map(([t]) => t);
+    expect({ missing: positions.filter(([, i]) => i < 0).map(([t]) => t), order }).toEqual({
+      missing: [],
+      order: tokens,
     });
-    expect(markerPos).toBeGreaterThanOrEqual(0);
-    expect(markerPos).toBeLessThan(purePos);
-    expect(purePos).toBeLessThan(namedPos);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("cyclic default-class imports still evaluate (luxon/kysely pattern)", async () => {
+    using dir = tempDir("transpiler-class-tdz-cycle", {
+      "entry.mjs": `import A from "./a.mjs";\nimport B from "./b.mjs";\nconsole.log(JSON.stringify([A.useB(), B.useA()]));\n`,
+      "a.mjs": `import B from "./b.mjs";\nexport default class A { static useB() { return B.name; } }\n`,
+      "b.mjs": `import A from "./a.mjs";\nexport default class B { static useA() { return A.name; } }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["B", "A"]);
     expect(exitCode).toBe(0);
   });
 });

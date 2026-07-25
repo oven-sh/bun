@@ -1470,7 +1470,7 @@ impl WebWorker {
         }
         let global = vm.global();
         let report_thrown = |e: JsError| {
-            if self.has_requested_terminate() {
+            if self.has_requested_terminate() && global.vm().has_termination_request() {
                 return;
             }
             // take_exception on a JsError always yields an Exception cell; None is unreachable.

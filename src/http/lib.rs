@@ -3778,7 +3778,7 @@ impl<'a> HTTPClient<'a> {
             // and forbid reuse (declared length never sent). A CONNECT reply
             // is not an origin response.
             self.state.flags.awaiting_continue = false;
-            self.state.flags.allow_keepalive = false;
+            self.flags.disable_keepalive = true;
             self.state.request_body = bun_ptr::RawSlice::EMPTY;
             self.state.request_stage = RequestStage::Done;
         }

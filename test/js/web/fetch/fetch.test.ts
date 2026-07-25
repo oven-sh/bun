@@ -3150,6 +3150,47 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
     }
   });
 
+  it("does not pool the connection after an early 2xx with Connection: keep-alive", async () => {
+    // Early final 2xx + keep-alive: the body is abandoned, so the declared
+    // Content-Length was never satisfied. Pooling that socket would let the
+    // next request's head land inside the previous request's body frame.
+    let connections = 0;
+    const server = net.createServer(sock => {
+      connections++;
+      let buf = Buffer.alloc(0);
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        let he: number;
+        while ((he = buf.indexOf("\r\n\r\n")) >= 0) {
+          buf = buf.subarray(he + 4);
+          sock.write("HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nContent-Length: 2\r\n\r\nok");
+        }
+      });
+      sock.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/p`;
+    try {
+      const r1 = await fetch(url, {
+        method: "POST",
+        body: Buffer.alloc(50_000, "x").toString(),
+        headers: { expect: "100-continue" },
+        keepalive: true,
+      });
+      await r1.text();
+      const r2 = await fetch(url, { keepalive: true });
+      await r2.text();
+      expect({ connections, status1: r1.status, status2: r2.status }).toEqual({
+        connections: 2,
+        status1: 200,
+        status2: 200,
+      });
+    } finally {
+      server.close();
+    }
+  });
+
   it("over an HTTPS CONNECT proxy the body still reaches the origin", async () => {
     // Regression guard: the CONNECT `200 Connection Established` reply must
     // not be treated as a final origin status that abandons the withheld body.

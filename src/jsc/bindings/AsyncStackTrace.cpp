@@ -20,10 +20,8 @@
 
 using namespace JSC;
 
-// dynamicDowncast(JSValue)'s isCell() check is true for the empty value on
-// JSVALUE64, so it would read through a null cell. asyncStackTraceContext()
-// and reaction getters return the empty value in several paths, so every
-// JSValue downcast in this file goes through this helper.
+// dynamicDowncast(JSValue)'s isCell() is true for the empty value on JSVALUE64
+// (null cell deref); asyncStackTraceContext() and reaction getters return empty.
 template<typename T>
 static inline T* cellAs(JSValue v)
 {
@@ -72,9 +70,8 @@ static bool appendGeneratorFrame(VM& vm, JSCell* owner, JSAsyncFunctionGenerator
     return true;
 }
 
-// With AsyncLocalStorage active, JSPromise::resolveWithInternalMicrotaskForAsyncAwait
-// wraps the await context in InternalFieldTuple(context, asyncContext). Unwrap
-// to field 0 so the generator/combinator probes see the real cell.
+// resolveWithInternalMicrotaskForAsyncAwait wraps await contexts as
+// InternalFieldTuple(context, asyncContext) when ALS is active; field 0 is the real cell.
 static inline JSValue unwrapAsyncContextTuple(JSValue v)
 {
     if (auto* tuple = cellAs<InternalFieldTuple>(v))
@@ -194,16 +191,13 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
     instance->setStackFrames(vm, WTF::move(frames));
 }
 
-// Installed as VM::onAppendStackTrace. Interpreter::getAsyncStackTrace walks
-// the await chain via JSPromise::asyncStackTraceContext(), but under
-// AsyncLocalStorage that context is an InternalFieldTuple(generator, asyncContext)
-// (see JSPromise::resolveWithInternalMicrotaskForAsyncAwait) and the walk's
-// dynamicDowncast<JSAsyncFunctionGenerator> fails, dropping every `at async`
-// frame. getStackTrace calls this hook before inserting its own async frames,
-// so we replicate getParentGenerator here with tuple unwrapping and append the
-// frames JSC's walk misses. To avoid duplicating frames JSC does find (when
-// ALS was inactive at some hop), we run the unwrapped and non-unwrapped walks
-// in lockstep and only start appending once the non-unwrapped walk stops.
+// VM::onAppendStackTrace hook, installed lazily by jsSetAsyncHooksEnabled so the
+// no-ALS path is untouched. Interpreter::getAsyncStackTrace's getParentGenerator
+// casts asyncStackTraceContext() to JSAsyncFunctionGenerator and fails on the
+// InternalFieldTuple ALS puts there, dropping every `at async` frame. Run the same
+// walk with and without the unwrap in lockstep and append only the frames the
+// un-unwrapped walk misses, so hops where ALS was inactive aren't doubled. See
+// oven-sh/WebKit#347 for the in-tree unwrap that will obsolete this hook.
 void Bun::appendAsyncLocalStorageStackFrames(VM& vm, JSCell* owner, Vector<StackFrame>& results, size_t maxToAppend)
 {
     if (!maxToAppend || !Options::useAsyncStackTrace())
@@ -230,12 +224,9 @@ void Bun::appendAsyncLocalStorageStackFrames(VM& vm, JSCell* owner, Vector<Stack
         return unwrap ? unwrapAsyncContextTuple(context) : context;
     };
 
-    // Mirrors Interpreter::getAsyncStackTrace's getParentGenerator for the
-    // direct-await and Promise.race shapes. Promise.all/allSettled/any store a
-    // JSPromiseCombinatorsGlobalContext (a private header the prebuilt WebKit
-    // doesn't forward), so under ALS the chain still ends at a combinator hop
-    // the same way JSC's own walk does; that narrower case wants the unwrap in
-    // getAsyncStackTrace itself.
+    // Mirrors Interpreter::getAsyncStackTrace's getParentGenerator for direct
+    // await and Promise.race. Promise.all/allSettled/any use JSPromiseCombinatorsGlobalContext
+    // (private header, not forwarded) so the chain still ends at those hops under ALS.
     auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen, bool unwrap) -> JSAsyncFunctionGenerator* {
         auto* returnPromise = cellAs<JSPromise>(gen->internalField(JSAsyncFunctionGenerator::Field::Context).get());
         JSValue context = promiseContext(returnPromise, unwrap);

@@ -36,11 +36,7 @@ describe.each([undefined, "run"] as const)("bun %s", runArg => {
       cmd.push(...flags, "-e", `console.log(${JSON.stringify(SCRIPT_RAN)})`);
 
       await using proc = Bun.spawn({ cmd, env: bunEnv, stderr: "pipe", stdout: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       // The script must never have been evaluated.
       expect(stdout).not.toContain(SCRIPT_RAN);
@@ -71,11 +67,7 @@ test("refuses to start when --permission is passed to a script file", async () =
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).not.toContain(SCRIPT_RAN);
   expect(stdout).toBe("");
   expect(stderr).toContain("--permission");
@@ -90,11 +82,7 @@ test("process.permission is still absent without the flag", async () => {
     stderr: "pipe",
     stdout: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toBe("undefined\n");
   expect(exitCode).toBe(0);

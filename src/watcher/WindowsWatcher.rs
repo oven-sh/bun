@@ -10,6 +10,7 @@
 
 use core::mem::size_of;
 use core::ptr;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use std::borrow::Cow;
 use std::sync::Arc;
 
@@ -43,8 +44,13 @@ pub struct WindowsWatcher {
     /// by the watch thread.
     pub buf: PathBuffer,
     /// The `DirWatcher` whose buffer was just returned by `next()` and must be
-    /// re-armed on the next `next()` call. Watch-thread-only.
+    /// re-armed on the next `next()` call. Watch-thread-only. Also seeded by
+    /// `new()` so the first root is armed by the watch thread, not before it.
     needs_rearm: Option<ptr::NonNull<DirWatcher>>,
+    /// Roots not yet retired. Decremented on the watch thread when a root
+    /// dies; `next()` returns `Err` when it reaches zero so the watcher does
+    /// not block forever on an IOCP with no pending I/O.
+    live_roots: AtomicUsize,
 }
 
 /// Root metadata shared between a `DirWatcher` (watch thread) and
@@ -69,6 +75,7 @@ impl Default for WindowsWatcher {
             roots: Vec::new(),
             buf: PathBuffer::uninit(),
             needs_rearm: None,
+            live_roots: AtomicUsize::new(0),
         }
     }
 }
@@ -176,10 +183,11 @@ impl DirWatcher {
     }
 
     /// Close the handle and retire this root; `covers()` skips it afterwards
-    /// and `stop()` won't close it again. Watch-thread-only.
-    fn mark_dead(&self, cause: &bun_sys::Error) {
+    /// and `stop()` won't close it again. Watch-thread-only. Returns whether
+    /// the root was newly retired.
+    fn mark_dead(&self, cause: &bun_sys::Error) -> bool {
         if self.is_dead() {
-            return;
+            return false;
         }
         self.state.dead.store(true);
         // SAFETY: dir_handle is the handle `add_root` opened; `stop()` skips
@@ -192,6 +200,7 @@ impl DirWatcher {
             bstr::BStr::new(&self.state.path),
             bstr::BStr::new(cause.name())
         );
+        true
     }
 }
 
@@ -278,7 +287,7 @@ impl WindowsWatcher {
         let mut this = Self::default();
         this.iocp = w::CreateIoCompletionPort(w::INVALID_HANDLE_VALUE, ptr::null_mut(), 0, 1)
             .map_err(|_| crate::Error::from(Error::IocpFailed))?;
-        if let Err(e) = this.add_root(root) {
+        if let Err(e) = this.add_root_inner::<false>(root) {
             // SAFETY: iocp was just created above.
             unsafe {
                 let _ = w::CloseHandle(this.iocp);
@@ -290,8 +299,17 @@ impl WindowsWatcher {
 
     /// Open `root` for recursive change notification, associate it with the
     /// shared IOCP, arm it, and append to `self.watchers`. Caller holds
-    /// `Watcher.mutex` when this is called after the watch thread has started.
+    /// `Watcher.mutex`; the watch thread is running, so arming here is safe
+    /// (`shutdown` hands cleanup to that thread).
     pub(crate) fn add_root(&mut self, root: &[u8]) -> Result<(), crate::Error> {
+        self.add_root_inner::<true>(root)
+    }
+
+    /// `ARM = false` defers the first `ReadDirectoryChangesW` to the watch
+    /// thread (via `needs_rearm`): `new()` runs before `Watcher::start`, and a
+    /// shutdown-before-start drops the `DirWatcher` without `stop()`, which
+    /// must not leave kernel I/O pending against the freed buffer.
+    fn add_root_inner<const ARM: bool>(&mut self, root: &[u8]) -> Result<(), crate::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -365,9 +383,16 @@ impl WindowsWatcher {
             (&raw mut (*p).state).write(Arc::clone(&state));
             dw.assume_init()
         };
-        dw.prepare().map_err(crate::Error::from)?;
+        if ARM {
+            dw.prepare().map_err(crate::Error::from)?;
+        }
+        let dw_ptr = ptr::NonNull::from(&mut *dw);
         self.watchers.push(dw);
         self.roots.push(state);
+        self.live_roots.fetch_add(1, Ordering::AcqRel);
+        if !ARM {
+            self.needs_rearm = Some(dw_ptr);
+        }
 
         bun_core::scoped_log!(watcher, "watching root[{}]: {}", key, bstr::BStr::new(root));
 
@@ -383,16 +408,29 @@ impl WindowsWatcher {
         })
     }
 
+    /// Account for a newly retired root. `Err` when none remain: the watch
+    /// loop must surface the failure rather than re-enter an infinite
+    /// `GetQueuedCompletionStatus` wait with no pending I/O to complete.
+    fn retire_root(&self, err: bun_sys::Error) -> bun_sys::Result<()> {
+        if self.live_roots.fetch_sub(1, Ordering::AcqRel) == 1 {
+            return Err(err);
+        }
+        Ok(())
+    }
+
     /// wait until new events are available
     pub(crate) fn next(&mut self, timeout: Timeout) -> bun_sys::Result<Option<EventIterator>> {
         if let Some(dw) = self.needs_rearm.take() {
-            // SAFETY: `dw` was the `lpOverlapped` of the previous completion,
-            // pointing at offset 0 of a `Box<DirWatcher>` in `self.watchers`
-            // (append-only, never dropped before `stop()`), so it is live.
+            // SAFETY: `dw` was the `lpOverlapped` of the previous completion
+            // (or seeded by `new()`), pointing at offset 0 of a
+            // `Box<DirWatcher>` in `self.watchers` (append-only, never dropped
+            // before `stop()`), so it is live.
             let dw = unsafe { dw.as_ptr().as_mut().unwrap_unchecked() };
             if !dw.is_dead() {
                 if let Err(err) = dw.prepare() {
-                    dw.mark_dead(&err);
+                    if dw.mark_dead(&err) {
+                        self.retire_root(err)?;
+                    }
                 }
             }
         }
@@ -452,7 +490,9 @@ impl WindowsWatcher {
                     ..Default::default()
                 };
                 // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
-                unsafe { dw.as_ptr().as_ref().unwrap_unchecked() }.mark_dead(&err);
+                if unsafe { dw.as_ptr().as_ref().unwrap_unchecked() }.mark_dead(&err) {
+                    self.retire_root(err)?;
+                }
                 continue;
             }
 
@@ -468,7 +508,9 @@ impl WindowsWatcher {
                 // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
                 let dw = unsafe { dw.as_ptr().as_mut().unwrap_unchecked() };
                 if let Err(err) = dw.prepare() {
-                    dw.mark_dead(&err);
+                    if dw.mark_dead(&err) {
+                        self.retire_root(err)?;
+                    }
                 }
                 continue;
             }

@@ -473,7 +473,8 @@ ${optionVars.join("\n")}
     local first_word="" i
     for (( i=1; i < COMP_CWORD; i++ )); do
         case "\${COMP_WORDS[i]}" in
-            ${globalValueFlags.join("|")}) ((i++)) ;;
+            =) ((i++)) ;;
+            ${globalValueFlags.join("|")}) ((i++)); [[ "\${COMP_WORDS[i]}" == "=" ]] && ((i++)) ;;
             -*) ;;
             *) first_word="\${COMP_WORDS[i]}"; break ;;
         esac

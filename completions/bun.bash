@@ -83,7 +83,8 @@ _bun_completions() {
     local first_word="" i
     for (( i=1; i < COMP_CWORD; i++ )); do
         case "${COMP_WORDS[i]}" in
-            --conditions|--config|--console-depth|--cwd|--dns-result-order|--elide-lines|--env-file|--eval|--fetch-preconnect|--filter|--import|--install|--max-http-header-size|--port|--preload|--print|--require|--shell|--title|--unhandled-rejections|-F|-c|-e|-p|-r) ((i++)) ;;
+            =) ((i++)) ;;
+            --conditions|--config|--console-depth|--cwd|--dns-result-order|--elide-lines|--env-file|--eval|--fetch-preconnect|--filter|--import|--install|--max-http-header-size|--port|--preload|--print|--require|--shell|--title|--unhandled-rejections|-F|-c|-e|-p|-r) ((i++)); [[ "${COMP_WORDS[i]}" == "=" ]] && ((i++)) ;;
             -*) ;;
             *) first_word="${COMP_WORDS[i]}"; break ;;
         esac

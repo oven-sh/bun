@@ -306,7 +306,7 @@ pub(crate) fn caa_reply_to_js(
 
     let property = this.property_bytes();
     let value = this.value_bytes();
-    obj.put(global_this, property, utf8_to_js(global_this, value)?);
+    obj.put(global_this, property, latin1_to_js(global_this, value)?);
 
     Ok(obj)
 }
@@ -428,22 +428,22 @@ pub(crate) fn naptr_reply_to_js(
 
     // SAFETY: flags is a non-null NUL-terminated C string from c-ares.
     let flags = unsafe { bun_core::ffi::cstr(this.flags.cast()) }.to_bytes();
-    obj.put(global_this, b"flags", utf8_to_js(global_this, flags)?);
+    obj.put(global_this, b"flags", latin1_to_js(global_this, flags)?);
 
     // SAFETY: service is a non-null NUL-terminated C string from c-ares.
     let service = unsafe { bun_core::ffi::cstr(this.service.cast()) }.to_bytes();
-    obj.put(global_this, b"service", utf8_to_js(global_this, service)?);
+    obj.put(global_this, b"service", latin1_to_js(global_this, service)?);
 
     // SAFETY: regexp is a non-null NUL-terminated C string from c-ares.
     let regexp = unsafe { bun_core::ffi::cstr(this.regexp.cast()) }.to_bytes();
-    obj.put(global_this, b"regexp", utf8_to_js(global_this, regexp)?);
+    obj.put(global_this, b"regexp", latin1_to_js(global_this, regexp)?);
 
     // SAFETY: replacement is a non-null NUL-terminated C string from c-ares.
     let replacement = unsafe { bun_core::ffi::cstr(this.replacement.cast()) }.to_bytes();
     obj.put(
         global_this,
         b"replacement",
-        utf8_to_js(global_this, replacement)?,
+        latin1_to_js(global_this, replacement)?,
     );
 
     Ok(obj)

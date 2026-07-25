@@ -62,7 +62,7 @@ var defaultMaxListeners = 10;
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(opts) {
-  if (this._events === undefined || this._events === Object.getPrototypeOf(this)._events) {
+  if (this._events === undefined || this._events === $getPrototypeOf(this)._events) {
     this._events = Object.create(null);
     this._eventsCount = 0;
     this[kShapeMode] = false;

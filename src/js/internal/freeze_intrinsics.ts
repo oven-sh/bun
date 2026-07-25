@@ -14,10 +14,10 @@
 // limitations under the License.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Port of Node.js lib/internal/freeze_intrinsics.js. Runs from
-// internal/process/pre_execution before any user code, so the bare global
-// lookups below observe pristine intrinsics.
+// Port of Node.js lib/internal/freeze_intrinsics.js. Runs before user code.
 
+const _String = String;
+const _TypeError = TypeError;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectFreeze = Object.freeze;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -70,6 +70,7 @@ export default function freezeIntrinsics(): void {
     Uint16Array.prototype,
     Int32Array.prototype,
     Uint32Array.prototype,
+    Float16Array.prototype,
     Float32Array.prototype,
     Float64Array.prototype,
     BigInt64Array.prototype,
@@ -153,6 +154,7 @@ export default function freezeIntrinsics(): void {
     Uint16Array,
     Int32Array,
     Uint32Array,
+    Float16Array,
     Float32Array,
     Float64Array,
     BigInt64Array,
@@ -233,11 +235,8 @@ export default function freezeIntrinsics(): void {
   for (let i = 0; i < intrinsicPrototypes.length; i++) enableDerivedOverrides(intrinsicPrototypes[i]);
 
   const frozenSet = new WeakSet<object>();
-  // Node.js's global `console` exposes `_stdout`/`_stderr` behind getters, so
-  // its deep-freeze stops at the accessor functions. Bun's are own data
-  // properties, which would pull the live stream instances (and through them
-  // every stream prototype) into the freeze set. Seed them as already-visited
-  // so traversal stops at the stream boundary like Node.js.
+  // In Node.js `console._stdout`/`_stderr` are getters; in Bun they are data
+  // properties, so seed them as visited to keep stream prototypes unfrozen.
   const consoleObj = console as { _stdout?: object; _stderr?: object };
   if (consoleObj._stdout) frozenSet.add(consoleObj._stdout);
   if (consoleObj._stderr) frozenSet.add(consoleObj._stderr);
@@ -283,11 +282,8 @@ export default function freezeIntrinsics(): void {
     freezingSet.forEach(frozenSet.add, frozenSet);
   }
 
-  // ES5 specified that simple assignment to a non-existent own property must
-  // fail if it would override an inherited non-writable data property. Replace
-  // each configurable own data property on the listed prototypes with an
-  // accessor that preserves that assignment-to-derived-object behaviour after
-  // freezing.
+  // Convert data properties to accessors so `derived.prop = x` still defines
+  // an own property after the inherited slot is frozen (ES5 override mistake).
   function enableDerivedOverride(obj: object, prop: PropertyKey, desc: PropertyDescriptor): void {
     if (!ObjectPrototypeHasOwnProperty.$call(desc, "value") || !desc.configurable) return;
     const value = desc.value;
@@ -299,7 +295,7 @@ export default function freezeIntrinsics(): void {
 
     function setter(this: unknown, newValue: unknown) {
       if (obj === this) {
-        throw new TypeError(`Cannot assign to read only property '${String(prop)}' of object '${obj}'`);
+        throw new _TypeError(`Cannot assign to read only property '${_String(prop)}' of object '${obj}'`);
       }
       if (ObjectPrototypeHasOwnProperty.$call(this, prop)) {
         (this as Record<PropertyKey, unknown>)[prop as string] = newValue;

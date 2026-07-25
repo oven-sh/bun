@@ -307,9 +307,7 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
-    // Node.js hardening flags. Applied at global-object creation time
-    // (ZigGlobalObject::finishCreation) so every realm — main thread, workers,
-    // test-isolation globals — sees them.
+    // Node.js hardening flags. Applied in ZigGlobalObject::finishCreation.
     parse_param!("--disallow-code-generation-from-strings"),
     parse_param!("--disable-proto <STR>"),
     parse_param!("--frozen-intrinsics"),
@@ -1331,7 +1329,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         }
         if args.option(b"--secure-heap").is_some() || args.option(b"--secure-heap-min").is_some() {
             bun_core::warn!(
-                "--secure-heap is not supported: Bun links against BoringSSL, which does not implement a secure heap\n"
+                "--secure-heap is not supported: Bun links against BoringSSL, which does not implement a secure heap"
             );
         }
         let use_system_ca = args.flag(b"--use-system-ca");

@@ -2,6 +2,8 @@ import { describe, expect, test as test_ } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 const test = test_.concurrent;
+// --frozen-intrinsics and worker spawns are ~3s each under debug+ASAN.
+const SLOW = 30_000;
 
 async function run(flags: string[], code: string) {
   await using proc = Bun.spawn({
@@ -32,16 +34,20 @@ describe("--disallow-code-generation-from-strings", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("applies to worker threads", async () => {
-    const { stdout, exitCode } = await run(
-      ["--disallow-code-generation-from-strings"],
-      `const { Worker } = require("worker_threads");
-       const w = new Worker('try { eval("1"); console.log("worker: eval WORKS"); } catch (e) { console.log("worker: " + e.name); }', { eval: true });
-       w.on("exit", () => {});`,
-    );
-    expect(stdout.trim()).toBe("worker: EvalError");
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "applies to worker threads",
+    async () => {
+      const { stdout, exitCode } = await run(
+        ["--disallow-code-generation-from-strings"],
+        `const { Worker } = require("worker_threads");
+         const w = new Worker('try { eval("1"); console.log("worker: eval WORKS"); } catch (e) { console.log("worker: " + e.name); }', { eval: true });
+         w.on("exit", () => {});`,
+      );
+      expect(stdout.trim()).toBe("worker: EvalError");
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
 
   test("WebAssembly is not affected", async () => {
     const { stdout, exitCode } = await run(
@@ -117,21 +123,25 @@ describe("--disable-proto", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("=throw applies to worker threads", async () => {
-    const { stdout, exitCode } = await run(
-      ["--disable-proto=throw"],
-      `const { Worker } = require("worker_threads");
-       const w = new Worker('try { ({}).__proto__; console.log("worker: readable"); } catch (e) { console.log("worker: " + e.code); }', { eval: true });
-       w.on("exit", () => {});`,
-    );
-    expect(stdout.trim()).toBe("worker: ERR_PROTO_ACCESS");
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "=throw applies to worker threads",
+    async () => {
+      const { stdout, exitCode } = await run(
+        ["--disable-proto=throw"],
+        `const { Worker } = require("worker_threads");
+         const w = new Worker('try { ({}).__proto__; console.log("worker: readable"); } catch (e) { console.log("worker: " + e.code); }', { eval: true });
+         w.on("exit", () => {});`,
+      );
+      expect(stdout.trim()).toBe("worker: ERR_PROTO_ACCESS");
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
 
-  test("invalid mode exits non-zero", async () => {
+  test("invalid mode exits 12", async () => {
     const { stderr, exitCode } = await run(["--disable-proto=bogus"], `console.log("ran")`);
     expect(stderr).toContain("invalid mode passed to --disable-proto");
-    expect(exitCode).not.toBe(0);
+    expect(exitCode).toBe(12);
   });
 
   test("applies to node:vm contexts (throw)", async () => {
@@ -157,56 +167,56 @@ describe("--disable-proto", () => {
 });
 
 describe("--frozen-intrinsics", () => {
-  test("freezes Array.prototype", async () => {
-    const { stdout, exitCode } = await run(
-      ["--frozen-intrinsics"],
-      `console.log(JSON.stringify({
-         arrProto: Object.isFrozen(Array.prototype),
-         objProto: Object.isFrozen(Object.prototype),
-         promise: Object.isFrozen(Promise),
-         math: Object.isFrozen(Math),
-       }))`,
-    );
-    expect(JSON.parse(stdout)).toEqual({ arrProto: true, objProto: true, promise: true, math: true });
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "freezes ECMA-262 intrinsics but not globalThis, and emits ExperimentalWarning",
+    async () => {
+      const { stdout, stderr, exitCode } = await run(
+        ["--frozen-intrinsics"],
+        `console.log(JSON.stringify({
+           arrProto: Object.isFrozen(Array.prototype),
+           objProto: Object.isFrozen(Object.prototype),
+           promise: Object.isFrozen(Promise),
+           math: Object.isFrozen(Math),
+           f16: Object.isFrozen(Float16Array.prototype),
+           console: Object.isFrozen(console),
+           globalThis: Object.isFrozen(globalThis),
+           slotConfigurable: Object.getOwnPropertyDescriptor(globalThis, "globalThis").configurable,
+           streams: Object.isFrozen(require("stream").Duplex.prototype),
+         }))`,
+      );
+      expect(JSON.parse(stdout)).toEqual({
+        arrProto: true,
+        objProto: true,
+        promise: true,
+        math: true,
+        f16: true,
+        console: true,
+        globalThis: false,
+        slotConfigurable: false,
+        streams: false,
+      });
+      expect(stderr).toContain("ExperimentalWarning");
+      expect(stderr).toContain("experimental feature");
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
 
-  test("assigning to an intrinsic prototype throws in strict mode", async () => {
-    const { stdout, exitCode } = await run(
-      ["--frozen-intrinsics"],
-      `"use strict"; try { Array.prototype.push = 1; console.log("mutated"); } catch (e) { console.log(e.name); }`,
-    );
-    expect(stdout.trim()).toBe("TypeError");
-    expect(exitCode).toBe(0);
-  });
-
-  test("derived-object assignment still works (override mistake mitigation)", async () => {
-    const { stdout, exitCode } = await run(
-      ["--frozen-intrinsics"],
-      `const o = {}; o.toString = () => "overridden"; console.log(o.toString());`,
-    );
-    expect(stdout.trim()).toBe("overridden");
-    expect(exitCode).toBe(0);
-  });
-
-  test("globalThis itself is not frozen, but its globalThis slot is", async () => {
-    const { stdout, exitCode } = await run(
-      ["--frozen-intrinsics"],
-      `console.log(JSON.stringify({
-         frozen: Object.isFrozen(globalThis),
-         slotConfigurable: Object.getOwnPropertyDescriptor(globalThis, "globalThis").configurable,
-       }))`,
-    );
-    expect(JSON.parse(stdout)).toEqual({ frozen: false, slotConfigurable: false });
-    expect(exitCode).toBe(0);
-  });
-
-  test("emits an ExperimentalWarning", async () => {
-    const { stderr, exitCode } = await run(["--frozen-intrinsics"], `1`);
-    expect(stderr).toContain("ExperimentalWarning");
-    expect(stderr).toContain("experimental feature");
-    expect(exitCode).toBe(0);
-  });
+  test(
+    "intrinsic prototype assignment throws but derived-object assignment still works",
+    async () => {
+      const { stdout, exitCode } = await run(
+        ["--frozen-intrinsics"],
+        `"use strict";
+         let proto; try { Array.prototype.push = 1; proto = "mutated"; } catch (e) { proto = e.name; }
+         const o = {}; o.toString = () => "overridden";
+         console.log(JSON.stringify({ proto, derived: o.toString() }));`,
+      );
+      expect(JSON.parse(stdout)).toEqual({ proto: "TypeError", derived: "overridden" });
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
 });
 
 describe("--secure-heap", () => {

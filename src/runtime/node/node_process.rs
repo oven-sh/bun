@@ -287,7 +287,11 @@ mod _impl {
                 std::sync::LazyLock::new(|| {
                     let mut set = bun_collections::StringSet::new();
                     for param in crate::cli::arguments::AUTO_PARAMS.iter() {
-                        if param.takes_value != bun_clap::Values::None {
+                        // OneOptional only takes a value via `--flag=val`; the streaming parser does not consume the next token for a bare `--flag`, so neither should this re-parser.
+                        if matches!(
+                            param.takes_value,
+                            bun_clap::Values::One | bun_clap::Values::Many
+                        ) {
                             if let Some(name) = param.names.long {
                                 let mut k = Vec::with_capacity(2 + name.len());
                                 k.extend_from_slice(b"--");

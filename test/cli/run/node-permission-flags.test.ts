@@ -80,12 +80,24 @@ describe("Node.js permission-model flags", () => {
     },
   );
 
+  test.concurrent(
+    "BUN_IGNORE_NODE_PERMISSION_FLAGS=1 execArgv does not swallow the script name after a bare grant",
+    async () => {
+      const { stdout, stderr, exitCode } = await run(["--permission", "--allow-child-process"], {
+        ...bunEnv,
+        BUN_IGNORE_NODE_PERMISSION_FLAGS: "1",
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe('read OK permission=undefined execArgv=["--permission","--allow-child-process"]\n');
+      expect(exitCode).toBe(0);
+    },
+  );
+
   test.concurrent("--permission is hidden from --help", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--help"],
       env: bunEnv,
       stdout: "pipe",
-      stderr: "pipe",
     });
     const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
     expect(stdout).not.toContain("--permission");

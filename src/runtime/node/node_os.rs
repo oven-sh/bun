@@ -263,8 +263,7 @@ mod _impl {
 
         match result {
             Ok(v) => Ok(v),
-            // Node's os.cpus() does `getCPUs() || []` and never throws on
-            // syscall/parse failure.
+            // Node never throws here (`getCPUs() || []`).
             Err(OsError::Any) => JSValue::create_empty_array(global, 0),
             Err(OsError::Js(e)) => Err(e),
         }
@@ -284,8 +283,7 @@ mod _impl {
                 match bun_sys::File::open(bun_core::zstr!("/proc/stat"), bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
                     Err(_) => {
-                        // hidepid mounts (common on Android) deny /proc/stat. Return
-                        // NPROCESSORS_ONLN stub entries so `.length` still matches Node.
+                        // Android hidepid often denies /proc/stat; return NPROCESSORS_ONLN stubs.
                         // SAFETY: pure FFI getter
                         let count: u32 =
                             u32::try_from(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN())).unwrap();
@@ -347,8 +345,7 @@ mod _impl {
                     },
                 };
 
-                // Initialize model/speed to defaults here so key order matches Node
-                // ({ model, speed, times }); the later passes overwrite them in place.
+                // Seed defaults in Node's key order; later passes overwrite model/speed.
                 let cpu = JSValue::create_empty_object(global_this, 3);
                 cpu.put(
                     global_this,

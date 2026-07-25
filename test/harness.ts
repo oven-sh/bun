@@ -464,6 +464,13 @@ export function parallelBarrierFixture(me: string, peers: string[]): string {
       while (!peers.every(p => fs.existsSync(at(p))) && Date.now() < deadline) {
         Atomics.wait(idle, 0, 0, 5);
       }
+      const missing = peers.filter(p => !fs.existsSync(at(p)));
+      if (missing.length > 0) {
+        throw new Error(
+          ${JSON.stringify(me)} + ": parallel barrier timed out after 10000ms waiting for peers: " +
+            missing.join(", "),
+        );
+      }
     }
   `;
 }

@@ -1083,8 +1083,7 @@ pub struct Options<'a> {
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 
-    /// Comment byte-ranges (into `json_comment_source`) to interleave back into
-    /// the output when re-printing JSONC. See [`print_json`].
+    /// Comment byte-ranges into `json_comment_source`, re-emitted when printing JSONC.
     pub json_preserve_comments: &'a [bun_ast::Range],
     pub json_comment_source: &'a [u8],
 }
@@ -1157,9 +1156,7 @@ pub struct PrintJsonOptions<'a> {
     pub indent: Indentation,
     pub mangled_props: Option<&'a MangledProps>,
     pub minify_whitespace: bool,
-    /// Comment byte-ranges into `source.contents` to re-emit at their original
-    /// positions relative to surviving AST nodes. Preserves JSONC comments
-    /// across a parse → edit → print round-trip.
+    /// Comment byte-ranges into `source.contents`, re-emitted relative to surviving nodes.
     pub preserve_comments: &'a [bun_ast::Range],
 }
 
@@ -1418,8 +1415,7 @@ pub mod __gated_printer {
         // Always carried; gated at call sites with MAY_HAVE_MODULE_INFO.
         pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
 
-        /// Index into `options.json_preserve_comments` of the next comment to
-        /// emit; advanced by [`Self::flush_json_comments_before`].
+        /// Next `options.json_preserve_comments` entry to emit.
         pub json_comment_cursor: usize,
         pub json_comment_watermark: i32,
 
@@ -1685,11 +1681,8 @@ pub mod __gated_printer {
             }
         }
 
-        /// Emit every preserved JSONC comment whose source start precedes
-        /// `before`, maintaining a monotonic cursor so each comment is printed
-        /// once. `leading_break` selects whether the separator newline/indent
-        /// goes before or after the comment text (before-close-brace vs
-        /// before-property callers are positioned differently).
+        /// Emit each preserved JSONC comment starting before `before` exactly once;
+        /// `leading_break` puts the newline/indent before the comment instead of after.
         #[inline]
         pub fn flush_json_comments_before(&mut self, before: i32, leading_break: bool) {
             if !IS_JSON {

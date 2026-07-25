@@ -180,6 +180,7 @@ impl UpdateInteractiveCommand {
     fn save_package_json(
         package_json: &mut WorkspacePackageJsonCacheEntry,
         package_json_path: &[u8],
+        log: &mut bun_ast::Log,
     ) -> crate::Result<()> {
         let preserve_trailing_newline = !package_json.source.contents.is_empty()
             && *package_json.source.contents.last().unwrap() == b'\n';
@@ -241,6 +242,8 @@ impl UpdateInteractiveCommand {
             Cow::Owned(new_package_json_source.into_vec()),
         );
         package_json.stale_contents.push(old);
+        // Refresh `root`/`comments`, whose offsets still point into the old buffer.
+        package_json.reparse_root(log)?;
         Ok(())
     }
 
@@ -404,7 +407,7 @@ impl UpdateInteractiveCommand {
 
             // Write the updated package.json if modified
             if modified {
-                Self::save_package_json(package_json, package_json_path)?;
+                Self::save_package_json(package_json, package_json_path, log)?;
             }
         }
         Ok(())
@@ -486,7 +489,7 @@ impl UpdateInteractiveCommand {
             edit_catalog_definitions(&mut updates_for_workspace[..], &mut package_json.root)?;
 
             // Save the updated package.json
-            Self::save_package_json(package_json, package_json_path)?;
+            Self::save_package_json(package_json, package_json_path, log)?;
         }
         Ok(())
     }

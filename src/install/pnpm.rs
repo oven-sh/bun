@@ -2060,6 +2060,7 @@ fn update_package_json_after_migration(
             bun_js_printer::PrintJsonOptions {
                 indent: root_pkg_json.indentation,
                 mangled_props: None,
+                preserve_comments: &root_pkg_json.comments,
                 ..Default::default()
             },
         )
@@ -2078,6 +2079,8 @@ fn update_package_json_after_migration(
                 .written_without_trailing_zero()
                 .to_vec(),
         );
+        // The ranges are byte offsets into the replaced buffer.
+        root_pkg_json.comments.clear();
 
         // Write the updated package.json
         let _ = sys::File::write_file(

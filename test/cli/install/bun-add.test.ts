@@ -114,7 +114,7 @@ it("should preserve comments in package.json on add", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "add", "bar"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -155,7 +155,7 @@ it("should preserve comments in package.json on update", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "update"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "pipe",
     stderr: "pipe",
     env,
@@ -197,7 +197,7 @@ it("should preserve comments in package.json on remove", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "remove", "pkg-a"],
     cwd: package_dir,
-    stdout: "pipe",
+    stdout: "ignore",
     stdin: "pipe",
     stderr: "pipe",
     env,

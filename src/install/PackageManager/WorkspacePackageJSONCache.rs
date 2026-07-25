@@ -24,8 +24,7 @@ pub struct MapEntry {
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,
-    /// Comment byte-ranges into `source.contents`, threaded into
-    /// `PrintJsonOptions.preserve_comments` so edits don't strip them.
+    /// Comment byte-ranges into `source.contents`, for `PrintJsonOptions.preserve_comments`.
     pub comments: Vec<bun_ast::Range>,
     /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
     /// so the source's path slices stay valid for the entry's lifetime.

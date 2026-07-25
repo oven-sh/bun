@@ -36,8 +36,7 @@ pub struct StructuralIndex<'c> {
     pub flags: u32,
     /// First comment seen (scalar indexer only).
     pub first_comment: Option<Range>,
-    /// Every comment range, in source order (scalar indexer only; the SIMD
-    /// kernel falls back to scalar on seeing a `/`).
+    /// Every comment range in source order (scalar indexer only).
     pub comments: Vec<Range>,
     /// Set when the indexer hit an error.
     pub index_error: Option<IndexError>,

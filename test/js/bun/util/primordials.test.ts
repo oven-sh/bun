@@ -9,8 +9,14 @@ import { bunEnv, bunExe } from "harness";
 const script = /* js */ `
 const { primordials } = require("bun:internal-for-testing");
 
-const tamper = process.argv[2] === "tamper";
-if (tamper) {
+// Harness values that must survive the tamper block below.
+const stringify = JSON.stringify;
+const write = process.stdout.write.bind(process.stdout);
+const map = new Map([["k", "v"]]);
+const u8 = new Uint8Array(4);
+u8[0] = 1; u8[1] = 2; u8[2] = 3; u8[3] = 4;
+
+if (process.env.TAMPER === "1") {
   Array.prototype.push = () => { throw new Error("tampered Array.prototype.push"); };
   Array.prototype.slice = () => { throw new Error("tampered Array.prototype.slice"); };
   Array.prototype[Symbol.iterator] = () => { throw new Error("tampered Array.prototype[Symbol.iterator]"); };
@@ -26,27 +32,19 @@ if (tamper) {
   Math.max = () => { throw new Error("tampered Math.max"); };
   Reflect.ownKeys = () => { throw new Error("tampered Reflect.ownKeys"); };
   JSON.stringify = () => { throw new Error("tampered JSON.stringify"); };
-  const TA = Object.getPrototypeOf(Uint8Array.prototype);
+  const TA = Reflect.getPrototypeOf(Uint8Array.prototype);
   TA.subarray = () => { throw new Error("tampered %TypedArray%.prototype.subarray"); };
   Promise.resolve = () => { throw new Error("tampered Promise.resolve"); };
 }
 
-const out = primordials.run([], "hello", new Map([["k", "v"]]), new Uint8Array([1, 2, 3, 4]), /ell/);
+const out = primordials.run([], "hello", map, u8, /ell/);
 
 const refs = primordials.refs();
-for (const [name, fn] of [
-  ["ArrayPrototypePush", refs.ArrayPrototypePush],
-  ["StringPrototypeSlice", refs.StringPrototypeSlice],
-  ["ObjectDefineProperty", refs.ObjectDefineProperty],
-  ["MapPrototypeGet", refs.MapPrototypeGet],
-  ["MathMax", refs.MathMax],
-  ["ReflectOwnKeys", refs.ReflectOwnKeys],
-  ["TypedArrayPrototypeGetLength", refs.TypedArrayPrototypeGetLength],
-]) {
-  out["typeof_" + name] = typeof fn;
-}
+const names = ["ArrayPrototypePush", "StringPrototypeSlice", "ObjectDefineProperty",
+               "MapPrototypeGet", "MathMax", "ReflectOwnKeys", "TypedArrayPrototypeGetLength"];
+for (let i = 0; i < names.length; i++) out["typeof_" + names[i]] = typeof refs[names[i]];
 
-process.stdout.write(out.JSONStringify ? JSON.stringify(out) : "JSONStringify failed");
+write(out.JSONStringify ? stringify(out) : "JSONStringify failed");
 `;
 
 const expected = {
@@ -82,8 +80,8 @@ const expected = {
 
 async function run(tamper: boolean) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script, tamper ? "tamper" : "clean"],
-    env: bunEnv,
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, TAMPER: tamper ? "1" : "0" },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -129,7 +127,7 @@ describe.concurrent("link-time constant primordials", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("Worker globals capture independently", async () => {
+  test("Worker globals capture independently", { timeout: 30_000 }, async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

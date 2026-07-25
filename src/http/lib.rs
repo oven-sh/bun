@@ -991,9 +991,7 @@ fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
 }
 
-/// Margin subtracted from a `Keep-Alive: timeout=N` hint before pooling
-/// (undici's `keepAliveTimeoutThreshold` default, 2 s). A hint at or below
-/// the margin means the safe idle window is empty: close instead of pooling.
+/// Margin subtracted from a `Keep-Alive: timeout=N` hint (undici's `keepAliveTimeoutThreshold`, 2 s).
 pub(crate) const KEEPALIVE_TIMEOUT_BUFFER_SECONDS: u32 = 2;
 
 /// `timeout=` parameter from a `Keep-Alive` header value (`timeout=5, max=100`). Case-insensitive.

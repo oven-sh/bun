@@ -308,15 +308,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         socket.close(uws::CloseKind::Normal);
     }
 
-    /// Non-blocking `MSG_PEEK` on the pooled socket's raw fd. A pooled
-    /// HTTP/1.1 socket is idle with an empty receive queue, so `recv` = 0
-    /// is a peer FIN already queued in the kernel that the event loop has
-    /// not yet dispatched; handing that socket to a new request races the
-    /// server's close and a non-idempotent request surfaces `ECONNRESET`.
-    /// The only healthy result is `EAGAIN`. Not applied to HTTP/2 (servers
-    /// legitimately send PING/SETTINGS while idle) and POSIX-only: on
-    /// Windows the pool relies on the `Keep-Alive` hint and the libuv
-    /// deferred-FIN sweep.
+    /// `recv(MSG_PEEK|MSG_DONTWAIT)` on the pooled fd: 0 = peer FIN queued
+    /// in the kernel but not yet dispatched, so the socket must not be reused.
+    /// POSIX-only; caller skips HTTP/2 (servers send PING/SETTINGS while idle).
     #[cfg_attr(windows, allow(unused_variables))]
     fn probe_idle_socket_alive(socket: HTTPSocket<SSL>) -> bool {
         #[cfg(unix)]

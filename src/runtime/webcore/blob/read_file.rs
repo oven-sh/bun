@@ -101,6 +101,9 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
         let blob = core::mem::take(&mut handler.context);
         let global_this = handler.global_this;
         drop(handler);
+        if crate::webcore::blob::is_stdin_fd_store(&blob) {
+            crate::webcore::blob::release_stdin_blob_read_claim();
+        }
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;

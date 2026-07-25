@@ -118,6 +118,46 @@ const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
+thread_local! {
+    /// Set while a `ReadFile` spawned by one of the `Bun.stdin` Blob read
+    /// helpers (`text()/json()/arrayBuffer()/bytes()`) is in flight. A second
+    /// concurrent call checks this and rejects with `ERR_INVALID_STATE`
+    /// instead of registering a second poll on fd 0 (which the kernel answers
+    /// with `EEXIST` from `epoll_ctl` after the loser has already consumed
+    /// bytes). Claimed in `do_read_file`; released in `NewReadFileHandler::run`.
+    static STDIN_BLOB_READ_IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
+}
+
+pub(crate) fn is_stdin_fd_store(blob: &Blob) -> bool {
+    matches!(
+        blob.store.get().as_deref(),
+        Some(s) if matches!(
+            &s.data,
+            store::Data::File(f) if matches!(
+                f.pathlike,
+                PathOrFileDescriptor::Fd(fd) if matches!(fd.stdio_tag(), Some(bun_sys::Stdio::StdIn))
+            )
+        )
+    )
+}
+
+pub(crate) fn release_stdin_blob_read_claim() {
+    STDIN_BLOB_READ_IN_FLIGHT.set(false);
+}
+
+/// For an fd-backed Blob, return the `ReadableStream` cached on the JS wrapper
+/// by `get_stream_with_cache`, if one has been materialised.
+fn fd_cached_stream(blob: &Blob, this_value: JSValue) -> Option<JSValue> {
+    let store = blob.store.get().as_deref()?;
+    let store::Data::File(f) = &store.data else {
+        return None;
+    };
+    if !matches!(f.pathlike, PathOrFileDescriptor::Fd(_)) {
+        return None;
+    }
+    js::stream_get_cached(this_value)
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 // is_s3: defined once above (near is_bun_file); duplicate removed to fix E0034.
@@ -440,6 +480,15 @@ impl BlobExt for Blob {
 
     fn do_read_file<F: read_file::ReadFileToJs>(&self, global: &JSGlobalObject) -> JSValue {
         debug!("doReadFile");
+
+        if is_stdin_fd_store(self) && STDIN_BLOB_READ_IN_FLIGHT.replace(true) {
+            return global
+                .err(
+                    jsc::ErrorCode::INVALID_STATE,
+                    format_args!("stdin is already being read by another Bun.stdin consumer"),
+                )
+                .reject();
+        }
 
         type Handler<'a, F> = read_file::NewReadFileHandler<'a, F>;
 
@@ -1218,7 +1267,12 @@ impl BlobExt for Blob {
 
         Ok(stream)
     }
-    fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_text(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_text(stream)
+            });
+        }
         Ok(self.get_text_clone(global_this)?)
     }
 
@@ -1227,7 +1281,12 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
 
-    fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_json(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_json(stream)
+            });
+        }
         Ok(self.get_json_share(global_this)?)
     }
 
@@ -1244,7 +1303,16 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
 
-    fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_array_buffer(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_array_buffer(stream)
+            });
+        }
         Ok(self.get_array_buffer_clone(global_this)?)
     }
 
@@ -1253,7 +1321,12 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Clone))
     }
 
-    fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_bytes(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(stream) = fd_cached_stream(self, callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_bytes(stream)
+            });
+        }
         Ok(self.get_bytes_clone(global_this)?)
     }
 

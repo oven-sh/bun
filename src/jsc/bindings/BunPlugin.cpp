@@ -39,6 +39,9 @@ namespace Bun {
 JSC::JSValue unwrapSpyOriginal(JSC::JSValue);
 }
 
+extern "C" bool Bun__VirtualMachine__isInPreload(void*);
+extern "C" void* Bun__getVM();
+
 namespace Zig {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
@@ -424,9 +427,15 @@ public:
     WriteBarrier<JSObject> esmOriginalExports;
     WriteBarrier<JSObject> cjsModule;
     WriteBarrier<Unknown> cjsOriginalExports;
+    // Non-JSModuleMock virtualModules entry (e.g. Bun.plugin build.module)
+    // that this mock.module() call overwrote; reinstated on restore.
+    WriteBarrier<JSObject> priorVirtualModuleEntry;
     // The namespace/module.exports that exists now came from a mock factory, not
     // the real source; restore should evict rather than replay.
     bool mustEvictOnRestore = false;
+    // Preload-installed mocks survive mock.restore() so that
+    // afterEach(mock.restore) doesn't tear down global test setup.
+    bool installedDuringPreload = false;
 
     static JSModuleMock* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSObject* callback);
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
@@ -611,6 +620,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
+    mock->installedDuringPreload = Bun__VirtualMachine__isInPreload(Bun__getVM());
 
     // Preserve true originals across repeat mock.module() calls for the same specifier.
     if (globalObject->onLoadPlugins.virtualModules) {
@@ -624,9 +634,13 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     mock->cjsModule.set(vm, mock, priorMock->cjsModule.get());
                 if (priorMock->cjsOriginalExports)
                     mock->cjsOriginalExports.set(vm, mock, priorMock->cjsOriginalExports.get());
+                if (priorMock->priorVirtualModuleEntry)
+                    mock->priorVirtualModuleEntry.set(vm, mock, priorMock->priorVirtualModuleEntry.get());
                 // A prior mock with no snapshot was installed before the module
                 // loaded; any registry entry seen now came from that mock's factory.
                 mock->mustEvictOnRestore = priorMock->mustEvictOnRestore || (!priorMock->esmNamespace && !priorMock->cjsModule);
+            } else {
+                mock->priorVirtualModuleEntry.set(vm, mock, prior.get());
             }
         }
     }
@@ -792,6 +806,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->esmOriginalExports);
     visitor.append(mock->cjsModule);
     visitor.append(mock->cjsOriginalExports);
+    visitor.append(mock->priorVirtualModuleEntry);
 }
 
 DEFINE_VISIT_CHILDREN(JSModuleMock);
@@ -803,14 +818,14 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
 
     auto& vm = globalObject->vm();
 
-    Vector<String, 8> toRemove;
+    Vector<std::pair<String, JSC::Strong<JSC::JSObject>>, 8> toReplace;
 
     for (auto& entry : *virtualModules) {
         auto* moduleMock = dynamicDowncast<JSModuleMock>(entry.value.get());
-        if (!moduleMock)
+        if (!moduleMock || moduleMock->installedDuringPreload)
             continue;
 
-        toRemove.append(entry.key);
+        toReplace.append({ entry.key, JSC::Strong<JSC::JSObject> { vm, moduleMock->priorVirtualModuleEntry.get() } });
 
         auto* ns = moduleMock->mustEvictOnRestore ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
         if (ns) {
@@ -852,8 +867,12 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
         }
     }
 
-    for (auto& key : toRemove)
-        virtualModules->remove(key);
+    for (auto& [key, prior] : toReplace) {
+        if (prior)
+            virtualModules->set(key, std::move(prior));
+        else
+            virtualModules->remove(key);
+    }
 }
 
 EncodedJSValue BunPlugin::OnLoad::run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path)

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "path";
-import { fakeNodeRun, tempDirWithFiles } from "../../harness";
+import { bunEnv, bunExe, fakeNodeRun, tempDirWithFiles } from "../../harness";
 
 describe("fake node cli", () => {
   test("the node cli actually works", () => {
@@ -97,8 +97,18 @@ describe("fake node cli", () => {
     );
   });
 
-  test("no args is exit code zero for now", () => {
+  // Bare `node` now matches Node.js: a TTY stdin enters the REPL, a
+  // non-TTY stdin (pipe) prints "Missing script". fakeNodeRun's default
+  // stdin is platform-dependent (Windows may inherit a console), so pin
+  // a piped stdin here.
+  test("no args with piped stdin errors with 'Missing script'", () => {
     const temp = tempDirWithFiles("fake-node", {});
-    expect(() => fakeNodeRun(temp, [])).toThrow();
+    const result = Bun.spawnSync([bunExe(), "--bun", "node"], {
+      cwd: temp,
+      env: { ...bunEnv, NODE_ENV: undefined },
+      stdin: Buffer.alloc(0),
+    });
+    expect(result.stderr.toString()).toContain("Missing script");
+    expect(result.success).toBe(false);
   });
 });

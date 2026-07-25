@@ -108,5 +108,9 @@ export const SSLConfig = b.dictionary(
       internalName: "session_timeout",
     },
     sigalgs: b.String.nullable,
+    ecdhCurve: {
+      type: b.String.nullable,
+      internalName: "ecdh_curve",
+    },
   },
 );

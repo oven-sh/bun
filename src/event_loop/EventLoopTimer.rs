@@ -204,6 +204,7 @@ pub enum Tag {
     EventLoopDelayMonitor,
     CronJob,
     GcRepeating,
+    QuicEndpoint,
 }
 
 impl Tag {
@@ -214,6 +215,7 @@ impl Tag {
             | Tag::EventLoopDelayMonitor // probably important
             | Tag::StatWatcherScheduler
             | Tag::GcRepeating // internal GC pacing
+            | Tag::QuicEndpoint
             => false,
             _ => true,
         }

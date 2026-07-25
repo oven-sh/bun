@@ -884,12 +884,13 @@ describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", (
     await once(sock, "connect");
     let buf = "";
     sock.on("data", d => (buf += d.toString()));
+    const closed = once(sock, "close");
     for (let i = 0; i < 3; i++) {
       sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-      while (buf.split("body").length - 1 < i + 1) await once(sock, "data");
+      while (!sock.readableEnded && buf.split("body").length - 1 < i + 1) await once(sock, "data");
     }
     sock.end();
-    await once(sock, "close");
+    await closed;
     expect(seen).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });

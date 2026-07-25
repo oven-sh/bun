@@ -92,6 +92,9 @@ pub struct DirWatcher {
     /// alignment proof for the `FILE_NOTIFY_INFORMATION` cast in
     /// `EventIterator::next`).
     pub buf: [u8; 64 * 1024],
+    /// `INVALID_HANDLE_VALUE` once the root has been marked dead (directory
+    /// removed or re-arm failed). The Box stays in place so `needs_rearm` /
+    /// `BackRef` addresses remain valid; `covers()` skips dead entries.
     pub dir_handle: HANDLE,
     /// Absolute path of the watched root with a trailing separator. Prefixed
     /// to the relative filename each event carries to rebuild the full path.
@@ -151,6 +154,29 @@ impl DirWatcher {
         }
         bun_core::scoped_log!(watcher, "read directory changes!");
         Ok(())
+    }
+
+    fn is_dead(&self) -> bool {
+        self.dir_handle == w::INVALID_HANDLE_VALUE
+    }
+
+    /// Close the handle and mark this root unusable. The Box stays in the
+    /// `watchers` Vec (append-only) so outstanding pointers remain valid; a
+    /// later `ensure_watch_root_covers` for the same path will see `covers()`
+    /// skip it and open a fresh root.
+    fn mark_dead(&mut self) {
+        if self.is_dead() {
+            return;
+        }
+        // SAFETY: dir_handle is the handle `add_root` opened; closed once here.
+        unsafe {
+            let _ = w::CloseHandle(self.dir_handle);
+        }
+        self.dir_handle = w::INVALID_HANDLE_VALUE;
+        bun_core::warn!(
+            "Stopped watching {} (directory removed)\n",
+            bstr::BStr::new(&self.root)
+        );
     }
 }
 
@@ -326,10 +352,10 @@ impl WindowsWatcher {
     }
 
     /// True if `dir` (absolute, with trailing separator) is already inside one
-    /// of the watched roots. Caller holds `Watcher.mutex`.
+    /// of the live watched roots. Caller holds `Watcher.mutex`.
     pub(crate) fn covers(&self, dir: &[u8]) -> bool {
         for dw in &self.watchers {
-            if is_parent_or_equal(&dw.root, dir) != ParentEqual::Unrelated {
+            if !dw.is_dead() && is_parent_or_equal(&dw.root, dir) != ParentEqual::Unrelated {
                 return true;
             }
         }
@@ -342,7 +368,10 @@ impl WindowsWatcher {
             // SAFETY: `dw` was the `lpOverlapped` of the previous completion,
             // pointing at offset 0 of a `Box<DirWatcher>` in `self.watchers`
             // (append-only, never dropped before `stop()`), so it is live.
-            unsafe { dw.as_ptr().as_mut().unwrap_unchecked() }.prepare()?;
+            let dw = unsafe { dw.as_ptr().as_mut().unwrap_unchecked() };
+            if !dw.is_dead() && dw.prepare().is_err() {
+                dw.mark_dead();
+            }
         }
 
         let mut nbytes: w::DWORD = 0;
@@ -359,12 +388,13 @@ impl WindowsWatcher {
                     timeout as w::DWORD,
                 )
             };
-            if rc == 0 {
-                let err = w::Win32Error::get();
-                // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
-                if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
-                    return Ok(None);
-                } else {
+            let Some(overlapped) = ptr::NonNull::new(overlapped) else {
+                if rc == 0 {
+                    let err = w::Win32Error::get();
+                    // `WAIT_TIMEOUT` (258) — not yet a named const on `bun_sys::windows::Win32Error`.
+                    if err == w::Win32Error::TIMEOUT || err == w::Win32Error(258) {
+                        return Ok(None);
+                    }
                     bun_core::scoped_log!(watcher, "GetQueuedCompletionStatus failed: {}", err.0);
                     return Err(bun_sys::Error {
                         errno: bun_sys::SystemErrno::init(err.0 as u32)
@@ -374,9 +404,6 @@ impl WindowsWatcher {
                         ..Default::default()
                     });
                 }
-            }
-
-            let Some(overlapped) = ptr::NonNull::new(overlapped) else {
                 bun_core::scoped_log!(
                     watcher,
                     "GetQueuedCompletionStatus returned no overlapped event"
@@ -390,6 +417,17 @@ impl WindowsWatcher {
             // `overlapped` is the address we passed to `ReadDirectoryChangesW`:
             // offset 0 of a boxed `DirWatcher` in `self.watchers`.
             let dw: ptr::NonNull<DirWatcher> = overlapped.cast();
+
+            if rc == 0 {
+                // A dequeued failed-I/O packet: the root directory is gone
+                // (handle closed by `stop()`, or the directory was deleted).
+                // Retire this root; other roots keep running. The IOCP-wide
+                // failure path (no packet) is the `overlapped.is_null()` arm
+                // above.
+                // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
+                unsafe { dw.as_ptr().as_mut().unwrap_unchecked() }.mark_dead();
+                continue;
+            }
 
             if nbytes == 0 {
                 // ReadDirectoryChangesW internal change-buffer overflow — too many
@@ -406,7 +444,10 @@ impl WindowsWatcher {
                     "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                 );
                 // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
-                unsafe { dw.as_ptr().as_mut().unwrap_unchecked() }.prepare()?;
+                let dw = unsafe { dw.as_ptr().as_mut().unwrap_unchecked() };
+                if dw.prepare().is_err() {
+                    dw.mark_dead();
+                }
                 continue;
             }
             self.needs_rearm = Some(dw);
@@ -423,10 +464,13 @@ impl WindowsWatcher {
 
     pub(crate) fn stop(&mut self) {
         // SAFETY: handles were opened in add_root()/new() and are valid until
-        // stop() is called once.
+        // stop() is called once. Caller holds `Watcher.mutex` (serialises
+        // against `add_root`).
         unsafe {
             for dw in &self.watchers {
-                w::CloseHandle(dw.dir_handle);
+                if !dw.is_dead() {
+                    w::CloseHandle(dw.dir_handle);
+                }
             }
             w::CloseHandle(self.iocp);
         }

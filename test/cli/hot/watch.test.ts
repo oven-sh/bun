@@ -62,16 +62,19 @@ describe.todoIf(isBroken && isWindows)("--watch works", async () => {
 // exercises the fix on Windows; the stderr assertion (no warning, no crash)
 // is meaningful everywhere.
 test.concurrent("picks up changes in a linked workspace package outside the cwd", async () => {
+  const appSource = (app: number) =>
+    `import { value } from "@test/db";\nconsole.log("[app]", ${app}, value);\n`;
   const root = tempDirWithFiles("watch-workspace", {
     "packages/db/package.json": JSON.stringify({ name: "@test/db", main: "index.js" }),
     "packages/db/index.js": `export const value = 1;\n`,
     "apps/myapp/package.json": JSON.stringify({ name: "myapp" }),
-    "apps/myapp/index.js": `import { value } from "@test/db";\nconsole.log("[app]", value);\n`,
+    "apps/myapp/index.js": appSource(1),
   });
   mkdirSync(join(root, "apps/myapp/node_modules/@test"), { recursive: true });
   symlinkSync(join(root, "packages/db"), join(root, "apps/myapp/node_modules/@test/db"), "junction");
 
   const dbIndex = join(root, "packages/db/index.js");
+  const appIndex = join(root, "apps/myapp/index.js");
 
   await using watcher = spawn({
     cmd: [bunExe(), "--watch", "index.js"],
@@ -84,20 +87,25 @@ test.concurrent("picks up changes in a linked workspace package outside the cwd"
     for await (const chunk of watcher.stderr) stderr += new TextDecoder().decode(chunk);
   })();
 
-  // Re-save the target generation on every line until it appears. Without
-  // the fix no change event ever fires for packages/db on Windows, so the
-  // loop never advances past gen 1 and the test times out.
+  // Alternate edits between the out-of-cwd package and the in-cwd app so both
+  // watch roots are exercised after the second one is registered. Re-save the
+  // target generation on every line until it appears; without the fix no event
+  // ever fires for packages/db on Windows and the loop never advances past
+  // (1, 1).
   const iter = forEachLine(watcher.stdout);
-  let gen = 1;
+  let db = 1;
+  let app = 1;
   for await (const line of iter) {
     expect(stderr).not.toContain("is not in the project directory");
-    if (line === `[app] ${gen}`) {
-      if (gen === 5) break;
-      gen += 1;
+    if (line === `[app] ${app} ${db}`) {
+      if (db === 4 && app === 4) break;
+      if (db <= app) db += 1;
+      else app += 1;
     }
-    await writeFile(dbIndex, `export const value = ${gen};\n`);
+    if (db > app) await writeFile(dbIndex, `export const value = ${db};\n`);
+    else await writeFile(appIndex, appSource(app));
   }
-  expect(gen).toBe(5);
+  expect({ db, app }).toEqual({ db: 4, app: 4 });
   expect(stderr).not.toContain("is not in the project directory");
 
   watcher.kill();

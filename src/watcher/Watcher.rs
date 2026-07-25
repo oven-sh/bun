@@ -339,7 +339,12 @@ impl Watcher {
             match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
+                    // `add_file` on another thread may be mid-`add_root`
+                    // (pushing to `platform.watchers` on Windows); serialise
+                    // against it so `stop()` iterates a stable Vec.
+                    let _guard = me.mutex.lock_guard();
                     me.platform.stop();
+                    drop(_guard);
                     if me.running.load() {
                         (me.on_error)(me.ctx, err);
                     }
@@ -777,10 +782,11 @@ impl Watcher {
         }
         match self.platform.add_root(dir) {
             Ok(()) => true,
-            Err(_) => {
+            Err(err) => {
                 bun_core::warn!(
-                    "Directory {} could not be opened for watching; changes under it will not be watched\n",
-                    bstr::BStr::new(dir)
+                    "Directory {} could not be opened for watching ({}); changes under it will not be watched\n",
+                    bstr::BStr::new(dir),
+                    err.name()
                 );
                 self.unwatchable_roots.push(dir.to_vec().into_boxed_slice());
                 false

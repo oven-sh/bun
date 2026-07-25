@@ -1436,11 +1436,9 @@ impl ServerConfig {
         // this used to be top-level, now it's "tls" object
         if args.ssl_config.is_none() {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
-                // The legacy top-level shape was `{ cert, key, fetch }`. Only
-                // accept it when both a certificate and a key are present so
-                // that unrelated top-level keys that happen to collide with
-                // TLSOptions names (lowMemoryMode, requestCert, ...) don't
-                // accidentally arm a certificate-less HTTPS listener.
+                // Top-level keys that collide with TLSOptions names must not
+                // arm a certificate-less HTTPS listener; unlike an explicit
+                // `tls:` object above, ignore rather than throw.
                 if ssl_config.has_server_identity() {
                     args.ssl_config = Some(ssl_config);
                 }

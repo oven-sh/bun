@@ -168,10 +168,7 @@ impl SSLConfig {
     }
 
     /// Whether this config carries both a certificate and a private key (inline
-    /// PEM or file path). A TLS server needs both to complete a handshake; a
-    /// config with only tuning knobs (lowMemoryMode, requestCert, ...) or with
-    /// only one half of the pair has no usable server identity and would
-    /// otherwise produce an HTTPS listener that can never respond.
+    /// PEM or file path). A TLS server needs both to complete a handshake.
     #[inline]
     pub fn has_server_identity(&self) -> bool {
         (self.cert.is_some() || !self.cert_file_name.is_null())

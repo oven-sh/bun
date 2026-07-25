@@ -2285,13 +2285,33 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    pub fn get_install_method(&self) -> Method {
+    pub fn get_install_method(&self, destination_dir: &Dir) -> Method {
         if self.cache_dir_subpath.as_bytes() == b"."
             || self.cache_dir_subpath.as_bytes().starts_with(b"..")
         {
-            Method::Symlink
+            return Method::Symlink;
+        }
+
+        let method = Self::supported_method();
+        if method != Method::Hardlink {
+            return method;
+        }
+
+        let (Ok(cache_stat), Ok(destination_stat)) =
+            (sys::fstat(self.cache_dir), sys::fstat(destination_dir.fd()))
+        else {
+            return method;
+        };
+
+        #[cfg(windows)]
+        if cache_stat.st_dev == 0 || destination_stat.st_dev == 0 {
+            return method;
+        }
+
+        if cache_stat.st_dev == destination_stat.st_dev {
+            method
         } else {
-            Self::supported_method()
+            Method::Copyfile
         }
     }
 

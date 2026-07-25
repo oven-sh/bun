@@ -1735,7 +1735,7 @@ impl<'a> PackageInstaller<'a> {
                             break 'result installer.install(
                                 self.skip_delete,
                                 &destination_dir,
-                                installer.get_install_method(),
+                                installer.get_install_method(&destination_dir),
                                 resolution.tag,
                             );
                         }
@@ -1776,7 +1776,7 @@ impl<'a> PackageInstaller<'a> {
                             installer.install(
                                 self.skip_delete,
                                 &destination_dir,
-                                installer.get_install_method(),
+                                installer.get_install_method(&destination_dir),
                                 resolution.tag,
                             )
                         };
@@ -1799,7 +1799,7 @@ impl<'a> PackageInstaller<'a> {
                     break 'result installer.install(
                         self.skip_delete,
                         &destination_dir,
-                        installer.get_install_method(),
+                        installer.get_install_method(&destination_dir),
                         resolution.tag,
                     );
                 }

@@ -9779,9 +9779,9 @@ pub fn zig_delete_tree(
                             return Err(e);
                         }
                         // "EPERM because it's a directory" is OS-dependent
-                        // (Linux returns EISDIR; macOS returns EPERM). We only
-                        // get errno, so forward EPERM as PermissionDenied —
-                        // caller maps it.
+                        // (Linux returns EISDIR; macOS returns EPERM), so at
+                        // this layer EPERM-on-directory is indistinguishable
+                        // from a real permission error.
                         Err(e) => return Err(e),
                     }
                 }

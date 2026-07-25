@@ -1179,7 +1179,11 @@ impl VirtualMachine {
     #[inline]
     pub fn suppress_microtask_drain_scope(&'static self) -> SuppressMicrotaskDrain {
         let prev = self.suppress_microtask_drain.replace(true);
-        SuppressMicrotaskDrain { vm: self, prev, _not_send: core::marker::PhantomData }
+        SuppressMicrotaskDrain {
+            vm: self,
+            prev,
+            _not_send: core::marker::PhantomData,
+        }
     }
 
     /// Acquires the JSC API lock for the duration of `f()`.

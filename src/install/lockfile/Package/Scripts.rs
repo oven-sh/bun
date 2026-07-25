@@ -19,18 +19,31 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
+fn registry_href_without_userinfo(href: &[u8]) -> Box<[u8]> {
+    if let Some(scheme_end) = strings::index_of(href, b"://") {
+        let auth_start = scheme_end + 3;
+        let path_start = strings::index_of_char(&href[auth_start..], b'/')
+            .map(|i| auth_start + i as usize)
+            .unwrap_or(href.len());
+        if let Some(at) = strings::index_of_char(&href[auth_start..path_start], b'@') {
+            let host_start = auth_start + at as usize + 1;
+            let mut out = Vec::with_capacity(href.len() - (host_start - auth_start));
+            out.extend_from_slice(&href[..auth_start]);
+            out.extend_from_slice(&href[host_start..]);
+            return out.into_boxed_slice();
+        }
+    }
+    Box::from(href)
+}
+
 fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
     let bun_exe = bun_core::self_exe_path().ok()?;
-    let scope_url = &crate::package_manager_real::PackageManager::get()
+    let href = crate::package_manager_real::PackageManager::get()
         .options
         .scope
-        .url;
-    let url = scope_url.url();
-    let registry: Box<[u8]> = if url.username.is_empty() && url.password.is_empty() {
-        Box::from(scope_url.href())
-    } else {
-        url.href_without_auth()
-    };
+        .url
+        .href();
+    let registry = registry_href_without_userinfo(href);
     let mut cmd: Vec<u8> = Vec::with_capacity(bun_exe.len() + registry.len() + 64);
     bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
         bun_exe.as_bytes(),

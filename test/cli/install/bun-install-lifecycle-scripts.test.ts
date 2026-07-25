@@ -1904,7 +1904,12 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           name: "git-dep-needs-dev",
           version: "1.0.0",
           devDependencies: { "what-bin": "1.0.0" },
-          scripts: { prepare: "what-bin" },
+          scripts: {
+            // Exercise the chained-preprepare path (`<install> && ( <user>\n)`),
+            // including a trailing shell comment that must not swallow the `)`.
+            preprepare: "what-bin && echo preprepare-ran > preprepare.txt # done",
+            prepare: "what-bin",
+          },
         }),
       );
 
@@ -1946,17 +1951,19 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
         env: testEnv,
       });
 
-      const err = stderrForInstall(await stderr.text());
-      const out = await stdout.text();
+      const [rawErr, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+      const err = stderrForInstall(rawErr);
       const depDir = join(packageDir, "node_modules", "git-dep-needs-dev");
 
       expect(err).not.toContain("what-bin: command not found");
       expect(err).not.toContain("what-bin: not found");
       expect(err).not.toContain("error:");
       expect(out).toContain("+ git-dep-needs-dev@git+file://");
-      expect(await exited).toBe(0);
+      expect(exitCode).toBe(0);
 
-      // `prepare` ran and found the `what-bin` devDependency.
+      // Both the user-declared `preprepare` and `prepare` ran and found the
+      // `what-bin` devDependency.
+      expect((await file(join(depDir, "preprepare.txt")).text()).trim()).toBe("preprepare-ran");
       expect(await file(join(depDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
 
       // npm does not add the git dependency's devDependencies to the outer

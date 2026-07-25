@@ -910,7 +910,7 @@ pub mod command {
     }
 
     #[cold]
-    fn translate_npm_value_flag(arg: &[u8]) -> Option<NpmFlag> {
+    fn translate_npm_value_flag(arg: &[u8], keep: &[&[u8]]) -> Option<NpmFlag> {
         use bun_core::zstr;
         let name: &[u8] = if let Some(long) = arg.strip_prefix(b"--") {
             match strings::index_of_char(long, b'=') {
@@ -924,6 +924,9 @@ pub mod command {
         } else {
             return None;
         };
+        if keep.contains(&name) {
+            return None;
+        }
         match name {
             b"workspace" => Some(NpmFlag::Rename(zstr!("--filter"))),
             b"prefix" => Some(NpmFlag::Rename(zstr!("--cwd"))),
@@ -965,6 +968,7 @@ pub mod command {
             hoisted: &mut Vec<&'static ZStr>,
             from: usize,
             stop_at_positional: bool,
+            keep: &[&[u8]],
         ) -> usize {
             let mut i = from;
             while i < argv.len() {
@@ -984,7 +988,7 @@ pub mod command {
                     i += 1;
                     continue;
                 }
-                if let Some(tr) = translate_npm_value_flag(ab) {
+                if let Some(tr) = translate_npm_value_flag(ab, keep) {
                     let eq = strings::index_of_char(ab, b'=');
                     let consumes_next = eq.is_none()
                         && argv
@@ -1011,8 +1015,9 @@ pub mod command {
         let mut hoisted: Vec<&'static ZStr> = Vec::new();
         let mut pre_subcommand_flags: Vec<&'static ZStr> = Vec::new();
         let sub_idx =
-            copy_translating_npm_flags(argv, &mut pre_subcommand_flags, &mut hoisted, 1, true);
+            copy_translating_npm_flags(argv, &mut pre_subcommand_flags, &mut hoisted, 1, true, &[]);
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
+        let sub_bytes = subcommand.map(|z| z.as_bytes());
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
         let has_positional_after = argv[rest_start..]
             .iter()
@@ -1020,7 +1025,7 @@ pub mod command {
             .any(|a| a.as_bytes().first() != Some(&b'-'));
 
         let mut mapped: Vec<&'static ZStr> = Vec::with_capacity(2);
-        match subcommand.map(|z| z.as_bytes()) {
+        match sub_bytes {
             // npm's lifecycle shortcuts run the package.json script; map to
             // `bun run <name>` so `npm test` does not invoke bun's test runner.
             Some(b"test" | b"t" | b"tst") => {
@@ -1060,12 +1065,23 @@ pub mod command {
             }
             Some(b"ls" | b"la" | b"ll") => mapped.push(zstr!("list")),
             Some(b"view" | b"show") => mapped.push(zstr!("info")),
+            Some(b"version" | b"verison") => {
+                mapped.push(zstr!("pm"));
+                mapped.push(zstr!("version"));
+            }
             Some(_) => mapped.push(*subcommand.unwrap()),
             None => {}
         }
 
+        // npm flags bun's own parser accepts for the mapped subcommand must
+        // reach it instead of being dropped.
+        let keep: &[&[u8]] = match sub_bytes {
+            Some(b"publish") => &[b"access", b"otp", b"tag"],
+            Some(b"version" | b"verison") => &[b"message"],
+            _ => &[],
+        };
         let mut tail: Vec<&'static ZStr> = Vec::with_capacity(argv.len().saturating_sub(rest_start));
-        copy_translating_npm_flags(argv, &mut tail, &mut hoisted, rest_start, false);
+        copy_translating_npm_flags(argv, &mut tail, &mut hoisted, rest_start, false, keep);
 
         let mut out: Vec<&'static ZStr> = Vec::with_capacity(
             1 + pre_subcommand_flags.len() + mapped.len() + hoisted.len() + tail.len(),

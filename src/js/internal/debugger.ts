@@ -644,7 +644,7 @@ class Debugger {
         if (typeof message === "string") {
           this.#message(ws, message);
         } else {
-          this.#error(ws, new Error(`Unexpected binary message: ${message.toString()}`));
+          this.#error(ws, new Error("Unexpected binary message"));
         }
       },
       drain: ws => this.#drain(ws),

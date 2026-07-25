@@ -222,11 +222,7 @@ public:
     std::atomic<uint64_t> version;
     size_t reference_count;
 
-    // Every live JSSQLStatement prepared against this connection. Not owning:
-    // entries are added in JSSQLStatement::create, removed on finalize/destroy.
-    // close() walks this to finalize the underlying sqlite3_stmt so the handle
-    // can be released even when user code (or a library like drizzle) dropped a
-    // statement without finalizing it.
+    // Not owning; close() walks this to finalize every outstanding sqlite3_stmt.
     Vector<WebCore::JSSQLStatement*> statements;
 
     void release()
@@ -1865,9 +1861,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
-    // A prepared statement keeps the sqlite3 connection alive until it is
-    // finalized, so release the ones handed out via db.prepare() whose JS
-    // wrappers are still around. Matches better-sqlite3's close().
+    // Finalize outstanding prepared statements, matching better-sqlite3's close().
     Vector<JSSQLStatement*> statements;
     statements.swap(versionDB->statements);
     for (auto* statement : statements) {

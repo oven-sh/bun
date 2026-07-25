@@ -274,7 +274,8 @@ declare module "bun:sqlite" {
      * ```ts
      * db.close();
      * ```
-     * This is called automatically when the database instance is garbage collected.
+     * The underlying connection is released automatically once the `Database`
+     * and every `Statement` prepared from it have been garbage collected.
      *
      * Internally, this finalizes outstanding statements and calls `sqlite3_close_v2`.
      */

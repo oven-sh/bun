@@ -123,8 +123,8 @@ db.close();
 Passing `true` calls `sqlite3_close` instead of `sqlite3_close_v2`. Prepared statements are finalized either way, so for most code the two behave the same.
 
 <Note>
-  `close()` is called automatically when the database is garbage collected. It is safe to call multiple times but has no
-  effect after the first.
+  The underlying connection is released automatically once the `Database` and every `Statement` prepared from it have
+  been garbage collected. It is safe to call `.close()` multiple times; after the first it is a no-op.
 </Note>
 
 ### `using` statement

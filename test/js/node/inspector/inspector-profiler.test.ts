@@ -62,6 +62,56 @@ console.log(
 );
 `;
 
+const coverageShapeFixture = `
+import { Session } from "node:inspector/promises";
+import vm from "node:vm";
+
+const session = new Session();
+session.connect();
+await session.post("Profiler.enable");
+await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+
+const code = [
+  "class K { m() { return 1; } }",
+  "class D extends K { }",
+  "class F { f = 1; g() {} }",
+  "function* gen() { yield 1; yield 2; }",
+  "async function af() { return 1; }",
+  "function andop(a, b) { return a && b; }",
+  "function f() { return 42; }",
+  "function dead() { return 1; 0xdead; }",
+  "({ K, D, F, gen, af, andop, f, dead });",
+].join("\\n");
+const url = "file:///inspector-coverage-shape/virtual.js";
+const exported = vm.runInThisContext(code, { filename: url });
+new exported.K().m();
+new exported.D();
+new exported.F();
+for (const _ of exported.gen()) {}
+await exported.af();
+exported.andop(0, 1);
+exported.andop(1, 1);
+exported.f();
+exported.f();
+exported.dead();
+
+const coverage = await session.post("Profiler.takePreciseCoverage");
+session.disconnect();
+
+const entry = coverage.result.find(script => script.url === url);
+// Normalise: sort by first-range start so order is stable, and collapse ranges
+// to [start, end, count] triples for a compact equality check.
+const normalised = entry.functions
+  .slice()
+  .sort((a, b) => a.ranges[0].startOffset - b.ranges[0].startOffset)
+  .map(fn => ({
+    name: fn.functionName,
+    block: fn.isBlockCoverage,
+    ranges: fn.ranges.map(r => [r.startOffset, r.endOffset, r.count]),
+  }));
+console.log(JSON.stringify({ codeLength: code.length, entry: normalised }));
+`;
+
 const coverageImportFixture = `
 import { Session } from "node:inspector/promises";
 
@@ -549,7 +599,7 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // neverCalled() reports a single function-granularity range with count 0.
       const neverCalledEntry = entryCoveringOffset(entry.functions, offsets.neverCalledBody);
       expect(neverCalledEntry).toEqual({
-        functionName: "",
+        functionName: "neverCalled",
         isBlockCoverage: false,
         ranges: [{ startOffset: expect.any(Number), endOffset: expect.any(Number), count: 0 }],
       });
@@ -605,6 +655,61 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // double() ran twice, neverCalled() never ran.
       expect(functionCounts).toContain(2);
       expect(functionCounts).toContain(0);
+    });
+
+    // https://github.com/oven-sh/bun/issues/3372
+    // Sequential: the three concurrent subprocess tests above already saturate
+    // the debug-ASAN process budget; a fourth pushes them past the default
+    // timeout on constrained runners.
+    test("FunctionCoverage list has no JSC-shaped artifacts", async () => {
+      using dir = tempDir("inspector-coverage-shape", {
+        "fixture.mjs": coverageShapeFixture,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "fixture.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      const { codeLength, entry } = JSON.parse(stdout);
+      const byName: Record<string, { name: string; block: boolean; ranges: [number, number, number][] }> = {};
+      for (const fn of entry) byName[fn.name] = fn;
+
+      // (a) Exactly one whole-script entry, spanning the full source.
+      const scriptEntries = entry.filter((fn: any) => fn.ranges[0][0] === 0);
+      expect(scriptEntries).toEqual([{ name: "", block: true, ranges: [[0, codeLength, 1]] }]);
+
+      // (b)/(f) No phantom default-constructor entry: JSC's builtin default
+      // constructor registers offsets [1, 14] under the user script's
+      // sourceID, but it must not surface as a FunctionCoverage entry.
+      expect(entry.filter((fn: any) => fn.ranges[0][0] === 1)).toEqual([]);
+
+      // (c) Generator and async functions appear exactly once (wrapper only,
+      // no inner-body duplicate).
+      expect(entry.filter((fn: any) => fn.name === "gen")).toHaveLength(1);
+      expect(entry.filter((fn: any) => fn.name === "af")).toHaveLength(1);
+      expect(byName.gen).toEqual({ name: "gen", block: true, ranges: [[78, 115, 1]] });
+      expect(byName.af).toEqual({ name: "af", block: true, ranges: [[116, 149, 1]] });
+
+      // (d) Functions whose last statement is a return have no trailing
+      // count-0 sub-range over the closing brace; but real dead code after a
+      // return is still reported.
+      expect(byName.f).toEqual({ name: "f", block: true, ranges: [[190, 217, 2]] });
+      expect(byName.m).toEqual({ name: "m", block: true, ranges: [[10, 27, 1]] });
+      expect(byName.andop.ranges[0]).toEqual([150, 189, 2]);
+      expect(byName.andop.ranges.some(([, , c]) => c === 0)).toBe(false);
+      expect(byName.dead.ranges[0]).toEqual([218, 255, 1]);
+      expect(byName.dead.ranges.some(([s, , c]) => s === 245 && c === 0)).toBe(true);
+
+      // Never-called method reported with count 0 and isBlockCoverage:false.
+      expect(byName.g).toEqual({ name: "g", block: false, ranges: [[69, 75, 0]] });
+
+      // One entry per declared function (plus the script entry); no extras
+      // from module-program, generator bodies, default constructors or
+      // class-field initializers.
+      expect(entry.map((fn: any) => fn.name).sort()).toEqual(["", "af", "andop", "dead", "f", "g", "gen", "m"]);
     });
   });
 

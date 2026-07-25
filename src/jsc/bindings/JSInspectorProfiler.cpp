@@ -6,9 +6,11 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ControlFlowProfiler.h>
+#include <JavaScriptCore/FunctionExecutable.h>
 #include <JavaScriptCore/FunctionHasExecutedCache.h>
 #include <JavaScriptCore/HeapIterationScope.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
+#include <JavaScriptCore/ParserModes.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -75,9 +77,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject * globa
 }
 
 // Returns a JSON string describing every script the control flow profiler has
-// data for: [{ url, scriptId, sourceLength, blocks: [[start, end, count]],
-// functions: [[start, end, executed]] }]. The JS layer in node/inspector.ts
-// reshapes this into the V8 ScriptCoverage format.
+// data for. The JS layer in node/inspector.ts reshapes this into the V8
+// ScriptCoverage format returned by Profiler.takePreciseCoverage.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_collectPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -90,9 +91,20 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     // (not the whole heap). Providers whose executables were all GC'd are not
     // reported, and offsets index the transpiled source for Bun-loaded modules;
     // Bun appends an inline //# sourceMappingURL, so consumers that read the
-    // script source (v8-to-istanbul) can remap.
+    // script source (v8-to-istanbul) can remap. FunctionExecutable metadata
+    // (name, source span, parse mode) is collected alongside so the JS layer
+    // can drop JSC-internal synthetic functions that would otherwise surface
+    // as phantom V8 FunctionCoverage entries.
+    struct ExecutableInfo {
+        unsigned functionStart;
+        unsigned functionEnd;
+        unsigned sourceEnd;
+        String name;
+        bool skip;
+    };
     Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
+    UncheckedKeyHashMap<SourceID, Vector<ExecutableInfo>> executablesPerSource;
     {
         HeapIterationScope iterationScope(vm.heap);
         vm.heap.forEachScriptExecutableSpace([&](auto& spaceAndSet) {
@@ -101,9 +113,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
                 auto* provider = executable->source().provider();
                 if (!provider)
                     return;
-                if (!seenSourceIDs.add(provider->asID()).isNewEntry)
+                SourceID sourceID = provider->asID();
+                if (seenSourceIDs.add(sourceID).isNewEntry)
+                    providers.append(*provider);
+                if (executable->type() != FunctionExecutableType)
                     return;
-                providers.append(*provider);
+
+                auto* fn = static_cast<FunctionExecutable*>(executable);
+                SourceParseMode mode = fn->parseMode();
+                // These compile as inner FunctionExecutables but have no direct
+                // source representation a V8 consumer would recognise. Their
+                // ranges either alias the wrapper (generator/async bodies) or
+                // carry offsets into a different SourceProvider (default
+                // constructors, class-field initializers), so emit them only
+                // as a skip marker.
+                bool skip = fn->isBuiltinFunction()
+                    || fn->implementationVisibility() != ImplementationVisibility::Public
+                    || mode == SourceParseMode::ClassFieldInitializerMode
+                    || isGeneratorOrAsyncFunctionBodyParseMode(mode);
+                ExecutableInfo info {
+                    fn->functionStart(),
+                    fn->functionEnd(),
+                    static_cast<unsigned>(executable->source().endOffset()),
+                    fn->ecmaName().string(),
+                    skip,
+                };
+                executablesPerSource.ensure(sourceID, [] { return Vector<ExecutableInfo> {}; }).iterator->value.append(WTF::move(info));
             });
         });
     }
@@ -124,12 +159,32 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
         script->setDouble("scriptId"_s, static_cast<double>(sourceID));
         script->setDouble("sourceLength"_s, static_cast<double>(provider->source().length()));
 
+        StringView source = provider->source();
+        unsigned providerLen = source.length();
+        // JSC emits a profile point after every return/throw; when that's the
+        // function's last statement the resulting block spans only whitespace
+        // and the closing brace. Tag each block so the JS layer can drop those
+        // without shipping full source text over the wire.
+        auto rangeHasCode = [&](int start, int end) -> bool {
+            unsigned s = start < 0 ? 0 : static_cast<unsigned>(start);
+            unsigned e = end < 0 ? 0 : static_cast<unsigned>(end);
+            if (e >= providerLen)
+                e = providerLen ? providerLen - 1 : 0;
+            for (unsigned i = s; i <= e && i < providerLen; i++) {
+                char16_t c = source[i];
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '}' && c != ';')
+                    return true;
+            }
+            return false;
+        };
+
         auto blockArray = JSON::Array::create();
         for (const auto& block : blocks) {
             auto range = JSON::Array::create();
             range->pushInteger(block.m_startOffset);
             range->pushInteger(block.m_endOffset);
             range->pushDouble(static_cast<double>(block.m_executionCount));
+            range->pushBoolean(rangeHasCode(block.m_startOffset, block.m_endOffset));
             blockArray->pushValue(WTF::move(range));
         }
         script->setValue("blocks"_s, WTF::move(blockArray));
@@ -143,6 +198,21 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
             functionArray->pushValue(WTF::move(range));
         }
         script->setValue("functions"_s, WTF::move(functionArray));
+
+        auto executableArray = JSON::Array::create();
+        auto execIt = executablesPerSource.find(sourceID);
+        if (execIt != executablesPerSource.end()) {
+            for (const auto& info : execIt->value) {
+                auto entry = JSON::Array::create();
+                entry->pushDouble(static_cast<double>(info.functionStart));
+                entry->pushDouble(static_cast<double>(info.functionEnd));
+                entry->pushDouble(static_cast<double>(info.sourceEnd));
+                entry->pushString(info.name);
+                entry->pushBoolean(info.skip);
+                executableArray->pushValue(WTF::move(entry));
+            }
+        }
+        script->setValue("executables"_s, WTF::move(executableArray));
 
         scripts->pushValue(WTF::move(script));
     }

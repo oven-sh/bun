@@ -1257,7 +1257,15 @@ describe("uid/gid", () => {
   });
 });
 
-const ownThp = isLinux ? readFileSync("/proc/self/status", "utf8").match(/^THP_enabled:\s*(\d)/m)?.[1] : undefined;
+function readOwnThp() {
+  if (!isLinux) return undefined;
+  try {
+    return readFileSync("/proc/self/status", "utf8").match(/^THP_enabled:\s*(\d)/m)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+const ownThp = readOwnThp();
 
 // mimalloc sets PR_SET_THP_DISABLE at startup on Linux; the flag is inherited
 // across fork and preserved across execve. Spawn should clear it so children
@@ -1270,5 +1278,5 @@ it.if(ownThp === "0")("child does not inherit PR_SET_THP_DISABLE", async () => {
   expect(exitCode).toBe(0);
 
   // Parent's flag is restored once vfork returns.
-  expect(readFileSync("/proc/self/status", "utf8").match(/^THP_enabled:\s*(\d)/m)?.[1]).toBe("0");
+  expect(readOwnThp()).toBe("0");
 });

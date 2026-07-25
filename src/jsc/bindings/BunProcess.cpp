@@ -94,6 +94,13 @@ typedef int mode_t;
 
 #if OS(LINUX)
 #include <features.h>
+#include <sys/prctl.h>
+#ifndef PR_SET_THP_DISABLE
+#define PR_SET_THP_DISABLE 41
+#endif
+#ifndef PR_GET_THP_DISABLE
+#define PR_GET_THP_DISABLE 42
+#endif
 #ifdef __GNU_LIBRARY__
 #include <gnu/libc-version.h>
 #endif
@@ -1823,6 +1830,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
     sigset_t emptyMask;
     sigemptyset(&emptyMask);
     pthread_sigmask(SIG_SETMASK, &emptyMask, nullptr);
+
+#if OS(LINUX)
+    // mimalloc sets PR_SET_THP_DISABLE at startup; the flag survives execve.
+    // Clear it so the replacement image gets the system default. A failed
+    // execve aborts below, so there is no state to restore.
+    if (prctl(PR_GET_THP_DISABLE, 0, 0, 0, 0) == 1) {
+        (void)prctl(PR_SET_THP_DISABLE, 0, 0, 0, 0);
+    }
+#endif
 
     ::execve(execPathUtf8.data(), argv.begin(), envp.begin());
     savedErrno = errno;

@@ -172,9 +172,8 @@ ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* glo
     if (q == notFound) {
         url = URL::fileURLWithFileSystemPath(specifier);
     } else {
-        // The module key encodes a bare #fragment as `?#frag` (see
-        // fileURLModuleKeySuffix / clone_specifier_suffix), so the suffix
-        // after '?' may be `query`, `query#frag`, or `#frag`.
+        // Suffix after `?` is `query`, `query#frag`, or `#frag`
+        // (clone_specifier_suffix carries a bare fragment as `?#frag`).
         StringView view = specifier;
         url = URL::fileURLWithFileSystemPath(view.substring(0, q));
         auto rest = view.substring(q + 1);

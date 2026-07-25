@@ -2940,18 +2940,10 @@ fn normalize_specifier_for_resolution<'a>(
     }
 }
 
-/// Index of the first `?` (or, for a relative ESM specifier, `#`) in a module
-/// specifier, or `None`.
-///
-/// Node keys the ESM cache on the full resolved URL including `?search` and
-/// `#hash`, so both must be split off for filesystem lookup and carried into
-/// the module key. `#` is only treated as a fragment for relative ESM
-/// specifiers (`./`, `../`): CommonJS resolution is path-based so `#` is a
-/// literal filename character there; a leading `#` is a package.json
-/// `"imports"` subpath (PACKAGE_IMPORTS_RESOLVE); and an absolute-path
-/// specifier here is most often a `file://` URL already decoded by
-/// `moduleLoaderResolve` / `moduleLoaderImportModule` (which hold the URL's
-/// real query/fragment separately), so a `#` in it is a filename byte.
+/// Index of the first `?` (or `#`, for a relative ESM specifier) in a module
+/// specifier. `#` is a URL fragment only for `./` / `../` ESM specifiers;
+/// everywhere else (CJS, bare, absolute, leading-`#` imports subpath) it is a
+/// literal filename byte.
 #[inline]
 pub fn index_of_query_or_fragment(specifier: &[u8], is_esm: bool) -> Option<usize> {
     let q = bun_core::strings::index_of_char_usize(specifier, b'?');
@@ -2965,12 +2957,9 @@ pub fn index_of_query_or_fragment(specifier: &[u8], is_esm: bool) -> Option<usiz
     }
 }
 
-/// Clone `suffix` (`?query`, `#frag`, or `?query#frag`) into a `bun.String`
-/// for the `queryString` out-param of `Zig__GlobalObject__resolve` /
-/// `Bun__resolveSync`. Bun's module cache key is a raw filesystem path with a
-/// single `?` delimiter (the loader splits on `?` only, because `#` is a legal
-/// filename byte), so a bare `#frag` gets a `?` prepended and rides in the
-/// query slot.
+/// Clone a specifier suffix into the `queryString` out-param. The module key's
+/// only delimiter is `?` (the loader never scans for `#`, a legal filename
+/// byte), so a bare `#frag` is carried as `?#frag`.
 #[inline]
 pub fn clone_specifier_suffix(suffix: &[u8]) -> bun_core::String {
     if suffix.is_empty() {

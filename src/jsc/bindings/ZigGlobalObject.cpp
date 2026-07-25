@@ -3566,11 +3566,8 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskCallback(Zig::GlobalObject* g
 }
 
 // `?query#fragment` suffix of a file:// specifier, for appending to the
-// resolved module cache key. Bun's key is a raw filesystem path with a single
-// '?' delimiter (the loader splits on '?' only because '#' is a legal filename
-// byte), so a bare #fragment rides in the query slot. Returned separately
-// from fileSystemPath() so a '#' in the decoded path itself is never mistaken
-// for a fragment.
+// resolved module cache key. Held separately from fileSystemPath() so a '#'
+// in the decoded path itself is never mistaken for a fragment.
 static WTF::String fileURLModuleKeySuffix(const WTF::URL& url)
 {
     auto query = url.query();

@@ -15,12 +15,12 @@
 // scanner that holds the handle for ~500ms and asserts the install still
 // succeeds.
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, stderrForInstall, tempDir } from "harness";
-import { join } from "node:path";
-import { mkdirSync, writeFileSync, readFileSync } from "node:fs";
-import { randomBytes, createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { createHash, randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 describe.skipIf(!isWindows)("bun install with a scanner holding an extracted file open", () => {
   test("retries EPERM until the handle is released", async () => {
@@ -107,7 +107,12 @@ describe.skipIf(!isWindows)("bun install with a scanner holding an extracted fil
     // Hold the handle for 500ms: longer than the unfixed 150ms retry
     // budget, shorter than the fixed ~1.3s budget.
     await using blocker = Bun.spawn({
-      cmd: [bunExe(), join(import.meta.dir, "../../cli/install/bun-install-windows-locked-temp-fixture.ts"), tmp, "500"],
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "../../cli/install/bun-install-windows-locked-temp-fixture.ts"),
+        tmp,
+        "500",
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",

@@ -380,7 +380,10 @@ impl JSValue {
     }
     /// `JSValue.getErrorsProperty(globalObject)`. Returns the
     /// own `errors` data property via `JSObject::getDirect` — no prototype
-    /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
+    /// walk, no getters invoked, nothrow. Returns `undefined` when the own
+    /// property is absent or was redefined as an accessor; the raw
+    /// GetterSetter cell never escapes this binding. Used for
+    /// `AggregateError.errors`.
     #[inline]
     pub fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
         unsafe extern "C" {

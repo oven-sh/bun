@@ -4589,7 +4589,17 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
 JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
+    if (!obj) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    JSC::JSValue errors = obj->getDirect(global->vm(), global->vm().propertyNames->errors);
+    // getDirect returns the raw storage slot: empty when the own property is
+    // absent, and the internal GetterSetter / CustomGetterSetter cell when the
+    // property was redefined as an accessor. Those are never valid user-visible
+    // JSValues, so normalize them to undefined rather than letting them escape
+    // to generic JS machinery (forEachInIterable, etc.).
+    if (!errors || errors.isGetterSetter() || errors.isCustomGetterSetter()) [[unlikely]]
+        return JSC::JSValue::encode(JSC::jsUndefined());
+    return JSC::JSValue::encode(errors);
 }
 
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()

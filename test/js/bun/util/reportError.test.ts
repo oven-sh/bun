@@ -144,6 +144,14 @@ const tamperedAggregateErrors = [
     "poisoned array iterator",
     'const e = new AggregateError([new Error("inner")], "agg_boom"); Object.defineProperty(Array.prototype, Symbol.iterator, { value() { throw new Error("poisoned"); } }); throw e;',
   ],
+  [
+    "setter-only errors property",
+    'const e = new AggregateError([], "agg_boom"); Object.defineProperty(e, "errors", { set(v) {} }); throw e;',
+  ],
+  [
+    "throwing getter on errors property",
+    'const e = new AggregateError([], "agg_boom"); Object.defineProperty(e, "errors", { get() { throw new Error("getter_boom"); } }); throw e;',
+  ],
   // A cyclic `errors` is an array, so it clears the shape check above: the
   // printer recurses into itself once per level until the native stack dies.
   ["self-referential errors array", 'const e = new AggregateError([], "agg_boom"); e.errors = [e]; throw e;'],
@@ -157,7 +165,7 @@ const tamperedAggregateErrors = [
   ],
 ] as const;
 
-test.each(tamperedAggregateErrors)(
+test.concurrent.each(tamperedAggregateErrors)(
   "uncaught AggregateError with tampered `errors` does not crash the printer (%s)",
   async (_name, fixture) => {
     await using proc = Bun.spawn({
@@ -175,6 +183,45 @@ test.each(tamperedAggregateErrors)(
     // Normal uncaught-error exit (1), no signal.
     expect(proc.signalCode).toBeNull();
     expect(exitCode).toBe(1);
+  },
+);
+
+// console.log / Bun.inspect route through the same print_errorlike_object path
+// as the uncaught-error printer. On the unfixed build, an accessor `errors`
+// makes the formatter feed JSC's internal GetterSetter cell into
+// forEachInIterable: debug/ASAN builds abort with
+//   ASSERTION FAILED: isSymbol() (JSCJSValue.cpp, synthesizePrototype)
+// and release builds throw a bogus "TypeError: Type error" out of console.log.
+test.concurrent.each([
+  [
+    "accessor returning self-reference",
+    'Object.defineProperty(e, "errors", { get() { return [e]; }, configurable: true });',
+  ],
+  ["setter-only accessor", 'Object.defineProperty(e, "errors", { set(v) {}, configurable: true });'],
+  ["self-referential data array", "e.errors = [e];"],
+] as const)(
+  "console.log / Bun.inspect of AggregateError with %s does not throw or crash",
+  async (_name, mutate) => {
+    const src = `
+      const e = new AggregateError([], "agg_boom");
+      ${mutate}
+      console.log(e);
+      const s = Bun.inspect(e);
+      if (typeof s !== "string") throw new Error("Bun.inspect returned " + typeof s);
+      process.stdout.write("done\\n");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stderr, endsWithDone: stdout.endsWith("done\n") }).toEqual({ stderr: "", endsWithDone: true });
+    expect(stdout).toContain("agg_boom");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
   },
 );
 

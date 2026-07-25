@@ -4820,13 +4820,11 @@ impl VirtualMachine {
         let mut exception_list = exception_list;
 
         if value.is_aggregate_error(global_ref) && depth < MAX_AGGREGATE_ERROR_DEPTH {
-            // `getErrorsProperty` is `getDirect` (own slot, nothrow): it
-            // returns empty when the own `errors` property is absent (deleted
-            // or never installed), the raw GetterSetter cell when redefined
-            // as an accessor, and whatever the user stored otherwise.
-            // Iterating anything but the spec-created shape (an array) is
-            // unsafe (an empty value decodes as a null cell), so tampered
-            // values fall through to the plain error-printing path below.
+            // `getErrorsProperty` reads the own data slot (nothrow, no getter
+            // call) and normalizes absent / accessor slots to `undefined`.
+            // Only iterate when the user stored the spec-created shape (an
+            // array); anything else falls through to the plain error-printing
+            // path below so the user's error is still surfaced.
             let errors = value.get_errors_property(global_ref);
             if errors.is_array() {
                 // Note: `JSValue::for_each` takes a C-ABI fn

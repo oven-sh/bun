@@ -4469,6 +4469,7 @@ impl VirtualMachine {
         allow_side_effects: bool,
     ) {
         let mut formatter = crate::console_object::Formatter::new(self.global());
+        formatter.stack_check = bun_core::StackCheck::init();
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),
@@ -4785,6 +4786,45 @@ impl VirtualMachine {
         let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
+            // Stack-safety + cycle guard for the `.errors` recursion below
+            // (`agg_iter` → `print_errorlike_object`). An AggregateError may
+            // appear in its own `.errors` array, and `.errors` may nest
+            // arbitrarily deep; neither case should overflow the native stack.
+            // Mirrors the `cause`-chain guard in `print_error_instance_body`.
+            if !formatter.stack_check.is_safe_to_recurse() {
+                formatter.failed = true;
+                if formatter.can_throw_stack_overflow {
+                    let _ = global_ref.throw_stack_overflow();
+                }
+                return;
+            }
+            if formatter.map_node.is_none() {
+                let mut node =
+                    NonNull::new(crate::console_object::formatter::visited::Pool::get_node())
+                        .expect("ObjectPool::get_node always returns a valid heap node");
+                let data = crate::console_object::formatter::visited::node_data_mut(&mut node);
+                data.clear();
+                formatter.map = core::mem::take(data);
+                formatter.map_node = Some(node);
+            }
+            if formatter
+                .map
+                .get_or_put(value)
+                .expect("unreachable")
+                .found_existing
+            {
+                let _ = if allow_ansi_color {
+                    writer.write_all(
+                        bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", true).as_bytes(),
+                    )
+                } else {
+                    writer.write_all(
+                        bun_core::pretty_fmt!("<r><cyan>[Circular]<r>\n", false).as_bytes(),
+                    )
+                };
+                return;
+            }
+
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -4844,6 +4884,7 @@ impl VirtualMachine {
             // which case the error is swallowed.
             let errors = value.get_errors_property(global_ref);
             let _ = errors.for_each(global_ref, (&raw mut ctx).cast(), agg_iter);
+            let _ = formatter.map.remove(&value);
             return;
         }
 

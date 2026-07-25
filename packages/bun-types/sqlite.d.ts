@@ -264,9 +264,11 @@ declare module "bun:sqlite" {
     /**
      * Close the database connection.
      *
+     * Outstanding prepared statements are finalized. Using one afterwards, or
+     * running a new query, throws an error.
+     *
      * It is safe to call this method multiple times. If the database is already
-     * closed, this is a no-op. Running queries after the database has been
-     * closed throws an error.
+     * closed, this is a no-op.
      *
      * @example
      * ```ts
@@ -274,18 +276,17 @@ declare module "bun:sqlite" {
      * ```
      * This is called automatically when the database instance is garbage collected.
      *
-     * Internally, this calls `sqlite3_close_v2`.
+     * Internally, this finalizes outstanding statements and calls `sqlite3_close_v2`.
      */
     close(
       /**
-       * If `true`, throw an error if the database is in use
+       * When `true`, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
+       * Prepared statements are finalized either way, so for most code the two
+       * behave the same.
+       *
        * @default false
        *
-       * When `true`, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
-       *
        * Learn more in the [sqlite3 documentation](https://www.sqlite.org/c3ref/close.html).
-       *
-       * In the future, Bun may default `throwOnError` to `true`, but for backwards compatibility it is `false` by default.
        */
       throwOnError?: boolean,
     ): void;

@@ -549,6 +549,18 @@ protected:
     void finishCreation(JSC::VM& vm);
 };
 
+static inline void untrackStatement(VersionSqlite3* versionDB, JSSQLStatement* statement)
+{
+    if (!versionDB)
+        return;
+    auto& statements = versionDB->statements;
+    size_t i = statements.find(statement);
+    if (i == WTF::notFound)
+        return;
+    statements[i] = statements.last();
+    statements.removeLast();
+}
+
 static JSValue toJSAsBuffer(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, int i)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -2849,8 +2861,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFunctionFinalize, (JSC::JSGlobalObject * 
     if (castedThis->stmt) {
         sqlite3_finalize(castedThis->stmt);
         castedThis->stmt = nullptr;
-        if (castedThis->version_db)
-            castedThis->version_db->statements.removeFirst(castedThis);
+        untrackStatement(castedThis->version_db, castedThis);
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
@@ -2881,7 +2892,7 @@ JSSQLStatement::~JSSQLStatement()
     }
 
     if (this->version_db) {
-        this->version_db->statements.removeFirst(this);
+        untrackStatement(this->version_db, this);
         this->version_db->release();
     }
 }

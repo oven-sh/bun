@@ -112,25 +112,19 @@ const db = new Database("./mydb.sqlite");
 
 ### `.close(throwOnError: boolean = false)`
 
-To close a database connection but allow existing queries to finish, call `.close(false)`:
+To close a database connection, call `.close()`. Any statements prepared from it are finalized, so using one afterwards throws `Statement has finalized`:
 
 ```ts db.ts icon="/icons/typescript.svg" highlight={3}
 const db = new Database();
 // ... do stuff
-db.close(false);
+db.close();
 ```
 
-To close the database and throw an error if there are any pending queries, call `.close(true)`:
-
-```ts db.ts icon="/icons/typescript.svg" highlight={3}
-const db = new Database();
-// ... do stuff
-db.close(true);
-```
+Passing `true` calls `sqlite3_close` instead of `sqlite3_close_v2`. Prepared statements are finalized either way, so for most code the two behave the same.
 
 <Note>
-  `close(false)` is called automatically when the database is garbage collected. It is safe to call multiple times but
-  has no effect after the first.
+  `close()` is called automatically when the database is garbage collected. It is safe to call multiple times but has no
+  effect after the first.
 </Note>
 
 ### `using` statement

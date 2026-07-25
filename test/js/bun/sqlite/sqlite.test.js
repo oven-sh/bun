@@ -1566,16 +1566,16 @@ it("close() should NOT throw an error if the database is in use", () => {
 it("close(true) works after db.prepare()'d statements were dropped without finalize (drizzle-orm pattern)", () => {
   const db = new Database(":memory:");
   db.exec("CREATE TABLE t (a INTEGER)");
-  // drizzle-orm/bun-sqlite's session prepareQuery() does this: prepare a
-  // statement, run it, let the reference fall out of scope. The wrapper is not
-  // finalized until GC, which previously made sqlite3_close() report "database
-  // is locked".
+  let weak;
   (() => {
-    db.prepare("INSERT INTO t VALUES (?)").run(1);
+    const stmt = db.prepare("INSERT INTO t VALUES (?)");
+    weak = new WeakRef(stmt);
+    stmt.run(1);
   })();
   (() => {
     expect(db.prepare("SELECT * FROM t").all()).toEqual([{ a: 1 }]);
   })();
+  expect(weak.deref()).toBeDefined();
   expect(() => db.close(true)).not.toThrow();
 });
 
@@ -1589,6 +1589,37 @@ it("should dispose without throwing when a prepared statement is still live", ()
       prepared = db.prepare("SELECT * FROM foo");
     }
   }).not.toThrow();
+  expect(() => prepared.all()).toThrow("Statement has finalized");
+});
+
+it("`using db` does not mask a thrown error with SuppressedError", () => {
+  let caught;
+  try {
+    using db = new Database(":memory:");
+    db.prepare("select 1");
+    throw new Error("REAL-BUG");
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).not.toBeInstanceOf(SuppressedError);
+  expect(caught.message).toBe("REAL-BUG");
+});
+
+it("close() with a live prepare()'d statement releases the database file", () => {
+  const dir = tempDirWithFiles("sqlite-close-live-statement", { "empty.txt": "" });
+  const file = path.join(dir, "my.db");
+  const db = new Database(file);
+  db.exec("PRAGMA journal_mode = WAL");
+  db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+  db.exec("CREATE TABLE foo (name TEXT)");
+  db.exec("INSERT INTO foo (name) VALUES ('foo')");
+  const prepared = db.prepare("SELECT * FROM foo");
+  expect(prepared.all()).toEqual([{ name: "foo" }]);
+  db.exec("PRAGMA wal_checkpoint(truncate)");
+
+  db.close();
+
+  expect(readdirSync(dir).sort()).toEqual(["empty.txt", "my.db"]);
   expect(() => prepared.all()).toThrow("Statement has finalized");
 });
 

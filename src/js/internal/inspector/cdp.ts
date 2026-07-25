@@ -122,18 +122,28 @@ type SessionFlags = {
   runtimeEnabled: boolean;
   breakpointsActive: boolean;
   pauseOnExceptions: string;
+  asyncCallStackDepth: number;
 };
 
 const sessionFlags: Map<number, SessionFlags> = new Map();
 const breakpointOwner: Map<string, number> = new Map();
 // Last values actually sent to the single backend so we only write on change.
-const backendAggregate = { breakpointsActive: false, pauseOnExceptions: "none" };
+const backendAggregate = { breakpointsActive: false, pauseOnExceptions: "none", asyncCallStackDepth: 0 };
 
 function aggregateBreakpointsActive(): boolean {
   for (const flags of sessionFlags.values()) {
     if (flags.debuggerEnabled && flags.breakpointsActive) return true;
   }
   return false;
+}
+
+function aggregateAsyncCallStackDepth(): number {
+  let max = 0;
+  for (const flags of sessionFlags.values()) {
+    const { asyncCallStackDepth } = flags;
+    if (flags.debuggerEnabled && asyncCallStackDepth > max) max = asyncCallStackDepth;
+  }
+  return max;
 }
 
 function aggregatePauseOnExceptions(): string {
@@ -213,13 +223,20 @@ class InspectorCDPAdapter {
   >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
   #flags: SessionFlags;
+  #usedObjectGroups = new Set<string>();
 
   constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
     this.#sessionId = nextSessionId++;
     this.#objectGroupPrefix = `bun-session-${this.#sessionId}:`;
-    this.#flags = { debuggerEnabled: false, runtimeEnabled: false, breakpointsActive: true, pauseOnExceptions: "none" };
+    this.#flags = {
+      debuggerEnabled: false,
+      runtimeEnabled: false,
+      breakpointsActive: true,
+      pauseOnExceptions: "none",
+      asyncCallStackDepth: 0,
+    };
     sessionFlags.$set(this.#sessionId, this.#flags);
     liveAdapters.$set(this.#sessionId, this);
   }
@@ -230,7 +247,9 @@ class InspectorCDPAdapter {
   // stays omitted so the handle is not bound to any releasable group, as in V8.
   #sessionObjectGroup(name: unknown): string | undefined {
     if (typeof name !== "string") return undefined;
-    return this.#objectGroupPrefix + name;
+    const prefixed = this.#objectGroupPrefix + name;
+    this.#usedObjectGroups.$add(prefixed);
+    return prefixed;
   }
 
   handleClientMessage(message: string): void {
@@ -288,6 +307,10 @@ class InspectorCDPAdapter {
   dispose(): void {
     if (!liveAdapters.$has(this.#sessionId)) return;
     this.#teardownDebuggerState();
+    for (const group of this.#usedObjectGroups) {
+      this.#sendToBackend("Runtime.releaseObjectGroup", { objectGroup: group });
+    }
+    this.#usedObjectGroups.clear();
     if (this.#flags.runtimeEnabled) {
       this.#flags.runtimeEnabled = false;
       if (!anyRuntimeEnabled()) {
@@ -306,17 +329,21 @@ class InspectorCDPAdapter {
   }
 
   #syncBackendAggregate(): void {
+    const writer = InspectorCDPAdapter.#backendWriter() ?? this;
     const active = aggregateBreakpointsActive();
     if (active !== backendAggregate.breakpointsActive) {
       backendAggregate.breakpointsActive = active;
-      const writer = InspectorCDPAdapter.#backendWriter() ?? this;
       writer.#sendToBackend("Debugger.setBreakpointsActive", { active });
     }
     const pauseState = aggregatePauseOnExceptions();
     if (pauseState !== backendAggregate.pauseOnExceptions) {
       backendAggregate.pauseOnExceptions = pauseState;
-      const writer = InspectorCDPAdapter.#backendWriter() ?? this;
       writer.#sendToBackend("Debugger.setPauseOnExceptions", { state: pauseState });
+    }
+    const depth = aggregateAsyncCallStackDepth();
+    if (depth !== backendAggregate.asyncCallStackDepth) {
+      backendAggregate.asyncCallStackDepth = depth;
+      writer.#sendToBackend("Debugger.setAsyncStackTraceDepth", { depth });
     }
   }
 
@@ -333,6 +360,7 @@ class InspectorCDPAdapter {
     this.#flags.debuggerEnabled = false;
     this.#flags.breakpointsActive = true;
     this.#flags.pauseOnExceptions = "none";
+    this.#flags.asyncCallStackDepth = 0;
     this.#syncBackendAggregate();
     if (!anyDebuggerEnabled()) this.#sendToBackend("Debugger.disable");
   }
@@ -667,13 +695,17 @@ class InspectorCDPAdapter {
         this.#sendToBackend(method, params, id, method);
         return;
 
-      case "Debugger.setAsyncCallStackDepth":
+      case "Debugger.setAsyncCallStackDepth": {
         if (!this.#flags.debuggerEnabled) {
           this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
           return;
         }
-        this.#sendToBackend("Debugger.setAsyncStackTraceDepth", { depth: params.maxDepth ?? 0 }, id, method);
+        const maxDepth = params.maxDepth;
+        this.#flags.asyncCallStackDepth = typeof maxDepth === "number" && maxDepth > 0 ? maxDepth : 0;
+        this.#syncBackendAggregate();
+        this.#replyToClient(id, {});
         return;
+      }
 
       case "Debugger.setBreakpointByUrl": {
         if (!this.#flags.debuggerEnabled) {
@@ -935,6 +967,9 @@ class InspectorCDPAdapter {
           case "Breakpoint": {
             const hitId = data?.breakpointId;
             if (hitId && breakpointOwner.$get(hitId) === this.#sessionId) cdpParams.hitBreakpoints = [hitId];
+            // V8 does not populate `data` for breakpoint pauses; JSC's is
+            // {breakpointId}, which the owner filter above covers.
+            cdpParams.data = undefined;
             break;
           }
         }

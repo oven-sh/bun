@@ -1048,6 +1048,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
+        Self::ensure_node_shim_on_path(vm.transpiler.env_mut(), ctx.debug.run_in_bun);
+
         // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
         // auto-detects the host zone the first time a `Date` is constructed —
         // matching upstream Bun. `.env` files are loaded by
@@ -1878,6 +1880,66 @@ impl RunCommand {
     ) -> crate::Result<()> {
         bun_install::RunCommand::create_fake_temporary_node_executable(path, optional_bun_path)
             .map_err(Into::into)
+    }
+
+    /// Prepends the bun-node shim dir to the `PATH` stored in `env` when
+    /// `--bun` / `[run] bun` is set or `node` is not already resolvable.
+    ///
+    /// This is the shim half of [`Self::configure_path_for_run`], applied from
+    /// [`Self::boot`] so that code paths that boot the VM without going through
+    /// `configure_path_for_run` (the `bun <file>` / `bun run ./<file>` fast
+    /// path, `bun -e`, `bun -p`) still see a `node` on `$PATH`. It is a no-op
+    /// when `configure_path_for_run` has already run (it would have prepended
+    /// the same shim dir), and when running as the `node` shim
+    /// (`PRETEND_TO_BE_NODE` short-circuits inside the create call).
+    #[cold]
+    fn ensure_node_shim_on_path(env: &mut DotEnv::Loader, force_using_bun: bool) {
+        let Ok(bun_node_exe) = Self::bun_node_file_utf8() else {
+            return;
+        };
+        let Some(bun_node_dir) = bun_paths::dirname(bun_node_exe.as_bytes()) else {
+            return;
+        };
+
+        let path = env.get(b"PATH").unwrap_or(b"");
+        // `configure_path_for_run` always prepends the shim dir first; if it
+        // already did, do nothing.
+        if strings::has_prefix(path, bun_node_dir)
+            && path.get(bun_node_dir.len()).copied() == Some(DELIMITER)
+        {
+            return;
+        }
+
+        if !force_using_bun {
+            let mut buf = PathBuffer::uninit();
+            if which(&mut buf, path, b"", b"node").is_some() {
+                return;
+            }
+        }
+
+        let mut new_path: Vec<u8> = Vec::with_capacity(bun_node_dir.len() + 1 + path.len());
+        let mut optional_bun_self_path: &[u8] = b"";
+        if Self::create_fake_temporary_node_executable(&mut new_path, &mut optional_bun_self_path)
+            .is_err()
+        {
+            return;
+        }
+        if new_path.is_empty() {
+            return;
+        }
+        new_path.extend_from_slice(path);
+        env.map.put(b"PATH", &new_path).unwrap_or_oom();
+        env.map
+            .put(b"NODE", bun_node_exe.as_bytes())
+            .unwrap_or_oom();
+        env.map
+            .put(b"npm_node_execpath", bun_node_exe.as_bytes())
+            .unwrap_or_oom();
+        if !optional_bun_self_path.is_empty() {
+            env.map
+                .put_default(b"npm_execpath", optional_bun_self_path)
+                .unwrap_or_oom();
+        }
     }
 
     /// Prepends workspace

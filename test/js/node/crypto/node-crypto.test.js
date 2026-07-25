@@ -932,6 +932,13 @@ it("cipher.setAAD on a non-authenticated cipher throws ERR_CRYPTO_INVALID_STATE"
   });
 });
 
+it("crypto.secureHeapUsed() returns the zero-shaped stats object", () => {
+  expect(typeof crypto.secureHeapUsed).toBe("function");
+  const result = crypto.secureHeapUsed();
+  expect(result).toEqual({ total: 0, used: 0, utilization: 0, min: 0 });
+  expect(crypto.secureHeapUsed().used).toBe(0);
+});
+
 it("generatePrime(Sync) should return an ArrayBuffer", async () => {
   const prime = crypto.generatePrimeSync(512);
   expect(prime).toBeInstanceOf(ArrayBuffer);

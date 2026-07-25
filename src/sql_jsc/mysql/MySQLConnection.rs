@@ -1459,7 +1459,7 @@ impl MySQLConnection {
                         columns.resize_with(field_count, ColumnDefinition41::default);
                         statement.columns = columns;
                         statement.columns_received = 0;
-                        statement.cached_structure = Default::default();
+                        statement.cached_structure.reset();
                         statement.fields_flags = Default::default();
                     }
                     statement
@@ -1473,7 +1473,7 @@ impl MySQLConnection {
                     let changed = statement.columns[statement.columns_received as usize]
                         .decode(&mut reader)?;
                     if changed {
-                        statement.cached_structure = Default::default();
+                        statement.cached_structure.reset();
                         statement.fields_flags = Default::default();
                         statement
                             .execution_flags

@@ -19,6 +19,16 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)
 }
 
+/// Create a JS string from raw octets, one byte per code unit (Latin-1).
+/// TXT RDATA is a sequence of arbitrary-octet <character-string>s (RFC 1035
+/// §3.3.14 / §3.3); Node's cares_wrap uses `OneByteString` here so the bytes
+/// round-trip via `Buffer.from(s, "latin1")`. UTF-8 decoding would replace
+/// any 0x80–0xFF byte that isn't part of a valid sequence with U+FFFD.
+#[inline]
+fn latin1_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
+    bstr::String::clone_latin1(bytes).transfer_to_js(global)
+}
+
 // ── struct_hostent ─────────────────────────────────────────────────────────
 pub(crate) fn hostent_to_js_response(
     this: &mut c_ares::struct_hostent,
@@ -381,7 +391,7 @@ pub(crate) fn txt_reply_to_js(
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
     let value = this.txt_bytes();
-    array.put_index(global_this, 0, utf8_to_js(global_this, value)?)?;
+    array.put_index(global_this, 0, latin1_to_js(global_this, value)?)?;
     Ok(array)
 }
 
@@ -391,7 +401,7 @@ pub(crate) fn txt_reply_to_js_for_any(
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
     let array =
-        cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
+        cares_list_to_js_array(this, global_this, |node, g| latin1_to_js(g, node.txt_bytes()))?;
     let obj = JSValue::create_empty_object(global_this, 1);
     obj.put(global_this, b"entries", array);
     Ok(obj)

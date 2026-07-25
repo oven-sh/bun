@@ -1,7 +1,9 @@
 import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { isWindows } from "harness";
+import * as dgram from "node:dgram";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
+import { once } from "node:events";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as util from "node:util";
@@ -659,5 +661,71 @@ describe("dns.lookupService with a numeric-string port", () => {
     expect(() => dns_promises.lookupService("127.0.0.1", "nope")).toThrow(
       expect.objectContaining({ code: "ERR_SOCKET_BAD_PORT" }),
     );
+  });
+});
+
+// TXT RDATA is a sequence of arbitrary-octet <character-string>s (RFC 1035
+// §3.3). Node exposes each as a one-byte-per-code-unit string (OneByteString)
+// so the original bytes round-trip via Buffer.from(s, "latin1"); decoding as
+// UTF-8 would replace e.g. 0xFF and lone 0x80 with U+FFFD and lose data.
+describe("dns.resolveTxt preserves raw TXT octets as latin1", () => {
+  // One TXT record whose single <character-string> is `payload`.
+  async function withTxtServer(payload, fn) {
+    const udp = dgram.createSocket("udp4");
+    udp.on("message", (msg, rinfo) => {
+      let off = 12;
+      while (off < msg.length && msg[off] !== 0) off += msg[off] + 1;
+      const question = msg.subarray(12, off + 5);
+      const rdata = Buffer.concat([Buffer.from([payload.length]), payload]);
+      const answer = Buffer.concat([
+        Buffer.from([0xc0, 0x0c, 0x00, 0x10, 0x00, 0x01, 0x00, 0x00, 0x00, 0x3c]),
+        Buffer.from([rdata.length >> 8, rdata.length & 0xff]),
+        rdata,
+      ]);
+      const header = Buffer.from([msg[0], msg[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      udp.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
+    });
+    udp.bind(0, "127.0.0.1");
+    await once(udp, "listening");
+    try {
+      await fn(udp.address().port);
+    } finally {
+      udp.close();
+    }
+  }
+
+  const bytes = Buffer.from([0x00, 0xff, 0x41, 0x0a, 0x80, 0xe9, 0xc3]);
+  const expectedCodes = [0x00, 0xff, 0x41, 0x0a, 0x80, 0xe9, 0xc3];
+
+  it("promises.Resolver#resolveTxt returns bytes losslessly", async () => {
+    await withTxtServer(bytes, async port => {
+      const r = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      r.setServers([`127.0.0.1:${port}`]);
+      const [[str]] = await r.resolveTxt("txtbin.test");
+      expect([...str].map(c => c.charCodeAt(0))).toEqual(expectedCodes);
+      expect(Buffer.from(str, "latin1").equals(bytes)).toBe(true);
+    });
+  });
+
+  it("callback Resolver#resolveTxt returns bytes losslessly", async () => {
+    await withTxtServer(bytes, async port => {
+      const r = new dns.Resolver({ timeout: 1000, tries: 1 });
+      r.setServers([`127.0.0.1:${port}`]);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      r.resolveTxt("txtbin.test", (err, records) => (err ? reject(err) : resolve(records)));
+      const [[str]] = await promise;
+      expect([...str].map(c => c.charCodeAt(0))).toEqual(expectedCodes);
+      expect(Buffer.from(str, "latin1").equals(bytes)).toBe(true);
+    });
+  });
+
+  it("all-ASCII TXT data is unchanged", async () => {
+    const ascii = Buffer.from("hello world");
+    await withTxtServer(ascii, async port => {
+      const r = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      r.setServers([`127.0.0.1:${port}`]);
+      const records = await r.resolveTxt("txtbin.test");
+      expect(records).toEqual([["hello world"]]);
+    });
   });
 });

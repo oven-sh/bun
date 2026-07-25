@@ -523,17 +523,30 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
 void Worker::dispatchErrorWithMessage(WTF::String message, RefPtr<SerializedScriptValue>&& serializedError)
 {
     postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(), serializedError = WTF::move(serializedError)](ScriptExecutionContext& context) {
-        if (protectedThis->m_options.kind != WorkerOptions::Kind::Web
-            || protectedThis->hasEventListeners(eventNames().errorEvent)) {
-            ErrorEvent::Init init;
-            init.message = message;
-            auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
-            protectedThis->dispatchEvent(event);
-            return;
-        }
+        ErrorEvent::Init init;
+        init.message = message;
+        init.cancelable = true;
 
-        // No parent-side error listener: report as unhandled so it is printed
-        // and exit code 1 (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2).
+        bool hadListener = protectedThis->hasEventListeners(eventNames().errorEvent);
+        auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+        protectedThis->dispatchEvent(event);
+
+        // Default action (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2):
+        // report to the parent's uncaught-exception path so the error prints
+        // and the process exit code becomes 1. Suppressed when:
+        //  - node:worker_threads owns this Worker (it always registers an
+        //    'error' listener that forwards to EventEmitter, whose own
+        //    no-listener default already calls Bun__reportUnhandledError),
+        //  - an 'error' listener was present (listener presence suppresses,
+        //    matching node's EventEmitter contract) or preventDefault() was
+        //    called on the cancelable event (browser-style escape), or
+        //  - the event was dropped by Worker::dispatchEvent's terminate/closed
+        //    gate (terminate() mid-run stays silent).
+        if (protectedThis->m_options.kind != WorkerOptions::Kind::Web
+            || hadListener || event->defaultPrevented()
+            || protectedThis->m_terminateRequested.load() || protectedThis->m_state.load() == State::Closed)
+            return;
+
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

@@ -529,9 +529,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
     if needs_wrapper {
         match flags.wrap {
             WrapKind::Cjs => {
-                // Direct eval may reach `require` by name (protobufjs), so bind
-                // it as a parameter. `ast.require_ref` can point at the
-                // `__require` polyfill, so take the Unbound scope member.
+                // `ast.require_ref` may be the `__require` polyfill, so use the Unbound scope member.
                 let require_arg_ref =
                     if ast.module_scope.contains_direct_eval && runtime_require_ref.is_some() {
                         ast.module_scope

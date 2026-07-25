@@ -238,6 +238,22 @@ describe("proxied fetch() response drops decoded Content-Encoding", () => {
     });
   }
 
+  test("static route built from a fetch() Response", async () => {
+    using upstream = Bun.serve({
+      port: 0,
+      development: false,
+      fetch() {
+        return new Response(gzipSync(payload), { headers: { "content-encoding": "gzip" } });
+      },
+    });
+    const snapshot = await fetch(upstream.url);
+    using proxy = Bun.serve({ port: 0, development: false, routes: { "/": snapshot } });
+
+    const { head, body } = await rawGet(proxy.port, payload.length);
+    expect(head.toLowerCase()).not.toContain("content-encoding");
+    expect(body.toString()).toBe(payload);
+  });
+
   test("explicit Content-Encoding on a handler-built Response is preserved", async () => {
     const gz = gzipSync(payload);
     using server = Bun.serve({

@@ -2462,6 +2462,14 @@ declare module "bun" {
      */
     macro?: MacroMap;
 
+    /**
+     * When the automatic JSX runtime is in use, prepend
+     * `import { jsx, jsxs, Fragment } from "<jsxImportSource>/jsx-runtime"`
+     * (or `jsxDEV` from `jsx-dev-runtime`) to the output so it can run
+     * standalone. Set `false` to suppress the import.
+     *
+     * @default true
+     */
     autoImportJSX?: boolean;
     allowBunRuntime?: boolean;
     exports?: {

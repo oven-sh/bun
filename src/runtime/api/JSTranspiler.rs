@@ -97,6 +97,12 @@ impl Default for Config {
             log: bun_ast::Log::default(), // overwritten at construction
             runtime: Runtime::Features {
                 top_level_await: true,
+                // The automatic JSX runtime is only runnable when the
+                // `jsx`/`jsxs`/`jsxDEV`/`Fragment` bindings are imported, so
+                // emit that import by default (matches Bun.build and
+                // esbuild/tsc/babel). Users can still opt out via
+                // `autoImportJSX: false`.
+                auto_import_jsx: true,
                 ..Default::default()
             },
             tree_shaking: false,

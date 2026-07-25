@@ -2086,6 +2086,7 @@ export default <>hi</>
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
       logLevel: "error",
+      autoImportJSX: false,
     });
 
     expect(bun.transformSync("console.log(<div key={() => {}} points={() => {}}></div>);")).toBe(
@@ -2193,6 +2194,67 @@ console.log(<div {...obj} key="after" />);`),
     }
   });
 
+  // https://github.com/oven-sh/bun/issues/7499
+  // The automatic JSX runtime replaces <div/> with a call through a generated
+  // binding (e.g. `jsxDEV_7x81h0kn`) that only exists when the matching
+  // `import { jsxDEV as jsxDEV_... } from ".../jsx-dev-runtime"` is emitted
+  // alongside it. Bun.Transpiler used to default autoImportJSX to false, so the
+  // emitted code referenced a name that was never declared anywhere.
+  describe("autoImportJSX defaults to true for the automatic runtime", () => {
+    it("development", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+      }).transformSync("export default function App() { return <><div>hi</div></>; }");
+      expect(out).toMatch(
+        /^import { jsxDEV as (\w+), Fragment as (\w+) } from "react\/jsx-dev-runtime";\nexport default function App\(\) {\n  return \1\(\2,/,
+      );
+    });
+
+    it("production", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react-jsx" } },
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).toMatch(/^import { jsx as (\w+) } from "react\/jsx-runtime";\nexport default \1\("div",/);
+    });
+
+    it("respects jsxImportSource", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react-jsx", jsxImportSource: "preact" } },
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).toMatch(/^import { jsx as (\w+) } from "preact\/jsx-runtime";\nexport default \1\("div",/);
+    });
+
+    it("key-after-spread emits createElement with an import", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+        logLevel: "error",
+      }).transformSync(`export default <div {...obj} key="after" />;`);
+      expect(out).toMatch(/^import { createElement as (\w+) } from "react";\nexport default \1\("div",/);
+    });
+
+    it("does not affect the classic runtime", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        tsconfig: { compilerOptions: { jsx: "react" } },
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).toBe('export default React.createElement("div", null, "hi");\n');
+    });
+
+    it("can still be disabled", () => {
+      const out = new Bun.Transpiler({
+        loader: "tsx",
+        define: { "process.env.NODE_ENV": JSON.stringify("development") },
+        autoImportJSX: false,
+      }).transformSync("export default <div>hi</div>;");
+      expect(out).not.toContain("import");
+      expect(out).toContain("jsxDEV");
+    });
+  });
+
   it("JSX bare key prop followed by key with a value does not crash", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -2203,6 +2265,7 @@ console.log(<div {...obj} key="after" />);`),
             loader: "jsx",
             define: { "process.env.NODE_ENV": JSON.stringify("development") },
             logLevel: "error",
+            autoImportJSX: false,
           });
           process.stdout.write(t.transformSync('console.log(<div key key="duplicate"></div>);'));
           process.stdout.write(t.transformSync('console.log(<div key className="x" key="duplicate"></div>);'));
@@ -2344,6 +2407,7 @@ console.log(<div {...obj} key="after" />);`),
       define: {
         "process.env.NODE_ENV": JSON.stringify("development"),
       },
+      autoImportJSX: false,
     });
     expect(bun.transformSync("export var foo = <div>{...a}b</div>")).toBe(
       `export var foo = jsxDEV_7x81h0kn("div", {

@@ -486,8 +486,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 if let Some(sig) = signal_code {
                     Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(sig.0));
                 }
-                // `.signaled` always carries a non-zero byte in practice;
-                // fallback only for type-totality.
                 Global::exit(1);
             }
 
@@ -2224,9 +2222,6 @@ impl RunCommand {
                     }
 
                     SpawnStatus::Signaled(signal) => {
-                        // The re-raise forwards the raw byte unconditionally so
-                        // the parent observes the real termination signal (incl.
-                        // RT 32-64).
                         if let Some(sc) = signal_code {
                             if sc != bun_sys::SignalCode::SIGINT && !silent {
                                 pretty_errorln!(

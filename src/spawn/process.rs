@@ -776,10 +776,7 @@ impl Status {
         None
     }
 
-    /// Returns the open `bun_sys::SignalCode` newtype so any non-zero byte
-    /// (including Linux real-time signals 32..=64) is surfaced. The closed
-    /// `bun_core::SignalCode` enum only covers 1..=31 and would drop RT
-    /// signals entirely.
+    /// Wraps any non-zero signal byte (incl. Linux RT signals 32..=64).
     pub fn signal_code(&self) -> Option<bun_sys::SignalCode> {
         let raw = match self {
             Status::Signaled(sig) => *sig,

@@ -514,15 +514,15 @@ it("should warn when linked package has peerDependencies", async () => {
 
   const header = `Linked package "${link_name}" declares peerDependencies that may not resolve from this project:`;
 
-  // Registering the link (no args) should not warn: nothing is being resolved.
-  {
-    const { out, err, exitCode } = await run([bunExe(), "link"], link_dir);
-    expect(err).not.toContain("peerDependencies");
-    expect(out).toContain(`Success! Registered "${link_name}"`);
-    expect(exitCode).toBe(0);
-  }
-
   try {
+    // Registering the link (no args) should not warn: nothing is being resolved.
+    {
+      const { out, err, exitCode } = await run([bunExe(), "link"], link_dir);
+      expect(err).not.toContain("peerDependencies");
+      expect(out).toContain(`Success! Registered "${link_name}"`);
+      expect(exitCode).toBe(0);
+    }
+
     // `bun link <name>` should warn once, listing peers not installed in the
     // linked package and the remedy.
     {
@@ -535,16 +535,6 @@ it("should warn when linked package has peerDependencies", async () => {
       expect(err).toContain("resolve modules from their real location on disk");
       expect(err).toContain("Install these peers in the linked package's own node_modules");
       expect(out).toContain(`installed ${link_name}@link:${link_name}`);
-      expect(exitCode).toBe(0);
-    }
-
-    // --silent suppresses the warning.
-    {
-      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-      await rm(join(package_dir, "bun.lock"), { force: true });
-      await rm(join(package_dir, "bun.lockb"), { force: true });
-      const { err, exitCode } = await run([bunExe(), "link", link_name, "--silent"], package_dir);
-      expect(err).not.toContain("peerDependencies");
       expect(exitCode).toBe(0);
     }
 

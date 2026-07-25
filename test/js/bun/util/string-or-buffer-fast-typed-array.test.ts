@@ -9,11 +9,11 @@
 // materialized, so comparing the descriptor before/after tells us whether the
 // call allocated a backing ArrayBuffer.
 
-import { describe, test, expect } from "bun:test";
 import { jscDescribe } from "bun:jsc";
-import { tempDir } from "harness";
-import fs from "fs";
+import { describe, expect, test } from "bun:test";
 import crypto from "crypto";
+import fs from "fs";
+import { tempDir } from "harness";
 import { promisify } from "util";
 
 const pbkdf2 = promisify(crypto.pbkdf2);
@@ -87,10 +87,7 @@ describe("StringOrBuffer does not materialize a FastTypedArray input", () => {
 
   test("zero-length FastTypedArray", async () => {
     const u8 = new Uint8Array(0);
-    const [out, ref] = await Promise.all([
-      pbkdf2(u8, "salt", 1, 32, "sha256"),
-      pbkdf2("", "salt", 1, 32, "sha256"),
-    ]);
+    const [out, ref] = await Promise.all([pbkdf2(u8, "salt", 1, 32, "sha256"), pbkdf2("", "salt", 1, 32, "sha256")]);
     expect(out.equals(ref)).toBe(true);
   });
 

@@ -228,8 +228,7 @@ pub use self::js_value::{
 // and is wired into `event_loop::tick` directly at link time. No fn-pointer
 // hook is re-exported from the crate root.
 pub use self::array_buffer::{
-    ArrayBuffer, BinaryType, BorrowedBufferBytes, JSCArrayBuffer, MarkedArrayBuffer,
-    TypedArrayType,
+    ArrayBuffer, BinaryType, BorrowedBufferBytes, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
 };
 pub use self::console_object as ConsoleObject;
 pub use self::console_object::Formatter;

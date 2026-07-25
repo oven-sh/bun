@@ -2460,9 +2460,7 @@ impl TestCommand {
                 let mut normalized = Vec::with_capacity(filter_names.len());
                 for in_ in filter_names {
                     let mut to_normalize = in_.to_vec();
-                    // Glob patterns stay posix-form: `bun_glob::match` treats `/`
-                    // in the pattern as the native separator, and rewriting to
-                    // `\` would turn `\*` into an escaped literal.
+                    // Glob patterns stay posix-form; `\` is a glob escape, not a separator.
                     if !bun_glob::detect_glob_syntax(in_) {
                         bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
                     }

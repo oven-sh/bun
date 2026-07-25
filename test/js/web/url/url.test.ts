@@ -100,6 +100,10 @@ describe("url", () => {
     expect(new URL("file://\u1E9E/x").host).toBe("xn--zca");
     // Bracketed hosts go to the IPv6 parser, never IDNA.
     expect(() => new URL("http://[::\u180E1]/")).toThrow();
+    // tab/LF/CR are stripped from anywhere in the input before parsing, so an
+    // embedded tab in the scheme or between : and // must not defeat the delta.
+    expect(new URL("ht\ttp://\u1E9E.com/").href).toBe("http://xn--zca.com/");
+    expect(new URL("http:\n//\u1E9E.com/").href).toBe("http://xn--zca.com/");
     // setter on a non-special scheme: opaque host stays verbatim.
     const u = new URL("foo://x/");
     u.hostname = "\u1E9E";

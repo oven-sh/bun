@@ -253,6 +253,8 @@ if (process.versions.bun &&
 // for release). Unknown internal/* specifiers fall through to the
 // original require and fail exactly as before.
 function installBunExposeInternalsRequireInterceptor() {
+  if (installBunExposeInternalsRequireInterceptor.installed) return;
+  installBunExposeInternalsRequireInterceptor.installed = true;
   const BunModule = require('module');
   const originalRequire = BunModule.prototype.require;
   let exposedInternals;

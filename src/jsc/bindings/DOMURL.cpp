@@ -79,7 +79,16 @@ static String applyIDNADeltaToURLAuthority(const String& urlString, StringView s
 
     StringView view { urlString };
 
-    // The URL parser strips tab/CR/LF/leading-C0 before locating anything.
+    // The URL parser strips tab/CR/LF everywhere (spec step 3) then leading
+    // C0/space (step 1); mirror both so an embedded tab in the scheme or the
+    // `//` run does not defeat the special-scheme match below. `stripped`
+    // owns the copy when one is needed so `view` stays valid.
+    auto isTabOrNewline = [](char16_t ch) { return ch == '\t' || ch == '\n' || ch == '\r'; };
+    String stripped;
+    if (view.find(isTabOrNewline) != notFound) {
+        stripped = urlString.removeCharacters(isTabOrNewline);
+        view = stripped;
+    }
     size_t scan = 0;
     while (scan < view.length() && (view[scan] <= 0x20))
         scan++;

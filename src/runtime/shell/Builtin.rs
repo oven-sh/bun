@@ -24,6 +24,10 @@ pub struct Builtin {
     pub stdin: BuiltinInput,
     pub stdout: BuiltinIO,
     pub stderr: BuiltinIO,
+    /// First error latched by [`Builtin::write_no_io`]; [`Builtin::done`]
+    /// folds it into the exit code so a builtin whose only failure is a write
+    /// error (`> ${buf}` too small) does not exit 0.
+    pub write_err: Option<bun_sys::Error>,
     /// Scratch for `fmt_error_arena`. One outstanding error string at a time.
     pub err_buf: Vec<u8>,
     pub impl_: Impl,
@@ -382,16 +386,18 @@ impl BuiltinIO {
                 // stored cursor is u32.
                 let idx = *i as usize;
                 let total = arraybuf.array_buffer.byte_len as usize;
-                if idx >= total {
+                let write_len = total.saturating_sub(idx).min(buf.len());
+                if write_len > 0 {
+                    let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
+                    dst.copy_from_slice(&buf[..write_len]);
+                    *i = i.saturating_add(write_len as u32);
+                }
+                if write_len < buf.len() {
                     return Err(bun_sys::Error::from_code(
                         bun_sys::E::ENOSPC,
                         bun_sys::Tag::write,
                     ));
                 }
-                let write_len = (total - idx).min(buf.len());
-                let dst = &mut arraybuf.slice_mut()[idx..idx + write_len];
-                dst.copy_from_slice(&buf[..write_len]);
-                *i = i.saturating_add(write_len as u32);
                 Ok(write_len)
             }
             BuiltinIO::Blob(_) | BuiltinIO::Ignore => Ok(buf.len()),
@@ -522,6 +528,7 @@ impl Builtin {
             stdin,
             stdout,
             stderr,
+            write_err: None,
             err_buf: Vec::new(),
             impl_: Self::make_impl(kind),
         }));
@@ -845,6 +852,33 @@ impl Builtin {
 
     /// Finish the builtin with `exit_code` and signal the owning Cmd.
     pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
+        // A `write_no_io` error that the builtin itself did not handle
+        // (discarded `let _ = write_no_io(...)`) fails the command here,
+        // mirroring the async `on_io_writer_chunk` error path.
+        let exit_code = match (exit_code, Self::of_mut(interp, cmd).write_err.take()) {
+            (0, Some(e)) => {
+                let msg = Self::task_error_to_string(interp, cmd, Self::kind_of(interp, cmd), &e)
+                    .to_vec();
+                match &Self::of(interp, cmd).stderr {
+                    // An fd stderr would need an async enqueue, but per-builtin
+                    // `on_io_writer_chunk` state machines have already advanced
+                    // past the point that can handle a completion. Tee the
+                    // message into the JS-side capture buffer so `r.stderr`
+                    // carries the diagnostic; the terminal write is skipped.
+                    BuiltinIO::Fd(fd) => {
+                        // SAFETY: see `OutFd::captured_mut`.
+                        if let Some(buf) = unsafe { fd.captured_mut() } {
+                            buf.extend_from_slice(&msg);
+                        }
+                    }
+                    _ => {
+                        let _ = Self::write_no_io(interp, cmd, IoKind::Stderr, &msg);
+                    }
+                }
+                1
+            }
+            (code, _) => code,
+        };
         // Output is written through immediately in `write_no_io`, so there
         // is nothing to flush here.
         Cmd::on_exec_done(interp, cmd, exit_code)
@@ -887,7 +921,10 @@ impl Builtin {
     /// Write `buf` to stdout/stderr without going through IOWriter (the
     /// stream is a captured buffer / arraybuffer / blob / /dev/null).
     ///
-    /// Returns `Err(ENOSPC)` when an ArrayBuffer target is already full.
+    /// Returns `Err(ENOSPC)` when an ArrayBuffer target cannot hold all of
+    /// `buf` (after writing what fits); the error is also latched on the
+    /// [`Builtin`] so [`Builtin::done`] fails the command even when the
+    /// caller discards the result.
     /// **WARNING**: caller must have checked `needs_io() == None` first.
     pub fn write_no_io(
         interp: &Interpreter,
@@ -911,7 +948,13 @@ impl Builtin {
             IoKind::Stdin => return Ok(0),
         };
         // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd's lifetime.
-        unsafe { out.write_no_io_to(shell, buf) }
+        let r = unsafe { out.write_no_io_to(shell, buf) };
+        if let Err(e) = &r {
+            if me.write_err.is_none() {
+                me.write_err = Some(e.clone());
+            }
+        }
+        r
     }
 
     /// Shell exec env of the owning Cmd.

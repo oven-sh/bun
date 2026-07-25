@@ -170,9 +170,20 @@ describe.concurrent("fd leak", () => {
     memLeakTest(...args);
   });
 
-  // Use text of this file so its big enough to cause a leak
-  memLeakTest("ArrayBuffer", () => TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(128)}`, 100);
-  memLeakTest("Buffer", () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(128)}`, 100);
+  // Use text of this file so its big enough to cause a leak. Overflowing the
+  // redirect target now fails the command (ENOSPC), so ignore exit/stderr:
+  // this test is about the buffer's Strong ref being released, not the result.
+  memLeakTest(
+    "ArrayBuffer",
+    () =>
+      TestBuilder.command`cat ${import.meta.filename} > ${new ArrayBuffer(128)}`.exitCode(() => {}).stderr(() => {}),
+    100,
+  );
+  memLeakTest(
+    "Buffer",
+    () => TestBuilder.command`cat ${import.meta.filename} > ${Buffer.alloc(128)}`.exitCode(() => {}).stderr(() => {}),
+    100,
+  );
   memLeakTest(
     "Blob_something",
     () =>

@@ -1627,7 +1627,7 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
+    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
     let argv: Vec<Box<[u8]>> = {
         const ARGV: &[&[u8]] = &[
@@ -1782,7 +1782,7 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
+    loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];

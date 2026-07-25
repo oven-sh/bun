@@ -237,7 +237,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
@@ -262,7 +262,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         original_script: &[u8],
         name: &[u8],
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'_>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         silent: bool,
         use_system_shell: bool,
@@ -308,13 +308,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         if !use_system_shell {
             // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
             // outlives the call (process-lifetime in `configure_env_for_run`).
-            // Erase the loader's borrowed lifetime to `'static` for the
-            // singleton handoff.
             let mini = bun_event_loop::MiniEventLoop::init_global(
-                Some(unsafe {
-                    &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                        .cast::<DotEnv::Loader<'static>>()
-                }),
+                Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
                 Some(cwd),
             );
             // SAFETY: `init_global` returns the thread-local singleton as a raw
@@ -396,12 +391,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: same lifetime erasure as the `!use_system_shell`
-                        // branch above — `env` outlives the mini event loop.
-                        Some(unsafe {
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: `env` outlives the mini event loop.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -538,7 +529,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn configure_env_for_run(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
@@ -552,7 +543,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub fn configure_env_for_run_without_linker(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
     ) -> crate::Result<bun_resolver::DirInfoRef> {
@@ -584,7 +575,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn configure_env_for_run_impl(
         ctx: &mut ContextData,
         this_transpiler: &mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader<'static>>,
+        env: Option<*mut DotEnv::Loader>,
         log_errors: bool,
         store_root_fd: bool,
         with_linker: bool,
@@ -899,9 +890,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
         let mini = bun_event_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
-            // singleton (set by `Transpiler::init`); erasing the borrowed
-            // lifetime mirrors the `run_package_script_foreground` handoff.
-            Some(unsafe { &mut *bundle.env.cast::<DotEnv::Loader<'static>>() }),
+            // singleton (set by `Transpiler::init`).
+            Some(unsafe { &mut *bundle.env }),
             None,
         );
         // SAFETY: `init_global` returns the thread-local singleton; single-
@@ -996,6 +986,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             };
             vm.module_loader.eval_source =
                 Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            vm.module_loader.interactive_eval_script =
+                ctx.runtime_options.eval.interactive_script.take();
             if ctx.runtime_options.eval.eval_and_print {
                 vm.transpiler.options.dead_code_elimination = false;
             }
@@ -1076,8 +1068,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
-
-        vm.env_loader().load_tracy();
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
@@ -2082,7 +2072,7 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2137,7 +2127,7 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2168,12 +2158,8 @@ impl RunCommand {
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
                     bun_event_loop::MiniEventLoop::init_global(
-                        Some(unsafe {
-                            // SAFETY: env loader is process-lifetime; erase
-                            // borrowed lifetime for the singleton handoff.
-                            &mut *::core::ptr::from_mut::<DotEnv::Loader<'_>>(env)
-                                .cast::<DotEnv::Loader<'static>>()
-                        }),
+                        // SAFETY: env loader is process-lifetime.
+                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
                         None,
                     ),
                 ),
@@ -2444,7 +2430,7 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        let env_loader: &mut DotEnv::Loader<'static> = this_transpiler.env_mut();
+        let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
         env_loader
             .map
             .put(b"npm_command", b"run-script")
@@ -2950,6 +2936,24 @@ impl RunCommand {
         Ok(true)
     }
 
+    /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
+    /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
+    /// which is Bun's own native REPL.
+    pub fn exec_node_repl(ctx: &mut ContextData) -> crate::Result<()> {
+        // Every caller has already established there's no user script target;
+        // any remaining positionals are dispatch artifacts (e.g. RunCommand's
+        // leading "run"), not user data — keep them out of `process.argv`.
+        ctx.positionals.clear();
+        let bootstrap = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts").as_bytes();
+        // Stash the user's `-e` (so `process._eval` is correct) and boot the
+        // bootstrap via `[eval]`; it runs `process._eval` like Node's
+        // internal/main/repl.js — no source splicing.
+        ctx.runtime_options.eval.interactive_script =
+            Some(::core::mem::take(&mut ctx.runtime_options.eval.script));
+        ctx.runtime_options.eval.script = bootstrap.to_vec().into_boxed_slice();
+        Self::exec_eval(ctx)
+    }
+
     /// Synthetic `cwd/[eval]`
     /// entry point + boot. `Arguments::parse` has already stashed the script
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
@@ -2985,6 +2989,15 @@ impl RunCommand {
         // `Command::which()` before dispatch.
         debug_assert!(crate::cli::PRETEND_TO_BE_NODE.load(::core::sync::atomic::Ordering::Relaxed));
 
+        // `node --interactive [-e code]`: same gate as AutoCommand — a script
+        // positional wins, and `-p` currently bypasses the REPL (see mod.rs).
+        if ctx.runtime_options.interactive
+            && !ctx.runtime_options.eval.eval_and_print
+            && ctx.positionals.is_empty()
+        {
+            return Self::exec_node_repl(ctx);
+        }
+
         if !ctx.runtime_options.eval.script.is_empty() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
@@ -3001,6 +3014,13 @@ impl RunCommand {
         }
 
         if ctx.positionals.is_empty() {
+            // Node: bare `node` on a TTY starts the REPL. Only in emulation
+            // mode; bun's own `bun` with no args stays the help text. Use
+            // Output's cached stdio flag (set at startup via libuv's handle
+            // probe), which is the same check `bun update --interactive` uses.
+            if Output::is_stdin_tty() {
+                return Self::exec_node_repl(ctx);
+            }
             Self::exec_as_if_node_missing_script();
         }
 
@@ -3047,7 +3067,7 @@ impl RunCommand {
     )]
     fn exec_as_if_node_missing_script() -> ! {
         Output::err_generic(
-            "Missing script to execute. Bun's provided 'node' cli wrapper does not support a repl.",
+            "Missing script to execute. Pass --interactive to start the Node.js-compatible REPL.",
             (),
         );
         Global::exit(1);
@@ -3993,7 +4013,7 @@ impl BunXFastPath {
     pub fn try_launch(
         ctx: &mut ContextData,
         path_len: usize,
-        env: &mut DotEnv::Loader<'static>,
+        env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
     ) {
         if !bun_core::FeatureFlags::WINDOWS_BUNX_FAST_PATH {

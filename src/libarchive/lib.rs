@@ -879,15 +879,6 @@ pub mod lib {
 
 use lib::Archive;
 
-#[repr(i32)] // c_int
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum Seek {
-    // values are POSIX SEEK_SET/CUR/END constants
-    Set = 0,
-    Current = 1,
-    End = 2,
-}
-
 pub struct BufferReadStream {
     buf: *const [u8],
 

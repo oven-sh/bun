@@ -627,7 +627,7 @@ impl ValueError {
         match self {
             // `.clone()` on BunString/SystemError already bumps the refcount (paired
             // with their Drop deref); an extra `.ref_()` here would leak +1 per dupe.
-            ValueError::SystemError(e) => ValueError::SystemError(e.dupe()),
+            ValueError::SystemError(e) => ValueError::SystemError(e.clone()),
             ValueError::Message(m) => ValueError::Message(m.clone()),
             ValueError::TypeError(m) => ValueError::TypeError(m.clone()),
             ValueError::JSValue(js_ref) => {
@@ -2339,8 +2339,8 @@ impl<'a> ValueBufferer<'a> {
         _global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
+        let args = callframe.arguments();
+        let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
         sink.handle_resolve_stream(true);
@@ -2351,11 +2351,11 @@ impl<'a> ValueBufferer<'a> {
         _global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<2>();
-        let Some(sink) = Self::take_ctx(args.ptr[args.len - 1]) else {
+        let args = callframe.arguments();
+        let Some(sink) = Self::take_ctx(args[args.len() - 1]) else {
             return Ok(JSValue::UNDEFINED);
         };
-        let err = args.ptr[0];
+        let err = args[0];
         sink.handle_reject_stream(err, true);
         Ok(JSValue::UNDEFINED)
     }

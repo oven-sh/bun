@@ -576,13 +576,12 @@ fn on_received_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     bun_output::scoped_log!(UpgradedDuplex, "onReceivedData");
 
     let function = frame.callee();
-    let args = frame.arguments_old::<1>();
+    let [data_arg] = frame.arguments_as_array::<1>();
 
     if let Some(self_ptr) = host_fn::get_function_data(function) {
         // SAFETY: function data was set to *mut UpgradedDuplex in get_js_handlers.
         let this = unsafe { bun_ptr::callback_ctx::<UpgradedDuplex>(self_ptr) };
-        if args.len >= 1 {
-            let data_arg = args.ptr[0];
+        if frame.arguments_count() >= 1 {
             if !this.origin.is_empty() {
                 if data_arg.is_empty_or_undefined_or_null() {
                     return Ok(JSValue::UNDEFINED);

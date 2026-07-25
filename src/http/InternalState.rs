@@ -13,11 +13,6 @@ bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 
 pub struct InternalState<'a> {
     pub response_message_buffer: MutableString,
-    /// pending response is the temporary storage for the response headers, url and status code
-    /// this uses shared_response_headers_buf to store the headers
-    /// this will be turned None once the metadata is cloned
-    pub pending_response: Option<bun_picohttp::Response<'static>>,
-
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
     /// this can happen after await fetch(...) and the body can continue streaming when this is already None
@@ -121,7 +116,6 @@ impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {
             response_message_buffer: MutableString::init_empty(),
-            pending_response: None,
             cloned_metadata: None,
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,
@@ -157,7 +151,6 @@ impl<'a> InternalState<'a> {
             response_message_buffer: MutableString::init_empty(),
             body_out_str: Some(NonNull::from(body_out_str)),
             stage: Stage::Pending,
-            pending_response: None,
             ..Default::default()
         }
     }

@@ -76,12 +76,12 @@ void CryptoAlgorithmHKDF::importKey(CryptoKeyFormat format, KeyData&& data, cons
         exceptionCallback(NotSupportedError, ""_s);
         return;
     }
-    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey)) {
-        exceptionCallback(SyntaxError, ""_s);
+    if (usages & (CryptoKeyUsageEncrypt | CryptoKeyUsageDecrypt | CryptoKeyUsageSign | CryptoKeyUsageVerify | CryptoKeyUsageWrapKey | CryptoKeyUsageUnwrapKey | CryptoKeyUsageKemMask)) {
+        exceptionCallback(SyntaxError, "Unsupported key usage for a HKDF key"_s);
         return;
     }
     if (extractable) {
-        exceptionCallback(SyntaxError, ""_s);
+        exceptionCallback(SyntaxError, "HKDF keys are not extractable"_s);
         return;
     }
 

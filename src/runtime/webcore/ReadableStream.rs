@@ -1026,14 +1026,13 @@ impl<C: SourceContext> NewSource<C> {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_jsvalue = call_frame.this();
-        let arguments = call_frame.arguments_old::<2>();
-        let view = arguments.ptr[0];
+        let [view, flags] = call_frame.arguments_as_array::<2>();
         view.ensure_still_alive();
         let Some(mut buffer) = view.as_array_buffer(global_this) else {
             return Ok(JSValue::UNDEFINED);
         };
         let result = self.on_pull_from_js(buffer.slice_mut(), view);
-        Self::process_result(this_jsvalue, global_this, arguments.ptr[1], result)
+        Self::process_result(this_jsvalue, global_this, flags, result)
     }
 
     pub fn start_from_js(

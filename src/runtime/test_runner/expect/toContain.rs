@@ -17,8 +17,7 @@ impl Expect {
         let (this, value, not) =
             self.matcher_prelude(global, frame.this(), "toContain", "<green>expected<r>")?;
 
-        let arguments_ = frame.arguments_old::<1>();
-        let arguments = arguments_.slice();
+        let arguments = frame.arguments();
 
         if arguments.len() < 1 {
             return Err(global.throw_invalid_arguments(format_args!("toContain() takes 1 argument")));

@@ -68,6 +68,14 @@ auto CryptoKey::usages() const -> Vector<CryptoKeyUsage>
         result.append(CryptoKeyUsage::WrapKey);
     if (m_usages & CryptoKeyUsageUnwrapKey)
         result.append(CryptoKeyUsage::UnwrapKey);
+    if (m_usages & CryptoKeyUsageEncapsulateKey)
+        result.append(CryptoKeyUsage::EncapsulateKey);
+    if (m_usages & CryptoKeyUsageEncapsulateBits)
+        result.append(CryptoKeyUsage::EncapsulateBits);
+    if (m_usages & CryptoKeyUsageDecapsulateKey)
+        result.append(CryptoKeyUsage::DecapsulateKey);
+    if (m_usages & CryptoKeyUsageDecapsulateBits)
+        result.append(CryptoKeyUsage::DecapsulateBits);
     return result;
 }
 

@@ -392,4 +392,113 @@ describe("bundler", () => {
       stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
+  // https://github.com/oven-sh/bun/issues/4565
+  // `exports.x = ...` as the unbraced body of if/while/do/else must not be
+  // converted to `var $x = ...; export { $x as x };` because `export` is only
+  // valid at the top level of a module.
+  const noNestedExport = (api: { readFile(path: string): string }) => {
+    // Before the fix, the output contained `export { $x as x };` nested inside
+    // a block, which is a syntax error. Any indented `export {` is wrong here.
+    expect(api.readFile("out.js")).not.toMatch(/^\s+export\s*\{/m);
+  };
+  itBundled("cjs2esm/ExportsAssignInSingleStmtIf#4565", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.always, lib.cond]));
+      `,
+      "/lib.js": /* js */ `
+        exports.always = 1;
+        if (process.env.NEVER_SET_4565) exports.cond = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,null]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInSingleStmtElse", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        if (process.env.NEVER_SET_4565) void 0;
+        else exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInSingleStmtWhile", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        let i = 0;
+        while (i++ < 1) exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInSingleStmtDoWhile", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        do exports.b = 2; while (false);
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ModuleExportsAssignInSingleStmtIf", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.a = 1;
+        if (process.env.NEVER_SET_4565) module.exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,null]" },
+  });
+  itBundled("cjs2esm/ExportsAssignInNestedSingleStmtIf", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.js';
+        console.log(JSON.stringify([lib.a, lib.b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        if (!process.env.NEVER_SET_4565) if (!process.env.NEVER_SET_4565) exports.b = 2;
+      `,
+    },
+    onAfterBundle: noNestedExport,
+    run: { stdout: "[1,2]" },
+  });
+  itBundled("cjs2esm/ExportsAssignTopLevelStillConverts", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './lib.js';
+        console.log(JSON.stringify([a, b]));
+      `,
+      "/lib.js": /* js */ `
+        exports.a = 1;
+        exports.b = 2;
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "[1,2]" },
+  });
 });

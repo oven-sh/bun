@@ -3,6 +3,7 @@ import { realpathSync } from "fs";
 import { isWindows } from "harness";
 import { isIPv4, isIPv6 } from "node:net";
 import * as os from "node:os";
+import { inspect } from "node:util";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -141,6 +142,70 @@ it("cpus", () => {
     expect(typeof cpu.times.sys === "number").toBe(true);
     expect(typeof cpu.times.user === "number").toBe(true);
   }
+});
+
+// https://github.com/oven-sh/bun/issues/9203
+it("cpus() returns plain data objects", () => {
+  const cpus = os.cpus();
+  expect(cpus.length).toBeGreaterThan(0);
+
+  const cpu = cpus[0];
+  expect(Object.keys(cpu)).toEqual(["model", "speed", "times"]);
+  expect(Object.keys(cpu.times)).toEqual(["user", "nice", "sys", "idle", "irq"]);
+
+  // Node returns plain data properties, not accessor properties.
+  expect(Object.getOwnPropertyDescriptor(cpu, "model")).toEqual({
+    value: expect.any(String),
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  expect(Object.getOwnPropertyDescriptor(cpu, "speed")).toEqual({
+    value: expect.any(Number),
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  expect(Object.getOwnPropertyDescriptor(cpu, "times")).toEqual({
+    value: expect.any(Object),
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+
+  // util.inspect(os.cpus()) should show values, not [Getter/Setter].
+  const inspected = inspect(cpu);
+  expect(inspected).not.toContain("Getter");
+  expect(inspected).not.toContain("toJSON");
+  expect(inspected).toContain("model:");
+});
+
+// https://github.com/oven-sh/bun/issues/9203
+it("cpus() array is safely mutable", () => {
+  const cpus = os.cpus();
+  const length = cpus.length;
+  const first = cpus.shift();
+  expect(first.model).toEqual(expect.any(String));
+  expect(cpus.length).toBe(length - 1);
+  if (cpus.length > 0) {
+    // After shift(), reading properties of the remaining entries must not throw.
+    const last = cpus[cpus.length - 1];
+    expect(last.model).toEqual(expect.any(String));
+    expect(last.times.user).toEqual(expect.any(Number));
+  }
+  // Mutating one call's result must not affect later calls.
+  expect(os.cpus().length).toBe(length);
+});
+
+// https://github.com/oven-sh/bun/issues/9203
+it("cpus() snapshots are taken at call time", () => {
+  const a = os.cpus();
+  // Access b first so that if the results were lazily populated the older
+  // snapshot `a` would be read later and appear to be "newer".
+  const b = os.cpus();
+  const bUser = b[0].times.user;
+  const aUser = a[0].times.user;
+  expect(bUser - aUser).toBeGreaterThanOrEqual(0);
 });
 
 it("networkInterfaces", () => {

@@ -277,8 +277,9 @@ impl S3Ext for S3 {
             self.request_payer,
             global_object,
         )?;
-        // An `s3://bucket/key` URL's bucket overrides any `bucket` from `options`.
-        if let Some(bucket) = bun_jsc::webcore_types::store::s3_url_bucket(self.pathlike.slice()) {
+        if let Some((bucket, _)) =
+            bun_jsc::webcore_types::store::s3_url_bucket_and_key(self.pathlike.slice())
+        {
             if result.credentials.bucket.as_ref() != bucket {
                 result.credentials.bucket = Box::<[u8]>::from(bucket);
                 result.changed_credentials = true;

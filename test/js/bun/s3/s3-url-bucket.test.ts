@@ -42,6 +42,11 @@ describe("s3:// URL bucket overrides configured bucket", () => {
     expect(presignPath({ ...creds, bucket: "cfgbkt" }, "s3://onlyname")).toBe("/cfgbkt/onlyname");
   });
 
+  it("s3://name/ and s3://name\\ (trailing separator, no key) are treated as plain keys", () => {
+    expect(presignPath({ ...creds, bucket: "cfgbkt" }, "s3://onlyname/")).toBe("/cfgbkt/onlyname");
+    expect(presignPath({ ...creds, bucket: "cfgbkt" }, "s3://onlyname\\")).toBe("/cfgbkt/onlyname");
+  });
+
   it("uppercase S3:// scheme is recognized", () => {
     expect(presignPath({ ...creds, bucket: "cfgbkt" }, "S3://urlbkt/dir/f.txt")).toBe("/urlbkt/dir/f.txt");
   });
@@ -61,42 +66,79 @@ describe("s3:// URL bucket overrides configured bucket", () => {
     expect(client.file("dir/f.txt").bucket).toBe("cfgbkt");
   });
 
-  describe.each(["S3_BUCKET", "AWS_BUCKET"])("env var %s", varName => {
-    it("Bun.file with s3:// URL: URL bucket wins over env bucket", async () => {
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          return new Response(new URL(req.url).pathname, {
-            headers: { etag: '"abc"' },
-            status: 200,
-          });
-        },
-      });
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const f = Bun.file("s3://urlbkt/dir/f.txt", {
+  it.each(["S3_BUCKET", "AWS_BUCKET"])("Bun.file with s3:// URL: URL bucket wins over %s", async varName => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(new URL(req.url).pathname, {
+          headers: { etag: '"abc"' },
+          status: 200,
+        });
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const f = Bun.file("s3://urlbkt/dir/f.txt", {
+           accessKeyId: "a", secretAccessKey: "b", region: "us-east-1",
+           endpoint: ${JSON.stringify(server.url.href)},
+         });
+         console.log(await f.text());
+         console.log(f.bucket);`,
+      ],
+      env: {
+        ...bunEnv,
+        [varName]: "envbkt",
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("/urlbkt/dir/f.txt\nurlbkt\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("fetch with s3:// URL: URL bucket wins over s3.bucket option and env bucket", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(new URL(req.url).pathname, {
+          headers: { etag: '"abc"' },
+          status: 200,
+        });
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const res = await fetch("s3://urlbkt/dir/f.txt", {
+           s3: {
              accessKeyId: "a", secretAccessKey: "b", region: "us-east-1",
              endpoint: ${JSON.stringify(server.url.href)},
-           });
-           console.log(await f.text());
-           console.log(f.bucket);`,
-        ],
-        env: {
-          ...bunEnv,
-          [varName]: "envbkt",
-          HTTP_PROXY: undefined,
-          HTTPS_PROXY: undefined,
-          http_proxy: undefined,
-          https_proxy: undefined,
-        },
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(stdout).toBe("/urlbkt/dir/f.txt\nurlbkt\n");
-      expect(exitCode).toBe(0);
+             bucket: "optbkt",
+           },
+         });
+         console.log(await res.text());`,
+      ],
+      env: {
+        ...bunEnv,
+        S3_BUCKET: "envbkt",
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+      },
+      stderr: "pipe",
     });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("/urlbkt/dir/f.txt\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -855,4 +855,18 @@ describe("Map/Set entry count is capped", () => {
     expect(out.length).toBeLessThan(4096);
     expect(out).toContain("... 9900 more items");
   });
+
+  it("cap is driven by the real entry count, not a lying size getter", () => {
+    class M extends Map {
+      get size() {
+        return 1;
+      }
+    }
+    const m = new M();
+    for (let i = 0; i < 500; i++) m.set(i, i);
+    const out = Bun.inspect(m);
+    expect(out).not.toContain("100: 100");
+    expect(out).toContain("... 400 more items");
+    expect(out.length).toBeLessThan(4096);
+  });
 });

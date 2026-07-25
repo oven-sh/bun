@@ -2917,7 +2917,6 @@ pub mod formatter {
         pub formatter: &'a mut Formatter<'b>,
         pub writer: &'a mut dyn bun_io::Write,
         pub count: usize,
-        pub length: usize,
     }
 
     impl<'a, 'b, const C: bool, const IS_ITERATOR: bool, const SINGLE_LINE: bool>
@@ -2937,14 +2936,7 @@ pub mod formatter {
             if this.formatter.failed {
                 return;
             }
-            if this.length > MAP_SET_ENTRY_CAP && this.count >= MAP_SET_ENTRY_CAP {
-                if this.count == MAP_SET_ENTRY_CAP {
-                    this.formatter.print_more_items_marker::<C>(
-                        this.writer,
-                        this.length,
-                        SINGLE_LINE,
-                    );
-                }
+            if !IS_ITERATOR && this.count >= MAP_SET_ENTRY_CAP {
                 this.count += 1;
                 return;
             }
@@ -3028,7 +3020,6 @@ pub mod formatter {
         pub formatter: &'a mut Formatter<'b>,
         pub writer: &'a mut dyn bun_io::Write,
         pub count: usize,
-        pub length: usize,
     }
 
     impl<'a, 'b, const C: bool, const SINGLE_LINE: bool> SetIteratorCtx<'a, 'b, C, SINGLE_LINE> {
@@ -3045,14 +3036,7 @@ pub mod formatter {
             if this.formatter.failed {
                 return;
             }
-            if this.length > MAP_SET_ENTRY_CAP && this.count >= MAP_SET_ENTRY_CAP {
-                if this.count == MAP_SET_ENTRY_CAP {
-                    this.formatter.print_more_items_marker::<C>(
-                        this.writer,
-                        this.length,
-                        SINGLE_LINE,
-                    );
-                }
+            if this.count >= MAP_SET_ENTRY_CAP {
                 this.count += 1;
                 return;
             }
@@ -4796,13 +4780,11 @@ pub mod formatter {
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
                 let global_this = self.global_this;
-                let length = length.max(0) as usize;
                 if self.single_line {
                     let mut iter = MapIteratorCtx::<C, false, true> {
                         formatter: self,
                         writer: writer_,
                         count: 0,
-                        length,
                     };
                     value.for_each(
                         global_this,
@@ -4813,6 +4795,9 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
+                    if count > MAP_SET_ENTRY_CAP {
+                        self.print_more_items_marker::<C>(writer_, count, true);
+                    }
                     if count > 0 {
                         let _ = writer_.write_all(b" ");
                     }
@@ -4821,15 +4806,18 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
-                        length,
                     };
                     value.for_each(
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         MapIteratorCtx::<C, false, false>::for_each,
                     )?;
+                    let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if count > MAP_SET_ENTRY_CAP {
+                        self.print_more_items_marker::<C>(writer_, count, false);
                     }
                 }
             }
@@ -4863,7 +4851,6 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
-                        length: 0,
                     };
                     value.for_each(
                         global_this,
@@ -4883,7 +4870,6 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
-                        length: 0,
                     };
                     value.for_each(
                         global_this,
@@ -4943,13 +4929,11 @@ pub mod formatter {
                 let _i = defer_decrement!(self.indent);
                 let _d = defer_decrement!(self.depth);
                 let global_this = self.global_this;
-                let length = length.max(0) as usize;
                 if self.single_line {
                     let mut iter = SetIteratorCtx::<C, true> {
                         formatter: self,
                         writer: writer_,
                         count: 0,
-                        length,
                     };
                     value.for_each(
                         global_this,
@@ -4960,6 +4944,9 @@ pub mod formatter {
                     if iter.formatter.failed {
                         return Ok(());
                     }
+                    if count > MAP_SET_ENTRY_CAP {
+                        self.print_more_items_marker::<C>(writer_, count, true);
+                    }
                     if count > 0 {
                         let _ = writer_.write_all(b" ");
                     }
@@ -4968,15 +4955,18 @@ pub mod formatter {
                         formatter: self,
                         writer: writer_,
                         count: 0,
-                        length,
                     };
                     value.for_each(
                         global_this,
                         (&raw mut iter).cast::<c_void>(),
                         SetIteratorCtx::<C, false>::for_each,
                     )?;
+                    let count = iter.count;
                     if iter.formatter.failed {
                         return Ok(());
+                    }
+                    if count > MAP_SET_ENTRY_CAP {
+                        self.print_more_items_marker::<C>(writer_, count, false);
                     }
                 }
             }

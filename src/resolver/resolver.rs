@@ -4916,7 +4916,7 @@ impl<'a> Resolver<'a> {
                 )
             };
 
-            if !result.is_success()
+            if matches!(result, MatchStatus::NotFound)
                 && !skip_bun_condition
                 && self.should_retry_without_bun_condition(matched_status)
             {

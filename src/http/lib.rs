@@ -118,8 +118,6 @@ pub struct HTTPResponseMetadata {
     pub url: bun_ptr::RawSlice<u8>,
     pub owned_buf: Box<[u8]>,
     pub response: bun_picohttp::Response<'static>,
-    /// The client recognised `Content-Encoding` and will deliver decoded
-    /// bytes, so the header no longer describes the body it accompanies.
     pub did_decompress: bool,
 }
 

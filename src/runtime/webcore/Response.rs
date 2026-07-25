@@ -171,9 +171,6 @@ pub struct Response {
     // `Copy` and has no `Drop`.
     url: JsCell<OwnedString>,
     redirected: Cell<bool>,
-    /// `fetch()` transparently decoded `Content-Encoding`; the header is kept
-    /// for user inspection (#5668) but `Bun.serve` must not re-emit it against
-    /// the now-decoded body.
     body_decoded: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response

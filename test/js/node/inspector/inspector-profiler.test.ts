@@ -652,10 +652,45 @@ console.log(JSON.stringify({ count: fn?.ranges?.[0]?.count }));
       expect(functionCounts).toContain(0);
     });
 
-    // A --preload that starts coverage before the entry module is linked (the
-    // c8 --import shape). ModuleProgramExecutables are excluded from
-    // deleteAllCode so the entry's JSModuleEnvironment stays consistent.
+    // entry.mjs is linked (JSModuleEnvironment created) but not yet evaluated
+    // when setup.mjs's TLA-awaited startPreciseCoverage fires deleteAllCode.
+    // Proves the scenario doesn't crash; the clearableCodeSet guard is shared
+    // with BunDebugger for the Debugger-mode case where layout does diverge.
     test.concurrent("does not corrupt a linked-but-unevaluated module after start", async () => {
+      using dir = tempDir("inspector-coverage-sibling", {
+        "setup.mjs": `import { Session } from "node:inspector/promises";
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+await s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+globalThis.__coverageSession = s;
+`,
+        "entry.mjs": `import "./setup.mjs";
+import { run } from "./target.mjs";
+for (let i = 0; i < 4; i++) run();
+const { result } = await globalThis.__coverageSession.post("Profiler.takePreciseCoverage");
+const me = result.find(sc => /target\\.mjs$/.test(sc.url));
+const runFn = me?.functions?.find(f => f.functionName === "run");
+process.stdout.write(JSON.stringify({ count: runFn?.ranges?.[0]?.count }));
+`,
+        "target.mjs": `let hits = 0;
+export function run() { hits++; return hits; }
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual({ count: 4 });
+    });
+
+    // The c8 --import / --preload pattern: coverage starts before the entry
+    // graph is even linked, so everything compiles instrumented on first load.
+    test.concurrent("counts calls when coverage is started via --preload", async () => {
       using dir = tempDir("inspector-coverage-preload", {
         "setup.mjs": `import { Session } from "node:inspector/promises";
 const s = new Session();

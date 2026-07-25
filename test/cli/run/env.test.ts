@@ -943,6 +943,18 @@ for (const shell of ["system", "bun"]) {
       expect(stderr + stdout).toContain("1 pass");
     });
 
+    test.skipIf(isWindowsCMD)("e2e: .env value shadowed only by .env.{other_NODE_ENV} is not pinned", () => {
+      const tmp = tempDirWithFiles("script-runner-dotenv", {
+        "package.json": `{"scripts":{"start":"NODE_ENV=production '${bunExe().replaceAll("\\", "\\\\")}' run index.ts"}}`,
+        "index.ts": "console.log('API_URL=' + process.env.API_URL);",
+        ".env": "API_URL=http://localhost:3000",
+        ".env.production": "API_URL=https://api.example.com",
+      });
+      expect(bunRunAsScript(tmp, "start", {}, ["--shell=" + shell]).stdout).toBe(
+        "API_URL=https://api.example.com",
+      );
+    });
+
     test("--no-env-file disables .env loading for scripts", () => {
       const tmp = tempDirWithFiles("script-runner-dotenv", {
         "package.json": '{"scripts":{"show-env":"' + show_dotenv_script + '"}}',

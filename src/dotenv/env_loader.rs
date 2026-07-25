@@ -732,6 +732,32 @@ impl Loader {
         self.try_load_default::<_, false>(dir, dir_handle, b".env", value_buffer)
     }
 
+    /// Load every NODE_ENV-specific default file (`.env.{development,
+    /// production,test}[.local]` + `.env.local`) as conditional. Files whose
+    /// slot is already set are skipped, so calling this after
+    /// [`Self::load_default_files`] visits only the other-suffix files. Used by
+    /// the `bun run <script>` path to mark `.env` keys that are shadowed by a
+    /// NODE_ENV file the parent's suffix did not load.
+    pub fn mark_keys_in_other_node_env_files<D: DirEntryProbe + ?Sized>(
+        &mut self,
+        dir: &D,
+    ) -> crate::Result<()> {
+        let dir_handle = bun_sys::Fd::cwd();
+        let mut value_buffer: Vec<u8> = Vec::new();
+        for name in [
+            b".env.development.local".as_slice(),
+            b".env.production.local".as_slice(),
+            b".env.test.local".as_slice(),
+            b".env.local".as_slice(),
+            b".env.development".as_slice(),
+            b".env.production".as_slice(),
+            b".env.test".as_slice(),
+        ] {
+            self.try_load_default::<_, true>(dir, dir_handle, name, &mut value_buffer)?;
+        }
+        Ok(())
+    }
+
     /// Probe `dir` for a known `.env*` filename and, if present, load it into
     /// its dedicated slot and bump the analytics counter. Shared body for the
     /// eight call sites in `load_default_files`.
@@ -1318,6 +1344,9 @@ impl<'a> Parser<'a> {
                     // Allow keys defined later in the same file to override keys defined earlier
                     // https://github.com/oven-sh/bun/issues/1262
                     if !OVERRIDE {
+                        if CONDITIONAL {
+                            entry.value_ptr.conditional = true;
+                        }
                         continue;
                     }
                 }

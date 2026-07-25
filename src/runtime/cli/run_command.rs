@@ -681,6 +681,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 let process_env_count = env_loader.map.map.count();
                 let disable_default = this_transpiler.options.env.disable_default_env_files;
                 let _ = this_transpiler.run_env_loader(disable_default);
+                // A `.env` key shadowed by a file under a NODE_ENV the parent
+                // does not run under must not be forwarded either, so visit
+                // the other-suffix files to mark those keys conditional.
+                if !disable_default && this_transpiler.options.env.files.is_empty() {
+                    if let Some(entries) =
+                        root_dir_info.get_entries(this_transpiler.resolver.generation)
+                    {
+                        // SAFETY: BSSMap-owned; single-threaded dispatch.
+                        let dir: &bun_resolver::fs::DirEntry = unsafe { &*entries };
+                        let _ = this_transpiler
+                            .env_mut()
+                            .mark_keys_in_other_node_env_files(dir);
+                    }
+                }
                 this_transpiler
                     .env_mut()
                     .take_script_dotenv(process_env_count);

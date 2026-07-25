@@ -282,6 +282,29 @@ M._extensions[".js"] = function (m, f) { globalThis.__hits.push(path.basename(f)
     expect(exitCode).toBe(0);
   });
 
+  test("require() of a sibling CJS module already fetched (but not yet evaluated) by the ESM loader runs its extension handler", async () => {
+    using dir = tempDir("ext-cross-require", {
+      "package.json": '{"type":"commonjs"}',
+      "hook.cjs": `
+const M = require("module"), fs = require("fs");
+M._extensions[".js"] = (m, f) => m._compile(fs.readFileSync(f, "utf8"), f);
+`,
+      "a.js": 'module.exports = { fromB: require("./b.js").value };',
+      "b.js": "module.exports = { value: 42 };",
+      "main.mjs": 'import a from "./a.js"; import "./b.js"; console.log(JSON.stringify({ fromB: a.fromB }));',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-r", "./hook.cjs", "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('{"fromB":42}');
+    expect(exitCode).toBe(0);
+  });
+
   test("a preload hook that transforms source applies to the CJS entrypoint and CJS via ESM import", async () => {
     using dir = tempDir("ext-transform", {
       "package.json": '{"type":"commonjs"}',

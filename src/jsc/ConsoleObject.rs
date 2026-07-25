@@ -2949,8 +2949,11 @@ pub mod formatter {
             }
             if this.length > MAP_SET_ENTRY_CAP && this.count >= MAP_SET_ENTRY_CAP {
                 if this.count == MAP_SET_ENTRY_CAP {
-                    this.formatter
-                        .print_more_items_marker::<C>(this.writer, this.length, SINGLE_LINE);
+                    this.formatter.print_more_items_marker::<C>(
+                        this.writer,
+                        this.length,
+                        SINGLE_LINE,
+                    );
                 }
                 this.count += 1;
                 return;
@@ -3054,8 +3057,11 @@ pub mod formatter {
             }
             if this.length > MAP_SET_ENTRY_CAP && this.count >= MAP_SET_ENTRY_CAP {
                 if this.count == MAP_SET_ENTRY_CAP {
-                    this.formatter
-                        .print_more_items_marker::<C>(this.writer, this.length, SINGLE_LINE);
+                    this.formatter.print_more_items_marker::<C>(
+                        this.writer,
+                        this.length,
+                        SINGLE_LINE,
+                    );
                 }
                 this.count += 1;
                 return;

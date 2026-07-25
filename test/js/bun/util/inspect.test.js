@@ -855,9 +855,7 @@ describe("never throws from a throwing user accessor", () => {
         throw new Error("boom");
       }
     }
-    expect(Bun.inspect(new EE("error", { message: "hi" }))).toBe(
-      'ErrorEvent {\n  type: "error",\n  error: null,\n}',
-    );
+    expect(Bun.inspect(new EE("error", { message: "hi" }))).toBe('ErrorEvent {\n  type: "error",\n  error: null,\n}');
   });
 
   it("AggregateError with own errors accessor", () => {
@@ -899,11 +897,7 @@ describe("never throws from a throwing user accessor", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("sentinel-reached");
     expect(stderr).not.toContain("boom");
     expect(exitCode).toBe(0);

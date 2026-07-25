@@ -3658,9 +3658,9 @@ pub mod __gated_printer {
                             if !e.is_single_line {
                                 self.print_newline();
                                 self.print_indent();
-                            }
-                            if IS_JSON {
-                                self.flush_json_comments_before(item.loc.start, false);
+                                if IS_JSON {
+                                    self.flush_json_comments_before(item.loc.start, false);
+                                }
                             }
                             self.print_expr(*item, Level::Comma, ExprFlag::none());
 

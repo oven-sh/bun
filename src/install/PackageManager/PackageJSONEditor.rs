@@ -992,6 +992,11 @@ pub(crate) fn edit(
                 bun_ast::Loc::EMPTY,
             );
         } else {
+            let prev_close_brace_loc = current_package_json
+                .data
+                .e_object()
+                .expect("infallible: variant checked")
+                .close_brace_loc;
             if needs_new_dependency_list && needs_new_trusted_dependencies_list {
                 let obj = current_package_json
                     .data
@@ -1024,6 +1029,7 @@ pub(crate) fn edit(
                     arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(root_properties),
+                        close_brace_loc: prev_close_brace_loc,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,
@@ -1059,6 +1065,7 @@ pub(crate) fn edit(
                     arena,
                     E::Object {
                         properties: G::PropertyList::move_from_list(root_properties),
+                        close_brace_loc: prev_close_brace_loc,
                         ..Default::default()
                     },
                     bun_ast::Loc::EMPTY,

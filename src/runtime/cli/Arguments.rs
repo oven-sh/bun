@@ -779,8 +779,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         Box::<[u8]>::from(out_z.as_bytes())
     } else {
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        match bun_sys::getcwd(&mut *temp) {
+            Ok(len) => Box::<[u8]>::from(&temp[..len]),
+            // The working directory may have been deleted out from under us;
+            // node still boots (process.cwd() throws on demand instead), so
+            // anchor to the executable's directory like exec_eval does.
+            Err(err) => match bun_core::self_exe_path()
+                .ok()
+                .and_then(|exe| bun_paths::dirname(exe.as_bytes()))
+            {
+                Some(dir) => Box::<[u8]>::from(dir),
+                None => return Err(err.into()),
+            },
+        }
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely

@@ -2988,8 +2988,15 @@ impl RunCommand {
 
         let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
         let mut cwd_buf = PathBuffer::uninit();
-        let cwd = bun_core::getcwd(&mut cwd_buf)?;
-        let cwd_bytes = cwd.as_bytes();
+        // The working directory may have been deleted; node still runs
+        // -e/-p/--interactive there, anchoring [eval] to the executable's dir.
+        let cwd_bytes = match bun_core::getcwd(&mut cwd_buf) {
+            Ok(cwd) => cwd.as_bytes(),
+            Err(_) => bun_core::self_exe_path()
+                .ok()
+                .and_then(|exe| bun_paths::dirname(exe.as_bytes()))
+                .unwrap_or(b"/"),
+        };
         let cwd_len = cwd_bytes.len();
         entry_point_buf[..cwd_len].copy_from_slice(cwd_bytes);
         entry_point_buf[cwd_len..cwd_len + EVAL_TRIGGER.len()].copy_from_slice(EVAL_TRIGGER);

@@ -621,6 +621,40 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(functionCounts).toContain(0);
     });
 
+    // A --preload that starts coverage before the entry module is linked (the
+    // c8 --import shape). ModuleProgramExecutables are excluded from
+    // deleteAllCode so the entry's JSModuleEnvironment stays consistent.
+    test.concurrent("does not corrupt a linked-but-unevaluated module after start", async () => {
+      using dir = tempDir("inspector-coverage-preload", {
+        "setup.mjs": `import { Session } from "node:inspector/promises";
+const s = new Session();
+s.connect();
+await s.post("Profiler.enable");
+await s.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
+globalThis.__coverageSession = s;
+`,
+        "entry.mjs": `import { run } from "./target.mjs";
+for (let i = 0; i < 4; i++) run();
+const { result } = await globalThis.__coverageSession.post("Profiler.takePreciseCoverage");
+const me = result.find(sc => /target\\.mjs$/.test(sc.url));
+const runFn = me?.functions?.find(f => f.functionName === "run");
+process.stdout.write(JSON.stringify({ count: runFn?.ranges?.[0]?.count }));
+`,
+        "target.mjs": `let hits = 0;
+export function run() { hits++; return hits; }
+`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--preload", "./setup.mjs", "entry.mjs"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+      expect(JSON.parse(stdout)).toEqual({ count: 4 });
+    });
+
     for (const kind of ["mjs", "cjs"] as const) {
       test.concurrent(`counts calls in a ${kind} module loaded before start`, async () => {
         const appSource =

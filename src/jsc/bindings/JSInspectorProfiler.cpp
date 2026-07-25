@@ -8,6 +8,7 @@
 #include <JavaScriptCore/ControlFlowProfiler.h>
 #include <JavaScriptCore/FunctionHasExecutedCache.h>
 #include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/IsoCellSetInlines.h>
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/FunctionExecutable.h>
@@ -59,23 +60,34 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isCPUProfilerRunning, (JSGlobalObject*, Call
 }
 
 // Precise code coverage via JSC's control-flow profiler. Only newly generated
-// bytecode carries op_profile_control_flow, so also deleteAllCode() (deferred
-// via VM::whenIdle) so already-loaded functions recompile instrumented.
+// bytecode carries op_profile_control_flow, so also deleteAllCode() so
+// already-loaded functions recompile instrumented on their next call.
+//
+// Both run inside whenIdle (like InspectorRuntimeAgent) so no instrumented JS
+// executes between them, and ModuleProgramExecutables are excluded via the
+// same clearableCodeSet guard BunDebugger applies before its deleteAllCode.
+//
+// There is no matching stop: once an async body has compiled under the
+// profiler its m_codeGenerationModeForGeneratorBody is pinned, so disabling
+// would make that body's next recompile dereference a null controlFlowProfiler
+// in CodeBlock::insertBasicBlockBoundariesForControlFlowProfiler.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_startPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_startPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = globalObject->vm();
-    if (vm.enableControlFlowProfiler())
-        vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
-    return JSValue::encode(jsUndefined());
-}
-
-JSC_DECLARE_HOST_FUNCTION(jsFunction_stopPreciseCoverage);
-JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
-{
-    auto& vm = globalObject->vm();
-    if (vm.disableControlFlowProfiler())
-        vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
+    vm.whenIdle([&vm] {
+        if (vm.controlFlowProfiler())
+            return;
+        if (auto* spaceAndSet = vm.heap.m_moduleProgramExecutableSpace.get()) {
+            HeapIterationScope iterationScope(vm.heap);
+            auto& set = spaceAndSet->clearableCodeSet;
+            set.forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+                set.remove(cell);
+            });
+        }
+        if (vm.enableControlFlowProfiler())
+            vm.deleteAllCode(PreventCollectionAndDeleteAllCode);
+    });
     return JSValue::encode(jsUndefined());
 }
 

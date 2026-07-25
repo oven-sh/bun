@@ -27,7 +27,6 @@ const stopCPUProfiler = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_s
 const setCPUSamplingInterval = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_setCPUSamplingInterval", 1);
 const isCPUProfilerRunning = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_isCPUProfilerRunning", 0);
 const startPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_startPreciseCoverage", 0);
-const stopPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_stopPreciseCoverage", 0);
 const collectPreciseCoverage = $newCppFunction("JSInspectorProfiler.cpp", "jsFunction_collectPreciseCoverage", 0);
 
 // Native bindings for inspector.open(): they start Bun's debugger thread with a
@@ -439,10 +438,7 @@ class Session extends EventEmitter {
   disconnect() {
     if (!this.#connected) return;
     if (isCPUProfilerRunning()) stopCPUProfiler();
-    if (this.#preciseCoverageEnabled) {
-      stopPreciseCoverage();
-      this.#preciseCoverageEnabled = false;
-    }
+    this.#preciseCoverageEnabled = false;
     this.#profilerEnabled = false;
     this.#connected = false;
     this.#coverageBaseline.$clear();
@@ -535,12 +531,8 @@ class Session extends EventEmitter {
         if (isCPUProfilerRunning()) {
           stopCPUProfiler();
         }
-        // V8's Profiler agent stops precise coverage on disable; without this
-        // the control-flow profiler keeps instrumenting newly-compiled code.
-        if (this.#preciseCoverageEnabled) {
-          stopPreciseCoverage();
-          this.#preciseCoverageEnabled = false;
-        }
+        // V8's Profiler agent stops precise coverage on disable.
+        this.#preciseCoverageEnabled = false;
         this.#profilerEnabled = false;
         return {};
 
@@ -582,11 +574,12 @@ class Session extends EventEmitter {
 
       case "Profiler.stopPreciseCoverage": {
         if (!this.#profilerEnabled) return $ERR_INSPECTOR_COMMAND("-32000: Profiler is not enabled");
+        // The VM-level profiler stays enabled for the process lifetime; see
+        // the comment on jsFunction_startPreciseCoverage for why disabling is
+        // unsafe once any async body has compiled under it.
         this.#coverageBaseline.$clear();
-        if (!this.#preciseCoverageEnabled) return {};
-        stopPreciseCoverage();
         this.#preciseCoverageEnabled = false;
-        return { [kDeferToImmediate]: {} };
+        return {};
       }
 
       case "Profiler.takePreciseCoverage": {

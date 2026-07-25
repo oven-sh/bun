@@ -871,6 +871,7 @@ class InspectorCDPAdapter {
         // shared backend stayed enabled for another session: remove the armed
         // breakpoint instead of orphaning it under a dead owner.
         this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
+        this.#replyToClient(id, this.#translateResult(method, result));
         return;
       }
       breakpointOwner.$set(breakpointId, this.#sessionId);

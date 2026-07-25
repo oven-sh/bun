@@ -1208,6 +1208,17 @@ for await (const line of rl) {
   });
   expect(bEval.error?.message).toBe("Debugger agent is not enabled");
 
+  // With B also debugger-enabled, B's setBreakpointsActive(false) must not
+  // lower the aggregate below A's true, and B cannot remove A's breakpoint.
+  await B.send("Debugger.enable");
+  await B.send("Debugger.setBreakpointsActive", { active: false });
+  const bRemoveOwned = await B.send("Debugger.removeBreakpoint", { breakpointId });
+  expect(bRemoveOwned).toEqual({ id: expect.any(Number), result: {} });
+  const pausesBoth = A.pauseCount;
+  await triggerHit();
+  expect(A.pauseCount).toBe(pausesBoth + 1);
+  await B.send("Debugger.disable");
+
   // objectId isolation: B presenting A's handle is rejected, and B's
   // releaseObject / releaseObjectGroup cannot invalidate it for A.
   const evalA = await A.send("Runtime.evaluate", {

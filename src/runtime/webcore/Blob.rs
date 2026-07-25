@@ -1225,6 +1225,8 @@ impl BlobExt for Blob {
     }
 
     fn fd_cached_stream(&self, this_value: JSValue) -> Option<JSValue> {
+        // `stream_get_cached` is `uncheckedDowncast<JSBlob>`.
+        js::from_js(this_value)?;
         let store = self.store.get().as_deref()?;
         let store::Data::File(f) = &store.data else {
             return None;

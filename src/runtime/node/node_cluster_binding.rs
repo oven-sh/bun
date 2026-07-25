@@ -127,8 +127,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Ok(JSValue::FALSE);
     }
 
-    // Backoff means the message was queued behind a pending handle ack and will
-    // still be delivered, so only Failure reports false.
+    // Backoff still delivers (queued behind a pending handle ack), so only Failure reports false.
     Ok(JSValue::TRUE)
 }
 
@@ -254,8 +253,7 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
 
     let success =
         ipc_data.serialize_and_send(global, message, is_internal, JSValue::NULL, zig_handle);
-    // Backoff means the message (and any handle fd) was queued behind a pending
-    // handle ack and will still be delivered, so only Failure reports false.
+    // Backoff still delivers (queued behind a pending handle ack), so only Failure reports false.
     Ok(if success == SerializeAndSendResult::Failure {
         JSValue::FALSE
     } else {

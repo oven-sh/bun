@@ -785,6 +785,13 @@ var require_wasi = __commonJS({
 
     var WASI = class WASI {
       constructor(wasiConfig = {}) {
+        {
+          const permission = require("internal/permission");
+          if (permission.enabled && !permission.has("wasi")) {
+            // node_wasi.cc WASI::New
+            throw permission.accessDeniedError("wasi");
+          }
+        }
         const defaultConfig = getDefaults();
         this.lastStdin = 0;
         this.sleep = wasiConfig.sleep || defaultConfig.sleep;

@@ -37,6 +37,11 @@ class Session extends EventEmitter {
   #profilerEnabled = false;
 
   connect() {
+    const permission = require("internal/permission");
+    if (permission.enabled && !permission.has("inspector")) {
+      // inspector_agent.cc Agent::Start under the permission model
+      throw permission.accessDeniedError("inspector");
+    }
     if (this.#connected) {
       throw new Error("Session is already connected");
     }

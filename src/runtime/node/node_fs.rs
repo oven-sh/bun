@@ -521,6 +521,94 @@ pub enum Flavor {
 // AsyncFSTask / UVFSRequest / NewAsyncCpTask / AsyncReaddirRecursiveTask are
 // the thread-pool wrappers that back every `fs.promises.*` call (and the shell
 // `cp` builtin).
+/// Node's fs permission checks: the `THROW_IF_INSUFFICIENT_PERMISSIONS` sites
+/// in node_file.cc, keyed by argument struct. The `resource` on a denial is
+/// the path exactly as the caller passed it (Node reports `ToNamespacedPath`
+/// output, which is the input path on POSIX).
+pub(crate) mod fs_perm {
+    use crate::node::types::{PathLike, PathOrFileDescriptor};
+    use crate::permission::{self, Scope};
+
+    pub struct Denied {
+        pub scope: Scope,
+        pub resource: Vec<u8>,
+    }
+
+    pub(crate) fn check(scope: Scope, path: &[u8]) -> Option<Denied> {
+        if permission::is_granted(scope, Some(path)) {
+            None
+        } else {
+            Some(Denied {
+                scope,
+                resource: path.to_vec(),
+            })
+        }
+    }
+
+    pub(crate) fn read(path: &PathLike) -> Option<Denied> {
+        check(Scope::FileSystemRead, path.slice())
+    }
+
+    pub(crate) fn write(path: &PathLike) -> Option<Denied> {
+        check(Scope::FileSystemWrite, path.slice())
+    }
+
+    /// `CheckOpenPermissions` in node_file.cc: the open flags decide which of
+    /// the two fs scopes the path needs.
+    pub(crate) fn open(path: &PathLike, flags: i32) -> Option<Denied> {
+        let rw = flags & (bun_sys::O::RDONLY | bun_sys::O::WRONLY | bun_sys::O::RDWR);
+        // Flags with write-like side effects even when opening read-only
+        // (O_TEMPORARY exists only on Windows libuv; Bun's flag parser maps it
+        // into these POSIX-shaped bits before this point).
+        let write_as_side_effect =
+            flags & (bun_sys::O::APPEND | bun_sys::O::CREAT | bun_sys::O::TRUNC) != 0;
+        if rw != bun_sys::O::WRONLY {
+            if let Some(denied) = read(path) {
+                return Some(denied);
+            }
+        }
+        if rw != bun_sys::O::RDONLY || write_as_side_effect {
+            if let Some(denied) = write(path) {
+                return Some(denied);
+            }
+        }
+        None
+    }
+
+    /// [`open`] when the argument may be an already-open fd, which Node does
+    /// not re-check.
+    pub(crate) fn open_path_or_fd(path: &PathOrFileDescriptor, flags: i32) -> Option<Denied> {
+        match path {
+            PathOrFileDescriptor::Path(path) => open(path, flags),
+            PathOrFileDescriptor::Fd(_) => None,
+        }
+    }
+
+    /// node's lib appends the `XXXXXX` template before the binding sees a
+    /// mkdtemp prefix, so both the grant lookup and the reported resource
+    /// carry it.
+    pub(crate) fn mkdtemp(prefix: &PathLike) -> Option<Denied> {
+        let mut tmpl = Vec::with_capacity(prefix.slice().len() + 6);
+        tmpl.extend_from_slice(prefix.slice());
+        tmpl.extend_from_slice(b"XXXXXX");
+        if permission::is_granted(Scope::FileSystemWrite, Some(&tmpl)) {
+            None
+        } else {
+            Some(Denied {
+                scope: Scope::FileSystemWrite,
+                resource: tmpl,
+            })
+        }
+    }
+
+    pub(crate) fn write_path_or_fd(path: &PathOrFileDescriptor) -> Option<Denied> {
+        match path {
+            PathOrFileDescriptor::Path(path) => write(path),
+            PathOrFileDescriptor::Fd(_) => None,
+        }
+    }
+}
+
 mod _async_tasks {
     use super::*;
 
@@ -1024,6 +1112,14 @@ mod _async_tasks {
     /// than a silent UAF/leak.
     pub trait FsArgument: Sized + Unprotect {
         const HAVE_ABORT_SIGNAL: bool = false;
+        /// The permission check node_file.cc performs for this operation's
+        /// arguments; `None` when granted. Callers gate on
+        /// [`crate::permission::is_enabled`] first, so implementations may
+        /// assume the model is on.
+        #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            None
+        }
         /// `Arguments.fromJS(ctx, &slice)` — parse this argument set from a JS
         /// call frame. Every `args::*` struct already exposes an inherent
         /// `from_js`; the trait forwards to it so the generic `Bindings` in
@@ -1048,10 +1144,11 @@ mod _async_tasks {
     /// methods each `args::*` struct already defines.
     /// [`Unprotect`] is implemented per-type alongside.
     macro_rules! impl_fs_argument {
-    ( $( $ty:ty ),+ $(,)? ) => {
+    ( $( $ty:ty $( => |$a:ident| $check:expr )? ),+ $(,)? ) => {
         $( impl FsArgument for $ty {
             #[inline] fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> { <$ty>::from_js(ctx, arguments) }
             #[inline] fn to_thread_safe(&mut self) { <$ty>::to_thread_safe(self) }
+            $( #[inline] fn permission_denied(&self) -> Option<super::fs_perm::Denied> { let $a = self; $check } )?
         } )+
     };
     // Fd-only types — `to_thread_safe` is a no-op (these hold only `FD`/scalars).
@@ -1065,32 +1162,42 @@ mod _async_tasks {
         } )+
     };
 }
+    use super::fs_perm;
     impl_fs_argument!(
-        args::Rename,
-        args::Truncate,
+        // Check shapes mirror node_file.cc: Rename/Link guard read+write on
+        // the source and write on the destination; Symlink guards the target
+        // both ways plus write on the link path.
+        args::Rename => |a| fs_perm::read(&a.old_path)
+            .or_else(|| fs_perm::write(&a.old_path))
+            .or_else(|| fs_perm::write(&a.new_path)),
+        args::Truncate => |a| fs_perm::write_path_or_fd(&a.path),
         args::FdVectorIo,
         args::FTruncate,
-        args::Chown,
-        args::Lutimes,
-        args::Chmod,
-        args::StatFS,
-        args::Stat,
-        args::Link,
-        args::Symlink,
-        args::Readlink,
-        args::Realpath,
-        args::Unlink,
-        args::Rm,
-        args::RmDir,
-        args::Mkdir,
-        args::MkdirTemp,
-        args::Readdir,
-        args::Open,
+        args::Chown => |a| fs_perm::write(&a.path),
+        args::Lutimes => |a| fs_perm::write(&a.path),
+        args::Chmod => |a| fs_perm::write(&a.path),
+        args::StatFS => |a| fs_perm::read(&a.path),
+        args::Stat => |a| fs_perm::read(&a.path),
+        args::Link => |a| fs_perm::read(&a.old_path)
+            .or_else(|| fs_perm::write(&a.old_path))
+            .or_else(|| fs_perm::write(&a.new_path)),
+        args::Symlink => |a| fs_perm::read(&a.target_path)
+            .or_else(|| fs_perm::write(&a.target_path))
+            .or_else(|| fs_perm::write(&a.new_path)),
+        args::Readlink => |a| fs_perm::read(&a.path),
+        args::Realpath => |a| fs_perm::read(&a.path),
+        args::Unlink => |a| fs_perm::write(&a.path),
+        args::Rm => |a| fs_perm::write(&a.path),
+        args::RmDir => |a| fs_perm::write(&a.path),
+        args::Mkdir => |a| fs_perm::write(&a.path),
+        args::MkdirTemp => |a| fs_perm::mkdtemp(&a.prefix),
+        args::Readdir => |a| fs_perm::read(&a.path),
+        args::Open => |a| fs_perm::open(&a.path, a.flags.as_int()),
         args::Write,
         args::Read,
-        args::Exists,
-        args::Access,
-        args::CopyFile,
+        args::Exists => |a| a.path.as_ref().and_then(fs_perm::read),
+        args::Access => |a| fs_perm::read(&a.path),
+        args::CopyFile => |a| fs_perm::read(&a.src).or_else(|| fs_perm::write(&a.dest)),
     );
     impl_fs_argument!(@fd
         args::Fchown, args::FChmod, args::Fstat, args::Close, args::Futimes,
@@ -1101,6 +1208,10 @@ mod _async_tasks {
     // `signal()` exposes it to `AsyncFSTask::run_from_js_thread`.
     impl FsArgument for args::ReadFile {
         const HAVE_ABORT_SIGNAL: bool = true;
+        #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            super::fs_perm::open_path_or_fd(&self.path, self.flag.as_int())
+        }
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::ReadFile::from_js(ctx, arguments)
@@ -1116,6 +1227,10 @@ mod _async_tasks {
     }
     impl FsArgument for args::WriteFile {
         const HAVE_ABORT_SIGNAL: bool = true;
+        #[inline]
+        fn permission_denied(&self) -> Option<super::fs_perm::Denied> {
+            super::fs_perm::open_path_or_fd(&self.file, self.flag.as_int())
+        }
         #[inline]
         fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             args::WriteFile::from_js(ctx, arguments)
@@ -10207,6 +10322,22 @@ pub enum NodeFSFunctionEnum {
 }
 
 impl NodeFSFunctionEnum {
+    /// Ops whose permission check sits before the sync/async split in
+    /// node_file.cc, so even the callback form throws synchronously instead of
+    /// delivering the denial through the callback.
+    pub const fn permission_check_throws_sync(self) -> bool {
+        matches!(
+            self,
+            Self::Chmod
+                | Self::Utimes
+                | Self::Lutimes
+                | Self::Mkdir
+                | Self::Rmdir
+                | Self::Readlink
+                | Self::Symlink
+        )
+    }
+
     /// Maps each async-FS function to its event-loop [`TaskTag`] (the `tags!`
     /// macro in `bun_event_loop::task_tag` declares one constant per variant).
     pub const fn task_tag(self) -> bun_event_loop::TaskTag {

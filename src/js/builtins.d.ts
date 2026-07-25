@@ -585,6 +585,7 @@ declare function $ERR_INVALID_CHAR(name, field?): TypeError;
 declare function $ERR_HTTP_INVALID_HEADER_VALUE(value: string, name: string): TypeError;
 declare function $ERR_HTTP_HEADERS_SENT(action: string): Error;
 declare function $ERR_INVALID_PROTOCOL(proto, expected): TypeError;
+declare function $ERR_ACCESS_DENIED(message: string): Error;
 declare function $ERR_INVALID_STATE(message: string): Error;
 declare function $ERR_INVALID_STATE_TypeError(message: string): TypeError;
 declare function $ERR_INVALID_STATE_RangeError(message: string): RangeError;

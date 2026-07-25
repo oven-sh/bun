@@ -21,7 +21,9 @@ use bun_jsc::{
     CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _,
 };
 
-use crate::node::util::validators;
+unsafe extern "C" {
+    safe fn Bun__Permission__requireInternalPermissionModule(global: &JSGlobalObject) -> JSValue;
+}
 
 /// Fast path for every enforcement site: when `--permission` is absent this is
 /// the only thing a check costs. Written once, before any JS runs.
@@ -251,6 +253,11 @@ static STATE: RwLock<State> = RwLock::new(State::new());
 pub struct CliGrants<'a> {
     pub fs_read: &'a [&'static [u8]],
     pub fs_write: &'a [&'static [u8]],
+    /// Read grants Node adds without a flag: the entrypoint script and every
+    /// preloaded (`-r`) module (`env.cc`, "Implicit allow entrypoint to
+    /// kFileSystemRead"). Kept separate from `fs_read` so the
+    /// comma-separated-list warning only looks at what the user typed.
+    pub implicit_fs_read: &'a [&'a [u8]],
     pub child: bool,
     pub worker: bool,
     pub inspector: bool,
@@ -264,6 +271,9 @@ pub fn init_from_cli(grants: &CliGrants<'_>) {
     let mut st = State::new();
     apply_fs(&mut st.fs_read, grants.fs_read);
     apply_fs(&mut st.fs_write, grants.fs_write);
+    for path in grants.implicit_fs_read {
+        st.fs_read.grant(resolve_against_cwd(path));
+    }
     st.child = grants.child;
     st.worker = grants.worker;
     st.inspector = grants.inspector;
@@ -386,13 +396,22 @@ fn drop_scope(scope: Scope, reference: Option<&[u8]>) {
 fn resolve_against_cwd(input: &[u8]) -> Vec<u8> {
     // `resolve_*_t` needs a destination plus a scratch buffer, each large
     // enough for the cwd plus the input.
-    let cap = bun_core::MAX_PATH_BYTES + input.len() + 2;
+    let cap = 2 * bun_core::MAX_PATH_BYTES + input.len() + 2;
     let mut buf = vec![0u8; cap];
     let mut scratch = vec![0u8; cap];
+    // `resolve_*_t` reads the cwd from `FileSystem.instance`, which is not
+    // initialized yet when `--allow-fs-*` grants are resolved during CLI
+    // parsing; hand it the cwd explicitly so a relative grant works there too.
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd: &[u8] = match bun_sys::getcwd_z(&mut cwd_buf) {
+        Ok(cwd) => cwd.as_bytes(),
+        Err(_) => b"",
+    };
+    let paths: &[&[u8]] = &[cwd, input];
     #[cfg(windows)]
-    let resolved = crate::node::path::resolve_windows_t::<u8>(&[input], &mut buf, &mut scratch);
+    let resolved = crate::node::path::resolve_windows_t::<u8>(paths, &mut buf, &mut scratch);
     #[cfg(not(windows))]
-    let resolved = crate::node::path::resolve_posix_t::<u8>(&[input], &mut buf, &mut scratch);
+    let resolved = crate::node::path::resolve_posix_t::<u8>(paths, &mut buf, &mut scratch);
     match resolved {
         Ok(slice) => slice.to_vec(),
         // A path we cannot resolve is stored/looked up verbatim; it then only
@@ -537,16 +556,64 @@ fn scope_and_reference(
     frame: &CallFrame,
 ) -> JsResult<(Option<Scope>, Option<bun_core::ZigStringSlice>)> {
     let [scope_arg, reference_arg] = frame.arguments_as_array::<2>();
-    validators::validate_string(global, scope_arg, "scope")?;
+    if !scope_arg.is_string() {
+        return Err(global.throw_invalid_argument_type_value(b"scope", b"string", scope_arg));
+    }
     let scope_slice = scope_arg.to_slice(global)?;
     let scope = Scope::from_name(scope_slice.slice());
 
     if reference_arg.is_undefined_or_null() {
         return Ok((scope, None));
     }
-    validators::validate_string(global, reference_arg, "reference")?;
+    // Node accepts a Buffer reference (`isBuffer` -> `validateBuffer` in
+    // internal/process/permission.js); everything else must be a string.
+    if let Some(buffer) = reference_arg
+        .js_type()
+        .is_typed_array_or_array_buffer()
+        .then(|| reference_arg.as_array_buffer(global))
+        .flatten()
+    {
+        let bytes = buffer.byte_slice().to_vec();
+        return Ok((scope, Some(bun_core::ZigStringSlice::init_owned(bytes))));
+    }
+    if !reference_arg.is_string() {
+        return Err(global.throw_invalid_argument_type_value(
+            b"reference",
+            b"string",
+            reference_arg,
+        ));
+    }
     let reference = reference_arg.to_slice(global)?;
     Ok((scope, Some(reference)))
+}
+
+/// `Permission::is_scope_granted` / `Permission::Drop` publish to the
+/// `node:permission-model:<scope>` diagnostics channels; the channel registry
+/// lives in JS, so route through `internal/permission`'s
+/// `publishPermissionEvent` (which also holds node's re-entrancy guard).
+fn publish_permission_event(
+    global: &JSGlobalObject,
+    scope: Scope,
+    resource: &[u8],
+    dropped: bool,
+) -> JsResult<()> {
+    let module = Bun__Permission__requireInternalPermissionModule(global);
+    if global.has_exception() {
+        return Err(JsError::Thrown);
+    }
+    let Some(publish) = module.get(global, b"publishPermissionEvent")? else {
+        return Ok(());
+    };
+    publish.call(
+        global,
+        module,
+        &[
+            ZigString::from_utf8(scope.permission_string().as_bytes()).to_js(global),
+            ZigString::from_utf8(resource).to_js(global),
+            JSValue::from(dropped),
+        ],
+    )?;
+    Ok(())
 }
 
 /// `process.permission` — only defined when `--permission` is on, matching
@@ -564,8 +631,20 @@ pub extern "C" fn Bun__Permission__createObject(global: &JSGlobalObject) -> JSVa
             // Node returns false for an empty reference string rather than
             // treating it as "no reference".
             Some(reference) if reference.slice().is_empty() => JSValue::FALSE,
-            Some(reference) => JSValue::from(is_granted(scope, Some(reference.slice()))),
-            None => JSValue::from(is_granted(scope, None)),
+            Some(reference) => {
+                let granted = is_granted(scope, Some(reference.slice()));
+                if !granted {
+                    publish_permission_event(global, scope, reference.slice(), false)?;
+                }
+                JSValue::from(granted)
+            }
+            None => {
+                let granted = is_granted(scope, None);
+                if !granted {
+                    publish_permission_event(global, scope, b"", false)?;
+                }
+                JSValue::from(granted)
+            }
         })
     }
 
@@ -573,7 +652,9 @@ pub extern "C" fn Bun__Permission__createObject(global: &JSGlobalObject) -> JSVa
     fn drop_fn(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let (scope, reference) = scope_and_reference(global, frame)?;
         if let Some(scope) = scope {
-            drop_scope(scope, reference.as_ref().map(|r| r.slice()));
+            let reference = reference.as_ref().map(|r| r.slice());
+            drop_scope(scope, reference);
+            publish_permission_event(global, scope, reference.unwrap_or(b""), true)?;
         }
         Ok(JSValue::UNDEFINED)
     }
@@ -625,11 +706,127 @@ pub(crate) fn net_access_denied_error(
     ))
 }
 
+/// `$newRustFunction("permission.rs", "jsIsGranted", 2)` — the `has()`
+/// predicate for builtin modules, immune to user tampering with
+/// `process.permission`. Callers pass builtin string literals, so no
+/// argument validation.
+pub(crate) fn js_is_granted(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    let [scope_arg, reference_arg] = frame.arguments_as_array::<2>();
+    let scope_slice = scope_arg.to_slice(global)?;
+    let Some(scope) = Scope::from_name(scope_slice.slice()) else {
+        return Ok(JSValue::FALSE);
+    };
+    if reference_arg.is_undefined_or_null() {
+        return Ok(JSValue::from(is_granted(scope, None)));
+    }
+    let reference = reference_arg.to_slice(global)?;
+    Ok(JSValue::from(is_granted(scope, Some(reference.slice()))))
+}
+
+/// The permission-model flags a sandboxed Node parent copies into
+/// `NODE_OPTIONS` when spawning `process.execPath`
+/// (`copyPermissionModelFlagsToEnv` in lib/child_process.js). Bun's
+/// child_process does the same, and this parses them back out at startup so
+/// children inherit the sandbox. Every other `NODE_OPTIONS` token is ignored,
+/// as before.
+pub struct NodeOptionsGrants {
+    pub permission: bool,
+    pub fs_read: Vec<&'static [u8]>,
+    pub fs_write: Vec<&'static [u8]>,
+    pub child: bool,
+    pub worker: bool,
+    pub inspector: bool,
+    pub wasi: bool,
+    pub net: bool,
+    pub addon: bool,
+}
+
+pub fn grants_from_node_options() -> Option<NodeOptionsGrants> {
+    let value = std::env::var("NODE_OPTIONS").ok()?;
+    if !value.contains("--permission") {
+        return None;
+    }
+    let mut grants = NodeOptionsGrants {
+        permission: false,
+        fs_read: Vec::new(),
+        fs_write: Vec::new(),
+        child: false,
+        worker: false,
+        inspector: false,
+        wasi: false,
+        net: false,
+        addon: false,
+    };
+    // Node splits NODE_OPTIONS on whitespace with no quoting; the flags Node
+    // itself injects are always in `--flag=value` form.
+    for token in value.split_ascii_whitespace() {
+        match token {
+            "--permission" => grants.permission = true,
+            "--allow-child-process" => grants.child = true,
+            "--allow-worker" => grants.worker = true,
+            "--allow-inspector" => grants.inspector = true,
+            "--allow-wasi" => grants.wasi = true,
+            "--allow-net" => grants.net = true,
+            "--allow-addons" => grants.addon = true,
+            _ => {
+                if let Some(value) = token.strip_prefix("--allow-fs-read=") {
+                    grants
+                        .fs_read
+                        .push(&*Box::leak(Box::<[u8]>::from(value.as_bytes())));
+                } else if let Some(value) = token.strip_prefix("--allow-fs-write=") {
+                    grants
+                        .fs_write
+                        .push(&*Box::leak(Box::<[u8]>::from(value.as_bytes())));
+                }
+            }
+        }
+    }
+    grants.permission.then_some(grants)
+}
+
 /// Read by `BunProcess.cpp` to decide whether to define `process.permission`
 /// and whether `process.binding()` is denied.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Permission__isEnabled() -> bool {
     is_enabled()
+}
+
+/// Gate for C++ callers (`process.chdir`, `process.report.writeReport`):
+/// throws `ERR_ACCESS_DENIED` and returns true when `path` is not covered by
+/// the requested fs scope. A null `ptr` means "the cwd" (what node reports
+/// for `writeReport()` with no filename).
+///
+/// SAFETY precondition: `ptr` is either null or valid for `len` bytes.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__Permission__throwIfFsDenied(
+    global: &JSGlobalObject,
+    is_write: bool,
+    ptr: *const core::ffi::c_char,
+    len: usize,
+) -> bool {
+    if !is_enabled() {
+        return false;
+    }
+    let scope = if is_write {
+        Scope::FileSystemWrite
+    } else {
+        Scope::FileSystemRead
+    };
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let path: &[u8] = if ptr.is_null() {
+        match bun_sys::getcwd_z(&mut cwd_buf) {
+            Ok(cwd) => cwd.as_bytes(),
+            Err(_) => b"",
+        }
+    } else {
+        // SAFETY: per fn precondition.
+        unsafe { core::slice::from_raw_parts(ptr.cast::<u8>(), len) }
+    };
+    if is_granted(scope, Some(path)) {
+        return false;
+    }
+    let _ = throw_access_denied(global, scope, path);
+    true
 }
 
 /// `process.binding()` is denied outright under `--permission`

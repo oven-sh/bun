@@ -296,6 +296,112 @@ for (const { input } of [{ input: { baz: "~0.0.3", moo: "~0.1.0" } }]) {
   });
 }
 
+// https://github.com/oven-sh/bun/issues/7284
+for (const flag of ["-E", "--exact"]) {
+  it(`should accept ${flag} and write exact version on update <pkg>`, async () => {
+    const urls: string[] = [];
+    const registry = {
+      "0.0.3": { bin: { "baz-run": "index.js" } },
+      "0.0.5": { bin: { "baz-exec": "index.js" } },
+      latest: "0.0.3",
+    };
+    setHandler(dummyRegistry(urls, registry));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: { baz: "~0.0.3" },
+      }),
+    );
+    {
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--linker=hoisted"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+    }
+    await rm(join(package_dir, "node_modules"), { force: true, recursive: true });
+    urls.length = 0;
+    registry.latest = "0.0.5";
+    setHandler(dummyRegistry(urls, registry));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "update", flag, "baz", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await new Response(stderr).text();
+    const out = await new Response(stdout).text();
+    expect(err).not.toContain("Invalid Argument");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("baz@0.0.5");
+    expect(await exited).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: { baz: "0.0.5" },
+    });
+  });
+
+  it(`should accept ${flag} and write exact versions on update --latest`, async () => {
+    const urls: string[] = [];
+    const registry = {
+      "0.0.3": { bin: { "baz-run": "index.js" } },
+      "0.0.5": { bin: { "baz-exec": "index.js" } },
+      latest: "0.0.3",
+    };
+    setHandler(dummyRegistry(urls, registry));
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: { baz: "^0.0.3" },
+      }),
+    );
+    {
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install", "--linker=hoisted"],
+        cwd: package_dir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const err = await new Response(stderr).text();
+      expect(err).not.toContain("error:");
+      expect(await exited).toBe(0);
+    }
+    urls.length = 0;
+    registry.latest = "0.0.5";
+    setHandler(dummyRegistry(urls, registry));
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "update", flag, "--latest", "--linker=hoisted"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await new Response(stderr).text();
+    const out = await new Response(stdout).text();
+    expect(err).not.toContain("Invalid Argument");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("0.0.5");
+    expect(await exited).toBe(0);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "foo",
+      dependencies: { baz: "0.0.5" },
+    });
+  });
+}
+
 it("lockfile should not be modified when there are no version changes, issue#5888", async () => {
   // Install packages
   const urls: string[] = [];

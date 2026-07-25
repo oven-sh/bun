@@ -1897,12 +1897,6 @@ impl QuicSession {
         }
     }
 
-    fn close_with_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        let (app, code, reason) = self.parse_close_options(global, options)?;
-        self.apply_close(app, code, &reason);
-        Ok(())
-    }
-
     fn any_stream_undelivered(&self) -> bool {
         self.streams.get().iter().any(|&s| {
             // SAFETY: pointers in `streams` are unregistered before their
@@ -1980,8 +1974,23 @@ impl QuicSession {
                 // `inner.destroying` and finished its half before reaching
                 // here, so teardown() MUST run; report a parse failure
                 // instead of propagating past it.
-                if let Err(e) = self.close_with_options(global, options) {
-                    global.report_uncaught_exception_from_error(e);
+                match self.parse_close_options(global, options) {
+                    Ok((app, code, reason)) => {
+                        if let Some(c) = self.conn() {
+                            if app || code != 0 || reason.len() > 1 {
+                                let r = core::ffi::CStr::from_bytes_until_nul(&reason)
+                                    .unwrap_or(c"close");
+                                c.abort_error(app, code.min(u32::MAX as u64) as c_uint, r);
+                            } else {
+                                // apply_close's c.close() stalls on a server
+                                // conn with live bidi streams; destroy() must
+                                // always reach the wire, so take lsquic's
+                                // immediate-close NO_ERROR path.
+                                c.abort();
+                            }
+                        }
+                    }
+                    Err(e) => global.report_uncaught_exception_from_error(e),
                 }
                 if let Some(endpoint) = self.endpoint_ref() {
                     endpoint.drive_engines_once();

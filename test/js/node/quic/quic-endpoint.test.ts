@@ -267,3 +267,36 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// endpoint.destroy() without an error used to cascade as a bare
+// session.destroy(), which aborts silently (no CONNECTION_CLOSE on the
+// wire), so the peer only learned via its idle timer. With a 30s idle
+// timeout the await below hangs well past the test's default timeout.
+describe("endpoint.destroy() without an error", () => {
+  test("emits CONNECTION_CLOSE so the connected peer's session.closed settles", async () => {
+    const tp = { maxIdleTimeout: 30 };
+    const serverHs = Promise.withResolvers<void>();
+    const server = await listen(
+      (s: any) => {
+        s.onerror = () => {};
+        s.closed.catch(() => {});
+        s.onhandshake = () => serverHs.resolve();
+      },
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["echo"], transportParams: tp },
+    );
+    await using endpoint = new QuicEndpoint();
+    const client = await connect(server.address, {
+      endpoint,
+      alpn: "echo",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    client.closed.catch(() => {});
+    await client.opened;
+    await serverHs.promise;
+
+    server.destroy();
+    await client.closed;
+    expect(client.destroyed).toBe(true);
+  });
+});

@@ -117,3 +117,19 @@ exports[`toMatchSnapshot errors should throw if arguments are in the wrong order
   "a": "oops",
 }
 `;
+
+exports[`property matchers preserve class name and handle shared references 5`] = `
+{
+  "id": Any<Number>,
+  "ts": [native code],
+}
+`;
+
+exports[`property matchers preserve class name and handle shared references 6`] = `
+{
+  "inner": {
+    "id": Any<Number>,
+    "parent": [Circular],
+  },
+}
+`;

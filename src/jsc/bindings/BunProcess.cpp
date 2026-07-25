@@ -2675,6 +2675,10 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "napi_build_version"_s), JSC::jsNumber(Napi::DEFAULT_NAPI_VERSION), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_builtin_shareable_builtins"_s), shareableBuiltins, 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_byteorder"_s), JSC::jsString(vm, String("little"_s)), 0);
+    // Node builds with amaro (TypeScript type-stripping); Bun implements the
+    // same surface natively (`module.stripTypeScriptTypes`, TS execution), so
+    // report the capability. Node reports a boolean `true` here.
+    variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_use_amaro"_s), JSC::jsBoolean(true), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
 
     config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);

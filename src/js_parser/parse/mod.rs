@@ -155,12 +155,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
             if Self::IS_TYPESCRIPT_ENABLED {
+                let type_args_lo = p.lexer.start as u32;
                 let _ = p.skip_type_script_type_arguments::<false, false>()?; // isInsideJSXElement
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_args_lo);
             }
         }
 
         if Self::IS_TYPESCRIPT_ENABLED {
             if p.lexer.is_contextual_keyword(b"implements") {
+                let implements_lo = p.lexer.start as u32;
                 p.lexer.next()?;
 
                 loop {
@@ -170,6 +173,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     p.lexer.next()?;
                 }
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, implements_lo);
             }
         }
 
@@ -212,6 +216,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 opts.ts_decorators = p.parse_type_script_decorators()?;
                 opts.has_class_decorators = class_opts.ts_decorators.len() > 0;
                 has_decorators = has_decorators || opts.ts_decorators.len() > 0;
+            }
+
+            if p.ts_strip_active() {
+                opts.ts_strip_member_lo = Some(p.lexer.start as u32);
             }
 
             // This property may turn out to be a type in TypeScript, which should be ignored
@@ -460,6 +468,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 type_colon_range = p.lexer.range();
                 p.lexer.next()?;
                 p.skip_type_script_type(Level::Lowest)?;
+                p.ts_strip_record_to_here(
+                    crate::ts_strip::EntryKind::Blank,
+                    type_colon_range.loc.start as u32,
+                );
             }
 
             // There may be a "=" after the type (but not after an "as" cast)
@@ -547,9 +559,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // whether this is an arrow function, and only pick an arrow function if
             // there were no conversion errors.
             if p.lexer.token == T::TEqualsGreaterThan
-                || (Self::IS_TYPESCRIPT_ENABLED
-                    && invalid_log.is_empty()
-                    && p.try_skip_type_script_arrow_return_type_with_backtracking())
+                || (Self::IS_TYPESCRIPT_ENABLED && invalid_log.is_empty() && {
+                    let colon_lo = p.lexer.start as u32;
+                    let skipped = p.try_skip_type_script_arrow_return_type_with_backtracking();
+                    if skipped {
+                        p.ts_strip_record_to_here(
+                            crate::ts_strip::EntryKind::ArrowReturnType,
+                            colon_lo,
+                        );
+                    }
+                    skipped
+                })
                 || opts.force_arrow_fn
             {
                 p.maybe_comma_spread_error(comma_after_spread);
@@ -701,10 +721,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Even anonymous classes can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
+            let type_params_lo = p.lexer.start as u32;
             let _ = p.skip_type_script_type_parameters(
                 TypeParameterFlag::ALLOW_IN_OUT_VARIANCE_ANNOTATIONS
                     | TypeParameterFlag::ALLOW_CONST_MODIFIER,
             )?;
+            p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_params_lo);
         }
         let mut class_opts = ParseClassOptions {
             allow_ts_decorators: true,
@@ -727,6 +749,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
+                p.ts_strip_record_to_here(
+                    crate::ts_strip::EntryKind::BlankStmt,
+                    loc.start as u32,
+                );
                 return Ok(p.s(S::TypeScript {}, loc));
             }
         }
@@ -1280,13 +1306,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_definite_assignment_assertion =
                     p.lexer.token == T::TExclamation && !p.lexer.has_newline_before;
                 if is_definite_assignment_assertion {
+                    let bang_lo = p.lexer.start as u32;
+                    let bang_hi = p.lexer.end as u32;
                     p.lexer.next()?;
+                    p.ts_strip_record_span(crate::ts_strip::EntryKind::Blank, bang_lo, bang_hi);
                 }
 
                 // "let foo: number"
                 if is_definite_assignment_assertion || p.lexer.token == T::TColon {
+                    let colon_lo = p.lexer.start as u32;
                     p.lexer.expect(T::TColon)?;
                     p.skip_type_script_type(Level::Lowest)?;
+                    p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, colon_lo);
                 }
             }
 
@@ -1666,11 +1697,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if Self::IS_TYPESCRIPT_ENABLED
                         && (!p.is_jsx_enabled() || p.is_ts_arrow_fn_jsx()?)
                     {
+                        let type_params_lo = p.lexer.start as u32;
                         match p
                             .try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
                             ) {
                             SkipTypeParameterResult::DidNotSkipAnything => {}
                             result => {
+                                p.ts_strip_record_to_here(
+                                    crate::ts_strip::EntryKind::ArrowTypeParams {
+                                        is_async: true,
+                                    },
+                                    type_params_lo,
+                                );
                                 p.lexer.next()?;
                                 return p.parse_paren_expr(
                                     async_range.loc,

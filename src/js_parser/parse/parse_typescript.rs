@@ -188,10 +188,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 _ => {
                     // "@x<y>" / "@x.y<z>"
-                    if Self::IS_TYPESCRIPT_ENABLED
-                        && p.skip_type_script_type_arguments::<false, false>()?
-                    {
-                        continue;
+                    if Self::IS_TYPESCRIPT_ENABLED {
+                        let type_args_lo = p.lexer.start as u32;
+                        if p.skip_type_script_type_arguments::<false, false>()? {
+                            p.ts_strip_record_to_here(
+                                crate::ts_strip::EntryKind::Blank,
+                                type_args_lo,
+                            );
+                            continue;
+                        }
                     }
                     break;
                 }
@@ -210,6 +215,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
+        // amaro rejects the deprecated identifier-named `module N {}` form
+        // (in `declare` contexts too) before doing anything else.
+        if p.ts_strip_active()
+            && p.lexer.token == T::TIdentifier
+            && p.source.contents[loc.start as usize..].starts_with(b"module")
+        {
+            p.ts_strip_record_span(
+                crate::ts_strip::EntryKind::Unsupported(
+                    crate::ts_strip::UnsupportedKind::ModuleKeyword,
+                ),
+                loc.start as u32,
+                p.lexer.end as u32,
+            );
+        }
         p.lexer.next()?;
 
         // Generate the namespace object
@@ -401,8 +420,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if opts.is_module_scope {
                 p.local_type_names.put(name_text, true)?;
             }
+            p.ts_strip_record_to_here(crate::ts_strip::EntryKind::BlankStmt, loc.start as u32);
             return Ok(p.s(S::TypeScript {}, loc));
         }
+
+        // Reaching here means the namespace has runtime output, which
+        // strip-only mode cannot express.
+        p.ts_strip_record_to_here(
+            crate::ts_strip::EntryKind::Unsupported(crate::ts_strip::UnsupportedKind::Namespace),
+            loc.start as u32,
+        );
 
         let mut arg_ref = Ref::NONE;
         if !opts.is_typescript_declare {
@@ -548,8 +575,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if opts.is_typescript_declare {
             // "import type foo = require('bar');"
             // "import type foo = bar.baz;"
+            p.ts_strip_record_to_here(crate::ts_strip::EntryKind::BlankStmt, loc.start as u32);
             return Ok(p.s(S::TypeScript {}, loc));
         }
+
+        // A live `import foo = …` has runtime semantics strip mode cannot
+        // express.
+        p.ts_strip_record_to_here(
+            crate::ts_strip::EntryKind::Unsupported(
+                crate::ts_strip::UnsupportedKind::ImportEquals,
+            ),
+            loc.start as u32,
+        );
 
         let ref_ = p
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
@@ -737,8 +774,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.has_non_local_export_declare_inside_namespace = true;
             }
 
+            p.ts_strip_record_to_here(crate::ts_strip::EntryKind::BlankStmt, loc.start as u32);
             return Ok(p.s(S::TypeScript {}, loc));
         }
+
+        p.ts_strip_record_to_here(
+            crate::ts_strip::EntryKind::Unsupported(crate::ts_strip::UnsupportedKind::Enum),
+            loc.start as u32,
+        );
 
         // Save these for when we do out-of-order enum visiting
         //

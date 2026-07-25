@@ -309,6 +309,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// until a constraint attempt actually backtracks, which is rare in real code.
     pub ts_infer_constraint_backtracks: Vec<u32>,
 
+    /// Strip-mode span recorder for `module.stripTypeScriptTypes` (see
+    /// `crate::ts_strip`). `None` for every normal parse, so recording sites
+    /// cost one null check when the feature is off.
+    pub ts_strip: Option<Box<crate::ts_strip::Recorder>>,
+
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
     /// enabled inside each enum body block since TypeScript requires numeric
@@ -8415,6 +8420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
             has_import_meta: self.has_import_meta,
+            ts_strip: self.take_ts_strip_output(),
 
             hashbang: hashbang.into(),
             // TODO: cross-module constant inlining
@@ -8617,6 +8623,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // literal below is the *only* write to `*out`). ───
         lexer.track_comments = opts.features.minify_identifiers;
         lexer.track_react_suppressions = opts.features.react_compiler.is_enabled();
+        lexer.track_tokens = opts.features.ts_strip_mode;
+        if lexer.track_tokens {
+            // The first token was scanned during `Lexer::init`, before the
+            // flag was set; capture it retroactively.
+            lexer.capture_token();
+        }
 
         if !TYPESCRIPT {
             // This is so it doesn't impact runtime transpiler caching when not in use
@@ -8688,6 +8700,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stack_check: bun_core::StackCheck::init(),
             reported_stack_overflow: core::cell::Cell::new(false),
             ts_infer_constraint_backtracks: Vec::new(),
+            ts_strip: if opts.features.ts_strip_mode {
+                Some(Box::default())
+            } else {
+                None
+            },
             arena,
             then_catch_chain: ThenCatchChain {
                 next_target: null_expr_data(),

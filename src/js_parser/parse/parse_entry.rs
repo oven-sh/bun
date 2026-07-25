@@ -187,6 +187,7 @@ impl<'a> Options<'a> {
                 minify_whitespace: f.minify_whitespace,
                 dead_code_elimination: f.dead_code_elimination,
                 set_breakpoint_on_first_line: f.set_breakpoint_on_first_line,
+                ts_strip_mode: f.ts_strip_mode,
                 trim_unused_imports: f.trim_unused_imports,
                 auto_polyfill_require: f.auto_polyfill_require,
                 replace_exports: Default::default(),

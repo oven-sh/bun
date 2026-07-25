@@ -430,8 +430,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // Skip over types
                 if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon {
+                    let colon_lo = p.lexer.start as u32;
                     p.lexer.expect(T::TColon)?;
                     p.skip_type_script_type(Level::Lowest)?;
+                    p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, colon_lo);
                 }
 
                 p.lexer.expect(T::TCloseParen)?;
@@ -855,7 +857,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         match p.lexer.token {
             T::TClass | T::TConst | T::TFunction | T::TVar | T::TAt => {
                 opts.is_export = true;
-                p.parse_stmt(opts)
+                let stmt = p.parse_stmt(opts)?;
+                p.ts_strip_forward_export(loc.start as u32, &stmt);
+                Ok(stmt)
             }
 
             T::TImport => {
@@ -863,7 +867,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if Self::IS_TYPESCRIPT_ENABLED && (opts.is_module_scope || opts.is_namespace_scope)
                 {
                     opts.is_export = true;
-                    return p.parse_stmt(opts);
+                    let stmt = p.parse_stmt(opts)?;
+                    p.ts_strip_forward_export(loc.start as u32, &stmt);
+                    return Ok(stmt);
                 }
 
                 p.lexer.unexpected()?;
@@ -877,7 +883,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 opts.is_export = true;
-                p.parse_stmt(opts)
+                let stmt = p.parse_stmt(opts)?;
+                p.ts_strip_forward_export(loc.start as u32, &stmt);
+                Ok(stmt)
             }
 
             T::TIdentifier => {
@@ -894,6 +902,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.expect(T::TIdentifier)?;
                         p.lexer.expect_or_insert_semicolon()?;
 
+                        p.ts_strip_record_to_here(
+                            crate::ts_strip::EntryKind::BlankStmt,
+                            loc.start as u32,
+                        );
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -936,6 +948,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     ..Default::default()
                                 };
                                 p.skip_type_script_type_stmt(&mut skipper)?;
+                                p.ts_strip_record_to_here(
+                                    crate::ts_strip::EntryKind::BlankStmt,
+                                    loc.start as u32,
+                                );
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
                             StmtIdentifier::SNamespace
@@ -947,13 +963,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export module Foo {}"
                                 // "export interface Foo {}"
                                 opts.is_export = true;
-                                return p.parse_stmt(opts);
+                                let stmt = p.parse_stmt(opts)?;
+                                p.ts_strip_forward_export(loc.start as u32, &stmt);
+                                return Ok(stmt);
                             }
                             StmtIdentifier::SDeclare => {
                                 // "export declare class Foo {}"
                                 opts.is_export = true;
                                 opts.lexical_decl = LexicalDecl::AllowAll;
-                                return p.parse_stmt(opts);
+                                let stmt = p.parse_stmt(opts)?;
+                                p.ts_strip_forward_export(loc.start as u32, &stmt);
+                                return Ok(stmt);
                             }
                         }
                     }
@@ -997,6 +1017,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let stmt = p.parse_fn_stmt(loc, &mut stmt_opts, Some(async_range))?;
                         if matches!(stmt.data, js_ast::StmtData::STypeScript(_)) {
                             // This was just a type annotation
+                            p.ts_strip_forward_export(loc.start as u32, &stmt);
                             return Ok(stmt);
                         }
 
@@ -1054,6 +1075,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         match &stmt.data {
                             // This was just a type annotation
                             js_ast::StmtData::STypeScript(_) => {
+                                p.ts_strip_forward_export(loc.start as u32, &stmt);
                                 return Ok(stmt);
                             }
 
@@ -1378,6 +1400,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     let value = p.parse_expr(Level::Lowest)?;
                     p.lexer.expect_or_insert_semicolon()?;
+                    p.ts_strip_record_to_here(
+                        crate::ts_strip::EntryKind::Unsupported(
+                            crate::ts_strip::UnsupportedKind::ExportAssignment,
+                        ),
+                        loc.start as u32,
+                    );
                     return Ok(p.s(S::ExportEquals { value }, loc));
                 }
                 p.lexer.unexpected()?;
@@ -1576,6 +1604,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         p.lexer.expect_contextual_keyword(b"from")?;
                                         let _ = p.parse_path()?;
                                         p.lexer.expect_or_insert_semicolon()?;
+                                        p.ts_strip_record_to_here(
+                                            crate::ts_strip::EntryKind::BlankStmt,
+                                            loc.start as u32,
+                                        );
                                         return Ok(p.s(S::TypeScript {}, loc));
                                     }
                                 }
@@ -1588,6 +1620,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
+                                p.ts_strip_record_to_here(
+                                    crate::ts_strip::EntryKind::BlankStmt,
+                                    loc.start as u32,
+                                );
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
 
@@ -1597,6 +1633,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.lexer.expect_contextual_keyword(b"from")?;
                                 let _ = p.parse_path()?;
                                 p.lexer.expect_or_insert_semicolon()?;
+                                p.ts_strip_record_to_here(
+                                    crate::ts_strip::EntryKind::BlankStmt,
+                                    loc.start as u32,
+                                );
                                 return Ok(p.s(S::TypeScript {}, loc));
                             }
                             _ => {}
@@ -1782,6 +1822,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         ..Default::default()
                     };
                     p.skip_type_script_type_stmt(&mut stmt_opts)?;
+                    p.ts_strip_record_to_here(
+                        crate::ts_strip::EntryKind::BlankStmt,
+                        loc.start as u32,
+                    );
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
             }
@@ -1810,6 +1854,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
 
                     p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                    p.ts_strip_record_to_here(
+                        crate::ts_strip::EntryKind::BlankStmt,
+                        loc.start as u32,
+                    );
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
                 // "interface \n Foo {}"
@@ -1843,6 +1891,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.lexer.next()?;
                     let _ = p.parse_stmts_up_to(T::TCloseBrace, opts)?;
                     p.lexer.next()?;
+                    p.ts_strip_record_to_here(
+                        crate::ts_strip::EntryKind::BlankStmt,
+                        loc.start as u32,
+                    );
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
             }
@@ -1878,6 +1930,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // The statements inside are dropped, so discard any scopes they
                     // recorded or the visit pass will hit a scope order mismatch.
                     p.discard_scopes_up_to(scope_index);
+                    p.ts_strip_record_to_here(
+                        crate::ts_strip::EntryKind::BlankStmt,
+                        loc.start as u32,
+                    );
                     return Ok(Some(p.s(S::TypeScript {}, loc)));
                 }
 
@@ -1963,6 +2019,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                p.ts_strip_record_to_here(
+                    crate::ts_strip::EntryKind::BlankStmt,
+                    loc.start as u32,
+                );
                 return Ok(Some(p.s(S::TypeScript {}, loc)));
             }
         }

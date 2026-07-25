@@ -28,6 +28,7 @@ pub mod parse;
 pub mod react_compiler_host;
 pub mod repl_transforms;
 pub mod scan;
+pub mod ts_strip;
 pub mod typescript;
 pub mod visit;
 

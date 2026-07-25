@@ -2569,6 +2569,7 @@ fn transpile_source_code_inner(
                     // SAFETY: `jsc_vm` is the live per-thread VM.
                     remove_cjs_module_wrapper: is_main
                         && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
+                    ts_strip_mode: false,
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
                 };
@@ -2859,6 +2860,19 @@ fn transpile_source_code_inner(
                     } else {
                         None
                     };
+                    // Node keeps a second entry per TypeScript file: the
+                    // transpilation cache (`StrippedTypeScript`), keyed by the
+                    // raw source.
+                    if bun_jsc::node_compile_cache::is_enabled()
+                        && source.path.is_file()
+                        && loader.is_typescript()
+                    {
+                        bun_jsc::node_compile_cache::note_transpiled(
+                            source.path.text,
+                            &source.contents,
+                            entry.output_code.byte_slice(),
+                        );
+                    }
                     let source_code = match &mut entry.output_code {
                         OutputCode::String(s) => *s,
                         OutputCode::Utf8(utf8) => {
@@ -3036,6 +3050,20 @@ fn transpile_source_code_inner(
                 // from the raw pointer, which would invalidate any earlier
                 // Unique tag under Stacked Borrows. Rederive at each use-site
                 // instead (reset, mapper, print, get_written).
+                // Node compile cache: the TypeScript transpilation entry is
+                // keyed by the raw source, which the print call below consumes
+                // (it takes `parse_result` by value); copy it out first. Only
+                // paid when NODE_COMPILE_CACHE is active for a TS file.
+                let raw_ts_for_compile_cache: Option<Box<[u8]>> =
+                    if bun_jsc::node_compile_cache::is_enabled()
+                        && path.is_file()
+                        && loader.is_typescript()
+                    {
+                        Some(parse_result.source.contents.as_ref().into())
+                    } else {
+                        None
+                    };
+
                 unsafe { (*(*extra).source_code_printer).ctx.reset() };
                 // Install the VM's sourcemap handler on the printer, then
                 // print the parse result (ESM, ASCII) with sourcemaps.
@@ -3198,6 +3226,9 @@ fn transpile_source_code_inner(
                 } else {
                     None
                 };
+                if let Some(raw) = &raw_ts_for_compile_cache {
+                    bun_jsc::node_compile_cache::note_transpiled(path.text, raw, written);
+                }
                 // The `Jsc` vtable bridge `put()` does not write
                 // `cache.output_code` (only the `r#impl == None` fallback
                 // does, and `r#impl` is `Some(Jsc)` here), so it is always

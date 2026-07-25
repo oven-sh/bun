@@ -46,15 +46,18 @@ unsafe impl Send for CacheState {}
 struct Entry {
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,
-    is_cjs: bool,
+    kind: CacheKind,
     code_hash: u32,
     code_size: u32,
     /// Post-transpile text; `None` when the module never transpiled
     /// successfully (parse error) — mirrors Node's "not initialized" state.
     code: Option<Box<[u8]>>,
-    /// Deserialized bytecode blob handed to JSC (the cache was accepted).
-    /// Kept alive for the process — `ZigSourceProvider` wraps it, no copy.
+    /// Deserialized cache payload: JSC bytecode for `CommonJs`/`Esm` (the
+    /// cache was accepted — `ZigSourceProvider` wraps it, no copy), the
+    /// transpiled source for `StrippedTypeScript`.
     blob: Option<AlignedBlob>,
+    /// `StrippedTypeScript` only: transpiled output awaiting persist.
+    transpiled: Option<Box<[u8]>>,
     persisted: bool,
 }
 
@@ -150,10 +153,28 @@ fn errno_tail(e: &sys::Error) -> String {
     }
 }
 
-/// Human-readable module name for logs: plain path for CommonJS, `file://`
-/// URL for ESM — matching Node's output.
-fn display_name(filename: &[u8], is_cjs: bool) -> String {
-    if is_cjs {
+/// Node's `CachedCodeType`; the discriminants feed the cache key so each
+/// (path, type) pair gets its own cache file. `Esm`/`CommonJs` keep the byte
+/// values of the old `is_cjs as u8` salt so existing cache dirs stay valid.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CacheKind {
+    Esm = 0,
+    CommonJs = 1,
+    /// Transpilation cache for TypeScript sources (`kStrippedTypeScript`):
+    /// `code` is the raw TypeScript, the payload is the transpiled output.
+    StrippedTypeScript = 2,
+}
+
+impl CacheKind {
+    fn from_is_cjs(is_cjs: bool) -> Self {
+        if is_cjs { CacheKind::CommonJs } else { CacheKind::Esm }
+    }
+}
+
+/// Human-readable module name for logs: plain path for CommonJS and
+/// transpilation entries, `file://` URL for ESM — matching Node's output.
+fn display_name(filename: &[u8], kind: CacheKind) -> String {
+    if kind != CacheKind::Esm {
         filename.as_bstr().to_string()
     } else if cfg!(windows) {
         let mut bytes = Vec::with_capacity(filename.len() + 8);
@@ -170,8 +191,12 @@ fn display_name(filename: &[u8], is_cjs: bool) -> String {
     }
 }
 
-fn type_name(is_cjs: bool) -> &'static str {
-    if is_cjs { "CommonJS" } else { "ESM" }
+fn type_name(kind: CacheKind) -> &'static str {
+    match kind {
+        CacheKind::CommonJs => "CommonJS",
+        CacheKind::Esm => "ESM",
+        CacheKind::StrippedTypeScript => "StrippedTypeScript",
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -182,15 +207,15 @@ fn hash32(bytes: &[u8]) -> u32 {
     Wyhash::hash(0, bytes) as u32
 }
 
-fn cache_key(filename: &[u8], is_cjs: bool) -> u32 {
-    let type_byte: [u8; 1] = [is_cjs as u8];
+fn cache_key(filename: &[u8], kind: CacheKind) -> u32 {
+    let type_byte: [u8; 1] = [kind as u8];
     Wyhash::hash(Wyhash::hash(0, &type_byte), filename) as u32
 }
 
 /// Portable mode keys on the path relative to the cache dir (Node parity).
 /// Falls back to absolute keys when no relative form exists (e.g. different
 /// Windows drives, where `relative` returns `to` unchanged — Node parity).
-fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u32 {
+fn key_for(state: &CacheState, filename: &[u8], kind: CacheKind) -> u32 {
     if state.portable {
         // Thread-local scratch result: consumed before any other resolve call.
         let rel = bun_paths::resolve_path::relative(&state.dir, filename);
@@ -200,10 +225,10 @@ fn key_for(state: &CacheState, filename: &[u8], is_cjs: bool) -> u32 {
                 rel.as_bstr(),
                 state.dir.as_bstr()
             );
-            return cache_key(rel, is_cjs);
+            return cache_key(rel, kind);
         }
     }
-    cache_key(filename, is_cjs)
+    cache_key(filename, kind)
 }
 
 /// `v<bun version>-<arch>-<revision>-<uid>`, mirroring Node's
@@ -482,6 +507,7 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return None;
     }
+    let kind = CacheKind::from_is_cjs(is_cjs);
     let Ok(code_size) = u32::try_from(code.len()) else {
         return None;
     };
@@ -489,7 +515,7 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
 
     let mut guard = STATE.lock();
     let state = guard.as_mut()?;
-    let key = key_for(state, filename, is_cjs);
+    let key = key_for(state, filename, kind);
 
     if let Some(entry) = state.entries.get(&key) {
         if entry.code_hash == code_hash && entry.code_size == code_size {
@@ -500,28 +526,30 @@ pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<(*mut u8, usi
 
     let mut entry = Entry {
         filename: filename.into(),
-        is_cjs,
+        kind,
         code_hash,
         code_size,
         code: None,
         blob: None,
+        transpiled: None,
         persisted: false,
     };
 
     read_cache_file(state, key, &mut entry, Some(code));
 
     let result = if entry.blob.is_some() {
+        // Node: compile_cache.cc `V8 code cache for %s %s was accepted`.
         cclog!(
-            "[compile cache] code cache for {} {} was accepted, keeping the in-memory entry\n",
-            type_name(is_cjs),
-            display_name(filename, is_cjs)
+            "[compile cache] V8 code cache for {} {} was accepted, keeping the in-memory entry\n",
+            type_name(kind),
+            display_name(filename, kind)
         );
         entry.blob.as_ref().map(|b| (b.ptr.as_ptr(), b.len))
     } else {
         cclog!(
-            "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",
-            type_name(is_cjs),
-            display_name(filename, is_cjs)
+            "[compile cache] V8 code cache for {} {} was not initialized, initializing the in-memory entry\n",
+            type_name(kind),
+            display_name(filename, kind)
         );
         entry.code = Some(code.into());
         None
@@ -542,19 +570,21 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return;
     }
+    let kind = CacheKind::from_is_cjs(is_cjs);
     let mut guard = STATE.lock();
     let Some(state) = guard.as_mut() else { return };
-    let key = key_for(state, filename, is_cjs);
+    let key = key_for(state, filename, kind);
     if state.entries.contains_key(&key) {
         return;
     }
     let mut entry = Entry {
         filename: filename.into(),
-        is_cjs,
+        kind,
         code_hash: 0,
         code_size: 0,
         code: None,
         blob: None,
+        transpiled: None,
         persisted: false,
     };
     // The read is attempted (and logged) like Node; without current code the
@@ -562,6 +592,83 @@ pub fn note_parse_failure(filename: &[u8], is_cjs: bool) {
     read_cache_file(state, key, &mut entry, None);
     entry.blob = None;
     state.entries.insert(key, entry);
+}
+
+/// TypeScript transpilation cache (`kStrippedTypeScript`): called once per
+/// transpiled TypeScript module with the raw source and the transpiled
+/// output. Mirrors Node's `getCompileCacheEntry`/`saveCompileCacheEntry`
+/// sequence in `stripTypeScriptModuleTypes`: validate any on-disk entry
+/// against the raw source ("retrieving transpile cache … success"), else
+/// register the transpiled output for the exit-time persist pass ("saving
+/// transpilation cache", then "writing cache … success" at exit; an accepted
+/// entry logs "skip persisting … because cache was the same" instead).
+///
+/// The stored transpiled text is validated but not yet fed back to the
+/// loader; Bun's own runtime transpiler cache already skips re-transpiling.
+pub fn note_transpiled(filename: &[u8], raw: &[u8], transpiled: &[u8]) {
+    if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
+        return;
+    }
+    let (Ok(code_size), Ok(_)) = (u32::try_from(raw.len()), u32::try_from(transpiled.len()))
+    else {
+        return;
+    };
+    let code_hash = hash32(raw);
+    let kind = CacheKind::StrippedTypeScript;
+
+    let mut guard = STATE.lock();
+    let Some(state) = guard.as_mut() else { return };
+    let key = key_for(state, filename, kind);
+
+    if let Some(entry) = state.entries.get(&key) {
+        if entry.code_hash == code_hash && entry.code_size == code_size {
+            // Same module re-required in-process: nothing new to record.
+            return;
+        }
+    }
+
+    let mut entry = Entry {
+        filename: filename.into(),
+        kind,
+        code_hash,
+        code_size,
+        code: None,
+        blob: None,
+        transpiled: None,
+        persisted: false,
+    };
+
+    read_cache_file(state, key, &mut entry, Some(raw));
+
+    if entry.blob.is_some() {
+        // Node: node_modules.cc GetCompileCacheEntry.
+        cclog!(
+            "[compile cache] retrieving transpile cache for {} {}...success\n",
+            type_name(kind),
+            display_name(filename, kind)
+        );
+    } else {
+        cclog!(
+            "[compile cache] no transpile cache for {} {}\n",
+            type_name(kind),
+            display_name(filename, kind)
+        );
+        // Node: compile_cache.cc MaybeSave(entry, transpiled).
+        cclog!(
+            "[compile cache] saving transpilation cache for {} {}\n",
+            type_name(kind),
+            display_name(filename, kind)
+        );
+        entry.code = Some(raw.into());
+        entry.transpiled = Some(transpiled.into());
+    }
+
+    if let Some(old) = state.entries.insert(key, entry) {
+        if let Some(blob) = old.blob {
+            // Never freed; see RETIRED_BLOBS for the invariant.
+            RETIRED_BLOBS.lock().push(blob);
+        }
+    }
 }
 
 fn cache_basename(key: u32) -> [u8; 8] {
@@ -579,8 +686,8 @@ fn read_cache_file(state: &CacheState, key: u32, entry: &mut Entry, code: Option
             state.dir.as_bstr(),
             SEP as char,
             core::str::from_utf8(&basename).expect("hex"),
-            type_name(entry.is_cjs),
-            display_name(&entry.filename, entry.is_cjs)
+            type_name(entry.kind),
+            display_name(&entry.filename, entry.kind)
         );
     }
     // Emits `line` + lazily-built `tail` once the outcome is known.
@@ -791,9 +898,12 @@ struct PersistJob {
     format: Format,
     code: Box<[u8]>,
     filename: Box<[u8]>,
-    is_cjs: bool,
+    kind: CacheKind,
     code_size: u32,
     code_hash: u32,
+    /// `StrippedTypeScript`: the payload is this transpiled text, not
+    /// generated bytecode.
+    transpiled: Option<Box<[u8]>>,
 }
 
 /// Phase 1 (locked): decide what needs persisting and move the source code
@@ -801,8 +911,8 @@ struct PersistJob {
 fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
     let mut jobs = Vec::new();
     for (&key, entry) in state.entries.iter_mut() {
-        let tname = type_name(entry.is_cjs);
-        let name = display_name(&entry.filename, entry.is_cjs);
+        let tname = type_name(entry.kind);
+        let name = display_name(&entry.filename, entry.kind);
         if entry.persisted {
             cclog!(
                 "[compile cache] skip persisting {tname} {name} because cache was already persisted\n"
@@ -822,16 +932,17 @@ fn collect_persist_jobs(state: &mut CacheState) -> Vec<PersistJob> {
         };
         jobs.push(PersistJob {
             key,
-            format: if entry.is_cjs {
+            format: if entry.kind == CacheKind::CommonJs {
                 Format::Cjs
             } else {
                 Format::Esm
             },
             code,
             filename: entry.filename.clone(),
-            is_cjs: entry.is_cjs,
+            kind: entry.kind,
             code_size: entry.code_size,
             code_hash: entry.code_hash,
+            transpiled: entry.transpiled.take(),
         });
     }
     jobs
@@ -845,8 +956,8 @@ fn write_persist_job_locked(
     job: &PersistJob,
     blob: &[u8],
 ) -> Result<(), ()> {
-    let tname = type_name(job.is_cjs);
-    let name = display_name(&job.filename, job.is_cjs);
+    let tname = type_name(job.kind);
+    let name = display_name(&job.filename, job.kind);
 
     let cache_size = blob.len() as u32;
     let cache_hash = hash32(blob);
@@ -944,11 +1055,16 @@ fn persist_pass() {
 
     // Phase 2: generate bytecode, unlocked.
     let mut generated: Vec<(PersistJob, Option<Box<[u8]>>)> = Vec::with_capacity(jobs.len());
-    for job in jobs {
-        let blob = generate_bytecode(job.format, &job.code, &job.filename);
+    for mut job in jobs {
+        let blob = if job.kind == CacheKind::StrippedTypeScript {
+            // The payload IS the transpiled text; nothing to generate.
+            job.transpiled.take()
+        } else {
+            generate_bytecode(job.format, &job.code, &job.filename)
+        };
         if blob.is_none() {
-            let tname = type_name(job.is_cjs);
-            let name = display_name(&job.filename, job.is_cjs);
+            let tname = type_name(job.kind);
+            let name = display_name(&job.filename, job.kind);
             cclog!("[compile cache] generating cache for {tname} {name} failed, skipping\n");
         }
         generated.push((job, blob));

@@ -64,6 +64,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "http/H2Client.rs": "http/H2Client.rs",
   "http/H3Client.rs": "http/H3Client.rs",
   "ini.rs": "ini/ini.rs",
+  "node_module_binding.rs": "runtime/node/node_module_binding.rs",
   "install_binding.rs": "install_jsc/install_binding.rs",
   "ipc.rs": "jsc/ipc.rs",
   "jest.rs": "runtime/test_runner/jest.rs",

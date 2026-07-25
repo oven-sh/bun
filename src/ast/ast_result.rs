@@ -20,6 +20,21 @@ type ImportRecordList<'a> = crate::import_record::List<'a>;
 
 pub type TopLevelSymbolToParts = ArrayHashMap<Ref, AstVec<u32>, AutoContext, AstAlloc>;
 
+/// Output of the `stripTypeScriptTypes` strip pass; produced by
+/// `bun_js_parser::ts_strip` when `Features::ts_strip_mode` is set. The code
+/// is the input source with type-only spans blanked in place (positions
+/// preserved), matching Node's amaro/swc_ts_fast_strip.
+pub enum TsStripOutput {
+    Code(Vec<u8>),
+    /// amaro-compatible unsupported-syntax rejection, with the byte span of
+    /// the offending construct for Node's `filename:line` stack decoration.
+    Unsupported {
+        message: &'static str,
+        lo: u32,
+        hi: u32,
+    },
+}
+
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
@@ -88,6 +103,9 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
+
+    /// Only set when parsing on behalf of `module.stripTypeScriptTypes`.
+    pub ts_strip: Option<Box<TsStripOutput>>,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -129,6 +147,7 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
+            ts_strip: None,
         }
     }
 }

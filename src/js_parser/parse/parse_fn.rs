@@ -65,7 +65,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Even anonymous functions can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
+            let type_params_lo = p.lexer.start as u32;
             let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_params_lo);
         }
 
         // Introduce a fake block scope for function declarations inside if statements
@@ -122,6 +124,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     p.has_non_local_export_declare_inside_namespace = true;
                 }
 
+                p.ts_strip_record_to_here(
+                    crate::ts_strip::EntryKind::BlankStmt,
+                    loc.start as u32,
+                );
                 return Ok(p.s(S::TypeScript {}, loc));
             }
         }
@@ -217,16 +223,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         while p.lexer.token != T::TCloseParen {
             // Skip over "this" type annotations
             if Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TThis {
+                let this_lo = p.lexer.start as u32;
                 p.lexer.next()?;
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
                     p.skip_type_script_type(Level::Lowest)?;
                 }
                 if p.lexer.token != T::TComma {
+                    p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, this_lo);
                     break;
                 }
 
                 p.lexer.next()?;
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, this_lo);
                 continue;
             }
 
@@ -263,6 +272,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     break;
                                 }
 
+                                if p.ts_strip_active() {
+                                    // swc rejects parameter properties in
+                                    // strip mode (they declare class fields).
+                                    p.ts_strip_record_span(
+                                        crate::ts_strip::EntryKind::Unsupported(
+                                            crate::ts_strip::UnsupportedKind::ParameterProperty,
+                                        ),
+                                        arg.loc.start as u32,
+                                        p.lexer.end as u32,
+                                    );
+                                }
                                 is_typescript_ctor_field = true;
 
                                 // TypeScript requires an identifier binding
@@ -283,11 +303,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 // "function foo(a?) {}"
                 if p.lexer.token == T::TQuestion {
+                    let q_lo = p.lexer.start as u32;
+                    let q_hi = p.lexer.end as u32;
                     p.lexer.next()?;
+                    p.ts_strip_record_span(crate::ts_strip::EntryKind::Blank, q_lo, q_hi);
                 }
 
                 // "function foo(a: any) {}"
                 if p.lexer.token == T::TColon {
+                    let colon_lo = p.lexer.start as u32;
                     p.lexer.next()?;
                     if !rest_arg {
                         if p.options.features.emit_decorator_metadata
@@ -304,6 +328,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // rest parameter is always object, leave metadata as m_none
                         p.skip_type_script_type(Level::Lowest)?;
                     }
+                    p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, colon_lo);
                 }
             }
 
@@ -374,6 +399,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // "function foo(): any {}"
         if Self::IS_TYPESCRIPT_ENABLED {
             if p.lexer.token == T::TColon {
+                let colon_lo = p.lexer.start as u32;
                 p.lexer.next()?;
 
                 if p.options.features.emit_decorator_metadata
@@ -384,6 +410,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 } else {
                     p.skip_typescript_return_type()?;
                 }
+                p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, colon_lo);
             } else if p.options.features.emit_decorator_metadata
                 && opts.allow_ts_decorators
                 && (opts.has_argument_decorators || opts.has_decorators)
@@ -459,7 +486,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Even anonymous functions can have TypeScript type parameters
         if Self::IS_TYPESCRIPT_ENABLED {
+            let type_params_lo = p.lexer.start as u32;
             let _ = p.skip_type_script_type_parameters(TypeParameterFlag::ALLOW_CONST_MODIFIER)?;
+            p.ts_strip_record_to_here(crate::ts_strip::EntryKind::Blank, type_params_lo);
         }
 
         let func = p.parse_fn(

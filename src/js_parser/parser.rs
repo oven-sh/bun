@@ -214,6 +214,11 @@ pub mod Runtime {
 
         pub set_breakpoint_on_first_line: bool,
 
+        /// `module.stripTypeScriptTypes` strip mode: capture tokens in the
+        /// lexer and record type-only construct spans on `P::ts_strip` so
+        /// the caller can blank them in place (see `crate::ts_strip`).
+        pub ts_strip_mode: bool,
+
         pub trim_unused_imports: bool,
 
         /// Allow runtime usage of require(), converting `require` into `__require`
@@ -298,6 +303,7 @@ pub mod Runtime {
                 minify_whitespace: false,
                 dead_code_elimination: true,
                 set_breakpoint_on_first_line: false,
+                ts_strip_mode: false,
                 trim_unused_imports: false,
                 auto_polyfill_require: false,
                 replace_exports: ReplaceableExportMap::default(),
@@ -1484,6 +1490,15 @@ pub struct PropertyOpts {
     pub ts_decorators: ExprNodeList,
     pub has_argument_decorators: bool,
     pub has_class_decorators: bool,
+
+    /// Strip mode (`P::ts_strip`): byte offset of the first token of this
+    /// class member after decorators, so fully-erased members (overload
+    /// signatures, `declare`/`abstract` members, index signatures) can blank
+    /// their leading modifiers too.
+    pub ts_strip_member_lo: Option<u32>,
+    /// Strip mode: position of the first blanked accessibility modifier of
+    /// this member, for swc's computed-key/generator `;` hazard fix.
+    pub ts_strip_modifier_lo: Option<u32>,
 }
 
 impl Default for PropertyOpts {
@@ -1501,6 +1516,8 @@ impl Default for PropertyOpts {
             ts_decorators: bun_alloc::AstAlloc::vec(),
             has_argument_decorators: false,
             has_class_decorators: false,
+            ts_strip_member_lo: None,
+            ts_strip_modifier_lo: None,
         }
     }
 }

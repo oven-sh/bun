@@ -572,7 +572,7 @@ pub(crate) const TEST_ONLY_PARAMS: &[ParamType] = &[
         "--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1."
     ),
     parse_param!(
-        "-t, --test-name-pattern/--grep <STR>    Run only tests with a name that matches the given regex."
+        "-t, --test-name-pattern/--grep <STR>...    Run only tests with a name that matches the given regex."
     ),
     parse_param!(
         "--reporter <STR>                 Test output reporter format. Available: 'junit' (requires --reporter-outfile), 'dots'. Default: console output."
@@ -1706,21 +1706,38 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         bun_core::pretty_errorln!("<r><red>error<r>: --retry cannot be used with --rerun-each");
         Global::exit(1);
     }
-    if let Some(name_pattern) = args.option(b"--test-name-pattern") {
-        ctx.test_options.test_filter_pattern = Some(name_pattern.into());
+    let name_patterns = args.options(b"--test-name-pattern");
+    if !name_patterns.is_empty() {
+        // Node.js allows `--test-name-pattern` to be repeated and runs the
+        // union of matches. `|` is lowest-precedence in ECMAScript regex, so
+        // joining the patterns with it is equivalent to testing each in turn.
+        let name_pattern: Box<[u8]> = if name_patterns.len() == 1 {
+            Box::from(name_patterns[0])
+        } else {
+            let mut joined =
+                Vec::with_capacity(name_patterns.iter().map(|p| p.len() + 1).sum::<usize>());
+            for (i, p) in name_patterns.iter().enumerate() {
+                if i > 0 {
+                    joined.push(b'|');
+                }
+                joined.extend_from_slice(p);
+            }
+            joined.into_boxed_slice()
+        };
         let regex = match RegularExpression::init(
-            bun_core::String::from_bytes(name_pattern),
+            bun_core::String::from_bytes(&name_pattern),
             RegexFlags::None,
         ) {
             Ok(r) => r,
             Err(_) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
-                    bun_core::fmt::QuotedFormatter { text: name_pattern },
+                    bun_core::fmt::QuotedFormatter { text: &name_pattern },
                 );
                 Global::exit(1);
             }
         };
+        ctx.test_options.test_filter_pattern = Some(name_pattern);
         // The compiled regex lives in `bun_jsc::RegularExpression` (T6); the
         // T3 `TestOptions` field is type-erased to `NonNull<()>` to break the
         // back-edge. High tier owns construction/destruction.

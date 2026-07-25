@@ -1324,6 +1324,27 @@ describe("bun test", () => {
     `);
   });
 
+  test.each([
+    ["-t", "alpha", "-t", "beta"],
+    ["--test-name-pattern", "alpha", "--test-name-pattern", "beta"],
+    ["--grep", "alpha", "-t", "beta"],
+  ])("repeated -t/--test-name-pattern runs the union of matches", (...args) => {
+    const stderr = runTest({
+      args,
+      input: `
+        import { test } from "bun:test";
+        test("alpha one", () => {});
+        test("beta two", () => {});
+        test("gamma three", () => {});
+      `,
+    });
+    expect(stderr).toContain("(pass) alpha one");
+    expect(stderr).toContain("(pass) beta two");
+    expect(stderr).not.toContain("(pass) gamma three");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("1 filtered out");
+  });
+
   test("--tsconfig-override works", () => {
     const dir = tempDirWithFiles("test-tsconfig-override", {
       "math.test.ts": `

@@ -732,6 +732,13 @@ JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC:
     return JSValue::encode(jsBoolean(thisObject->hasEvaluated));
 }
 
+extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
+
+JSC_DEFINE_CUSTOM_GETTER(getterIsPreloading, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    return JSValue::encode(jsBoolean(Bun__VirtualMachine__isInPreload(defaultGlobalObject(globalObject)->bunVM())));
+}
+
 JSC_DEFINE_CUSTOM_SETTER(setterPaths,
     (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue,
         JSC::EncodedJSValue value, JSC::PropertyName propertyName))
@@ -891,6 +898,7 @@ static const struct HashTableValue JSCommonJSModulePrototypeTableValues[] = {
     { "children"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterChildren, setterChildren } },
     { "filename"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterFilename, setterFilename } },
     { "id"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterId, setterId } },
+    { "isPreloading"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterIsPreloading, 0 } },
     { "loaded"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterLoaded, setterLoaded } },
     { "parent"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor | PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, getterParent, setterParent } },
     { "path"_s, static_cast<unsigned>(PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, getterPath, setterPath } },
@@ -940,6 +948,16 @@ public:
         Base::finishCreation(vm);
         ASSERT(inherits(info()));
         Bun::reifyStaticPropertyTable(vm, info(), JSCommonJSModulePrototypeTableValues, *this);
+
+        // `Module.prototype.load(filename)` — needed for packages like
+        // `requizzle` that construct `new Module(...)` directly and call
+        // `.load()` on it. Mirrors Node's cjs loader semantics.
+        this->putDirectBuiltinFunction(
+            vm,
+            this->globalObject(),
+            JSC::Identifier::fromString(vm, "load"_s),
+            WebCore::commonJSModulePrototypeLoadCodeGenerator(vm),
+            0);
     }
 };
 

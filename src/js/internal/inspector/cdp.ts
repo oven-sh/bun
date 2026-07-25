@@ -91,19 +91,14 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
   debug: "debug",
 };
 
-// ── Per-session isolation ─────────────────────────────────────────────────────
-// JSC's JSGlobalObjectInspectorController has a single DebuggerAgent /
-// RuntimeAgent / InjectedScript, and its FrontendRouter broadcasts every
-// response and event to every attached FrontendChannel. Node gives each
-// inspector WebSocket a separate V8InspectorSession, so one client cannot
-// disable another's Debugger, flip its breakpointsActive / pauseOnExceptions,
-// delete its breakpoints, or read/release its Runtime.RemoteObject handles.
-// Every adapter runs on the one debugger thread, so module-level coordination
-// state needs no locking.
+// JSC has one DebuggerAgent/RuntimeAgent/InjectedScript per process and its
+// FrontendRouter broadcasts every response and event to every FrontendChannel,
+// so per-session isolation (Node gives each WebSocket its own
+// V8InspectorSession) is emulated at this layer. All adapters run on the one
+// debugger thread, so module-level state needs no locking.
 
-// Disjoint backend-command-id ranges per session: FrontendRouter replays a
-// response to every channel, so without this one adapter can claim another's
-// reply from its #pending map.
+// Disjoint backend-command-id ranges per session so a broadcast response only
+// matches the sender's #pending map.
 const BACKEND_ID_STRIDE = 1_000_000_000;
 
 const PAUSE_ON_EXCEPTIONS_ORDER: Record<string, number> = {
@@ -117,8 +112,6 @@ const PAUSE_ON_EXCEPTIONS_ORDER: Record<string, number> = {
 const FOREIGN_OBJECT_ID_ERROR = "Could not find object with given id";
 
 let nextSessionId = 1;
-// A Map (not a Set) so we can reach other adapters' sendToBackend for backend
-// aggregate updates even after an adapter has left.
 const liveAdapters: Map<number, InspectorCDPAdapter> = new Map();
 
 type SessionFlags = {
@@ -164,12 +157,9 @@ function anyRuntimeEnabled(): boolean {
   return false;
 }
 
-// Tag every RemoteObject handle leaving this adapter with its session id so a
-// handle minted for one client cannot be presented by another. JSC emits a
-// fixed `{"injectedScriptId":N,"id":M}` string (InjectedScriptSource.js), so a
-// recursive walk that rewrites every `objectId` string property covers
-// evaluate/callFunctionOn/getProperties results, paused scope chains and
-// consoleAPICalled args alike.
+// Tag every RemoteObject.objectId leaving this adapter with its session id so
+// a handle minted for one client cannot be presented by another. JSC emits the
+// fixed `{"injectedScriptId":N,"id":M}` shape (InjectedScriptSource.js).
 function tagObjectIds(value: unknown, sessionId: number): void {
   if (value === null || typeof value !== "object") return;
   if ($isArray(value)) {
@@ -484,13 +474,25 @@ class InspectorCDPAdapter {
         const { objectId, executionContextId } = params;
         let callArguments = params.arguments;
         if ($isArray(callArguments)) {
-          callArguments = callArguments.map((arg: AnyObject) => {
-            if (arg === null || typeof arg !== "object") return arg;
+          const rewritten: AnyObject[] = [];
+          for (const arg of callArguments as AnyObject[]) {
+            if (arg === null || typeof arg !== "object") {
+              rewritten.push(arg);
+              continue;
+            }
             const { objectId: argObjectId } = arg;
-            if (typeof argObjectId !== "string") return arg;
+            if (typeof argObjectId !== "string") {
+              rewritten.push(arg);
+              continue;
+            }
             const backendArgId = untagObjectId(argObjectId, this.#sessionId);
-            return backendArgId === null ? arg : { ...arg, objectId: backendArgId };
-          });
+            if (backendArgId === null) {
+              this.#replyErrorToClient(id, -32000, FOREIGN_OBJECT_ID_ERROR);
+              return;
+            }
+            rewritten.push({ ...arg, objectId: backendArgId });
+          }
+          callArguments = rewritten;
         }
         const forward = (targetObjectId: unknown) =>
           this.#sendToBackend(

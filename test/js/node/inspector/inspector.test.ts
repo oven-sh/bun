@@ -1071,12 +1071,21 @@ for await (const line of rl) {
   });
 
   const decoder = new TextDecoder();
+  const stderrReader = proc.stderr.getReader();
+  let stderrText = "";
+  const stderrDrained = (async () => {
+    for (;;) {
+      const { value, done } = await stderrReader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
   const stdoutReader = proc.stdout.getReader();
   let stdoutText = "";
   async function waitForStdout(marker: string) {
     while (!stdoutText.includes(marker)) {
       const { value, done } = await stdoutReader.read();
-      if (done) throw new Error(`stdout closed before "${marker}": ${stdoutText}`);
+      if (done) throw new Error(`stdout closed before "${marker}": ${stdoutText}\nstderr: ${stderrText}`);
       stdoutText += decoder.decode(value);
     }
   }
@@ -1167,16 +1176,33 @@ for await (const line of rl) {
   const objectId = evalA.result?.result?.objectId;
   expect(objectId).toBeString();
   const bProps = await B.send("Runtime.getProperties", { objectId, ownProperties: true });
+  // callFunctionOn: neither the target objectId nor an arguments[].objectId may
+  // reach the backend from another session.
+  const bCallTarget = await B.send("Runtime.callFunctionOn", {
+    objectId,
+    functionDeclaration: "function(){ return this.alpha }",
+    returnByValue: true,
+  });
+  const bCallArg = await B.send("Runtime.callFunctionOn", {
+    executionContextId: 1,
+    functionDeclaration: "function(x){ return x.alpha }",
+    arguments: [{ objectId }],
+    returnByValue: true,
+  });
   const bRelease = await B.send("Runtime.releaseObject", { objectId });
   const aProps = await A.send("Runtime.getProperties", { objectId, ownProperties: true });
   const alphaFromA = (aProps.result?.result || []).find((p: any) => p.name === "alpha")?.value?.value;
   expect({
     bProps: bProps.error?.message ?? "no error",
+    bCallTarget: bCallTarget.error?.message ?? "no error",
+    bCallArg: bCallArg.error?.message ?? "no error",
     bRelease: bRelease.error?.message ?? "no error",
     alphaFromA,
     aError: aProps.error?.message,
   }).toEqual({
     bProps: "Could not find object with given id",
+    bCallTarget: "Could not find object with given id",
+    bCallArg: "Could not find object with given id",
     bRelease: "Could not find object with given id",
     alphaFromA: "objA-secret",
     aError: undefined,
@@ -1202,4 +1228,5 @@ for await (const line of rl) {
   proc.stdin.write("exit\n");
   proc.stdin.flush();
   expect(await proc.exited).toBe(0);
+  await stderrDrained;
 }, 20_000);

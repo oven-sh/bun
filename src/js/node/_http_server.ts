@@ -1066,8 +1066,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
         }
 
-        socket.cork();
-
         if (isPipelined) {
           // Completion of a queued response is tracked through the pipeline
           // (advanceResponsePipeline) and its native handle, not this dispatch.
@@ -1390,6 +1388,15 @@ function detachSocketListenersForHandoff(socket) {
   socket.removeListener("error", socketOnError);
   socket.removeListener("timeout", onNodeHTTPServerSocketTimeout);
   socket.on("end", onReadableStreamEnd);
+  // Node's OutgoingMessage.end() fully uncorks the connection; a response
+  // on this kept-alive socket may have corked the Duplex (res.cork() forwards
+  // to the socket) without ever reaching the standalone OutgoingMessage end
+  // path, so bring it back to zero before the raw socket is handed over.
+  const writableState = socket._writableState;
+  if (writableState && writableState.corked) {
+    writableState.corked = 1;
+    socket.uncork();
+  }
 }
 const kSocketTimeoutTimer = Symbol("socketTimeoutTimer");
 const kStreamingEnabled = Symbol("kStreamingEnabled");
@@ -3219,6 +3226,12 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   }
   this._header = " ";
   const req = this.req;
+  const reqSocket = req?.socket;
+  if (reqSocket && reqSocket._writableState?.corked) {
+    // Like Node's OutgoingMessage.prototype.end: fully uncork the connection.
+    reqSocket._writableState.corked = 1;
+    reqSocket.uncork();
+  }
   if (!req._consuming && !req?._readableState?.resumeScheduled) {
     req._dump();
   }

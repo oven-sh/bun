@@ -783,6 +783,99 @@ describe("Should be compatible with node.js", () => {
   });
 });
 
+// A ServerResponse writes through the native handle, not the socket Duplex,
+// so a cork() left on the Duplex after a kept-alive request would make a
+// 'connect'/'upgrade' handler's socket.write() buffer forever. Covers the
+// proxy-chain / puppeteer-with-proxy failure in #12213.
+describe("CONNECT/Upgrade on a kept-alive connection can write to the socket", () => {
+  async function runKeepAliveHandoff(method: "CONNECT" | "Upgrade", writeAsync: boolean) {
+    await using server = http.createServer((req, res) => {
+      res.end("body");
+    }) as http.Server & AsyncDisposable;
+    let corkedAtHandoff: number | undefined;
+    const handler = (req: http.IncomingMessage, socket: net.Socket) => {
+      corkedAtHandoff = socket.writableCorked;
+      const respond = () => {
+        socket.write(
+          method === "CONNECT"
+            ? "HTTP/1.1 200 Connection Established\r\n\r\n"
+            : "HTTP/1.1 101 Switching Protocols\r\nUpgrade: raw\r\nConnection: Upgrade\r\n\r\n",
+        );
+        socket.end("tunnel-data");
+      };
+      if (writeAsync) setImmediate(respond);
+      else respond();
+    };
+    server.on(method === "CONNECT" ? "connect" : "upgrade", handler);
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const received = await new Promise<string>((resolve, reject) => {
+      const sock = net.connect({ port, host: "127.0.0.1" });
+      sock.on("error", reject);
+      let buf = "";
+      let phase = 0;
+      sock.on("connect", () => {
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      });
+      sock.on("data", d => {
+        buf += d.toString();
+        if (phase === 0 && buf.includes("body")) {
+          phase = 1;
+          buf = "";
+          sock.write(
+            method === "CONNECT"
+              ? "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"
+              : "GET / HTTP/1.1\r\nHost: x\r\nUpgrade: raw\r\nConnection: Upgrade\r\n\r\n",
+          );
+        }
+      });
+      sock.on("close", () => resolve(buf));
+    });
+
+    expect(corkedAtHandoff).toBe(0);
+    expect(received).toContain("tunnel-data");
+  }
+
+  for (const method of ["CONNECT", "Upgrade"] as const) {
+    for (const writeAsync of [false, true]) {
+      test(`${method}, ${writeAsync ? "async" : "sync"} write`, async () => {
+        await runKeepAliveHandoff(method, writeAsync);
+      });
+    }
+  }
+
+  // The dispatch path left the connection Duplex corked after every 'request'
+  // emit (proxy-chain hit this via CONNECT on a kept-alive socket above, but
+  // writing to req.socket directly after res.end() is the same leak).
+  test("req.socket is not corked across 'request' dispatches", async () => {
+    const seen: number[] = [];
+    await using server = http.createServer((req, res) => {
+      seen.push(req.socket.writableCorked);
+      res.cork();
+      res.end("body");
+      // Node's OutgoingMessage.end() fully uncorks the connection.
+      seen.push(req.socket.writableCorked);
+    }) as http.Server & AsyncDisposable;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const sock = net.connect({ port, host: "127.0.0.1" });
+    await once(sock, "connect");
+    let buf = "";
+    sock.on("data", d => (buf += d.toString()));
+    for (let i = 0; i < 3; i++) {
+      sock.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      while (buf.split("body").length - 1 < i + 1) await once(sock, "data");
+    }
+    sock.end();
+    await once(sock, "close");
+    expect(seen).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+});
+
 // Windows: after FIN on a CONNECT-tunnel socket, AFD's level-triggered
 // UV_DISCONNECT used to re-derive EOF and bounce the poll between 0 and
 // WRITABLE forever (pins the poll_cb allow_half_open arm).

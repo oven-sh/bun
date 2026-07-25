@@ -4220,9 +4220,7 @@ describe("request body still flows after res.end() was called in the handler", (
 
     const sock = connect(port, "127.0.0.1");
     await once(sock, "connect");
-    sock.write(
-      "POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n",
-    );
+    sock.write("POST / HTTP/1.1\r\nHost: x\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n");
     sock.setNoDelay(true);
     await new Promise<void>(r => setImmediate(r));
     sock.write("6\r\n world\r\n0\r\n\r\n");

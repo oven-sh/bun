@@ -1042,10 +1042,13 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
                 let cols: &[i32] = &original_table
                     .0
                     .items::<"columns_for_non_ascii", Box<[i32]>>()[orig_line as usize];
+                // A codepoint's continuation bytes carry the NEXT column (the
+                // extend in `generate` runs before `column +=`), so pick the
+                // last index in the equal-value run, not the first.
                 first_na as i32
                     + cols
-                        .partition_point(|&c| c < orig_col_units)
-                        .min(cols.len().saturating_sub(1)) as i32
+                        .partition_point(|&c| c <= orig_col_units)
+                        .saturating_sub(1) as i32
             } else {
                 orig_col_units
             };

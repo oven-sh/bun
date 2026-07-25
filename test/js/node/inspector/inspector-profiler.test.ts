@@ -619,7 +619,7 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
         "export function alpha() { return 'A'; }   // called 3x",
         "export function beta() { return 'B'; }    // called 1x",
         "const tag='\u00e9\u{1f389}'; export function caf\u00e9() { return tag; }   // non-ASCII before the function",
-        "export class Zed { m() { return 'Z'; } }   // hoisted in the transpiled text",
+        "export class Zed { m() { return 'Z'; } \u8a9e() { return '\u8a9e'; } }   // hoisted in the transpiled text",
         "",
       ].join("\n");
       using dir = tempDir("inspector-coverage-original", {
@@ -631,7 +631,7 @@ session.connect();
 await session.post("Profiler.enable");
 await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
 const M = await import("./m.mjs");
-M.alpha(); M.alpha(); M.alpha(); M.beta(); new M.Zed().m(); M.caf\u00e9();
+M.alpha(); M.alpha(); M.alpha(); M.beta(); const z = new M.Zed(); z.m(); z.\u8a9e(); M.caf\u00e9();
 const coverage = await session.post("Profiler.takePreciseCoverage");
 await session.post("Profiler.stopPreciseCoverage");
 session.disconnect();
@@ -679,6 +679,11 @@ console.log(JSON.stringify(entry));
       expect(byName("alpha").ranges[0].startOffset).toBe(bytes.indexOf("function alpha"));
       expect(byName("m").ranges[0].startOffset).toBe(bytes.indexOf("m() {"));
       expect(byName("caf\u00e9").ranges[0].startOffset).toBe(bytes.indexOf("function caf\u00e9"));
+      // The CJK method 語 is on a line with earlier non-ASCII (the other
+      // method body returns '語'), so its UTF-16 column sits inside an
+      // equal-value run of columns_for_non_ascii.
+      expect(slice(byName("\u8a9e"))).toStartWith("\u8a9e() { return '\u8a9e'; }");
+      expect(byName("\u8a9e").ranges[0].startOffset).toBe(bytes.indexOf("\u8a9e() {"));
     });
   });
 

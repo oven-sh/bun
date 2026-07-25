@@ -702,8 +702,7 @@ describe("locally-rejected malformed hostnames report EBADNAME", () => {
   });
 
   const longLabel = Buffer.alloc(64, "l").toString();
-  const longName =
-    Array.from({ length: 30 }, (_, i) => "seg" + String(i).padStart(6, "0")).join(".") + ".example";
+  const longName = Array.from({ length: 30 }, (_, i) => "seg" + String(i).padStart(6, "0")).join(".") + ".example";
   const malformed = {
     "label > 63 octets": longLabel + ".ex.example",
     "name > 255 octets": longName,
@@ -737,9 +736,7 @@ describe("locally-rejected malformed hostnames report EBADNAME", () => {
 
     it("promises resolve4 rejects with EBADNAME", async () => {
       const before = wire;
-      await expect(promisesResolver.resolve4(name)).rejects.toThrow(
-        expect.objectContaining({ code: "EBADNAME" }),
-      );
+      await expect(promisesResolver.resolve4(name)).rejects.toThrow(expect.objectContaining({ code: "EBADNAME" }));
       expect(wire).toBe(before);
     });
   });

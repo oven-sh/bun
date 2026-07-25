@@ -4,10 +4,8 @@
 
 "use strict";
 
-const EE = require("node:events");
 const { Stream } = require("internal/streams/legacy");
 const destroyImpl = require("internal/streams/destroy");
-const eos = require("internal/streams/end-of-stream");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const {
@@ -1095,7 +1093,7 @@ Writable.prototype._destroy = function (err, cb) {
   cb(err);
 };
 
-Writable.prototype[EE.captureRejectionSymbol] = function (err) {
+Writable.prototype[Symbol.for("nodejs.rejection")] = function (err) {
   this.destroy(err);
 };
 
@@ -1121,7 +1119,9 @@ Writable.prototype[SymbolAsyncDispose] = function () {
     this.destroy(error);
   }
   return new Promise((resolve, reject) =>
-    eos(this, err => (err && err.name !== "AbortError" ? reject(err) : resolve(null))),
+    require("internal/streams/end-of-stream")(this, err =>
+      err && err.name !== "AbortError" ? reject(err) : resolve(null),
+    ),
   );
 };
 

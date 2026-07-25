@@ -3,8 +3,6 @@
 
 "use strict";
 
-const { kEmptyObject, once } = require("internal/shared");
-const { validateAbortSignal, validateFunction, validateObject, validateBoolean } = require("internal/validators");
 const {
   isClosed,
   isReadable,
@@ -21,6 +19,9 @@ const {
   willEmitClose: _willEmitClose,
   kIsClosedPromise,
 } = require("internal/streams/utils");
+let shared, validators;
+const getShared = () => (shared ??= require("internal/shared"));
+const getValidators = () => (validators ??= require("internal/validators"));
 
 const SymbolDispose = Symbol.dispose;
 const PromisePrototypeThen = $Promise.prototype.$then;
@@ -86,6 +87,8 @@ function getEosOnCloseError(stream, readable, readableFinished, writable, writab
 const kEosNodeSynchronousCallback = Symbol("kEosNodeSynchronousCallback");
 
 function eos(stream, options, callback) {
+  const { kEmptyObject, once } = getShared();
+  const { validateAbortSignal, validateFunction, validateObject } = getValidators();
   if (arguments.length === 2) {
     callback = options;
     options = kEmptyObject;
@@ -315,6 +318,7 @@ function eos(stream, options, callback) {
 }
 
 function eosWeb(stream, options, callback) {
+  const { once } = getShared();
   if (hasAsyncContext()) {
     callback = once(bindAsyncResource(callback, "STREAM_END_OF_STREAM"));
   } else {
@@ -356,10 +360,10 @@ function eosWeb(stream, options, callback) {
 function finished(stream, opts) {
   let autoCleanup = false;
   if (opts === null) {
-    opts = kEmptyObject;
+    opts = getShared().kEmptyObject;
   }
   if (opts?.cleanup) {
-    validateBoolean(opts.cleanup, "cleanup");
+    getValidators().validateBoolean(opts.cleanup, "cleanup");
     autoCleanup = opts.cleanup;
   }
   return new Promise<void>((resolve, reject) => {

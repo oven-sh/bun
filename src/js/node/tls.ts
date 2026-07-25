@@ -1,5 +1,8 @@
 // Hardcoded module "node:tls"
-const { isArrayBufferView } = require("node:util/types");
+let types;
+function isArrayBufferView(value) {
+  return (types ??= require("node:util/types")).isArrayBufferView(value);
+}
 const net = require("node:net");
 const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
@@ -64,64 +67,66 @@ function getValidCiphersSet() {
 }
 
 // OpenSSL cipher-list selector keywords that are not literal suite names.
-const CIPHER_LIST_SELECTORS = new Set([
-  "DEFAULT",
-  "ALL",
-  "COMPLEMENTOFDEFAULT",
-  "COMPLEMENTOFALL",
-  "HIGH",
-  "MEDIUM",
-  "LOW",
-  "PSK",
-  "aNULL",
-  "eNULL",
-  "NULL",
-  "EXPORT",
-  "EXP",
-  "kRSA",
-  "aRSA",
-  "RSA",
-  "kDHE",
-  "kEDH",
-  "DH",
-  "DHE",
-  "EDH",
-  "kECDHE",
-  "kEECDH",
-  "ECDHE",
-  "EECDH",
-  "ECDH",
-  "aECDSA",
-  "ECDSA",
-  "aDSS",
-  "DSS",
-  "kPSK",
-  "aPSK",
-  "AES",
-  "AES128",
-  "AES256",
-  "AESGCM",
-  "AESCCM",
-  "CHACHA20",
-  "3DES",
-  "DES",
-  "RC4",
-  "RC2",
-  "MD5",
-  "SHA",
-  "SHA1",
-  "SHA256",
-  "SHA384",
-  "CAMELLIA",
-  "ARIA",
-  "SRP",
-  "TLSv1",
-  "TLSv1.0",
-  "TLSv1.2",
-  "TLSv1.3",
-  "SSLv3",
-  "FIPS",
-]);
+let CIPHER_LIST_SELECTORS: Set<string> | undefined;
+const getCipherListSelectors = () =>
+  (CIPHER_LIST_SELECTORS ??= new Set([
+    "DEFAULT",
+    "ALL",
+    "COMPLEMENTOFDEFAULT",
+    "COMPLEMENTOFALL",
+    "HIGH",
+    "MEDIUM",
+    "LOW",
+    "PSK",
+    "aNULL",
+    "eNULL",
+    "NULL",
+    "EXPORT",
+    "EXP",
+    "kRSA",
+    "aRSA",
+    "RSA",
+    "kDHE",
+    "kEDH",
+    "DH",
+    "DHE",
+    "EDH",
+    "kECDHE",
+    "kEECDH",
+    "ECDHE",
+    "EECDH",
+    "ECDH",
+    "aECDSA",
+    "ECDSA",
+    "aDSS",
+    "DSS",
+    "kPSK",
+    "aPSK",
+    "AES",
+    "AES128",
+    "AES256",
+    "AESGCM",
+    "AESCCM",
+    "CHACHA20",
+    "3DES",
+    "DES",
+    "RC4",
+    "RC2",
+    "MD5",
+    "SHA",
+    "SHA1",
+    "SHA256",
+    "SHA384",
+    "CAMELLIA",
+    "ARIA",
+    "SRP",
+    "TLSv1",
+    "TLSv1.0",
+    "TLSv1.2",
+    "TLSv1.3",
+    "SSLv3",
+    "FIPS",
+  ]));
 
 function validateCiphers(ciphers: string, name: string = "options") {
   // Set the cipher list and cipher suite before anything else because
@@ -167,7 +172,7 @@ function validateCiphers(ciphers: string, name: string = "options") {
         first === 0x2b /* + */ ||
         first === 0x40 /* @ */ ||
         StringPrototypeIncludes.$call(r, "+") ||
-        CIPHER_LIST_SELECTORS.has(r) ||
+        getCipherListSelectors().has(r) ||
         ciphersSet.has(r)
       ) {
         sawUsableEntry = true;
@@ -471,7 +476,8 @@ function checkServerIdentity(hostname, cert) {
 // — Postgres, Valkey, `Bun.connect`, …), so identical options return the same
 // native handle and the same `SSL_CTX*`. Replaces the SHA-256/WeakRef cache
 // that used to live in this file.
-const NativeSecureContext = $rust("SecureContext.rs", "js.getConstructor");
+let NativeSecureContext;
+const getNativeSecureContext = () => (NativeSecureContext ??= $rust("SecureContext.rs", "js.getConstructor"));
 
 // Node treats any falsy key/cert/ca as "not provided" (test-tls-options-
 // boolean-check.js exercises false/0/""). The bindgen SSLConfigFile union only
@@ -574,7 +580,8 @@ function newNativeSecureContext(options, cached = false) {
       options = { ...options, minVersion, maxVersion };
     }
   }
-  const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
+  const Native = getNativeSecureContext();
+  const ctx = (cached ? Native.intern : Native.createPrivate)(options);
   if (pfxExtraCAs) {
     for (const pem of pfxExtraCAs) ctx.addCACert(pem);
   }
@@ -1367,7 +1374,11 @@ function Server(options, secureConnectionListener): void {
   // Lets net.ts's SNI dispatch recognize a raw native SecureContext handed to
   // an SNICallback (the `context.context || context` unwrap accepts both the
   // wrapper and the unwrapped native context).
-  Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
+  Object.defineProperty(Server.prototype, kNativeSecureContextCtor, {
+    get: getNativeSecureContext,
+    enumerable: false,
+    configurable: true,
+  });
 
   Server.prototype.getTicketKeys = function () {
     throw Error("Not implented in Bun yet");

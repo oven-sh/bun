@@ -1,17 +1,14 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
-const utl = require("internal/util/inspect");
+// Capture inspect's built-ins now (before user code can monkey-patch them); inspect itself loads on first use.
+const inspectGlobals = require("internal/util/inspect_globals");
+
+let _utl;
+function utl() {
+  return (_utl ??= require("internal/util/inspect"));
+}
 const { promisify } = require("internal/promisify");
-const {
-  validateString,
-  validateOneOf,
-  validateBoolean,
-  validateObject,
-  validateInteger,
-} = require("internal/validators");
-const { resistStopPropagation } = require("internal/shared");
-const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
@@ -20,8 +17,7 @@ const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
-const { uncurryThis, SafeMap } = require("internal/primordials");
-const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
+const RegExpPrototypeExec = RegExp.prototype.exec;
 
 var cjs_exports;
 
@@ -39,10 +35,19 @@ function isDeepStrictEqual(a, b, skipPrototype) {
 
 const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
 
-const inspect = utl.inspect;
-const formatWithOptions = utl.formatWithOptions;
-const format = utl.format;
-const stripVTControlCharacters = utl.stripVTControlCharacters;
+// The single public `util.inspect` wrapper lives in inspect_globals so custom-inspect hooks
+// always receive the same function whether or not node:util has loaded.
+const inspect = inspectGlobals.publicInspect;
+const { SafeMap } = require("internal/primordials");
+function formatWithOptions(inspectOptions, ...args) {
+  return utl().formatWithOptions.$apply(this, arguments);
+}
+function format(...args) {
+  return utl().format.$apply(this, arguments);
+}
+function stripVTControlCharacters(str) {
+  return utl().stripVTControlCharacters(str);
+}
 
 var debugs = {};
 var debugEnvRegex = /^$/;
@@ -334,7 +339,7 @@ function styleText(format, text, options) {
 
     if (format[0] === "#") {
       let hexStyle = getHexStyleCache().get(format);
-      if (hexStyle === undefined && RegExpPrototypeExec(hexColorRegExp, format) !== null) {
+      if (hexStyle === undefined && RegExpPrototypeExec.$call(hexColorRegExp, format) !== null) {
         hexStyle = getHexStyle(format);
       }
       if (hexStyle !== undefined) {
@@ -344,6 +349,7 @@ function styleText(format, text, options) {
     }
   }
 
+  const { validateString, validateObject, validateBoolean, validateOneOf } = require("internal/validators");
   validateString(text, "text");
   if (options !== undefined) {
     validateObject(options, "options");
@@ -374,7 +380,7 @@ function styleText(format, text, options) {
     if (typeof key === "string" && key[0] === "#") {
       let hexStyle = getHexStyleCache().get(key);
       if (hexStyle === undefined) {
-        if (RegExpPrototypeExec(hexColorRegExp, key) === null) {
+        if (RegExpPrototypeExec.$call(hexColorRegExp, key) === null) {
           throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
         }
         if (skipColorize) continue;
@@ -430,11 +436,12 @@ function prepareCallSites(_err, callSites) {
 function validateSourceMapOption(options) {
   const { sourceMap } = options;
   if (sourceMap !== undefined) {
-    validateBoolean(sourceMap, "options.sourceMap");
+    require("internal/validators").validateBoolean(sourceMap, "options.sourceMap");
   }
 }
 
 function getCallSites(frameCount = 10, options) {
+  const { validateObject, validateInteger } = require("internal/validators");
   // If options is not provided check if frameCount is an object
   if (options === undefined) {
     if (typeof frameCount === "object" && frameCount !== null) {
@@ -485,7 +492,7 @@ function getSignals() {
 
 function convertProcessSignalToExitCode(signalCode) {
   const signals = getSignals();
-  validateOneOf(signalCode, "signalCode", ObjectKeys(signals));
+  require("internal/validators").validateOneOf(signalCode, "signalCode", ObjectKeys(signals));
 
   // POSIX standard: exit code for signal termination is 128 + signal number.
   return 128 + signals[signalCode];
@@ -521,7 +528,7 @@ function aborted(signal: AbortSignal, resource: object) {
     // Do not leak the current scope into the listener.
     // Instead, create a new function.
     unregisterToken,
-    resistStopPropagation({ __proto__: null, once: true }),
+    require("internal/shared").resistStopPropagation({ __proto__: null, once: true }),
   );
 
   if (!lazyAbortedRegistry) {
@@ -549,7 +556,7 @@ function aborted(signal: AbortSignal, resource: object) {
 function setTraceSigInt(enable) {
   // Node validates the argument before the worker check (lib/util.js), so a
   // bad type throws ERR_INVALID_ARG_TYPE even inside a worker.
-  validateBoolean(enable, "enable");
+  require("internal/validators").validateBoolean(enable, "enable");
   if (!Bun.isMainThread) {
     // Matches node's ERR_WORKER_UNSUPPORTED_OPERATION('Calling util.setTraceSigInt').
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt is not supported in workers");
@@ -591,8 +598,23 @@ cjs_exports = {
   parseArgs,
   TextDecoder,
   TextEncoder,
-  MIMEType,
-  MIMEParams,
+  get MIMEType() {
+    return (cjs_exports.MIMEType = require("internal/util/mime").MIMEType);
+  },
+  set MIMEType(v) {
+    Object.defineProperty(cjs_exports, "MIMEType", { value: v, writable: true, enumerable: true, configurable: true });
+  },
+  get MIMEParams() {
+    return (cjs_exports.MIMEParams = require("internal/util/mime").MIMEParams);
+  },
+  set MIMEParams(v) {
+    Object.defineProperty(cjs_exports, "MIMEParams", {
+      value: v,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
 
   // Deprecated in Node.js 22, removed in 23
   isArray: $isArray,

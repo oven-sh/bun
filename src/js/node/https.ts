@@ -2,14 +2,13 @@
 // The client portions (Agent, request, get) are a port of Node.js's lib/https.js
 // https://github.com/nodejs/node/blob/v26.3.0/lib/https.js
 const http = require("node:http");
-const tls = require("node:tls");
-const { isIP } = require("node:net");
-const net = require("node:net");
-const { urlToHttpOptions } = require("internal/url");
-const { kEmptyObject, once } = require("internal/shared");
+const { isIP } = require("internal/net/isIP");
+const { getLazy, kEmptyObject, once } = require("internal/shared");
 const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
-const { validateHeaderValue } = require("node:_http_common");
+
+const tls = getLazy(() => require("node:tls"));
+const net = getLazy(() => require("node:net"));
 
 const ArrayPrototypeShift = Array.prototype.shift;
 const ObjectAssign = Object.assign;
@@ -21,9 +20,9 @@ function request(...args) {
 
   if (typeof args[0] === "string") {
     const urlStr = ArrayPrototypeShift.$call(args);
-    options = urlToHttpOptions(new URL(urlStr));
+    options = require("internal/url").urlToHttpOptions(new URL(urlStr));
   } else if (args[0] instanceof URL) {
-    options = urlToHttpOptions(ArrayPrototypeShift.$call(args));
+    options = require("internal/url").urlToHttpOptions(ArrayPrototypeShift.$call(args));
   }
 
   if (args[0] && typeof args[0] !== "function") {
@@ -72,7 +71,7 @@ function getTunnelConfigForProxiedHttps(agent, reqOptions) {
   // When the request options come from a string invalid characters would be stripped away,
   // when it's an object ERR_INVALID_CHAR would be thrown. Validate again in case
   // agent.createConnection() is called with invalid options.
-  validateHeaderValue("host", endpoint);
+  require("node:_http_common").validateHeaderValue("host", endpoint);
 
   let payload = `CONNECT ${endpoint} HTTP/1.1\r\n`;
   // The parseProxyConfigFromEnv() method should have already validated the authorization header
@@ -186,7 +185,7 @@ function establishTunnel(agent, socket, options, tunnelConfig, afterSocket) {
         $debug("Propagate free event from tunneled socket to tunnel socket");
         socket.emit("free");
       }
-      tunneledSocket = tls.connect(requestOptions, onTLSHandshakeSuccess);
+      tunneledSocket = tls().connect(requestOptions, onTLSHandshakeSuccess);
       tunneledSocket.on("free", onTunneledSocketFree);
       tunneledSocket.on("error", onTLSHandshakeError);
       const agentKey = requestOptions._agentKey;
@@ -274,7 +273,7 @@ function createConnection(...args) {
   const tunnelConfig = getTunnelConfigForProxiedHttps(this, options);
 
   if (tunnelConfig === null) {
-    socket = tls.connect(options);
+    socket = tls().connect(options);
   } else {
     const connectOptions = {
       ...this[kProxyConfig].proxyConnectionOptions,
@@ -314,9 +313,9 @@ function createConnection(...args) {
       establishTunnel(agent, socket, options, tunnelConfig, cleanupAndPropagate);
     }
     if (this[kProxyConfig].protocol === "http:") {
-      socket = net.connect(connectOptions, onProxyConnection);
+      socket = net().connect(connectOptions, onProxyConnection);
     } else {
-      socket = tls.connect(connectOptions, onProxyConnection);
+      socket = tls().connect(connectOptions, onProxyConnection);
     }
 
     socket.on("error", onError);
@@ -519,23 +518,50 @@ function createServer(options, requestListener) {
   const server = http.createServer(options, requestListener);
   const optionsALPNProtocols = options.ALPNProtocols;
   if (optionsALPNProtocols) {
-    tls.convertALPNProtocols(optionsALPNProtocols, server);
+    tls().convertALPNProtocols(optionsALPNProtocols, server);
   }
   server.ALPNCallback = options.ALPNCallback;
   return server;
 }
 
-var https = {
-  Agent,
-  globalAgent: new Agent({
+function createGlobalAgent(proxyEnv) {
+  return new Agent({
     keepAlive: true,
     scheduling: "lifo",
     timeout: 5000,
-    proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
-  }),
-  Server: http.Server,
+    proxyEnv,
+  });
+}
+// With an env proxy configured, construct eagerly so an invalid proxy URL still throws at load.
+let globalAgent = shouldUseEnvProxy() ? createGlobalAgent(process.env) : undefined;
+let globalAgentSet = globalAgent !== undefined;
+
+var https = {
+  Agent,
+  get globalAgent() {
+    if (!globalAgentSet) {
+      globalAgentSet = true;
+      globalAgent = createGlobalAgent(undefined);
+    }
+    return globalAgent;
+  },
+  set globalAgent(value) {
+    globalAgentSet = true;
+    globalAgent = value;
+  },
+  get Server() {
+    return defineServer(http.Server);
+  },
+  set Server(value) {
+    defineServer(value);
+  },
   createServer,
   get,
   request,
 };
+
+function defineServer(value) {
+  Reflect.defineProperty(https, "Server", { value, writable: true, enumerable: true, configurable: true });
+  return value;
+}
 export default https;

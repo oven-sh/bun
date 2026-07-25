@@ -34,7 +34,6 @@ const {
   isAnyArrayBuffer,
 } = require("node:util/types");
 const { innerOk } = require("internal/assert/utils");
-const { validateFunction } = require("internal/validators");
 
 const ArrayFrom = Array.from;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -700,7 +699,7 @@ function expectedException(actual, expected, message, fn) {
 }
 
 function getActual(fn) {
-  validateFunction(fn, "fn");
+  require("internal/validators").validateFunction(fn, "fn");
   try {
     fn();
   } catch (e) {

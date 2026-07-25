@@ -4,8 +4,6 @@
 // instances directly from its native handle (the `kHandle` constructor form).
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_incoming.js
 const Readable = require("internal/streams/readable");
-// callback-style stream.finished (returns a cleanup function)
-const finished = require("internal/streams/end-of-stream");
 
 const {
   abortedSymbol,
@@ -21,8 +19,6 @@ const {
   onDataIncomingMessage,
   kAbortController,
 } = require("internal/http");
-
-const { FakeSocket } = require("internal/http/FakeSocket");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ArrayPrototypeSlice = Array.prototype.slice;
@@ -173,7 +169,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "socket", {
     let socket = this[fakeSocketSymbol];
     if (socket === undefined && this[typeSymbol] === NodeHTTPIncomingRequestType.NodeHTTPResponse) {
       // The native server path historically always exposed a socket object.
-      socket = this[fakeSocketSymbol] = new FakeSocket(this);
+      socket = this[fakeSocketSymbol] = new (require("internal/http/FakeSocket").FakeSocket)(this);
     }
     // Like Node.js, a bare `new IncomingMessage()` reports an undefined
     // socket (not null) until one is assigned.
@@ -451,7 +447,10 @@ IncomingMessage.prototype._destroy = function _destroy(err, cb) {
   if (socket && !socket.destroyed && this.aborted) {
     socket.destroy(err);
     const state = { cleanup: undefined as undefined | (() => void) };
-    state.cleanup = finished(socket, onFinishedAfterDestroy.bind(this, state, err, cb));
+    state.cleanup = require("internal/streams/end-of-stream")(
+      socket,
+      onFinishedAfterDestroy.bind(this, state, err, cb),
+    );
   } else {
     process.nextTick(onError, this, err, cb);
   }

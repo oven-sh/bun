@@ -1,5 +1,3 @@
-const { validateString } = require("internal/validators");
-
 const codesWarned = new Set();
 
 function getDeprecationWarningEmitter(code, msg, deprecated, shouldEmitWarning = () => true) {
@@ -21,7 +19,7 @@ function getDeprecationWarningEmitter(code, msg, deprecated, shouldEmitWarning =
 
 function deprecate(fn, msg, code) {
   // Lazy-load to avoid a circular dependency.
-  if (code !== undefined) validateString(code, "code");
+  if (code !== undefined) require("internal/validators").validateString(code, "code");
 
   const emitDeprecationWarning = getDeprecationWarningEmitter(code, msg, deprecated);
 

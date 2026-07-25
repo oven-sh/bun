@@ -1,6 +1,4 @@
 // Hardcoded module "node:path"
-const { validateString } = require("internal/validators");
-
 const [bindingPosix, bindingWin32] = $cpp("Path.cpp", "createNodePathBinding");
 const toNamespacedPathPosix = bindingPosix.toNamespacedPath.bind(bindingPosix);
 const toNamespacedPathWin32 = bindingWin32.toNamespacedPath.bind(bindingWin32);
@@ -50,6 +48,7 @@ type Glob = import("bun").Glob;
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
 function matchesGlob(isWindows, path, pattern) {
+  const { validateString } = require("internal/validators");
   let glob: Glob;
 
   validateString(path, "path");

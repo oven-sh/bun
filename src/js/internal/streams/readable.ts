@@ -1,6 +1,5 @@
 "use strict";
 
-const EE = require("node:events");
 const { Stream, prependListener } = require("internal/streams/legacy");
 const { addAbortSignal, addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
@@ -20,13 +19,6 @@ const {
   kErrored,
   kConstructed,
 } = require("internal/streams/utils");
-const { aggregateTwoErrors } = require("internal/errors");
-const { validateAbortSignal, validateObject } = require("internal/validators");
-const { StringDecoder } = require("node:string_decoder");
-const from = require("internal/streams/from");
-const { SafeSet } = require("internal/primordials");
-const { kAutoDestroyed } = require("internal/shared");
-
 const ObjectDefineProperties = Object.defineProperties;
 const SymbolAsyncDispose = Symbol.asyncDispose;
 const NumberIsNaN = Number.isNaN;
@@ -124,6 +116,7 @@ function ReadableState(options, stream, isDuplex) {
   this.awaitDrainWriters = null;
 
   if (options?.encoding) {
+    const { StringDecoder } = require("node:string_decoder");
     this.decoder = new StringDecoder(options.encoding);
     this.encoding = options.encoding;
   }
@@ -308,7 +301,7 @@ Readable.prototype._destroy = function (err, cb) {
   cb(err);
 };
 
-Readable.prototype[EE.captureRejectionSymbol] = function (err) {
+Readable.prototype[Symbol.for("nodejs.rejection")] = function (err) {
   this.destroy(err);
 };
 
@@ -520,6 +513,7 @@ Readable.prototype.isPaused = function () {
 Readable.prototype.setEncoding = function (enc) {
   const state = this._readableState;
 
+  const { StringDecoder } = require("node:string_decoder");
   const decoder = new StringDecoder(enc);
   state.decoder = decoder;
   // If setEncoding(null), decoder.encoding equals utf8.
@@ -834,6 +828,7 @@ Readable.prototype.pipe = function (dest, pipeOpts) {
   if (state.pipes.length === 1) {
     if ((state[kState] & kMultiAwaitDrain) === 0) {
       state[kState] |= kMultiAwaitDrain;
+      const { SafeSet } = require("internal/primordials");
       state.awaitDrainWriters = new SafeSet(state.awaitDrainWriters ? [state.awaitDrainWriters] : []);
     }
   }
@@ -1261,6 +1256,7 @@ Readable.prototype[SymbolAsyncIterator] = function () {
 
 Readable.prototype.iterator = function (options) {
   if (options !== undefined) {
+    const { validateObject } = require("internal/validators");
     validateObject(options, "options");
   }
   return streamToAsyncIterator(this, options);
@@ -1298,6 +1294,7 @@ Readable.prototype.iterator = function (options) {
 let composeImpl;
 
 Readable.prototype.compose = function compose(stream, options) {
+  const { validateAbortSignal, validateObject } = require("internal/validators");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -1327,6 +1324,7 @@ function streamToAsyncIterator(stream, options?) {
 }
 
 async function* createAsyncIterator(stream, options) {
+  const { aggregateTwoErrors } = require("internal/errors");
   let callback = nop;
 
   function next(resolve) {
@@ -1680,6 +1678,7 @@ function endReadableNT(state, stream) {
           (wState.finished || wState.writable === false));
 
       if (autoDestroy) {
+        const { kAutoDestroyed } = require("internal/shared");
         stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
         stream.destroy();
       }
@@ -1695,7 +1694,7 @@ function endWritableNT(stream) {
 }
 
 Readable.from = function (iterable, opts) {
-  return from(Readable, iterable, opts);
+  return require("internal/streams/from")(Readable, iterable, opts);
 };
 
 // Lazy to avoid circular references
@@ -1723,5 +1722,48 @@ Readable.wrap = function (src, options) {
     },
   }).wrap(src);
 };
+
+// Attach the streaming operators (map, filter, toArray, ...) to Readable.prototype.
+const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
+const opStreamKeys = ObjectKeys(streamReturningOperators);
+for (let i = 0; i < opStreamKeys.length; i++) {
+  const key = opStreamKeys[i];
+  const op = streamReturningOperators[key];
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return Readable.from(op.$apply(this, args));
+  }
+  Object.defineProperty(fn, "name", { __proto__: null, value: op.name });
+  Object.defineProperty(fn, "length", { __proto__: null, value: op.length });
+  Object.defineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
+const promiseKeys = ObjectKeys(promiseReturningOperators);
+for (let i = 0; i < promiseKeys.length; i++) {
+  const key = promiseKeys[i];
+  const op = promiseReturningOperators[key];
+  function fn(...args) {
+    if (new.target) {
+      throw $ERR_ILLEGAL_CONSTRUCTOR();
+    }
+    return Promise.$resolve().then(() => op.$apply(this, args));
+  }
+  Object.defineProperty(fn, "name", { __proto__: null, value: op.name });
+  Object.defineProperty(fn, "length", { __proto__: null, value: op.length });
+  Object.defineProperty(Readable.prototype, key, {
+    __proto__: null,
+    value: fn,
+    enumerable: false,
+    configurable: true,
+    writable: true,
+  });
+}
 
 export default Readable as unknown as typeof import("node:stream").Readable;

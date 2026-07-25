@@ -1,9 +1,5 @@
 "use strict";
 
-const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
-const { kWeakHandler, resistStopPropagation } = require("internal/shared");
-const { finished } = require("internal/streams/end-of-stream");
-
 const MathFloor = Math.floor;
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
@@ -16,6 +12,7 @@ const kEmpty = Symbol("kEmpty");
 const kEof = Symbol("kEof");
 
 function map(fn, options) {
+  const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
   validateFunction(fn, "fn");
   if (options != null) {
     validateObject(options, "options");
@@ -165,7 +162,7 @@ async function some(fn, options = undefined) {
 }
 
 async function every(fn, options = undefined) {
-  validateFunction(fn, "fn");
+  require("internal/validators").validateFunction(fn, "fn");
   // https://en.wikipedia.org/wiki/De_Morgan's_laws
   return !(await some.$call(
     this,
@@ -184,7 +181,7 @@ async function find(fn, options) {
 }
 
 async function forEach(fn, options) {
-  validateFunction(fn, "fn");
+  require("internal/validators").validateFunction(fn, "fn");
   async function forEachFn(value, options) {
     await fn(value, options);
     return kEmpty;
@@ -194,7 +191,7 @@ async function forEach(fn, options) {
 }
 
 function filter(fn, options) {
-  validateFunction(fn, "fn");
+  require("internal/validators").validateFunction(fn, "fn");
   async function filterFn(value, options) {
     if (await fn(value, options)) {
       return value;
@@ -215,6 +212,7 @@ class ReduceAwareErrMissingArgs extends TypeError {
 }
 
 async function reduce(reducer, initialValue, options) {
+  const { validateAbortSignal, validateFunction, validateObject } = require("internal/validators");
   validateFunction(reducer, "reducer");
   if (options != null) {
     validateObject(options, "options");
@@ -227,12 +225,13 @@ async function reduce(reducer, initialValue, options) {
   if (options?.signal?.aborted) {
     const err = $makeAbortError(undefined, { cause: options.signal.reason });
     this.once("error", () => {}); // The error is already propagated
-    await finished(this.destroy(err));
+    await require("internal/streams/end-of-stream").finished(this.destroy(err));
     throw err;
   }
   const ac = new AbortController();
   const signal = ac.signal;
   if (options?.signal) {
+    const { kWeakHandler, resistStopPropagation } = require("internal/shared");
     const opts = resistStopPropagation({ once: true, [kWeakHandler]: this });
     options.signal.addEventListener("abort", () => ac.abort(), opts);
   }
@@ -260,6 +259,7 @@ async function reduce(reducer, initialValue, options) {
 }
 
 async function toArray(options) {
+  const { validateAbortSignal, validateObject } = require("internal/validators");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -301,6 +301,7 @@ function toIntegerOrInfinity(number) {
 }
 
 function drop(number, options?) {
+  const { validateAbortSignal, validateObject } = require("internal/validators");
   if (options != null) {
     validateObject(options, "options");
   }
@@ -326,6 +327,7 @@ function drop(number, options?) {
 ObjectDefineProperty(drop, "length", { value: 1 });
 
 function take(number, options?: { signal: AbortSignal }) {
+  const { validateAbortSignal, validateObject } = require("internal/validators");
   if (options != null) {
     validateObject(options, "options");
   }

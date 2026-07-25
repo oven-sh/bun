@@ -43,7 +43,6 @@
 "use strict";
 
 const Duplex = require("internal/streams/duplex");
-const { getHighWaterMark } = require("internal/streams/state");
 
 const kCallback = Symbol("kCallback");
 
@@ -53,7 +52,9 @@ function Transform(options): void {
   // TODO (ronag): This should preferably always be
   // applied but would be semver-major. Or even better;
   // make Transform a Readable with the Writable interface.
-  const readableHighWaterMark = options ? getHighWaterMark(this, options, "readableHighWaterMark", true) : null;
+  const readableHighWaterMark = options
+    ? require("internal/streams/state").getHighWaterMark(this, options, "readableHighWaterMark", true)
+    : null;
   if (readableHighWaterMark === 0) {
     // A Duplex will buffer both on the writable and readable side while
     // a Transform just wants to buffer hwm number of elements. To avoid

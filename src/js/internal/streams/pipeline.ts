@@ -4,11 +4,6 @@
 "use strict";
 
 const eos = require("internal/streams/end-of-stream");
-const { once } = require("internal/shared");
-const destroyImpl = require("internal/streams/destroy");
-const Duplex = require("internal/streams/duplex");
-const { aggregateTwoErrors } = require("internal/errors");
-const { validateFunction, validateAbortSignal } = require("internal/validators");
 const {
   isIterable,
   isReadable,
@@ -19,6 +14,9 @@ const {
   isReadableStream,
   isReadableFinished,
 } = require("internal/streams/utils");
+let destroyImpl, validators;
+const getDestroy = () => (destroyImpl ??= require("internal/streams/destroy"));
+const getValidators = () => (validators ??= require("internal/validators"));
 
 const SymbolAsyncIterator = Symbol.asyncIterator;
 const ArrayIsArray = Array.isArray;
@@ -42,7 +40,7 @@ function destroyer(stream, reading, writing) {
     destroy: err => {
       if (finished) return;
       finished = true;
-      destroyImpl.destroyer(stream, err || $ERR_STREAM_DESTROYED("pipe"));
+      getDestroy().destroyer(stream, err || $ERR_STREAM_DESTROYED("pipe"));
     },
     cleanup,
   };
@@ -52,7 +50,7 @@ function popCallback(streams) {
   // Streams should never be an empty array. It should always contain at least
   // a single stream. Therefore optimize for the average case instead of
   // checking for length === 0 as well.
-  validateFunction(streams[streams.length - 1], "streams[stream.length - 1]");
+  getValidators().validateFunction(streams[streams.length - 1], "streams[stream.length - 1]");
   return streams.pop();
 }
 
@@ -123,7 +121,7 @@ async function pumpToNode(iterable, writable, finish, { end }) {
 
     finish();
   } catch (err) {
-    finish(error !== err ? aggregateTwoErrors(error, err) : err);
+    finish(error !== err ? require("internal/errors").aggregateTwoErrors(error, err) : err);
   } finally {
     cleanup();
     writable.off("drain", resume);
@@ -160,7 +158,7 @@ async function pumpToWeb(readable, writable, finish, { end }) {
 }
 
 function pipeline(...streams) {
-  return pipelineImpl(streams, once(popCallback(streams)));
+  return pipelineImpl(streams, require("internal/shared").once(popCallback(streams)));
 }
 
 function pipelineImpl(streams, callback, opts?) {
@@ -180,7 +178,7 @@ function pipelineImpl(streams, callback, opts?) {
   // https://github.com/nodejs/node/issues/35452
   const lastStreamCleanup: (() => void)[] = [];
 
-  validateAbortSignal(outerSignal, "options.signal");
+  getValidators().validateAbortSignal(outerSignal, "options.signal");
 
   function abort() {
     finishImpl($makeAbortError(undefined, { cause: outerSignal?.reason }));
@@ -276,7 +274,7 @@ function pipelineImpl(streams, callback, opts?) {
       } else if (isIterable(stream) || isReadableNodeStream(stream) || isTransformStream(stream)) {
         ret = stream;
       } else {
-        ret = Duplex.from(stream);
+        ret = require("internal/streams/duplex").from(stream);
       }
     } else if (typeof stream === "function") {
       if (isTransformStream(ret)) {
@@ -384,7 +382,7 @@ function pipelineImpl(streams, callback, opts?) {
       }
       ret = stream;
     } else {
-      ret = Duplex.from(stream);
+      ret = require("internal/streams/duplex").from(stream);
     }
   }
 

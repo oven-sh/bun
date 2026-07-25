@@ -1,9 +1,14 @@
 "use strict";
 
-const { inspect } = require("internal/util/inspect");
 const colors = require("internal/util/colors");
-const { validateObject } = require("internal/validators");
-const { myersDiff, printMyersDiff, printSimpleMyersDiff } = require("internal/assert/myers_diff") as typeof Internal;
+let _inspect;
+function inspect(value, opts) {
+  return (_inspect ??= require("internal/util/inspect").inspect).$apply(this, arguments);
+}
+let _myers;
+function myers(): typeof Internal {
+  return (_myers ??= require("internal/assert/myers_diff"));
+}
 
 const ErrorCaptureStackTrace = Error.captureStackTrace;
 const ObjectAssign = Object.assign;
@@ -110,8 +115,8 @@ function getColoredMyersDiff(actual, expected) {
   const skipped = false;
 
   // const diff = myersDiff(StringPrototypeSplit.$call(actual, ""), StringPrototypeSplit.$call(expected, ""));
-  const diff = myersDiff(actual, expected, false, false);
-  let message = printSimpleMyersDiff(diff);
+  const diff = myers().myersDiff(actual, expected, false, false);
+  let message = myers().printSimpleMyersDiff(diff);
 
   if (skipped) {
     message += "...";
@@ -220,8 +225,8 @@ function createErrDiff(actual, expected, operator, customMessage) {
     const checkCommaDisparity = actual != null && typeof actual === "object";
     let myersDiffMessage;
     try {
-      const diff = myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
-      myersDiffMessage = printMyersDiff(diff);
+      const diff = myers().myersDiff(inspectedActual, inspectedExpected, checkCommaDisparity, true);
+      myersDiffMessage = myers().printMyersDiff(diff);
     } catch {
       myersDiffMessage = undefined;
     }
@@ -263,7 +268,7 @@ class AssertionError extends Error {
   operator;
 
   constructor(options) {
-    validateObject(options, "options");
+    require("internal/validators").validateObject(options, "options");
     const {
       message,
       operator,
@@ -415,7 +420,7 @@ class AssertionError extends Error {
     return `${this.name} [${this.code}]: ${this.message}`;
   }
 
-  [inspect.custom](recurseTimes, ctx) {
+  [Symbol.for("nodejs.util.inspect.custom")](recurseTimes, ctx) {
     // Long strings should not be fully inspected.
     const tmpActual = this.actual;
     const tmpExpected = this.expected;

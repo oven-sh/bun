@@ -1,7 +1,5 @@
 "use strict";
 
-const { validateInteger } = require("internal/validators");
-
 const NumberIsInteger = Number.isInteger;
 const MathFloor = Math.floor;
 type Key = string; // do we need to allow symbols?
@@ -23,7 +21,7 @@ function getDefaultHighWaterMark(objectMode: boolean = false): number {
 }
 
 function setDefaultHighWaterMark(objectMode: boolean, value: number): void {
-  validateInteger(value, "value", 0);
+  require("internal/validators").validateInteger(value, "value", 0);
   if (objectMode) {
     defaultHighWaterMarkObjectMode = value;
   } else {

@@ -3,7 +3,6 @@
 // node:tls sockets and the llhttp HTTPParser binding, matching the upstream
 // implementation as closely as possible.
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_client.js
-const net = require("node:net");
 const { kEmptyObject, once, ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kClientRequestStatistics = Symbol("ClientRequestStatistics");
 const {
@@ -16,14 +15,8 @@ const {
   kSkipPendingData,
 } = require("node:_http_common");
 const { kUniqueHeaders, parseUniqueHeadersOption, OutgoingMessage } = require("node:_http_outgoing");
-const Agent = require("node:_http_agent");
-const { urlToHttpOptions } = require("internal/url");
 const { kOutHeaders, kNeedDrain, kProxyConfig, checkShouldUseProxy } = require("internal/http");
 const { validateInteger, validateBoolean, validateString, validateOneOf } = require("internal/validators");
-const { getTimerDuration } = require("internal/timers");
-const { addAbortSignal } = require("internal/streams/add-abort-signal");
-const finished = require("internal/streams/end-of-stream");
-const dc = require("node:diagnostics_channel");
 
 const ObjectAssign = Object.assign;
 const ObjectDefineProperty = Object.defineProperty;
@@ -31,12 +24,17 @@ const ObjectKeys = Object.keys;
 const NumberIsFinite = Number.isFinite;
 const ArrayIsArray = Array.isArray;
 
-const onClientRequestCreatedChannel = dc.channel("http.client.request.created");
-const onClientRequestStartChannel = dc.channel("http.client.request.start");
-const onClientRequestErrorChannel = dc.channel("http.client.request.error");
-const onClientResponseFinishChannel = dc.channel("http.client.response.finish");
+let dc;
+let onClientRequestCreatedChannel;
+let onClientRequestStartChannel;
+let onClientRequestErrorChannel;
+let onClientResponseFinishChannel;
+function channel(name) {
+  return (dc ??= require("node:diagnostics_channel")).channel(name);
+}
 
 function emitErrorEvent(request, error) {
+  onClientRequestErrorChannel ??= channel("http.client.request.error");
   if (onClientRequestErrorChannel.hasSubscribers) {
     onClientRequestErrorChannel.publish({
       request,
@@ -169,10 +167,10 @@ function ClientRequest(input, options, cb) {
 
   if (typeof input === "string") {
     const urlStr = input;
-    input = urlToHttpOptions(new URL(urlStr));
+    input = require("internal/url").urlToHttpOptions(new URL(urlStr));
   } else if (isURLInstance(input)) {
     // url.URL instance
-    input = urlToHttpOptions(input);
+    input = require("internal/url").urlToHttpOptions(input);
   } else {
     cb = options;
     options = input;
@@ -187,7 +185,7 @@ function ClientRequest(input, options, cb) {
   }
 
   let agent = options.agent;
-  const defaultAgent = options._defaultAgent || Agent.globalAgent;
+  const defaultAgent = options._defaultAgent || require("node:_http_agent").globalAgent;
   if (agent === false) {
     agent = new defaultAgent.constructor();
   } else if (agent === null || agent === undefined) {
@@ -242,11 +240,12 @@ function ClientRequest(input, options, cb) {
   this.socketPath = options.socketPath;
 
   const optionsTimeout = options.timeout;
-  if (optionsTimeout !== undefined) this.timeout = getTimerDuration(optionsTimeout, "timeout");
+  if (optionsTimeout !== undefined)
+    this.timeout = require("internal/timers").getTimerDuration(optionsTimeout, "timeout");
 
   const signal = options.signal;
   if (signal) {
-    addAbortSignal(signal, this);
+    require("internal/streams/add-abort-signal").addAbortSignal(signal, this);
     delete optsWithoutSignal.signal;
   }
   let method = options.method;
@@ -430,9 +429,10 @@ function ClientRequest(input, options, cb) {
       }
     } else {
       $debug("CLIENT use net.createConnection", opts);
-      this.onSocket(net.createConnection(opts));
+      this.onSocket(require("node:net").createConnection(opts));
     }
   }
+  onClientRequestCreatedChannel ??= channel("http.client.request.created");
   if (onClientRequestCreatedChannel.hasSubscribers) {
     onClientRequestCreatedChannel.publish({
       request: this,
@@ -478,6 +478,7 @@ ClientRequest.prototype._finish = function _finish() {
       },
     });
   }
+  onClientRequestStartChannel ??= channel("http.client.request.start");
   if (onClientRequestStartChannel.hasSubscribers) {
     onClientRequestStartChannel.publish({
       request: this,
@@ -830,6 +831,7 @@ function parserOnIncomingClient(res, shouldKeepAlive) {
     });
   }
 
+  onClientResponseFinishChannel ??= channel("http.client.response.finish");
   if (onClientResponseFinishChannel.hasSubscribers) {
     onClientResponseFinishChannel.publish({
       request: req,
@@ -1074,7 +1076,10 @@ function onSocketNT(req, socket, err) {
         socket.emit("free");
         socket.removeListener("error", socketErrorListener);
       } else {
-        finished(socket.destroy(err || req[kError]), onSocketFinishedDestroy.bind(undefined, req, socket, err));
+        require("internal/streams/end-of-stream")(
+          socket.destroy(err || req[kError]),
+          onSocketFinishedDestroy.bind(undefined, req, socket, err),
+        );
         return;
       }
     }
@@ -1126,7 +1131,7 @@ ClientRequest.prototype.setTimeout = function setTimeout(msecs, callback) {
   }
 
   listenSocketTimeout(this);
-  msecs = getTimerDuration(msecs, "msecs");
+  msecs = require("internal/timers").getTimerDuration(msecs, "msecs");
   if (callback) this.once("timeout", callback);
 
   const socket = this.socket;

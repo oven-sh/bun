@@ -1,8 +1,6 @@
 const kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const kCustomPromisifyArgsSymbol = Symbol("customPromisifyArgs");
 
-const { validateFunction } = require("internal/validators");
-
 function defineCustomPromisify(target, callback) {
   Object.defineProperty(target, kCustomPromisifiedSymbol, {
     value: callback,
@@ -21,6 +19,7 @@ function defineCustomPromisifyArgs(target, args) {
 }
 
 var promisify = function promisify(original) {
+  const { validateFunction } = require("internal/validators");
   validateFunction(original, "original");
   const custom = original[kCustomPromisifiedSymbol];
   if (custom) {

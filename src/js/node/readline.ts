@@ -26,8 +26,6 @@
 // Section: Imports
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
-const { StringDecoder } = require("node:string_decoder");
-const { promisify } = require("internal/promisify");
 const { SafeStringIterator } = require("internal/primordials");
 
 const {
@@ -791,7 +789,7 @@ var ESCAPE_CODE_TIMEOUT = 500;
 function emitKeypressEvents(stream, iface = {}) {
   if (stream[KEYPRESS_DECODER]) return;
 
-  stream[KEYPRESS_DECODER] = new StringDecoder("utf8");
+  stream[KEYPRESS_DECODER] = new (require("node:string_decoder").StringDecoder)("utf8");
 
   stream[ESCAPE_DECODER] = emitKeys(stream);
   stream[ESCAPE_DECODER].next();
@@ -1162,7 +1160,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   input.on("error", this[kOnError]);
 
   if (!this.terminal) {
-    this[kDecoder] = new StringDecoder("utf8");
+    this[kDecoder] = new (require("node:string_decoder").StringDecoder)("utf8");
     input.on("data", this[kOnData]);
     input.on("end", this[kOnEnd]);
     this.once("close", this[kOnSelfCloseWithoutTerminal]);
@@ -2247,7 +2245,7 @@ Interface.prototype.question = function question(query, options, cb) {
   }
 };
 
-Interface.prototype.question[promisify.custom] = {
+Interface.prototype.question[SymbolFor("nodejs.util.promisify.custom")] = {
   question(query, options) {
     if (options === null || typeof options !== "object") {
       options = kEmptyObject;

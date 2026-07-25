@@ -2,8 +2,10 @@
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { validateString } = require("internal/validators");
-const jsc: typeof import("bun:jsc") = require("bun:jsc");
+let _jsc: typeof import("bun:jsc");
+function jsc(): typeof import("bun:jsc") {
+  return (_jsc ??= require("bun:jsc"));
+}
 
 function notimpl(message) {
   throwNotImplemented("node:v8 " + message);
@@ -57,8 +59,8 @@ function totalmem() {
 }
 
 function getHeapStatistics() {
-  const stats = jsc.heapStats();
-  const memory = jsc.memoryUsage();
+  const stats = jsc().heapStats();
+  const memory = jsc().memoryUsage();
 
   // These numbers need to be plausible, even if incorrect
   // From npm's codebase:
@@ -95,11 +97,11 @@ function getHeapCodeStatistics() {
 function setFlagsFromString(flags) {
   // Validate before reporting the gap: node rejects a non-string argument
   // regardless of whether the flag itself can be applied.
-  validateString(flags, "flags");
+  require("internal/validators").validateString(flags, "flags");
   notimpl("setFlagsFromString");
 }
 function deserialize(value) {
-  return jsc.deserialize(value);
+  return jsc().deserialize(value);
 }
 function takeCoverage() {
   notimpl("takeCoverage");
@@ -108,7 +110,7 @@ function stopCoverage() {
   notimpl("stopCoverage");
 }
 function serialize(arg1) {
-  return jsc.serialize(arg1, { binaryType: "nodebuffer" });
+  return jsc().serialize(arg1, { binaryType: "nodebuffer" });
 }
 
 function getDefaultHeapSnapshotPath() {

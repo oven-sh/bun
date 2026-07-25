@@ -3,20 +3,24 @@ const httpAgent = require("node:_http_agent");
 const { Agent } = httpAgent;
 const { ClientRequest } = require("node:_http_client");
 const { validateHeaderName, validateHeaderValue, parsers } = require("node:_http_common");
-const { IncomingMessage } = require("node:_http_incoming");
 const { OutgoingMessage } = require("node:_http_outgoing");
-const { Server, ServerResponse } = require("node:_http_server");
 
 const { METHODS, STATUS_CODES, setMaxHTTPHeaderSize, getMaxHTTPHeaderSize } = require("internal/http");
 
 // Like Node.js's lib/_http_client.js creating its debuglog('http'): emits the
 // sensitive-data process warning when NODE_DEBUG enables the http section.
-require("node:util").debuglog("http");
+if (process.env.NODE_DEBUG) require("node:util").debuglog("http");
 
 const { WebSocket, CloseEvent, MessageEvent } = globalThis;
 
 function createServer(options, callback) {
+  const { Server } = require("node:_http_server");
   return new Server(options, callback);
+}
+
+function defineLazy(name, value) {
+  Reflect.defineProperty(http_exports, name, { value, writable: true, enumerable: true, configurable: true });
+  return value;
 }
 
 /**
@@ -45,12 +49,27 @@ function get(url, options, cb) {
 
 const http_exports = {
   Agent,
-  Server,
+  get Server() {
+    return defineLazy("Server", require("node:_http_server").Server);
+  },
+  set Server(value) {
+    defineLazy("Server", value);
+  },
   METHODS,
   STATUS_CODES,
   createServer,
-  ServerResponse,
-  IncomingMessage,
+  get ServerResponse() {
+    return defineLazy("ServerResponse", require("node:_http_server").ServerResponse);
+  },
+  set ServerResponse(value) {
+    defineLazy("ServerResponse", value);
+  },
+  get IncomingMessage() {
+    return defineLazy("IncomingMessage", require("node:_http_incoming").IncomingMessage);
+  },
+  set IncomingMessage(value) {
+    defineLazy("IncomingMessage", value);
+  },
   request,
   get,
   get maxHeaderSize() {

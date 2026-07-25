@@ -4,13 +4,7 @@ const ObjectKeys = Object.keys;
 const ObjectDefineProperty = Object.defineProperty;
 
 const customPromisify = Symbol.for("nodejs.util.promisify.custom");
-const { streamReturningOperators, promiseReturningOperators } = require("internal/streams/operators");
-const compose = require("internal/streams/compose");
 const { setDefaultHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
-const { pipeline } = require("internal/streams/pipeline");
-const { destroyer } = require("internal/streams/destroy");
-const eos = require("internal/streams/end-of-stream");
-const promises = require("internal/stream.promises");
 const utils = require("internal/streams/utils");
 const { isArrayBufferView, isUint8Array } = require("node:util/types");
 const Stream = require("internal/streams/legacy").Stream;
@@ -21,83 +15,72 @@ Stream.isErrored = utils.isErrored;
 Stream.isReadable = utils.isReadable;
 Stream.isWritable = utils.isWritable;
 
-Stream.Readable = require("internal/streams/readable");
-const streamKeys = ObjectKeys(streamReturningOperators);
-for (let i = 0; i < streamKeys.length; i++) {
-  const key = streamKeys[i];
-  const op = streamReturningOperators[key];
-  function fn(...args) {
-    if (new.target) {
-      throw $ERR_ILLEGAL_CONSTRUCTOR();
-    }
-    return Stream.Readable.from(op.$apply(this, args));
-  }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
-  ObjectDefineProperty(Stream.Readable.prototype, key, {
+function defineValue(name, value) {
+  Reflect.defineProperty(Stream, name, {
     __proto__: null,
-    value: fn,
-    enumerable: false,
-    configurable: true,
+    value,
     writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+  return value;
+}
+
+function defineLazy(name, load) {
+  ObjectDefineProperty(Stream, name, {
+    __proto__: null,
+    enumerable: true,
+    configurable: true,
+    get() {
+      return defineValue(name, load());
+    },
+    set(value) {
+      defineValue(name, value);
+    },
   });
 }
-const promiseKeys = ObjectKeys(promiseReturningOperators);
-for (let i = 0; i < promiseKeys.length; i++) {
-  const key = promiseKeys[i];
-  const op = promiseReturningOperators[key];
-  function fn(...args) {
-    if (new.target) {
-      throw $ERR_ILLEGAL_CONSTRUCTOR();
-    }
-    return Promise.$resolve().then(() => op.$apply(this, args));
-  }
-  ObjectDefineProperty(fn, "name", { __proto__: null, value: op.name });
-  ObjectDefineProperty(fn, "length", { __proto__: null, value: op.length });
-  ObjectDefineProperty(Stream.Readable.prototype, key, {
+
+defineLazy("Readable", () => require("internal/streams/readable"));
+defineLazy("Writable", () => require("internal/streams/writable"));
+defineLazy("Duplex", () => require("internal/streams/duplex"));
+defineLazy("Transform", () => require("internal/streams/transform"));
+defineLazy("PassThrough", () => require("internal/streams/passthrough"));
+defineLazy("duplexPair", () => require("internal/streams/duplexpair"));
+defineLazy("pipeline", () => {
+  const { pipeline } = require("internal/streams/pipeline");
+  ObjectDefineProperty(pipeline, customPromisify, {
     __proto__: null,
-    value: fn,
-    enumerable: false,
-    configurable: true,
-    writable: true,
+    enumerable: true,
+    get() {
+      return Stream.promises.pipeline;
+    },
   });
-}
-Stream.Writable = require("internal/streams/writable");
-Stream.Duplex = require("internal/streams/duplex");
-Stream.Transform = require("internal/streams/transform");
-Stream.PassThrough = require("internal/streams/passthrough");
-Stream.duplexPair = require("internal/streams/duplexpair");
-Stream.pipeline = pipeline;
-const { addAbortSignal } = require("internal/streams/add-abort-signal");
-Stream.addAbortSignal = addAbortSignal;
-Stream.finished = eos;
-Stream.destroy = destroyer;
-Stream.compose = compose;
+  return pipeline;
+});
+defineLazy("addAbortSignal", () => require("internal/streams/add-abort-signal").addAbortSignal);
+defineLazy("finished", () => {
+  const eos = require("internal/streams/end-of-stream");
+  ObjectDefineProperty(eos, customPromisify, {
+    __proto__: null,
+    enumerable: true,
+    get() {
+      return Stream.promises.finished;
+    },
+  });
+  return eos;
+});
+defineLazy("destroy", () => require("internal/streams/destroy").destroyer);
+defineLazy("compose", () => require("internal/streams/compose"));
 Stream.setDefaultHighWaterMark = setDefaultHighWaterMark;
 Stream.getDefaultHighWaterMark = getDefaultHighWaterMark;
 
+let promises;
 ObjectDefineProperty(Stream, "promises", {
   __proto__: null,
   configurable: true,
   enumerable: true,
   get() {
-    return promises;
-  },
-});
-
-ObjectDefineProperty(pipeline, customPromisify, {
-  __proto__: null,
-  enumerable: true,
-  get() {
-    return promises.pipeline;
-  },
-});
-
-ObjectDefineProperty(eos, customPromisify, {
-  __proto__: null,
-  enumerable: true,
-  get() {
-    return promises.finished;
+    return (promises ??= require("internal/stream.promises"));
   },
 });
 

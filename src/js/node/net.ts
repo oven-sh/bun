@@ -21,8 +21,10 @@
 
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 const Duplex = require("internal/streams/duplex");
-const { isUint8Array } = require("node:util/types");
-const { getDefaultHighWaterMark } = require("internal/streams/state");
+let types;
+function isUint8Array(value) {
+  return (types ??= require("node:util/types")).isUint8Array(value);
+}
 const EventEmitter = require("node:events");
 let dns: typeof import("node:dns");
 
@@ -106,8 +108,9 @@ function appendTlsKeylog(line: Buffer) {
     }
   }
 }
-const SocketAddress = $rust("node_net_binding.rs", "SocketAddress");
-const BlockList = $rust("node_net_binding.rs", "BlockList");
+let SocketAddress;
+let BlockList;
+const getBlockList = () => (BlockList ??= $rust("node_net_binding.rs", "BlockList"));
 const newDetachedSocket = $newRustFunction("node_net_binding.rs", "newDetachedSocket", 1);
 const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
@@ -1431,12 +1434,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
 // config has neither handler never registers the native SNI/ALPN dispatches,
 // so a server without an SNICallback or ALPNCallback does not pay a JS
 // round-trip from inside the handshake for them.
-const { serverName: _serverNameHandler, alpnCallback: _alpnCallbackHandler, ...ServerHandlersNoSNI } = ServerHandlers;
+let ServerHandlersNoSNI;
 // Partial tables so a server with exactly one of the callbacks only registers
 // that dispatch (the other would be a per-handshake JS round-trip that always
 // falls through).
-const { serverName: _snOnly, ...ServerHandlersALPNOnly } = ServerHandlers;
-const { alpnCallback: _acOnly, ...ServerHandlersSNIOnly } = ServerHandlers;
+let ServerHandlersALPNOnly;
+let ServerHandlersSNIOnly;
 
 /** The handler table for a listen config: the full table only when a
  *  per-connection callback is configured, so other servers never pay a JS
@@ -1445,9 +1448,9 @@ function serverHandlersFor(server) {
   const sni = !!server._SNICallback;
   const alpn = !!server._ALPNCallback;
   if (sni && alpn) return ServerHandlers;
-  if (sni) return ServerHandlersSNIOnly;
-  if (alpn) return ServerHandlersALPNOnly;
-  return ServerHandlersNoSNI;
+  if (sni) return (ServerHandlersSNIOnly ??= (({ alpnCallback: _acOnly, ...rest }) => rest)(ServerHandlers));
+  if (alpn) return (ServerHandlersALPNOnly ??= (({ serverName: _snOnly, ...rest }) => rest)(ServerHandlers));
+  return (ServerHandlersNoSNI ??= (({ serverName: _sn, alpnCallback: _ac, ...rest }) => rest)(ServerHandlers));
 }
 
 // node.net.native trace events: one 'b'/'e' pair per connect *attempt*, including
@@ -1779,7 +1782,7 @@ function Socket(options?) {
   }
   const optsBlockList = opts.blockList;
   if (optsBlockList) {
-    if (!BlockList.isBlockList(optsBlockList)) {
+    if (!getBlockList().isBlockList(optsBlockList)) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optsBlockList);
     }
     this.blockList = optsBlockList;
@@ -3468,7 +3471,7 @@ function Server(options?, connectionListener?) {
     allowHalfOpen = false,
     keepAlive = false,
     keepAliveInitialDelay,
-    highWaterMark = getDefaultHighWaterMark(),
+    highWaterMark = require("internal/streams/state").getDefaultHighWaterMark(),
     pauseOnConnect = false,
     noDelay = false,
   } = options;
@@ -3503,7 +3506,7 @@ function Server(options?, connectionListener?) {
 
   const optionsBlockList = options.blockList;
   if (optionsBlockList) {
-    if (!BlockList.isBlockList(optionsBlockList)) {
+    if (!getBlockList().isBlockList(optionsBlockList)) {
       throw $ERR_INVALID_ARG_TYPE("options.blockList", "net.BlockList", optionsBlockList);
     }
     this.blockList = optionsBlockList;
@@ -4173,7 +4176,7 @@ Server.prototype[kArmHandshakeTimeout] = function (socket) {
   initAcceptedTLSSocket(this, socket);
 };
 
-export default {
+const net = {
   createServer,
   Server,
   createConnection,
@@ -4190,8 +4193,34 @@ export default {
   getDefaultAutoSelectFamilyAttemptTimeout,
   setDefaultAutoSelectFamilyAttemptTimeout,
 
-  BlockList,
-  SocketAddress,
   // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L2456
   Stream: Socket,
-} as any as typeof import("node:net");
+};
+Object.defineProperties(net, {
+  BlockList: {
+    get() {
+      const value = getBlockList();
+      Reflect.defineProperty(net, "BlockList", { value, writable: true, enumerable: true, configurable: true });
+      return value;
+    },
+    set(value) {
+      Reflect.defineProperty(net, "BlockList", { value, writable: true, enumerable: true, configurable: true });
+    },
+    enumerable: true,
+    configurable: true,
+  },
+  SocketAddress: {
+    get() {
+      const value = (SocketAddress ??= $rust("node_net_binding.rs", "SocketAddress"));
+      Reflect.defineProperty(net, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });
+      return value;
+    },
+    set(value) {
+      Reflect.defineProperty(net, "SocketAddress", { value, writable: true, enumerable: true, configurable: true });
+    },
+    enumerable: true,
+    configurable: true,
+  },
+});
+
+export default net as any as typeof import("node:net");

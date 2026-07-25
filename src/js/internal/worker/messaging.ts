@@ -9,9 +9,6 @@
 // `workerMessage` listeners are invoked directly because Bun's process.emit cannot
 // report no-listeners or a throwing listener (see receiveMessageFromWorker).
 
-const { validateNumber } = require("internal/validators");
-const { SafeMap } = require("internal/primordials");
-
 const messageTypes = {
   REGISTER_MAIN_THREAD_PORT: "registerMainThreadPort",
   UNREGISTER_MAIN_THREAD_PORT: "unregisterMainThreadPort",
@@ -24,9 +21,9 @@ let currentThreadId = 0;
 let isMainThread = true;
 
 // Only populated on the main thread (the hub); always empty elsewhere.
-// SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
-// cross-thread routing table can't be broken by user code replacing Map.prototype.
-const threadsPorts = new SafeMap<number, any>();
+// SafeMap: its prototype is a frozen null-proto snapshot taken when this module loads, so the
+// cross-thread routing table can't be broken by user code later replacing Map.prototype.
+const threadsPorts = new (require("internal/primordials").SafeMap)();
 
 // Only populated on child threads; always undefined on the main thread.
 let mainThreadPort: any;
@@ -241,7 +238,7 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
   }
 
   if (typeof timeout !== "undefined") {
-    validateNumber(timeout, "timeout", 0);
+    require("internal/validators").validateNumber(timeout, "timeout", 0);
   }
 
   if (threadId === currentThreadId) {

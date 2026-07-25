@@ -1,4 +1,4 @@
-const { Duplex } = require("node:stream");
+const Duplex = require("internal/streams/duplex");
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
 
 interface NativeHandle {

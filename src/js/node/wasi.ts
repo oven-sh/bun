@@ -2039,4 +2039,14 @@ var require_wasi = __commonJS({
     exports.default = WASI;
   },
 });
-export default { WASI: require_wasi().default };
+const wasiExports = {
+  get WASI() {
+    const value = require_wasi().default;
+    Reflect.defineProperty(wasiExports, "WASI", { value, writable: true, enumerable: true, configurable: true });
+    return value;
+  },
+  set WASI(value) {
+    Reflect.defineProperty(wasiExports, "WASI", { value, writable: true, enumerable: true, configurable: true });
+  },
+};
+export default wasiExports;

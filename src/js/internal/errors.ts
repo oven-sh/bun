@@ -1,5 +1,3 @@
-const { SafeArrayIterator } = require("internal/primordials");
-
 const ArrayIsArray = Array.isArray;
 const ArrayPrototypePush = Array.prototype.push;
 
@@ -11,6 +9,7 @@ function aggregateTwoErrors(innerError: Error | undefined, outerError: Error & {
       ArrayPrototypePush.$call(outerErrors, innerError);
       return outerError;
     }
+    const { SafeArrayIterator } = require("internal/primordials");
     const err = new AggregateError(new SafeArrayIterator([outerError, innerError]), outerError.message);
     err.code = outerError.code;
     return err;

@@ -3,9 +3,11 @@
 const { checkIsHttpToken } = require("internal/validators");
 const FreeList = require("internal/freelist");
 const { methods, allMethods, HTTPParser } = process.binding("http_parser");
-const incoming = require("node:_http_incoming");
 
-const { IncomingMessage, readStart, readStop } = incoming;
+let incoming;
+function getIncoming() {
+  return (incoming ??= require("node:_http_incoming"));
+}
 
 const RegExpPrototypeExec = RegExp.prototype.exec;
 
@@ -108,7 +110,7 @@ function parserOnHeadersComplete(
   }
 
   // Parser is also used by http client
-  const ParserIncomingMessage = socket?.server?.[kIncomingMessage] || IncomingMessage;
+  const ParserIncomingMessage = socket?.server?.[kIncomingMessage] || getIncoming().IncomingMessage;
 
   const incoming = (parser.incoming = new ParserIncomingMessage(socket));
   incoming.httpVersionMajor = versionMajor;
@@ -147,7 +149,7 @@ function parserOnBody(b) {
   // Pretend this was the result of a stream._read call.
   if (!stream._dumped) {
     const ret = stream.push(b);
-    if (!ret) readStop(this.socket);
+    if (!ret) getIncoming().readStop(this.socket);
   }
 }
 
@@ -171,7 +173,7 @@ function parserOnMessageComplete() {
   }
 
   // Force to read the next incoming message
-  readStart(parser.socket);
+  getIncoming().readStart(parser.socket);
 }
 
 const parsers = new FreeList("parsers", 1000, function parsersCb() {

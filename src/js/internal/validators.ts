@@ -1,5 +1,3 @@
-const { hideFromStack } = require("internal/shared");
-
 const RegExpPrototypeExec = RegExp.prototype.exec;
 const ArrayIsArray = Array.isArray;
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
@@ -132,9 +130,19 @@ function getValidatedFsPath(p: any, propName: string = "path") {
   throw $ERR_INVALID_ARG_TYPE(propName, ["string", "Buffer", "URL"], p);
 }
 
-hideFromStack(validateLinkHeaderValue, validateInternalField);
-hideFromStack(validateString, validateFunction, validateBoolean, validateUndefined);
-hideFromStack(getValidatedPath, getValidatedFsPath, throwIfNullBytesInFileName);
+for (const fn of [
+  validateLinkHeaderValue,
+  validateInternalField,
+  validateString,
+  validateFunction,
+  validateBoolean,
+  validateUndefined,
+  getValidatedPath,
+  getValidatedFsPath,
+  throwIfNullBytesInFileName,
+]) {
+  Object.defineProperty(fn, "name", { value: "::bunternal::" });
+}
 
 export default {
   /** (value, name) */

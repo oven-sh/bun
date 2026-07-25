@@ -1,8 +1,6 @@
 "use strict";
 
 const { isNodeStream, isWebStream, kControllerErrorFunction } = require("internal/streams/utils");
-const eos = require("internal/streams/end-of-stream");
-
 const SymbolDispose = Symbol.dispose;
 
 let addAbortListener;
@@ -47,7 +45,7 @@ function addAbortSignalNoValidate(signal, stream) {
   } else {
     addAbortListener ??= require("internal/abort_listener").addAbortListener;
     const disposable = addAbortListener(signal, onAbort);
-    eos(stream, disposable[SymbolDispose]);
+    require("internal/streams/end-of-stream")(stream, disposable[SymbolDispose]);
   }
   return stream;
 }

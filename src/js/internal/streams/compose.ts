@@ -1,22 +1,22 @@
 "use strict";
 
-const { pipeline } = require("internal/streams/pipeline");
-const Duplex = require("internal/streams/duplex");
-const { destroyer } = require("internal/streams/destroy");
-const {
-  isNodeStream,
-  isReadable,
-  isWritable,
-  isWebStream,
-  isTransformStream,
-  isWritableStream,
-  isReadableStream,
-} = require("internal/streams/utils");
-const eos = require("internal/streams/end-of-stream");
-
 const ArrayPrototypeSlice = Array.prototype.slice;
 
 export default function compose(...streams) {
+  const { pipeline } = require("internal/streams/pipeline");
+  const Duplex = require("internal/streams/duplex");
+  const { destroyer } = require("internal/streams/destroy");
+  const {
+    isNodeStream,
+    isReadable,
+    isWritable,
+    isWebStream,
+    isTransformStream,
+    isWritableStream,
+    isReadableStream,
+  } = require("internal/streams/utils");
+  const eos = require("internal/streams/end-of-stream");
+
   if (streams.length === 0) {
     throw $ERR_MISSING_ARGS("streams");
   }

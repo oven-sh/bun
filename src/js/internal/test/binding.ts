@@ -142,6 +142,24 @@ function internalBinding(name: string) {
           }
         },
       };
+    case "fs": {
+      // Just writeBuffer (internal/net's module-level destructure); node's
+      // binding fills `ctx` on failure instead of throwing.
+      const { writeSync } = require("node:fs");
+      return {
+        writeBuffer(fd: number, buffer: Uint8Array, offset: number, length: number, position: number | null, ctx: any) {
+          try {
+            return writeSync(fd, buffer, offset, length, position);
+          } catch (err: any) {
+            ctx.errno = err.errno;
+            ctx.syscall = err.syscall;
+            ctx.code = err.code;
+            ctx.message = err.message;
+            return 0;
+          }
+        },
+      };
+    }
     // The icu-era binding node exposed until nodejs/node#55156; vendored
     // tests like test-icu-punycode still consume it.
     case "icu": {

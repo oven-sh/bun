@@ -247,6 +247,19 @@ if (process.versions.bun &&
   installBunExposeInternalsRequireInterceptor();
 }
 
+// Bun: worker_threads workers likewise skip the flag-check block (isMainThread
+// gate); node workers inherit --expose-gc via the re-spawned parent's
+// execArgv. Install the same gc shim the main thread gets.
+if (process.versions.bun &&
+    !isMainThread &&
+    typeof process.argv[1] === 'string' &&
+    fs.existsSync(process.argv[1]) &&
+    parseTestMetadata().flags.some((f) => f === '--expose-gc' || f === '--expose_gc')) {
+  const { onGCSweepSync } = require('./gc');
+  const { releaseWeakRefs } = require('bun:jsc');
+  globalThis.gc ??= () => { Bun.gc(true); onGCSweepSync(releaseWeakRefs, Bun.gc); };
+}
+
 // Serve require("internal/*") from bun's internal module registry
 // (via bun:internal-for-testing, which is expose-internals-gated:
 // always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1

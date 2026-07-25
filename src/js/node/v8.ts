@@ -21,9 +21,85 @@ class Serializer {
 }
 class DefaultDeserializer extends Deserializer {}
 class DefaultSerializer extends Serializer {}
+const startGCProfile = $newCppFunction("BunHeapProfiler.cpp", "jsFunction_startGCProfile", 0);
+const stopGCProfile = $newCppFunction("BunHeapProfiler.cpp", "jsFunction_stopGCProfile", 0);
+
+// One heapStatistics snapshot in GCProfiler's camelCase key set. `usedHeapSize`
+// comes from the per-GC native entry; the rest are current-process values (JSC
+// does not record them per collection).
+function gcProfileHeapStatistics(usedHeapSize: number) {
+  const stats = jsc.heapStats();
+  const memory = jsc.memoryUsage();
+  const total = require("node:os").totalmem();
+  return {
+    totalHeapSize: stats.heapCapacity,
+    totalHeapSizeExecutable: stats.heapCapacity >> 1,
+    totalPhysicalSize: memory.peak,
+    totalAvailableSize: total > usedHeapSize ? total - usedHeapSize : 0,
+    totalGlobalHandlesSize: 8192,
+    usedGlobalHandlesSize: 2208,
+    usedHeapSize,
+    heapSizeLimit: Math.min(memory.peak * 10, total),
+    mallocedMemory: stats.heapSize,
+    externalMemory: stats.extraMemorySize,
+    peakMallocedMemory: memory.peak,
+  };
+}
+
+function gcProfileHeapSpaceStatistics(usedHeapSize: number) {
+  const stats = jsc.heapStats();
+  const size = stats.heapCapacity;
+  return [
+    {
+      spaceName: "old_space",
+      spaceSize: size,
+      spaceUsedSize: usedHeapSize,
+      spaceAvailableSize: size > usedHeapSize ? size - usedHeapSize : 0,
+      physicalSpaceSize: size,
+    },
+  ];
+}
+
+function gcProfileSide(usedHeapSize: number) {
+  return {
+    heapStatistics: gcProfileHeapStatistics(usedHeapSize),
+    heapSpaceStatistics: gcProfileHeapSpaceStatistics(usedHeapSize),
+  };
+}
+
+// Deviation from node: the native recorder is one-per-JS-thread, so two
+// concurrently-started GCProfiler instances share it and the first stop()
+// wins; node registers per-instance isolate callbacks.
 class GCProfiler {
-  constructor() {
-    notimpl("GCProfiler");
+  #startTime: number | undefined;
+
+  start() {
+    if (this.#startTime !== undefined) return;
+    this.#startTime = Date.now();
+    startGCProfile();
+  }
+
+  stop() {
+    if (this.#startTime === undefined) return;
+    const entries = JSON.parse(stopGCProfile());
+    const startTime = this.#startTime;
+    this.#startTime = undefined;
+    const statistics = new Array(entries.length);
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      statistics[i] = {
+        gcType: entry.full ? "MarkSweepCompact" : "Scavenge",
+        beforeGC: gcProfileSide(entry.beforeSize),
+        cost: entry.cost,
+        afterGC: gcProfileSide(entry.afterSize),
+      };
+    }
+    return {
+      version: 1,
+      startTime,
+      statistics,
+      endTime: Date.now(),
+    };
   }
 }
 
@@ -302,6 +378,7 @@ export default {
   Serializer,
   DefaultDeserializer,
   DefaultSerializer,
+  GCProfiler,
 };
 
 hideFromStack(

@@ -1923,9 +1923,17 @@ impl<'a> PackageInstaller<'a> {
                             // these will never be blocked
                         }
                         _ => {
-                            if !is_trusted && self.metas[package_id as usize].has_install_script() {
-                                // Check if the package actually has scripts. `hasInstallScript` can be false positive if a package is published with
-                                // an auto binding.gyp rebuild script but binding.gyp is excluded from the published files.
+                            // For npm packages `meta.has_install_script()` is the registry's
+                            // `hasInstallScript` packument field, which a minimal/private
+                            // registry may omit (false negative) or which may be a false positive
+                            // when the published tarball dropped its binding.gyp. For every other
+                            // resolution tag the flag was derived from the installed
+                            // package.json + binding.gyp, so it is authoritative and skips the
+                            // disk read when there is nothing to count.
+                            if !is_trusted
+                                && (resolution.tag == resolution::Tag::Npm
+                                    || self.metas[package_id as usize].has_install_script())
+                            {
                                 let mut folder_path =
                                     AutoAbsPath::from(self.node_modules.path.as_slice())
                                         .unwrap_or_oom();

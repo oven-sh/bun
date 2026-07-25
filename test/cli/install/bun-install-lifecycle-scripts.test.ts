@@ -211,6 +211,98 @@ test.concurrent("trustedDependencies matches the resolved package name, not the 
   expect(await exited).toBe(0);
 });
 
+describe.concurrent.each([
+  ["omitted", undefined],
+  ["false", false],
+])("blocked-script notice when registry hasInstallScript is %s", (_, hasInstallScript) => {
+  // A private/minimal registry may omit the npm `hasInstallScript` packument
+  // field (or a hostile one may set it to false). The install-time
+  // "Blocked N postinstalls" notice must come from the installed
+  // package.json / binding.gyp, not from that registry-supplied flag, so it
+  // agrees with `bun pm untrusted`.
+  async function installFromMinimalRegistry(pkgName: string, tgz: string) {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.endsWith(".tgz")) {
+          return new Response(file(join(import.meta.dir, "registry", "packages", pkgName, tgz)));
+        }
+        return Response.json({
+          name: pkgName,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name: pkgName,
+              version: "1.0.0",
+              ...(hasInstallScript !== undefined ? { hasInstallScript } : {}),
+              dist: { tarball: `${registry.url}${pkgName}/-/${tgz}` },
+            },
+          },
+        });
+      },
+    });
+
+    await write(
+      join(packageDir, "bunfig.toml"),
+      `[install]\ncache = "${join(packageDir, ".bun-cache").replaceAll("\\", "\\\\")}"\nregistry = "${registry.url}"\nlinker = "hoisted"\n`,
+    );
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { [pkgName]: "1.0.0" },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, code] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    return { out, err, code, packageDir };
+  }
+
+  test("package.json scripts", async () => {
+    const { out, err, code, packageDir } = await installFromMinimalRegistry(
+      "lifecycle-postinstall",
+      "lifecycle-postinstall-1.0.0.tgz",
+    );
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "+ lifecycle-postinstall@1.0.0",
+      "",
+      "1 package installed",
+      "",
+      "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+      "",
+    ]);
+    expect(await exists(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeFalse();
+    expect(code).toBe(0);
+  });
+
+  test("binding.gyp", async () => {
+    const { out, err, code, packageDir } = await installFromMinimalRegistry(
+      "binding-gyp-scripts",
+      "binding-gyp-scripts-1.5.0.tgz",
+    );
+    expect(err).not.toContain("error:");
+    expect(out).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+    expect(await exists(join(packageDir, "node_modules", "binding-gyp-scripts", "build.node"))).toBeFalse();
+    expect(code).toBe(0);
+  });
+});
+
 test.concurrent("default trusted dependencies require the canonical registry tarball URL", async () => {
   using ctx = await setupTest();
   const { packageDir, packageJson, env } = ctx;

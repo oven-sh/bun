@@ -624,7 +624,7 @@ impl RepositoryExt for Repository {
         // it is only valid until the next use of `TlBufs::final_path_buf()` on this
         // thread (another `try_https` call, or `checkout`'s `get_fd_path`).
         let final_path_buf = TlBufs::final_path_buf();
-        if url.starts_with(b"http") {
+        if url.starts_with(b"http") || url.starts_with(b"file:") {
             return Some(url);
         }
 

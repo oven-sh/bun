@@ -1885,6 +1885,82 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       expect(await exists(join(packageDir, "node_modules", "lifecycle-install-test", "postinstall.txt"))).toBeTrue();
     });
 
+    // https://github.com/oven-sh/bun/issues/10297
+    // https://github.com/oven-sh/bun/issues/6138
+    test("git dependency devDependencies are installed before `prepare` runs", async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      const testEnv = forceWaiterThread ? { ...env, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" } : env;
+
+      // A local git repo that needs a devDependency (`what-bin`, served by the
+      // verdaccio registry) for its `prepare` script. npm clones a git
+      // dependency, runs a full install including devDependencies, runs
+      // `prepare`, then installs the packaged result.
+      const repoDir = join(packageDir, "repo");
+      await mkdir(repoDir, { recursive: true });
+      await writeFile(
+        join(repoDir, "package.json"),
+        JSON.stringify({
+          name: "git-dep-needs-dev",
+          version: "1.0.0",
+          devDependencies: { "what-bin": "1.0.0" },
+          scripts: { prepare: "what-bin" },
+        }),
+      );
+
+      const gitEnv = {
+        ...baseEnv,
+        GIT_AUTHOR_NAME: "bun",
+        GIT_AUTHOR_EMAIL: "bun@example.com",
+        GIT_COMMITTER_NAME: "bun",
+        GIT_COMMITTER_EMAIL: "bun@example.com",
+        GIT_CONFIG_NOSYSTEM: "1",
+      };
+      for (const args of [["init", "-b", "main"], ["add", "."], ["commit", "-m", "init"]]) {
+        const r = Bun.spawnSync({ cmd: ["git", ...args], cwd: repoDir, env: gitEnv, stdout: "ignore", stderr: "pipe" });
+        if (r.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed: ${r.stderr}`);
+      }
+
+      await writeFile(
+        packageJson,
+        JSON.stringify({
+          name: "consumer",
+          version: "1.0.0",
+          dependencies: {
+            "git-dep-needs-dev": `git+file://${repoDir.replaceAll("\\", "/")}#main`,
+          },
+          trustedDependencies: ["git-dep-needs-dev"],
+        }),
+      );
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: testEnv,
+      });
+
+      const err = stderrForInstall(await stderr.text());
+      const out = await stdout.text();
+      const depDir = join(packageDir, "node_modules", "git-dep-needs-dev");
+
+      expect(err).not.toContain("what-bin: command not found");
+      expect(err).not.toContain("what-bin: not found");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("+ git-dep-needs-dev@git+file://");
+      expect(await exited).toBe(0);
+
+      // `prepare` ran and found the `what-bin` devDependency.
+      expect(await file(join(depDir, "what-bin.txt")).text()).toBe("what-bin@1.0.0");
+
+      // npm does not add the git dependency's devDependencies to the outer
+      // lockfile or hoist them into the outer node_modules.
+      expect(await exists(join(packageDir, "node_modules", "what-bin"))).toBeFalse();
+      expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("what-bin");
+    });
+
     test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {
       using ctx = await setupTest();
       const { packageDir, packageJson, env } = ctx;

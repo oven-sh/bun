@@ -489,6 +489,28 @@ impl FetchTasklet {
         Ok(())
     }
 
+    /// Release the tasklet-held sink ref without touching the stream buffer
+    /// (which is reused across redirect-replay generations). If the sink had
+    /// not yet reached `write_end_request`, also release the tasklet ref that
+    /// `start_request_stream` took for it, since after `detach_js` the pump's
+    /// `js_end` will no-op and never balance it.
+    fn take_and_detach_sink(&mut self) {
+        if let Some(sink) = self.sink.take() {
+            // SAFETY: sink came from init_exact_refs; FetchTasklet holds one
+            // ref. `detach_js` runs no JS callbacks. JS-thread-only.
+            let was_done = unsafe { (*sink).is_detached() };
+            unsafe {
+                (*sink).detach_js();
+                ResumableFetchSink::deref_(sink);
+            }
+            if !was_done {
+                // SAFETY: the tasklet has additional refs while the fetch is
+                // active; this balances the one `start_request_stream` took.
+                FetchTasklet::deref(std::ptr::from_mut(self));
+            }
+        }
+    }
+
     fn clear_sink(&mut self) {
         if let Some(sink) = self.sink.take() {
             // SAFETY: sink came from init_exact_refs; FetchTasklet holds one ref.
@@ -925,18 +947,30 @@ impl FetchTasklet {
         };
 
         if self.result.restart_request_stream
-            && let HTTPRequestBody::MultipartFormStream {
-                segments, stream, ..
-            } = &mut self.request_body
+            && matches!(
+                self.request_body,
+                HTTPRequestBody::MultipartFormStream { .. }
+            )
         {
             let global_this = self.global_this;
-            if let Some(sink) = self.sink.take() {
-                // SAFETY: `sink` is the live ResumableSink this tasklet owns.
-                unsafe { (*sink).detach_js() };
-            }
-            stream.deinit();
-            match multipart_form_stream(&global_this, segments) {
+            self.take_and_detach_sink();
+            let fresh = {
+                let HTTPRequestBody::MultipartFormStream {
+                    segments, stream, ..
+                } = &mut self.request_body
+                else {
+                    unreachable!()
+                };
+                stream.deinit();
+                multipart_form_stream(&global_this, segments)
+            };
+            match fresh {
                 Ok(Some(fresh)) => {
+                    let HTTPRequestBody::MultipartFormStream { stream, .. } =
+                        &mut self.request_body
+                    else {
+                        unreachable!()
+                    };
                     *stream = fresh;
                     self.is_waiting_request_stream_start = true;
                 }
@@ -964,6 +998,12 @@ impl FetchTasklet {
             self.result.restart_request_stream = false;
             if let Some(buf) = self.stream_buffer_mut() {
                 self.request_stream_generation = buf.generation.load(Ordering::Acquire);
+                // A `write_request_data` that passed its `restart_pending`
+                // check before the HTTP thread reset the buffer can still
+                // deposit a stale chunk afterwards; reset again here (JS
+                // thread, after any such write has returned) so the new sink
+                // starts from an empty buffer.
+                buf.lock().reset();
             }
             self.request_stream_restart_pending
                 .store(false, Ordering::Release);
@@ -2272,9 +2312,13 @@ impl FetchTasklet {
     /// `js_end` instead of reaching `write_end_request`.
     pub(crate) fn detach_stale_request_sink(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
-        if let Some(sink) = this_ref.sink.take() {
-            // SAFETY: `sink` is the live ResumableSink this tasklet owns.
-            unsafe { (*sink).detach_js() };
+        // If the restart block in `on_progress_update` already ran (callbacks
+        // coalesced), `self.sink` is the fresh sink and must not be detached.
+        if this_ref
+            .request_stream_restart_pending
+            .load(Ordering::Acquire)
+        {
+            this_ref.take_and_detach_sink();
         }
         // SAFETY: `this` is the live heap tasklet; we hold the ref taken above.
         FetchTasklet::deref(this);

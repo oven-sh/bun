@@ -871,7 +871,9 @@ pub mod command {
     const NPM_VALUE_FLAGS_IGNORED: &[&[u8]] = &[
         b"access",
         b"before",
+        b"ca",
         b"cache",
+        b"cafile",
         b"depth",
         b"editor",
         b"fetch-retries",
@@ -880,6 +882,8 @@ pub mod command {
         b"fetch-retry-mintimeout",
         b"fetch-timeout",
         b"globalconfig",
+        b"https-proxy",
+        b"include",
         b"init-author-email",
         b"init-author-name",
         b"init-author-url",
@@ -893,8 +897,12 @@ pub mod command {
         b"maxsockets",
         b"message",
         b"node-options",
+        b"noproxy",
+        b"omit",
         b"otp",
         b"pack-destination",
+        b"proxy",
+        b"registry",
         b"script-shell",
         b"searchexclude",
         b"searchlimit",
@@ -962,8 +970,12 @@ pub mod command {
         match arg.as_bytes() {
             b"--save-dev" => zstr!("--dev"),
             b"--save-exact" => zstr!("--exact"),
-            b"--save-optional" => zstr!("--optional"),
+            b"--save-optional" | b"-O" => zstr!("--optional"),
             b"--save-peer" => zstr!("--peer"),
+            // npm's -P/--save-prod mean "save to dependencies", bun's
+            // default; bun's own -P means --prod (skip devDependencies), so
+            // map to the no-op --save. (-D and -E match bun's shorts.)
+            b"-P" | b"--save-prod" => zstr!("--save"),
             _ => arg,
         }
     }
@@ -1097,15 +1109,28 @@ pub mod command {
         // `--filter` would not consume its value and the workspace name would
         // leak as a positional.
         let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
-            Some(b"publish") => (&[b"access", b"otp", b"tag"], &[]),
+            Some(b"publish") => (
+                &[b"access", b"ca", b"cafile", b"otp", b"registry", b"tag"],
+                &[],
+            ),
             Some(b"version" | b"verison") => (&[b"message"], &[]),
             Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
+            // The script runner accepts --filter but none of the npm
+            // config flags.
             Some(
                 b"test" | b"t" | b"tst" | b"start" | b"stop" | b"restart" | b"run-script" | b"rum"
-                | b"urn" | b"run" | b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta"
-                | b"instal" | b"install" | b"ci" | b"clean-install" | b"ic" | b"install-clean"
-                | b"isntall-clean" | b"update" | b"upgrade" | b"up" | b"udpate" | b"outdated",
+                | b"urn" | b"run",
             ) => (&[], &[(b"workspace", zstr!("--filter"))]),
+            // The install-family parsers accept --filter plus these npm
+            // config flags as spelled.
+            Some(
+                b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta" | b"instal" | b"install"
+                | b"ci" | b"clean-install" | b"ic" | b"install-clean" | b"isntall-clean"
+                | b"update" | b"upgrade" | b"up" | b"udpate" | b"outdated",
+            ) => (
+                &[b"ca", b"cafile", b"omit", b"registry"],
+                &[(b"workspace", zstr!("--filter"))],
+            ),
             _ => (&[], &[]),
         };
 
@@ -1166,10 +1191,13 @@ pub mod command {
             // Decided from `tail`, where value-flags are already consumed, so
             // e.g. `--loglevel`'s value is not mistaken for an initializer.
             Some(b"init" | b"create" | b"innit") => {
-                let has_initializer = tail
-                    .iter()
-                    .take_while(|a| a.as_bytes() != b"--")
-                    .any(|a| a.as_bytes().first() != Some(&b'-'));
+                // Everything after `--` is positional in npm, so the scan
+                // does not stop there: `npm init -- x` still names a
+                // template.
+                let has_initializer = tail.iter().any(|a| {
+                    let b = a.as_bytes();
+                    b != b"--" && b.first() != Some(&b'-')
+                });
                 mapped.push(if has_initializer {
                     zstr!("create")
                 } else {
@@ -1213,6 +1241,25 @@ pub mod command {
         // subcommands mapped to them.
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
             hoisted.clear();
+        }
+        // npm consumes its remaining config flags (e.g. `-y`) anywhere
+        // before `--`, and `bun create` rejects flags it does not know, so
+        // for the create mapping keep only positionals up to `--`;
+        // everything after `--` is forwarded to the create-* package.
+        if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"create")) {
+            pre_subcommand_flags.clear();
+            let mut past_separator = false;
+            tail.retain(|a| {
+                let b = a.as_bytes();
+                if past_separator {
+                    return true;
+                }
+                if b == b"--" {
+                    past_separator = true;
+                    return true;
+                }
+                b.first() != Some(&b'-')
+            });
         }
 
         let mut out: Vec<&'static ZStr> = Vec::with_capacity(
@@ -2257,7 +2304,10 @@ pub mod command {
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
-                    if !strings::has_prefix(slice, b"--") {
+                    // Like the bunx parser, a token starting with `-` is
+                    // never a positional: `bun create -y foo` must not take
+                    // `-y` for the template name.
+                    if slice[0] != b'-' {
                         if positional_i == 1 {
                             template_name_start = remainder_i + 2;
                         }

@@ -199,13 +199,47 @@ describe("fake npm/npx cli", () => {
       using dir = tempDir("fake-npm-savedev", {
         "package.json": JSON.stringify({ name: "root", version: "1.0.0" }),
         "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "dep2/package.json": JSON.stringify({ name: "dep2", version: "1.0.0" }),
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
       });
       const r = await fakePmRun(String(dir), "npm", ["install", "--save-dev", "./dep"]);
       expect(r.exitCode).toBe(0);
+      // npm's `-O` short means --save-optional.
+      const r2 = await fakePmRun(String(dir), "npm", ["install", "-O", "./dep2"]);
+      expect(r2.exitCode).toBe(0);
       const pkg = JSON.parse(await Bun.file(join(String(dir), "package.json")).text());
       expect(pkg.devDependencies).toEqual({ dep: "./dep" });
+      expect(pkg.optionalDependencies).toEqual({ dep2: "./dep2" });
       expect(pkg.dependencies).toBeUndefined();
+    });
+
+    test.concurrent("npm install -P does not enable bun's production mode", async () => {
+      using dir = tempDir("fake-npm-saveprod", {
+        "package.json": JSON.stringify({
+          name: "root",
+          version: "1.0.0",
+          devDependencies: { dep: "./dep" },
+        }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      // npm's -P is --save-prod, a no-op default; bun's own -P is --prod,
+      // which would skip devDependencies.
+      const r = await fakePmRun(String(dir), "npm", ["install", "-P"]);
+      expect(existsSync(join(String(dir), "node_modules", "dep"))).toBe(true);
+      expect(r.exitCode).toBe(0);
+    });
+
+    test.concurrent("npm config value flags before the subcommand do not eat it", async () => {
+      using dir = tempDir("fake-npm-preflag", {
+        "package.json": JSON.stringify({ name: "p", version: "0.0.0" }),
+        "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
+      });
+      // `dev` is --omit's value, not the subcommand; --omit itself is a
+      // flag bun install accepts and must reach it.
+      const r = await fakePmRun(String(dir), "npm", ["--omit", "dev", "install", "--dry-run"]);
+      expect(r.stdout).toContain("bun install");
+      expect(r.exitCode).toBe(0);
     });
 
     test.concurrent("npm version dispatches as bun pm version", async () => {
@@ -282,6 +316,13 @@ describe("fake npm/npx cli", () => {
       const ws = await fakePmRun(String(dir), "npm", ["init", "nonexistent-template", "-w", "client"]);
       expect(ws.stdout + ws.stderr).toContain("create-nonexistent-template");
       expect(ws.stdout + ws.stderr).not.toContain("create-client");
+      // Everything after `--` is positional in npm, so it still names a
+      // template, and a short boolean flag is not one.
+      const dd = await fakePmRun(String(dir), "npm", ["init", "--", "nonexistent-template"]);
+      expect(dd.stdout + dd.stderr).toContain("create-nonexistent-template");
+      const y = await fakePmRun(String(dir), "npm", ["init", "-y", "nonexistent-template"]);
+      expect(y.stdout + y.stderr).toContain("create-nonexistent-template");
+      expect(y.stdout + y.stderr).not.toContain("create--y");
     });
 
     test.concurrent("npm run -w <pkg> / --prefix <dir> are translated, not dropped", async () => {

@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, forEachLine, isBroken, isWindows, tempDirWithFiles } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
-import { writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 describe.todoIf(isBroken && isWindows)("--watch works", async () => {
@@ -109,3 +109,57 @@ test.concurrent("picks up changes in a linked workspace package outside the cwd"
 
   watcher.kill();
 });
+
+// Deleting a secondary watch root must not take down the cwd root with it.
+// Windows-only: the per-root failure path this guards is the
+// ReadDirectoryChangesW / GetQueuedCompletionStatus error propagation; on
+// POSIX the inode watch simply stops firing.
+test.concurrent.skipIf(!isWindows)(
+  "keeps watching the cwd after a linked package outside it is deleted",
+  async () => {
+    const root = tempDirWithFiles("watch-workspace-rm", {
+      "packages/db/package.json": JSON.stringify({ name: "@test/db", main: "index.js" }),
+      "packages/db/index.js": `export const value = 1;\n`,
+      "apps/myapp/package.json": JSON.stringify({ name: "myapp" }),
+      "apps/myapp/index.js": `import { value } from "@test/db";\nconsole.log("[app]", 1, value);\n`,
+    });
+    mkdirSync(join(root, "apps/myapp/node_modules/@test"), { recursive: true });
+    symlinkSync(join(root, "packages/db"), join(root, "apps/myapp/node_modules/@test/db"), "junction");
+
+    const appIndex = join(root, "apps/myapp/index.js");
+
+    await using watcher = spawn({
+      cmd: [bunExe(), "--watch", "index.js"],
+      cwd: join(root, "apps/myapp"),
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    (async () => {
+      for await (const chunk of watcher.stderr) stderr += new TextDecoder().decode(chunk);
+    })();
+
+    const iter = forEachLine(watcher.stdout);
+    let app = 1;
+    let removed = false;
+    for await (const line of iter) {
+      if (line === `[app] ${app} 1` || (removed && line === `[app] ${app}`)) {
+        if (!removed) {
+          // Drop the junction first so `packages/db` has no second opener and
+          // actually leaves delete-pending, which is what surfaces the failed
+          // completion the next re-arm hits.
+          await rm(join(root, "apps/myapp/node_modules/@test/db"), { recursive: true, force: true });
+          await rm(join(root, "packages/db"), { recursive: true, force: true });
+          removed = true;
+        }
+        if (app === 4) break;
+        app += 1;
+      }
+      await writeFile(appIndex, `console.log("[app]", ${app});\n`);
+    }
+    expect(app).toBe(4);
+    expect(stderr).not.toContain("Watcher crashed");
+
+    watcher.kill();
+  },
+);

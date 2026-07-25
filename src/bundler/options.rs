@@ -945,10 +945,8 @@ pub fn defines_from_transform_options(
         }
     }
 
-    // `Bun.env` / `import.meta.env` are aliases for `process.env` at runtime;
-    // Node has neither, so rewrite them so the bundle runs there. Target the
-    // global explicitly so a local `process` binding does not capture the
-    // rewrite.
+    // Bun.env / import.meta.env alias process.env; Node lacks them. globalThis
+    // keeps the rewrite pointed at the real env if `process` is shadowed locally.
     if target == Target::Node {
         user_defines
             .get_or_put_value(b"Bun.env", Box::from(b"globalThis.process.env".as_slice()))?;

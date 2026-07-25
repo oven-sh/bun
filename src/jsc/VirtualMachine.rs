@@ -4457,6 +4457,7 @@ impl VirtualMachine {
         // time and `load_preloads` clears the boxes but keeps the Vec buffer,
         // so reclaim it here or every Worker leaks it.
         drop(core::mem::take(&mut self.preload));
+        drop(core::mem::take(&mut self.currently_loading_preload));
 
         // SAFETY: this VM is raw-`dealloc`'d (no field `Drop` runs), so
         // `transpiler` is never auto-dropped after `deinit` clears its fields.

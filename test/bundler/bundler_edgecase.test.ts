@@ -2895,11 +2895,13 @@ describe("bundler", () => {
   });
   itBundled("edgecase/EsmTopLevelVarShadowsHostGlobalScoping", {
     files: {
-      "/entry.js": /* js */ `
+      "/entry.ts": /* ts */ `
         import { Response as ModResponse } from "external-pkg";
         import cjs from "./cjs.cjs";
         export class Response { body = "mine"; }
-        console.log(new Response().constructor.name, cjs.URL, typeof ModResponse);
+        export enum Event { Click }
+        export namespace Text { export const x = 1; }
+        console.log(new Response().constructor.name, cjs.URL, typeof ModResponse, Event.Click, Text.x);
       `,
       "/cjs.cjs": /* js */ `
         const URL = "cjs-url";
@@ -2920,8 +2922,10 @@ describe("bundler", () => {
       expect(out).toMatch(/\bimport { Response\b/);
       expect(out).toContain("{ URL, fetch }");
       expect(out).not.toMatch(/\bURL2\b/);
+      expect(out).not.toMatch(/\bvar Event\b/);
+      expect(out).not.toMatch(/\bvar Text\b/);
     },
-    run: { stdout: "Response cjs-url number" },
+    run: { stdout: "Response cjs-url number 0 1" },
   });
   for (const target of ["bun", "node"] as const) {
     itBundled(`edgecase/EsmTopLevelVarShadowsHostGlobalTarget_${target}`, {

@@ -137,14 +137,7 @@ pub unsafe fn rename_symbols_in_chunk(
         );
     }
 
-    // Scope hoisting rewrites module-scope `const`/`let` to `var`. In an
-    // unwrapped browser ESM chunk a top-level `var`/`function` becomes a
-    // `globalThis` property when the bundle is loaded as a classic `<script>`,
-    // so a name that collides with a host global overwrites it (#14110:
-    // Chart.js's `const getComputedStyle` recurses via
-    // `defaultView.getComputedStyle`). Reserve those names so the renamer
-    // suffixes the binding. CJS-wrapped modules keep their declarations in the
-    // closure; `class`/`import` are lexical and cannot clobber `globalThis`.
+    // A browser ESM chunk loaded as a classic `<script>` assigns its scope-hoisted top-level `var`/`function` onto `globalThis`, so reserve names that collide with known host globals so the renamer suffixes the binding.
     if c.options.output_format == options::OutputFormat::Esm
         && c.options.target == options::Target::Browser
     {
@@ -163,6 +156,8 @@ pub unsafe fn rename_symbols_in_chunk(
                         | symbol::Kind::GeneratorOrAsyncFunction
                         | symbol::Kind::Constant
                         | symbol::Kind::Other
+                        | symbol::Kind::TsEnum
+                        | symbol::Kind::TsNamespace
                 ) && !symbol.must_not_be_renamed()
                     && defines_table::is_pure_global_identifier(symbol.original_name.slice())
                 {

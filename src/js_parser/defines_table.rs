@@ -265,8 +265,6 @@ mod identifiers {
     }
 }
 
-/// True when `name` is one of the pure global identifiers in
-/// `defines_table.string-map.ts`.
 pub fn is_pure_global_identifier(name: &[u8]) -> bool {
     lookup_pure_global_identifier(name).is_some()
 }

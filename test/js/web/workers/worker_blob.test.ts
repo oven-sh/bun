@@ -131,18 +131,12 @@ test("Worker on a revoked blob still works", async () => {
 // duped blob store pinned the payload for the lifetime of the process (roughly
 // 1 MB retained per MB minted per dead worker). After the sweep, a dead
 // worker's URL resolves like a revoked URL and the payload is released.
-//
-// Skipped on Windows: RSS there does not drop after worker threads exit (the
-// per-thread mimalloc arenas stay committed), so allocator residue alone
-// exceeds the threshold regardless of whether the entries are released.
-test.skipIf(isWindows)(
-  "blob URLs created inside a Worker are released when the Worker exits",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test("blob URLs created inside a Worker are released when the Worker exits", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
         const workerBody = ${JSON.stringify(`
           const urls = [];
           for (let i = 0; i < 4; i++) {
@@ -158,7 +152,10 @@ test.skipIf(isWindows)(
 
         async function runWorker() {
           const w = new Worker(src);
-          const urls = await new Promise(r => (w.onmessage = e => r(e.data)));
+          const urls = await new Promise((resolve, reject) => {
+            w.onmessage = e => resolve(e.data);
+            w.onerror = e => reject(new Error("worker errored: " + e.message));
+          });
           await new Promise(r => w.addEventListener("close", r, { once: true }));
           return urls;
         }
@@ -189,29 +186,31 @@ test.skipIf(isWindows)(
 
         console.log(JSON.stringify({ growthMB, deadUrlServed, parentUrlStillResolves }));
       `,
-      ],
-      env: {
-        ...bunEnv,
-        // Under ASAN the 1 MB payload frees go into the quarantine (default
-        // quarantine_size_mb=256) instead of being returned, so the RSS delta
-        // measures the quarantine rather than the registry. Disable it so the
-        // threshold is meaningful on ASAN builds.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    ],
+    env: {
+      ...bunEnv,
+      // Under ASAN the 1 MB payload frees go into the quarantine (default
+      // quarantine_size_mb=256) instead of being returned, so the RSS delta
+      // measures the quarantine rather than the registry. Disable it so the
+      // threshold is meaningful on ASAN builds.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    const { growthMB, deadUrlServed, parentUrlStillResolves } = JSON.parse(stdout);
+  expect(stderr).toBe("");
+  const { growthMB, deadUrlServed, parentUrlStillResolves } = JSON.parse(stdout);
+  if (!isWindows) {
     // 30 workers * 4 MB: when leaking, growth is ~120 MB; when swept, growth
-    // is allocator noise (typically under 15 MB even on debug builds).
+    // is allocator noise (typically under 15 MB even on debug builds). RSS
+    // does not drop after worker threads exit on Windows (per-thread mimalloc
+    // arenas stay committed), so the threshold is meaningless there.
     expect(growthMB).toBeLessThan(40);
-    expect(deadUrlServed).toBe(false);
-    expect(parentUrlStillResolves).toBe(true);
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  }
+  expect(deadUrlServed).toBe(false);
+  expect(parentUrlStillResolves).toBe(true);
+  expect(exitCode).toBe(0);
+}, 60_000);

@@ -2124,6 +2124,56 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
+  // https://github.com/oven-sh/bun/issues/9416
+  for (const target of ["node", "browser"] as const) {
+    itBundled(`edgecase/ImportMetaRequireTarget-${target}#9416`, {
+      files: {
+        "/entry.ts": /* js */ `
+          const events = import.meta.require("events");
+          const ref = import.meta.require;
+          const path = import.meta.require.resolve("path");
+          console.log(typeof events.EventEmitter, typeof ref, typeof path);
+        `,
+      },
+      target,
+      run: { stdout: "function function string" },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("import.meta.require");
+      },
+    });
+  }
+  itBundled("edgecase/ImportMetaRequireTargetBun#9416", {
+    files: {
+      "/entry.ts": /* js */ `
+        const events = import.meta.require("events");
+        const ref = import.meta.require;
+        const path = import.meta.require.resolve("path");
+        console.log(typeof events.EventEmitter, typeof ref, typeof path);
+      `,
+    },
+    target: "bun",
+    run: { stdout: "function function string" },
+  });
+  itBundled("edgecase/ImportMetaRequireRebundle#9416", {
+    // A target=bun bundle emits `var __require = import.meta.require`; re-bundling
+    // that output for target=node must not leave `import.meta.require` in the result.
+    files: {
+      "/entry.ts": /* js */ `
+        var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+        var __require = import.meta.require;
+        var f = __commonJS(function () {
+          var events = __require("events");
+          console.log(typeof events.EventEmitter);
+        });
+        f();
+      `,
+    },
+    target: "node",
+    run: { stdout: "function" },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("import.meta.require");
+    },
+  });
   itBundled("edgecase/build-cjs-module#20308", {
     files: {
       "/entry.ts": /* js */ `

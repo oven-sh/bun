@@ -496,6 +496,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return Some(p.value_for_import_meta_main(false, target.loc));
                     }
 
+                    // `import.meta.require` is a Bun extension. When bundling for a target that
+                    // does not support it (node/browser), lower it to the same node that a bare
+                    // `require` identifier becomes so the target's `__require` polyfill is used.
+                    if name == b"require"
+                        && p.options.lower_import_meta_require
+                        && !p.is_source_runtime()
+                    {
+                        if !identifier_opts.is_call_target() && p.options.features.allow_runtime {
+                            p.record_usage_of_runtime_require();
+                        }
+                        return Some(p.value_for_require(name_loc));
+                    }
+
                     if name == b"hot" {
                         return Some(Expr {
                             data: js_ast::ExprData::ESpecial(

@@ -597,4 +597,128 @@ describe("bundler", () => {
       stdout: "loaded ok",
     },
   });
+
+  // ============================================================================
+  // Sloppy-mode CommonJS can assign to an undeclared identifier to create a
+  // property on the global object. ESM output is always strict mode, so such
+  // assignments would throw ReferenceError at runtime unless a `var` is hoisted
+  // for them. https://github.com/oven-sh/bun/issues/13008
+  // ============================================================================
+
+  itBundled("cjs/ImplicitGlobalAssignESM#13008", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(lib().name);
+        console.log(new lib.Generator().name);
+      `,
+      "/lib.cjs": /* js */ `
+        module.exports = function () {
+          return new Generator();
+        };
+        Generator = function () {
+          this.name = "gen";
+        };
+        module.exports.Generator = Generator;
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "gen\ngen",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toContain("var Generator");
+    },
+  });
+
+  itBundled("cjs/ImplicitGlobalAssignNestedESM", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(lib.init());
+      `,
+      "/lib.cjs": /* js */ `
+        function init() {
+          helper = function () { return 42; };
+          return helper();
+        }
+        exports.init = init;
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "42",
+    },
+  });
+
+  itBundled("cjs/ImplicitGlobalAssignDestructureESM", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        console.log(lib.a, lib.b);
+      `,
+      "/lib.cjs": /* js */ `
+        ({ x: a } = { x: 1 });
+        for (b in { k: 0 }) {}
+        module.exports = { a: a, b: b };
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "1 k",
+    },
+  });
+
+  itBundled("cjs/ImplicitGlobalAssignStrictDirective", {
+    files: {
+      "/entry.js": /* js */ `
+        import './lib.cjs';
+      `,
+      "/lib.cjs": /* js */ `
+        "use strict";
+        try {
+          Foo = 1;
+          console.log("no throw");
+        } catch (e) {
+          console.log(e.constructor.name);
+        }
+      `,
+    },
+    format: "esm",
+    outfile: "/out.mjs",
+    run: {
+      stdout: "ReferenceError",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").not.toContain("var Foo");
+    },
+  });
+
+  itBundled("cjs/ImplicitGlobalAssignCJS", {
+    files: {
+      "/entry.js": /* js */ `
+        const lib = require('./lib.cjs');
+        console.log(lib().name);
+      `,
+      "/lib.cjs": /* js */ `
+        module.exports = function () {
+          return new Generator();
+        };
+        Generator = function () {
+          this.name = "gen";
+        };
+      `,
+    },
+    format: "cjs",
+    outfile: "/out.cjs",
+    run: {
+      stdout: "gen",
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.cjs").not.toContain("var Generator");
+    },
+  });
 });

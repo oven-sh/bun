@@ -250,6 +250,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Assigning to `exports` in a CommonJS module must be tracked to undo the
                 // `module.exports` -> `exports` optimization.
                 p.commonjs_module_exports_assigned_deoptimized = true;
+            } else if in_.assign_target == js_ast::AssignTarget::Replace
+                && p.symbols[result.r#ref.inner_index() as usize].kind
+                    == js_ast::symbol::Kind::Unbound
+                && !result.is_inside_with_scope
+                && !p.is_strict_mode()
+                && p.is_strict_mode_output_format()
+            {
+                // Sloppy-mode code can assign to an undeclared identifier to create a
+                // property on the global object. Bundling into an ES module forces strict
+                // mode, which would turn that into a ReferenceError at runtime. Hoist a
+                // `var` declaration so the bundled output keeps working. Compound
+                // assignments (`Update`) read the value first and already throw in sloppy
+                // mode, so they are excluded.
+                p.symbols[result.r#ref.inner_index() as usize].kind =
+                    js_ast::symbol::Kind::Hoisted;
+                p.relocated_top_level_vars.push(js_ast::LocRef {
+                    loc: expr.loc,
+                    ref_: result.r#ref,
+                });
             }
 
             p.symbols[result.r#ref.inner_index() as usize].set_has_been_assigned_to(true);

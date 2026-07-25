@@ -618,6 +618,30 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).toContain(files[1]);
   });
 
+  test("writes data-loader entry points with a .js extension", async () => {
+    using dir = tempDir("no-bundle-outdir-data-loaders", {
+      "config.toml": `key = 1\n`,
+      "data.yaml": `key: 2\n`,
+      "style.css": `.x { color: red; }\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./config.toml", "./data.yaml", "./style.css", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist")).sort()).toEqual(["config.js", "data.js", "style.css"]);
+    expect(stdout).toContain("config.js");
+    expect(stdout).toContain("data.js");
+    expect(stdout).toContain("style.css");
+  });
+
   test("does not escape --outdir when an entry point is outside --root", async () => {
     using dir = tempDir("no-bundle-outdir-escape", {
       "src/a.ts": `export const a = 1;\n`,

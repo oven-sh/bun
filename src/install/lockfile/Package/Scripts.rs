@@ -212,11 +212,11 @@ impl Scripts {
                     scripts[PREPREPARE] = Some(match scripts[PREPREPARE].take() {
                         Some(user_preprepare) => {
                             let mut chained =
-                                Vec::with_capacity(install_cmd.len() + 10 + user_preprepare.len());
+                                Vec::with_capacity(install_cmd.len() + 8 + user_preprepare.len());
                             chained.extend_from_slice(&install_cmd);
-                            chained.extend_from_slice(b" && { ");
+                            chained.extend_from_slice(b" && ( ");
                             chained.extend_from_slice(&user_preprepare);
-                            chained.extend_from_slice(b" ; }");
+                            chained.extend_from_slice(b" )");
                             chained.into_boxed_slice()
                         }
                         None => {

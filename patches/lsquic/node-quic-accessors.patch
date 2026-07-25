@@ -2066,7 +2066,7 @@
                  LSQ_DEBUG("acking via regular record #%"PRIu64,
                                                          packet_out->po_packno);
              }
-@@ -4420,6 +4436,40 @@
+@@ -4420,6 +4436,95 @@
  }
  
  
@@ -2075,14 +2075,34 @@
 + * re-opens, so the stashed packets must not be retransmitted at 1-RTT:
 + * the server (which rejected 0-RTT, so never processed them) would receive
 + * the payload on a stream the client already reported as failed.  Destroy
-+ * the packets instead.  lsquic_packet_out_ack_streams releases each
-+ * stream's n_unacked so the subsequent shutdown can finish it.
++ * the packets instead.  Covers the same queue set as
++ * lsquic_send_ctl_0rtt_to_1rtt, which would otherwise relabel survivors
++ * HETY_SHORT and send them.  lsquic_packet_out_ack_streams releases each
++ * stream's n_unacked so the subsequent shutdown can finish it;
++ * on_datagram_status reports carried DATAGRAM frames as lost so the
++ * application's inflight-id FIFO stays aligned.
 + */
++static void
++send_ctl_discard_0rtt_packet (struct lsquic_send_ctl *ctl,
++                              struct lsquic_packet_out *packet_out,
++                              struct lsquic_packet_out **next)
++{
++    lsquic_packet_out_ack_streams(packet_out);
++    if ((packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM)
++            && ctl->sc_enpub->enp_stream_if->on_datagram_status)
++        ctl->sc_enpub->enp_stream_if->on_datagram_status(
++            ctl->sc_conn_pub->lconn,
++            lsquic_packet_out_count_datagram_frames(packet_out), 0);
++    send_ctl_destroy_chain(ctl, packet_out, next);
++    send_ctl_destroy_packet(ctl, packet_out);
++}
++
++
 +void
 +lsquic_send_ctl_drop_0rtt_packets (struct lsquic_send_ctl *ctl)
 +{
 +    struct lsquic_packet_out *packet_out, *next;
-+    unsigned count, packet_sz;
++    unsigned count, packet_sz, n;
 +
 +    count = 0;
 +    for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[PNS_APP]);
@@ -2093,12 +2113,47 @@
 +        {
 +            packet_sz = packet_out_sent_sz(packet_out);
 +            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
-+            lsquic_packet_out_ack_streams(packet_out);
-+            send_ctl_destroy_chain(ctl, packet_out, &next);
-+            send_ctl_destroy_packet(ctl, packet_out);
++            send_ctl_discard_0rtt_packet(ctl, packet_out, &next);
 +            ++count;
 +        }
 +    }
++    for (packet_out = TAILQ_FIRST(&ctl->sc_scheduled_packets);
++                                                packet_out; packet_out = next)
++    {
++        next = TAILQ_NEXT(packet_out, po_next);
++        if (packet_out->po_header_type == HETY_0RTT)
++        {
++            send_ctl_sched_remove(ctl, packet_out);
++            send_ctl_discard_0rtt_packet(ctl, packet_out, NULL);
++            ++count;
++        }
++    }
++    for (packet_out = TAILQ_FIRST(&ctl->sc_lost_packets);
++                                                packet_out; packet_out = next)
++    {
++        next = TAILQ_NEXT(packet_out, po_next);
++        if (packet_out->po_header_type == HETY_0RTT)
++        {
++            TAILQ_REMOVE(&ctl->sc_lost_packets, packet_out, po_next);
++            packet_out->po_flags &= ~PO_LOST;
++            send_ctl_discard_0rtt_packet(ctl, packet_out, NULL);
++            ++count;
++        }
++    }
++    for (n = 0; n < 2; ++n)
++        for (packet_out = TAILQ_FIRST(&ctl->sc_buffered_packets[n].bpq_packets);
++                                                packet_out; packet_out = next)
++        {
++            next = TAILQ_NEXT(packet_out, po_next);
++            if (packet_out->po_header_type == HETY_0RTT)
++            {
++                TAILQ_REMOVE(&ctl->sc_buffered_packets[n].bpq_packets,
++                             packet_out, po_next);
++                --ctl->sc_buffered_packets[n].bpq_count;
++                send_ctl_discard_0rtt_packet(ctl, packet_out, NULL);
++                ++count;
++            }
++        }
 +
 +    LSQ_DEBUG("dropped %u 0-RTT packet%.*s", count, count != 1, "s");
 +}

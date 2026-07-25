@@ -251,6 +251,7 @@ describe("0-RTT rejected", () => {
     const earlyClose = early.closed.catch((e: any) => e);
 
     const info = await c.opened;
+    expect(earlyRejectedFired).toBe(true);
     expect(info.earlyDataAttempted).toBe(true);
     expect(info.earlyDataAccepted).toBe(false);
 
@@ -268,6 +269,5 @@ describe("0-RTT rejected", () => {
     await b.barrier.promise;
 
     expect(b.got).toEqual(["PAY-ORDER-42"]);
-    expect(earlyRejectedFired).toBe(true);
   });
 });

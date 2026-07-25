@@ -3537,8 +3537,7 @@ void GlobalObject::reload()
     this->requireMap()->clear(this);
     RETURN_IF_EXCEPTION(scope, );
 
-    // Stale entries (keyed by old source text) pin their SourceProvider; every
-    // module already re-transpiles after clearAll() so re-parsing is marginal.
+    // Stale entries (keyed by old source text) pin their old SourceProvider.
     vm.codeCache()->clear();
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.

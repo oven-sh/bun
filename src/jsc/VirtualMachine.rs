@@ -3832,8 +3832,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Interns `input_` in the VM's ref-string map and returns the entry with
-    /// exactly +1 owed to the caller on both fresh-insert and cache-hit paths.
+    /// Interns `input_` and returns the entry with exactly +1 owed to the caller.
     pub fn ref_counted_string<const DUPE: bool>(
         &mut self,
         input_: &[u8],
@@ -3843,8 +3842,7 @@ impl VirtualMachine {
         let mut was_new = false;
         let r = self.ref_counted_string_with_was_new::<DUPE>(&mut was_new, input_, hash_);
         if !was_new {
-            // SAFETY: `r` is live (held in `self.ref_strings`). A fresh entry
-            // already carries +1 from `create_external`; a cache hit does not.
+            // SAFETY: `r` is live in `self.ref_strings`; fresh entries already have +1 from `create_external`.
             unsafe { (*r).ref_() };
         }
         r

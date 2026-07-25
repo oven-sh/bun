@@ -5206,9 +5206,7 @@ async function connect(address, options = kEmptyObject) {
     });
   }
 
-  // Stamp before kConnect: the native side may build_engine and then throw,
-  // leaving a baked engine on an endpoint whose key would otherwise stay
-  // undefined and so match any later connect().
+  // Before kConnect: build_engine may run and then throw, leaving a baked engine whose key must already be set.
   endpoint[kNoteClientEngine](engineKey);
 
   const session = endpoint[kConnect](address[kSocketAddressHandle], rest);

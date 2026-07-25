@@ -394,17 +394,21 @@ const IS_UV_FS_COPYFILE_DISABLED =
   });
 
   it.skipIf(!isASAN)("Bun.write(path, fetch()) then resp.body does not crash", async () => {
-    using tmpbase = tempDir("bun-write-fetch-then-body", {});
-    const out = join(String(tmpbase), "dl.out");
-    await using server = Bun.serve({
-      port: 0,
-      fetch: () => new Response(Buffer.alloc(300_000, "y")),
-    });
-    const resp = await fetch(server.url);
-    const p = Bun.write(out, resp);
-    expect(resp.body).toBeInstanceOf(ReadableStream);
-    expect(() => resp.clone()).not.toThrow();
-    await Promise.race([p, Bun.sleep(1)]);
+    using dir = tempDir("bun-write-fetch-then-body", {});
+    const out = JSON.stringify(join(String(dir), "dl.out"));
+    const fixture = `
+      const server = Bun.serve({ port: 0, fetch: () => new Response(Buffer.alloc(300_000, "y")) });
+      const resp = await fetch(server.url);
+      const p = Bun.write(${out}, resp);
+      if (!(resp.body instanceof ReadableStream)) throw new Error("expected ReadableStream");
+      resp.clone();
+      await Promise.race([p, Bun.sleep(1)]);
+      console.log("OK");
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
   });
 
   it("Response -> Bun.file -> Response -> text", async () => {

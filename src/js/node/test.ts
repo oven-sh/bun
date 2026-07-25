@@ -160,6 +160,39 @@ function emitTagsExperimentalWarning() {
   process.emitWarning("Test tags is an experimental feature and might change at any time", "ExperimentalWarning");
 }
 
+// Node's Mulberry32 generator and random draw (utils.js createSeededGenerator,
+// test.js dequeuePendingSubtest): file order under --test-randomize is the
+// sequence of uniform draws from one generator seeded with randomSeed.
+function createSeededGenerator(seed: number): () => number {
+  let state = seed >>> 0;
+  return function seededRandom() {
+    state = (state + 0x6d2b79f5) | 0;
+    let value = Math.imul(state ^ (state >>> 15), 1 | state);
+    value ^= value + Math.imul(value ^ (value >>> 7), 61 | value);
+    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+function createRandomSeed(): number {
+  return Math.floor(Math.random() * 4_294_967_296);
+}
+
+function drawRandomOrder<T>(items: T[], seed: number): T[] {
+  if (items.length < 2) return items;
+  const random = createSeededGenerator(seed);
+  const pending = items.slice();
+  const out: T[] = [];
+  while (pending.length > 0) {
+    if (pending.length < 2) {
+      out.push(pending.shift()!);
+      continue;
+    }
+    const index = Math.floor(random() * pending.length);
+    out.push(pending.splice(index, 1)[0]);
+  }
+  return out;
+}
+
 function validateRunOptions(options: Record<string, unknown>) {
   validateObject(options, "options");
 
@@ -181,6 +214,9 @@ function validateRunOptions(options: Record<string, unknown>) {
     argv = [],
     cwd = process.cwd(),
     env,
+    randomize: suppliedRandomize,
+    randomSeed: suppliedRandomSeed,
+    rerunFailuresFilePath,
   } = options as Record<string, any>;
 
   // Order mirrors node's runner.js:731-909 — the errors are observable.
@@ -194,6 +230,36 @@ function validateRunOptions(options: Record<string, unknown>) {
   }
   if (only != null) validateBoolean(only, "options.only");
   if (globPatterns != null) validateArray(globPatterns, "options.globPatterns");
+  // Node's randomization option handling (runner.js:753-801): a supplied seed
+  // implies randomize, watch and rerun-failures modes reject both spellings
+  // (seed checked first), and enabling randomize without a seed draws one.
+  if (suppliedRandomize != null) validateBoolean(suppliedRandomize, "options.randomize");
+  if (suppliedRandomSeed != null) validateUint32(suppliedRandomSeed, "options.randomSeed");
+  let randomize = suppliedRandomize;
+  let randomSeed = suppliedRandomSeed;
+  if (randomSeed != null) {
+    randomize = true;
+  }
+  if (watch) {
+    if (randomSeed != null) {
+      throw $ERR_INVALID_ARG_VALUE("options.randomSeed", randomSeed, "is not supported with watch mode");
+    }
+    if (randomize) {
+      throw $ERR_INVALID_ARG_VALUE("options.randomize", randomize, "is not supported with watch mode");
+    }
+  }
+  if (rerunFailuresFilePath) {
+    validateString(rerunFailuresFilePath, "options.rerunFailuresFilePath");
+    if (randomSeed != null) {
+      throw $ERR_INVALID_ARG_VALUE("options.randomSeed", randomSeed, "is not supported with rerun failures mode");
+    }
+    if (randomize) {
+      throw $ERR_INVALID_ARG_VALUE("options.randomize", randomize, "is not supported with rerun failures mode");
+    }
+  }
+  if (randomize) {
+    randomSeed ??= createRandomSeed();
+  }
   validateString(cwd, "options.cwd");
   if (globPatterns?.length > 0 && files?.length > 0) {
     throw $ERR_INVALID_ARG_VALUE(
@@ -273,6 +339,9 @@ function validateRunOptions(options: Record<string, unknown>) {
     concurrency,
     timeout,
     signal,
+    randomize,
+    randomSeed,
+    rerunFailuresFilePath,
   };
 }
 
@@ -300,13 +369,13 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
   if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
-  // Name/skip patterns and `only` are applied by pruning the merged queue, so
-  // they only reach the tests under isolation 'none'. Process isolation runs
-  // each file through `bun test`, which never sees them.
+  if (opts.rerunFailuresFilePath) throwNotImplemented("run({ rerunFailuresFilePath })", 5090);
+  // `only` is applied by pruning the merged queue, so it only reaches the
+  // tests under isolation 'none'. Name/skip patterns and tag filters are
+  // forwarded to process-isolation children through the environment
+  // (runOneFile) and applied at registration.
   if (opts.isolation !== "none") {
     if (opts.only) throwNotImplemented("run({ only: true })", 5090);
-    if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
-    if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
   }
 
   if (opts.isolation === "none") {
@@ -384,7 +453,21 @@ function publicRunCounts(counts: Record<string, number>) {
   return { __proto__: null, tests, failed, passed, cancelled, skipped, todo, topLevel, suites };
 }
 
-function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number>, durationMs: number) {
+function emitRunDiagnostics(
+  reporter: TestsStream,
+  counts: Record<string, number>,
+  durationMs: number,
+  randomSeed?: number,
+) {
+  // Node queues the seed line before any test runs (runner.js:937), so it is
+  // the first root diagnostic reported.
+  if (randomSeed !== undefined) {
+    reporter.emitMessage("test:diagnostic", {
+      __proto__: null,
+      nesting: 0,
+      message: `Randomized test order seed: ${randomSeed}`,
+    });
+  }
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `tests ${counts.tests}` });
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `suites ${counts.suites}` });
   reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `pass ${counts.passed}` });
@@ -442,7 +525,10 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
 
     // Explicit files keep their spelling: the per-file test is named by the
     // path as passed (node's runner), while discovery yields absolute paths.
-    const files = opts.files !== undefined ? (opts.files as string[]) : discoverRunFiles(opts);
+    let files = opts.files !== undefined ? (opts.files as string[]) : discoverRunFiles(opts);
+    if (opts.randomize) {
+      files = drawRandomOrder(files, opts.randomSeed as number);
+    }
     function onInterrupt() {
       state.interrupted = true;
       state.childProc?.kill();
@@ -488,7 +574,7 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
 
     reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
     const durationMs = roundDurationMs(performance.now() - started);
-    emitRunDiagnostics(reporter, counts, durationMs);
+    emitRunDiagnostics(reporter, counts, durationMs, opts.randomize ? (opts.randomSeed as number) : undefined);
     reporter.emitMessage("test:summary", {
       __proto__: null,
       success: runSucceeded(counts),
@@ -566,6 +652,12 @@ async function runOneFile(
   // in the child's process.execArgv; bun's CLI likewise takes runtime flags
   // before the `test` keyword and user args after the path.
   const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
+  if (opts.randomize) {
+    // In-file order: node forwards --test-randomize/--test-random-seed to the
+    // child (runner.js:237-241); bun's child is `bun test`, whose native
+    // --seed shuffler is seeded per-file from (seed, basename).
+    args.splice(1 + (opts.execArgv as string[]).length + 1, 0, `--seed=${opts.randomSeed}`);
+  }
   const fileStarted = performance.now();
   const fileCounts = makeRunCounts();
 
@@ -585,11 +677,21 @@ async function runOneFile(
   reporter.emitMessage("test:enqueue", { __proto__: null, ...fileNode });
   reporter.emitMessage("test:dequeue", { __proto__: null, ...fileNode });
 
+  const filterEnv: Record<string, string> = {};
+  if (opts.testTagFilterExpressions != null) {
+    filterEnv[kRunChildTagFiltersEnv] = JSON.stringify(opts.testTagFilterExpressions);
+  }
+  function serializePatterns(patterns: RegExp[]) {
+    return JSON.stringify(patterns.map(re => ({ source: re.source, flags: re.flags })));
+  }
+  if (opts.testNamePatterns != null) filterEnv[kRunChildNamePatternsEnv] = serializePatterns(opts.testNamePatterns);
+  if (opts.testSkipPatterns != null) filterEnv[kRunChildSkipPatternsEnv] = serializePatterns(opts.testSkipPatterns);
   const proc = Bun.spawn({
     cmd: args,
     cwd: opts.cwd as string,
     env: {
       ...(opts.env ?? process.env),
+      ...filterEnv,
       BUN_TEST_DRAIN_EVENT_LOOP: "1",
       [kRunChildEnv]: kRunChildEnvValue,
       NODE_TEST_WORKER_ID: String((state.nextWorkerId++ % state.maxWorkerId) + 1),
@@ -1234,6 +1336,9 @@ function maybeCompleteSuite(suite: TestNode): boolean {
   if (!suite.isSuite || !suite.collectionSettled || suite.suiteReported) return false;
   if (suite.childrenDone < suite.childrenCount) return false;
   suite.suiteReported = true;
+  // A suite no descendant rescued from the name/tag filters completes without
+  // reporting any events (node's Suite postRun filtered path).
+  if (suite.filteredByName || suite.filteredByTag) return true;
   // A todo suite's advisory results never fail it (or the run) in node.
   const isTodo = suite.todoFlag || hasTodoAncestor(suite);
   if (isTodo) suite.childrenFailed = 0;
@@ -2206,6 +2311,11 @@ class TestNode {
   hookFailure: unknown = undefined;
   // Deferred diagnostics_channel end publisher for suites (node's #publishEnd).
   publishSuiteEnd: (() => void) | null = null;
+  // Run-child registration filtering (node's filteredByName/filteredByTag,
+  // test.js:641-655): suites start filtered and are rescued per dimension by
+  // the first passing descendant; a still-filtered suite reports no events.
+  filteredByName = false;
+  filteredByTag = false;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
   #tags: string[] | undefined;
@@ -3622,14 +3732,16 @@ function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
   return kept;
 }
 
+// Node's evaluateTagFilters (tag_filter.js): filters AND together — a test
+// passes only when every filter appears in its tag set.
 function tagsMatchFilters(tags: string[], filters: string[]): boolean {
-  for (const tag of tags) {
-    if (filters.includes(tag)) return true;
+  for (const filter of filters) {
+    if (!tags.includes(filter)) return false;
   }
-  return false;
+  return true;
 }
 
-// Drops tests whose (inherited) tags miss every filter; a suite survives only
+// Drops tests whose (inherited) tags fail the filters; a suite survives only
 // if any descendant does, and its child accounting shrinks to the survivors.
 function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): StandaloneEntry[] {
   const kept: StandaloneEntry[] = [];
@@ -3735,7 +3847,10 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
   try {
     if (typeof opts.setup === "function") await opts.setup(reporter);
 
-    const files = discoverRunFiles(opts);
+    let files = discoverRunFiles(opts);
+    if (opts.randomize) {
+      files = drawRandomOrder(files, opts.randomSeed as number);
+    }
     const numbering = { verdictNumber: 0 };
     standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts, numbering);
     // node's root test is already running while files load, so before() hooks
@@ -3844,7 +3959,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     // directly so it carries no data.file, matching runFiles and the adjacent
     // run-level summary (the sink would stamp the stale activeRunFile on it).
     reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
-    emitRunDiagnostics(reporter, counts, durationMs);
+    emitRunDiagnostics(reporter, counts, durationMs, opts.randomize ? (opts.randomSeed as number) : undefined);
     reporter.emitMessage("test:summary", {
       __proto__: null,
       success: runSucceeded(counts),
@@ -4200,6 +4315,87 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
   return topLevelRunner;
 }
 
+// Filters forwarded by the run() parent for process isolation. Node passes
+// them to children on the command line (runner.js getRunArgs); bun's children
+// are `bun test` processes, so they arrive in the environment instead.
+const kRunChildTagFiltersEnv = "BUN_NODE_TEST_TAG_FILTERS";
+const kRunChildNamePatternsEnv = "BUN_NODE_TEST_NAME_PATTERNS";
+const kRunChildSkipPatternsEnv = "BUN_NODE_TEST_SKIP_PATTERNS";
+
+type RunChildFilters = {
+  tagFilters: string[] | null;
+  namePatterns: RegExp[] | null;
+  skipPatterns: RegExp[] | null;
+} | null;
+let runChildFiltersMemo: RunChildFilters | undefined;
+
+function parsePatternListEnv(raw: string | undefined): RegExp[] | null {
+  if (raw === undefined) return null;
+  try {
+    const list = JSON.parse(raw) as { source: string; flags: string }[];
+    if (!Array.isArray(list) || list.length === 0) return null;
+    return list.map(entry => new RegExp(entry.source, entry.flags));
+  } catch {
+    return null;
+  }
+}
+
+function runChildFilters(): RunChildFilters {
+  if (runChildFiltersMemo !== undefined) return runChildFiltersMemo;
+  let tagFilters: string[] | null = null;
+  const rawTags = process.env[kRunChildTagFiltersEnv];
+  if (rawTags !== undefined) {
+    try {
+      const list = JSON.parse(rawTags);
+      if (Array.isArray(list) && list.length > 0) tagFilters = list;
+    } catch {}
+  }
+  const namePatterns = parsePatternListEnv(process.env[kRunChildNamePatternsEnv]);
+  const skipPatterns = parsePatternListEnv(process.env[kRunChildSkipPatternsEnv]);
+  runChildFiltersMemo = tagFilters === null && namePatterns === null && skipPatterns === null
+    ? null
+    : { tagFilters, namePatterns, skipPatterns };
+  return runChildFiltersMemo;
+}
+
+function ancestorNamesOf(node: TestNode): string[] {
+  const names: string[] = [];
+  for (let cur = node.parent; cur !== undefined && cur.parent !== undefined; cur = cur.parent) {
+    names.unshift(cur.name);
+  }
+  return names;
+}
+
+// Node's per-test filter evaluation at construction (test.js:640-656): each
+// dimension is computed independently and a passing node rescues its
+// still-filtered ancestors on that dimension only.
+function applyRunChildFilters(node: TestNode): boolean {
+  if (!runChildReporterEnabled) return false;
+  const filters = runChildFilters();
+  if (filters === null) return false;
+  const { tagFilters, namePatterns, skipPatterns } = filters;
+  if (namePatterns !== null || skipPatterns !== null) {
+    const ancestors = ancestorNamesOf(node);
+    node.filteredByName =
+      (namePatterns !== null && !nameMatchesPatterns(node.name, ancestors, namePatterns)) ||
+      (skipPatterns !== null && nameMatchesPatterns(node.name, ancestors, skipPatterns));
+    if (!node.filteredByName) {
+      for (let t = node.parent; t !== undefined && t.filteredByName; t = t.parent) {
+        t.filteredByName = false;
+      }
+    }
+  }
+  if (tagFilters !== null) {
+    node.filteredByTag = !tagsMatchFilters(node.tags, tagFilters);
+    if (!node.filteredByTag) {
+      for (let t = node.parent; t !== undefined && t.filteredByTag; t = t.parent) {
+        t.filteredByTag = false;
+      }
+    }
+  }
+  return node.filteredByName || node.filteredByTag;
+}
+
 function addTest(
   arg0: unknown,
   arg1: unknown,
@@ -4221,6 +4417,7 @@ function addTest(
       // Subtest of a running test (or of an inline suite created inside one).
       const child = new TestNode(name, runningNode, options, false, true);
       child.ownTags = ownTags;
+      if (applyRunChildFilters(child)) return Promise.resolve(undefined);
       if (mode === "skip" || options.skip) {
         // Report at execution turn (on the same chain as non-skip siblings)
         // so the event stream keeps declaration order; the returned promise
@@ -4247,6 +4444,10 @@ function addTest(
   // truthiness: node runs the body for falsy-but-defined skip/todo
   // ({ skip: '' }) and only reports the directive.
   const effectiveMode = mode === "skip" || options.skip ? "skip" : mode === "todo" || options.todo ? "todo" : undefined;
+
+  // A filtered-out test registers nothing and reports nothing (node's
+  // "silently skipped" filtered tests).
+  if (applyRunChildFilters(node)) return Promise.resolve(undefined);
 
   if (inStandaloneMode()) {
     noteRunChildRegistered(parent);
@@ -4346,6 +4547,7 @@ function addSuite(
   if (runningNode !== undefined && runningNode.isRunning()) {
     const suite = new TestNode(name, runningNode, options, true, true);
     suite.ownTags = ownTags;
+    applyRunChildFilters(suite);
     if (mode === "skip" || options.skip) {
       // Report at execution turn so the event stream keeps declaration order;
       // the returned promise resolves after the directive lands.
@@ -4394,6 +4596,9 @@ function addSuite(
   const suiteNode = new TestNode(name, parent, options, true, false);
   suiteNode.ownTags = ownTags;
   if (mode === "only") suiteNode.onlyFlag = true;
+  // A filtered suite still runs its body (children may rescue it); if nothing
+  // does, maybeCompleteSuite suppresses its events.
+  applyRunChildFilters(suiteNode);
   noteRunChildRegistered(parent);
 
   // Node merges .todo()/.skip() into the options and checks skip first, so

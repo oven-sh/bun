@@ -437,6 +437,9 @@ struct us_listen_socket_t {
   unsigned int socket_ext_size;
   /* kind to stamp on accepted sockets. */
   unsigned char accept_kind;
+  /* node:https server 'keylog': park NSS key-log lines on accepted sockets'
+   * SSLs so the JS layer can drain them after the handshake. */
+  unsigned char keylog_enabled;
   /* Set when TCP_DEFER_ACCEPT/SO_ACCEPTFILTER was successfully applied. */
   unsigned char deferred_accept;
 };

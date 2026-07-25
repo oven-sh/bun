@@ -440,6 +440,24 @@ impl<const SSL: bool> ListenSocket<SSL> {
         // (a listen socket IS a us_socket_t).
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
+
+    /// Swap the default `SSL_CTX` used for newly accepted sockets
+    /// (`tls.Server#setSecureContext`). See
+    /// [`crate::ListenSocket::set_default_ssl_ctx`].
+    #[inline]
+    pub fn set_default_ssl_ctx(&mut self, ctx: *mut crate::SslCtx) {
+        // S008: opaque ZST cast as in `close`.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .set_default_ssl_ctx(ctx)
+    }
+
+    /// See [`crate::ListenSocket::enable_keylog`].
+    #[inline]
+    pub fn enable_keylog(&mut self) {
+        // S008: opaque ZST cast as in `close`.
+        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
+            .enable_keylog()
+    }
 }
 
 #[derive(strum::IntoStaticStr, Debug)]

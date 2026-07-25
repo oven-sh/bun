@@ -86,6 +86,22 @@ impl ListenSocket {
         unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
     }
 
+    /// Swap the default `SSL_CTX` used for newly accepted sockets
+    /// (`tls.Server#setSecureContext`). C up_refs `ctx`; the caller keeps its
+    /// own reference. Raw `*mut SslCtx` for the same shared-ownership reason
+    /// as [`add_server_name`].
+    pub fn set_default_ssl_ctx(&mut self, ctx: *mut SslCtx) {
+        // SAFETY: self is a live listen socket; caller guarantees `ctx` points
+        // at a live SSL_CTX (C up-refs and stores it).
+        unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx) }
+    }
+
+    /// Park NSS key-log lines for sockets accepted from now on
+    /// (node:https server 'keylog'); drained per-socket by the JS layer.
+    pub fn enable_keylog(&mut self) {
+        us_listen_socket_enable_keylog(self)
+    }
+
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -109,6 +125,8 @@ unsafe extern "C" {
         user: *mut c_void,
     ) -> c_int;
     fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
+    safe fn us_listen_socket_enable_keylog(ls: &mut ListenSocket);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,

@@ -42,6 +42,8 @@ extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSVal
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
+extern "C" EncodedJSValue Server__setSecureContext(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
+extern "C" EncodedJSValue Server__enableKeylog(JSC::JSGlobalObject*, EncodedJSValue);
 
 static EncodedJSValue assignHeadersFromFetchHeaders(FetchHeaders& impl, JSObject* prototype, JSObject* objectValue, JSC::InternalFieldTuple* tuple, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
@@ -1289,6 +1291,31 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     return JSValue::encode(jsUndefined());
 }
 
+// https.Server#setSecureContext(): hand the TLS options object to the Rust
+// server, which builds a fresh SSL_CTX and swaps it in as the listener's
+// default for newly accepted connections.
+JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerSecureContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue serverValue = callFrame->argument(0);
+    JSValue optionsValue = callFrame->argument(1);
+    Server__setSecureContext(globalObject, JSValue::encode(serverValue), JSValue::encode(optionsValue));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+// https.Server 'keylog': arm key-log-line parking for sockets accepted from
+// now on; _http_server.ts drains them per connection via socketHandle.drainKeylog().
+JSC_DEFINE_HOST_FUNCTION(jsHTTPEnableServerKeylog, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Server__enableKeylog(globalObject, JSValue::encode(callFrame->argument(0)));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 // Pushes only the parser/handler flags. Unlike setServerCustomOptions this rebinds no
 // callbacks, so it is safe to call on a listening server (server.httpAllowHalfOpen is
 // assignable at any time, like Node's).
@@ -1468,6 +1495,12 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerAppFlags"_s)),
         JSC::JSFunction::create(vm, globalObject, 5, "setServerAppFlags"_s, jsHTTPSetAppFlags, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerSecureContext"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "setServerSecureContext"_s, jsHTTPSetServerSecureContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "enableServerKeylog"_s)),
+        JSC::JSFunction::create(vm, globalObject, 1, "enableServerKeylog"_s, jsHTTPEnableServerKeylog, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
         globalObject->JSResponseConstructor(), 0);

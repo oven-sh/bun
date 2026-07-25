@@ -409,6 +409,11 @@ void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
+/* tls.Server#setSecureContext(): swap the default SSL_CTX used for NEWLY
+ * accepted sockets (SNI-selected contexts are untouched). Up_refs ctx; live
+ * connections keep the previous context alive through their own SSL refs. */
+void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
+    struct ssl_ctx_st *ctx) __attribute__((nonnull(1, 2)));
 /* Parses a PKCS#12 blob into malloc'd PEM key/cert/ca strings (caller frees);
  * returns 0 with a static *err_reason tag on failure. */
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
@@ -551,6 +556,10 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
 int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+/* node:https server 'keylog': park key-log lines for sockets accepted by `ls`;
+ * drain per-socket with us_socket_pop_keylog after the handshake. */
+void us_listen_socket_enable_keylog(struct us_listen_socket_t *ls) nonnull_fn_decl;
+int us_socket_pop_keylog(us_socket_r s, unsigned char *out, int out_cap);
 
 /* Public interfaces for loops */
 

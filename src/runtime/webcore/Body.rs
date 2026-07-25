@@ -323,9 +323,7 @@ impl PendingValue {
         on_receive: fn(ctx: *mut c_void, value: *mut Value),
     ) -> Option<DeferredStartBuffering> {
         // No producer `task` means nothing will ever call `resolve` on this body.
-        let Some(producer_task) = self.task else {
-            return None;
-        };
+        let producer_task = self.task?;
         if self.readable.has() || self.promise.is_some() || self.on_receive_value.is_some() {
             return None;
         }

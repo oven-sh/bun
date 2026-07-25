@@ -1317,12 +1317,14 @@ pub struct WriteFileWaitFromLockedValueTask {
 }
 
 impl WriteFileWaitFromLockedValueTask {
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn then_wrap(this: *mut c_void, value: *mut body::Value) {
         // SAFETY: `this` is the Box-allocated task registered as `locked.task`
         // below; `value` is the live `&mut Value` reborrowed by the caller.
+        let value = unsafe { &mut *value };
         let _ = Self::then(
             NonNull::new(this.cast::<WriteFileWaitFromLockedValueTask>()).unwrap(),
-            unsafe { &mut *value },
+            value,
         );
         // TODO: properly propagate exception upwards
     }

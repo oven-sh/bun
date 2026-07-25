@@ -79,6 +79,20 @@ describe("node-fetch honors TLS options from agent", () => {
 
       const res = await nodeFetch(`https://localhost:${port}/`, { agent });
       expect(await res.json()).toEqual({ authorized: true });
+
+      // Node also accepts the key as [{ pem }] objects.
+      const pemAgent = new https.Agent({
+        ca: ca1,
+        cert: serverCert,
+        key: [{ pem: serverKey }],
+        servername: "agent1",
+      });
+      try {
+        const pemRes = await nodeFetch(`https://localhost:${port}/`, { agent: pemAgent });
+        expect(await pemRes.json()).toEqual({ authorized: true });
+      } finally {
+        pemAgent.destroy();
+      }
     } finally {
       agent.destroy();
       server.close();

@@ -157,6 +157,8 @@ function tlsFromAgent(agent, url) {
     if (typeof value === "string" && (key === "minVersion" || key === "maxVersion")) {
       value = require("internal/tls").tlsStringToProtocolVersion(value);
       if (!value) continue;
+    } else if (key === "key") {
+      value = require("internal/tls").normalizePemKeyOption(value, opts.passphrase);
     }
     (tls ??= { __proto__: null })[key] = value;
   }
@@ -216,7 +218,7 @@ async function fetch(
       init = { ...init, body: Readable.toWeb(readable) };
     }
   }
-  const initAgent = init && (init as any).agent;
+  const initAgent = init && Object.hasOwn(init, "agent") ? (init as any).agent : undefined;
   if (initAgent && (init as any).tls === undefined) {
     const tls = tlsFromAgent(initAgent, url);
     if (tls !== undefined) init = { ...init, tls } as any;

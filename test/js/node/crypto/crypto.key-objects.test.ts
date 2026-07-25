@@ -1826,7 +1826,9 @@ describe("createPrivateKey with RFC 5958 v2 OneAsymmetricKey", () => {
     const privateKey = createPrivateKey({ key, format: "der", type: "pkcs8" });
     expect(privateKey.asymmetricKeyType).toBe("ed25519");
     const sig = sign(null, Buffer.from("OneAsymmetricKey"), privateKey);
-    expect(verify(null, Buffer.from("OneAsymmetricKey"), createPublicKey({ key: spki, format: "der", type: "spki" }), sig)).toBe(true);
+    expect(
+      verify(null, Buffer.from("OneAsymmetricKey"), createPublicKey({ key: spki, format: "der", type: "spki" }), sig),
+    ).toBe(true);
   });
 
   const rejects: [string, Buffer][] = [

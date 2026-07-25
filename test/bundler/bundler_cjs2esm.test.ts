@@ -83,6 +83,73 @@ describe("bundler", () => {
       stdout: "undefined",
     },
   });
+  itBundled("cjs2esm/BadNamedImportReExportedFromEntryCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import {bad} from './bar.cjs';
+        export {bad};
+        console.log(bad);
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+        import * as mod from './out.js';
+        if (mod.bad !== undefined) throw new Error("expected undefined, got " + mod.bad);
+      `,
+    },
+    run: [{ stdout: "undefined" }, { file: "/test.mjs" }],
+  });
+  itBundled("cjs2esm/BadNamedExportFromEntryCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        export {bad} from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+        import * as mod from './out.js';
+        if (mod.bad !== undefined) throw new Error("expected undefined, got " + mod.bad);
+      `,
+    },
+    run: { file: "/test.mjs" },
+  });
+  itBundled("cjs2esm/BadNamedImportNamedReExportedToEntryFromCommonJS", {
+    files: {
+      "/entry.js": /* js */ `
+        import {bad} from './foo';
+        export {bad};
+        console.log(bad);
+      `,
+      "/foo.js": /* js */ `
+        export {bad} from './bar.cjs';
+      `,
+      "/bar.cjs": /* js */ `
+        exports.foo = 'bar';
+      `,
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).not.toContain("__INVALID__REF__");
+    },
+    runtimeFiles: {
+      "/test.mjs": /* js */ `
+        import * as mod from './out.js';
+        if (mod.bad !== undefined) throw new Error("expected undefined, got " + mod.bad);
+      `,
+    },
+    run: [{ stdout: "undefined" }, { file: "/test.mjs" }],
+  });
   itBundled("cjs2esm/ExportsFunction", {
     files: {
       "/entry.js": /* js */ `

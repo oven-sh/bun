@@ -53,22 +53,6 @@ fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<Signal
     bun_sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
-/// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
-/// `bun_jsc::SystemError` and materialize a JS Error instance.
-fn sys_system_error_to_js(err: &bun_sys::SystemError, global: &JSGlobalObject) -> JSValue {
-    let jsc_err = SystemError {
-        errno: err.errno,
-        code: err.code,
-        message: err.message,
-        path: err.path,
-        syscall: err.syscall,
-        hostname: err.hostname,
-        fd: err.fd,
-        dest: err.dest,
-    };
-    jsc_err.to_error_instance(global)
-}
-
 /// `Terminal.CreateResult` — local mirror that flattens `IntrusiveRc<Terminal>`
 /// to a `BackRef<Terminal>` used by `Subprocess.terminal`, so the scopeguard /
 /// field-assignment paths share one pointer type with `existing_terminal`.
@@ -747,11 +731,23 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(timeout_value) = args.get(global_this, "timeout")? {
                 'brk: {
                     if timeout_value != JSValue::NULL {
-                        if timeout_value.is_number()
-                            && timeout_value.as_number().is_infinite()
-                            && timeout_value.as_number() > 0.0
-                        {
-                            break 'brk;
+                        if timeout_value.is_number() {
+                            let n = timeout_value.as_number();
+                            // +Infinity is accepted as "no timeout"; NaN is always a
+                            // caller-side bug (validate_integer_range would map it to 0).
+                            if n.is_nan() {
+                                return Err(global_this.throw_range_error(
+                                    n,
+                                    bun_fmt::OutOfRangeOptions {
+                                        field_name: b"timeout",
+                                        msg: b"a non-negative integer",
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
+                            if n.is_infinite() && n > 0.0 {
+                                break 'brk;
+                            }
                         }
 
                         let timeout_int = global_this.validate_integer_range::<u64>(
@@ -775,6 +771,14 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             if let Some(val) = args.get(global_this, "killSignal")? {
                 kill_signal = signal_code_from_js(val, global_this)?;
+                if kill_signal.0 == 0 {
+                    return Err(global_this
+                        .err(
+                            jsc::ErrorCode::ERR_UNKNOWN_SIGNAL,
+                            format_args!("Unknown signal: 0"),
+                        )
+                        .throw());
+                }
             }
 
             if let Some(val) = args.get(global_this, "maxBuffer")? {
@@ -1211,7 +1215,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             } else {
                 -UV_E::NFILE
             };
-            return Err(global_this.throw_value(sys_system_error_to_js(&systemerror, global_this)));
+            return Err(global_this
+                .throw_value(SystemError::from(systemerror).to_error_instance(global_this)));
         }
         Err(err) => {
             // See EMFILE arm above.
@@ -1241,8 +1246,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                             if errno == sys::Errno::ENOENT {
                                 systemerror.errno = -UV_E::NOENT;
                             }
-                            return Err(global_this
-                                .throw_value(sys_system_error_to_js(&systemerror, global_this)));
+                            return Err(global_this.throw_value(
+                                SystemError::from(systemerror).to_error_instance(global_this),
+                            ));
                         }
                     }
                     _ => {}
@@ -1514,18 +1520,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     #[cfg(unix)]
     if !IS_SYNC {
         if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: re-borrow `jsc_vm` through the raw pointer for the nested
-            // `vm` arg while `rare_data()` holds the outer &mut.
-            let raw_socket = unsafe { &mut *jsc_vm_ptr }
-                .rare_data()
-                .spawn_ipc_group(unsafe { &mut *jsc_vm_ptr })
-                .from_fd(
-                    bun_uws::SocketKind::SpawnIpc,
-                    None,
-                    core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
-                    posix_ipc_fd.native(),
-                    true,
-                );
+            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
+            let vm = unsafe { &mut *jsc_vm_ptr };
+            let loop_ = vm.uws_loop();
+            let raw_socket = vm.rare_data().spawn_ipc_group(loop_).from_fd(
+                bun_uws::SocketKind::SpawnIpc,
+                None,
+                core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
+                posix_ipc_fd.native(),
+                true,
+            );
             if !raw_socket.is_null() {
                 let socket = raw_socket;
                 subprocess.ipc_data.set(Some(IPC::SendQueue::init(
@@ -2076,14 +2080,12 @@ fn throw_command_not_found(global_this: &JSGlobalObject, command: &[u8]) -> JsEr
         message: BunString::create_format(format_args!(
             "Executable not found in $PATH: \"{}\"",
             bstr::BStr::new(command)
-        )),
-        code: BunString::static_("ENOENT"),
+        ))
+        .into(),
+        code: BunString::static_("ENOENT").into(),
         errno: -UV_E::NOENT,
-        path: BunString::clone_utf8(command),
-        syscall: BunString::EMPTY,
-        hostname: BunString::EMPTY,
-        fd: -1,
-        dest: BunString::EMPTY,
+        path: BunString::clone_utf8(command).into(),
+        ..Default::default()
     };
     global_this.throw_value(err.to_error_instance(global_this))
 }

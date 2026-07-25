@@ -87,7 +87,15 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             int err = WSAGetLastError();
             if (ret < 0) {
                 if (err == WSAEINTR) continue;
-                if (err == WSAEWOULDBLOCK) return i;
+                switch (err) {
+                    case WSAEWOULDBLOCK:  errno = EAGAIN; break;
+                    case WSAEMSGSIZE:     errno = EMSGSIZE; break;
+                    case WSAECONNREFUSED: errno = ECONNREFUSED; break;
+                    case WSAENETUNREACH:  errno = ENETUNREACH; break;
+                    case WSAEHOSTUNREACH: errno = EHOSTUNREACH; break;
+                    default:              errno = EIO; break;
+                }
+                if (err == WSAEWOULDBLOCK || i > 0) return i;
                 return ret;
             }
             break;
@@ -111,7 +119,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
             if (ret < 0) {
                 if (errno == EINTR) continue;
-                if (errno == EAGAIN || errno == EWOULDBLOCK) return i;
+                if (errno == EAGAIN || errno == EWOULDBLOCK || i > 0) return i;
                 return ret;
             }
             break;
@@ -129,24 +137,28 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
 #if defined(_WIN32)
-    socklen_t addr_len = sizeof(struct sockaddr_storage);
-    while (1) {
-        ssize_t ret = recvfrom(fd, recvbuf->buf, LIBUS_RECV_BUFFER_LENGTH, flags, (struct sockaddr *)&recvbuf->addr, &addr_len);
-        if (ret < 0) {
-            int err = WSAGetLastError();
-            if (err == WSAEINTR) continue;
-            /* Winsock surfaces ICMP "port/host unreachable" from a previous
-             * sendto as WSAECONNRESET (or WSAENETRESET for TTL-expired) on the
-             * next recv. That's per-destination, not per-socket, so treat it as
-             * "no packet" and retry — bubbling it up makes loop.c close the
-             * socket and tear down every conn that shares it (e.g. the QUIC
-             * client endpoint). Mirrors libuv's uv__udp_recv handling. */
-            if (err == WSAECONNRESET || err == WSAENETRESET) continue;
-            return ret;
+    for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
+        while (1) {
+            socklen_t addr_len = sizeof(struct sockaddr_storage);
+            ssize_t ret = recvfrom(fd, recvbuf->buf + (size_t) i * LIBUS_UDP_MAX_SIZE,
+                LIBUS_UDP_MAX_SIZE, flags, (struct sockaddr *)&recvbuf->addr[i], &addr_len);
+            if (ret < 0) {
+                int err = WSAGetLastError();
+                if (err == WSAEINTR) continue;
+                /* Winsock surfaces ICMP "port/host unreachable" from a previous
+                 * sendto as WSAECONNRESET (or WSAENETRESET for TTL-expired) on the
+                 * next recv. That's per-destination, not per-socket, so treat it as
+                 * "no packet" and retry — bubbling it up makes loop.c close the
+                 * socket and tear down every conn that shares it (e.g. the QUIC
+                 * client endpoint). Mirrors libuv's uv__udp_recv handling. */
+                if (err == WSAECONNRESET || err == WSAENETRESET) continue;
+                return i > 0 ? i : (int) ret;
+            }
+            recvbuf->recvlen[i] = (size_t) ret;
+            break;
         }
-        recvbuf->recvlen = ret;
-        return 1;
     }
+    return LIBUS_UDP_RECV_COUNT;
 #elif defined(__APPLE__)
     if (Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
@@ -293,7 +305,7 @@ int bsd_udp_packet_buffer_local_ip(struct udp_recvbuf *msgvec, int index, char *
 
 char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
-    return (char *)&msgvec->addr;
+    return (char *)&msgvec->addr[index];
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_name;
 #endif
@@ -301,7 +313,7 @@ char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index) {
 
 char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
-    return msgvec->buf;
+    return msgvec->buf + (size_t) index * LIBUS_UDP_MAX_SIZE;
 #else
     return ((struct mmsghdr *) msgvec)[index].msg_hdr.msg_iov[0].iov_base;
 #endif
@@ -309,7 +321,7 @@ char *bsd_udp_packet_buffer_payload(struct udp_recvbuf *msgvec, int index) {
 
 int bsd_udp_packet_buffer_payload_length(struct udp_recvbuf *msgvec, int index) {
 #if defined(_WIN32)
-    return msgvec->recvlen;
+    return (int) msgvec->recvlen[index];
 #else
     /* Clamp to the per-datagram buffer capacity so a truncated datagram can
      * never report more bytes than we actually copied, even if the underlying
@@ -1444,8 +1456,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 
 /* Receive-path options every UDP socket needs, whether freshly created or
  * adopted from an existing fd: destination-address and TOS reporting for
- * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR. */
-static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
+ * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR (opt-in). */
+static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family, int options) {
     /* We need destination address for udp packets in both ipv6 and ipv4 */
 
 /* On FreeBSD this option seems to be called like so */
@@ -1488,15 +1500,21 @@ static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
 #if defined(__linux__)
     /* IP_RECVERR/IPV6_RECVERR queues ICMP errors on the socket's error queue
      * for on_recv_error to drain. libuv gates this on UV_UDP_LINUX_RECVERR
-     * (Node's dgram never passes it); Bun opts in for sockets it creates. */
+     * (Node's dgram never passes it). Opt-in only: on a shared unconnected
+     * socket (the HTTP/3 fetch client) it also makes a queued ICMP fail the
+     * next send to a different, live peer. */
+    if (options & LIBUS_UDP_LINUX_RECVERR) {
 #ifdef IP_RECVERR
-    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+        setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
 #endif
 #ifdef IPV6_RECVERR
-    if (family == AF_INET6) {
-        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-    }
+        if (family == AF_INET6) {
+            setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+        }
 #endif
+    }
+#else
+    (void) options;
 #endif
 }
 
@@ -1631,7 +1649,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family);
+    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family, options);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {

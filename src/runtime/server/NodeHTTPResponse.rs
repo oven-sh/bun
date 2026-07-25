@@ -1462,10 +1462,10 @@ pub(crate) fn node_http_request_on_resolve(
     callframe: &CallFrame,
 ) -> JSValue {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_old::<2>();
+    let arguments = callframe.arguments_as_array::<2>();
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1474,7 +1474,7 @@ pub(crate) fn node_http_request_on_resolve(
         had
     });
     // defer this.deref(); — moved to tail.
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -1508,11 +1508,11 @@ pub(crate) fn node_http_request_on_reject(
     global_object: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JSValue {
-    let arguments = callframe.arguments_old::<2>();
-    let err = arguments.ptr[0];
+    let arguments = callframe.arguments_as_array::<2>();
+    let err = arguments[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
-    let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
+    let this: &NodeHTTPResponse = arguments[1].as_class_ref::<NodeHTTPResponse>().unwrap();
     // `promise` non-empty is the ownership token for the server-handler ref;
     // `mark_request_as_done` may have already released it on abort.
     let had_promise = this.promise.with_mut(|p| {
@@ -1520,7 +1520,7 @@ pub(crate) fn node_http_request_on_reject(
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments[1]);
 
     // defer this.deref(); — moved to tail.
 

@@ -238,9 +238,7 @@ impl CondExpr {
             let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
             if let Some(err) = err {
-                let y = Self::write_failing_error(interp, this, format_args!("{}\n", err));
-                err.deinit();
-                return y;
+                return Self::write_failing_error(interp, this, format_args!("{}\n", err));
             }
             // Defensive fallback — finish via `writeFailingError` with exit 1.
             debug_assert!(false, "Expansion child failed without an error");

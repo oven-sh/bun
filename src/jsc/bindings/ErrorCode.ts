@@ -357,6 +357,13 @@ const errors: ErrorCodeMapping = [
   ["ERR_TRAILING_JUNK_AFTER_STREAM_END", TypeError],
   ["ERR_SQLITE_ERROR", Error],
   ["ERR_CRYPTO_ARGON2_NOT_SUPPORTED", Error],
+  ["ERR_HTTP2_INVALID_CONNECTION_HEADERS", TypeError],
+  ["ERR_QUIC_CONNECTION_FAILED", Error],
+  ["ERR_QUIC_ENDPOINT_CLOSED", Error],
+  ["ERR_QUIC_OPEN_STREAM_FAILED", Error],
+  ["ERR_QUIC_STREAM_ABORTED", Error],
+  ["ERR_QUIC_STREAM_RESET", Error],
+  ["ERR_QUIC_VERSION_NEGOTIATION_ERROR", Error],
   // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
   // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
   ["HPE_STRICT", Error],

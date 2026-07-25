@@ -62,19 +62,15 @@ impl ShellErr {
     pub fn throw_js(self, global: &JSGlobalObject) -> bun_jsc::JsError {
         match self {
             ShellErr::Sys(sys) => {
-                // `to_error_instance` decrements every string ref itself, so we
-                // must hand it the *owned* value (move) — no extra deref here.
                 let err = bun_jsc::SystemError::from(sys).to_error_instance(global);
                 global.throw_value(err)
             }
             ShellErr::Custom(custom) => {
                 let err_value = BunString::clone_utf8(&custom).to_error_instance(global);
-                // `custom: Box<[u8]>` drops here.
                 global.throw_value(err_value)
             }
             ShellErr::InvalidArguments { val } => {
                 global.throw_invalid_arguments(format_args!("{}", bstr::BStr::new(&*val)))
-                // `val` drops here.
             }
             ShellErr::Todo(todo) => global.throw_todo(&todo),
         }
@@ -89,7 +85,6 @@ impl ShellErr {
                     err.message,
                     err.path
                 );
-                err.deref();
             }
             ShellErr::Custom(custom) => {
                 bun_core::pretty_errorln!(
@@ -112,15 +107,6 @@ impl ShellErr {
         }
         bun_core::Global::exit(1)
     }
-
-    /// Spec `ShellErr.deinit`. Explicit release for callers that drop a
-    /// `ShellErr` without throwing it (the `Box<[u8]>` arms free on ordinary
-    /// drop, so only `.sys` needs work).
-    pub fn deinit(self) {
-        if let ShellErr::Sys(sys) = self {
-            sys.deref();
-        }
-    }
 }
 
 impl fmt::Display for ShellErr {
@@ -135,13 +121,6 @@ impl fmt::Display for ShellErr {
         }
     }
 }
-
-// Note: no `impl Drop for ShellErr`. Release is *manual* and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
-// `toErrorInstance` already consumed those refs. An unconditional `Drop` would
-// re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
-// `throw_mini` / `deinit` taking `self` by value; the `Box<[u8]>` payloads free
-// on ordinary drop, and `.sys` is released exactly once on whichever consume
-// path runs.
 
 // ───────────────────────────── Test ─────────────────────────────
 
@@ -720,10 +699,9 @@ pub mod testing_apis {
         }
         #[cfg(not(windows))]
         {
-            let arguments_ = callframe.arguments_old::<1>();
             // SAFETY: bun_vm() is non-null for a Bun-owned global.
             let vm = global.bun_vm();
-            let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+            let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
             let string: JSValue = match arguments.next_eat() {
                 Some(s) => s,
                 None => {
@@ -758,10 +736,9 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {
@@ -838,10 +815,9 @@ pub mod testing_apis {
         callframe: &CallFrame,
         marked_argument_buffer: &mut MarkedArgumentBuffer,
     ) -> JsResult<JSValue> {
-        let arguments_ = callframe.arguments_old::<2>();
         // SAFETY: bun_vm() is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = jsc::ArgumentsSlice::init(vm, arguments_.slice());
+        let mut arguments = jsc::ArgumentsSlice::init(vm, callframe.arguments());
         let string_args: JSValue = match arguments.next_eat() {
             Some(s) => s,
             None => {

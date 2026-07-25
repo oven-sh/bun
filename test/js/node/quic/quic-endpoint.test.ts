@@ -163,15 +163,17 @@ describe("default connect() endpoint reuse", () => {
       const c = await dial({ transportParams: { maxIdleTimeout: 3, initialMaxStreamsBidi: 50 } });
       const d = await dial({ application: { maxHeaderPairs: 1024 } });
       const e = await dial({});
+      const f = await dial({ cc: "bbr" });
       console.log(JSON.stringify({
         a_eq_b: a.ep === b.ep,
         b_eq_c: b.ep === c.ep,
         d_eq_e: d.ep === e.ep,
+        e_eq_f: e.ep === f.ep,
         a_streams: String(a.tp.initialMaxStreamsBidi),
         b_streams: String(b.tp.initialMaxStreamsBidi),
       }));
       server.destroy();
-      await a.ep?.close?.(); await b.ep?.close?.(); await d.ep?.close?.(); await e.ep?.close?.();
+      for (const x of [a, b, d, e, f]) await x.ep?.close?.();
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -185,6 +187,7 @@ describe("default connect() endpoint reuse", () => {
       a_eq_b: false,
       b_eq_c: true,
       d_eq_e: false,
+      e_eq_f: false,
       a_streams: "10",
       b_streams: "50",
     });

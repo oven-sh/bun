@@ -4609,25 +4609,30 @@ function alpnWantsHttp(alpn) {
 /**
  * lsquic bakes these into the per-engine settings at `build_engine` time
  * (src/runtime/node/quic/endpoint.rs), so a shared client endpoint is only
- * reusable when a later connect()'s values match the first. keepAlive,
- * maxIdleTimeout and preferredAddressPolicy are re-applied per connect()
- * there and so stay out of this key.
+ * reusable when a later connect()'s values match the first. keepAlive and
+ * preferredAddressPolicy are applied per conn there and so stay out of this
+ * key. maxIdleTimeout is re-applied via `lsquic_engine_set_idle_timeout_ms`
+ * but that mutates the shared settings a conn reads through a pointer at
+ * handshake_ok, so it belongs in the key too.
  * @param {boolean} wantHttp
  * @param {*} handshakeTimeout
+ * @param {*} cc
  * @param {object} tp transportParams
  * @param {object} app normalized application options
  * @returns {string}
  */
-function clientEngineKey(wantHttp, handshakeTimeout, tp, app) {
+function clientEngineKey(wantHttp, handshakeTimeout, cc, tp, app) {
   return (
     `${wantHttp ? "h" : "r"}` +
     `|${handshakeTimeout}` +
+    `|${cc}` +
     `|${tp.initialMaxStreamDataBidiLocal}` +
     `|${tp.initialMaxStreamDataBidiRemote}` +
     `|${tp.initialMaxStreamDataUni}` +
     `|${tp.initialMaxData}` +
     `|${tp.initialMaxStreamsBidi}` +
     `|${tp.initialMaxStreamsUni}` +
+    `|${tp.maxIdleTimeout}` +
     `|${tp.maxUdpPayloadSize}` +
     `|${tp.disableActiveMigration}` +
     `|${tp.maxDatagramFrameSize}` +
@@ -5085,7 +5090,7 @@ function processSessionOptions(options, config = kEmptyObject) {
 
   const engineKey = forServer
     ? undefined
-    : clientEngineKey(alpnWantsHttp(options.alpn), handshakeTimeout, transportParams, normalizedApplication);
+    : clientEngineKey(alpnWantsHttp(options.alpn), handshakeTimeout, cc, transportParams, normalizedApplication);
   const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, engineKey);
 
   if (sessionTicket !== undefined) {

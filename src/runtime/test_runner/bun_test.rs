@@ -1070,7 +1070,7 @@ impl BunTest {
 
                 let root = self.bun_test_root.get();
                 let beforeall_order: Order::AllOrderResult = if self.first_last.first {
-                    order.generate_all_order(&root.hook_scope.before_all)?
+                    order.generate_all_order(&root.hook_scope.before_all, 0, false)?
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
@@ -1098,7 +1098,7 @@ impl BunTest {
                 }
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
-                    order.generate_all_order(&root.hook_scope.after_all)?
+                    order.generate_all_order(&root.hook_scope.after_all, 0, true)?
                 } else {
                     Order::AllOrderResult::EMPTY
                 };

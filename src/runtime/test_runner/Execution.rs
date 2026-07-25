@@ -100,6 +100,11 @@ pub struct Execution {
     /// `t.skip()`/`t.todo()` mark lands there before the DoneCallback is
     /// stamped).
     pub on_stack_entry_data: core::cell::Cell<Option<super::bun_test::EntryData>>,
+    /// Set to `Some(group_index)` when `--bail` fires. From that point the
+    /// step loops skip every remaining test/beforeAll group and run only the
+    /// `afterAll` groups for scopes already on the describe stack (i.e. whose
+    /// `scope_start <= bail_at_group`), so teardown still happens before exit.
+    pub bail_at_group: Option<usize>,
 }
 
 pub struct ConcurrentGroup {
@@ -111,10 +116,23 @@ pub struct ConcurrentGroup {
     pub remaining_incomplete_entries: usize,
     /// used by beforeAll to skip directly to afterAll if it fails
     pub failure_skip_to: usize,
+    /// Group index at which this group's enclosing describe scope begins.
+    /// Used by `--bail` to decide whether an `afterAll` group's scope was
+    /// already entered when the bail fired (scope_start <= bail group index).
+    pub scope_start: usize,
+    /// True for `afterAll` hook groups. Under `--bail`, only `afterAll`
+    /// groups whose scope was already entered continue to execute.
+    pub is_after_all: bool,
 }
 
 impl ConcurrentGroup {
-    pub(crate) fn init(sequence_start: usize, sequence_end: usize, next_index: usize) -> ConcurrentGroup {
+    pub(crate) fn init(
+        sequence_start: usize,
+        sequence_end: usize,
+        next_index: usize,
+        scope_start: usize,
+        is_after_all: bool,
+    ) -> ConcurrentGroup {
         ConcurrentGroup {
             sequence_start,
             sequence_end,
@@ -122,6 +140,8 @@ impl ConcurrentGroup {
             remaining_incomplete_entries: sequence_end - sequence_start,
             failure_skip_to: next_index,
             next_sequence_index: 0,
+            scope_start,
+            is_after_all,
         }
     }
 
@@ -282,6 +302,7 @@ impl Execution {
             group_index: 0,
             on_stack_entry: core::cell::Cell::new(None),
             on_stack_entry_data: core::cell::Cell::new(None),
+            bail_at_group: None,
         }
     }
 
@@ -825,6 +846,15 @@ pub(crate) fn step_group(
         {
             // SAFETY: group_ptr points into this.groups; only this scope holds a `&mut` to it.
             let group = unsafe { &mut *group_ptr.as_ptr() };
+            if let Some(bail_at) = this.bail_at_group {
+                // --bail fired: run only afterAll for scopes already entered. A
+                // group already `executing` is the one bail fired in (or a
+                // concurrent group still settling); fall through so it drains.
+                if !group.executing && !(group.is_after_all && group.scope_start <= bail_at) {
+                    this.group_index += 1;
+                    continue;
+                }
+            }
             if !group.executing {
                 Execution::on_group_started(global_this);
                 group.executing = true;
@@ -990,6 +1020,19 @@ fn step_sequence_one(
         group_log::log(format_args!("runOne: no more entries; sequence complete."));
         return Ok(Some(AdvanceSequenceStatus::Done));
     };
+    if this.bail_at_group.is_some() && sequence.test_entry.is_some() {
+        // --bail fired: drop this not-yet-run test sequence so the group can
+        // settle and step_group can advance to the afterAll unwind. Hook-only
+        // sequences (test_entry == None) are afterAll/beforeAll and are left
+        // for step_group's scope check.
+        sequence.active_entry = None;
+        // SAFETY: `group` points into `this.groups`, disjoint from `this.sequences`.
+        let group_mut = unsafe { &mut *group.as_ptr() };
+        if group_mut.remaining_incomplete_entries > 0 {
+            group_mut.remaining_incomplete_entries -= 1;
+        }
+        return Ok(Some(AdvanceSequenceStatus::Done));
+    }
     // SAFETY: arena-owned entry
     let next_item = unsafe { &mut *next_item_ptr.as_ptr() };
     sequence.executing = true;

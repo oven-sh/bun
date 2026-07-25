@@ -929,6 +929,11 @@ pub struct CommandLineReporter {
     pub skips_to_repeat_buf: Vec<u8>,
     pub todos_to_repeat_buf: Vec<u8>,
 
+    /// Latched when `summary.fail` reaches `jest.bail`. The current file's
+    /// execution unwinds the active describe stack's `afterAll` hooks, then
+    /// `TestCommand::run` observes this to print the summary and exit.
+    pub bailed: bool,
+
     pub reporters: ReportersConfig,
 }
 
@@ -1498,15 +1503,15 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.print_summary();
-                    pretty_error!(
-                        "\nBailed out after {} failure{}<r>\n",
-                        this.jest.bail,
-                        if this.jest.bail == 1 { "" } else { "s" }
-                    );
-                    Output::flush();
-                    this.write_junit_report_if_needed();
-                    Global::exit(1);
+                    // Latch bail on the execution so the step loops skip the
+                    // remaining tests/beforeAll and run only the active
+                    // describe stack's afterAll hooks before the file returns.
+                    // The actual summary/exit happens in `TestCommand::run`
+                    // once that unwind completes.
+                    this.bailed = true;
+                    if buntest.execution.bail_at_group.is_none() {
+                        buntest.execution.bail_at_group = Some(buntest.execution.group_index);
+                    }
                 }
             }
         }
@@ -2258,6 +2263,7 @@ impl TestCommand {
             failures_to_repeat_buf: Vec::new(),
             skips_to_repeat_buf: Vec::new(),
             todos_to_repeat_buf: Vec::new(),
+            bailed: false,
             reporters: ReportersConfig::default(),
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
@@ -3403,7 +3409,22 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
+            if reporter.bailed {
+                break;
+            }
             repeat_index += 1;
+        }
+
+        if reporter.bailed {
+            reporter.print_summary();
+            pretty_error!(
+                "\nBailed out after {} failure{}<r>\n",
+                reporter.jest.bail,
+                if reporter.jest.bail == 1 { "" } else { "s" }
+            );
+            Output::flush();
+            reporter.write_junit_report_if_needed();
+            Global::exit(1);
         }
         Ok(())
     }

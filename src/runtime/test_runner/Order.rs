@@ -29,17 +29,22 @@ impl Order {
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
 
-    pub fn generate_order_sub(&mut self, current: &mut TestScheduleEntry) -> JsResult<()> {
+    pub fn generate_order_sub(&mut self, current: &mut TestScheduleEntry, scope_start: usize) -> JsResult<()> {
         match current {
             TestScheduleEntry::Describe(describe) => self.generate_order_describe(describe)?,
             TestScheduleEntry::TestCallback(test_callback) => {
-                self.generate_order_test(NonNull::from(&mut **test_callback))?
+                self.generate_order_test(NonNull::from(&mut **test_callback), scope_start)?
             }
         }
         Ok(())
     }
 
-    pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    pub fn generate_all_order(
+        &mut self,
+        entries: &[Box<ExecutionEntry>],
+        scope_start: usize,
+        is_after_all: bool,
+    ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
@@ -70,8 +75,13 @@ impl Order {
             )); // add sequence to concurrentgroup
             let sequences_end = self.sequences.len();
             let failure_skip_to = self.groups.len() + 1;
-            self.groups
-                .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // add a new concurrentgroup to order
+            self.groups.push(ConcurrentGroup::init(
+                sequences_start,
+                sequences_end,
+                failure_skip_to,
+                scope_start,
+                is_after_all,
+            )); // add a new concurrentgroup to order
             self.previous_group_was_concurrent = false;
         }
         let end = self.groups.len();
@@ -83,10 +93,11 @@ impl Order {
             return Ok(()); // do not schedule any tests in a failed describe scope
         }
         let use_hooks = self.cfg.always_use_hooks || current.base.has_callback;
+        let scope_start = self.groups.len();
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all)?
+            self.generate_all_order(&current.before_all, scope_start, false)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -103,7 +114,7 @@ impl Order {
             if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
                 continue;
             }
-            self.generate_order_sub(&mut current.entries[i])?;
+            self.generate_order_sub(&mut current.entries[i], scope_start)?;
         }
 
         // update skip_to values for beforeAll to skip to the first afterAll
@@ -111,7 +122,7 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+            self.generate_all_order(&current.after_all, scope_start, true)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -126,7 +137,7 @@ impl Order {
     /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
     /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
     /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
+    pub fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>, scope_start: usize) -> JsResult<()> {
         // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
         // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
         // dereferences the pointer locally.
@@ -212,7 +223,7 @@ impl Order {
             repeat_count,
         )); // add sequence to concurrentgroup
         let sequences_end = self.sequences.len();
-        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end)?; // add or extend the concurrent group
+        self.append_or_extend_concurrent_group(concurrent, sequences_start, sequences_end, scope_start)?; // add or extend the concurrent group
         Ok(())
     }
 
@@ -221,6 +232,7 @@ impl Order {
         concurrent: bool,
         sequences_start: usize,
         sequences_end: usize,
+        scope_start: usize,
     ) -> JsResult<()> {
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
@@ -236,8 +248,13 @@ impl Order {
             }
         }
         let failure_skip_to = self.groups.len() + 1;
-        self.groups
-            .push(ConcurrentGroup::init(sequences_start, sequences_end, failure_skip_to)); // otherwise, add a new concurrentgroup to order
+        self.groups.push(ConcurrentGroup::init(
+            sequences_start,
+            sequences_end,
+            failure_skip_to,
+            scope_start,
+            false,
+        )); // otherwise, add a new concurrentgroup to order
         Ok(())
     }
 }

@@ -356,6 +356,64 @@ describe("bun test", () => {
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
     });
+
+    // https://github.com/oven-sh/bun/issues/12250
+    test("runs afterAll for the active describe stack before exiting", async () => {
+      using dir = tempDir("bun-test-bail-afterall", {
+        "bail.test.ts": `
+          import { describe, test, afterAll, afterEach, beforeAll } from "bun:test";
+          afterAll(() => console.log("ROOT-AFTERALL"));
+          describe("A", () => {
+            beforeAll(() => console.log("A-BEFOREALL"));
+            afterAll(() => console.log("A-AFTERALL"));
+            describe("A1", () => {
+              afterAll(async () => {
+                await new Promise(r => setImmediate(r));
+                console.log("A1-AFTERALL");
+              });
+              afterEach(() => console.log("A1-AFTEREACH"));
+              test("fail-here", () => { throw new Error("boom"); });
+              test("a1-second", () => { console.log("A1-SECOND-RAN"); });
+            });
+            test("a-sibling", () => { console.log("A-SIBLING-RAN"); });
+          });
+          describe("B", () => {
+            beforeAll(() => console.log("B-BEFOREALL"));
+            afterAll(() => console.log("B-AFTERALL"));
+            test("b1", () => { console.log("B1-RAN"); });
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--bail", "bail.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+
+      // afterEach for the failing test, then the afterAll of every scope that
+      // was already on the stack, innermost first; nothing from scopes that had
+      // not started yet (B, and A's sibling test).
+      const marks = stdout.split("\n").filter(l => /BEFOREALL|AFTERALL|AFTEREACH|-RAN/.test(l));
+      expect(marks).toEqual([
+        "A-BEFOREALL",
+        "A1-AFTEREACH",
+        "A1-AFTERALL",
+        "A-AFTERALL",
+        "ROOT-AFTERALL",
+      ]);
+      expect(stderr).toContain("Bailed out after 1 failure");
+      expect(stderr).not.toContain("a1-second");
+      expect(stderr).not.toContain("a-sibling");
+      expect(stderr).not.toContain("b1");
+      expect(exitCode).toBe(1);
+    });
   });
   describe("--timeout", () => {
     test("must provide a number timeout", () => {

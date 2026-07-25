@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url";
+
 const pingCount = 100;
-const serverPath = new URL("./http-availability-server.js", import.meta.url).pathname;
+const serverPath = fileURLToPath(new URL("./http-availability-server.js", import.meta.url));
 
 function percentile(sorted, value) {
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * value) - 1)];

@@ -6291,7 +6291,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         await subscriber.subscribe(testChannel(), () => {});
 
-        expect(() => subscriber.set(testKey(), testValue())).toThrow(
+        await expect(subscriber.set(testKey(), testValue())).rejects.toThrow(
           "RedisClient.prototype.set cannot be called while in subscriber mode",
         );
 

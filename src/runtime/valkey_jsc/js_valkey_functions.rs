@@ -28,38 +28,46 @@ const fn bname(b: &'static [u8]) -> &'static str {
 // Helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
+/// Returns a rejected `Promise` (never throws) when the client is in
+/// subscriber mode. The prototype methods that call this are declared as
+/// promise-returning, so a state error must reject rather than throw so that
+/// `.catch()` / `await ... catch` observes it.
+fn require_not_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> Option<JSValue> {
     if this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
-        return Err(global
-            .err(
-                ErrorCode::REDIS_INVALID_STATE,
-                format_args!(
-                    "RedisClient.prototype.{} cannot be called while in subscriber mode.",
-                    bstr::BStr::new(function_name)
-                ),
-            )
-            .throw());
+        return Some(
+            global
+                .err(
+                    ErrorCode::REDIS_INVALID_STATE,
+                    format_args!(
+                        "RedisClient.prototype.{} cannot be called while in subscriber mode.",
+                        bstr::BStr::new(function_name)
+                    ),
+                )
+                .reject(),
+        );
     }
-    Ok(())
+    None
 }
 
-fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> JsResult<()> {
+fn require_subscriber(this: &JSValkeyClient, function_name: &[u8]) -> Option<JSValue> {
     if !this.is_subscriber() {
         // `global_object: GlobalRef` derefs safely (BACKREF — VM-owned global outlives client).
         let global: &JSGlobalObject = &this.global_object;
-        return Err(global
-            .err(
-                ErrorCode::REDIS_INVALID_STATE,
-                format_args!(
-                    "RedisClient.prototype.{} can only be called while in subscriber mode.",
-                    bstr::BStr::new(function_name)
-                ),
-            )
-            .throw());
+        return Some(
+            global
+                .err(
+                    ErrorCode::REDIS_INVALID_STATE,
+                    format_args!(
+                        "RedisClient.prototype.{} can only be called while in subscriber mode.",
+                        bstr::BStr::new(function_name)
+                    ),
+                )
+                .reject(),
+        );
     }
-    Ok(())
+    None
 }
 
 fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgument>> {
@@ -149,12 +157,12 @@ pub(crate) mod compile {
     pub(crate) fn test_correct_state<const REQ: ClientStateRequirement>(
         this: &JSValkeyClient,
         js_client_prototype_function_name: &[u8],
-    ) -> JsResult<()> {
+    ) -> Option<JSValue> {
         match REQ {
             ClientStateRequirement::NotSubscriber => {
                 require_not_subscriber(this, js_client_prototype_function_name)
             }
-            ClientStateRequirement::DontCare => Ok(()),
+            ClientStateRequirement::DontCare => None,
         }
     }
 }
@@ -176,9 +184,12 @@ macro_rules! cmd_noargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
             send_cmd(
                 this,
                 global,
@@ -200,9 +211,12 @@ macro_rules! cmd_key {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(
@@ -232,9 +246,12 @@ macro_rules! cmd_key_varargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
 
             if frame.argument(0).is_undefined_or_null() {
                 return Err(global.throw_missing_arguments_value(&[$arg0_name]));
@@ -278,9 +295,12 @@ macro_rules! cmd_key_value {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(
@@ -317,9 +337,12 @@ macro_rules! cmd_key_value_value2 {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
 
             let Some(key) = from_js(global, frame.argument(0))? else {
                 return Err(global.throw_invalid_argument_type(
@@ -363,9 +386,12 @@ macro_rules! cmd_strings_varargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
@@ -400,9 +426,12 @@ macro_rules! cmd_key_value_varargs {
             global: &JSGlobalObject,
             frame: &CallFrame,
         ) -> JsResult<JSValue> {
-            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
-                this, $name,
-            )?;
+            if let Some(rejected) = compile::test_correct_state::<
+                { compile::ClientStateRequirement::$state },
+            >(this, $name)
+            {
+                return Ok(rejected);
+            }
 
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
@@ -481,7 +510,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn get(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"get")?;
+        if let Some(rejected) = require_not_subscriber(this, b"get") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("get", "key", "string or buffer"));
@@ -503,7 +534,9 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"getBuffer")?;
+        if let Some(rejected) = require_not_subscriber(this, b"getBuffer") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("getBuffer", "key", "string or buffer"));
@@ -521,7 +554,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn set(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"set")?;
+        if let Some(rejected) = require_not_subscriber(this, b"set") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -569,7 +604,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn incr(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"incr")?;
+        if let Some(rejected) = require_not_subscriber(this, b"incr") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("incr", "key", "string or buffer"));
@@ -587,7 +624,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn decr(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"decr")?;
+        if let Some(rejected) = require_not_subscriber(this, b"decr") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("decr", "key", "string or buffer"));
@@ -605,7 +644,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn exists(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"exists")?;
+        if let Some(rejected) = require_not_subscriber(this, b"exists") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("exists", "key", "string or buffer"));
@@ -624,7 +665,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn expire(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"expire")?;
+        if let Some(rejected) = require_not_subscriber(this, b"expire") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("expire", "key", "string or buffer"));
@@ -657,7 +700,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn ttl(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"ttl")?;
+        if let Some(rejected) = require_not_subscriber(this, b"ttl") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("ttl", "key", "string or buffer"));
@@ -676,7 +721,9 @@ impl JSValkeyClient {
     // Implement srem (remove value from a set)
     #[bun_jsc::host_fn(method)]
     pub fn srem(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"srem")?;
+        if let Some(rejected) = require_not_subscriber(this, b"srem") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
@@ -721,7 +768,9 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"srandmember")?;
+        if let Some(rejected) = require_not_subscriber(this, b"srandmember") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -760,7 +809,9 @@ impl JSValkeyClient {
     // Implement smembers (get all members of a set)
     #[bun_jsc::host_fn(method)]
     pub fn smembers(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"smembers")?;
+        if let Some(rejected) = require_not_subscriber(this, b"smembers") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("smembers", "key", "string or buffer"));
@@ -779,7 +830,9 @@ impl JSValkeyClient {
     // Implement spop (pop a random member from a set)
     #[bun_jsc::host_fn(method)]
     pub fn spop(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"spop")?;
+        if let Some(rejected) = require_not_subscriber(this, b"spop") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -814,7 +867,9 @@ impl JSValkeyClient {
     // Implement sadd (add member to a set)
     #[bun_jsc::host_fn(method)]
     pub fn sadd(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"sadd")?;
+        if let Some(rejected) = require_not_subscriber(this, b"sadd") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
@@ -855,7 +910,9 @@ impl JSValkeyClient {
     // Implement sismember (check if value is member of a set)
     #[bun_jsc::host_fn(method)]
     pub fn sismember(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"sismember")?;
+        if let Some(rejected) = require_not_subscriber(this, b"sismember") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("sismember", "key", "string or buffer"));
@@ -881,7 +938,9 @@ impl JSValkeyClient {
     // Implement hmget (get multiple values from hash)
     #[bun_jsc::host_fn(method)]
     pub fn hmget(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"hmget")?;
+        if let Some(rejected) = require_not_subscriber(this, b"hmget") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         if args_view.len() < 2 {
@@ -943,7 +1002,9 @@ impl JSValkeyClient {
     // Implement hincrby (increment hash field by integer value)
     #[bun_jsc::host_fn(method)]
     pub fn hincrby(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"hincrby")?;
+        if let Some(rejected) = require_not_subscriber(this, b"hincrby") {
+            return Ok(rejected);
+        }
 
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
         let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
@@ -971,7 +1032,9 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"hincrbyfloat")?;
+        if let Some(rejected) = require_not_subscriber(this, b"hincrbyfloat") {
+            return Ok(rejected);
+        }
 
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
         let field = OwnedString::new(frame.argument(1).to_bun_string(global)?);
@@ -998,7 +1061,9 @@ impl JSValkeyClient {
         frame: &CallFrame,
         command: &'static [u8],
     ) -> JsResult<JSValue> {
-        require_not_subscriber(this, command)?;
+        if let Some(rejected) = require_not_subscriber(this, command) {
+            return Ok(rejected);
+        }
 
         let key = OwnedString::new(frame.argument(0).to_bun_string(global)?);
 
@@ -1141,7 +1206,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn hsetnx(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"hsetnx")?;
+        if let Some(rejected) = require_not_subscriber(this, b"hsetnx") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("hsetnx", "key", "string or buffer"));
@@ -1165,7 +1232,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn hexists(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"hexists")?;
+        if let Some(rejected) = require_not_subscriber(this, b"hexists") {
+            return Ok(rejected);
+        }
 
         let Some(key) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("hexists", "key", "string or buffer"));
@@ -1520,7 +1589,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn smove(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"smove")?;
+        if let Some(rejected) = require_not_subscriber(this, b"smove") {
+            return Ok(rejected);
+        }
 
         let Some(source) = from_js(global, frame.argument(0))? else {
             return Err(global.throw_invalid_argument_type("smove", "source", "string or buffer"));
@@ -1612,7 +1683,9 @@ impl JSValkeyClient {
 
     #[bun_jsc::host_fn(method)]
     pub fn publish(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        require_not_subscriber(this, b"publish")?;
+        if let Some(rejected) = require_not_subscriber(this, b"publish") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
         let mut args: Vec<JSArgument> = Vec::with_capacity(args_view.len());
@@ -1758,7 +1831,9 @@ impl JSValkeyClient {
         let _guard = this.ref_scope();
 
         // Check if we're in subscription mode
-        require_subscriber(this, b"unsubscribe")?;
+        if let Some(rejected) = require_subscriber(this, b"unsubscribe") {
+            return Ok(rejected);
+        }
 
         let args_view = frame.arguments();
 

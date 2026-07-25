@@ -179,8 +179,10 @@ describe("AbortSignal", () => {
     expect({ ...JSON.parse(stdout.trim()), exitCode }).toMatchObject({ exitCode: 0 });
   });
 
-  test.concurrent("a {once:true} listener that re-registers itself during dispatch is added, not rejected as a duplicate", async () => {
-    const src = `
+  test.concurrent(
+    "a {once:true} listener that re-registers itself during dispatch is added, not rejected as a duplicate",
+    async () => {
+      const src = `
       const t = new EventTarget();
       let calls = 0;
       const fn = () => {
@@ -193,10 +195,11 @@ describe("AbortSignal", () => {
       t.dispatchEvent(new Event("x"));  // no listener left
       console.log(calls);
     `;
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("2");
-    expect(exitCode).toBe(0);
-  });
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("2");
+      expect(exitCode).toBe(0);
+    },
+  );
 });

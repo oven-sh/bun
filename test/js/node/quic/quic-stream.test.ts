@@ -179,3 +179,100 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+// A 0-RTT stream the server rejects must not reach the server at 1-RTT.
+// lsquic's default is to stash rejected 0-RTT packets and retransmit them
+// once 1-RTT keys exist, but node:quic destroys every early stream and the
+// application re-opens, so a retransmission delivers the payload twice.
+describe("0-RTT rejected", () => {
+  async function readAll(stream: any) {
+    const chunks: Buffer[] = [];
+    for await (const c of stream) for (const x of [].concat(c)) chunks.push(Buffer.from(x));
+    return Buffer.concat(chunks);
+  }
+
+  test("a rejected early stream's data never reaches the server", async () => {
+    // Server A issues a ticket, then a fresh server B (new ticket keys)
+    // rejects the early data.
+    const makeServer = async () => {
+      const got: string[] = [];
+      const barrier = Promise.withResolvers<void>();
+      const ep = await listen(
+        async s => {
+          s.onerror = () => {};
+          s.closed.catch(() => {});
+          s.onstream = async (st: any) => {
+            const body = await readAll(st).catch(() => Buffer.alloc(0));
+            got.push(body.toString());
+            if (body.length) {
+              st.writer.writeSync(body);
+              await st.writer.end();
+            }
+            barrier.resolve();
+          };
+        },
+        { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["echo"] },
+      );
+      return { ep, got, barrier };
+    };
+
+    const a = await makeServer();
+    const gotTicket = Promise.withResolvers<Buffer>();
+    let token: Buffer | undefined;
+    {
+      const c = await connect(a.ep.address, {
+        alpn: "echo",
+        verifyPeer: "manual",
+        reuseEndpoint: false,
+        onsessionticket: (t: Buffer) => gotTicket.resolve(t),
+        onnewtoken: (t: Buffer) => (token = t),
+      });
+      await c.opened;
+      await readAll(await c.createBidirectionalStream({ body: Buffer.from("first") }));
+      var ticket = await gotTicket.promise;
+      c.close();
+      await c.closed.catch(() => {});
+    }
+    await a.ep.close();
+
+    const b = await makeServer();
+    let earlyRejectedFired = false;
+    const c = await connect(b.ep.address, {
+      alpn: "echo",
+      verifyPeer: "manual",
+      reuseEndpoint: false,
+      sessionTicket: ticket,
+      token,
+      onearlyrejected: () => (earlyRejectedFired = true),
+    });
+    c.closed.catch(() => {});
+
+    // The 0-RTT stream: opened before the handshake, its payload must be
+    // discarded on rejection.
+    const early = await c.createBidirectionalStream({ body: Buffer.from("PAY-ORDER-42") });
+    const earlyClose = early.closed.catch((e: any) => e);
+
+    const info = await c.opened;
+    expect(info.earlyDataAttempted).toBe(true);
+    expect(info.earlyDataAccepted).toBe(false);
+
+    // The client-side early stream is destroyed with an application error.
+    const err = await earlyClose;
+    expect(err?.code).toBe("ERR_QUIC_APPLICATION_ERROR");
+    await expect(readAll(early)).rejects.toThrow();
+
+    // The documented re-open: this is the one delivery the server must see.
+    const echoed = await readAll(await c.createBidirectionalStream({ body: Buffer.from("PAY-ORDER-42") }));
+    expect(echoed.toString()).toBe("PAY-ORDER-42");
+
+    // The re-open reached the server; any retransmitted 0-RTT stream that
+    // was going to arrive has arrived by now (same path, lower stream id).
+    await b.barrier.promise;
+    c.close();
+    await c.closed.catch(() => {});
+    await b.ep.close();
+
+    expect(b.got).toEqual(["PAY-ORDER-42"]);
+    expect(earlyRejectedFired).toBe(true);
+  });
+});

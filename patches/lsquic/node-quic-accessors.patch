@@ -160,7 +160,7 @@
   * Refuse pushed stream.  Call it from @ref on_new_stream.
   *
   * No need to call lsquic_stream_close() after this.  on_close will be called.
-@@ -2031,6 +2154,112 @@
+@@ -2031,6 +2154,120 @@
  unsigned lsquic_engine_quic_versions (const lsquic_engine_t *);
  
  /**
@@ -232,6 +232,14 @@
 + */
 +void
 +lsquic_conn_abort_silent (lsquic_conn_t *);
++
++/**
++ * Destroy every sent-but-unacked 0-RTT packet so rejected early stream
++ * data is never retransmitted at 1-RTT.  Only valid from inside the
++ * @ref on_early_data_failed callback.
++ */
++void
++lsquic_conn_drop_0rtt_packets (lsquic_conn_t *);
 +
 +/**
 + * Per-connection SSL object (IETF QUIC only). Returns NULL for gQUIC or
@@ -1383,7 +1391,7 @@
      if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
          if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
              conn->ifc_flags |= IFC_ERROR;
-@@ -8342,6 +8642,9 @@
+@@ -8342,10 +8642,28 @@
      struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
  
      LSQ_DEBUG("early data failed");
@@ -1393,6 +1401,25 @@
      lsquic_send_ctl_stash_0rtt_packets(&conn->ifc_send_ctl);
  }
  
+ 
++/* bun: destroy the unacked 0-RTT packets so a rejected early stream's
++ * STREAM frames are never retransmitted at 1-RTT.  node:quic tears every
++ * 0-RTT stream down and the application re-opens; without this the stashed
++ * packets reach the server on a stream the client already reported as
++ * failed, and the documented re-open delivers the payload a second time.
++ * Called from node:quic's on_early_data_failed callback (before this
++ * function's one caller stashes, so the stash finds nothing). */
++void
++lsquic_conn_drop_0rtt_packets (struct lsquic_conn *lconn)
++{
++    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
++    lsquic_send_ctl_drop_0rtt_packets(&conn->ifc_send_ctl);
++}
++
++
+ static size_t
+ ietf_full_conn_ci_get_min_datagram_size (struct lsquic_conn *lconn)
+ {
 @@ -8401,6 +8704,11 @@
      packet_out = get_writeable_packet(conn, need);
      if (!packet_out)
@@ -2035,3 +2062,56 @@
                  LSQ_DEBUG("acking via regular record #%"PRIu64,
                                                          packet_out->po_packno);
              }
+@@ -4420,6 +4436,40 @@
+ }
+ 
+ 
++/* bun: the node:quic early-data-rejected counterpart of the stash function
++ * above.  node:quic destroys every 0-RTT stream and the application
++ * re-opens, so the stashed packets must not be retransmitted at 1-RTT:
++ * the server (which rejected 0-RTT, so never processed them) would receive
++ * the payload on a stream the client already reported as failed.  Destroy
++ * the packets instead.  lsquic_packet_out_ack_streams releases each
++ * stream's n_unacked so the subsequent shutdown can finish it.
++ */
++void
++lsquic_send_ctl_drop_0rtt_packets (struct lsquic_send_ctl *ctl)
++{
++    struct lsquic_packet_out *packet_out, *next;
++    unsigned count, packet_sz;
++
++    count = 0;
++    for (packet_out = TAILQ_FIRST(&ctl->sc_unacked_packets[PNS_APP]);
++                                                packet_out; packet_out = next)
++    {
++        next = TAILQ_NEXT(packet_out, po_next);
++        if (packet_out->po_header_type == HETY_0RTT)
++        {
++            packet_sz = packet_out_sent_sz(packet_out);
++            send_ctl_unacked_remove(ctl, packet_out, packet_sz);
++            lsquic_packet_out_ack_streams(packet_out);
++            send_ctl_destroy_chain(ctl, packet_out, &next);
++            send_ctl_destroy_packet(ctl, packet_out);
++            ++count;
++        }
++    }
++
++    LSQ_DEBUG("dropped %u 0-RTT packet%.*s", count, count != 1, "s");
++}
++
++
+ uint64_t
+ lsquic_send_ctl_get_bw (struct lsquic_send_ctl *ctl)
+ {
+--- a/src/liblsquic/lsquic_send_ctl.h
++++ b/src/liblsquic/lsquic_send_ctl.h
+@@ -524,6 +524,9 @@
+ lsquic_send_ctl_stash_0rtt_packets (struct lsquic_send_ctl *);
+ 
+ void
++lsquic_send_ctl_drop_0rtt_packets (struct lsquic_send_ctl *);
++
++void
+ lsquic_send_ctl_set_bw_sampler (struct lsquic_send_ctl *, int enable);
+ 
+ int

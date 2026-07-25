@@ -162,6 +162,11 @@ static void nq_on_early_data_failed(lsquic_conn_t *c) {
         struct us_nq_vtable *vt = *(struct us_nq_vtable **) ctx;
         vt->on_early_data_failed(ctx);
     }
+    /* node:quic destroys every 0-RTT stream and the application re-opens;
+     * lsquic's transparent stash-and-retransmit-at-1-RTT would deliver the
+     * rejected payload to the server on a stream the client already reported
+     * as failed, so the documented re-open delivers it a second time. */
+    lsquic_conn_drop_0rtt_packets(c);
 }
 static void nq_on_origin(lsquic_conn_t *c, const unsigned char *chunk,
                          size_t len, int fin) {

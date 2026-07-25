@@ -618,6 +618,8 @@ JSC_DEFINE_CUSTOM_GETTER(getterLoaded, (JSC::JSGlobalObject * globalObject, JSC:
 
 extern "C" bool Bun__VirtualMachine__isInPreload(void* /* BunVM */);
 
+// Bun treats --import as an alias of --preload, so unlike Node this also
+// reports true inside --import scripts.
 JSC_DEFINE_CUSTOM_GETTER(getterIsPreloading, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     return JSValue::encode(jsBoolean(Bun__VirtualMachine__isInPreload(defaultGlobalObject(globalObject)->bunVM())));

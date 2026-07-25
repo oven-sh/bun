@@ -530,11 +530,15 @@ class InspectorCDPAdapter {
   // Current backend breakpointId -> the id the client knows (only entries that
   // were re-set diverge).
   #breakpointIdAliases = new Map<string, string>();
-  // Pre-parse breakpoints whose removal was issued during retranslation. The
-  // script starts executing as soon as it parses, so a stale pass-through
-  // breakpoint can fire before the backend processes the removal; V8 has no
-  // such pause (it re-resolves internally), so resume through it silently.
-  #supersededBreakpointIds = new Set<string>();
+  // Pre-parse breakpoints whose removal was issued during retranslation,
+  // mapped to the generated location they were re-set to. The script starts
+  // executing as soon as it parses, so a stale pass-through breakpoint can
+  // fire before the backend processes the removal. When it fires on the same
+  // line the re-set resolved to, it is the breakpoint the client asked for
+  // (JSC resolved the stale request forward to the same place) and is
+  // reported under the id the client knows; a pause anywhere else has no V8
+  // equivalent (V8 re-resolves internally) and is resumed silently.
+  #supersededBreakpoints = new Map<string, AnyObject>();
   // Profiler domain: tracking state plus the deferred Profiler.stop replies,
   // each answered in order when ScriptProfiler.trackingComplete delivers the
   // samples. A FIFO so pipelined start/stop pairs over the remote transport
@@ -994,8 +998,8 @@ class InspectorCDPAdapter {
     // JSC resolves distinct pre-parse requests on an unmapped line forward to
     // one shared pause location; removing one of them after a re-added
     // breakpoint resolved to that same location cleared the re-added one too.
-    for (const { bp } of resets) {
-      this.#supersededBreakpointIds.$add(bp.jscId);
+    for (const { bp, generated } of resets) {
+      this.#supersededBreakpoints.$set(bp.jscId, generated);
       this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId: bp.jscId });
     }
     for (const { clientBreakpointId, bp, generated } of resets) {
@@ -1690,9 +1694,12 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.paused": {
-        if (params.reason === "Breakpoint" && this.#supersededBreakpointIds.$has(params.data?.breakpointId)) {
-          this.#sendToBackend("Debugger.resume");
-          return;
+        if (params.reason === "Breakpoint") {
+          const superseded = this.#supersededBreakpoints.$get(params.data?.breakpointId);
+          if (superseded !== undefined && params.callFrames?.[0]?.location?.lineNumber !== superseded.lineNumber) {
+            this.#sendToBackend("Debugger.resume");
+            return;
+          }
         }
         const callFrames = (params.callFrames ?? []).map((frame: AnyObject) => ({
           callFrameId: frame.callFrameId,

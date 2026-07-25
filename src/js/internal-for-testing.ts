@@ -41,9 +41,7 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
-// WTF StringImpl::hash() — the 24-bit-masked StringHasher value JSC's
-// SourceCodeKey uses for CodeCache lookup. Lets a test assert that a mined
-// hash-collision pair still collides after a WebKit bump.
+// WTF StringImpl::hash() (24-bit-masked; what SourceCodeKey compares on).
 export const stringImplHash: (s: string) => number = $newCppFunction(
   "BunString.cpp",
   "Bun__stringImplHashForTesting",

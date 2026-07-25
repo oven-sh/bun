@@ -4626,14 +4626,11 @@ pub mod bv2_impl {
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
                     if !result.external
-                        && resolve.import_record.kind != ImportKind::EntryPointBuild
                         && this.should_skip_require_resolve_for_importer(
                             &resolve.import_record,
                             resolve.import_record.original_target.bake_graph(),
                         )
                     {
-                        drop(result.namespace);
-                        drop(result.path);
                         return;
                     }
                     if !result.external {

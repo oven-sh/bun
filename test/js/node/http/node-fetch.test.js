@@ -88,6 +88,22 @@ test("node-fetch Response rejects body consumers when a legacy Stream body error
   await expect(res.text()).rejects.toThrow("integrity check failed");
 });
 
+test("node-fetch fetch() rejects when a legacy Stream request body errors", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch: () => new Response("ok"),
+  });
+
+  class Legacy extends stream.Stream {}
+  const body = new Legacy();
+  body.on("error", () => {});
+
+  const p = fetch2(server.url.href, { method: "POST", body });
+  queueMicrotask(() => body.emit("error", new Error("upload failed")));
+
+  await expect(p).rejects.toThrow("upload failed");
+});
+
 test("node-fetch Response accepts a stream.Readable body", async () => {
   const body = stream.Readable.from([Buffer.from("from "), Buffer.from("readable")]);
   const res = new Response(body, { status: 200 });

@@ -275,5 +275,32 @@
                 "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
             ],
         },
+        {
+            "target_name": "no_delay_load_hook_addon",
+            "sources": ["no_delay_load_hook_addon.c"],
+            "include_dirs": ["<!@(node -p \"require('node-addon-api').include\")"],
+            "libraries": [],
+            "dependencies": ["<!(node -p \"require('node-addon-api').gyp\")"],
+            "defines": [
+                "NAPI_DISABLE_CPP_EXCEPTIONS",
+                "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
+            ],
+            # node-gyp's win_delay_load_hook setting adds both the hook source
+            # and /DELAYLOAD:node.exe. Disable it and re-add only /DELAYLOAD so
+            # the addon delay-imports napi_* from "node.exe" with no redirect
+            # hook, matching cmake-js projects that omit ${CMAKE_JS_SRC}.
+            "win_delay_load_hook": "false",
+            "conditions": [
+                ["OS=='win'", {
+                    "msvs_settings": {
+                        "VCLinkerTool": {
+                            "DelayLoadDLLs": ["node.exe"],
+                            "AdditionalOptions": ["/ignore:4199"],
+                        },
+                    },
+                    "libraries": ["delayimp.lib"],
+                }],
+            ],
+        },
     ]
 }

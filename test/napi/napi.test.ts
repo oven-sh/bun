@@ -1223,6 +1223,24 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     },
     25_000,
   );
+
+  // https://github.com/oven-sh/bun/issues/10690
+  // Addons built with /DELAYLOAD:node.exe but without win_delay_load_hook.cc
+  // (e.g. cmake-js projects that omit ${CMAKE_JS_SRC}, like nodegl) used to
+  // resolve their napi_* delay-imports against whatever "node.exe" the Windows
+  // loader found on PATH and crash. On non-Windows the addon links normally,
+  // so this just checks the addon still loads.
+  it("loads an addon that delay-loads node.exe without win_delay_load_hook", async () => {
+    const addon = join(__dirname, "napi-app/build/Debug/no_delay_load_hook_addon.node");
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(addon)}).hello())`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "hello\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // Kept outside describe.concurrent("napi") so RSS measurement isn't skewed by

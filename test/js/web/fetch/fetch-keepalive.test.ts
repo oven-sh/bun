@@ -251,6 +251,62 @@ test("an early response to a streaming POST closes the socket instead of pooling
   });
 });
 
+// Negative contract for the gate above: a streamed POST whose chunked body
+// completed (terminator written) before the response arrived must still hand
+// its connection back to the keep-alive pool.
+test("a completed streaming POST keeps its connection in the keep-alive pool", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      let connections = 0;
+      const server = net.createServer(sock => {
+        connections++;
+        sock.on("error", () => {});
+        let buf = "";
+        sock.on("data", d => {
+          buf += d.toString("latin1");
+          // One response per fully-received chunked message (terminator seen).
+          while (buf.includes("0\\r\\n\\r\\n")) {
+            buf = buf.slice(buf.indexOf("0\\r\\n\\r\\n") + 5);
+            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
+          }
+        });
+      });
+      server.listen(0, "127.0.0.1");
+      await new Promise(r => server.on("listening", r));
+      const url = "http://127.0.0.1:" + server.address().port + "/";
+
+      const results = [];
+      for (let i = 0; i < 8; i++) {
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("hello"));
+            c.close();
+          },
+        });
+        const res = await fetch(url, { method: "POST", duplex: "half", body });
+        results.push(res.status, await res.text());
+      }
+      console.log(JSON.stringify({ results, connections }));
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { results: Array(8).fill([200, "ok"]).flat(), connections: 1 },
+    exitCode: 0,
+  });
+});
+
 // RFC 9112 §9.3/§9.6: a response carrying `Connection: close` must not be
 // pooled whatever its status code, and an HTTP/1.0 response is non-persistent
 // unless it carries an explicit `Connection: keep-alive`. The server below says
@@ -399,62 +455,6 @@ test("a proxy that answers CONNECT with HTTP/1.0 200 still allows the tunnel to 
   const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
   expect({ result, exitCode }).toEqual({
     result: { connects: 1, bodies: ["ok", "ok", "ok"] },
-    exitCode: 0,
-  });
-});
-
-// Negative contract for the gate above: a streamed POST whose chunked body
-// completed (terminator written) before the response arrived must still hand
-// its connection back to the keep-alive pool.
-test("a completed streaming POST keeps its connection in the keep-alive pool", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      import net from "node:net";
-      let connections = 0;
-      const server = net.createServer(sock => {
-        connections++;
-        sock.on("error", () => {});
-        let buf = "";
-        sock.on("data", d => {
-          buf += d.toString("latin1");
-          // One response per fully-received chunked message (terminator seen).
-          while (buf.includes("0\\r\\n\\r\\n")) {
-            buf = buf.slice(buf.indexOf("0\\r\\n\\r\\n") + 5);
-            sock.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nok");
-          }
-        });
-      });
-      server.listen(0, "127.0.0.1");
-      await new Promise(r => server.on("listening", r));
-      const url = "http://127.0.0.1:" + server.address().port + "/";
-
-      const results = [];
-      for (let i = 0; i < 8; i++) {
-        const body = new ReadableStream({
-          start(c) {
-            c.enqueue(new TextEncoder().encode("hello"));
-            c.close();
-          },
-        });
-        const res = await fetch(url, { method: "POST", duplex: "half", body });
-        results.push(res.status, await res.text());
-      }
-      console.log(JSON.stringify({ results, connections }));
-      process.exit(0);
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
-  expect({ result, exitCode }).toEqual({
-    result: { results: Array(8).fill([200, "ok"]).flat(), connections: 1 },
     exitCode: 0,
   });
 });

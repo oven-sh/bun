@@ -241,10 +241,7 @@ bool JSCommonJSModule::load(JSC::VM& vm, Zig::GlobalObject* globalObject)
 
     if (JSValue extension = this->m_pendingCustomExtension.get()) {
         this->m_pendingCustomExtension.clear();
-        JSValue filename = this->m_filename.get();
-        WTF::String filenameStr = filename.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        evaluateCommonJSCustomExtension(globalObject, this, filenameStr, filename, extension);
+        evaluateCommonJSCustomExtension(globalObject, this, this->m_filename.get(), extension);
         this->hasEvaluated = true;
     } else if (this->sourceCode.isNull()) {
         return true;
@@ -1568,7 +1565,6 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                                 evaluateCommonJSCustomExtension(
                                     globalObject,
                                     moduleObject,
-                                    moduleKey.string(),
                                     moduleObject->m_filename.get(),
                                     extension);
                                 moduleObject->hasEvaluated = true;

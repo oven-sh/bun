@@ -255,7 +255,7 @@ pub fn find_longest_registered_extension<'a>(
         }
     }
     // Node's `.js` fallback; skip for extensions Bun handles natively (e.g. `.jsx`).
-    if !last_ext.is_empty() && (last_ext == b".cjs" || DEFAULT_LOADERS.get(last_ext).is_none()) {
+    if last_ext == b".cjs" || DEFAULT_LOADERS.get(last_ext).is_none() {
         return vm.commonjs_custom_extensions.get(b".js".as_slice());
     }
     None

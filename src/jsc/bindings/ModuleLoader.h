@@ -142,7 +142,6 @@ JSValue fetchBuiltinModuleWithoutResolution(
 void evaluateCommonJSCustomExtension(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
-    String filename,
     JSValue filenameValue,
     JSValue extension);
 

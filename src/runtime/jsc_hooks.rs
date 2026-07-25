@@ -4272,7 +4272,7 @@ unsafe fn transpile_file(
         use bun_jsc::node_module_module::{CustomLoader, find_longest_registered_extension};
         if let Some(entry) =
             // SAFETY: per fn contract.
-            find_longest_registered_extension(unsafe { &*jsc_vm }, _specifier.slice())
+            find_longest_registered_extension(unsafe { &*jsc_vm }, lr.path.text)
         {
             match entry {
                 CustomLoader::Loader(loader) => lr.loader = Some(*loader),

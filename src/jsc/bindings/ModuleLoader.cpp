@@ -616,7 +616,6 @@ JSValue resolveAndFetchBuiltinModule(
 void evaluateCommonJSCustomExtension(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* target,
-    String filename,
     JSValue filenameValue,
     JSValue extension)
 {
@@ -864,7 +863,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Recursive extension. This is a bug in Bun"_s));
             RELEASE_AND_RETURN(scope, {});
         }
-        evaluateCommonJSCustomExtension(globalObject, target, specifierWtfString, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
+        evaluateCommonJSCustomExtension(globalObject, target, specifierValue, JSC::JSValue::decode(res->result.value.cjsCustomExtension));
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
     }

@@ -198,6 +198,18 @@ impl Debugger {
             return;
         };
         bun_analytics::features::debugger.fetch_add(1, Ordering::Relaxed);
+
+        // Even for plain `--inspect` (no `-wait`/`-brk`), user code must not
+        // run before the debugger thread has finished starting the inspector
+        // server: `node:inspector`'s url()/close() read the URL that thread
+        // publishes, and Node's `--inspect` starts its agent synchronously.
+        // `start()` stores 0 and wakes after `internal/debugger.ts` has run
+        // (which is what publishes the URL).
+        bun_core::scoped_log!(debugger, "spin");
+        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
+            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+        }
+
         if !dbg.must_block_until_connected {
             return;
         }
@@ -209,12 +221,6 @@ impl Debugger {
             }
         });
 
-        bun_core::scoped_log!(debugger, "spin");
-        // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
-        // load, so this loop is a no-op on first call.
-        while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
-        }
         if bun_core::Environment::ENABLE_LOGS {
             bun_core::scoped_log!(
                 debugger,
@@ -383,6 +389,11 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
+            // Armed here and cleared by `start()` after the debugger thread has
+            // run `internal/debugger.ts` (which publishes the inspector URL);
+            // `wait_for_debugger_if_necessary` blocks on it so user code never
+            // observes the server mid-startup.
+            FUTEX_ATOMIC.store(1, Ordering::Relaxed);
             // `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
             // pointer is only ever dereferenced on the debugger thread under

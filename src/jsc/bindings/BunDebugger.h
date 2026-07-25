@@ -11,5 +11,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunction_openNodeInspector);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_waitForNodeInspectorConnection);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_postNodeInspectorControl);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_closeNodeInspector);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_getNodeInspectorUrl);
 
 } // namespace Bun

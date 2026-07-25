@@ -39,6 +39,153 @@ test("inspector.waitForDebugger() throws ERR_INSPECTOR_NOT_ACTIVE when the inspe
   expect(error.message).toBe("Inspector is not active");
 });
 
+// Under `bun --inspect`, node:inspector must see the CLI-started debugger the
+// same way Node's --inspect exposes it: url() returns the ws:// URL, open()
+// throws ERR_INSPECTOR_ALREADY_ACTIVATED, and close() actually releases the
+// port (a fresh TCP connect is refused). Previously the CLI server was
+// invisible to node:inspector so url() was undefined, waitForDebugger() threw,
+// and close() left the port bound.
+const cliInspectFixture = `
+const inspector = require("node:inspector");
+const net = require("node:net");
+
+const urlBefore = inspector.url();
+const parsed = new URL(urlBefore);
+const debugPort = process.debugPort;
+
+let alreadyActiveCode = null;
+try {
+  inspector.open(0, "127.0.0.1", false);
+} catch (error) {
+  alreadyActiveCode = error.code;
+}
+
+// The CLI server is actually listening on the port url() reports.
+const portBefore = await new Promise(resolve => {
+  const s = net.connect(Number(parsed.port), "127.0.0.1");
+  s.on("connect", () => { s.destroy(); resolve("listening"); });
+  s.on("error", e => resolve("refused:" + e.code));
+});
+
+inspector.close();
+const urlAfterClose = inspector.url() ?? null;
+
+// After close() the port must be refused: Node's close() is synchronous and
+// releases the socket before returning.
+const portAfter = await new Promise(resolve => {
+  const s = net.connect(Number(parsed.port), "127.0.0.1");
+  s.on("connect", () => { s.destroy(); resolve("listening"); });
+  s.on("error", e => resolve("refused:" + e.code));
+});
+
+// close() followed by open() must start a fresh server, same as when the
+// first server was started by inspector.open() itself.
+inspector.open(0, "127.0.0.1", false);
+const urlAfterReopen = inspector.url();
+inspector.close();
+
+console.log(
+  JSON.stringify({
+    urlBefore,
+    alreadyActiveCode,
+    portBefore,
+    urlAfterClose,
+    portAfter,
+    urlAfterReopen,
+    debugPort,
+  }),
+);
+`;
+
+test("inspector.url()/close() report and control the --inspect CLI debugger", async () => {
+  using dir = tempDir("inspector-cli-inspect", {
+    "fixture.mjs": cliInspectFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(summary).toEqual({
+    urlBefore: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:\d+\//),
+    alreadyActiveCode: "ERR_INSPECTOR_ALREADY_ACTIVATED",
+    portBefore: "listening",
+    urlAfterClose: null,
+    portAfter: "refused:ECONNREFUSED",
+    urlAfterReopen: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:\d+\//),
+    debugPort: Number(new URL(summary.urlBefore).port),
+  });
+  expect(summary.urlAfterReopen).not.toBe(summary.urlBefore);
+});
+
+// waitForDebugger() under --inspect must block until a client connects instead
+// of throwing ERR_INSPECTOR_NOT_ACTIVE. The CLI server speaks the JSC inspector
+// protocol, so the client sends Inspector.initialized (which resolves the wait).
+test("inspector.waitForDebugger() under --inspect blocks until a client connects", async () => {
+  using dir = tempDir("inspector-cli-wait", {
+    "fixture.mjs": `
+const inspector = require("node:inspector");
+process.stderr.write("URL " + inspector.url() + "\\n");
+inspector.waitForDebugger();
+console.log(JSON.stringify({ resumed: globalThis.__resumed === true }));
+inspector.close();
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "fixture.mjs"],
+    env: injectedScriptChildEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const decoder = new TextDecoder();
+  const reader = proc.stderr.getReader();
+  let stderrText = "";
+  let wsUrl: string | undefined;
+  while (!wsUrl) {
+    const { value, done } = await reader.read();
+    if (done) throw new Error(`stderr closed before URL line: ${stderrText}`);
+    stderrText += decoder.decode(value);
+    wsUrl = stderrText.match(/^URL (ws:\S+)/m)?.[1];
+  }
+
+  const ws = new WebSocket(wsUrl);
+  const opened = Promise.withResolvers<void>();
+  ws.onopen = () => opened.resolve();
+  ws.onerror = e => opened.reject(e);
+  await opened.promise;
+  // Mark the global before resuming so the fixture can prove it actually
+  // waited. The CLI server speaks JSC's protocol; Inspector.initialized is
+  // what resolves the waiting-for-connection state (BunDebugger.cpp).
+  ws.send(
+    JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "globalThis.__resumed = true" } }),
+  );
+  ws.send(JSON.stringify({ id: 2, method: "Inspector.initialized" }));
+
+  const drained = (async () => {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      stderrText += decoder.decode(value);
+    }
+  })();
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  await drained;
+  ws.close();
+
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!)).toEqual({ resumed: true });
+  expect(exitCode).toBe(0);
+});
+
 // inspector.open() starts a WebSocket server speaking the V8 Chrome DevTools
 // Protocol (translated to JSC's inspector protocol on the debugger thread).
 // The fixture opens the inspector, talks to its own server as a CDP client,

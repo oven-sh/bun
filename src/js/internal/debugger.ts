@@ -114,96 +114,107 @@ export default function (
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
 ): void {
   if (urlIsServer) {
+    // Mark serverStarted so node:inspector's url() (which consults the same
+    // nodeInspectorState) does not wait on a server that will never listen.
+    reportNodeInspectorServerStarted("", undefined, "connect-mode");
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
   }
 
-  if (isNodeInspector) {
-    // node:inspector's inspector.open(): connections speak the V8 Chrome
-    // DevTools Protocol, the listening URL is reported back to the inspected
-    // thread (which prints Node's "Debugger listening on ..." line), and a
-    // control callback lets the inspected thread close the server or forward
-    // commands from the in-process inspector.Session.
-    let debug: Debugger | undefined;
-    let sessionBackend: Backend | undefined;
-    let sessionAdapter: any;
-    let sessionRefs = 0;
-    const control = (message: string) => {
-      let parsed: any;
-      try {
-        parsed = JSON.parse(message);
-      } catch {
-        return;
-      }
-      switch (parsed?.type) {
-        case "close":
-          try {
-            sessionBackend?.close();
-            sessionBackend = undefined;
-            sessionAdapter = undefined;
-            sessionRefs = 0;
-            debug?.stop();
-            debug = undefined;
-          } finally {
-            // inspector.close() blocks until this lands: the port must already
-            // be refused when close() returns. Signalled from a finally so a
-            // failing stop() cannot hang the inspected thread forever.
-            reportNodeInspectorServerStarted("", control, undefined);
-          }
-          return;
-        case "session-connect":
-          sessionRefs++;
-          return;
-        case "session-disconnect":
-          // Last in-process Session that forwarded Debugger.* commands has
-          // disconnected: release the shared backend so its breakpoints don't
-          // outlive it. Refcounted so one Session can't tear down another's.
-          if (--sessionRefs > 0) return;
-          sessionRefs = 0;
+  // Shared node:inspector control surface. `debug` is whichever server is
+  // currently listening on this debugger thread, started either by CLI
+  // --inspect (the JSC-protocol server below) or by inspector.open() (a CDP
+  // server). The control callback lets the inspected thread close it, reopen
+  // it as a CDP server, and forward Debugger.* commands from the in-process
+  // inspector.Session. The backend connection underneath is JSC-protocol in
+  // both cases, so "command" forwarding goes through the CDP adapter
+  // regardless of which protocol `debug` serves to its own clients.
+  let debug: Debugger | undefined;
+  let sessionBackend: Backend | undefined;
+  let sessionAdapter: any;
+  let sessionRefs = 0;
+  const control = (message: string) => {
+    let parsed: any;
+    try {
+      parsed = JSON.parse(message);
+    } catch {
+      return;
+    }
+    switch (parsed?.type) {
+      case "close":
+        try {
           sessionBackend?.close();
           sessionBackend = undefined;
           sessionAdapter = undefined;
-          return;
-        case "open": {
-          // inspector.open() after inspector.close() or after a failed start:
-          // start a new server on this already-running debugger thread and
-          // report its URL back.
-          try {
-            debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
-            reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
-          } catch (error) {
-            reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
-          }
-          return;
+          sessionRefs = 0;
+          debug?.stop();
+          debug = undefined;
+        } finally {
+          // inspector.close() blocks until this lands: the port must already
+          // be refused when close() returns. Signalled from a finally so a
+          // failing stop() cannot hang the inspected thread forever.
+          reportNodeInspectorServerStarted("", control, undefined);
         }
-        case "command": {
-          // A CDP command forwarded from the inspected thread's in-process
-          // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
-          // --inspect-brk). Responses stay on this thread; the in-process
-          // Session treats these as fire-and-forget.
-          if (!debug) return;
-          if (!sessionAdapter) {
-            let adapter: any;
-            sessionBackend = debug.createSessionBackend((...messages: string[]) => {
-              for (const backendMessage of messages) {
-                adapter.handleBackendMessage(backendMessage);
-              }
-            });
-            adapter = new (cdpAdapterConstructor())(
-              (backendMessage: string) => void sessionBackend?.write(backendMessage),
-              () => {},
-            );
-            sessionAdapter = adapter;
-            sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
-          }
-          sessionAdapter.handleClientMessage(
-            JSON.stringify({ id: parsed.id ?? 0, method: parsed.method, params: parsed.params ?? {} }),
-          );
-          return;
+        return;
+      case "session-connect":
+        sessionRefs++;
+        return;
+      case "session-disconnect":
+        // Last in-process Session that forwarded Debugger.* commands has
+        // disconnected: release the shared backend so its breakpoints don't
+        // outlive it. Refcounted so one Session can't tear down another's.
+        if (--sessionRefs > 0) return;
+        sessionRefs = 0;
+        sessionBackend?.close();
+        sessionBackend = undefined;
+        sessionAdapter = undefined;
+        return;
+      case "open": {
+        // inspector.open() after inspector.close() or after a failed start:
+        // start a new server on this already-running debugger thread and
+        // report its URL back.
+        try {
+          debug = new Debugger(executionContextId, parsed.url, createBackend, send, close, true);
+          reportNodeInspectorServerStarted(debug.url!.href, control, undefined);
+        } catch (error) {
+          reportNodeInspectorServerStarted("", control, nodeInspectorListenErrorDetail(error));
         }
+        return;
       }
-    };
+      case "command": {
+        // A CDP command forwarded from the inspected thread's in-process
+        // inspector.Session (e.g. Debugger.setBreakpointByUrl from vitest
+        // --inspect-brk). Responses stay on this thread; the in-process
+        // Session treats these as fire-and-forget.
+        if (!debug) return;
+        if (!sessionAdapter) {
+          let adapter: any;
+          sessionBackend = debug.createSessionBackend((...messages: string[]) => {
+            for (const backendMessage of messages) {
+              adapter.handleBackendMessage(backendMessage);
+            }
+          });
+          adapter = new (cdpAdapterConstructor())(
+            (backendMessage: string) => void sessionBackend?.write(backendMessage),
+            () => {},
+          );
+          sessionAdapter = adapter;
+          sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
+        }
+        sessionAdapter.handleClientMessage(
+          JSON.stringify({ id: parsed.id ?? 0, method: parsed.method, params: parsed.params ?? {} }),
+        );
+        return;
+      }
+    }
+  };
 
+  if (isNodeInspector) {
+    // node:inspector's inspector.open(): connections speak the V8 Chrome
+    // DevTools Protocol, the listening URL is reported back to the inspected
+    // thread (which prints Node's "Debugger listening on ..." line), and the
+    // control callback above lets the inspected thread close the server or
+    // forward commands from the in-process inspector.Session.
     try {
       debug = new Debugger(executionContextId, url, createBackend, send, close, true);
     } catch (error) {
@@ -218,11 +229,21 @@ export default function (
     return;
   }
 
-  let debug: Debugger | undefined;
   try {
     debug = new Debugger(executionContextId, url, createBackend, send, close);
   } catch (error) {
     exit("Failed to start inspector:\n", error);
+  }
+
+  // Publish the CLI --inspect server's URL and control callback into the same
+  // nodeInspectorState that inspector.open() uses, so node:inspector's url()/
+  // close()/waitForDebugger() see and can shut down the CLI-started server.
+  // Connect-mode (unix:/fd:/tcp: URLs) has no listen URL; report it as
+  // "no server" so inspector.url() stays undefined for those.
+  if (debug!.url) {
+    reportNodeInspectorServerStarted(debug!.url.href, control, undefined);
+  } else {
+    reportNodeInspectorServerStarted("", undefined, "connect-mode");
   }
 
   // If the user types --inspect, we print the URL to the console.

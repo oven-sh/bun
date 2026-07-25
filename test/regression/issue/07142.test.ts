@@ -18,15 +18,11 @@ async function run(dir: string, entry: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
-describe("exports \"bun\" condition target missing on disk", () => {
+describe('exports "bun" condition target missing on disk', () => {
   test("falls through to the node condition (import)", async () => {
     using dir = tempDir("issue-7142-import", {
       "node_modules/ofetch/package.json": JSON.stringify({

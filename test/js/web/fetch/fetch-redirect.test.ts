@@ -328,3 +328,60 @@ describe("fetch() follows a redirect whose Location scheme is not lowercase", ()
     }
   });
 });
+
+// RFC 9112 §9.6: `Connection: close` applies to the connection regardless of
+// status code. A 3xx response that sets it must not have its socket pooled for
+// the follow-up request; the client has to open a fresh connection.
+//
+// The original request is a streamed POST so its chunked terminator is on the
+// wire before the 303 arrives; that is the one path where the redirect
+// socket-pool check would otherwise succeed.
+it("fetch() does not reuse a socket whose 303 response sent Connection: close (streamed POST)", async () => {
+  const requestsPerConn: string[][] = [];
+  const server = net.createServer(socket => {
+    const mine: string[] = [];
+    requestsPerConn.push(mine);
+    let buf = "";
+    socket.on("error", () => {});
+    socket.on("data", chunk => {
+      buf += chunk.toString("latin1");
+      for (const m of buf.match(/(GET|POST) \S+ HTTP\/1\.1/g) ?? []) {
+        if (!mine.includes(m)) mine.push(m);
+      }
+      if (buf.includes("0\r\n\r\n") && mine[0]?.startsWith("POST /start ")) {
+        buf = "";
+        const port = (server.address() as net.AddressInfo).port;
+        socket.write(
+          `HTTP/1.1 303 See Other\r\nLocation: http://127.0.0.1:${port}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+        );
+      } else if (mine.some(l => l.startsWith("GET /final "))) {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nFINAL");
+      }
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as net.AddressInfo;
+  try {
+    const body = new ReadableStream({
+      start(c) {
+        c.enqueue(new TextEncoder().encode("abcd"));
+        c.close();
+      },
+    });
+    const res = await fetch(`http://127.0.0.1:${port}/start`, {
+      method: "POST",
+      body,
+      // @ts-expect-error
+      duplex: "half",
+    });
+    expect({ status: res.status, redirected: res.redirected, body: await res.text() }).toEqual({
+      status: 200,
+      redirected: true,
+      body: "FINAL",
+    });
+    expect(requestsPerConn).toEqual([["POST /start HTTP/1.1"], ["GET /final HTTP/1.1"]]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});

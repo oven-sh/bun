@@ -115,6 +115,7 @@ pub struct FetchTasklet {
     pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
+    pub is_node_http_client: bool,
     // Custom Hostname
     pub hostname: Option<Box<[u8]>>,
     pub is_waiting_body: bool,
@@ -1900,6 +1901,7 @@ impl FetchTasklet {
             check_server_identity: fetch_options.check_server_identity,
             reject_unauthorized: fetch_options.reject_unauthorized,
             upgraded_connection: fetch_options.upgraded_connection,
+            is_node_http_client: fetch_options.is_node_http_client,
             hostname: fetch_options.hostname,
             is_waiting_body: false,
             is_waiting_abort: false,
@@ -2166,12 +2168,18 @@ impl FetchTasklet {
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) or when the user explicitly
-    /// set Content-Length without setting Transfer-Encoding.
+    /// True for upgraded connections, for h2/h3 (which frame at the protocol
+    /// layer), and for node:http's ClientRequest when the caller set
+    /// Content-Length without Transfer-Encoding. WebIDL fetch() always chunks
+    /// a ReadableStream body: Content-Length and Transfer-Encoding are
+    /// forbidden request-header names, and honoring a caller-supplied
+    /// Content-Length there would decouple the declared length from the bytes
+    /// actually written (CL-desync request smuggling).
     fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection
             || self.result.is_http2
-            || (self.request_headers.get(b"content-length").is_some()
+            || (self.is_node_http_client
+                && self.request_headers.get(b"content-length").is_some()
                 && self.request_headers.get(b"transfer-encoding").is_none())
     }
 

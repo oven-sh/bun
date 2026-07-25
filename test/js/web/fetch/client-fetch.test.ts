@@ -613,43 +613,6 @@ test.each([
   });
 });
 
-// The same empty-chunk hazard on the other framing path: with an explicit
-// Content-Length the body is sent raw, so an empty enqueue buffers nothing,
-// but it still reported backpressure -- pausing the request body stream to
-// wait for a drain event that can never arrive. The upload hung forever.
-test("an empty request body chunk does not stall a stream body sent with an explicit Content-Length", async () => {
-  let recorded = Buffer.alloc(0);
-  await using server = net
-    .createServer(sock => {
-      sock.on("error", () => {});
-      sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
-        if (recorded.toString("latin1").endsWith("AAAABBBB")) {
-          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-        }
-      });
-    })
-    .listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
-
-  const encoder = new TextEncoder();
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    duplex: "half",
-    headers: { "content-length": "8" },
-    body: new ReadableStream({
-      start(controller) {
-        for (const chunk of ["AAAA", "", "BBBB"]) controller.enqueue(encoder.encode(chunk));
-        controller.close();
-      },
-    }),
-  });
-  expect(await res.text()).toBe("ok");
-  const raw = recorded.toString("latin1");
-  expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("AAAABBBB");
-});
-
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be
 // joined into the preceding field value with SP, or the message rejected.
 // Accepting it while silently discarding the continuation is neither: it

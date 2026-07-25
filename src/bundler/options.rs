@@ -85,10 +85,8 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
         return out;
     }
 
-    // dot=true so `.cjs`-style names match; follow_symlinks=false matches
-    // esbuild and avoids cycles through e.g. pnpm's symlink farms.
     let walker = match bun_glob::BunGlobWalker::init_with_cwd(
-        pattern, source_dir, true, false, false, false, true, None,
+        pattern, source_dir, true, false, true, false, true, None,
     ) {
         Ok(Ok(w)) => w,
         _ => return out,
@@ -98,16 +96,24 @@ pub fn parser_glob_resolver(source_dir: &[u8], pattern: &[u8]) -> Vec<Box<[u8]>>
     if iter.init().map(|m| m.is_err()).unwrap_or(true) {
         return out;
     }
-    while let Ok(Ok(Some(m))) = iter.next() {
-        let p: &[u8] = &m;
-        let mut s: Vec<u8> = p
-            .iter()
-            .map(|&b| if cfg!(windows) && b == b'\\' { b'/' } else { b })
-            .collect();
-        if !(s.starts_with(b"./") || s.starts_with(b"../")) {
-            s.splice(0..0, b"./".iter().copied());
+    loop {
+        match iter.next() {
+            Ok(Ok(Some(m))) => {
+                let p: &[u8] = &m;
+                let mut s: Vec<u8> = p
+                    .iter()
+                    .map(|&b| if cfg!(windows) && b == b'\\' { b'/' } else { b })
+                    .collect();
+                if !(s.starts_with(b"./") || s.starts_with(b"../")) {
+                    s.splice(0..0, b"./".iter().copied());
+                }
+                out.push(s.into_boxed_slice());
+            }
+            Ok(Ok(None)) => break,
+            // A mid-walk failure would otherwise emit a partial map whose
+            // keys can never cover the runtime specifier.
+            Ok(Err(_)) | Err(_) => return Vec::new(),
         }
-        out.push(s.into_boxed_slice());
     }
     out
 }

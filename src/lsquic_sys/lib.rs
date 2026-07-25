@@ -224,6 +224,7 @@ unsafe extern "C" {
     pub fn us_nq_spec_stride() -> usize;
     pub fn us_nq_stream_reset(s: *mut lsquic_stream, code: u64);
     pub fn us_nq_hset_pairs(hset: *mut c_void, len: *mut usize) -> *const c_char;
+    pub fn us_nq_hset_malformed(hset: *mut c_void) -> c_int;
     pub fn us_nq_hset_free(hset: *mut c_void);
     pub fn us_nq_stream_send_headers(
         s: *mut lsquic_stream,
@@ -815,6 +816,13 @@ impl Stream {
 pub struct HeaderSet(*mut c_void);
 
 impl HeaderSet {
+    /// RFC 9114 §4.1.2 malformed-message flag (NUL in a field, empty name).
+    /// The shim flags-and-continues instead of returning -1 into lsqpack so
+    /// this stream can be reset without taking the connection down.
+    pub fn malformed(&self) -> bool {
+        // SAFETY: `self.0` is a live `nq_hset` until `Drop`.
+        unsafe { us_nq_hset_malformed(self.0) != 0 }
+    }
     /// h3 permits bytes that are not valid UTF-8, so the JS boundary picks the
     /// encoding (latin1, as node does for HTTP headers).
     pub fn pairs(&self) -> Vec<Vec<u8>> {

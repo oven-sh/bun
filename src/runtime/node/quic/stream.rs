@@ -1035,11 +1035,14 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             .iter()
             .find(|kv| kv[0] == b":status")
             .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // A :status in a request is malformed: node's nghttp3 resets the
-        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
-        // the request unanswered until the idle timeout.
+        // RFC 9114 §4.1.2: a malformed message (NUL in a field, empty field
+        // name, :status in a request) is a *stream* error.  The shim flags
+        // NUL/empty instead of returning -1 into lsqpack, which would have
+        // become a CONNECTION_CLOSE and torn down every concurrent request.
+        // node's nghttp3 resets the stream; routing the bad headers to
+        // `onheaders` would leave the request unanswered until idle timeout.
         let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
-        if peer_is_client && has_status.is_some() {
+        if hset.malformed() || (peer_is_client && has_status.is_some()) {
             if let Some(s) = qs.ls() {
                 // reset() only ends the read side when the peer already
                 // FIN'd/RST'd, so STOP_SENDING is what stops a malformed

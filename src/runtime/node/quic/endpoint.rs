@@ -2619,6 +2619,29 @@ impl QuicEndpoint {
         Ok(JSValue::UNDEFINED)
     }
 
+    /// `lastChanceToFinalize` sweeps the endpoint / session / stream wrappers
+    /// in unspecified order, so by the time `release_native` runs
+    /// `lsquic_engine_destroy` the raw `*mut QuicSession` registries and the
+    /// session/stream boxes the vtable callbacks reach may already be freed.
+    /// This drops the registries, nulls `vtable.owner` so every owner-keyed
+    /// callback short-circuits in `ctx_ref`, and points `on_stream_close` /
+    /// `on_conn_closed` at variants that never follow a session or endpoint
+    /// back-pointer; the session/stream `finalize` methods null their own
+    /// lsquic ctx, which is how already-freed boxes stay out of the shim.
+    fn detach_for_finalize(&self) {
+        self.sessions.with_mut(Vec::clear);
+        self.pending_new_sessions.with_mut(Vec::clear);
+        self.provisional.with_mut(Vec::clear);
+        self.pending_verneg.with_mut(Vec::clear);
+        self.vtable.with_mut(|vt| {
+            if let Some(vt) = vt.as_mut() {
+                vt.owner = null_mut();
+                vt.on_stream_close = stream::QuicStream::on_close_detached;
+                vt.on_conn_closed = QuicSession::on_closed_detached;
+            }
+        });
+    }
+
     #[expect(
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicEndpoint::finalize(b)` and requires `self: Box<Self>`"
@@ -2629,29 +2652,7 @@ impl QuicEndpoint {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        // `lastChanceToFinalize` sweeps wrappers in unspecified order, so the
-        // raw `*mut QuicSession` registries and the session/stream boxes the
-        // vtable callbacks reach may already be freed. `release_native` ->
-        // `lsquic_engine_destroy` fires `on_close` / `on_conn_closed` /
-        // `on_mini_conn_failed` on every live conn: make those safe first.
-        self.sessions.with_mut(Vec::clear);
-        self.pending_new_sessions.with_mut(Vec::clear);
-        self.provisional.with_mut(Vec::clear);
-        self.pending_verneg.with_mut(Vec::clear);
-        self.vtable.with_mut(|vt| {
-            if let Some(vt) = vt.as_mut() {
-                // Owner-keyed callbacks (`on_mini_conn_failed`, `packets_out`,
-                // `on_new_conn`/`on_new_stream`, the SSL_CTX lookups) now see
-                // a null owner and `ctx_ref` returns `None`.
-                vt.owner = null_mut();
-                // ctx-keyed callbacks reach a live stream/session box (their
-                // own `finalize` nulls the ctx otherwise), but its session /
-                // endpoint back-pointer may be a freed box: swap in variants
-                // that only clear the lsquic back-reference.
-                vt.on_stream_close = stream::QuicStream::on_close_detached;
-                vt.on_conn_closed = QuicSession::on_closed_detached;
-            }
-        });
+        self.detach_for_finalize();
         self.release_native();
     }
 }

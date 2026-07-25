@@ -321,10 +321,8 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// IDNA-encode a hostname for node:dns, matching Node.js's `ada::idna::to_ascii`
-/// step in cares_wrap before `ares_query`/`uv_getaddrinfo`. ASCII-only names
-/// pass through unchanged (DNS is case-insensitive). Returns an empty slice on
-/// encoding failure, which c-ares then rejects the same way Node.js does.
+/// Node.js's `ada::idna::to_ascii` step before `ares_query`/`uv_getaddrinfo`.
+/// ASCII names pass through; IDNA failure yields an empty slice c-ares rejects.
 fn hostname_to_ascii<'a>(name: &'a [u8], buf: &'a mut [u8; 1024]) -> &'a [u8] {
     if strings::first_non_ascii(name).is_none() {
         return name;
@@ -5422,9 +5420,7 @@ impl Resolver {
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
 
-        // Node.js sets `req.hostname` to the caller's argument before
-        // `ada::idna::to_ascii` runs in cares_wrap, so `err.hostname` always
-        // echoes the original spelling. Encode only the wire name here.
+        // Encode for the wire only so `err.hostname` still echoes the caller's spelling.
         let mut ascii_buf = [0u8; 1024];
         let ascii_name = hostname_to_ascii(name, &mut ascii_buf);
 

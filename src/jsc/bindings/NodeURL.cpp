@@ -176,10 +176,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     return JSC::JSValue::encode(JSC::jsString(vm, host));
 }
 
-// IDNA-encode a hostname for node:dns resolve*/lookup. The caller has already
-// verified `input` contains non-ASCII bytes. Returns the number of ASCII bytes
-// written to `output`, or 0 if encoding failed or would not fit (Node.js passes
-// an empty name to c-ares in that case, which then rejects the query).
+// Returns ASCII bytes written, or 0 on IDNA failure or overflow.
 extern "C" int32_t Bun__hostnameToASCII(const char* input, size_t input_len, char* output, size_t output_cap)
 {
     auto domain = WTF::String::fromUTF8(std::span { input, input_len });

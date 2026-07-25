@@ -15,7 +15,7 @@ Applies after node-quic-accessors.patch (which adds ss_error_code).
 
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1481,22 +1481,51 @@
+@@ -1481,22 +1481,55 @@
  }
  
  
@@ -35,11 +35,15 @@ Applies after node-quic-accessors.patch (which adds ss_error_code).
 +    if (!(stream->stream_flags & STREAM_RST_SENT)
 +                                    && !(stream->sm_qflags & SMQF_SEND_RST))
 +        stream_reset(stream, HEC_MESSAGE_ERROR, 0);
-+    /* stream_reset clears every SENDING flag and re-queues SEND_RST, so the
-+     * STOP_SENDING goes on here afterwards.  RESET_STREAM only aborts our
-+     * send side; without STOP_SENDING a peer mid-body keeps uploading. */
++    /* RESET_STREAM only aborts our send side; without STOP_SENDING a peer
++     * mid-body keeps uploading into a request nothing will answer. */
 +    if (!(stream->stream_flags & (STREAM_FIN_RECVD|STREAM_SS_SENT)))
++    {
++        if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
++            TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
++                                                        next_send_stream);
 +        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
++    }
 +    stream->stream_flags |= STREAM_RST_RECVD;
 +    if (stream->stream_if->on_reset
 +                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
@@ -74,7 +78,7 @@ Applies after node-quic-accessors.patch (which adds ss_error_code).
      }
  }
  
-@@ -4893,17 +4922,13 @@
+@@ -4893,17 +4926,13 @@
  verify_cl_on_new_data_frame (struct lsquic_stream *stream,
                                                      struct hq_filter *filter)
  {

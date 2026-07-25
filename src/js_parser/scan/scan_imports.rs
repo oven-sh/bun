@@ -139,6 +139,19 @@ impl<'a> ImportScanner<'a> {
                     //
                     let mut did_remove_star_loc = false;
                     let keep_unused_imports = !p.options.features.trim_unused_imports;
+
+                    // `serialize_metadata` emits references to imported types as
+                    // `ns.alias` and records a use on the generated namespace ref
+                    // so a type-only export does not force a named binding that
+                    // fails at link time. Give the statement a star binding so
+                    // the trim pass below keeps it and the printer emits `* as ns`.
+                    let added_star_for_metadata = st.star_name_loc.is_empty()
+                        && p.symbols[st.namespace_ref.inner_index() as usize].use_count_estimate
+                            > 0;
+                    if added_star_for_metadata {
+                        st.star_name_loc = stmt.loc;
+                    }
+
                     // TypeScript always trims unused imports. This is important for
                     // correctness since some imports might be fake (only in the type
                     // system and used for type-only imports).
@@ -528,10 +541,11 @@ impl<'a> ImportScanner<'a> {
                             // Make sure the printer prints this as a property access
                             let symbol: &mut Symbol =
                                 &mut p.symbols[name_ref.inner_index() as usize];
-                            if record!()
+                            if (record!()
                                 .flags
                                 .contains(import_record::Flags::CONTAINS_IMPORT_STAR)
-                                || !st.star_name_loc.is_empty()
+                                || !st.star_name_loc.is_empty())
+                                && !added_star_for_metadata
                             {
                                 // SAFETY: arena-owned slice valid for 'p.
                                 let original_name = symbol.original_name.slice();
@@ -566,19 +580,6 @@ impl<'a> ImportScanner<'a> {
 
                     p.import_records_for_current_part
                         .push(st.import_record_index);
-
-                    // `serialize_metadata` emits references to imported types as
-                    // `ns.alias` and records a use on the generated namespace ref
-                    // so a type-only export does not force a named binding that
-                    // fails at link time. Give the statement a star binding so
-                    // the printer emits `* as ns`. This runs after the
-                    // `namespace_alias` assignment above so kept named items stay
-                    // bound as themselves.
-                    if st.star_name_loc.is_empty()
-                        && p.symbols[st.namespace_ref.inner_index() as usize].use_count_estimate > 0
-                    {
-                        st.star_name_loc = stmt.loc;
-                    }
 
                     if !st.star_name_loc.is_empty() {
                         record!()

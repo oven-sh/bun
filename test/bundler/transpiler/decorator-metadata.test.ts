@@ -673,6 +673,62 @@ describe("decorator metadata", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("union / intersection / array of imported types elide the import", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "./_metadata";
+          import { JustInterface, AliasType, RealClass } from "./mod";
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec a!: JustInterface | AliasType<string>;
+            @dec b!: JustInterface[];
+            @dec c!: JustInterface & { y: number };
+            @dec d!: RealClass | null;
+          }
+          const t = (k: string) => Reflect.getMetadata("design:type", Thing.prototype, k);
+          console.log(t("a") === Object, t("b") === Array, t("c") === Object, (t("d") as any).tag);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true true true RealClass\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("setter parameter type does not erase a prior value use of the same import", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "./_metadata";
+          import { RealClass } from "./mod";
+          new RealClass();
+          function dec(...args: any[]) {}
+          class Thing {
+            @dec set foo(v: RealClass) {}
+          }
+          console.log((Reflect.getMetadata("design:type", Thing.prototype, "foo") as any).tag);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("RealClass\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("generated namespace binding does not collide with user declarations", async () => {
+      const { stdout, stderr, exitCode } = await run({
+        "index.ts": `
+          import "./_metadata";
+          import { RealClass } from "./mod";
+          const import_mod_1 = 5;
+          function import_mod() {}
+          function dec(...args: any[]) {}
+          class Thing { @dec a!: RealClass }
+          console.log(import_mod_1, typeof import_mod, (Reflect.getMetadata("design:type", Thing.prototype, "a") as any).tag);
+        `,
+      });
+      expect(stderr).toBe("");
+      expect(stdout).toBe("5 function RealClass\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("constructor parameter types from another module", async () => {
       const { stdout, stderr, exitCode } = await run({
         "index.ts": `
@@ -708,7 +764,7 @@ describe("decorator metadata", () => {
         }
         new RealClass();
       `);
-      expect(out).toContain(`import*as import_mod_0 from"./mod";import{RealClass}from"./mod";`);
+      expect(out).toMatch(/import\*as import_mod_\w+ from"\.\/mod";import\{RealClass\}from"\.\/mod";/);
       // must still parse as a module
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(out)).not.toThrow();
     });

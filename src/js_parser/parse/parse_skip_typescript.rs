@@ -632,11 +632,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::Normal => {
                             if GET_METADATA {
                                 let ident = self.lexer.identifier;
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
+                                let r#ref = self.find_symbol_for_ts_metadata(ident)?;
                                 **result
                                     .as_mut()
                                     .expect("infallible: GET_METADATA implies Some") =
-                                    Metadata::MIdentifier(find_result.r#ref);
+                                    Metadata::MIdentifier(r#ref);
                             }
 
                             self.lexer.next()?;
@@ -907,15 +907,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let id_ref = *id_ref;
                                 let mut dot: Vec<Ref> = Vec::with_capacity(2);
                                 dot.push(id_ref);
-                                let find_result = self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                dot.push(find_result.r#ref);
+                                dot.push(self.find_symbol_for_ts_metadata(ident)?);
                                 *r = Metadata::MDot(dot);
                             }
                             Metadata::MDot(dot) => {
                                 if self.lexer.is_identifier_or_keyword() {
-                                    let find_result =
-                                        self.find_symbol(bun_ast::Loc::EMPTY, ident)?;
-                                    dot.push(find_result.r#ref);
+                                    dot.push(self.find_symbol_for_ts_metadata(ident)?);
                                 }
                             }
                             _ => {}

@@ -3762,18 +3762,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             let path_name = fs::PathName::init(path.text);
             // When decorator metadata routes through this namespace ref the
-            // name is printed as a `* as name` binding, and the transpile-only
-            // printer does not rename; two imports with the same path basename
-            // would collide. The record index disambiguates. The bundler's
-            // linker resolves metadata references directly and its renamer
-            // already deduplicates, so keep the plain form there.
+            // name is printed as a `* as name` binding under NoOpRenamer, so
+            // it must not collide with a user binding or another import's
+            // namespace. The bundler's renamer deduplicates, so keep the
+            // plain form there.
             let name: &'a [u8] =
                 if self.options.features.emit_decorator_metadata && !self.options.bundle {
+                    let hash = bun_wyhash::hash_with_seed(
+                        u64::from(stmt.import_record_index),
+                        path.text,
+                    );
                     bun_alloc::arena_format!(
                         in self.arena,
                         "import_{}_{}",
                         bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base()),
-                        stmt.import_record_index,
+                        bun_core::fmt::truncated_hash32(hash),
                     )
                 } else {
                     bun_alloc::arena_format!(
@@ -5917,6 +5920,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
+    /// `find_symbol` for an identifier in a type annotation being tracked for
+    /// decorator metadata. The lookup must create an unbound symbol for
+    /// globals like `Map`, but a type annotation is not a value use: the
+    /// identifier may be folded away by a union or array type before
+    /// `serialize_metadata` ever sees it. The emit path records a use for
+    /// what it actually emits.
+    pub(crate) fn find_symbol_for_ts_metadata(
+        &mut self,
+        name: &'a [u8],
+    ) -> Result<Ref, crate::Error> {
+        let r#ref = self.find_symbol(bun_ast::Loc::EMPTY, name)?.r#ref;
+        self.ignore_usage(r#ref);
+        if TYPESCRIPT {
+            let slot = &mut self.ts_use_counts[r#ref.inner_index() as usize];
+            *slot = slot.saturating_sub(1);
+        }
+        Ok(r#ref)
+    }
+
     pub(crate) fn ignore_usage_of_identifier_in_dot_chain(&mut self, expr: Expr) {
         let mut current = expr;
         loop {
@@ -7162,6 +7184,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(root) = self.metadata_root_for_import_item(refs[0]) {
                     *current_expr = root;
                 } else if self.is_import_item.contains_key(&refs[0]) {
+                    self.record_usage(refs[0]);
                     *current_expr = self.new_expr(
                         E::ImportIdentifier {
                             ref_: refs[0],
@@ -7170,6 +7193,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         bun_ast::Loc::EMPTY,
                     );
                 } else {
+                    self.record_usage(refs[0]);
                     *current_expr =
                         self.new_expr(E::Identifier::init(refs[0]), bun_ast::Loc::EMPTY);
                 }
@@ -7248,17 +7272,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// For a named or default import referenced from decorator metadata, build
-    /// `ns.alias` and move the use count from the item's ref to the namespace
-    /// ref. A single-file transpiler cannot know whether the import is a class
-    /// or a type-only export; keeping the named binding for a type alias makes
-    /// the module fail to link (`Export named 'X' not found`). Going through
-    /// the namespace keeps a real class reachable and lets the `typeof` guard
+    /// `ns.alias` and record a use on the namespace ref. A single-file
+    /// transpiler cannot know whether the import is a class or a type-only
+    /// export; keeping the named binding for a type alias makes the module
+    /// fail to link (`Export named 'X' not found`). Going through the
+    /// namespace keeps a real class reachable and lets the `typeof` guard
     /// fall back to `Object` for a missing export.
     fn metadata_root_for_import_item(&mut self, ref_: Ref) -> Option<Expr> {
         let &(namespace_ref, alias) = self.import_namespace_of_item.get(&ref_)?;
-        // `find_symbol` in the type-skip path already counted this as a value
-        // use; that single use is what would keep the named binding alive.
-        self.ignore_usage(ref_);
         self.record_usage(namespace_ref);
         let target = self.new_expr(E::Identifier::init(namespace_ref), bun_ast::Loc::EMPTY);
         Some(self.new_expr(

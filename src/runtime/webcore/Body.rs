@@ -317,6 +317,46 @@ impl PendingValue {
         self.to_any_blob_allow_promise()
     }
 
+    /// Install a native completion hook that fires once the producer (fetch /
+    /// server request) has delivered the full body, and tell that producer to
+    /// start buffering. Used by consumers that need the whole body as bytes
+    /// but are not themselves a JS Promise (`Bun.$` stdin redirect).
+    ///
+    /// Returns `false` when a ReadableStream or another consumer is already
+    /// attached; the caller must go through the stream or reject.
+    ///
+    /// The producer replaces the owning `Body::Value` with the final
+    /// `InternalBlob` / `Error` before invoking `resolve` / `to_error_instance`,
+    /// so when `on_receive` runs the body has already been updated in place and
+    /// the callback only needs to resume its state machine.
+    pub(crate) fn hook_native_receiver(
+        &mut self,
+        ctx: *mut c_void,
+        on_receive: fn(ctx: *mut c_void, value: &mut Value),
+    ) -> bool {
+        // A native producer (fetch tasklet / server request ctx) registers
+        // itself as `task`; without one there is nothing that will call
+        // `resolve` / `to_error_instance`, so the hook would never fire.
+        let Some(producer_task) = self.task else {
+            return false;
+        };
+        if self.readable.has() || self.promise.is_some() || self.on_receive_value.is_some() {
+            return false;
+        }
+        if let Some(on_start_buffering) = self.on_start_buffering.take() {
+            on_start_buffering(producer_task);
+        }
+        self.task = Some(ctx);
+        self.on_receive_value = Some(on_receive);
+        // `task` now names the consumer; the remaining producer-facing hooks
+        // would read it as their own ctx, so they must not fire anymore.
+        self.on_start_streaming = None;
+        self.on_readable_stream_available = None;
+        self.on_stream_cancelled = None;
+        self.on_stream_drained = None;
+        true
+    }
+
     pub(crate) fn is_disturbed<T: BodyOwnerJs>(
         &self,
         global_object: &JSGlobalObject,

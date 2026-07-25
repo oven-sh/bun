@@ -1666,6 +1666,148 @@ describe("deno_task", () => {
     TestBuilder.command`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${code} > /dev/null`
       .quiet()
       .runAsTest("bunception redirect /dev/null");
+
+    // A fetch() Response body is delivered as a Locked PendingValue paused
+    // after the first socket read; the shell has to ask the producer to
+    // buffer and wait for it. Before this fix, `use_as_any_blob` substituted
+    // an empty blob, so the command ran on zero bytes and reported success.
+    // `cat` is an external command on POSIX and a builtin on Windows, so this
+    // covers both Cmd::init_subproc_redirections and Builtin::init_redirections.
+    describe("stdin from Request/Response", () => {
+      const countStdin = `process.stdout.write(String((await Bun.stdin.bytes()).length))`;
+
+      async function served(
+        size: number,
+        opts: { chunked?: boolean } = {},
+      ): Promise<[Response, () => void]> {
+        const srv = Bun.serve({
+          port: 0,
+          fetch: () =>
+            opts.chunked
+              ? new Response(
+                  (async function* () {
+                    let sent = 0;
+                    while (sent < size) {
+                      const n = Math.min(50_000, size - sent);
+                      yield Buffer.alloc(n, "x");
+                      sent += n;
+                      await Bun.sleep(1);
+                    }
+                  })(),
+                )
+              : new Response(Buffer.alloc(size, "x")),
+        });
+        const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+        return [res, () => srv.stop(true)];
+      }
+
+      test.each([
+        ["a body that fits the first socket read", 100, {}],
+        ["a body larger than the backpressure window", 500_000, {}],
+        ["a chunked body from a slow origin", 500_000, { chunked: true }],
+      ] as const)("buffers %s", async (_name, size, opts) => {
+        const [res, stop] = await served(size, opts);
+        try {
+          const out = await $`${BUN} -e ${countStdin} < ${res}`.text();
+          expect(out).toBe(String(size));
+        } finally {
+          stop();
+        }
+      });
+
+      test("buffers a body larger than the backpressure window (builtin)", async () => {
+        const [res, stop] = await served(500_000);
+        try {
+          const { stdout } = await $`cat < ${res}`;
+          expect(stdout.length).toBe(500_000);
+        } finally {
+          stop();
+        }
+      });
+
+      test("pipes the buffered body through a pipeline", async () => {
+        const [res, stop] = await served(500_000);
+        try {
+          const out = await $`cat < ${res} | ${BUN} -e ${countStdin}`.text();
+          expect(out).toBe("500000");
+        } finally {
+          stop();
+        }
+      });
+
+      test("marks the body used after redirecting", async () => {
+        const [res, stop] = await served(500_000);
+        try {
+          await $`cat < ${res}`.quiet();
+          expect(res.bodyUsed).toBe(true);
+          await expect($`cat < ${res}`.text()).rejects.toThrow(/already used/i);
+        } finally {
+          stop();
+        }
+      });
+
+      test("accepts a Request body", async () => {
+        const req = new Request("http://x", { method: "POST", body: Buffer.alloc(200_000, "y") });
+        const { stdout } = await $`cat < ${req}`;
+        expect(stdout.length).toBe(200_000);
+      });
+
+      // Bodies that never had a native producer attached, or whose body has
+      // already been taken, have no bytes to buffer; they must throw instead of
+      // running the command on zero bytes.
+      test.each([
+        [
+          "a ReadableStream body",
+          () =>
+            new Response(
+              new ReadableStream({
+                start(c) {
+                  c.enqueue(new TextEncoder().encode("hi"));
+                  c.close();
+                },
+              }),
+            ),
+          /body is a ReadableStream/,
+        ],
+        [
+          "an async-generator body",
+          () =>
+            new Response(
+              (async function* () {
+                yield "hi";
+              })(),
+            ),
+          /body is a ReadableStream/,
+        ],
+        [
+          "an already-consumed body",
+          async () => {
+            const r = new Response("hi");
+            await r.text();
+            return r;
+          },
+          /already used/i,
+        ],
+      ])("rejects %s", async (_name, make, pattern) => {
+        const r = await make();
+        await expect($`cat < ${r}`.text()).rejects.toThrow(pattern);
+      });
+
+      test("stdout redirect to a stream-body Response rejects without the stdin hint", async () => {
+        const body = new ReadableStream({
+          start(c) {
+            c.enqueue(new TextEncoder().encode("x"));
+            c.close();
+          },
+        });
+        const err = await $`echo hi > ${new Response(body)}`.text().then(
+          () => null,
+          e => e,
+        );
+        expect(err?.message).toMatch(/body is a ReadableStream/);
+        expect(err?.message).not.toMatch(/Read it first/);
+      });
+    });
   });
 
   describe("pwd", async () => {

@@ -3684,12 +3684,15 @@ it.each([
 // check there was skipped because internalEnd's own uncork had already
 // released the cork slot.
 describe("Connection: close on an async handler", () => {
-  // Resolves either when the server FINs (correct) or when a second response
+  // Resolves either when the server closes (correct) or when a second response
   // arrives on the same connection (the bug), so a broken server never hangs.
+  // `serverClosed` is true iff the socket closed without us destroying it: on
+  // Windows the second write can draw an RST that pre-empts 'end', so 'close
+  // without client destroy' is the portable signal.
   function exchange(port: number, payload: string) {
     const { promise, resolve } = Promise.withResolvers<{ raw: string; serverClosed: boolean; responses: number }>();
     const chunks: Buffer[] = [];
-    let serverClosed = false;
+    let weDestroyed = false;
     let sentSecond = false;
     const sock = net.connect(port, "127.0.0.1", () => sock.write(payload));
     const raw = () => Buffer.concat(chunks).toString("latin1");
@@ -3701,13 +3704,12 @@ describe("Connection: close on an async handler", () => {
         sock.write("GET /two HTTP/1.1\r\nHost: x\r\n\r\n", err => void err);
       }
       if (responses() > 1) {
+        weDestroyed = true;
         sock.destroy();
-        resolve({ raw: raw(), serverClosed: false, responses: responses() });
       }
     });
-    sock.on("end", () => (serverClosed = true));
     sock.on("error", () => {});
-    sock.on("close", () => resolve({ raw: raw(), serverClosed, responses: responses() }));
+    sock.on("close", () => resolve({ raw: raw(), serverClosed: !weDestroyed, responses: responses() }));
     return promise;
   }
 

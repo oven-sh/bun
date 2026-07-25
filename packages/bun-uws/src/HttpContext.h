@@ -557,6 +557,8 @@ private:
              * parsing further requests on this connection. */
             if (IsNodeHttp && httpContextData->onClientError) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_PARSING_STOPPED;
+                /* Cleared before onClientError, which may close the socket. */
+                httpResponseData->isParsingHttp = false;
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 if (!us_socket_is_closed(s)) {
                     /* Balance the parsing ref taken at the top of onData (the
@@ -583,8 +585,7 @@ private:
         if (returnedData != nullptr) {
             /* Mark that we are no longer parsing Http. httpResponseData is only
              * live when the socket was neither closed nor upgraded in the
-             * handler (both destroy it); every other branch below that still
-             * dereferences it is already gated on returnedData the same way. */
+             * handler (both destroy it). */
             httpResponseData->isParsingHttp = false;
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);

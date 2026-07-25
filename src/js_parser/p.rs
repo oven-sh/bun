@@ -818,12 +818,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         s: &js_ast::e::EString,
         buf: &mut BumpVec<'a, u8>,
     ) -> Result<bool, crate::Error> {
+        let start = buf.len();
         let mut cur: Option<&js_ast::e::EString> = Some(s);
         while let Some(seg) = cur {
             let bytes = seg.string(self.arena)?;
-            // NUL is the in-band placeholder marker; a literal one would be
-            // misread as a wildcard, and filesystem paths cannot contain NUL.
             if bytes.iter().any(|&b| b == 0) {
+                buf.truncate(start);
                 return Ok(false);
             }
             buf.extend_from_slice(bytes);
@@ -914,7 +914,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             _ => {}
         }
         for &b in shape {
-            if matches!(b, b'*' | b'?' | b'[' | b'{' | b'!') {
+            if matches!(b, b'*' | b'?' | b'[' | b'{' | b'!' | b'\\') {
                 return false;
             }
         }

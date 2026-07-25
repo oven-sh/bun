@@ -179,3 +179,100 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+// RFC 9114 s4.1.2: a malformed HTTP/3 message MUST be a *stream* error
+// (H3_MESSAGE_ERROR, 0x10e). lsquic's content-length verifier used to call
+// ci_abort_error on the whole connection instead, so one malformed request
+// tore down every concurrent stream and surfaced on the server session's
+// `closed` as ERR_QUIC_TRANSPORT_ERROR code 1.
+describe("HTTP/3 malformed request (content-length mismatch)", () => {
+  test("resets only the offending stream; sibling streams and the session survive", async () => {
+    const resets: bigint[] = [];
+    const serverClosed = Promise.withResolvers<any>();
+    const sawReset = Promise.withResolvers<void>();
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.onreset = (err: any) => {
+            resets.push(typeof err?.code === "bigint" ? err.code : -1n);
+            sawReset.resolve();
+          };
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.then(
+          () => serverClosed.resolve(null),
+          (e: any) => serverClosed.resolve(e),
+        );
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 2 },
+        onheaders(this: any, headers: Record<string, string>) {
+          if (headers[":path"] === "/good") {
+            this.sendHeaders({ ":status": "200" });
+            this.writer.writeSync("ok");
+            this.writer.endSync();
+          }
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 2 },
+    });
+    await client.opened;
+    client.closed.catch(() => {});
+
+    // content-length says 1000, body ends at 3 bytes.
+    const short = await client.createBidirectionalStream({
+      headers: {
+        ":method": "POST",
+        ":path": "/short",
+        ":scheme": "https",
+        ":authority": "localhost",
+        "content-length": "1000",
+      },
+      body: new TextEncoder().encode("abc"),
+    });
+    short.closed.catch(() => {});
+
+    // content-length says 3, body is 1000 bytes.
+    const over = await client.createBidirectionalStream({
+      headers: {
+        ":method": "POST",
+        ":path": "/over",
+        ":scheme": "https",
+        ":authority": "localhost",
+        "content-length": "3",
+      },
+      body: new Uint8Array(Buffer.alloc(1000, "x")),
+    });
+    over.closed.catch(() => {});
+
+    // A sibling request on the SAME connection, AFTER the malformed ones,
+    // proves the connection survived.
+    const goodAnswered = Promise.withResolvers<string>();
+    const good = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/good", ":scheme": "https", ":authority": "localhost" },
+      onheaders(h: Record<string, string>) {
+        goodAnswered.resolve(h[":status"]);
+      },
+    });
+    good.closed.catch(() => {});
+
+    // Before: the malformed request triggers CONNECTION_CLOSE, so the server
+    // session errors and the sibling request never sees a response.
+    const status = await Promise.race([goodAnswered.promise, serverClosed.promise.then(e => e ?? "closed")]);
+    expect(status).toBe("200");
+
+    // Server surfaces the rejection as stream.onreset with H3_MESSAGE_ERROR.
+    await sawReset.promise;
+    expect(resets.every(c => c === 0x10en)).toBe(true);
+    expect(resets.length).toBeGreaterThanOrEqual(1);
+
+    client.close();
+    expect(await serverClosed.promise).toBe(null);
+  });
+});

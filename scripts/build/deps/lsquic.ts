@@ -128,6 +128,10 @@ export const lsquic: Dependency = {
     // never be encrypted and the peer idled out instead of learning of the
     // close. Select the PNS by handshake progress, as ngtcp2 does.
     "patches/lsquic/connection-close-pns.patch",
+    // verify_cl_on_fin / verify_cl_on_new_data_frame aborted the whole
+    // connection on a content-length mismatch; RFC 9114 s4.1.2 says a
+    // malformed message is a stream error (H3_MESSAGE_ERROR).
+    "patches/lsquic/h3-message-error-stream.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

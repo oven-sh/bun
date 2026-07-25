@@ -358,6 +358,13 @@ impl QuicStream {
             return;
         }
         self.inbound.with_mut(|inbound| {
+            // `on_reset` can fire from inside the same `lsquic_stream_read`
+            // that produced `data` (a locally-detected malformed message
+            // resets mid-read); once `mark_reset` has errored the queue the
+            // bytes belong to the reset and never reach the reader.
+            if inbound.errored {
+                return;
+            }
             if !data.is_empty() {
                 inbound.chunks.push_back(data.to_vec());
             }

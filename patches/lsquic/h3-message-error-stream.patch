@@ -1,0 +1,88 @@
+RFC 9114 s4.1.2: a malformed HTTP/3 message (which includes a request
+whose DATA-frame byte count does not match its content-length header)
+MUST be treated as a stream error of type H3_MESSAGE_ERROR. lsquic's
+verify_cl_on_fin / verify_cl_on_new_data_frame instead call
+ci_abort_error on the whole connection, so one bad request tears down
+every concurrent stream on the same QUIC connection.
+
+Replace the connection abort with a per-stream RESET_STREAM carrying
+HEC_MESSAGE_ERROR and report it via on_reset(how=0) so the application
+observes it the same way as a peer-initiated reset. STREAM_RST_RECVD is
+set so the read state machine reaches a final state and subsequent
+reads return -1 ECONNRESET.
+
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1481,22 +1481,45 @@
+ }
+ 
+ 
++/* bun: RFC 9114 s4.1.2 requires a malformed message to be a *stream* error
++ * (H3_MESSAGE_ERROR), not a connection error.  lsquic originally called
++ * ci_abort_error on the whole connection here, which kills every unrelated
++ * in-flight request.  Reset this stream and report it via on_reset(how=0) so
++ * the application observes it the same way as a peer-initiated reset.
++ * STREAM_RST_RECVD is set so the read state machine reaches a final state and
++ * subsequent reads return -1 ECONNRESET. */
++static void
++stream_reject_malformed (struct lsquic_stream *stream)
++{
++    stream->sm_bflags &= ~SMBF_VERIFY_CL;
++    stream->error_code = HEC_MESSAGE_ERROR;
++    if (!(stream->stream_flags & STREAM_RST_SENT)
++                                    && !(stream->sm_qflags & SMQF_SEND_RST))
++        stream_reset(stream, HEC_MESSAGE_ERROR, 0);
++    stream->stream_flags |= STREAM_RST_RECVD;
++    if (stream->stream_if->on_reset
++                            && !(stream->stream_flags & STREAM_ONCLOSE_DONE)
++                            && !(stream->sm_dflags & SMDF_ONRESET0))
++    {
++        stream->sm_dflags |= SMDF_ONRESET0;
++        stream->stream_if->on_reset(stream, stream->st_ctx, 0);
++    }
++}
++
++
+ static void
+ verify_cl_on_fin (struct lsquic_stream *stream)
+ {
+-    struct lsquic_conn *lconn;
+-
+     /* The rules in RFC7230, Section 3.3.2 are a bit too intricate.  We take
+      * a simple approach and verify content-length only when there was any
+      * payload at all.
+      */
+     if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
+     {
+-        lconn = stream->conn_pub->lconn;
+-        lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
+-            "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
+-            "while content-length specified of %llu", stream->id,
+-            stream->sm_data_in, stream->sm_cont_len);
++        LSQ_INFO("number of bytes in DATA frames of stream %"PRIu64" is %llu, "
++            "while content-length specified %llu; resetting the stream",
++            stream->id, stream->sm_data_in, stream->sm_cont_len);
++        stream_reject_malformed(stream);
+     }
+ }
+ 
+@@ -4894,17 +4917,13 @@
+ verify_cl_on_new_data_frame (struct lsquic_stream *stream,
+                                                     struct hq_filter *filter)
+ {
+-    struct lsquic_conn *lconn;
+-
+     stream->sm_data_in += filter->hqfi_left;
+     if (stream->sm_data_in > stream->sm_cont_len)
+     {
+-        lconn = stream->conn_pub->lconn;
+         filter->hqfi_flags |= HQFI_FLAG_ERROR;
+-        stream->sm_bflags &= ~SMBF_VERIFY_CL;
+-        lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
+-            "number of bytes in DATA frames of stream %"PRIu64" exceeds "
++        LSQ_INFO("number of bytes in DATA frames of stream %"PRIu64" exceeds "
+             "content-length limit of %llu", stream->id, stream->sm_cont_len);
++        stream_reject_malformed(stream);
+     }
+ }
+ 

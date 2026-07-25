@@ -466,6 +466,83 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// https://github.com/oven-sh/bun/issues/9859
+describe.concurrent("--no-bundle with --outdir", () => {
+  test("writes a single entry point", async () => {
+    using dir = tempDir("no-bundle-outdir-single", {
+      "src/app.tsx": `export const App = () => <div>app</div>;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.tsx", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("app.js");
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(out).toContain("jsx");
+    expect(out).toContain("app");
+  });
+
+  test("writes multiple entry points", async () => {
+    using dir = tempDir("no-bundle-outdir-multi", {
+      "src/main.tsx": `import { App } from "./app";\nexport const Main = () => <div><App /></div>;\n`,
+      "src/app.tsx": `export const App = () => <div>app</div>;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/main.tsx", "./src/app.tsx", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("main.js");
+    expect(stdout).toContain("app.js");
+    expect(exitCode).toBe(0);
+
+    expect(fs.readdirSync(path.join(String(dir), "dist")).sort()).toEqual(["app.js", "main.js"]);
+
+    const main = await Bun.file(path.join(String(dir), "dist", "main.js")).text();
+    const app = await Bun.file(path.join(String(dir), "dist", "app.js")).text();
+    expect(main).toContain('from "./app"');
+    expect(app).toContain("app");
+  });
+
+  test("preserves nested directory structure relative to the source root", async () => {
+    using dir = tempDir("no-bundle-outdir-nested", {
+      "src/main.ts": `export const main = 1;\n`,
+      "src/nested/deep.ts": `export const deep = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/main.ts", "./src/nested/deep.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    const main = await Bun.file(path.join(String(dir), "dist", "main.js")).text();
+    const deep = await Bun.file(path.join(String(dir), "dist", "nested", "deep.js")).text();
+    expect(main).toContain("main");
+    expect(deep).toContain("deep");
+    expect(stdout).toContain("main.js");
+    expect(stdout).toContain(path.join("nested", "deep.js"));
+  });
+});
+
 describe("CLI argument error messages", () => {
   test("--format with an unrecognized value echoes the value back", async () => {
     using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });

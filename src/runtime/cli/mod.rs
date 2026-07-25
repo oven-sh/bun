@@ -955,8 +955,6 @@ pub mod command {
         }
     }
 
-    /// # Safety
-    /// Single-threaded CLI startup; stores into the process-global argv slot.
     #[cold]
     #[inline(never)]
     unsafe fn translate_npm_argv() {
@@ -1197,8 +1195,6 @@ pub mod command {
         unsafe { bun::set_argv(stored) };
     }
 
-    /// # Safety
-    /// Single-threaded CLI startup; stores into the process-global argv slot.
     #[cold]
     #[inline(never)]
     unsafe fn translate_npx_argv() {

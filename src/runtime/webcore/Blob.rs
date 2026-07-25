@@ -4348,7 +4348,12 @@ pub extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 #[unsafe(no_mangle)]
 pub extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
     if let Some(filename) = this.get_file_name() {
-        return BunString::from_bytes(filename);
+        let name = if this.needs_to_read_file() || this.is_s3() {
+            bun_paths::basename(filename)
+        } else {
+            filename
+        };
+        return BunString::from_bytes(name);
     }
     BunString::empty()
 }

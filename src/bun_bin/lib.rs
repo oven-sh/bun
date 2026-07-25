@@ -81,7 +81,19 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // `leak:uws_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
-    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    //
+    // Windows: `/GF` string pooling and COFF COMDAT folding give distinct
+    // per-TU ASAN global registrations the same address, which the ODR
+    // checker reports as a violation at startup. The linker-side folds are
+    // already gated off for ASAN (flags.ts SAFEICF/lldtailmerge), but `/GF`
+    // is per-TU at compile time and there is no COFF equivalent of ELF's
+    // odr-indicator, so disable the check. LSan is not implemented on
+    // Windows; leaving detect_leaks=0 keeps the option string uniform.
+    if cfg!(windows) {
+        c"detect_stack_use_after_return=0:detect_leaks=0:detect_odr_violation=0".as_ptr()
+    } else {
+        c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    }
 }
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`
@@ -175,8 +187,13 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     // (env conversion).
     #[cfg(windows)]
     {
+        // Under ASAN the `#[global_allocator]` is `System`, so routing libuv
+        // through mimalloc would give it a different heap than the rest of
+        // the process and hide its allocations from the interceptor. Leave
+        // libuv on the CRT allocator (ASAN-intercepted) in that build.
         // SAFETY: mimalloc fns match the libuv allocator signatures; called
         // exactly once before any uv handle is created.
+        #[cfg(not(bun_asan))]
         unsafe {
             let _ = bun_sys::windows::libuv::uv_replace_allocator(
                 Some(bun_alloc::mimalloc::mi_malloc),

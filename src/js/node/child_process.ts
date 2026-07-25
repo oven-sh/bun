@@ -151,7 +151,7 @@ function spawn(file, args, options) {
           child.emit("error", err);
         }
       }
-    }, timeout).unref();
+    }, timeout);
 
     const clear = () => {
       if (timeoutId) {
@@ -339,7 +339,7 @@ function execFile(file, args, options, callback) {
     timeoutId = setTimeout(function delayedKill() {
       timeoutId = null;
       kill();
-    }, optionsTimeout).unref();
+    }, optionsTimeout);
   }
 
   function addOnDataListener(child_buffer, _buffer, kind) {

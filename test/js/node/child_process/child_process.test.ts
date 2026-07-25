@@ -290,6 +290,67 @@ describe("spawn()", () => {
     expect(end! - start < 2000).toBe(true);
   });
 
+  it("timeout kill timer keeps the event loop alive when the child is unref'd (Node.js parity)", async () => {
+    // Node's spawn/execFile timeout timers are ref'd: if the user unref()s the child, the
+    // parent must still stay alive until the deadline, deliver the kill, then exit.
+    const parent = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], {
+        stdio: "ignore",
+        timeout: 500,
+        killSignal: "SIGKILL",
+      });
+      process.stdout.write(String(c.pid) + "\\n");
+      c.unref();
+    `;
+    const start = performance.now();
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", parent], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const parentLivedMs = performance.now() - start;
+    expect(stderr).toBe("");
+    const grandchildPid = parseInt(stdout.trim(), 10);
+    expect(Number.isFinite(grandchildPid) && grandchildPid > 0).toBe(true);
+
+    const isAlive = (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let alive = isAlive(grandchildPid);
+    for (let i = 0; alive && i < 40; i++) {
+      await Bun.sleep(25);
+      alive = isAlive(grandchildPid);
+    }
+    try {
+      if (alive) process.kill(grandchildPid, "SIGKILL");
+    } catch {}
+
+    expect({ grandchildAlive: alive, parentWaitedForTimeout: parentLivedMs >= 400 }).toEqual({
+      grandchildAlive: false,
+      parentWaitedForTimeout: true,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("timeout kill timer is cleared when the child exits early, releasing the loop", async () => {
+    const parent = `
+      const { spawn } = require("node:child_process");
+      const c = spawn(process.execPath, ["-e", ""], { stdio: "ignore", timeout: 30000 });
+      c.unref();
+    `;
+    const start = performance.now();
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", parent], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const parentLivedMs = performance.now() - start;
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(parentLivedMs).toBeLessThan(15000);
+    expect(exitCode).toBe(0);
+  });
+
   it("should allow us to set env", async () => {
     async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {

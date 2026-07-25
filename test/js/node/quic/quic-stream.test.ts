@@ -207,7 +207,13 @@ describe("HTTP/3 duplicate field lines", () => {
             // generic multi-value: joins with ", "
             "x-multi": ["one", "two", "three"],
           });
+          this.writer.writeSync(new TextEncoder().encode("body"));
           this.writer.endSync();
+        },
+        onwanttrailers(this: any) {
+          // sendTrailers doesn't enforce strict single-value, so this reaches
+          // the wire as two field lines and exercises the discard branch.
+          this.sendTrailers({ "content-type": ["text/html", "text/plain"] });
         },
       },
     );
@@ -220,7 +226,8 @@ describe("HTTP/3 duplicate field lines", () => {
     await client.opened;
 
     const clientSaw = Promise.withResolvers<Record<string, unknown>>();
-    await client.createBidirectionalStream({
+    const clientTrailers = Promise.withResolvers<Record<string, unknown>>();
+    const stream = await client.createBidirectionalStream({
       headers: {
         ":method": "GET",
         ":path": "/",
@@ -235,7 +242,12 @@ describe("HTTP/3 duplicate field lines", () => {
       onheaders(headers: Record<string, unknown>) {
         clientSaw.resolve(headers);
       },
+      ontrailers(trailers: Record<string, unknown>) {
+        clientTrailers.resolve(trailers);
+      },
     });
+    for await (const _ of stream) {
+    }
 
     const serverHeaders = await serverSaw.promise;
     expect({
@@ -255,6 +267,10 @@ describe("HTTP/3 duplicate field lines", () => {
       "set-cookie": ["a=1", "b=2"],
       "x-multi": "one, two, three",
     });
+
+    // known single-value field duplicated: first value wins, second discarded
+    const trailers = await clientTrailers.promise;
+    expect(trailers["content-type"]).toBe("text/html");
 
     client.close();
   });

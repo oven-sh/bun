@@ -1343,10 +1343,7 @@ describe("--env-file", () => {
         `@echo off\r\nnode "%~dp0..\\${name}\\cli.js" %*\r\n`,
       );
     } else {
-      await writeFile(
-        join(dir, "node_modules", ".bin", name),
-        `#!/usr/bin/env node\nrequire("../${name}/cli.js");\n`,
-      );
+      await writeFile(join(dir, "node_modules", ".bin", name), `#!/usr/bin/env node\nrequire("../${name}/cli.js");\n`);
       chmodSync(join(dir, "node_modules", name, "cli.js"), 0o755);
       chmodSync(join(dir, "node_modules", ".bin", name), 0o755);
     }

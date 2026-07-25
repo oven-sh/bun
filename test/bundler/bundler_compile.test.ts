@@ -1309,11 +1309,7 @@ ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t bufsiz) {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      build.stdout.text(),
-      build.stderr.text(),
-      build.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
     expect({ stdout, stderr }).toEqual({
       stdout: expect.not.stringContaining("/run/host_virtiofs"),
       stderr: expect.not.stringContaining("failed to rename"),

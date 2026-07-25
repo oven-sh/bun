@@ -3453,11 +3453,19 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!bufferWriteVarWidthCheckValue(lexicalGlobalObject, scope, number, byteLength, isSigned)) [[unlikely]]
-        return {};
-
-    if (!offsetValue.isNumber()) [[unlikely]]
-        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "offset"_s, "number"_s, offsetValue);
+    // The one-byte writers dispatch to writeU_Int8(), which validates the offset before the value's
+    // range; wider widths go through checkInt(), which is the other way around.
+    if (byteLength == 1) {
+        if (!bufferAccessCheckOffsetType(lexicalGlobalObject, scope, offsetValue)) [[unlikely]]
+            return {};
+        if (!bufferWriteVarWidthCheckValue(lexicalGlobalObject, scope, number, byteLength, isSigned)) [[unlikely]]
+            return {};
+    } else {
+        if (!bufferWriteVarWidthCheckValue(lexicalGlobalObject, scope, number, byteLength, isSigned)) [[unlikely]]
+            return {};
+        if (!bufferAccessCheckOffsetType(lexicalGlobalObject, scope, offsetValue)) [[unlikely]]
+            return {};
+    }
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
     if (!view) [[unlikely]] {
         bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());

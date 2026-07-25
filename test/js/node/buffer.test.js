@@ -4895,6 +4895,12 @@ describe("read*/write* after JIT tier-up", () => {
       ),
     ).toBe("ERR_OUT_OF_RANGE");
     expect(valueOfCalls).toBe(0);
+    // With both a bad value and a bad offset: the one-byte writers (writeU_Int8) report the offset
+    // first, the wider ones (checkInt) the value first.
+    expect(codeOf(() => scratch.writeUIntLE(300, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
+    expect(codeOf(() => scratch.writeIntLE(200, "bad", 1))).toBe("ERR_INVALID_ARG_TYPE");
+    expect(codeOf(() => scratch.writeUIntLE(2 ** 24, "bad", 2))).toBe("ERR_OUT_OF_RANGE");
+    expect(codeOf(() => scratch.writeIntBE(2 ** 24, "bad", 3))).toBe("ERR_OUT_OF_RANGE");
     // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
     expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");

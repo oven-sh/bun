@@ -727,4 +727,87 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
 
     expect(f.name).toBe(filePath);
   });
+
+  describe("sliced Bun.file() as a destination", () => {
+    async function tryWrite(fn) {
+      try {
+        return { err: null, result: await fn() };
+      } catch (err) {
+        return { err, result: null };
+      }
+    }
+
+    it.each([
+      ["slice(5)", f => f.slice(5), "XY"],
+      ["slice(5, 7)", f => f.slice(5, 7), "XY"],
+      ["slice(5, 6) with oversized data", f => f.slice(5, 6), "ABCDEFGHIJKLMNOP"],
+    ])("Bun.write rejects %s and leaves the file intact", async (_label, slicer, payload) => {
+      using dir = tempDir("bun-write-sliced-dest", { "f.txt": "0123456789" });
+      const p = join(String(dir), "f.txt");
+      const dest = slicer(Bun.file(p));
+
+      const { err } = await tryWrite(() => Bun.write(dest, payload));
+      expect({ err, after: fs.readFileSync(p, "utf8") }).toEqual({
+        err: expect.any(TypeError),
+        after: "0123456789",
+      });
+      expect(err.message).toContain("sliced");
+    });
+
+    it("file.slice().write() rejects and leaves the file intact", async () => {
+      using dir = tempDir("bun-write-sliced-dest-instance", { "f.txt": "0123456789" });
+      const p = join(String(dir), "f.txt");
+
+      const { err } = await tryWrite(() => Bun.file(p).slice(5, 7).write("XY"));
+      expect({ err, after: fs.readFileSync(p, "utf8") }).toEqual({
+        err: expect.any(TypeError),
+        after: "0123456789",
+      });
+      expect(err.message).toContain("sliced");
+    });
+
+    it("large (non-fast-path) payload to a sliced destination is rejected", async () => {
+      using dir = tempDir("bun-write-sliced-dest-large", { "f.txt": "0123456789" });
+      const p = join(String(dir), "f.txt");
+      const big = Buffer.alloc(512 * 1024, "Z");
+
+      const { err } = await tryWrite(() => Bun.write(Bun.file(p).slice(5), big));
+      expect({ err, after: fs.readFileSync(p, "utf8") }).toEqual({
+        err: expect.any(TypeError),
+        after: "0123456789",
+      });
+    });
+
+    it("Bun.file as a source is rejected too", async () => {
+      using dir = tempDir("bun-write-sliced-dest-file-src", {
+        "dst.txt": "0123456789",
+        "src.txt": "abcdefghij",
+      });
+      const dst = join(String(dir), "dst.txt");
+      const src = join(String(dir), "src.txt");
+
+      const { err } = await tryWrite(() => Bun.write(Bun.file(dst).slice(5), Bun.file(src)));
+      expect({ err, after: fs.readFileSync(dst, "utf8") }).toEqual({
+        err: expect.any(TypeError),
+        after: "0123456789",
+      });
+    });
+
+    it("un-sliced Bun.file() still works after reading .size", async () => {
+      using dir = tempDir("bun-write-unsliced-after-size", { "f.txt": "0123456789" });
+      const p = join(String(dir), "f.txt");
+      const f = Bun.file(p);
+      expect(f.size).toBe(10);
+
+      const written = await Bun.write(f, "hello world, this is longer than before");
+      expect(fs.readFileSync(p, "utf8")).toBe("hello world, this is longer than before");
+      expect(written).toBe(39);
+    });
+
+    it("in-memory Blob slice destination is still rejected with the bytes message", async () => {
+      const { err } = await tryWrite(() => Bun.write(new Blob(["0123456789"]).slice(5, 7), "XY"));
+      expect(err).toBeInstanceOf(TypeError);
+      expect(err.message).toContain("backed by bytes");
+    });
+  });
 });

@@ -5015,6 +5015,16 @@ pub fn write_file_internal(
         // TODO only reset last_modified on success paths instead of resetting
         // last_modified at the beginning for better performance.
         if let store::Data::File(ref mut file) = *blob_store.data_mut() {
+            // A sliced Bun.file() (non-zero offset) would have its window
+            // ignored: the destination is opened with O_TRUNC and written from
+            // position 0, silently replacing the whole file. Reject up front
+            // rather than destroy data. `offset` is only ever non-zero via
+            // `.slice()`, so this has no false positives.
+            if blob.offset.get() != 0 {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "Cannot write to a sliced Bun.file(). Writing at an offset is not supported; write to the un-sliced file instead."
+                )));
+            }
             file.last_modified = jsc::INIT_TIMESTAMP;
         }
     }

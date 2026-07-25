@@ -302,6 +302,34 @@ test("static import with a #fragment keys the module cache per fragment", async 
   expect(exitCode).toBe(0);
 });
 
+// A `/` inside the fragment (`#/definitions/Foo`, `#/route`) must not leak into
+// the referrer's directory when the fragment-loaded module resolves its own
+// relative imports.
+test("relative imports inside a module loaded with a #fragment containing / resolve", async () => {
+  using dir = tempDir("import-fragment-slash-referrer", {
+    "b.mjs": `export default 42;`,
+    "a.mjs": `import v from "./b.mjs"; export default v;`,
+    "entry.mjs": `
+      const u = new URL("./a.mjs", import.meta.url).href;
+      const viaURL = await import(u + "#/ptr");
+      const viaRel = await import("./a.mjs#/ptr");
+      const viaQuery = await import("./a.mjs?v/1");
+      console.log(JSON.stringify({ viaURL: viaURL.default, viaRel: viaRel.default, viaQuery: viaQuery.default }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({ viaURL: 42, viaRel: 42, viaQuery: 42 });
+  expect(exitCode).toBe(0);
+});
+
 // `#` is a legal filename byte. A resolved module key with a `#` that came
 // from the filesystem path (not from a specifier fragment) must round-trip
 // through the loader intact.

@@ -3070,10 +3070,13 @@ pub fn collect_macro_vm_garbage() {
 }
 
 fn normalize_source(source: &[u8]) -> &[u8] {
-    if let Some(rest) = source.strip_prefix(b"file://") {
-        return rest;
+    let source = source.strip_prefix(b"file://".as_slice()).unwrap_or(source);
+    // A referring module's key may carry a `?query#frag` suffix; strip it so
+    // `dir_with_trailing_slash` doesn't latch onto a `/` inside the suffix.
+    match bun_core::strings::index_of_char_usize(source, b'?') {
+        Some(i) => &source[..i],
+        None => source,
     }
-    source
 }
 
 /// `bun.String.createIfDifferent` — `clone_utf8(other)` unless `other` is

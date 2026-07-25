@@ -4841,10 +4841,15 @@ fn normalize_specifier_for_resolution<'a>(
     }
 }
 
-/// Strip a `file://` prefix.
+/// Strip a `file://` prefix and any `?query#frag` module-key suffix so
+/// `dir_with_trailing_slash` doesn't latch onto a `/` inside the suffix.
 #[inline]
 fn normalize_source(source: &[u8]) -> &[u8] {
-    source.strip_prefix(b"file://".as_slice()).unwrap_or(source)
+    let source = source.strip_prefix(b"file://".as_slice()).unwrap_or(source);
+    match bun_core::strings::index_of_char_usize(source, b'?') {
+        Some(i) => &source[..i],
+        None => source,
+    }
 }
 
 /// `VirtualMachine._resolve`.

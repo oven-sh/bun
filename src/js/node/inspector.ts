@@ -36,14 +36,16 @@ const waitForNodeInspectorConnection = $newCppFunction(
 );
 const postNodeInspectorControl = $newCppFunction("BunDebugger.cpp", "jsFunction_postNodeInspectorControl", 1);
 const closeNodeInspector = $newCppFunction("BunDebugger.cpp", "jsFunction_closeNodeInspector", 0);
-// Reads the debugger-thread server URL from the shared nodeInspectorState,
-// which both inspector.open() and CLI --inspect publish into. This is the
-// single source of truth for "is an inspector listening and where".
-const getNodeInspectorUrl = $newCppFunction("BunDebugger.cpp", "jsFunction_getNodeInspectorUrl", 0);
+const nativeGetNodeInspectorUrl = $newCppFunction("BunDebugger.cpp", "jsFunction_getNodeInspectorUrl", 0);
 
-// Node writes the --inspect port to process.debugPort at bootstrap; Bun's
-// debugPort is otherwise a static 9229. Reflect the CLI server's port here so
-// tools that probe process.debugPort under `bun --inspect` see the real one.
+// The ws:// URL published by inspector.open() or CLI --inspect, or undefined.
+// nodeInspectorState is process-global, so a Worker must not read or act on the
+// main thread's server: Node's per-worker inspectors are independent (and Bun
+// does not support them yet).
+const getNodeInspectorUrl = Bun.isMainThread ? nativeGetNodeInspectorUrl : () => undefined;
+
+// Reflect the CLI --inspect port in process.debugPort, like Node does at
+// bootstrap (Bun's debugPort is otherwise a static 9229).
 {
   const initialUrl = getNodeInspectorUrl();
   if (typeof initialUrl === "string") {
@@ -93,9 +95,8 @@ function open(port?: number, host?: string, wait?: boolean) {
     return disposable;
   }
   if (resolvedUrl === null) {
-    // A listening server is caught by the top guard above, so null here means
-    // a debugger thread exists that is not serving a WebSocket (BUN_INSPECT
-    // connect-mode, or a worker).
+    // The top guard above catches a listening server; null here means a
+    // debugger thread exists without one (BUN_INSPECT connect-mode).
     throw $ERR_INSPECTOR_ALREADY_ACTIVATED();
   }
 
@@ -114,6 +115,9 @@ function open(port?: number, host?: string, wait?: boolean) {
 }
 
 function close() {
+  if (!Bun.isMainThread) {
+    throw $ERR_WORKER_UNSUPPORTED_OPERATION("inspector.close() is not supported in workers");
+  }
   if (getNodeInspectorUrl() === undefined) {
     return;
   }

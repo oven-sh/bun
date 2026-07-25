@@ -184,6 +184,52 @@ process.exit(0);
   expect(exitCode).toBe(0);
 });
 
+// nodeInspectorState is process-global; a Worker must not see or control the
+// main thread's --inspect server through node:inspector.
+test("inspector.url()/close() in a Worker do not reach the main thread's --inspect server", async () => {
+  using dir = tempDir("inspector-cli-worker", {
+    "fixture.mjs": `
+const inspector = require("node:inspector");
+const { Worker } = require("node:worker_threads");
+const mainUrl = inspector.url();
+const worker = new Worker("./worker.mjs");
+const fromWorker = await new Promise(resolve => worker.on("message", resolve));
+// The worker's close() must not have shut down the main thread's server.
+const urlAfterWorker = inspector.url();
+console.log(JSON.stringify({ mainUrl, urlAfterWorker, ...fromWorker }));
+inspector.close();
+await worker.terminate();
+`,
+    "worker.mjs": `
+const inspector = require("node:inspector");
+const { parentPort } = require("node:worker_threads");
+let closeCode = null;
+try { inspector.close(); } catch (e) { closeCode = e.code; }
+let waitCode = null;
+try { inspector.waitForDebugger(); } catch (e) { waitCode = e.code; }
+parentPort.postMessage({ workerUrl: inspector.url() ?? null, closeCode, waitCode });
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0", "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(summary).toEqual({
+    mainUrl: expect.stringMatching(/^ws:\/\/127\.0\.0\.1:\d+\//),
+    urlAfterWorker: summary.mainUrl,
+    workerUrl: null,
+    closeCode: "ERR_WORKER_UNSUPPORTED_OPERATION",
+    waitCode: "ERR_INSPECTOR_NOT_ACTIVE",
+  });
+});
+
 // inspector.open() starts a WebSocket server speaking the V8 Chrome DevTools
 // Protocol (translated to JSC's inspector protocol on the debugger thread).
 // The fixture opens the inspector, talks to its own server as a CDP client,

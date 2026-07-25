@@ -780,12 +780,9 @@ extern "C" bool Debugger__startNodeInspectorServer(BunString* url, bool waitForC
 extern "C" void Debugger__waitForNodeInspectorConnection();
 extern "C" void Debugger__abandonNodeInspectorWait();
 
-// node:inspector's inspector.url(): the listening ws:// URL of whichever
-// debugger-thread server is active (inspector.open() or CLI --inspect), or
-// undefined when none is. The Rust-side futex in
-// Debugger::wait_for_debugger_if_necessary guarantees the CLI server has
-// already reported (or decided not to) before user code runs, so no wait is
-// needed here.
+// node:inspector's inspector.url(): the ws:// URL published by inspector.open()
+// or CLI --inspect, or undefined. The Rust-side futex guarantees the CLI server
+// has already reported before user code runs, so no wait is needed here.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_getNodeInspectorUrl, (JSGlobalObject * globalObject, CallFrame*))
 {
     auto& vm = JSC::getVM(globalObject);

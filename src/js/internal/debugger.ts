@@ -114,21 +114,13 @@ export default function (
   reportNodeInspectorServerStarted: (url: string, controlCallback?: (message: string) => void, error?: string) => void,
 ): void {
   if (urlIsServer) {
-    // Mark serverStarted so node:inspector's url() (which consults the same
-    // nodeInspectorState) does not wait on a server that will never listen.
-    reportNodeInspectorServerStarted("", undefined, "connect-mode");
     connectToUnixServer(executionContextId, url, createBackend, send, close);
     return;
   }
 
-  // Shared node:inspector control surface. `debug` is whichever server is
-  // currently listening on this debugger thread, started either by CLI
-  // --inspect (the JSC-protocol server below) or by inspector.open() (a CDP
-  // server). The control callback lets the inspected thread close it, reopen
-  // it as a CDP server, and forward Debugger.* commands from the in-process
-  // inspector.Session. The backend connection underneath is JSC-protocol in
-  // both cases, so "command" forwarding goes through the CDP adapter
-  // regardless of which protocol `debug` serves to its own clients.
+  // node:inspector control callback shared by the CLI --inspect server below
+  // and inspector.open()'s CDP server: the inspected thread sends close /
+  // reopen / forwarded Debugger.* commands through it.
   let debug: Debugger | undefined;
   let sessionBackend: Backend | undefined;
   let sessionAdapter: any;
@@ -210,11 +202,8 @@ export default function (
   };
 
   if (isNodeInspector) {
-    // node:inspector's inspector.open(): connections speak the V8 Chrome
-    // DevTools Protocol, the listening URL is reported back to the inspected
-    // thread (which prints Node's "Debugger listening on ..." line), and the
-    // control callback above lets the inspected thread close the server or
-    // forward commands from the in-process inspector.Session.
+    // inspector.open(): connections speak the V8 Chrome DevTools Protocol and
+    // the listening URL is reported back so the inspected thread can print it.
     try {
       debug = new Debugger(executionContextId, url, createBackend, send, close, true);
     } catch (error) {
@@ -235,15 +224,10 @@ export default function (
     exit("Failed to start inspector:\n", error);
   }
 
-  // Publish the CLI --inspect server's URL and control callback into the same
-  // nodeInspectorState that inspector.open() uses, so node:inspector's url()/
-  // close()/waitForDebugger() see and can shut down the CLI-started server.
-  // Connect-mode (unix:/fd:/tcp: URLs) has no listen URL; report it as
-  // "no server" so inspector.url() stays undefined for those.
+  // Publish the CLI --inspect server to node:inspector so url()/close()/
+  // waitForDebugger() see it. Connect-mode (unix:/fd:/tcp:) has no listen URL.
   if (debug!.url) {
     reportNodeInspectorServerStarted(debug!.url.href, control, undefined);
-  } else {
-    reportNodeInspectorServerStarted("", undefined, "connect-mode");
   }
 
   // If the user types --inspect, we print the URL to the console.

@@ -60,10 +60,10 @@ const u32be = (n: number) => {
 };
 
 // HPACK static-table indices we need.
-const hpackStatus = (code: 100 | 200 | 204 | 404) =>
+const hpackStatus = (code: 100 | 200 | 204) =>
   code === 100
     ? Buffer.concat([Buffer.from([0x10, 7]), Buffer.from(":status"), Buffer.from([3]), Buffer.from("100")])
-    : Buffer.from([0x80 | { 200: 8, 204: 9, 404: 13 }[code]]);
+    : Buffer.from([0x80 | { 200: 8, 204: 9 }[code]]);
 // Literal field never-indexed, new name (4-bit prefix 0001 0000): len(name) name len(value) value.
 const hpackLit = (name: string, value: string) =>
   Buffer.concat([Buffer.from([0x10, name.length]), Buffer.from(name), Buffer.from([value.length]), Buffer.from(value)]);

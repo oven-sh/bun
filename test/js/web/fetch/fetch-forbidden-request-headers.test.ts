@@ -146,6 +146,30 @@ describe("fetch() forbidden hop-by-hop request headers", () => {
     expect(headerValue(lines, "transfer-encoding")).toBe("chunked");
   });
 
+  test("Upgrade past the request-header cap with a stream body does not desync framing", async () => {
+    // The JS-thread reads Upgrade by name (uncapped); build_request must set
+    // upgrade_state before the cap drops the header so the two sides agree.
+    await using origin = rawOrigin(() => true);
+    const port = await origin.listen();
+    const headers: Record<string, string> = { upgrade: "websocket" };
+    for (let i = 0; i < 256; i++) headers["a-" + i] = "x";
+    async function* body() {
+      yield new TextEncoder().encode("hello");
+    }
+    const res = await fetch(`http://127.0.0.1:${port}/x`, {
+      method: "POST",
+      headers,
+      body: body(),
+      // @ts-expect-error bun-specific
+      duplex: "half",
+    });
+    expect(await res.text()).toBe("OK");
+    const lines = origin.state.head.split("\r\n");
+    // The wire must not declare chunked: body framing is raw on this path.
+    expect(headerValue(lines, "transfer-encoding")).toBeUndefined();
+    expect(headerValue(lines, "connection")).toBe("Upgrade");
+  });
+
   test("Upgrade: websocket is preserved and Connection is normalized to 'Upgrade'", async () => {
     // Bun's fetch() supports protocol upgrade (PR #22390). The Upgrade token passes through,
     // but the Connection header is rewritten to exactly "Upgrade" so a caller cannot smuggle

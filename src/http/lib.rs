@@ -573,8 +573,8 @@ pub fn hash_header_name(name: &[u8]) -> u64 {
 
 /// Shared by `build_request` and the JS-thread `upgraded_connection` check so header and body framing agree.
 pub fn upgrade_header_offers_h2(value: &[u8]) -> bool {
-    for token in value.split(|&b| b == b',') {
-        let token = bun_core::strings::trim(token, b" \t");
+    let mut it = HeaderValueIterator::init(value);
+    while let Some(token) = it.next() {
         if bun_core::strings::eql_any_case_insensitive_ascii(token, &[b"h2", b"h2c"]) {
             return true;
         }
@@ -2422,9 +2422,8 @@ impl<'a> HTTPClient<'a> {
                     if upgrade_header_offers_h2(self.header_str(header_values[i])) {
                         continue;
                     }
-                    if will_append {
-                        self.flags.upgrade_state = HTTPUpgradeState::Pending;
-                    }
+                    // Set regardless of `will_append`: body framing on the JS thread keys on the same header, uncapped.
+                    self.flags.upgrade_state = HTTPUpgradeState::Pending;
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name())
                     || h == hash_header_const(b"Keep-Alive")

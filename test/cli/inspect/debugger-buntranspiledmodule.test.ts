@@ -213,13 +213,13 @@ test("t", () => { expect(x).toBe(1); });
   }
 }
 
-test("bun test --isolate: Debugger.scriptParsed reports module and breakpoints resolve", async () => {
+test.concurrent("bun test --isolate: Debugger.scriptParsed reports module and breakpoints resolve", async () => {
   await runDebuggerProbe(["--isolate"], "BunTranspiledModule");
 });
 
 // Sanity: without --isolate the provider is plain Module, the isolation cache
 // is empty (hence null), and this has always worked; pinning it alongside
 // ensures the --isolate case is being compared against the correct baseline.
-test("bun test (no --isolate): Debugger.scriptParsed reports module and breakpoints resolve", async () => {
+test.concurrent("bun test (no --isolate): Debugger.scriptParsed reports module and breakpoints resolve", async () => {
   await runDebuggerProbe([], null);
 });

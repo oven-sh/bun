@@ -338,6 +338,8 @@ pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
     pub const BUILD: usize = 0;
+    /// The range literal was exactly `*`.
+    pub const STAR: usize = 2;
 }
 
 pub struct Group {
@@ -484,9 +486,20 @@ impl Group {
             && !self.flags.is_set(Flags::BUILD)
     }
 
+    /// The range literal was exactly `*`, unlike [`Group::is_star`] which also
+    /// matches equivalent shapes like `>=0.0.0` and `x`. npm only treats the
+    /// literal `*` as "the `latest` dist-tag".
+    #[inline]
+    pub fn is_star_literal(&self) -> bool {
+        self.flags.is_set(Flags::STAR)
+    }
+
     #[inline]
     pub fn eql(&self, rhs: &Group) -> bool {
-        self.head.eql(&rhs.head)
+        // The literal `*` resolves differently from structurally identical
+        // ranges like `>=0.0.0` (it prefers the `latest` dist-tag), so
+        // star-ness is part of query equality.
+        self.is_star_literal() == rhs.is_star_literal() && self.head.eql(&rhs.head)
     }
 
     pub fn to_version(&self) -> Version {
@@ -812,6 +825,13 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
         tail: None,
         flags: FlagsBitSet::init_empty(),
     };
+
+    // npm special-cases the literal range `*` (it resolves to the `latest`
+    // dist-tag); record it here because the parsed form (`>=0.0.0`) is
+    // indistinguishable from ranges npm does not special-case, like `x`.
+    if strings::trim(input, &strings::WHITESPACE_CHARS) == b"*" {
+        list.flags.set_value(Flags::STAR, true);
+    }
 
     let mut token = Token::default();
 

@@ -213,14 +213,15 @@ describe("0-RTT rejected", () => {
         },
         { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["echo"] },
       );
-      return { ep, got, barrier };
+      return { ep, got, barrier, [Symbol.asyncDispose]: () => ep.close() };
     };
 
-    const a = await makeServer();
     const gotTicket = Promise.withResolvers<Buffer>();
+    let ticket: Buffer;
     let token: Buffer | undefined;
     {
-      const c = await connect(a.ep.address, {
+      await using a = await makeServer();
+      await using c = await connect(a.ep.address, {
         alpn: "echo",
         verifyPeer: "manual",
         reuseEndpoint: false,
@@ -229,15 +230,12 @@ describe("0-RTT rejected", () => {
       });
       await c.opened;
       await readAll(await c.createBidirectionalStream({ body: Buffer.from("first") }));
-      var ticket = await gotTicket.promise;
-      c.close();
-      await c.closed.catch(() => {});
+      ticket = await gotTicket.promise;
     }
-    await a.ep.close();
 
-    const b = await makeServer();
+    await using b = await makeServer();
     let earlyRejectedFired = false;
-    const c = await connect(b.ep.address, {
+    await using c = await connect(b.ep.address, {
       alpn: "echo",
       verifyPeer: "manual",
       reuseEndpoint: false,
@@ -259,7 +257,7 @@ describe("0-RTT rejected", () => {
     // The client-side early stream is destroyed with an application error.
     const err = await earlyClose;
     expect(err?.code).toBe("ERR_QUIC_APPLICATION_ERROR");
-    await expect(readAll(early)).rejects.toThrow();
+    await expect(readAll(early)).rejects.toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
 
     // The documented re-open: this is the one delivery the server must see.
     const echoed = await readAll(await c.createBidirectionalStream({ body: Buffer.from("PAY-ORDER-42") }));
@@ -268,9 +266,6 @@ describe("0-RTT rejected", () => {
     // The re-open reached the server; any retransmitted 0-RTT stream that
     // was going to arrive has arrived by now (same path, lower stream id).
     await b.barrier.promise;
-    c.close();
-    await c.closed.catch(() => {});
-    await b.ep.close();
 
     expect(b.got).toEqual(["PAY-ORDER-42"]);
     expect(earlyRejectedFired).toBe(true);

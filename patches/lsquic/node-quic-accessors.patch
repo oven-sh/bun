@@ -1391,7 +1391,7 @@
      if (0 == (conn->ifc_flags & IFC_IMMEDIATE_CLOSE_FLAGS))
          if (0 != conn->ifc_process_incoming_packet(conn, packet_in))
              conn->ifc_flags |= IFC_ERROR;
-@@ -8342,10 +8642,28 @@
+@@ -8342,10 +8642,32 @@
      struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
  
      LSQ_DEBUG("early data failed");
@@ -1412,7 +1412,11 @@
 +void
 +lsquic_conn_drop_0rtt_packets (struct lsquic_conn *lconn)
 +{
-+    struct ietf_full_conn *conn = (struct ietf_full_conn *) lconn;
++    struct ietf_full_conn *conn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF)) != LSCONN_IETF)
++        return;
++    conn = (struct ietf_full_conn *) lconn;
 +    lsquic_send_ctl_drop_0rtt_packets(&conn->ifc_send_ctl);
 +}
 +

@@ -5984,11 +5984,9 @@ pub mod bv2_impl {
                     && source.path.is_file()
                 {
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    if let Some(found) = locate_node_bindings_addon(
-                        source_dir,
-                        import_record.path.text,
-                        &mut buf,
-                    ) {
+                    if let Some(found) =
+                        locate_node_bindings_addon(source_dir, import_record.path.text, &mut buf)
+                    {
                         // SAFETY: arena outlives every ImportRecord in this pass.
                         let text: &'static [u8] = unsafe {
                             bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(found))

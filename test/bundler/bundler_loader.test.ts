@@ -636,9 +636,7 @@ describe("bundler", async () => {
         ...bindingsPkg,
       },
       bundleErrors: {
-        "/entry.ts": [
-          `Could not locate the "does_not_exist.node" addon for require("bindings"). Is it built?`,
-        ],
+        "/entry.ts": [`Could not locate the "does_not_exist.node" addon for require("bindings"). Is it built?`],
       },
     });
 

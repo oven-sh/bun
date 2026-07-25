@@ -2025,18 +2025,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         s.resolve_rope_if_needed(p.arena);
                         let raw = s.string(p.arena).expect("unreachable");
                         if !raw.is_empty() {
-                            let name: &'a [u8] =
-                                if strings::has_suffix_comptime(raw, b".node") {
-                                    raw
-                                } else {
-                                    let mut buf = bun_alloc::ArenaVec::with_capacity_in(
-                                        raw.len() + 5,
-                                        p.arena,
-                                    );
-                                    buf.extend_from_slice(raw);
-                                    buf.extend_from_slice(b".node");
-                                    buf.into_bump_slice()
-                                };
+                            let name: &'a [u8] = if strings::has_suffix_comptime(raw, b".node") {
+                                raw
+                            } else {
+                                let mut buf =
+                                    bun_alloc::ArenaVec::with_capacity_in(raw.len() + 5, p.arena);
+                                buf.extend_from_slice(raw);
+                                buf.extend_from_slice(b".node");
+                                buf.into_bump_slice()
+                            };
                             let handles_import_errors =
                                 p.fn_or_arrow_data_visit.try_body_count != 0;
                             let new_index = p.add_import_record_by_range(
@@ -2046,9 +2043,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             );
                             {
                                 let recs = p.import_records.items_mut();
-                                recs[new_index as usize].flags.insert(
-                                    js_ast::ImportRecordFlags::NODE_BINDINGS_SEARCH,
-                                );
+                                recs[new_index as usize]
+                                    .flags
+                                    .insert(js_ast::ImportRecordFlags::NODE_BINDINGS_SEARCH);
                                 recs[new_index as usize].flags.set(
                                     js_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
                                     handles_import_errors,

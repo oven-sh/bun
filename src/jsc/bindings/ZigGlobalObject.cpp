@@ -919,6 +919,23 @@ namespace Zig {
 
 using namespace WebCore;
 
+static void promiseRejectionTrackerForShadowRealm(JSGlobalObject*, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
+{
+    // Only the thread-default global's m_aboutToBeNotifiedRejectedPromises is
+    // ever drained by the event loop, so route ShadowRealm rejections there.
+    Zig::GlobalObject::promiseRejectionTracker(defaultGlobalObject(), promise, operation);
+}
+
+static const JSC::GlobalObjectMethodTable& shadowRealmGlobalObjectMethodTable()
+{
+    static const JSC::GlobalObjectMethodTable table = [] {
+        JSC::GlobalObjectMethodTable t = GlobalObject::globalObjectMethodTable();
+        t.promiseRejectionTracker = &promiseRejectionTrackerForShadowRealm;
+        return t;
+    }();
+    return table;
+}
+
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -929,7 +946,8 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(
         vm,
         Zig::GlobalObject::createStructure(vm),
-        ScriptExecutionContext::generateIdentifier());
+        ScriptExecutionContext::generateIdentifier(),
+        &shadowRealmGlobalObjectMethodTable());
     shadow->setConsole(shadow);
 
     return shadow;
@@ -1080,15 +1098,7 @@ extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
-    // The event loop only drains the thread-default Zig::GlobalObject's
-    // m_aboutToBeNotifiedRejectedPromises. A ShadowRealm's global is also a
-    // Zig::GlobalObject but is never drained, so route its rejections (and the
-    // matching Handle) to the default global so they are reported.
     auto* globalObj = static_cast<GlobalObject*>(obj);
-    if (!globalObj->isThreadLocalDefaultGlobalObject) [[unlikely]] {
-        if (auto* defaultGlobal = defaultGlobalObject())
-            globalObj = defaultGlobal;
-    }
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:

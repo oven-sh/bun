@@ -4877,7 +4877,20 @@ describe("read*/write* after JIT tier-up", () => {
     expect(codes).toEqual(["ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE"]);
     // The value is only coerced after the byteLength dispatch, as in lib/internal/buffer.js.
     let valueOfCalls = 0;
-    expect(codeOf(() => scratch.writeIntLE({ valueOf() { valueOfCalls++; return 1; } }, 0, 7))).toBe("ERR_OUT_OF_RANGE");
+    expect(
+      codeOf(() =>
+        scratch.writeIntLE(
+          {
+            valueOf() {
+              valueOfCalls++;
+              return 1;
+            },
+          },
+          0,
+          7,
+        ),
+      ),
+    ).toBe("ERR_OUT_OF_RANGE");
     expect(valueOfCalls).toBe(0);
     // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
     expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");

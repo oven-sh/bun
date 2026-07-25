@@ -3365,7 +3365,6 @@ static EncodedJSValue throwBufferInvalidByteLength(JSC::JSGlobalObject* lexicalG
     return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "byteLength"_s, ">= 1 and <= 6"_s, byteLengthValue);
 }
 
-
 // checkInt()'s value range for byteLength <= 4 and the ">= -(2 ** N) and < 2 ** N" wording it uses
 // for the 5- and 6-byte widths.
 static bool bufferWriteVarWidthCheckValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, double number, size_t byteLength, bool isSigned)

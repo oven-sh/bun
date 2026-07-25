@@ -861,13 +861,13 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
+        dedupe_external_esm_imports(self, &mut chunks);
+
         compute_cross_chunk_dependencies(self, &mut chunks)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
             self.check_for_memory_corruption();
         }
-
-        dedupe_external_esm_imports(self, &mut chunks);
 
         self.graph.symbols.follow_all();
 

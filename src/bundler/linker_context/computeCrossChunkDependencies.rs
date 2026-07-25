@@ -231,7 +231,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         if let Some(namespace_alias) = &symbol.namespace_alias {
                             ref_to_use = namespace_alias.namespace_ref;
                         }
-                        ref_to_use
+                        symbols.follow(ref_to_use)
                     };
 
                     if cfg!(debug_assertions) {

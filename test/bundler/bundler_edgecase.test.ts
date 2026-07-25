@@ -251,6 +251,58 @@ describe("bundler", () => {
       { file: "/out/entry3.js", stdout: "XY X" },
     ],
   });
+  itBundled("edgecase/DedupeExternalESMImportsSplittingReExport", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { utilNS } from "./util.js";
+        import { sharedNS } from "./shared.js";
+        console.log(utilNS.tag, sharedNS.tag);
+      `,
+      "/entry2.js": /* js */ `
+        import { utilNS } from "./util.js";
+        import { sharedNS } from "./shared.js";
+        console.log(utilNS.tag, sharedNS.tag);
+      `,
+      "/util.js": /* js */ `
+        import * as NS from "pkg";
+        export { NS as utilNS };
+      `,
+      "/shared.js": /* js */ `
+        import * as NS from "pkg";
+        export { NS as sharedNS };
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    splitting: true,
+    external: ["pkg"],
+    format: "esm",
+    runtimeFiles: {
+      "/node_modules/pkg/index.mjs": `export const tag = "EXT";`,
+      "/node_modules/pkg/package.json": `{ "type": "module", "main": "./index.mjs" }`,
+    },
+    onAfterBundle(api) {
+      // util.js and shared.js land in one shared chunk. Their two
+      // `import * as NS` collapse to one, and both re-exported namespaces
+      // follow to the same ref, so the shared chunk exports one symbol and
+      // each entry's cross-chunk import has a single clause. The dedupe must
+      // run before cross-chunk dependency recording so that walk() follows
+      // the merged ref and records one import; otherwise the entry chunk gets
+      // two clause items with the same local name (a SyntaxError).
+      const chunkFiles = readdirSync(api.outdir).filter(f => !/^entry[12]\.js$/.test(f));
+      expect(chunkFiles).toHaveLength(1);
+      const sharedChunk = api.readFile("/out/" + chunkFiles[0]);
+      expect(sharedChunk.match(/^import\s*\*\s*as\s/gm) ?? []).toHaveLength(1);
+      for (const file of ["/out/entry1.js", "/out/entry2.js"]) {
+        const out = api.readFile(file);
+        const locals = [...out.matchAll(/\b(?:as\s+)?(\w+)\s*\n?[,}]/g)].map(m => m[1]);
+        expect(new Set(locals).size).toBe(locals.length);
+      }
+    },
+    run: [
+      { file: "/out/entry1.js", stdout: "EXT EXT" },
+      { file: "/out/entry2.js", stdout: "EXT EXT" },
+    ],
+  });
   itBundled("edgecase/DedupeExternalESMImportsNotAcrossLoader", {
     files: {
       "/entry.js": /* js */ `

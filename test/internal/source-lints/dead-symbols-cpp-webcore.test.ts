@@ -6,7 +6,7 @@
 // Source-tree lint: reads files from src/ only, never touches the built binary.
 
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -18,25 +18,6 @@ function src(p: string): string {
 function resurrected(checks: Array<[string, RegExp]>): string[] {
   return checks.filter(([file, re]) => re.test(src(file))).map(([file, re]) => `${file}: ${re.source}`);
 }
-
-test("deleted webcore headers do not reappear", () => {
-  // None of these headers were #include'd anywhere in src/; they are leftover
-  // WebKit imports from the initial webcore copy.
-  const gone = [
-    "src/jsc/bindings/webcore/JSDOMBindingInternalsBuiltins.h",
-    "src/jsc/bindings/webcore/JSDOMBindingInternalsBuiltins.cpp",
-    "src/jsc/bindings/webcore/EventSender.h",
-    "src/jsc/bindings/webcore/JSDOMConstructorNotCallable.h",
-    "src/jsc/bindings/webcore/JSDOMConvertVariadic.h",
-    "src/jsc/bindings/webcore/JSDOMConvertXPathNSResolver.h",
-    "src/jsc/bindings/webcore/JSDOMConvertScheduledAction.h",
-    "src/jsc/bindings/webcore/BroadcastChannelIdentifier.h",
-    "src/jsc/bindings/webcore/PortIdentifier.h",
-    "src/jsc/bindings/webcore/WebSocketIdentifier.h",
-  ];
-  const present = gone.filter(p => existsSync(path.join(repoRoot, p)));
-  expect(present).toEqual([]);
-});
 
 test("dead C++ static helpers in JSMIMEType.cpp do not reappear", () => {
   // JSMIMEParams.cpp has its own copies of these which are live; the

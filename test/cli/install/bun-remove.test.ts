@@ -1,9 +1,12 @@
-import { file, spawn } from "bun";
+import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { existsSync } from "fs";
+import { bunExe, bunEnv as env, readdirSorted, tmpdirSync, toHaveBins } from "harness";
 import { join, relative } from "path";
 import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
+
+expect.extend({ toHaveBins });
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -340,3 +343,62 @@ it.concurrent("should remove peerDependencies", async () => {
     destroyTestContext(ctx);
   }
 });
+
+// https://github.com/oven-sh/bun/issues/11970
+for (const global of [false, true]) {
+  it.concurrent(`should delete bins of the removed package${global ? " (global)" : ""}`, async () => {
+    const dir = tmpdirSync();
+    await Promise.all([
+      write(join(dir, "package.json"), JSON.stringify({ name: "foo" })),
+      write(
+        join(dir, "has-two-bins", "package.json"),
+        JSON.stringify({
+          name: "has-two-bins",
+          version: "1.0.0",
+          bin: { "bin-a": "./bin-a.js", "bin-b": "./bin-b.js" },
+        }),
+      ),
+      write(join(dir, "has-two-bins", "bin-a.js"), `#!/usr/bin/env node\nconsole.log("a")`),
+      write(join(dir, "has-two-bins", "bin-b.js"), `#!/usr/bin/env node\nconsole.log("b")`),
+      write(
+        join(dir, "has-one-bin", "package.json"),
+        JSON.stringify({ name: "has-one-bin", version: "1.0.0", bin: { "bin-c": "./bin-c.js" } }),
+      ),
+      write(join(dir, "has-one-bin", "bin-c.js"), `#!/usr/bin/env node\nconsole.log("c")`),
+    ]);
+
+    const binDir = global ? join(dir, "bun-home", "bin") : join(dir, "node_modules", ".bin");
+    const installEnv = {
+      ...env,
+      ...(global && {
+        BUN_INSTALL: join(dir, "bun-home"),
+        BUN_INSTALL_BIN: binDir,
+      }),
+    };
+    const globalArgs = global ? ["-g"] : [];
+
+    async function run(args: string[]) {
+      await using proc = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: installEnv,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return stdout;
+    }
+
+    await run(["add", "--linker=hoisted", ...globalArgs, "./has-two-bins", "./has-one-bin"]);
+    expect(await readdirSorted(binDir)).toHaveBins(["bin-a", "bin-b", "bin-c"]);
+
+    await run(["remove", ...globalArgs, "has-two-bins"]);
+    // bin-a and bin-b are removed; bin-c (from a still-installed package) is not.
+    expect(await readdirSorted(binDir)).toHaveBins(["bin-c"]);
+
+    await run(["remove", ...globalArgs, "has-one-bin"]);
+    expect(existsSync(binDir) ? await readdirSorted(binDir) : []).toEqual([]);
+  });
+}

@@ -500,11 +500,8 @@ impl RunCommand {
         .as_deref()
     }
 
-    /// Symlinks/hardlinks the running bun binary as `node` + `bun` inside a
-    /// temp dir and prepends that dir to `path`. Also links `npm` + `npx`
-    /// there *only when* they are not already resolvable in `original_path`,
-    /// so the shim is a fallback on bun-only hosts and never shadows a real
-    /// npm under `--bun`.
+    /// Symlinks/hardlinks the running bun binary as
+    /// `node` + `bun` inside a temp dir and prepends that dir to `path`.
     ///
     /// `#[cold]`: only reached on the `bun run <script>` / lifecycle-script
     /// slow path, never on plain `bun foo.js` startup. Forcing it into
@@ -631,10 +628,6 @@ impl RunCommand {
             }
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
-            // A nested `--bun` inherits a PATH with `BUN_NODE_DIR` already
-            // prepended, so a probe hit inside the shim dir is our own link,
-            // not a real npm; treating it as real would delete the only npm
-            // on PATH mid-script.
             let mut real_in_path = |bin: &[u8]| -> bool {
                 bun_which::which(&mut which_buf, original_path, b".", bin).is_some_and(|p| {
                     !bun_core::strings::starts_with(p.as_bytes(), Self::BUN_NODE_DIR.as_bytes())
@@ -650,8 +643,6 @@ impl RunCommand {
                 (NPX_LINK, need_npx),
             ] {
                 if !wanted {
-                    // A real one exists in PATH. Remove any stale shim left by
-                    // a previous run so it can't shadow the real binary.
                     let _ = bun_sys::unlink(dest);
                     continue;
                 }
@@ -759,9 +750,6 @@ impl RunCommand {
             }
 
             let mut which_buf = bun_paths::PathBuffer::uninit();
-            // Same nested-`--bun` guard as the POSIX arm: a probe hit inside
-            // the shim dir is our own hardlink, not a real npm. Compare
-            // case-insensitively; Windows paths are.
             let shim_dir_utf8 = bun_core::strings::to_utf8_alloc_with_type(
                 &target_path_buffer[prefix.len()..dir_slice_len],
             );
@@ -802,11 +790,9 @@ impl RunCommand {
                 ),
             ] {
                 if !wanted {
-                    // A real one exists in PATH. Remove any stale shim left by
-                    // a previous run so it can't shadow the real binary (the
-                    // shim dir persists across runs and is prepended to PATH).
                     target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                    // `name` ends in NUL, so the written path is NUL-terminated.
+                    // SAFETY: `name` ends in NUL, so the written path is
+                    // NUL-terminated.
                     let path_w = bun_core::WStr::from_buf(
                         &target_path_buffer[..],
                         dir_slice_len + name.len() - 1,
@@ -817,12 +803,6 @@ impl RunCommand {
                             bun_sys::E::EPERM | bun_sys::E::EACCES | bun_sys::E::EBUSY
                         )
                     {
-                        // Deleting fails while the link's image is mapped by a
-                        // running process (the link targets this very binary).
-                        // A mapped image can still be renamed, and
-                        // `npm.exe.stale` never matches PATH resolution, so
-                        // rename it out of the way. Other errors (ENOENT: no
-                        // stale link) need no fallback.
                         let mut stale_buf = bun_paths::w_path_buffer_pool::get();
                         stale_buf[..dir_slice_len]
                             .copy_from_slice(&target_path_buffer[..dir_slice_len]);

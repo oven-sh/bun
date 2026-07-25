@@ -847,8 +847,6 @@ pub mod command {
         }
     }
 
-    // `is_npm`/`is_npx` compare the basename exactly so `pnpm`/`pnpx` (and
-    // anything else ending in "npm"/"npx") are not caught.
     pub(crate) fn is_npm(argv0: &[u8]) -> bool {
         let base = bun_paths::basename(argv0);
         base == b"npm" || (cfg!(windows) && base == b"npm.exe")
@@ -859,15 +857,6 @@ pub mod command {
         base == b"npx" || (cfg!(windows) && base == b"npx.exe")
     }
 
-    /// npm long options that take a separate value argument and have no bun
-    /// equivalent. When bun is invoked as `npm` via the shim these are dropped
-    /// together with their value so the value is not mistaken for a positional
-    /// (e.g. `npm install --loglevel error react` must not try to install a
-    /// package called `error`). Options that change the *target* of the
-    /// operation are translated instead of dropped where bun can express
-    /// them: `--prefix` always (`--cwd`), `--workspace` only for subcommands
-    /// whose parser accepts `--filter`; see `translate_npm_value_flag` and
-    /// the per-subcommand `renames`. Kept sorted for `binary_search`.
     const NPM_VALUE_FLAGS_IGNORED: &[&[u8]] = &[
         b"access",
         b"before",
@@ -917,17 +906,10 @@ pub mod command {
     #[derive(Clone, Copy)]
     enum NpmFlag {
         Drop,
-        /// Copied through together with its value (bun accepts the npm
-        /// spelling for the mapped subcommand).
         Keep,
         Rename(&'static bun_core::ZStr),
     }
 
-    /// Classify a value-taking npm flag. Returns `None` for anything that is
-    /// not a recognized value-taking npm flag (positionals, boolean flags,
-    /// bun's own flags). The advance over argv (flag plus separate value) is
-    /// the same whichever variant comes back, so a scan that only needs the
-    /// subcommand position can pass empty `keep`/`renames`.
     #[cold]
     fn translate_npm_value_flag(
         arg: &[u8],
@@ -960,10 +942,6 @@ pub mod command {
         }
     }
 
-    /// npm's boolean `--save-*` dependency-group flags under bun's spelling.
-    /// These take no value, so they are rewritten in place; bun's clap parser
-    /// would otherwise skip the npm spelling silently and e.g.
-    /// `npm install --save-dev typescript` would land in `"dependencies"`.
     #[cold]
     fn rename_npm_bool_flag(arg: &'static bun_core::ZStr) -> &'static bun_core::ZStr {
         use bun_core::zstr;
@@ -972,19 +950,11 @@ pub mod command {
             b"--save-exact" => zstr!("--exact"),
             b"--save-optional" | b"-O" => zstr!("--optional"),
             b"--save-peer" => zstr!("--peer"),
-            // npm's -P/--save-prod mean "save to dependencies", bun's
-            // default; bun's own -P means --prod (skip devDependencies), so
-            // map to the no-op --save. (-D and -E match bun's shorts.)
             b"-P" | b"--save-prod" => zstr!("--save"),
             _ => arg,
         }
     }
 
-    /// Rewrite argv when bun is invoked as `npm` (via the `--bun` shim dir) so
-    /// the rest of the CLI can dispatch it as a normal bun invocation.
-    /// Best-effort: subcommands bun has no equivalent for fall through
-    /// unchanged.
-    ///
     /// # Safety
     /// Single-threaded CLI startup; stores into the process-global argv slot.
     #[cold]
@@ -999,14 +969,6 @@ pub mod command {
         let argv = bun::argv().as_slice();
         let Some(&argv0) = argv.first() else { return };
 
-        // Copy `argv[from..]` into `tail`, dropping npm-only value-taking
-        // flags (with their separate value) and renaming
-        // `--workspace`/`--prefix` to their bun spellings into `hoisted`.
-        // Renamed flags are hoisted before the subcommand so `bun run`'s
-        // stop-after-first-positional does not pass them through to the
-        // script. Stops at the first positional when `stop_at_positional` is
-        // set and returns its index; otherwise copies to the end. A bare `--`
-        // ends flag processing either way.
         fn copy_translating_npm_flags(
             argv: &[&'static ZStr],
             tail: &mut Vec<&'static ZStr>,
@@ -1042,9 +1004,6 @@ pub mod command {
                             .is_some_and(|n| n.as_bytes().first() != Some(&b'-'));
                     match tr {
                         NpmFlag::Drop => {}
-                        // Hoisted, not in place: before the subcommand the
-                        // flag's value would be taken for the subcommand by
-                        // `which()`'s leading-flag skip.
                         NpmFlag::Keep => {
                             hoisted.push(a);
                             if consumes_next {
@@ -1070,11 +1029,6 @@ pub mod command {
             argv.len()
         }
 
-        // npm accepts config flags in any position, so the subcommand (and
-        // with it the keep/rename decision) must be known before the
-        // pre-subcommand flags are processed: `npm --tag beta publish` keeps
-        // `--tag beta` only because `publish` is found first. The scan
-        // advances over value flags exactly like `copy_translating_npm_flags`.
         let scan_end = {
             let mut i = 1;
             while i < argv.len() {
@@ -1091,23 +1045,12 @@ pub mod command {
             }
             i
         };
-        // npm treats a leading `--` as end-of-options but still takes the
-        // next token as the subcommand: `npm -- upgrade` is `npm upgrade`.
-        // Without this skip the raw token would bypass the mapping and e.g.
-        // `upgrade` would dispatch bun's self-upgrader.
         let sub_idx =
             scan_end + usize::from(argv.get(scan_end).is_some_and(|a| a.as_bytes() == b"--"));
         let subcommand = argv.get(sub_idx).filter(|a| a.as_bytes() != b"--");
         let sub_bytes = subcommand.map(|z| z.as_bytes());
         let rest_start = sub_idx + usize::from(sub_idx < argv.len());
 
-        // npm flags bun's own parser accepts for the mapped subcommand must
-        // reach it instead of being dropped, either as-is (`keep`) or under
-        // bun's spelling (`renames`). `--workspace` becomes `--filter` only
-        // where the mapped command parses `--filter` (run scripts, install,
-        // update, outdated); elsewhere it stays dropped, since an unknown
-        // `--filter` would not consume its value and the workspace name would
-        // leak as a positional.
         let (keep, renames): (&[&[u8]], &[(&[u8], &ZStr)]) = match sub_bytes {
             Some(b"publish") => (
                 &[b"access", b"ca", b"cafile", b"otp", b"registry", b"tag"],
@@ -1115,14 +1058,10 @@ pub mod command {
             ),
             Some(b"version" | b"verison") => (&[b"message"], &[]),
             Some(b"pack") => (&[], &[(b"pack-destination", zstr!("--destination"))]),
-            // The script runner accepts --filter but none of the npm
-            // config flags.
             Some(
                 b"test" | b"t" | b"tst" | b"start" | b"stop" | b"restart" | b"run-script" | b"rum"
                 | b"urn" | b"run",
             ) => (&[], &[(b"workspace", zstr!("--filter"))]),
-            // The install-family parsers accept --filter plus these npm
-            // config flags as spelled.
             Some(
                 b"i" | b"isntall" | b"in" | b"ins" | b"inst" | b"insta" | b"instal" | b"install"
                 | b"ci" | b"clean-install" | b"ic" | b"install-clean" | b"isntall-clean"
@@ -1164,8 +1103,6 @@ pub mod command {
 
         let mut mapped: Vec<&'static ZStr> = Vec::with_capacity(2);
         match sub_bytes {
-            // npm's lifecycle shortcuts run the package.json script; map to
-            // `bun run <name>` so `npm test` does not invoke bun's test runner.
             Some(b"test" | b"t" | b"tst") => {
                 mapped.push(zstr!("run"));
                 mapped.push(zstr!("test"));
@@ -1183,17 +1120,8 @@ pub mod command {
                 mapped.push(zstr!("restart"));
             }
             Some(b"run-script" | b"rum" | b"urn") => mapped.push(zstr!("run")),
-            // npm ≥7's `npm exec` is what `npx` delegates to; bun's own `exec`
-            // is a shell-script runner.
             Some(b"exec") => mapped.push(zstr!("x")),
-            // `npm init <x>` / `npm create <x>` ≡ `npx create-<x>`. Bare
-            // `npm init` scaffolds a package.json, same as `bun init`.
-            // Decided from `tail`, where value-flags are already consumed, so
-            // e.g. `--loglevel`'s value is not mistaken for an initializer.
             Some(b"init" | b"create" | b"innit") => {
-                // Everything after `--` is positional in npm, so the scan
-                // does not stop there: `npm init -- x` still names a
-                // template.
                 let has_initializer = tail.iter().any(|a| {
                     let b = a.as_bytes();
                     b != b"--" && b.first() != Some(&b'-')
@@ -1212,17 +1140,12 @@ pub mod command {
             }
             Some(b"ls" | b"la" | b"ll") => mapped.push(zstr!("list")),
             Some(b"view" | b"show" | b"v") => mapped.push(zstr!("info")),
-            // npm spells dependency-update as `upgrade`/`up`/`udpate` too;
-            // bare `upgrade` would dispatch bun's self-upgrader.
             Some(b"upgrade" | b"up" | b"udpate") => mapped.push(zstr!("update")),
-            // `c` is npm's alias for `config`; bare `c` would dispatch
-            // `bun create`.
             Some(b"c") => mapped.push(zstr!("config")),
             Some(b"version" | b"verison") => {
                 mapped.push(zstr!("pm"));
                 mapped.push(zstr!("version"));
             }
-            // Likewise `npm pack` / `npm cache` are `bun pm pack` / `pm cache`.
             Some(b"pack") => {
                 mapped.push(zstr!("pm"));
                 mapped.push(zstr!("pack"));
@@ -1235,17 +1158,9 @@ pub mod command {
             None => {}
         }
 
-        // The bunx and `bun create` parsers skip flags they do not know
-        // without consuming their value, so a hoisted `--cwd <dir>` would
-        // become the package or template name; drop renamed flags for the
-        // subcommands mapped to them.
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"x" | b"create")) {
             hoisted.clear();
         }
-        // npm consumes its remaining config flags (e.g. `-y`) anywhere
-        // before `--`, and `bun create` rejects flags it does not know, so
-        // for the create mapping keep only positionals up to `--`;
-        // everything after `--` is forwarded to the create-* package.
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"create")) {
             pre_subcommand_flags.clear();
             let mut past_separator = false;
@@ -1267,10 +1182,6 @@ pub mod command {
         );
         out.push(argv0);
         out.extend_from_slice(&pre_subcommand_flags);
-        // Hoisted flags go right after the first mapped token: `bun run`
-        // forwards everything after the script name to the script, so for the
-        // lifecycle shortcuts (`mapped = ["run", "test"]`) they must land
-        // between "run" and the script name.
         if let Some((first, rest_mapped)) = mapped.split_first() {
             out.push(*first);
             out.extend_from_slice(&hoisted);
@@ -1286,14 +1197,6 @@ pub mod command {
         unsafe { bun::set_argv(stored) };
     }
 
-    /// Rewrite argv when bun is invoked as `npx` via the shim. Since npm 7
-    /// `npx` accepts the same config flags as `npm`, so the npm-only
-    /// value-taking flags (plus npx's `-c`/`--call`) are dropped up to the
-    /// first positional; everything from the package name on belongs to the
-    /// executed package and is copied verbatim. Flags `translate_npm_argv`
-    /// would rename are dropped too: the bunx parser has no equivalent and
-    /// would take the stray value for the package name.
-    ///
     /// # Safety
     /// Single-threaded CLI startup; stores into the process-global argv slot.
     #[cold]
@@ -2304,9 +2207,6 @@ pub mod command {
             while remainder_i < remainder.len() && positional_i < positionals.len() {
                 let slice = strings::trim(remainder[remainder_i].as_bytes(), b" \t\n");
                 if !slice.is_empty() {
-                    // Like the bunx parser, a token starting with `-` is
-                    // never a positional: `bun create -y foo` must not take
-                    // `-y` for the template name.
                     if slice[0] != b'-' {
                         if positional_i == 1 {
                             template_name_start = remainder_i + 2;

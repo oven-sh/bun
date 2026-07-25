@@ -1684,11 +1684,9 @@ impl QuicEndpoint {
         if self.provisional.get().iter().any(|p| p.dcid == dcid) {
             return;
         }
-        // With address validation on, a tokenless Initial gets a Retry, not a
-        // session — announcing now would surface one that then times out.
-        // Initial layout after DCID (RFC 9000 §17.2.2): 1-byte SCID len, SCID,
-        // then the token-length varint. A single 0x00 byte encodes the empty
-        // token every compliant client sends on first contact.
+        // Under address validation a tokenless Initial is answered with a
+        // Retry, not a mini-conn, so a provisional announced now would time
+        // out. RFC 9000 §17.2.2: SCID-len, SCID, then the token-length varint.
         if self.validate_address.get() {
             let scid_off = dcid_start + dcid_len;
             let has_token = payload

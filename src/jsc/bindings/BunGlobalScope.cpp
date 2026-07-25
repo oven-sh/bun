@@ -24,7 +24,7 @@ using namespace JSC;
 String GlobalScope::defaultLanguage()
 {
     const char* localeID = uloc_getDefault();
-    if (!localeID || !*localeID || !strcmp(localeID, "en_US_POSIX") || !strcmp(localeID, "c") || !strcmp(localeID, "C"))
+    if (!strcmp(localeID, "en_US_POSIX") || !strcmp(localeID, "c") || !strcmp(localeID, "C"))
         return "en-US"_s;
     String tag = JSC::languageTagForLocaleID(localeID);
     return tag.isEmpty() ? "und"_s : tag;

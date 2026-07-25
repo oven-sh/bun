@@ -365,12 +365,21 @@ describe.skipIf(isWindows)("DefaultLocale follows POSIX locale environment", () 
     ]);
   });
 
-  test.concurrent.each(["C", "POSIX", "C.UTF-8"])("LANG=%s falls back to en-US", async raw => {
-    expect(await resolveDefaultLocale({ LANG: raw })).toEqual(["en-US", "en-US", "en-US", "en-US"]);
+  test.concurrent.each(["C", "POSIX", "C.UTF-8"])("LC_ALL=%s masks a real LANG with en-US", async raw => {
+    expect(await resolveDefaultLocale({ LC_ALL: raw, LANG: "de_DE.UTF-8" })).toEqual([
+      "en-US",
+      "en-US",
+      "en-US",
+      "en-US",
+    ]);
   });
 
   test.concurrent("unset locale falls back to en-US", async () => {
     expect(await resolveDefaultLocale({})).toEqual(["en-US", "en-US", "en-US", "en-US"]);
+  });
+
+  test.concurrent('set-but-empty LC_ALL="" resolves to und (matches Node.js)', async () => {
+    expect(await resolveDefaultLocale({ LC_ALL: "", LANG: "de_DE.UTF-8" })).toEqual(["und", "und", "und", "und"]);
   });
 
   // `-p` runs under Zig::EvalGlobalObject (the third method table wired up).

@@ -1124,8 +1124,8 @@ describe.concurrent("bun run", () => {
   // under /tmp used to be shared across users (`/tmp/bun-node-<sha>`). The
   // first user to run `bun --bun` owns the 0700 directory; every other user
   // hits EEXIST, fails the ownership check, and silently gets no shim (their
-  // `node` falls through to whatever is on PATH, or ENOENT). Windows is
-  // already per-user via `GetTempPathW`.
+  // `node` falls through to whatever is on PATH, or ENOENT). Skipped on
+  // Windows because there is no `process.getuid()` to assert against.
   it.skipIf(isWindows)("--bun node shim dir is per-user so two users do not collide (#7504)", async () => {
     using dir = tempDir("bun-run-shim-uid", {
       "package.json": JSON.stringify({ name: "shim-uid", scripts: { go: "node ./check.js" } }),

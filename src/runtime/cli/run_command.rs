@@ -1848,7 +1848,9 @@ impl RunCommand {
             let total = {
                 let mut cur = std::io::Cursor::new(&mut target_path_buffer[conv_len..]);
                 write!(&mut cur, "bun-node-{uid}").expect("PathBuffer");
-                if Environment::GIT_SHA_SHORT.len() > 0 {
+                if Environment::IS_DEBUG {
+                    cur.write_all(b"-debug").expect("PathBuffer");
+                } else if Environment::GIT_SHA_SHORT.len() > 0 {
                     write!(&mut cur, "-{}", Environment::GIT_SHA_SHORT).expect("PathBuffer");
                 }
                 cur.write_all(b"\\node.exe").expect("PathBuffer");

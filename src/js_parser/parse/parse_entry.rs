@@ -935,10 +935,8 @@ impl<'a> Parser<'a> {
                     }
 
                     js_ast::StmtData::SExportDefault(value) => {
-                        // Move export default ahead of other code to help cyclical imports
-                        // in packages like luxon (#1961). Keep a named default class in
-                        // place when an earlier top-level statement already references the
-                        // class name so its TDZ is preserved.
+                        // Hoist for cyclic-import compat (#1961), except when a named
+                        // default class is already referenced earlier (preserve its TDZ).
                         let class_name_ref = match &value.value {
                             js_ast::StmtOrExpr::Stmt(s) => match &s.data {
                                 js_ast::StmtData::SClass(c) => {

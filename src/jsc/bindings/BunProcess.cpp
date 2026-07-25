@@ -391,15 +391,9 @@ extern "C" void CrashHandler__setDlOpenAction(const char* action);
 extern "C" bool Bun__VM__allowAddons(void* vm);
 
 #if OS(WINDOWS)
-// Addons that import napi_* from a module literally named "node.exe" work
-// under node.exe because the loader resolves that name to the process image.
-// Under bun.exe it resolves to whatever node.exe the search path finds, and
-// the addon ends up calling Node's napi functions with Bun's env pointer.
-//
-// Walk the addon's import tables after LoadLibrary and rebind any node.exe
-// entries to the host process. Covers /DELAYLOAD:node.exe without
-// win_delay_load_hook.cc (cmake-js projects that omit ${CMAKE_JS_SRC}) and
-// non-delay imports (Zig-built addons that link node.lib directly).
+// Rebind an addon's node.exe imports to this process so napi_* calls reach
+// Bun instead of whatever node.exe the Windows loader found on PATH.
+// https://github.com/oven-sh/bun/issues/10690
 static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names, bool keepUnresolved)
 {
     size_t count = 0;
@@ -407,7 +401,6 @@ static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE
         ++count;
     if (count == 0) return;
 
-    // Regular IATs sit in a read-only page once the loader is done.
     DWORD oldProtect = 0;
     if (!VirtualProtect(iat, count * sizeof(*iat), PAGE_READWRITE, &oldProtect)) return;
 
@@ -464,8 +457,6 @@ static void rebindNodeExeImports(HMODULE addon)
                 // Old VC6 delayimp used VAs here; MSVC has emitted RVAs since 2002.
                 if (!desc->Attributes.RvaBased) continue;
                 if (!isHostName(reinterpret_cast<const char*>(base + desc->DllNameRVA))) continue;
-                // Leave unresolved delay slots pointing at their thunk so a
-                // missing symbol still surfaces at the call site.
                 rebindThunks(base, host,
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportAddressTableRVA),
                     reinterpret_cast<PIMAGE_THUNK_DATA>(base + desc->ImportNameTableRVA),

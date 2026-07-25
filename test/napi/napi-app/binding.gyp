@@ -285,10 +285,8 @@
                 "NAPI_DISABLE_CPP_EXCEPTIONS",
                 "NODE_API_EXPERIMENTAL_NOGC_ENV_OPT_OUT=1",
             ],
-            # node-gyp's win_delay_load_hook setting adds both the hook source
-            # and /DELAYLOAD:node.exe. Disable it and re-add only /DELAYLOAD so
-            # the addon delay-imports napi_* from "node.exe" with no redirect
-            # hook, matching cmake-js projects that omit ${CMAKE_JS_SRC}.
+            # /DELAYLOAD:node.exe with no win_delay_load_hook, like cmake-js
+            # projects that omit ${CMAKE_JS_SRC} (issue #10690).
             "win_delay_load_hook": "false",
             "conditions": [
                 ["OS=='win'", {

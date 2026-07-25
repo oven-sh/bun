@@ -3,6 +3,10 @@ import { bunEnv, bunExe, isLinux, isPosix, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 
+// Hermetic env: a contributor's shell may export NODE_PRESERVE_SYMLINKS{,_MAIN}
+// (rush / pnpm monorepo setups do), which would flip the negative-control tests.
+const env = { ...bunEnv, NODE_PRESERVE_SYMLINKS: undefined, NODE_PRESERVE_SYMLINKS_MAIN: undefined };
+
 describe("--preserve-symlinks", () => {
   test.concurrent("required symlink reports the symlink path as __filename", async () => {
     using dir = tempDir("preserve-symlinks-require", {
@@ -13,7 +17,7 @@ describe("--preserve-symlinks", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--preserve-symlinks", "main.cjs"],
-      env: bunEnv,
+      env,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -33,7 +37,7 @@ describe("--preserve-symlinks", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.cjs"],
-      env: bunEnv,
+      env,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -54,7 +58,7 @@ describe("--preserve-symlinks", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--preserve-symlinks", "link.cjs"],
-      env: bunEnv,
+      env,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -73,7 +77,7 @@ describe("--preserve-symlinks", () => {
   ) {
     await using proc = Bun.spawn({
       cmd,
-      env: { ...bunEnv, ...extraEnv },
+      env: { ...env, ...extraEnv },
       cwd,
       stdout: "pipe",
       stderr: "pipe",
@@ -130,7 +134,7 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
         `process.kill(process.pid, "SIGUSR1");
          setImmediate(() => { console.log("survived"); process.exit(0); });`,
       ],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -152,7 +156,7 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
          process.kill(process.pid, "SIGUSR1");
          setImmediate(() => { console.log("survived"); process.exit(0); });`,
       ],
-      env: bunEnv,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -177,7 +181,7 @@ describe.skipIf(!isPosix)("SIGUSR1 default disposition", () => {
          const SIGUSR1 = require("node:os").constants.signals.SIGUSR1;
          console.log(((sigIgn >> BigInt(SIGUSR1 - 1)) & 1n).toString());`,
         ],
-        env: bunEnv,
+        env,
         stdout: "pipe",
         stderr: "pipe",
       });

@@ -138,9 +138,6 @@ error: Hello World`,
     run: { stdout: "" },
   });
   // https://github.com/oven-sh/bun/issues/8058
-  // The printer rewrites require("bun") / import("bun") to the literal text
-  // `globalThis.Bun`. A user local named `globalThis` must be renamed so it
-  // does not capture that reference.
   for (const minifyIdentifiers of [false, true]) {
     const suffix = minifyIdentifiers ? "Minified" : "";
     itBundled(`bun/RequireBunWithShadowedGlobalThis${suffix}`, {
@@ -193,8 +190,6 @@ error: Hello World`,
       run: { stdout: "intercepted\nPASS" },
     });
   }
-  // The printer emits `throw new Error(...)` as raw text for an unresolvable
-  // try/catch'd require. A user local named `Error` must be renamed.
   itBundled("bun/InlinedRequireErrorWithShadowedError", {
     target: "bun",
     files: {
@@ -211,6 +206,37 @@ error: Hello World`,
       `,
     },
     run: { stdout: "function\nPASS" },
+  });
+  itBundled("bun/InfinityLiteralWithShadowedInfinity", {
+    target: "bun",
+    files: {
+      "/entry.ts": /* js */ `
+        {
+          let Infinity = 5;
+          if (1e400 === 5) throw new Error("Infinity literal captured local Infinity");
+          if (1e400 !== globalThis.Infinity) throw new Error("1e400 is not Infinity");
+          void Infinity;
+        }
+        console.log("PASS");
+      `,
+    },
+    run: { stdout: "PASS" },
+  });
+  itBundled("bun/NaNLiteralWithShadowedNaN", {
+    target: "bun",
+    minifySyntax: true,
+    files: {
+      "/entry.ts": /* js */ `
+        {
+          let NaN = 6;
+          if (0/0 === 6) throw new Error("folded NaN captured local NaN");
+          if (!globalThis.Number.isNaN(0/0)) throw new Error("0/0 is not NaN");
+          void NaN;
+        }
+        console.log("PASS");
+      `,
+    },
+    run: { stdout: "PASS" },
   });
   if (Bun.version.startsWith("1.4") || Bun.version.startsWith("1.3") || Bun.version.startsWith("1.2")) {
     for (const backend of ["api", "cli"] as const) {

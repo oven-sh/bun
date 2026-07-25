@@ -1565,8 +1565,7 @@ impl QuicSession {
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
-        // Before onSessionHandshake so `onearlyrejected` has fired when the
-        // application's `await opened` continuation runs.
+        // Before onSessionHandshake: `onearlyrejected` must precede `await opened`.
         if early_data.0 && !early_data.1 && !self.is_server.get() {
             if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
                 let vm = global.bun_vm().as_mut();

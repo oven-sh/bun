@@ -1681,8 +1681,7 @@ pub mod __gated_printer {
             }
         }
 
-        /// Emit each preserved JSONC comment starting before `before` exactly once;
-        /// `leading_break` puts the newline/indent before the comment instead of after.
+        /// Emit each preserved JSONC comment starting before `before` exactly once; `leading_break` puts the newline/indent before it instead of after.
         #[inline]
         pub fn flush_json_comments_before(&mut self, before: i32, leading_break: bool) {
             if !IS_JSON {

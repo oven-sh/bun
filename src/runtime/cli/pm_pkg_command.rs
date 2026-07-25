@@ -687,8 +687,7 @@ impl PmPkgCommand {
         Self::set_nested(&mut nested, remaining_path, value, parse_json)
     }
 
-    /// Spliced-in nodes carry `Loc::EMPTY` so comment preservation never
-    /// mistakes value-string offsets for package.json offsets.
+    /// Spliced-in nodes carry `Loc::EMPTY` so comment preservation never mistakes value-string offsets for package.json offsets.
     fn clear_locs(expr: &mut Expr) {
         expr.loc = Loc::EMPTY;
         if let Some(obj) = expr.data.e_object_mut() {

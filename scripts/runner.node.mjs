@@ -1893,6 +1893,11 @@ function isNodeTest(path) {
   return (
     unixPath.includes("js/node/test/parallel/") ||
     unixPath.includes("js/node/test/sequential/") ||
+    unixPath.includes("js/node/test/abort/") ||
+    unixPath.includes("js/node/test/async-hooks/") ||
+    unixPath.includes("js/node/test/client-proxy/") ||
+    unixPath.includes("js/node/test/message/") ||
+    unixPath.includes("js/node/test/report/") ||
     unixPath.includes("js/bun/test/parallel/")
   );
 }

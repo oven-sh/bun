@@ -19,23 +19,23 @@ freed JSC heap.
 
 All reproduced cross-thread UAFs in this class converge on
 **`EventLoop::enqueue_task_concurrent`** (`src/jsc/event_loop.rs:997`). Putting
-a check *inside* the funnel does not help: `&self` there is already a pointer
+a check _inside_ the funnel does not help: `&self` there is already a pointer
 into the freed box. Several callers also "guard" with an off-thread
 `vm.is_shutting_down()` read; that read is itself a UAF face (the flag lives in
 the freed box).
 
 ## Shutdown map (reference)
 
-| step | action                                                         | fences                              |
-| ---- | -------------------------------------------------------------- | ----------------------------------- |
-| 1    | `self.vm = null` under `vm_lock`                               | parent-thread readers               |
-| 2a   | `is_shutting_down = true`, `on_exit`, drain timers/sockets/DNS | on-thread re-entry                  |
-| 2b   | `ScriptExecutionContext::markTerminating()`                    | C++ `postTaskTo` posters            |
-| 2c   | `Bun__JSCTaskScheduler__markShuttingDown()`                    | `Atomics.notify` posters            |
-| 2d   | `release_queued_tasks_for_shutdown()`                          | tasks already queued                |
-| 3    | `WebWorker__teardownJSCVM`                                     | GC finalizers, JSC heap freed       |
-| 4    | `WebWorker__dispatchExit`                                      | parent releases its ref             |
-| 5    | `vm.destroy()`; `dealloc(vm_ptr)`; free uws loop               | VM box freed                        |
+| step | action                                                         | fences                        |
+| ---- | -------------------------------------------------------------- | ----------------------------- |
+| 1    | `self.vm = null` under `vm_lock`                               | parent-thread readers         |
+| 2a   | `is_shutting_down = true`, `on_exit`, drain timers/sockets/DNS | on-thread re-entry            |
+| 2b   | `ScriptExecutionContext::markTerminating()`                    | C++ `postTaskTo` posters      |
+| 2c   | `Bun__JSCTaskScheduler__markShuttingDown()`                    | `Atomics.notify` posters      |
+| 2d   | `release_queued_tasks_for_shutdown()`                          | tasks already queued          |
+| 3    | `WebWorker__teardownJSCVM`                                     | GC finalizers, JSC heap freed |
+| 4    | `WebWorker__dispatchExit`                                      | parent releases its ref       |
+| 5    | `vm.destroy()`; `dealloc(vm_ptr)`; free uws loop               | VM box freed                  |
 
 Rust-side cross-thread posters were not serialized with any of 2b/2c/2d.
 
@@ -101,12 +101,12 @@ about to be). The abandon path:
 
 Three generic helpers carry most of the surface:
 
-| helper                         | users                                                         |
-| ------------------------------ | ------------------------------------------------------------- |
-| `WorkTask<C>`                  | `ReadFile`, `WriteFile`, `GetAddrInfoRequest`                 |
-| `ConcurrentPromiseTask<C>`     | `CopyFile`, `TransformTask`, `WalkTask`, `PipelineTask`       |
-| `AnyTaskJob<C>`                | `Pbkdf2Ctx`, `CryptoJob<Scrypt/…>`, `ZstdCtx`, `SecretsCtx`   |
-| `ConcurrentCppTask`            | WebCrypto (`PhonyWorkQueue::dispatch`)                        |
+| helper                     | users                                                       |
+| -------------------------- | ----------------------------------------------------------- |
+| `WorkTask<C>`              | `ReadFile`, `WriteFile`, `GetAddrInfoRequest`               |
+| `ConcurrentPromiseTask<C>` | `CopyFile`, `TransformTask`, `WalkTask`, `PipelineTask`     |
+| `AnyTaskJob<C>`            | `Pbkdf2Ctx`, `CryptoJob<Scrypt/…>`, `ZstdCtx`, `SecretsCtx` |
+| `ConcurrentCppTask`        | WebCrypto (`PhonyWorkQueue::dispatch`)                      |
 
 Direct callers converted alongside: `FetchTasklet`, `PasswordJob`,
 `CompressionStream` (zlib/brotli/zstd), `AsyncFSTask` / `NewAsyncCpTask` /
@@ -123,7 +123,8 @@ terminating-VM JS execution, the `serve.listen`/JS-re-entry assert zone.
 Refcount-deferred VM dealloc + a closed-flag at the funnel: each off-thread job
 takes an `Arc` clone of a per-VM gate and brackets its enqueue with a read
 lock; `shutdown` takes the write lock before dealloc. Same sweep, but:
-- `shutdown` then *waits* on in-flight pool jobs (a slow argon2/RSA can stall
+
+- `shutdown` then _waits_ on in-flight pool jobs (a slow argon2/RSA can stall
   terminate for seconds);
 - more atomics on the hot enqueue path;
 - the gate must be `Arc`'d so it outlives the VM box anyway.

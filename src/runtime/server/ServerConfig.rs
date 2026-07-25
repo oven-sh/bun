@@ -1369,8 +1369,7 @@ impl ServerConfig {
             }
         }
 
-        // node:https (via `onNodeHTTPRequest`) keeps Node's cert-less
-        // fail-closed listener; direct `Bun.serve` callers get a TypeError.
+        // node:https keeps Node's cert-less fail-closed listener; direct Bun.serve throws.
         let is_node_http = !args.on_node_http_request.is_empty();
         let require_identity = |global: &JSGlobalObject, cfg: Option<&SSLConfig>| -> JsResult<()> {
             if is_node_http || cfg.is_some_and(SSLConfig::has_identity_material) {

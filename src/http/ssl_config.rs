@@ -135,8 +135,7 @@ impl SSLConfig {
         Self::default()
     }
 
-    /// Whether this config carries a server identity (key+cert pair); `ca`,
-    /// `crl` and the tuning fields alone cannot complete a TLS handshake.
+    /// Whether this config carries a key+cert pair a TLS server can present.
     #[inline]
     pub fn has_identity_material(&self) -> bool {
         (self.cert.is_some() && self.key.is_some())

@@ -121,8 +121,9 @@ function injectFakeEmitter(Class) {
   }
 
   // fakeParentPort routes self's native ErrorEvent (.error) here; emit() sends CustomEvent (.detail)
+  const _ErrorEvent = ErrorEvent;
   function errorEventHandler(event) {
-    return event instanceof ErrorEvent ? event.error : event.detail;
+    return event instanceof _ErrorEvent ? event.error : event.detail;
   }
 
   function customEventHandler(event) {
@@ -203,10 +204,10 @@ function injectFakeEmitter(Class) {
     switch (event) {
       case "message":
       case "messageerror":
-        this.dispatchEvent(new MessageEvent(event, { data: arg }));
+        this.dispatchEvent(new MessageEvent(event, { __proto__: null, data: arg }));
         break;
       default:
-        this.dispatchEvent(new CustomEvent(event, { detail: arg }));
+        this.dispatchEvent(new CustomEvent(event, { __proto__: null, detail: arg }));
         break;
     }
     return hadListeners;

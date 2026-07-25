@@ -3,6 +3,74 @@ import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "t
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };
 
 describe("Bun.serve SSL validations", () => {
+  describe("tls option without a certificate", () => {
+    const tuningOnly: Record<string, Bun.TLSOptions> = {
+      "lowMemoryMode": { lowMemoryMode: true },
+      "requestCert": { requestCert: true },
+      "rejectUnauthorized": { rejectUnauthorized: false },
+      "secureOptions": { secureOptions: 1 },
+      "passphrase": { passphrase: "x" },
+      "serverName": { serverName: "example.com" },
+      "ca": { ca: publicKey },
+    };
+
+    // An explicit `tls: { ... }` that only carries tuning knobs (no cert/key)
+    // must throw rather than start an HTTPS listener that can never complete a
+    // handshake.
+    for (const [label, tls] of Object.entries(tuningOnly)) {
+      test(`tls: { ${label} } throws`, () => {
+        expect(() => {
+          Bun.serve({ port: 0, tls, fetch: () => new Response("ok") });
+        }).toThrow('tls object is missing "cert" and "key"');
+      });
+      test(`tls: [{ ${label} }] throws`, () => {
+        expect(() => {
+          Bun.serve({ port: 0, tls: [tls], fetch: () => new Response("ok") });
+        }).toThrow('tls object is missing "cert" and "key"');
+      });
+    }
+
+    // The same keys at the top level (the legacy v0.2 flattened shape) must
+    // NOT flip the server into TLS mode. They are silently ignored and the
+    // server stays plain HTTP.
+    for (const [label, opts] of Object.entries(tuningOnly)) {
+      test(`top-level { ${label} } stays HTTP`, async () => {
+        using server = Bun.serve({
+          port: 0,
+          ...(opts as object),
+          fetch: () => new Response("ok"),
+        });
+        expect(server.url.protocol).toBe("http:");
+        const res = await fetch(server.url);
+        expect(await res.text()).toBe("ok");
+        expect(res.status).toBe(200);
+      });
+    }
+
+    // Back-compat: cert/key at the top level (no `tls:` wrapper) still works.
+    test("top-level { cert, key } still enables TLS", async () => {
+      using server = Bun.serve({
+        port: 0,
+        // @ts-expect-error legacy flattened shape
+        cert: publicKey,
+        key: privateKey,
+        fetch: () => new Response("ok"),
+      });
+      expect(server.url.protocol).toBe("https:");
+      const res = await fetch(server.url, { tls: { rejectUnauthorized: false } });
+      expect(await res.text()).toBe("ok");
+      expect(res.status).toBe(200);
+    });
+
+    // tls: {} with nothing in it was already treated as "no TLS"; keep that.
+    test("tls: {} stays HTTP", async () => {
+      using server = Bun.serve({ port: 0, tls: {}, fetch: () => new Response("ok") });
+      expect(server.url.protocol).toBe("http:");
+      const res = await fetch(server.url);
+      expect(res.status).toBe(200);
+    });
+  });
+
   const fixtures = [
     {
       label: "invalid key",

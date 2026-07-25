@@ -3656,7 +3656,7 @@ impl<'a> Resolver<'a> {
         use crate::package_json::Status;
         matches!(
             status,
-            Status::Exact | Status::ExactEndsWithStar | Status::Inexact
+            Status::Exact | Status::ExactEndsWithStar | Status::Inexact | Status::PackageResolve
         ) && self.opts.conditions.import.contains_key(b"bun".as_slice())
     }
 
@@ -4897,24 +4897,24 @@ impl<'a> Resolver<'a> {
 
             let matched_status = esm_resolution.status;
 
-            if matched_status == crate::package_json::Status::PackageResolve {
-                return self.handle_imports_package_resolve(
+            let result = if matched_status == crate::package_json::Status::PackageResolve {
+                self.handle_imports_package_resolve(
                     &esm_resolution.path,
                     kind,
                     dir_info,
                     global_cache,
                     out,
-                );
-            }
-
-            let result = self.handle_esm_resolution(
-                esm_resolution,
-                package_json.source.path.name().dir,
-                kind,
-                package_json,
-                b"",
-                out,
-            );
+                )
+            } else {
+                self.handle_esm_resolution(
+                    esm_resolution,
+                    package_json.source.path.name().dir,
+                    kind,
+                    package_json,
+                    b"",
+                    out,
+                )
+            };
 
             if !result.is_success()
                 && !skip_bun_condition

@@ -119,6 +119,32 @@ describe.concurrent('exports "bun" condition target missing on disk', () => {
     expect(exitCode).toBe(0);
   });
 
+  test("falls through for an imports map bare-package target", async () => {
+    using dir = tempDir("issue-7142-imports-pkg", {
+      "node_modules/pkg/package.json": JSON.stringify({
+        name: "pkg",
+        type: "module",
+        exports: { ".": "./index.mjs" },
+        imports: {
+          "#fetch": {
+            bun: "bun-only-pkg",
+            default: "dep",
+          },
+        },
+      }),
+      "node_modules/pkg/index.mjs": `export { picked } from "#fetch";\n`,
+      "node_modules/dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "./index.mjs" }),
+      "node_modules/dep/index.mjs": `export const picked = "dep";\n`,
+      "index.mjs": `import { picked } from "pkg";\nconsole.log(picked);\n`,
+      "package.json": JSON.stringify({ name: "app", type: "module" }),
+    });
+
+    const { stdout, stderr, exitCode } = await run(dir, "index.mjs");
+    expect(stderr).not.toContain("Cannot find");
+    expect(stdout.trim()).toBe("dep");
+    expect(exitCode).toBe(0);
+  });
+
   test("still prefers the bun condition when its target exists", async () => {
     using dir = tempDir("issue-7142-prefers-bun", {
       "node_modules/pkg/package.json": JSON.stringify({

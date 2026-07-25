@@ -2589,6 +2589,17 @@ pub mod bv2_impl {
                 .loader(&self.transpiler.options.loaders)
                 .unwrap_or(Loader::File);
 
+            // When the resolver followed a symlink, `path.pretty` still holds the
+            // pre-symlink absolute path (`set_realpath` moved the old `text` there).
+            // Keep it for output naming so `outdir` mirrors the entry-point spelling
+            // the user wrote, matching esbuild. `path_with_pretty_initialized` below
+            // overwrites `pretty`.
+            if is_entry_point && path.is_symlink && path.is_file() && !path.pretty.is_empty() {
+                self.graph
+                    .entry_point_original_names
+                    .put(source_index.get(), path.pretty)?;
+            }
+
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
             // `Path<'static>` alias so `path` doesn't keep `self` borrowed.

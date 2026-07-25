@@ -85,6 +85,49 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
         .sort((a, b) => a - b),
     ).toEqual(Array.from({ length: 32 }, (_, i) => i));
   });
+
+  // https://github.com/oven-sh/bun/issues/30569
+  it("send() returns false once the IPC write queue backs up", async () => {
+    // Child acknowledges, then busy-loops so the parent end of the IPC pipe
+    // is never drained. Parent floods ~64 KiB messages; send() must flip to
+    // false once queued bytes exceed the 128 KiB threshold instead of
+    // buffering without bound.
+    //
+    // The child only enters the busy-loop from the send() callback (which
+    // fires once "ready" has actually been written): the first send() lazily
+    // opens the IPC socket and, in advanced mode on Windows, queues a version
+    // packet behind an async uv_write, so "ready" would otherwise sit unsent
+    // forever once the event loop stops running.
+    const { promise: ready, resolve, reject } = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.send("ready", () => { const end = Date.now() + 10000; while (Date.now() < end) {} })`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "ignore", "ignore"],
+      serialization: mode,
+      ipc: () => resolve(),
+    });
+    child.exited.then(code => reject(new Error(`exited ${code} before ready`)));
+    await ready;
+    const payload = { s: Buffer.alloc(65536, "z").toString() };
+    let trueCount = 0;
+    let falseCount = 0;
+    for (let i = 0; i < 500; i++) {
+      if (child.send(payload) === false) {
+        falseCount++;
+        break;
+      }
+      trueCount++;
+    }
+    child.kill("SIGKILL");
+    // Exactly one send() must have returned false (the loop breaks on it).
+    // trueCount is included so a regression's failure output shows how many
+    // sends went through before the loop gave up.
+    expect(`true=${trueCount} false=${falseCount}`).toMatch(/^true=\d+ false=1$/);
+  });
 });
 
 describe("ipc mode advanced", () => {

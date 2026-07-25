@@ -273,10 +273,15 @@ test("mock.module with a file:// URL + query string registers under the same key
       mock.module(base + "?v=1", () => ({ default: "MOCKED", url: "mocked" }));
       const m1 = await import(base + "?v=1");
       const m2 = await import(base + "?v=2");
+      // Relative specifier for a file that does not exist on disk: registration
+      // and virtual-module lookup both go through the relative-URL fallback.
+      mock.module("./virt.mjs?v=1", () => ({ default: "VMOCK" }));
+      const m3 = await import("./virt.mjs?v=1");
       console.log(JSON.stringify({
         mocked: m1.default,
         unmocked: m2.default,
         unmockedUrl: m2.url.slice(m2.url.lastIndexOf("/") + 1),
+        relMocked: m3.default,
       }));
     `,
   });
@@ -293,6 +298,7 @@ test("mock.module with a file:// URL + query string registers under the same key
     mocked: "MOCKED",
     unmocked: "REAL",
     unmockedUrl: "real.mjs?v=2",
+    relMocked: "VMOCK",
   });
   expect(exitCode).toBe(0);
 });

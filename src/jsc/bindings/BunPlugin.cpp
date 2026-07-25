@@ -796,7 +796,11 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = URL(url, path).fileSystemPath();
+            auto joined = URL(url, path);
+            auto query = joined.queryWithLeadingQuestionMark();
+            joinedPath = query.isEmpty()
+                ? joined.fileSystemPath()
+                : makeString(joined.fileSystemPath(), query);
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

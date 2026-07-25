@@ -91,6 +91,38 @@ describe("lookbehind JIT correctness", () => {
     [/(?<!ab)c/, "\u00ffxxc", "c"],
     [/(?<!\u00e9)x/, "\u00e9x", null],
     [/(?<!\u00e9)x/, "ax", "x"],
+    // 16-bit input strings (code points above U+00FF force Char16 storage).
+    [/(?<!ab)c/, "\u0100abc", null],
+    [/(?<!ab)c/, "\u0100xxc", "c"],
+    [/(?<!\u0101)x/, "\u0101x", null],
+    [/(?<!\u0101)x/, "a\u0100x", "x"],
+    [/(?<![0-9])px/, "\u010010px", null],
+    [/(?<![0-9])px/, "\u0100apx", "px"],
+    [/(?<=\u0101\u0102)x/, "\u0101\u0102x", "x"],
+    [/(?<=\u0101\u0102)x/, "\u0101\u0103x", null],
+    // Lookbehind inside a lookahead.
+    [/x(?=(?<!x)y)y/, "xy", null],
+    [/x(?=(?<!a)y)y/, "xy", "xy"],
+    [/(?=(?<=a)b)b/, "ab", "b"],
+    [/(?=(?<=a)b)b/, "xb", null],
+    [/z(?=a(?<!za)b)ab/, "zab", null],
+    [/z(?=a(?<!ya)b)ab/, "zab", "zab"],
+    [/(?=(?<!ab|c)d)d/, "abd", null],
+    [/(?=(?<!ab|c)d)d/, "xd", "d"],
+    [/(?=ab(?<!xab)c)abc/, "xabc", null],
+    [/(?=ab(?<!xab)c)abc/, "yabc", "abc"],
+    [/(?<!)X/, "aX", null],
+    [/(?<=)X/, "aX", "X"],
+    [/(?=(?<!a)b)/, "xb", ""],
+    [/(?=(?<!a)b)/, "ab", null],
+    [/((?<!a)b)+/, "xbbb", "bbb"],
+    [/((?<!a)b)+/, "abbb", "bb"],
+    [/(?<![^a])b/, "ab", "b"],
+    [/(?<![^a])b/, "xb", null],
+    [/(?<![^a])b/, "b", "b"],
+    [/(?<!.)b/, "ab", null],
+    [/(?<!.)b/, "b", "b"],
+    [/(?<!.)b/, "\nb", "b"],
     // Patterns below must fall back to the interpreter; they still need to work.
     [/(?<!a)b/u, "ab", null],
     [/(?<!a)b/u, "xb", "b"],
@@ -111,10 +143,10 @@ describe("lookbehind JIT correctness", () => {
     }
   });
 
-  test("warmed-up JIT path", () => {
+  test("16-bit MatchOnly path", () => {
     for (const [re, input, expected] of cases) {
-      // Push the regex past the JIT threshold, then verify again.
-      for (let i = 0; i < 8; i++) re.test("\u0000");
+      // Force compilation of the Char16 match-only body before the assertion below.
+      re.test("\u0100");
       const m = re.exec(input);
       if (expected === null) {
         expect(m).toBeNull();

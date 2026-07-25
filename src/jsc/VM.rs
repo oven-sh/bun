@@ -31,6 +31,8 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
+    safe fn JSC__VM__gcDeferralIncrement(vm: &VM) -> i32;
+    safe fn JSC__VM__gcDeferralDecrement(vm: &VM) -> i32;
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
@@ -104,6 +106,20 @@ impl VM {
 
     pub fn collect_async(&self) {
         JSC__VM__collectAsync(self)
+    }
+
+    /// Bracketed GC deferral for latency-sensitive regions (e.g. UI render
+    /// frames). `DeferGCForAWhile` semantics — the closing decrement does
+    /// **not** itself collect; the next allocation slow path will, so any
+    /// deferred pressure resolves outside the bracket. Returns the new
+    /// JS-side nesting depth; the underlying heap deferral is held at one
+    /// level regardless. See `JSC__VM__gcDeferralIncrement` in BunGCDefer.cpp.
+    pub fn gc_deferral_increment(&self) -> i32 {
+        JSC__VM__gcDeferralIncrement(self)
+    }
+
+    pub fn gc_deferral_decrement(&self) -> i32 {
+        JSC__VM__gcDeferralDecrement(self)
     }
 
     pub fn set_execution_forbidden(&self, forbidden: bool) {

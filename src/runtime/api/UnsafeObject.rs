@@ -10,11 +10,32 @@ pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
         global,
         &[
             ("gcAggressionLevel", __jsc_host_gc_aggression_level, 1),
+            ("gcDefer", __jsc_host_gc_defer, 0),
+            ("gcAllow", __jsc_host_gc_allow, 0),
             ("arrayBufferToString", __jsc_host_array_buffer_to_string, 1),
             ("mimallocDump", __jsc_host_dump_mimalloc, 1),
             ("memoryFootprint", __jsc_host_memory_footprint, 1),
         ],
     )
+}
+
+/// Defer GC across a latency-sensitive region. Pair every call with
+/// [`gc_allow`] (use `try`/`finally` on the JS side). Eden collections that
+/// would have fired mid-region are pushed to the first allocation after
+/// `gcAllow()`; the closing call itself does not collect. Returns the new
+/// nesting depth.
+#[bun_jsc::host_fn]
+fn gc_defer(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        global.vm().gc_deferral_increment() as f64
+    ))
+}
+
+#[bun_jsc::host_fn]
+fn gc_allow(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        global.vm().gc_deferral_decrement() as f64
+    ))
 }
 
 #[bun_jsc::host_fn]

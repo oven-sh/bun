@@ -2820,6 +2820,8 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+// JSC__VM__gcDeferralIncrement / Decrement live in BunGCDefer.cpp.
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);

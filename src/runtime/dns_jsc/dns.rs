@@ -2143,9 +2143,7 @@ impl Resolver {
             // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
             unsafe { c_ares::Channel::destroy(channel) };
         }
-        // Native-backend lookups (`pending_host_cache_native`) are not cancelled
-        // by `ares_destroy`, so the timer may still be linked; drop it (and its
-        // +1 ref / uws active-handle) explicitly.
+        // Native-backend lookups aren't cancelled by `ares_destroy`; drop the timer ref explicitly.
         self.remove_timer();
     }
 }
@@ -4160,10 +4158,7 @@ impl Resolver {
         false
     }
 
-    /// Arm the retransmit timer. Call *before* handing the request to c-ares:
-    /// dispatch can fire the completion callback synchronously (EBADNAME/
-    /// ENOTIMP/…), and its `request_completed()` must see the timer ACTIVE so
-    /// the `ref_()`/`deref()` pair balances.
+    /// Arm the retransmit timer. Call *before* c-ares dispatch: it may fire the completion callback synchronously.
     fn request_sent(&self, _vm: &VirtualMachine) {
         let _ = self.add_timer(None);
     }

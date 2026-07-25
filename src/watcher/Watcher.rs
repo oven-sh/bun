@@ -335,18 +335,20 @@ impl Watcher {
             // defer Output.flush() — handled at end
             log!("Watcher started");
 
-            match me.watch_loop() {
-                Err(err) => {
-                    me.watchloop_handle.store(false);
-                    // serialise against `add_root` on other threads
-                    let _guard = me.mutex.lock_guard();
-                    me.platform.stop();
-                    drop(_guard);
-                    if me.running.load() {
-                        (me.on_error)(me.ctx, err);
-                    }
+            let loop_result = me.watch_loop();
+            // Both exits must stop the platform before the Box drops below:
+            // on Windows every root still has a pending ReadDirectoryChangesW
+            // aimed at its buffer. Locked to serialise against `add_root` on
+            // other threads.
+            {
+                let _guard = me.mutex.lock_guard();
+                me.platform.stop();
+            }
+            if let Err(err) = loop_result {
+                me.watchloop_handle.store(false);
+                if me.running.load() {
+                    (me.on_error)(me.ctx, err);
                 }
-                Ok(()) => {}
             }
 
             // deinit and close descriptors if needed

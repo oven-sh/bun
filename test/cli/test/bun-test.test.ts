@@ -1345,6 +1345,25 @@ describe("bun test", () => {
     expect(stderr).toContain("1 filtered out");
   });
 
+  test("repeated -t compiles each pattern independently (backreferences stay local)", () => {
+    const stderr = runTest({
+      args: ["-t", "(foo)\\1", "-t", "(bar)\\1"],
+      input: `
+        import { test } from "bun:test";
+        test("foofoo", () => {});
+        test("bar", () => {});
+        test("barbar", () => {});
+        test("quux", () => {});
+      `,
+    });
+    expect(stderr).toContain("(pass) foofoo");
+    expect(stderr).toContain("(pass) barbar");
+    expect(stderr).not.toContain("(pass) bar ");
+    expect(stderr).not.toContain("(pass) quux");
+    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("2 filtered out");
+  });
+
   test("--tsconfig-override works", () => {
     const dir = tempDirWithFiles("test-tsconfig-override", {
       "math.test.ts": `

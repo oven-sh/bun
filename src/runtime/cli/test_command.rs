@@ -2214,7 +2214,9 @@ impl TestCommand {
                 filter_regex: ctx
                     .test_options
                     .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                    .iter()
+                    .map(|p| p.cast::<jsc::RegularExpression>())
+                    .collect(),
                 snapshots: Snapshots {
                     update_snapshots: ctx.test_options.update_snapshots,
                     total: 0,
@@ -3011,9 +3013,16 @@ impl TestCommand {
 
                 reporter.print_summary();
             } else {
+                let patterns = &ctx.test_options.test_filter_pattern;
+                pretty_error!("<red>error<r><d>:<r> regex ");
+                for (i, p) in patterns.iter().enumerate() {
+                    if i > 0 {
+                        pretty_error!("<d>,<r> ");
+                    }
+                    pretty_error!("<b>{}<r>", bun_fmt::quote(p));
+                }
                 pretty_error!(
-                    "<red>error<r><d>:<r> regex <b>{}<r> matched 0 tests. Searched {} file{} (skipping {} test{}) ",
-                    bun_fmt::quote(ctx.test_options.test_filter_pattern.as_ref().unwrap()),
+                    " matched 0 tests. Searched {} file{} (skipping {} test{}) ",
                     summary.files,
                     if summary.files == 1 { "" } else { "s" },
                     summary.skipped_because_label,

@@ -402,7 +402,7 @@ impl ScopeFunctions {
                 if let Some(reporter) = bun_test.reporter {
                     // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
                     let reporter = unsafe { reporter.as_ref() };
-                    if let Some(filter_regex) = reporter.jest.filter_regex {
+                    if !reporter.jest.filter_regex.is_empty() {
                         group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
                         // reshaped for borrowck — clear at end via explicit call below.
@@ -426,10 +426,14 @@ impl ScopeFunctions {
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())
                         ));
-                        // SAFETY: `filter_regex` is the FFI-allocated Yarr handle stored in
-                        // `TestRunner` for the process lifetime; single-threaded here so the
-                        // exclusive borrow is unaliased.
-                        matches_filter = unsafe { &mut *filter_regex.as_ptr() }.matches(str);
+                        // SAFETY: each `filter_regex` is the FFI-allocated Yarr handle stored
+                        // in `TestRunner` for the process lifetime; single-threaded here so
+                        // the exclusive borrow is unaliased.
+                        matches_filter = reporter
+                            .jest
+                            .filter_regex
+                            .iter()
+                            .any(|r| unsafe { &mut *r.as_ptr() }.matches(str));
 
                         bun_test.collection.filter_buffer.clear();
                     }

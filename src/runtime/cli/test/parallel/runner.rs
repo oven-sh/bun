@@ -359,7 +359,7 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         "--max-concurrency={}",
         opts.max_concurrency
     ))?);
-    if let Some(pattern) = &opts.test_filter_pattern {
+    for pattern in &opts.test_filter_pattern {
         argv.push(lit(b"-t\0"));
         argv.push(dupe_z(pattern));
     }

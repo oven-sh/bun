@@ -210,9 +210,9 @@ describe("Bun.serve tls must carry key+cert", () => {
     ["cert without key", { cert: tlsCert.cert }],
   ] as const) {
     test(`top-level ${label} throws (legacy path)`, () => {
-      expect(() =>
-        Bun.serve({ port: 0, ...opts, fetch: () => new Response("ok") } as any),
-      ).toThrow('tls option requires both "key" and "cert"');
+      expect(() => Bun.serve({ port: 0, ...opts, fetch: () => new Response("ok") } as any)).toThrow(
+        'tls option requires both "key" and "cert"',
+      );
     });
   }
 

@@ -2106,11 +2106,7 @@ pub mod bv2_impl {
             }
         }
 
-        /// esbuild's `require-resolve-not-external` handling: a `RequireResolve`
-        /// record is resolved for diagnostics only, its path text stays as the
-        /// original specifier, and the target is not pulled into the graph.
-        /// Skipped for the dev server, whose `hmr.requireResolve` pass-through
-        /// relies on the bundler writing the resolved module id.
+        /// esbuild's `require-resolve-not-external`: warn and skip graph-enqueue for a resolved `RequireResolve` record, except under the dev server whose `hmr.requireResolve` needs the resolved id written.
         fn should_skip_require_resolve_enqueue(
             &mut self,
             kind: ImportKind,
@@ -2137,9 +2133,7 @@ pub mod bv2_impl {
             true
         }
 
-        /// `should_skip_require_resolve_enqueue` for the post-plugin-dispatch
-        /// paths, where the importer's `Source` and `ImportRecord` are reached
-        /// via graph indices rather than being in scope.
+        /// `should_skip_require_resolve_enqueue` for the post-plugin-dispatch paths where the importer's `Source` and flags are reached via graph indices.
         fn should_skip_require_resolve_for_importer(
             &mut self,
             ir: &jsc_api::JSBundler::MiniImportRecord,

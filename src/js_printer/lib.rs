@@ -6202,9 +6202,12 @@ pub mod __gated_printer {
             }
         }
 
+        /// A module disabled via the package.json "browser" field (or a
+        /// disabled node builtin under --target=browser) must evaluate to an
+        /// empty object, matching esbuild/webpack and the browser-field spec.
         #[inline]
         fn print_disabled_import(&mut self) {
-            self.print_whitespacer(ws!(b"(() => ({}))"));
+            self.print(b"({})");
         }
 
         // We must use Object.defineProperty() to handle re-exports from ESM -> CJS

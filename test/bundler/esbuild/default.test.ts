@@ -1265,13 +1265,15 @@ describe.concurrent("bundler", () => {
       assert(api.readFile("/out.js").startsWith("#! in file"), "hashbang from banner does not override file hashbang");
     },
   });
+  // esbuild errors here; Bun instead stubs "fs" out as an empty module for
+  // browser targets, so the value must be an empty object, not a function.
   itBundled("default/RequireFSBrowser", {
     files: {
       "/entry.js": `console.log(require('fs'))`,
     },
     target: "browser",
     run: {
-      stdout: "[Function]",
+      stdout: "{}",
     },
   });
   itBundled("default/RequireFSNode", {
@@ -1295,6 +1297,8 @@ describe.concurrent("bundler", () => {
       stdout: "true",
     },
   });
+  // esbuild errors here; Bun instead stubs "fs" out as an empty module for
+  // browser targets, so the namespace must be an empty object, not a function.
   itBundled("default/ImportFSBrowser", {
     files: {
       "/entry.js": /* js */ `
@@ -1306,7 +1310,7 @@ describe.concurrent("bundler", () => {
       `,
     },
     run: {
-      stdout: "[Function: fs] undefined undefined",
+      stdout: "{} undefined undefined",
     },
     target: "browser",
   });

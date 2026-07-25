@@ -11,8 +11,8 @@ __FastRefreshModule as FastHMR
 import {
 __FastRefreshRuntime as FastRefresh
 } from "http://localhost:8080/bun:wrap";
-var this_package_should_not_exist_f335_0 = (() => ({}));
-var this_package_should_not_exist_f335_1 = (() => ({}));
+var this_package_should_not_exist_f335_0 = ({});
+var this_package_should_not_exist_f335_1 = ({});
 var hmr = new FastHMR(3165260286, "caught-require.js", FastRefresh), exports = hmr.exports;
 await (hmr._load = async function() {
   try {

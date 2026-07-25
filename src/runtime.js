@@ -109,6 +109,13 @@ var __moduleCache;
 // When you do know the module is CJS
 export var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
+// Map of bundled modules for `require("./dir/" + x)` / `import("./dir/" + x)`
+export var __glob = map => path => {
+  var fn = map[path];
+  if (fn) return fn();
+  throw new Error("Module not found in bundle: " + path);
+};
+
 export var __name = (target, name) => {
   Object.defineProperty(target, "name", {
     value: name,

@@ -1003,6 +1003,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
+        if let Some(glob) = self.handle_glob_pattern(arg, false) {
+            return glob;
+        }
+
         if self.options.warn_about_unbundled_modules {
             // Use a debug log so people can see this if they want to
             let r = js_lexer::range_of_identifier(self.source, state.loc);
@@ -1234,6 +1238,251 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     arg.loc,
                 )
             }
+        }
+    }
+
+    /// Try to recognise `require("./dir/" + x)` / `import("./dir/" + x)` (or the
+    /// template-literal equivalent) and lower it to a bundled lookup map so the
+    /// matching files are included in the output. Matches esbuild's behaviour:
+    /// see https://esbuild.github.io/api/#glob. Returns `None` when the pattern
+    /// does not qualify (no `./`/`../` prefix, fully opaque arg, etc.), in which
+    /// case the caller falls through to the unbundled runtime `require`.
+    pub fn handle_glob_pattern(&mut self, arg: Expr, is_require: bool) -> Option<Expr> {
+        if !self.options.bundle || self.is_control_flow_dead {
+            return None;
+        }
+        // Only the `file` namespace has a source directory to glob from.
+        if !self.source.path.is_file() {
+            return None;
+        }
+
+        // (text, is_wildcard) pairs flattened from the expression.
+        let mut raw_parts: smallvec::SmallVec<[(&'a [u8], bool); 8]> = smallvec::SmallVec::new();
+        if !self.glob_parts_from_expr(arg, &mut raw_parts) {
+            return None;
+        }
+
+        // Build the glob pattern. A wildcard immediately after `/` expands to
+        // `**/*` (may recurse into subdirectories); otherwise it is `*` (stays
+        // in the current directory). This matches esbuild and keeps
+        // `"./file-" + x + ".js"` from recursing.
+        let mut pattern = Vec::<u8>::new();
+        let mut prefix_is_relative = false;
+        let mut had_wildcard = false;
+        let mut ends_in_slash = true;
+        for (text, is_wildcard) in &raw_parts {
+            if *is_wildcard {
+                had_wildcard = true;
+                if ends_in_slash {
+                    pattern.extend_from_slice(b"**/*");
+                } else {
+                    pattern.push(b'*');
+                }
+                ends_in_slash = false;
+                continue;
+            }
+            if pattern.is_empty()
+                && (strings::has_prefix_comptime(text, b"./")
+                    || strings::has_prefix_comptime(text, b"../"))
+            {
+                prefix_is_relative = true;
+            }
+            // `*` / `?` / `[` / `{` in the literal text would change glob
+            // semantics relative to a substring match. esbuild escapes them; we
+            // don't have a glob-escape helper, so bail to the runtime path.
+            if bun_glob::detect_glob_syntax(text) {
+                return None;
+            }
+            pattern.extend_from_slice(text);
+            if !text.is_empty() {
+                ends_in_slash = *text.last().unwrap() == b'/';
+            }
+        }
+        // Fully-static strings go through the normal `require("...")` path.
+        if !had_wildcard || !prefix_is_relative {
+            return None;
+        }
+
+        let source_dir = self.source.path.source_dir();
+        if source_dir.is_empty() {
+            return None;
+        }
+
+        // Walk the filesystem for matches. Any I/O error (including the source
+        // directory being virtual / not on disk) falls through to the unbundled
+        // path rather than failing the build.
+        let mut matches: Vec<Box<[u8]>> = Vec::new();
+        if !walk_glob_for_bundle(source_dir, &pattern, &mut matches) {
+            return None;
+        }
+
+        // Nothing on disk matched: fall through so `check_dynamic_specifier`
+        // (and the `allowUnresolved` gate) still see this call, and runtime
+        // resolution can still pick up files that only exist at run time.
+        if matches.is_empty() {
+            return None;
+        }
+        matches.sort();
+
+        let loc = arg.loc;
+        let arena = self.arena;
+        let mut properties = BumpVec::<G::Property>::with_capacity_in(matches.len(), arena);
+        let handles_import_errors = self.fn_or_arrow_data_visit.try_body_count != 0;
+
+        for abs in &matches {
+            // Key in the map is the same relative form the caller will pass at
+            // runtime (starts with `./` or `../`). Force POSIX separators so the
+            // keys match what the caller builds at runtime on every platform.
+            let rel = bun_paths::resolve_path::relative_platform::<
+                bun_paths::resolve_path::platform::Posix,
+                false,
+            >(source_dir, abs);
+            let rel_with_dot: &'a [u8] = if strings::has_prefix_comptime(rel, b"../")
+                || strings::has_prefix_comptime(rel, b"./")
+            {
+                arena.alloc_slice_copy(rel)
+            } else {
+                let mut buf = BumpVec::<u8>::with_capacity_in(rel.len() + 2, arena);
+                buf.extend_from_slice(b"./");
+                buf.extend_from_slice(rel);
+                buf.into_bump_slice()
+            };
+
+            let abs_path: &'a [u8] = arena.alloc_slice_copy(abs);
+            let import_record_index = self.add_import_record(
+                if is_require {
+                    ImportKind::Require
+                } else {
+                    ImportKind::Dynamic
+                },
+                loc,
+                abs_path,
+            );
+            self.import_records.items_mut()[import_record_index as usize]
+                .flags
+                .set(
+                    bun_ast::ImportRecordFlags::HANDLES_IMPORT_ERRORS,
+                    handles_import_errors,
+                );
+            self.import_records_for_current_part
+                .push(import_record_index);
+
+            let value_expr = if is_require {
+                self.new_expr(
+                    E::RequireString {
+                        import_record_index,
+                        ..Default::default()
+                    },
+                    loc,
+                )
+            } else {
+                let path_expr = self.new_expr(E::String::init(rel_with_dot), loc);
+                self.new_expr(
+                    E::Import {
+                        expr: path_expr,
+                        import_record_index,
+                        options: Expr::EMPTY,
+                    },
+                    loc,
+                )
+            };
+
+            let body = bun_core::handle_oom(G::FnBody::init_return_expr(arena, value_expr));
+            let arrow = self.new_expr(
+                E::Arrow {
+                    body,
+                    prefer_expr: true,
+                    ..Default::default()
+                },
+                loc,
+            );
+
+            properties.push(G::Property {
+                key: Some(self.new_expr(E::String::init(rel_with_dot), loc)),
+                value: Some(arrow),
+                ..Default::default()
+            });
+        }
+
+        let map = self.new_expr(
+            E::Object {
+                properties: G::PropertyList::from_bump_vec(properties),
+                ..Default::default()
+            },
+            loc,
+        );
+        let glob_call = self.call_runtime(loc, b"__glob", ExprNodeList::init_one(map));
+        Some(self.new_expr(
+            E::Call {
+                target: glob_call,
+                args: ExprNodeList::init_one(arg),
+                ..Default::default()
+            },
+            loc,
+        ))
+    }
+
+    /// Flattens `expr` into alternating literal / wildcard segments. Returns
+    /// `false` for shapes that cannot be analysed (tagged template, non-string
+    /// left operand of `+`, etc.).
+    fn glob_parts_from_expr(
+        &mut self,
+        expr: Expr,
+        out: &mut smallvec::SmallVec<[(&'a [u8], bool); 8]>,
+    ) -> bool {
+        match expr.data {
+            js_ast::ExprData::EString(mut s) => {
+                s.resolve_rope_if_needed(self.arena);
+                let bytes = match s.string(self.arena) {
+                    Ok(b) => b,
+                    Err(_) => return false,
+                };
+                out.push((bytes, false));
+                true
+            }
+            js_ast::ExprData::ETemplate(tmpl) => {
+                if tmpl.tag.is_some() {
+                    return false;
+                }
+                match &tmpl.head {
+                    js_ast::e::TemplateContents::Cooked(head) => {
+                        let bytes = match head.string(self.arena) {
+                            Ok(b) => b,
+                            Err(_) => return false,
+                        };
+                        out.push((bytes, false));
+                    }
+                    js_ast::e::TemplateContents::Raw(_) => return false,
+                }
+                for part in tmpl.parts().iter() {
+                    if !self.glob_parts_from_expr(part.value, out) {
+                        out.push((b"", true));
+                    }
+                    match &part.tail {
+                        js_ast::e::TemplateContents::Cooked(tail) => {
+                            let bytes = match tail.string(self.arena) {
+                                Ok(b) => b,
+                                Err(_) => return false,
+                            };
+                            out.push((bytes, false));
+                        }
+                        js_ast::e::TemplateContents::Raw(_) => return false,
+                    }
+                }
+                true
+            }
+            js_ast::ExprData::EBinary(bin) if bin.op == js_ast::op::Code::BinAdd => {
+                // The left side must itself be analysable so we have a literal
+                // prefix to anchor the glob.
+                if !self.glob_parts_from_expr(bin.left, out) {
+                    return false;
+                }
+                if !self.glob_parts_from_expr(bin.right, out) {
+                    out.push((b"", true));
+                }
+                true
+            }
+            _ => false,
         }
     }
 
@@ -9242,6 +9491,33 @@ pub trait GenerateImportSymbols {
     type Key;
     fn get(&self, key: &Self::Key) -> Option<Ref>;
     fn alias_name(&self, key: &Self::Key) -> &'static [u8];
+}
+
+/// Walk `source_dir` for `pattern` (relative, POSIX, may contain `**`/`*`),
+/// pushing the absolute path of every file that matches into `out`. Returns
+/// `false` on any I/O failure so the caller can fall back to the unbundled
+/// runtime require.
+fn walk_glob_for_bundle(source_dir: &[u8], pattern: &[u8], out: &mut Vec<Box<[u8]>>) -> bool {
+    let mut walker = match bun_glob::BunGlobWalker::init_with_cwd(
+        pattern, source_dir, /*dot*/ false, /*absolute*/ true,
+        /*follow_symlinks*/ false, /*error_on_broken_symlinks*/ false,
+        /*only_files*/ true, None,
+    ) {
+        Ok(Ok(w)) => w,
+        _ => return false,
+    };
+    let mut iter = bun_glob::walk::Iterator::new(&mut walker);
+    match iter.init() {
+        Ok(Ok(())) => {}
+        _ => return false,
+    }
+    loop {
+        match iter.next() {
+            Ok(Ok(Some(path))) => out.push(path),
+            Ok(Ok(None)) => return true,
+            _ => return false,
+        }
+    }
 }
 
 // ─── Module-level constructor fns ───

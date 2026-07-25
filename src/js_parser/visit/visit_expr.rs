@@ -2033,7 +2033,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         *e = p.transpose_known_to_be_if_require(first, &state);
                         return;
                     }
-                    _ => {}
+                    _ => {
+                        // require(`./dir/${x}`) => __glob({"./dir/a": () => require_a(), ...})(`./dir/${x}`)
+                        if let Some(glob) = p.handle_glob_pattern(first, true) {
+                            *e = glob;
+                            return;
+                        }
+                    }
                 }
             }
 

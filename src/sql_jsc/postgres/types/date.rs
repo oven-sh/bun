@@ -39,14 +39,33 @@ pub fn parse_infinity(bytes: &[u8]) -> Option<f64> {
 
 /// Decode a Postgres `timestamp` (WITHOUT TIME ZONE) text value as UTC, so the
 /// text/simple-query path agrees with the binary path (which is already UTC).
-/// Postgres emits these as `YYYY-MM-DD HH:MM:SS[.ffffff]` with no offset;
-/// without this they'd go through JS `Date.parse` and be read as local time on
-/// non-UTC hosts. Returns `None` for anything that isn't this exact shape
-/// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
-/// `Date.parse`. `timestamptz` and `date` already decode correctly via
-/// `Date.parse` and must NOT be routed here.
+/// Postgres emits these as `YYYY-MM-DD HH:MM:SS[.ffffff]` with no offset.
+/// Returns `None` for anything that isn't this exact shape (e.g. `infinity`,
+/// BC dates, 5+ digit years), so the caller falls back to `Date.parse`.
 pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
     let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
+    components_to_ms_utc(global_object, &parsed)
+}
+
+/// Decode a Postgres `timestamptz` text value:
+/// `YYYY-MM-DD HH:MM:SS[.ffffff][+-]HH[:MM[:SS]]`. The wall-clock components
+/// are converted as UTC and then shifted by the explicit offset, so the
+/// text/simple-query path agrees with the binary path regardless of year. JS
+/// `Date.parse` cannot be used here: the space separator makes it take the
+/// non-ISO heuristic path, which maps years 0001..0099 into 1900..2099.
+/// Returns `None` for anything outside this shape (BC dates, 5+ digit years,
+/// missing offset) so the caller can fall back.
+pub fn timestamptz_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
+    let (parsed, offset_seconds) =
+        crate::shared::datetime_text::parse_postgres_timestamptz(bytes)?;
+    let wall_clock_utc = components_to_ms_utc(global_object, &parsed)?;
+    Some(wall_clock_utc - f64::from(offset_seconds) * 1000.0)
+}
+
+fn components_to_ms_utc(
+    global_object: &JSGlobalObject,
+    parsed: &crate::shared::datetime_text::DateTimeText,
+) -> Option<f64> {
     global_object
         .gregorian_date_time_to_ms_utc(
             i32::from(parsed.year),

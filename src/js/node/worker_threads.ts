@@ -130,12 +130,9 @@ function injectFakeEmitter(Class) {
     };
   }
 
-  // These extractors recover the raw value for .on() listeners from whatever
-  // event shape dispatchEvent delivered. They must match both the native
-  // MessagePort events (message/messageerror are MessageEvent carrying .data)
-  // and the events emit() constructs below. Everything else (including "error",
-  // which MessagePort never fires natively) rides CustomEvent.detail, which is
-  // what node's NodeEventTarget[kCreateEvent] produces for non-message types.
+  // message/messageerror arrive as MessageEvent (.data), from native dispatch
+  // and from emit() below; everything else rides CustomEvent.detail (node's
+  // NodeEventTarget default). MessagePort has no native "error" event.
   function functionForEventType(event, listener) {
     switch (event) {
       case "message":
@@ -193,14 +190,9 @@ function injectFakeEmitter(Class) {
     return this;
   }
 
-  // node's NodeEventTarget.prototype.emit(type, arg): carry a single raw arg,
-  // hand it as-is to node-style listeners, lazily wrap it as a typed event for
-  // addEventListener listeners, and return whether any listeners were
-  // registered. The extractors in functionForEventType undo the wrapping for
-  // .on() listeners, so the init dict here must round-trip through them.
-  // Known gap: listenerCount() only sees the .on()/.once() registry, so an
-  // addEventListener-only listener yields false here where node returns true
-  // (same pre-existing gap as listenerCount() itself).
+  // node's NodeEventTarget.emit(type, arg): single arg, boolean return. The
+  // init dicts here must round-trip through functionForEventType's extractors.
+  // listenerCount() misses addEventListener-only listeners (pre-existing gap).
   function emit(event, arg) {
     const hadListeners = listenerCount.$call(this, event) > 0;
     switch (event) {

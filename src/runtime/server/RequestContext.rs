@@ -1944,10 +1944,12 @@ where
 
     /// # Safety
     /// `this` must be a `*mut RequestContext` previously registered as `lock.task`.
-    pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: &mut Body::Value) {
+    pub(crate) fn do_render_with_body_locked(this: *mut c_void, value: *mut Body::Value) {
         // SAFETY: caller upholds the fn-level contract — `this` is the
         // `*mut RequestContext` previously registered as `lock.task`.
-        Self::do_render_with_body(unsafe { bun_ptr::callback_ctx::<Self>(this) }, value, None);
+        let this = unsafe { bun_ptr::callback_ctx::<Self>(this) };
+        // SAFETY: live `&mut Value` reborrowed by `resolve`/`to_error_instance`.
+        Self::do_render_with_body(this, unsafe { &mut *value }, None);
     }
 
     fn render_with_blob_from_body_value(&mut self) {

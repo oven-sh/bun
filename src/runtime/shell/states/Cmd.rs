@@ -401,10 +401,7 @@ impl Cmd {
         }
     }
 
-    fn on_redirect_body_received(
-        ctx: *mut core::ffi::c_void,
-        _value: &mut crate::webcore::body::Value,
-    ) {
+    fn on_redirect_body_received(ctx: *mut core::ffi::c_void, value: *mut crate::webcore::body::Value) {
         // SAFETY: `ctx` is the `heap::alloc`'d `RedirectBodyBufferCtx`
         // installed by `try_buffer_redirect_body`; consumed here.
         let mut ctx = unsafe { bun_core::heap::take(ctx.cast::<RedirectBodyBufferCtx>()) };
@@ -417,6 +414,22 @@ impl Cmd {
             interp.as_cmd(this).state,
             CmdState::BufferingRedirectBody
         ));
+        // SAFETY: `value` aliases the owning body already written in place by
+        // the producer; no other borrow is live once we return.
+        if let crate::webcore::body::Value::Error(err) = unsafe { &*value } {
+            let global = interp.global_this_ref().expect("buffering only on Js loop");
+            let js_err = err.dupe(global).to_js(global);
+            Builtin::cmd_write_failing_error(
+                interp,
+                this,
+                format_args!(
+                    "bun: failed to read Response body for stdin redirect: {}\n",
+                    js_err.fmt_string(global),
+                ),
+            )
+            .run(interp);
+            return;
+        }
         interp.as_cmd_mut(this).state = CmdState::ExpandingArgs { idx: 0 };
         Yield::Next(this).run(interp);
     }

@@ -237,7 +237,7 @@ pub struct PendingValue {
     pub task: Option<*mut c_void>,
 
     /// runs after the data is available.
-    pub on_receive_value: Option<fn(ctx: *mut c_void, value: &mut Value)>,
+    pub on_receive_value: Option<fn(ctx: *mut c_void, value: *mut Value)>,
 
     /// conditionally runs when requesting data
     /// used in HTTP server to ignore request bodies unless asked for it
@@ -320,7 +320,7 @@ impl PendingValue {
     pub(crate) fn hook_native_receiver(
         &mut self,
         ctx: *mut c_void,
-        on_receive: fn(ctx: *mut c_void, value: &mut Value),
+        on_receive: fn(ctx: *mut c_void, value: *mut Value),
     ) -> bool {
         // No producer `task` means nothing will ever call `resolve` on this body.
         let Some(producer_task) = self.task else {
@@ -1047,7 +1047,7 @@ impl Value {
             }
 
             if let Some(callback) = locked.on_receive_value.take() {
-                callback(locked.task.unwrap(), new);
+                callback(locked.task.unwrap(), std::ptr::from_mut(new));
                 return Ok(());
             }
 
@@ -1356,7 +1356,7 @@ impl Value {
             if let Some(on_receive_value) = locked.on_receive_value.take() {
                 // `task` is the live request-ctx pointer registered alongside
                 // this callback.
-                on_receive_value(locked.task.unwrap(), self);
+                on_receive_value(locked.task.unwrap(), std::ptr::from_mut(self));
             }
 
             return Ok(());
@@ -2541,9 +2541,12 @@ impl<'a> ValueBufferer<'a> {
         Ok(())
     }
 
-    fn on_receive_value(ctx: *mut c_void, value: &mut Value) {
+    fn on_receive_value(ctx: *mut c_void, value: *mut Value) {
         // SAFETY: ctx was set from `self as *mut Self` in buffer_locked_body_value.
         let sink = unsafe { bun_ptr::callback_ctx::<Self>(ctx) };
+        // SAFETY: `value` is the live `&mut Value` the caller reborrowed into
+        // this callback; uniquely accessed for the duration.
+        let value = unsafe { &mut *value };
         match value {
             Value::Error(err) => {
                 bun_core::scoped_log!(BodyValueBufferer, "onReceiveValue Error");

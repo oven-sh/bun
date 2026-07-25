@@ -1694,8 +1694,13 @@ describe("deno_task", () => {
                 )
               : new Response(Buffer.alloc(size, "x")),
         });
-        const res = await fetch(`http://127.0.0.1:${srv.port}/`);
-        return [res, () => srv.stop(true)];
+        try {
+          const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+          return [res, () => srv.stop(true)];
+        } catch (e) {
+          srv.stop(true);
+          throw e;
+        }
       }
 
       test.each([
@@ -1715,7 +1720,7 @@ describe("deno_task", () => {
       test("buffers a body larger than the backpressure window (builtin)", async () => {
         const [res, stop] = await served(500_000);
         try {
-          const { stdout } = await $`cat < ${res}`;
+          const { stdout } = await $`cat < ${res}`.quiet();
           expect(stdout.length).toBe(500_000);
         } finally {
           stop();
@@ -1745,8 +1750,33 @@ describe("deno_task", () => {
 
       test("accepts a Request body", async () => {
         const req = new Request("http://x", { method: "POST", body: Buffer.alloc(200_000, "y") });
-        const { stdout } = await $`cat < ${req}`;
+        const { stdout } = await $`cat < ${req}`.quiet();
         expect(stdout.length).toBe(200_000);
+      });
+
+      // The body can error after `fetch()` resolved (connection reset, short
+      // body). The shell is parked in BufferingRedirectBody at that point, so
+      // the resume path must fail the command rather than leaving the shell
+      // promise pending forever.
+      test("fails the command when the body errors mid-buffer", async () => {
+        await using srv = Bun.listen({
+          port: 0,
+          hostname: "127.0.0.1",
+          socket: {
+            data(socket) {
+              socket.write(
+                "HTTP/1.1 200 OK\r\nContent-Length: 500000\r\nConnection: close\r\n\r\n" +
+                  Buffer.alloc(1000, "x").toString(),
+              );
+              socket.flush();
+              socket.end();
+            },
+          },
+        });
+        const res = await fetch(`http://127.0.0.1:${srv.port}/`);
+        const { exitCode, stderr } = await $`cat < ${res}`.quiet().nothrow();
+        expect(stderr.toString()).toMatch(/failed to read Response body/);
+        expect(exitCode).toBe(1);
       });
 
       // Bodies that never had a native producer attached, or whose body has

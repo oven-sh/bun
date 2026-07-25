@@ -1812,7 +1812,7 @@ describe("Worker buffers messages while there is no 'message' listener", () => {
            await wt.postMessageToThread(tid, "m2w", 5000);
            const reply = await new Promise((r, rej) => {
              w.once("message", r);
-             setTimeout(() => rej(new Error("DROPPED")), 2000);
+             setTimeout(() => rej(new Error("DROPPED")), 2000).unref();
            });
            console.log(JSON.stringify(reply));
            await w.terminate();

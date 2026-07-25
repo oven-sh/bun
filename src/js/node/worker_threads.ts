@@ -1354,7 +1354,17 @@ class Worker extends EventEmitter {
           this.#bufferedMessages = buf.slice(i);
           return;
         }
-        this.emit("message", buf[i]);
+        try {
+          this.emit("message", buf[i]);
+        } catch (e) {
+          // Node delivers each queued message as its own task, so a throwing listener
+          // on buf[i] doesn't suppress buf[i+1..]. Re-queue the tail and rethrow.
+          if (i + 1 < buf.length) {
+            this.#bufferedMessages = buf.slice(i + 1);
+            this.#scheduleFlush();
+          }
+          throw e;
+        }
       }
     });
   }

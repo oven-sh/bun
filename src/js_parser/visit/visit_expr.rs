@@ -2035,9 +2035,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     _ => {
                         if !p.is_control_flow_dead {
-                            if let Some(glob) =
-                                p.try_glob_require(first)
-                            {
+                            if let Some(glob) = p.try_glob_require(first) {
                                 *e = glob;
                                 return;
                             }

@@ -646,6 +646,97 @@ describe("package.json exports target percent-encoding", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/8640
+describe("ESM import specifier percent-encoding", () => {
+  it.concurrent("decodes a relative ESM specifier before resolving", async () => {
+    using dir = tempDir("esm-specifier-percent", {
+      "foo bar.js": "export default 'decoded';",
+      "foo%20bar.js": "export default 'literal';",
+      "a#b.js": "export default 'hash';",
+      "lit%25.js": "export default 'percent';",
+      "index.mjs": [
+        `import space from './foo%20bar.js';`,
+        `import hash from './a%23b.js';`,
+        `import pct from './lit%2525.js';`,
+        `const dyn = (await import('./foo%20bar.js?v=1')).default;`,
+        `console.log(JSON.stringify({ space, hash, pct, dyn }));`,
+      ].join("\n"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      space: "decoded",
+      hash: "hash",
+      pct: "percent",
+      dyn: "decoded",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("does not decode a CJS require() specifier", async () => {
+    using dir = tempDir("esm-specifier-percent-cjs", {
+      "req bar.js": "module.exports = 'decoded';",
+      "req%20bar.js": "module.exports = 'literal';",
+      "index.cjs": `console.log(require('./req%20bar.js'));`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("literal\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("rejects encoded path separators and malformed escapes", async () => {
+    using dir = tempDir("esm-specifier-percent-sep", {
+      "sub/file.js": "export default 1;",
+      "a%ZZ.js": "export default 1;",
+      "index.mjs": [
+        `const out = {};`,
+        `for (const spec of ['./sub%2Ffile.js', './sub%2ffile.js', './sub%5Cfile.js', './a%ZZ.js']) {`,
+        `  try { await import(spec); out[spec] = 'resolved'; }`,
+        `  catch (e) { out[spec] = e.code ?? e.name; }`,
+        `}`,
+        `console.log(JSON.stringify(out));`,
+      ].join("\n"),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "./sub%2Ffile.js": "ERR_MODULE_NOT_FOUND",
+      "./sub%2ffile.js": "ERR_MODULE_NOT_FOUND",
+      "./sub%5Cfile.js": "ERR_MODULE_NOT_FOUND",
+      "./a%ZZ.js": "ERR_MODULE_NOT_FOUND",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("package.json exports targets longer than the maximum path length", () => {
   it.concurrent("reports a resolution error for an oversized string exports target", async () => {
     using dir = tempDir("resolver-exports-long-target", {

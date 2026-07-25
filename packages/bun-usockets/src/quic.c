@@ -429,7 +429,10 @@ static void *us_quic_hsi_create(void *hsi_ctx, lsquic_stream_t *s, int is_push) 
 
 static struct lsxpack_header *us_quic_hsi_prepare(void *hset_p, struct lsxpack_header *hdr, size_t space) {
     struct us_quic_hset *h = (struct us_quic_hset *) hset_p;
-    if (space > 64 * 1024) return NULL;
+    /* NULL from this hook is connection-fatal in lsquic (LQRHS_ERROR ->
+     * HEC_QPACK_DECOMPRESSION_FAILED), so the only rejection is the
+     * structural limit of lsxpack_strlen_t; lsqpack never asks for more. */
+    if (space > LSXPACK_MAX_STRLEN) return NULL;
     unsigned int need = h->len + (unsigned int) space;
     if (need > h->cap) {
         unsigned int ncap = h->cap ? h->cap : 512;

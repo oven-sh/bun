@@ -205,6 +205,17 @@ describe("Bun.serve tls must carry key+cert", () => {
     expect(await res.text()).toBe("ok");
   });
 
+  for (const [label, opts] of [
+    ["key without cert", { key: tlsCert.key }],
+    ["cert without key", { cert: tlsCert.cert }],
+  ] as const) {
+    test(`top-level ${label} throws (legacy path)`, () => {
+      expect(() =>
+        Bun.serve({ port: 0, ...opts, fetch: () => new Response("ok") } as any),
+      ).toThrow('tls option requires both "key" and "cert"');
+    });
+  }
+
   test("top-level key+cert still arms TLS (legacy path)", async () => {
     await using server = Bun.serve({
       port: 0,

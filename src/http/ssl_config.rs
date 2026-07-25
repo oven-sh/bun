@@ -138,8 +138,17 @@ impl SSLConfig {
     /// Whether this config carries a key+cert pair a TLS server can present.
     #[inline]
     pub fn has_identity_material(&self) -> bool {
-        (self.cert.is_some() || !self.cert_file_name.is_null())
-            && (self.key.is_some() || !self.key_file_name.is_null())
+        self.has_any_cert() && self.has_any_key()
+    }
+
+    #[inline]
+    pub fn has_any_cert(&self) -> bool {
+        self.cert.is_some() || !self.cert_file_name.is_null()
+    }
+
+    #[inline]
+    pub fn has_any_key(&self) -> bool {
+        self.key.is_some() || !self.key_file_name.is_null()
     }
 
     /// Borrow `server_name` as a `&CStr` (None if null). Convenience accessor

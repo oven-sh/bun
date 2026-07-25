@@ -1442,6 +1442,8 @@ impl ServerConfig {
             if let Some(ssl_config) = SSLConfig::from_js(vm, global, arg)? {
                 if ssl_config.has_identity_material() {
                     args.ssl_config = Some(ssl_config);
+                } else if ssl_config.has_any_key() || ssl_config.has_any_cert() {
+                    require_identity(global, Some(&ssl_config))?;
                 }
             }
             if global.has_exception() {

@@ -190,6 +190,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketStartPipelinedResponse, (
 // setsockopt takes seconds.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetKeepAlive, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(callFrame->thisValue());
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsBoolean(false));
@@ -199,6 +201,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketSetKeepAlive, (JSC::JSGlo
     }
     bool enabled = callFrame->argument(0).toBoolean(globalObject);
     int32_t delayMs = callFrame->argument(1).toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
     unsigned int delaySecs = delayMs > 0 ? static_cast<unsigned int>(delayMs) / 1000 : 0;
     return JSValue::encode(JSC::jsBoolean(us_socket_keepalive(thisObject->socket, enabled, delaySecs) == 0));
 }

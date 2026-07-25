@@ -1962,7 +1962,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   }
 
   setNoDelay(enable = true) {
-    this[kHandle]?.setNoDelay(Boolean(enable === undefined ? true : enable));
+    this[kHandle]?.setNoDelay(Boolean(enable));
     return this;
   }
 

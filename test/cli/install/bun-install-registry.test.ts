@@ -3925,10 +3925,6 @@ describe("hoisting", async () => {
 
   // https://github.com/oven-sh/bun/issues/9838
   test("conflicting workspace deps are hoisted in workspace-path order, not package-name order", async () => {
-    // `@libs/lib` sorts before `my-app` by name, but `apps/app` sorts before
-    // `libs/lib` by path. npm hoists by path, so the app's `no-deps@2.0.0`
-    // should win the root slot and `strict-peer-dep` (peer `no-deps@^2.0.0`)
-    // should dedupe onto it instead of nesting its own copy.
     await Promise.all([
       write(
         packageJson,
@@ -3976,6 +3972,19 @@ describe("hoisting", async () => {
       expect(await exists(join(packageDir, "node_modules", "strict-peer-dep", "node_modules"))).toBeFalse();
     }
 
+    async function install(cwd: string) {
+      const { stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd,
+        stdout: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+    }
+
     for (const cwd of [packageDir, join(packageDir, "apps", "app")]) {
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "apps", "app", "node_modules"), { recursive: true, force: true });
@@ -3983,41 +3992,18 @@ describe("hoisting", async () => {
       await rm(join(packageDir, "bun.lockb"), { force: true });
       await rm(join(packageDir, "bun.lock"), { force: true });
 
-      let { stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd,
-        stdout: "ignore",
-        stderr: "pipe",
-        env,
-      });
-
-      let err = await stderr.text();
-      expect(err).not.toContain("error:");
-      expect(await exited).toBe(0);
+      await install(cwd);
       await checkLayout();
 
-      // re-install with the saved lockfile + empty node_modules
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "libs", "lib", "node_modules"), { recursive: true, force: true });
 
-      ({ stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd,
-        stdout: "ignore",
-        stderr: "pipe",
-        env,
-      }));
-
-      err = await stderr.text();
-      expect(err).not.toContain("error:");
-      expect(await exited).toBe(0);
+      await install(cwd);
       await checkLayout();
     }
   });
 
   test("conflicting workspace deps are hoisted in workspace-path order (reversed)", async () => {
-    // Reversed: path-first workspace now wants `no-deps@1.0.0`, so that is
-    // what should hoist to root regardless of which name sorts first.
     await Promise.all([
       write(
         packageJson,
@@ -4057,9 +4043,9 @@ describe("hoisting", async () => {
       env,
     });
 
-    const err = await stderr.text();
+    const [err, exitCode] = await Promise.all([stderr.text(), exited]);
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
+    expect(exitCode).toBe(0);
 
     expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
       name: "no-deps",

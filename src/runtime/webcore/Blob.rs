@@ -210,17 +210,22 @@ pub trait BlobExt {
         get_cached: fn(JSValue) -> Option<JSValue>,
         set_cached: fn(JSValue, &JSGlobalObject, JSValue),
     ) -> JsResult<JSValue>;
-    fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
+    fn fd_cached_stream(&self, this_value: JSValue) -> Option<JSValue>;
+    fn get_text(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_text_clone(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
+    fn get_json(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_json_share(&self, global_object: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
     fn get_array_buffer_clone(
         &self,
         global_this: &JSGlobalObject,
     ) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
+    fn get_array_buffer(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue>;
     fn get_bytes_clone(&self, global_this: &JSGlobalObject) -> Result<JSValue, jsc::JsTerminated>;
-    fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
+    fn get_bytes(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_form_data(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue>;
     fn get_exists_sync(&self) -> JSValue;
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
@@ -1218,7 +1223,30 @@ impl BlobExt for Blob {
 
         Ok(stream)
     }
-    fn get_text(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+
+    /// For an fd-backed Blob (the same condition under which `.stream()`
+    /// de-duplicates via the wrapper's cached slot), return that cached
+    /// ReadableStream so `.text()/.json()/.arrayBuffer()/.bytes()` can route
+    /// through it instead of reading the fd directly. This makes a second
+    /// consumer reject with `ERR_INVALID_STATE` when e.g. `process.stdin`
+    /// already holds the reader, rather than silently splitting the bytes.
+    fn fd_cached_stream(&self, this_value: JSValue) -> Option<JSValue> {
+        let store = self.store.get().as_deref()?;
+        let store::Data::File(f) = &store.data else {
+            return None;
+        };
+        if !matches!(f.pathlike, PathOrFileDescriptor::Fd(_)) {
+            return None;
+        }
+        js::stream_get_cached(this_value)
+    }
+
+    fn get_text(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(stream) = self.fd_cached_stream(callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_text(stream)
+            });
+        }
         Ok(self.get_text_clone(global_this)?)
     }
 
@@ -1227,7 +1255,12 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_object, |g| self.to_string(g, Lifetime::Clone))
     }
 
-    fn get_json(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_json(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(stream) = self.fd_cached_stream(callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_json(stream)
+            });
+        }
         Ok(self.get_json_share(global_this)?)
     }
 
@@ -1244,7 +1277,16 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_array_buffer(g, Lifetime::Clone))
     }
 
-    fn get_array_buffer(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_array_buffer(
+        &self,
+        global_this: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if let Some(stream) = self.fd_cached_stream(callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_array_buffer(stream)
+            });
+        }
         Ok(self.get_array_buffer_clone(global_this)?)
     }
 
@@ -1253,7 +1295,12 @@ impl BlobExt for Blob {
         JSPromise::wrap(global_this, |g| self.to_uint8_array(g, Lifetime::Clone))
     }
 
-    fn get_bytes(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    fn get_bytes(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+        if let Some(stream) = self.fd_cached_stream(callframe.this()) {
+            return bun_jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_bytes(stream)
+            });
+        }
         Ok(self.get_bytes_clone(global_this)?)
     }
 

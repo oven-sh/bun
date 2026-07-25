@@ -22,6 +22,7 @@ const VENDORED = new Set([
   'internal/fs/sync_write_stream',
   'internal/net',
   'internal/event_target',
+  'internal/watch_mode/files_watcher',
 ]);
 
 // ---------------- primordials emulator ----------------
@@ -535,8 +536,13 @@ function getOverrides() {
     ),
     'internal/url': {
       toPathIfFileURL: (p) => (p instanceof URL ? require('url').fileURLToPath(p) : p),
+      fileURLToPath: require('url').fileURLToPath,
     },
     'internal/options': { getOptionValue: () => undefined },
+    // node lib/internal/timers.js TIMEOUT_MAX (2**31 - 1); bun's
+    // internal/timers does not export it.
+    'internal/timers': { TIMEOUT_MAX: 2 ** 31 - 1 },
+    'internal/events/abort_listener': { addAbortListener: require('events').addAbortListener },
     'internal/v8/startup_snapshot': {
       namespace: { isBuildingSnapshot: () => false, addSerializeCallback: () => {} },
     },

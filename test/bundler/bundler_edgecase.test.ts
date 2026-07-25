@@ -2156,8 +2156,13 @@ describe("bundler", () => {
     },
     capture: ["__dirname", "__filename"],
     onAfterBundle(api) {
-      api.expectFile("/out.js").toContain("import.meta.dir");
-      api.expectFile("/out.js").toContain("import.meta.path");
+      // Word-boundary match: `import.meta.dir` is a prefix of the Node
+      // spelling `import.meta.dirname`, so a bare toContain can't tell
+      // them apart.
+      api.expectFile("/out.js").toMatch(/import\.meta\.dir\b/);
+      api.expectFile("/out.js").toMatch(/import\.meta\.path\b/);
+      api.expectFile("/out.js").not.toContain("import.meta.dirname");
+      api.expectFile("/out.js").not.toContain("import.meta.filename");
       api.expectFile("/out.js").not.toContain('"/entry.ts"');
     },
   });

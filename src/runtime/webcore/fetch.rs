@@ -1385,7 +1385,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let upgrade = upgrade_.to_slice();
                 // `defer upgrade.deinit()` → Drop.
                 let slice = upgrade.slice();
-                if slice != b"h2" && slice != b"h2c" {
+                // Case-insensitive to agree with build_request (RFC 9110 7.8).
+                if !bun_core::strings::eql_any_case_insensitive_ascii(slice, &[b"h2", b"h2c"]) {
                     upgraded_connection = true;
                 }
             }

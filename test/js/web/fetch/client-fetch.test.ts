@@ -778,51 +778,55 @@ test.each(["1_0", "+10", "0x10", "1e1"])(
   },
 );
 
-// Transfer-Encoding is a forbidden request header (WHATWG fetch): the engine
-// owns body framing. A caller-supplied value used to be written verbatim while
-// the body was still chunk-framed, so `Transfer-Encoding: gzip` produced a
-// message that is undecodable per RFC 9112 section 6.1 (chunk octets presented
-// as a gzip member). The caller's value is now dropped and `chunked` emitted.
-test("a caller-supplied Transfer-Encoding on a streamed body is ignored", async () => {
-  let recorded = Buffer.alloc(0);
-  await using server = net
-    .createServer(sock => {
-      sock.on("error", () => {});
-      sock.on("data", d => {
-        recorded = Buffer.concat([recorded, d]);
-        if (recorded.toString("latin1").endsWith("0\r\n\r\n")) {
-          sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
-        }
-      });
-    })
-    .listen(0, "127.0.0.1");
-  await once(server, "listening");
-  const { port } = server.address() as net.AddressInfo;
+// The engine owns body framing for a streamed body without a valid
+// Content-Length. A caller-supplied Transfer-Encoding used to be written
+// verbatim while the body was still chunk-framed; a case-mismatched
+// `Upgrade: H2c` used to switch the body writer to raw while the header
+// writer still emitted `Transfer-Encoding: chunked`. Both must produce a
+// `chunked` header with a correctly chunk-framed body.
+test.each([{ "transfer-encoding": "gzip" }, { "upgrade": "H2c" }])(
+  "a streamed body with %j is sent with Transfer-Encoding: chunked and a chunk-framed body",
+  async headers => {
+    let recorded = Buffer.alloc(0);
+    await using server = net
+      .createServer(sock => {
+        sock.on("error", () => {});
+        sock.on("data", d => {
+          recorded = Buffer.concat([recorded, d]);
+          if (recorded.toString("latin1").endsWith("0\r\n\r\n")) {
+            sock.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+          }
+        });
+      })
+      .listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
 
-  const res = await fetch(`http://127.0.0.1:${port}/`, {
-    method: "POST",
-    duplex: "half",
-    headers: { "transfer-encoding": "gzip" },
-    body: new ReadableStream({
-      start(c) {
-        c.enqueue(new TextEncoder().encode("xy"));
-        c.close();
-      },
-    }),
-  });
-  expect(await res.text()).toBe("ok");
+    const res = await fetch(`http://127.0.0.1:${port}/`, {
+      method: "POST",
+      duplex: "half",
+      headers,
+      body: new ReadableStream({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("xy"));
+          c.close();
+        },
+      }),
+    });
+    expect(await res.text()).toBe("ok");
 
-  const raw = recorded.toString("latin1");
-  const headers = raw.slice(0, raw.indexOf("\r\n\r\n"));
-  const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
-  expect({
-    transferEncoding: headers.match(/^transfer-encoding: (.*)$/gim),
-    body,
-  }).toEqual({
-    transferEncoding: ["Transfer-Encoding: chunked"],
-    body: "2\r\nxy\r\n0\r\n\r\n",
-  });
-});
+    const raw = recorded.toString("latin1");
+    const head = raw.slice(0, raw.indexOf("\r\n\r\n"));
+    const body = raw.slice(raw.indexOf("\r\n\r\n") + 4);
+    expect({
+      transferEncoding: head.match(/^transfer-encoding: (.*)$/gim),
+      body,
+    }).toEqual({
+      transferEncoding: ["Transfer-Encoding: chunked"],
+      body: "2\r\nxy\r\n0\r\n\r\n",
+    });
+  },
+);
 
 // RFC 9112 section 5.2: an obs-fold continuation line in a response must be
 // joined into the preceding field value with SP, or the message rejected.

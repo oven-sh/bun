@@ -935,26 +935,17 @@ impl<'a> Parser<'a> {
                     }
 
                     js_ast::StmtData::SExportDefault(value) => {
-                        // Hoist for cyclic-import compat (#1961), except when a named
-                        // default class is already referenced earlier (preserve its TDZ).
-                        let class_name_ref = match &value.value {
-                            js_ast::StmtOrExpr::Stmt(s) => match &s.data {
-                                js_ast::StmtData::SClass(c) => {
-                                    c.class.class_name.map(|name| name.ref_)
-                                }
-                                _ => None,
-                            },
-                            js_ast::StmtOrExpr::Expr(_) => None,
-                        };
-                        let used_before_decl = match class_name_ref {
-                            Some(ref_) => {
-                                p.symbols.as_slice()[ref_.inner_index() as usize].use_count_estimate
-                                    > 0
-                            }
-                            None => false,
+                        // Hoist for cyclic-import compat (#1961). A named default class
+                        // has a TDZ binding, so leave it in place.
+                        let is_named_default_class = match &value.value {
+                            js_ast::StmtOrExpr::Stmt(s) => matches!(
+                                &s.data,
+                                js_ast::StmtData::SClass(c) if c.class.class_name.is_some()
+                            ),
+                            js_ast::StmtOrExpr::Expr(_) => false,
                         };
                         let should_move =
-                            !p.options.bundle && !used_before_decl && value.can_be_moved();
+                            !p.options.bundle && !is_named_default_class && value.can_be_moved();
                         let sliced = arena.alloc_slice_copy(&[*stmt]);
                         p.append_part(&mut parts, sliced)?;
 

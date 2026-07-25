@@ -288,8 +288,9 @@ describe("class declaration TDZ is preserved", () => {
     using dir = tempDir("transpiler-class-tdz-default", {
       "entry.mjs":
         `const t = (f) => { try { return f(); } catch (e) { return "THROW:" + e.constructor.name; } };\n` +
-        `console.log(JSON.stringify([t(() => typeof Named), t(() => new Named().m())]));\n` +
-        `export default class Named { m() { return "ok"; } static s = 3; }\n`,
+        `console.log(JSON.stringify([t(() => typeof Named), t(() => new Named().m()), t(probe)]));\n` +
+        `export default class Named { m() { return "ok"; } static s = 3; }\n` +
+        `function probe() { return typeof Named; }\n`,
     });
 
     await using proc = Bun.spawn({
@@ -303,7 +304,11 @@ describe("class declaration TDZ is preserved", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["THROW:ReferenceError", "THROW:ReferenceError"]);
+    expect(JSON.parse(stdout)).toEqual([
+      "THROW:ReferenceError",
+      "THROW:ReferenceError",
+      "THROW:ReferenceError",
+    ]);
     expect(exitCode).toBe(0);
   });
 

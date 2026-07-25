@@ -130,10 +130,9 @@ pub struct Watcher {
     pub eventlist_index_scratch: Vec<platform::EventListIndex>,
 
     /// Scratch snapshot of `watchlist.file_path` taken under `mutex` in
-    /// `watch_loop_cycle` so the path scan does not race `add_file`'s
-    /// realloc; owned by the watcher thread.
+    /// `watch_loop_cycle`; owned by the watcher thread.
     #[cfg(windows)]
-    pub platform_scratch: Vec<Box<[u8]>>,
+    pub platform_scratch: Vec<Cow<'static, [u8]>>,
 
     /// Directories outside every watch root whose `add_root` failed. Checked
     /// before retrying so the warning prints once, not per file per reload.
@@ -339,9 +338,7 @@ impl Watcher {
             match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
-                    // `add_file` on another thread may be mid-`add_root`
-                    // (pushing to `platform.watchers` on Windows); serialise
-                    // against it so `stop()` iterates a stable Vec.
+                    // serialise against `add_root` on other threads
                     let _guard = me.mutex.lock_guard();
                     me.platform.stop();
                     drop(_guard);

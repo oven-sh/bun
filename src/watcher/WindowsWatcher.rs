@@ -10,9 +10,12 @@
 
 use core::mem::size_of;
 use core::ptr;
+use std::borrow::Cow;
+use std::sync::Arc;
 
-use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, Watcher};
+use crate::watcher_impl::{Op, WatchEvent, WatchItemColumns, WatchItemIndex, WatchList, Watcher};
 use bun_core::strings;
+use bun_threading::Mutex;
 use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_paths::{PathBuffer, WPathBuffer};
 use bun_ptr::{BackRef, RawSlice};
@@ -27,16 +30,30 @@ pub(crate) type Platform = WindowsWatcher;
 pub struct WindowsWatcher {
     pub iocp: HANDLE,
     /// One entry per watch root. `Box` keeps each `DirWatcher` at a stable
-    /// address so its `OVERLAPPED` / event buffer remain valid across Vec
-    /// growth while the async `ReadDirectoryChangesW` is pending. Appended
-    /// under `Watcher.mutex`; never shrunk.
+    /// address across Vec growth while its async `ReadDirectoryChangesW` is
+    /// pending. The boxes are referenced only by the watch thread (plus
+    /// `stop()`, which runs after the watch loop exits); appended under
+    /// `Watcher.mutex`, never shrunk.
     pub watchers: Vec<Box<DirWatcher>>,
+    /// Parallel to `watchers`. `covers()` on transpiler threads reads this
+    /// (under `Watcher.mutex`) instead of the `DirWatcher` boxes, which the
+    /// watch thread mutates without the lock.
+    pub roots: Vec<Arc<RootState>>,
     /// Scratch for `root + event filename` during `watch_loop_cycle`. Owned
     /// by the watch thread.
     pub buf: PathBuffer,
     /// The `DirWatcher` whose buffer was just returned by `next()` and must be
     /// re-armed on the next `next()` call. Watch-thread-only.
     needs_rearm: Option<ptr::NonNull<DirWatcher>>,
+}
+
+/// Root metadata shared between a `DirWatcher` (watch thread) and
+/// `WindowsWatcher.roots` (transpiler threads, under `Watcher.mutex`).
+pub struct RootState {
+    /// Absolute path of the watched root with a trailing separator.
+    pub path: Box<[u8]>,
+    /// Set by `mark_dead` once the root is retired and its handle closed.
+    pub dead: bun_core::AtomicCell<bool>,
 }
 
 // SAFETY: the raw HANDLE and `needs_rearm` pointer are sent to the watch
@@ -49,6 +66,7 @@ impl Default for WindowsWatcher {
         Self {
             iocp: w::INVALID_HANDLE_VALUE,
             watchers: Vec::new(),
+            roots: Vec::new(),
             buf: PathBuffer::uninit(),
             needs_rearm: None,
         }
@@ -92,13 +110,10 @@ pub struct DirWatcher {
     /// alignment proof for the `FILE_NOTIFY_INFORMATION` cast in
     /// `EventIterator::next`).
     pub buf: [u8; 64 * 1024],
-    /// `INVALID_HANDLE_VALUE` once the root has been marked dead (directory
-    /// removed or re-arm failed). The Box stays in place so `needs_rearm` /
-    /// `BackRef` addresses remain valid; `covers()` skips dead entries.
     pub dir_handle: HANDLE,
-    /// Absolute path of the watched root with a trailing separator. Prefixed
-    /// to the relative filename each event carries to rebuild the full path.
-    pub root: Box<[u8]>,
+    /// Shared with `WindowsWatcher.roots`: `state.path` prefixes each event's
+    /// relative filename; `state.dead` retires the root.
+    pub state: Arc<RootState>,
 }
 
 // `OVERLAPPED` = 32 bytes / align 8 on Win64; `buf` must be ≥ 4-aligned for
@@ -108,7 +123,7 @@ pub struct DirWatcher {
 // `lpOverlapped` out-param.
 bun_core::assert_ffi_layout!(
     DirWatcher,
-    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>() + ::core::mem::size_of::<Box<[u8]>>(),
+    32 + 64 * 1024 + ::core::mem::size_of::<HANDLE>() + ::core::mem::size_of::<Arc<RootState>>(),
     ::core::mem::align_of::<w::OVERLAPPED>();
     overlapped @ 0, buf @ 32, dir_handle @ 32 + 64 * 1024,
 );
@@ -157,25 +172,25 @@ impl DirWatcher {
     }
 
     fn is_dead(&self) -> bool {
-        self.dir_handle == w::INVALID_HANDLE_VALUE
+        self.state.dead.load()
     }
 
-    /// Close the handle and mark this root unusable. The Box stays in the
-    /// `watchers` Vec (append-only) so outstanding pointers remain valid; a
-    /// later `ensure_watch_root_covers` for the same path will see `covers()`
-    /// skip it and open a fresh root.
-    fn mark_dead(&mut self) {
+    /// Close the handle and retire this root; `covers()` skips it afterwards
+    /// and `stop()` won't close it again. Watch-thread-only.
+    fn mark_dead(&self, cause: &bun_sys::Error) {
         if self.is_dead() {
             return;
         }
-        // SAFETY: dir_handle is the handle `add_root` opened; closed once here.
+        self.state.dead.store(true);
+        // SAFETY: dir_handle is the handle `add_root` opened; `stop()` skips
+        // dead roots, so this is the only close.
         unsafe {
             let _ = w::CloseHandle(self.dir_handle);
         }
-        self.dir_handle = w::INVALID_HANDLE_VALUE;
         bun_core::warn!(
-            "Stopped watching {} (directory removed)\n",
-            bstr::BStr::new(&self.root)
+            "Stopped watching {} ({})\n",
+            bstr::BStr::new(&self.state.path),
+            bstr::BStr::new(cause.name())
         );
     }
 }
@@ -333,17 +348,26 @@ impl WindowsWatcher {
         if needs_slash {
             root_buf.push(b'\\');
         }
-
-        // Box first so `overlapped`/`buf` land at their final address before
-        // the first `ReadDirectoryChangesW`.
-        let mut dw = Box::new(DirWatcher {
-            overlapped: bun_core::ffi::zeroed(),
-            buf: [0u8; 64 * 1024],
-            dir_handle: *handle_guard,
-            root: root_buf.into_boxed_slice(),
+        let state = Arc::new(RootState {
+            path: root_buf.into_boxed_slice(),
+            dead: bun_core::AtomicCell::new(false),
         });
+
+        // Initialize on the heap: `Box::new(DirWatcher { .. })` materialises
+        // the 64KB `buf` on the stack first in debug builds.
+        let mut dw = Box::<DirWatcher>::new_zeroed();
+        // SAFETY: all-zero bytes are valid for `overlapped` (must be zeroed
+        // for ReadDirectoryChangesW) and `buf`; the remaining fields are
+        // written below, so `assume_init` sees a fully-initialised value.
+        let mut dw = unsafe {
+            let p = dw.as_mut_ptr();
+            (&raw mut (*p).dir_handle).write(*handle_guard);
+            (&raw mut (*p).state).write(Arc::clone(&state));
+            dw.assume_init()
+        };
         dw.prepare().map_err(crate::Error::from)?;
         self.watchers.push(dw);
+        self.roots.push(state);
 
         bun_core::scoped_log!(watcher, "watching root[{}]: {}", key, bstr::BStr::new(root));
 
@@ -354,12 +378,9 @@ impl WindowsWatcher {
     /// True if `dir` (absolute, with trailing separator) is already inside one
     /// of the live watched roots. Caller holds `Watcher.mutex`.
     pub(crate) fn covers(&self, dir: &[u8]) -> bool {
-        for dw in &self.watchers {
-            if !dw.is_dead() && is_parent_or_equal(&dw.root, dir) != ParentEqual::Unrelated {
-                return true;
-            }
-        }
-        false
+        self.roots.iter().any(|root| {
+            !root.dead.load() && is_parent_or_equal(&root.path, dir) != ParentEqual::Unrelated
+        })
     }
 
     /// wait until new events are available
@@ -369,8 +390,10 @@ impl WindowsWatcher {
             // pointing at offset 0 of a `Box<DirWatcher>` in `self.watchers`
             // (append-only, never dropped before `stop()`), so it is live.
             let dw = unsafe { dw.as_ptr().as_mut().unwrap_unchecked() };
-            if !dw.is_dead() && dw.prepare().is_err() {
-                dw.mark_dead();
+            if !dw.is_dead() {
+                if let Err(err) = dw.prepare() {
+                    dw.mark_dead(&err);
+                }
             }
         }
 
@@ -420,33 +443,32 @@ impl WindowsWatcher {
 
             if rc == 0 {
                 // A dequeued failed-I/O packet: the root directory is gone
-                // (handle closed by `stop()`, or the directory was deleted).
-                // Retire this root; other roots keep running. The IOCP-wide
-                // failure path (no packet) is the `overlapped.is_null()` arm
-                // above.
+                // (handle closed, or the directory was deleted). Retire this
+                // root; other roots keep running.
+                let err = bun_sys::Error {
+                    errno: bun_sys::SystemErrno::init(w::Win32Error::get().0 as u32)
+                        .unwrap_or(bun_sys::SystemErrno::EINVAL) as _,
+                    syscall: bun_sys::Tag::watch,
+                    ..Default::default()
+                };
                 // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
-                unsafe { dw.as_ptr().as_mut().unwrap_unchecked() }.mark_dead();
+                unsafe { dw.as_ptr().as_ref().unwrap_unchecked() }.mark_dead(&err);
                 continue;
             }
 
             if nbytes == 0 {
-                // ReadDirectoryChangesW internal change-buffer overflow — too many
-                // events arrived between drain and re-arm. This is NOT a shutdown
-                // signal: stop() closes the dir handle, which surfaces as rc==0 /
-                // ERROR_OPERATION_ABORTED above, never as rc!=0 && nbytes==0. Per
-                // MSDN, the function returns zero bytes when its internal buffer
-                // overflows. Drop the lost events, re-arm, and keep watching so
-                // --hot picks up the next change. Returning ESHUTDOWN here kills
-                // the watcher thread and the --hot child silently exits
-                // (hot.test.ts "should work with sourcemap generation" flake).
+                // ReadDirectoryChangesW's internal buffer overflowed (MSDN:
+                // zero bytes on success), not a shutdown — a closed handle
+                // surfaces as rc == 0 above. Drop the lost events and re-arm
+                // so --hot keeps watching.
                 bun_core::scoped_log!(
                     watcher,
                     "ReadDirectoryChangesW buffer overflow (nbytes==0); re-arming"
                 );
                 // SAFETY: see the cast note above — `dw` is a live boxed DirWatcher.
                 let dw = unsafe { dw.as_ptr().as_mut().unwrap_unchecked() };
-                if dw.prepare().is_err() {
-                    dw.mark_dead();
+                if let Err(err) = dw.prepare() {
+                    dw.mark_dead(&err);
                 }
                 continue;
             }
@@ -463,12 +485,12 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in add_root()/new() and are valid until
-        // stop() is called once. Caller holds `Watcher.mutex` (serialises
-        // against `add_root`).
+        // Runs on the watch thread after the loop exits, under `Watcher.mutex`.
+        // SAFETY: live handles were opened in add_root()/new(); dead roots
+        // already closed theirs in mark_dead().
         unsafe {
-            for dw in &self.watchers {
-                if !dw.is_dead() {
+            for (dw, root) in self.watchers.iter().zip(&self.roots) {
+                if !root.dead.load() {
                     w::CloseHandle(dw.dir_handle);
                 }
             }
@@ -482,6 +504,24 @@ impl WindowsWatcher {
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
     None = 0,
+}
+
+/// Snapshot the watchlist's path column under `mutex`: `add_file` on other
+/// threads may realloc it mid-scan, and a mid-batch dispatch can evict and
+/// reorder it (same pattern as `INotifyWatcher`'s `eventlist_index_scratch`).
+/// Takes field borrows, not `&mut Watcher`, so the caller's `EventIterator`
+/// pointer into `platform` keeps its provenance.
+fn snapshot_watchlist_paths(
+    mutex: &Mutex,
+    scratch: &mut Vec<Cow<'static, [u8]>>,
+    watchlist: &WatchList,
+) -> usize {
+    let _guard = mutex.lock_guard();
+    scratch.clear();
+    // Cheap: the common path stores `Cow::Borrowed` over process-lifetime
+    // interned paths, so this copies fat pointers, not path bytes.
+    scratch.extend(watchlist.items_file_path().iter().cloned());
+    scratch.len()
 }
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
@@ -500,23 +540,13 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         timeout = Timeout::None;
 
         let base_idx = {
-            let root = &iter.watcher.root;
+            let root = &iter.watcher.state.path;
             this.platform.buf[..root.len()].copy_from_slice(root);
             root.len()
         };
 
-        // `add_file` on other threads may realloc `watchlist` mid-iteration;
-        // snapshot the path column under the same mutex it takes (same pattern
-        // as `INotifyWatcher`'s `eventlist_index_scratch`).
-        {
-            let _guard = this.mutex.lock_guard();
-            this.platform_scratch.clear();
-            for p in this.watchlist.items_file_path() {
-                this.platform_scratch
-                    .push(p.as_ref().to_vec().into_boxed_slice());
-            }
-        }
-        let n_items = this.platform_scratch.len();
+        let mut n_items =
+            snapshot_watchlist_paths(&this.mutex, &mut this.platform_scratch, &this.watchlist);
 
         bun_core::scoped_log!(watcher, "number of watched items: {}", n_items);
         while let Some(event) = iter.next() {
@@ -543,7 +573,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             //   to implement and maintain.
             // - others that i'm not thinking of
 
-            for item_idx in 0..n_items {
+            let mut item_idx = 0;
+            while item_idx < n_items {
                 // reshaped for borrowck — `rel` is computed in a scoped
                 // block so the borrows of `this.platform_scratch` /
                 // `this.platform.buf` are released before we touch
@@ -567,6 +598,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 };
                 // skip unrelated items
                 if rel == ParentEqual::Unrelated {
+                    item_idx += 1;
                     continue;
                 }
                 // if the event is for a parent dir of the item, only emit it if it's a delete or rename
@@ -588,11 +620,22 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                     }
                     // Reset event_id to start a new batch
                     event_id = 0;
+                    // The dispatch may have evicted watchlist entries
+                    // (`swap_remove` reorders the live list); refresh the
+                    // snapshot so emitted indices stay in sync, and re-check
+                    // this slot against it.
+                    n_items = snapshot_watchlist_paths(
+                        &this.mutex,
+                        &mut this.platform_scratch,
+                        &this.watchlist,
+                    );
+                    continue;
                 }
 
                 this.watch_events[event_id] =
                     create_watch_event(&event, item_idx as WatchItemIndex);
                 event_id += 1;
+                item_idx += 1;
             }
         }
     }

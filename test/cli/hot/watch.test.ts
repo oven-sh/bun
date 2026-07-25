@@ -106,8 +106,6 @@ test.concurrent("picks up changes in a linked workspace package outside the cwd"
   }
   expect({ db, app }).toEqual({ db: 4, app: 4 });
   expect(stderr).not.toContain("is not in the project directory");
-
-  watcher.kill();
 });
 
 // Deleting a secondary watch root must not take down the cwd root with it.
@@ -157,6 +155,4 @@ test.concurrent.skipIf(!isWindows)("keeps watching the cwd after a linked packag
   }
   expect(app).toBe(4);
   expect(stderr).not.toContain("Watcher crashed");
-
-  watcher.kill();
 });

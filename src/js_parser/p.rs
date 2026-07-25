@@ -832,7 +832,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(true)
     }
 
-    /// Appends `arg`'s static shape to `buf`; `false` means opaque.
+    /// Appends `arg`'s static shape to `buf`; `false` means nothing was
+    /// appended (`buf` is truncated back to its entry length).
     fn append_dynamic_specifier_shape(
         &mut self,
         arg: Expr,
@@ -842,20 +843,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if depth >= 32 {
             return Ok(false);
         }
-        match &arg.data {
-            js_ast::ExprData::EString(s) => self.append_estring_rope(s, buf),
-            js_ast::ExprData::ETemplate(tmpl) => {
+        let start = buf.len();
+        let ok = match &arg.data {
+            js_ast::ExprData::EString(s) => self.append_estring_rope(s, buf)?,
+            js_ast::ExprData::ETemplate(tmpl) => 'tmpl: {
                 if tmpl.tag.is_some() {
-                    return Ok(false);
+                    break 'tmpl false;
                 }
                 match &tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
                         if !self.append_estring_rope(head, buf)? {
-                            return Ok(false);
+                            break 'tmpl false;
                         }
                     }
-                    js_ast::e::TemplateContents::Raw(_) => return Ok(false),
+                    js_ast::e::TemplateContents::Raw(_) => break 'tmpl false,
                 }
+                let mut ok = true;
                 for part in tmpl.parts().iter() {
                     let value = part.value;
                     if !self.append_dynamic_specifier_shape(value, buf, depth + 1)? {
@@ -864,13 +867,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     match &part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
                             if !self.append_estring_rope(tail, buf)? {
-                                return Ok(false);
+                                ok = false;
+                                break;
                             }
                         }
-                        js_ast::e::TemplateContents::Raw(_) => return Ok(false),
+                        js_ast::e::TemplateContents::Raw(_) => {
+                            ok = false;
+                            break;
+                        }
                     }
                 }
-                Ok(true)
+                ok
             }
             js_ast::ExprData::EBinary(bin) if bin.op == js_ast::Op::Code::BinAdd => {
                 let (l, r) = (bin.left, bin.right);
@@ -882,7 +889,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !ok_r {
                     buf.push(0);
                 }
-                Ok(ok_l || ok_r)
+                ok_l || ok_r
             }
             js_ast::ExprData::EIdentifier(id) => {
                 let ref_ = id.ref_;
@@ -896,10 +903,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         return r;
                     }
                 }
-                Ok(false)
+                false
             }
-            _ => Ok(false),
+            _ => false,
+        };
+        if !ok {
+            buf.truncate(start);
         }
+        Ok(ok)
     }
 
     fn glob_shape_is_eligible(shape: &[u8]) -> bool {

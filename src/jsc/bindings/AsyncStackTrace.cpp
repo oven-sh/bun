@@ -16,8 +16,71 @@
 #include <JavaScriptCore/Options.h>
 #include <JavaScriptCore/StackFrame.h>
 #include <JavaScriptCore/UnlinkedCodeBlock.h>
+#include <JavaScriptCore/VMEntryRecord.h>
 
 using namespace JSC;
+
+// dynamicDowncast(JSValue)'s isCell() check is true for the empty value on
+// JSVALUE64, so it would read through a null cell. asyncStackTraceContext()
+// and reaction getters return the empty value in several paths, so every
+// JSValue downcast in this file goes through this helper.
+template<typename T>
+static inline T* cellAs(JSValue v)
+{
+    return (v && v.isCell()) ? dynamicDowncast<T>(v.asCell()) : nullptr;
+}
+
+template<typename T>
+static inline bool dynamicCastValue(JSValue v, T** out)
+{
+    *out = cellAs<T>(v);
+    return *out != nullptr;
+}
+
+static BytecodeIndex computeGeneratorBytecodeIndex(CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator)
+{
+    BytecodeIndex bytecodeIndex(0);
+    JSValue stateValue = generator->internalField(JSAsyncFunctionGenerator::Field::State).get();
+    if (stateValue.isInt32()) {
+        int32_t state = stateValue.asInt32();
+        size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+        if (state > 0 && numberOfJumpTables > 0) {
+            size_t lastTableIndex = numberOfJumpTables - 1;
+            const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+            int32_t offset = jumpTable.offsetForValue(state);
+            if (offset)
+                bytecodeIndex = BytecodeIndex(offset);
+        }
+    }
+    return bytecodeIndex;
+}
+
+static bool appendGeneratorFrame(VM& vm, JSCell* owner, JSAsyncFunctionGenerator* generator, WTF::Vector<StackFrame>& results)
+{
+    auto* asyncFunction = cellAs<JSFunction>(generator->next());
+    if (!asyncFunction || asyncFunction->isHostOrPrivateBuiltinFunction())
+        return false;
+    FunctionExecutable* executable = asyncFunction->jsExecutable();
+    if (!executable)
+        return false;
+    if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
+        BytecodeIndex bytecodeIndex = computeGeneratorBytecodeIndex(codeBlock, generator);
+        results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
+    } else {
+        results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+    }
+    return true;
+}
+
+// With AsyncLocalStorage active, JSPromise::resolveWithInternalMicrotaskForAsyncAwait
+// wraps the await context in InternalFieldTuple(context, asyncContext). Unwrap
+// to field 0 so the generator/combinator probes see the real cell.
+static inline JSValue unwrapAsyncContextTuple(JSValue v)
+{
+    if (auto* tuple = cellAs<InternalFieldTuple>(v))
+        return tuple->getInternalField(0);
+    return v;
+}
 
 // Walk a promise's reaction chain to find the async generators awaiting it,
 // and collect them as async StackFrames. Used when an error is created from
@@ -35,20 +98,8 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
 
     JSC::AssertNoGC assertNoGC;
 
-    auto dynamicCastValue = []<typename T>(JSC::JSValue v, T** out) -> bool {
-        if (!v || !v.isCell())
-            return false;
-        *out = dynamicDowncast<T>(v.asCell());
-        return *out != nullptr;
-    };
-
     auto unwrapGeneratorFromContext = [&](JSC::JSValue context) -> JSC::JSAsyncFunctionGenerator* {
-        JSC::InternalFieldTuple* tuple = nullptr;
-        if (dynamicCastValue(context, &tuple))
-            context = tuple->getInternalField(0);
-        JSC::JSAsyncFunctionGenerator* generator = nullptr;
-        dynamicCastValue(context, &generator);
-        return generator;
+        return cellAs<JSC::JSAsyncFunctionGenerator>(unwrapAsyncContextTuple(context));
     };
 
     // Walk reaction->context → generator. If context is not a generator (e.g.
@@ -104,43 +155,9 @@ static void collectAsyncStackFramesFromPromise(JSC::VM& vm, JSC::JSCell* owner, 
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](JSC::CodeBlock* codeBlock, JSC::JSAsyncFunctionGenerator* generator) -> JSC::BytecodeIndex {
-        JSC::BytecodeIndex bytecodeIndex(0);
-        JSC::JSValue stateValue = generator->internalField(JSC::JSAsyncFunctionGenerator::Field::State).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const JSC::UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = JSC::BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
-
-    auto appendFrame = [&](JSC::JSAsyncFunctionGenerator* generator) {
-        JSC::JSFunction* asyncFunction = nullptr;
-        if (!dynamicCastValue(generator->next(), &asyncFunction))
-            return;
-        if (asyncFunction->isHostOrPrivateBuiltinFunction())
-            return;
-        JSC::FunctionExecutable* executable = asyncFunction->jsExecutable();
-        if (!executable)
-            return;
-        if (JSC::CodeBlock* codeBlock = executable->codeBlockForCall()) {
-            JSC::BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, generator);
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
-        } else {
-            results.append(JSC::StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
-        }
-    };
-
     JSC::JSAsyncFunctionGenerator* gen = getAwaitingGenerator(promise);
     while (gen && results.size() < maxStackSize) {
-        appendFrame(gen);
+        appendGeneratorFrame(vm, owner, gen, results);
         JSC::JSPromise* returnPromise = nullptr;
         if (!dynamicCastValue(gen->context(), &returnPromise))
             break;
@@ -175,4 +192,79 @@ extern "C" void Bun__attachAsyncStackFromPromise(JSC::JSGlobalObject* globalObje
         return;
 
     instance->setStackFrames(vm, WTF::move(frames));
+}
+
+// Installed as VM::onAppendStackTrace. Interpreter::getAsyncStackTrace walks
+// the await chain via JSPromise::asyncStackTraceContext(), but under
+// AsyncLocalStorage that context is an InternalFieldTuple(generator, asyncContext)
+// (see JSPromise::resolveWithInternalMicrotaskForAsyncAwait) and the walk's
+// dynamicDowncast<JSAsyncFunctionGenerator> fails, dropping every `at async`
+// frame. getStackTrace calls this hook before inserting its own async frames,
+// so we replicate getParentGenerator here with tuple unwrapping and append the
+// frames JSC's walk misses. To avoid duplicating frames JSC does find (when
+// ALS was inactive at some hop), we run the unwrapped and non-unwrapped walks
+// in lockstep and only start appending once the non-unwrapped walk stops.
+void Bun::appendAsyncLocalStorageStackFrames(VM& vm, JSCell* owner, Vector<StackFrame>& results, size_t maxToAppend)
+{
+    if (!maxToAppend || !Options::useAsyncStackTrace())
+        return;
+
+    AssertNoGC assertNoGC;
+
+    JSAsyncFunctionGenerator* origin = nullptr;
+    for (EntryFrame* entryFrame = vm.topEntryFrame; entryFrame;) {
+        VMEntryRecord* record = vmEntryRecord(entryFrame);
+        if (auto* generator = dynamicDowncast<JSAsyncFunctionGenerator>(record->m_context)) {
+            origin = generator;
+            break;
+        }
+        entryFrame = record->prevTopEntryFrame();
+    }
+    if (!origin)
+        return;
+
+    auto promiseContext = [](JSPromise* p, bool unwrap) -> JSValue {
+        if (!p)
+            return { };
+        JSValue context = p->asyncStackTraceContext();
+        return unwrap ? unwrapAsyncContextTuple(context) : context;
+    };
+
+    // Mirrors Interpreter::getAsyncStackTrace's getParentGenerator for the
+    // direct-await and Promise.race shapes. Promise.all/allSettled/any store a
+    // JSPromiseCombinatorsGlobalContext (a private header the prebuilt WebKit
+    // doesn't forward), so under ALS the chain still ends at a combinator hop
+    // the same way JSC's own walk does; that narrower case wants the unwrap in
+    // getAsyncStackTrace itself.
+    auto getParentGenerator = [&](JSAsyncFunctionGenerator* gen, bool unwrap) -> JSAsyncFunctionGenerator* {
+        auto* returnPromise = cellAs<JSPromise>(gen->internalField(JSAsyncFunctionGenerator::Field::Context).get());
+        JSValue context = promiseContext(returnPromise, unwrap);
+        if (!context)
+            return nullptr;
+        if (auto* generator = cellAs<JSAsyncFunctionGenerator>(context))
+            return generator;
+        if (auto* promise = cellAs<JSPromise>(context))
+            return cellAs<JSAsyncFunctionGenerator>(promiseContext(promise, unwrap));
+        return nullptr;
+    };
+
+    size_t appended = 0;
+    bool jscStopped = false;
+    JSAsyncFunctionGenerator* current = origin;
+    for (unsigned hops = 0; hops < 256 && appended < maxToAppend; hops++) {
+        JSAsyncFunctionGenerator* next = getParentGenerator(current, /* unwrap */ true);
+        if (!next)
+            break;
+        if (!jscStopped) {
+            if (getParentGenerator(current, /* unwrap */ false))
+                current = next;
+            else
+                jscStopped = true;
+        }
+        if (jscStopped) {
+            if (appendGeneratorFrame(vm, owner, next, results))
+                appended++;
+            current = next;
+        }
+    }
 }

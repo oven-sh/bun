@@ -66,9 +66,10 @@ public:
 
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
-    // For top-level-await modules JSC finishes evaluation asynchronously
-    // (record status EvaluatingAsync -> Evaluated); pull the final state into
-    // m_status/m_evaluationException once the record has settled.
+    // record->evaluate() advances the records of the whole graph without
+    // telling their wrappers, and for top-level await it finishes
+    // asynchronously (record status EvaluatingAsync -> Evaluated). Pull the
+    // record's state into m_status/m_evaluationException on demand.
     void reconcileEvaluationState(JSC::VM& vm);
 
     bool hasAsyncGraph() const;
@@ -89,7 +90,7 @@ protected:
 
     NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String identifier, JSValue context, JSValue moduleWrapper);
 
-    void evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint);
+    void prepareGraphForEvaluation(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;

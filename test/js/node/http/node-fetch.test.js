@@ -55,6 +55,37 @@ for (const [impl, name] of [
   });
 }
 
+// https://github.com/oven-sh/bun/issues/13390
+// Packages like minipass (used by cacache, @expo/cli) implement streams by extending the legacy
+// Stream base class directly, without Node's Readable machinery. node-fetch accepts these as
+// Response bodies; previously Bun's override threw ERR_INVALID_ARG_TYPE from Readable.toWeb.
+test("node-fetch Response accepts a legacy Stream body that is not a stream.Readable", async () => {
+  class MinipassLike extends stream.Stream {
+    end(chunk) {
+      if (chunk) this.emit("data", chunk);
+      this.emit("end");
+    }
+  }
+
+  const body = new MinipassLike();
+  expect(body instanceof stream.Stream).toBe(true);
+  expect(body instanceof stream.Readable).toBe(false);
+  expect(body._readableState).toBeUndefined();
+
+  const res = new Response(body, { status: 200 });
+  queueMicrotask(() => body.end(Buffer.from("hello world")));
+
+  expect(res.body).toBeInstanceOf(stream.Readable);
+  expect(await res.text()).toBe("hello world");
+});
+
+test("node-fetch Response accepts a stream.Readable body", async () => {
+  const body = stream.Readable.from([Buffer.from("from "), Buffer.from("readable")]);
+  const res = new Response(body, { status: 200 });
+  expect(res.body).toBeInstanceOf(stream.Readable);
+  expect(await res.text()).toBe("from readable");
+});
+
 test("node-fetch uses node streams instead of web streams", async () => {
   using server = Bun.serve({
     port: 0,

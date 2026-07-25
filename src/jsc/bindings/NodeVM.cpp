@@ -50,6 +50,7 @@
 
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/JSCInlines.h"
+#include "JavaScriptCore/JSGlobalLexicalEnvironment.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
@@ -1810,6 +1811,45 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
 JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
+}
+
+// Returns the let/const/class binding names of a global's JSGlobalLexicalEnvironment
+// as a JS array. Those bindings are not own properties of the (vm sandbox) object, so
+// the REPL cannot enumerate them via Object.getOwnPropertyNames; V8 exposes them via
+// the Runtime.globalLexicalScopeNames inspector method, which JSC does not implement.
+// `context` is a contextified vm sandbox (resolved to its NodeVMGlobalObject); any
+// other value falls back to the calling realm's global.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_getGlobalLexicalScopeNames, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSGlobalObject* target = globalObject;
+    JSValue contextArg = callFrame->argument(0);
+    if (contextArg.isObject()) {
+        if (auto* nodeVmGlobal = NodeVM::getGlobalObjectFromContext(globalObject, contextArg, false))
+            target = nodeVmGlobal;
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    Vector<Identifier, 8> names;
+    if (auto* lexicalEnv = target->globalLexicalEnvironment()) {
+        SymbolTable* symbolTable = lexicalEnv->symbolTable();
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        for (auto it = symbolTable->begin(locker), end = symbolTable->end(locker); it != end; ++it) {
+            if (it->key->isSymbol())
+                continue;
+            names.append(Identifier::fromUid(vm, it->key.get()));
+        }
+    }
+
+    JSArray* result = constructEmptyArray(globalObject, nullptr, names.size());
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned i = 0; i < names.size(); ++i) {
+        result->putDirectIndex(globalObject, i, jsString(vm, names[i].string()));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(result);
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)

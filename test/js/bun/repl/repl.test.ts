@@ -1847,3 +1847,114 @@ describe.concurrent("node:repl prints a frozen thrown error and continues", () =
     interactiveTimeout,
   );
 });
+
+describe.concurrent("node:repl inspector-backed features", () => {
+  const env = { ...bunEnv, NO_COLOR: "1", NODE_REPL_HISTORY: "" };
+
+  // let/const/class bindings land in the REPL context's global lexical
+  // environment, not on the sandbox object, so the own-property walk in
+  // complete() never saw them. Node reads them via V8's
+  // Runtime.globalLexicalScopeNames; Bun reads the JSGlobalLexicalEnvironment
+  // symbol table directly (NodeVM.cpp jsFunction_getGlobalLexicalScopeNames).
+  test(
+    "complete() offers let/const/class bindings",
+    async () => {
+      const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const decls = "let qqLet = 1; var qqVar = 2; const qqConst = 3; qqImplicit = 4; function qqFn(){}; class qqCls{}\\n";
+      const complete = (r, line) => new Promise(res => r.complete(line, (e, [c]) => res(c.filter(Boolean).sort())));
+      // defaultEval finishes via queueMicrotask; wait one turn so the bindings
+      // exist before asking for completions.
+      const settle = () => new Promise(res => queueMicrotask(() => queueMicrotask(res)));
+      (async () => {
+        for (const useGlobal of [false, true]) {
+          const inp = new PassThrough(), out = new PassThrough(); out.resume();
+          const r = repl.start({ input: inp, output: out, terminal: false, prompt: "", useGlobal });
+          inp.write(decls);
+          await settle();
+          console.log("useGlobal=" + useGlobal + " " + JSON.stringify(await complete(r, "qq")));
+          r.close();
+        }
+        // User-facing face: after \`const x = ...\`, bare-identifier and member
+        // completion both reach it.
+        const inp = new PassThrough(), out = new PassThrough(); out.resume();
+        const r = repl.start({ input: inp, output: out, terminal: false, prompt: "" });
+        inp.write("const myUniqueArr = [9, 9, 9]\\n");
+        await settle();
+        console.log("ID " + JSON.stringify(await complete(r, "myUniqu")));
+        console.log("MEMBER " + JSON.stringify(await complete(r, "myUniqueArr.len")));
+        r.close();
+      })();
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual([
+        'useGlobal=false ["qqCls","qqConst","qqFn","qqImplicit","qqLet","qqVar"]',
+        'useGlobal=true ["qqCls","qqConst","qqFn","qqImplicit","qqLet","qqVar"]',
+        'ID ["myUniqueArr"]',
+        'MEMBER ["myUniqueArr.length"]',
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+
+  // The TTY eval-result preview (grey `10` under `5+5`) went through V8's
+  // Runtime.evaluate {throwOnSideEffect:true}; JSC has none, so Bun gates an
+  // in-context eval on an AST side-effect scan: pure expressions preview,
+  // anything that would run user code (calls, assignments, ...) does not.
+  test(
+    "terminal input preview renders for pure expressions and skips side-effectful ones",
+    async () => {
+      const script = `
+      const repl = require("node:repl");
+      const { Stream } = require("node:stream");
+      process.env.TERM = "xterm";
+      let buf = "";
+      class S extends Stream {
+        readable = true; writable = true;
+        write(c) { buf += c; return true; }
+        resume() {} pause() {}
+      }
+      const io = new S();
+      const r = repl.start({ prompt: "> ", stream: io, terminal: true, useColors: false, preview: true });
+      r.context.sideEffect = 0;
+      r.context.bump = () => r.context.sideEffect++;
+      // One emit() per input: readline inserts the whole string then refreshes
+      // once, so the captured preview is for the final line, not an
+      // intermediate keystroke. useColors:false renders it as "\\n// <value>".
+      const probe = input => {
+        buf = "";
+        io.emit("data", input);
+        const m = buf.match(/\\n\\/\\/ (.+?)\\x1b/);
+        console.log(JSON.stringify({ input, preview: m ? m[1] : null }));
+        io.emit("keypress", "", { ctrl: true, name: "u" });
+      };
+      probe("3+4");           // pure BinaryExpression
+      probe("[9,8].length");  // pure MemberExpression
+      probe("bump()");        // CallExpression: not evaluated
+      probe("sideEffect++");  // UpdateExpression: not evaluated
+      probe("sideEffect=9");  // AssignmentExpression: not evaluated
+      probe("qzqz_nope");     // ReferenceError: suppressed
+      console.log(JSON.stringify({ sideEffect: r.context.sideEffect }));
+      r.close();
+    `;
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n").map(l => JSON.parse(l))).toEqual([
+        { input: "3+4", preview: "7" },
+        { input: "[9,8].length", preview: "2" },
+        { input: "bump()", preview: null },
+        { input: "sideEffect++", preview: null },
+        { input: "sideEffect=9", preview: null },
+        { input: "qzqz_nope", preview: null },
+        { sideEffect: 0 },
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    interactiveTimeout,
+  );
+});

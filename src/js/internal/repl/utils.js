@@ -26,10 +26,9 @@ const {
 // Lazy: don't destructure — the vm.Script parse of acorn's ~122 KB source
 // stays deferred until isRecoverableError/isValidSyntax first runs.
 const acorn = require("internal/repl/acorn");
+const acornWalk = require("internal/repl/acorn-walk");
 
-const { sendInspectorCommand, getBuiltinLibs } = require("internal/repl/node-shims");
-
-const { ERR_INSPECTOR_NOT_AVAILABLE } = require("internal/repl/node-errors").codes;
+const { getBuiltinLibs } = require("internal/repl/node-shims");
 
 const { clearLine, clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
@@ -274,7 +273,10 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
     );
   }
 
-  // This returns a code preview for arbitrary input code.
+  // This returns a code preview for arbitrary input code. Node runs
+  // V8's Runtime.evaluate with throwOnSideEffect:true, which aborts at the
+  // first write/call at runtime; JSC has no equivalent, so gate on an AST
+  // side-effect scan before evaluating in the REPL's own context.
   function getInputPreview(input, callback) {
     // For similar reasons as `defaultEval`, wrap expressions starting with a
     // curly brace with parenthesis.
@@ -282,78 +284,78 @@ function setupPreview(repl, contextSymbol, bufferSymbol, active) {
       input = `(${input})`;
       wrapped = true;
     }
-    sendInspectorCommand(
-      session => {
-        session.post(
-          "Runtime.evaluate",
-          {
-            expression: input,
-            throwOnSideEffect: true,
-            timeout: 333,
-            contextId: repl[contextSymbol],
-          },
-          (error, preview) => {
-            if (error) {
-              callback(error);
-              return;
-            }
-            const { result } = preview;
-            if (result.value !== undefined) {
-              callback(null, inspect(result.value, previewOptions));
-              // Ignore EvalErrors, SyntaxErrors and ReferenceErrors. It is not clear
-              // where they came from and if they are recoverable or not. Other errors
-              // may be inspected.
-            } else if (
-              preview.exceptionDetails &&
-              (result.className === "EvalError" ||
-                result.className === "SyntaxError" ||
-                // Report ReferenceError in case the strict mode is active
-                // for input that has no completions.
-                (result.className === "ReferenceError" && (hasCompletions || !isInStrictMode(repl))))
-            ) {
-              callback(null, null);
-            } else if (result.objectId) {
-              // The writer options might change and have influence on the inspect
-              // output. The user might change e.g., `showProxy`, `getters` or
-              // `showHidden`. Use `inspect` instead of `JSON.stringify` to keep
-              // `Infinity` and similar intact.
-              const inspectOptions = inspect(
-                {
-                  ...repl.writer.options,
-                  colors: false,
-                  depth: 1,
-                  compact: true,
-                  breakLength: Infinity,
-                },
-                previewOptions,
-              );
-              session.post(
-                "Runtime.callFunctionOn",
-                {
-                  functionDeclaration: `(v) =>
-                    Reflect
-                    .getOwnPropertyDescriptor(globalThis, 'util')
-                    .get().inspect(v, ${inspectOptions})`,
-                  objectId: result.objectId,
-                  arguments: [result],
-                },
-                (error, preview) => {
-                  if (error) {
-                    callback(error);
-                  } else {
-                    callback(null, preview.result.value);
-                  }
-                },
-              );
-            } else {
-              // Either not serializable or undefined.
-              callback(null, result.unserializableValue || result.type);
-            }
-          },
-        );
-      },
-      () => callback(new ERR_INSPECTOR_NOT_AVAILABLE()),
-    );
+
+    let ast;
+    try {
+      ast = acorn.parse(input, { __proto__: null, ecmaVersion: "latest" });
+    } catch {
+      return callback(null, null);
+    }
+    // V8's throwOnSideEffect is a runtime trap; approximating it statically
+    // means any node kind that can run user code is a reject. A property get
+    // (MemberExpression) can run a user getter — that hole is accepted so the
+    // common case (`arr.length`, `Math.PI`) still previews.
+    let safe = true;
+    const reject = () => (safe = false);
+    try {
+      acornWalk.simple(ast, {
+        CallExpression: reject,
+        NewExpression: reject,
+        TaggedTemplateExpression: reject,
+        AssignmentExpression: reject,
+        UpdateExpression: reject,
+        AwaitExpression: reject,
+        YieldExpression: reject,
+        ImportExpression: reject,
+        SpreadElement: reject,
+        ThrowStatement: reject,
+        ForStatement: reject,
+        ForInStatement: reject,
+        ForOfStatement: reject,
+        WhileStatement: reject,
+        DoWhileStatement: reject,
+        VariableDeclaration: reject,
+        FunctionDeclaration: reject,
+        ClassDeclaration: reject,
+        UnaryExpression: node => {
+          if (node.operator === "delete") safe = false;
+        },
+      });
+    } catch {
+      safe = false;
+    }
+    if (!safe) return callback(null, null);
+
+    let result;
+    let threw = false;
+    try {
+      const script = new vm.Script(input, { filename: "REPLPreview", displayErrors: false });
+      result = repl.useGlobal
+        ? script.runInThisContext({ displayErrors: false })
+        : script.runInContext(repl.context, { displayErrors: false });
+    } catch (e) {
+      threw = true;
+      result = e;
+    }
+    if (threw) {
+      const name = result?.constructor?.name;
+      // Ignore EvalErrors, SyntaxErrors and ReferenceErrors. It is not clear
+      // where they came from and if they are recoverable or not. Other errors
+      // may be inspected.
+      if (
+        name === "EvalError" ||
+        name === "SyntaxError" ||
+        (name === "ReferenceError" && (hasCompletions || !isInStrictMode(repl)))
+      ) {
+        return callback(null, null);
+      }
+    }
+    if (result === undefined) return callback(null, "undefined");
+    const inspectOptions =
+      typeof result === "object" || typeof result === "function"
+        ? { ...repl.writer.options, colors: false, depth: 1, compact: true, breakLength: Infinity }
+        : previewOptions;
+    return callback(null, inspect(result, inspectOptions));
   }
 
   const showPreview = (showCompletion = true) => {

@@ -45,6 +45,8 @@ bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JS
 
 } // namespace NodeVM
 
+JSC_DECLARE_HOST_FUNCTION(jsFunction_getGlobalLexicalScopeNames);
+
 class BaseVMOptions {
 public:
     String filename;

@@ -75,11 +75,28 @@ function debuglog(set, cb) {
 
 // ---- internal/util/inspector ----------------------------------------------
 
+// The three Node-side callers each need a different V8 inspector method, and
+// JSC's backend speaks none of them in-process. Two are replaced by direct
+// bindings (getGlobalLexicalScopeNames below; the input preview's AST-gated
+// eval in internal/repl/utils.js); the remaining caller — createContext()'s
+// Runtime.executionContextCreated capture — only recorded a contextId for the
+// two replaced callers, so falling through to onError there is correct.
 function sendInspectorCommand(cb, onError) {
-  // JSC's inspector protocol has no `Runtime.globalLexicalScopeNames` (V8-only),
-  // so let/const/class tab-completion in useGlobal:true mode is inert until a
-  // native binding enumerates JSGlobalObject::globalLexicalEnvironment().
   return onError();
+}
+
+const nativeGlobalLexicalScopeNames = $newCppFunction("NodeVM.cpp", "jsFunction_getGlobalLexicalScopeNames", 1);
+
+// Enumerates let/const/class bindings of a vm context's (or, with no context,
+// the main realm's) global lexical environment. Those bindings are not own
+// properties of the context object, so the REPL's property walk cannot see
+// them; Node surfaces them via V8's Runtime.globalLexicalScopeNames.
+function getGlobalLexicalScopeNames(context) {
+  try {
+    return nativeGlobalLexicalScopeNames(context);
+  } catch {
+    return [];
+  }
 }
 
 // ---- internal/util/types ----------------------------------------------
@@ -427,6 +444,7 @@ export default {
   debuglog,
   // internal/util/inspector
   sendInspectorCommand,
+  getGlobalLexicalScopeNames,
   // internal/util/types
   isProxy,
   // internal/options

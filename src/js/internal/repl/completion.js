@@ -35,14 +35,13 @@ const {
 } = primordials;
 
 const {
-  kContextId,
   getREPLResourceName,
   globalBuiltins,
   getReplBuiltinLibs,
   fixReplRequire,
 } = require("internal/repl/utils");
 
-const { sendInspectorCommand } = require("internal/repl/node-shims");
+const { getGlobalLexicalScopeNames } = require("internal/repl/node-shims");
 
 const { isProxy } = require("internal/repl/node-shims");
 
@@ -104,25 +103,6 @@ function isNotLegacyObjectPrototypeMethod(str) {
     str !== "__defineSetter__" &&
     str !== "__lookupGetter__" &&
     str !== "__lookupSetter__"
-  );
-}
-
-function getGlobalLexicalScopeNames(contextId) {
-  return sendInspectorCommand(
-    session => {
-      let names = [];
-      session.post(
-        "Runtime.globalLexicalScopeNames",
-        {
-          executionContextId: contextId,
-        },
-        (error, result) => {
-          if (!error) names = result.names;
-        },
-      );
-      return names;
-    },
-    () => [],
   );
 }
 
@@ -388,8 +368,11 @@ function complete(line, callback) {
 
     // Resolve expr and get its completions.
     if (!expr) {
-      // Get global vars synchronously
-      ArrayPrototypePush(completionGroups, getGlobalLexicalScopeNames(this[kContextId]));
+      // let/const/class bindings live in the target global's lexical
+      // environment, not on `this.context`, so the property walk below never
+      // sees them. Node reads them via V8's Runtime.globalLexicalScopeNames;
+      // Bun reads the JSGlobalLexicalEnvironment symbol table directly.
+      ArrayPrototypePush(completionGroups, getGlobalLexicalScopeNames(this.useGlobal ? undefined : this.context));
       let contextProto = this.context;
       while ((contextProto = ObjectGetPrototypeOf(contextProto)) !== null) {
         ArrayPrototypePush(completionGroups, filteredOwnPropertyNames(contextProto));

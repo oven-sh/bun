@@ -28,11 +28,7 @@ impl Default for ObjectURLRegistry {
 
 pub struct Entry {
     blob: Blob,
-    /// The `ScriptExecutionContext` id of the realm that called
-    /// `URL.createObjectURL`. Used by [`ObjectURLRegistry::revoke_all_for_context`]
-    /// so worker teardown removes that worker's entries per the File API spec
-    /// (a blob URL store entry is removed when its creating environment is
-    /// discarded).
+    /// Registering realm; see [`ObjectURLRegistry::revoke_all_for_context`].
     context_id: i32,
 }
 
@@ -98,9 +94,7 @@ impl ObjectURLRegistry {
         let _ = self.map.lock().remove(&uuid.bytes);
     }
 
-    /// Remove every entry registered by `context_id`. Called from worker
-    /// teardown (via `RuntimeHooks::revoke_object_urls_for_context`) so a
-    /// worker's blob URLs do not outlive that worker.
+    /// Remove every entry registered by `context_id` (worker teardown).
     pub fn revoke_all_for_context(&self, context_id: i32) {
         let mut map = self.map.lock();
         let keys: Vec<[u8; 16]> = map

@@ -622,7 +622,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     // Preserve true originals across repeat mock.module() calls for the same specifier.
     if (globalObject->onLoadPlugins.virtualModules) {
         if (auto prior = globalObject->onLoadPlugins.virtualModules->get(specifier)) {
-            if (auto* priorMock = dynamicDowncast<JSModuleMock>(prior.get())) {
+            auto* priorMock = dynamicDowncast<JSModuleMock>(prior.get());
+            if (priorMock && priorMock->installedDuringPreload && !mock->installedDuringPreload) {
+                // Shadowing a preload mock: snapshot current (preload) values below; stash for reinstatement.
+                mock->priorVirtualModuleEntry.set(vm, mock, priorMock);
+            } else if (priorMock) {
                 if (priorMock->esmNamespace)
                     mock->esmNamespace.set(vm, mock, priorMock->esmNamespace.get());
                 if (priorMock->esmOriginalExports)
@@ -633,8 +637,6 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     mock->cjsOriginalExports.set(vm, mock, priorMock->cjsOriginalExports.get());
                 if (priorMock->priorVirtualModuleEntry)
                     mock->priorVirtualModuleEntry.set(vm, mock, priorMock->priorVirtualModuleEntry.get());
-                else if (priorMock->installedDuringPreload)
-                    mock->priorVirtualModuleEntry.set(vm, mock, priorMock);
                 // Prior mock had no snapshot for a cache: that cache's entry came from its factory.
                 mock->mustEvictEsm = priorMock->mustEvictEsm || !priorMock->esmNamespace;
                 mock->mustEvictCjs = priorMock->mustEvictCjs || !priorMock->cjsModule;

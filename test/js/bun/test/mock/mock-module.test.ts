@@ -464,6 +464,7 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
           expect(getValue()).toBe("per-test");
         });
         test("b sees preload mock again", async () => {
+          expect(getValue()).toBe("preload-mock");
           expect((await import("./dep.ts")).getValue()).toBe("preload-mock");
         });
       `,

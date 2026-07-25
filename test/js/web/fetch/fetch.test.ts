@@ -3068,3 +3068,109 @@ it("an explicit numeric `timeout` extends the socket idle deadline past the defa
   expect(out.withDefault).toStartWith("ERR:");
   expect(exitCode).toBe(0);
 }, 60_000);
+
+describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
+  // Raw TCP origin that records how many body bytes arrived alongside the
+  // request head and, optionally, how many arrived in total. `onHead` is
+  // invoked once the CRLFCRLF boundary is seen and returns the bytes to
+  // write back before the body is expected (or to reject the upload).
+  function rawOrigin(onHead: (sock: import("net").Socket, headText: string) => Buffer | string) {
+    const result = { bodyWithHead: -1, bodyTotal: 0, sawHead: false };
+    const server = net.createServer(sock => {
+      let buf = Buffer.alloc(0);
+      let headEnd = -1;
+      let cl = 0;
+      let replied = false;
+      sock.on("data", chunk => {
+        buf = Buffer.concat([buf, chunk]);
+        if (headEnd < 0) {
+          headEnd = buf.indexOf("\r\n\r\n");
+          if (headEnd < 0) return;
+          result.sawHead = true;
+          result.bodyWithHead = buf.length - (headEnd + 4);
+          const headText = buf.toString("latin1", 0, headEnd);
+          cl = Number((/content-length:\s*(\d+)/i.exec(headText) || [, "0"])[1]);
+          sock.write(onHead(sock, headText));
+        }
+        result.bodyTotal = buf.length - (headEnd + 4);
+        if (!replied && result.bodyTotal >= cl) {
+          replied = true;
+          sock.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+      });
+      sock.on("error", () => {});
+    });
+    return { server, result };
+  }
+
+  it("withholds the body until 100 Continue arrives", async () => {
+    const { server, result } = rawOrigin(() => "HTTP/1.1 100 Continue\r\n\r\n");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        body: "the-payload",
+        headers: { expect: "100-continue" },
+      });
+      expect({
+        status: res.status,
+        text: await res.text(),
+        bodyWithHead: result.bodyWithHead,
+        bodyTotal: result.bodyTotal,
+      }).toEqual({ status: 200, text: "ok", bodyWithHead: 0, bodyTotal: 11 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("abandons the body when the server answers with a final status before 100", async () => {
+    const body = Buffer.alloc(50_000, "x").toString();
+    const { server, result } = rawOrigin(
+      () => "HTTP/1.1 417 Expectation Failed\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope",
+    );
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    let received = "";
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        body,
+        headers: { Expect: "100-continue" },
+      });
+      received = await res.text();
+      expect({
+        status: res.status,
+        text: received,
+        bodyWithHead: result.bodyWithHead,
+        bodyTotal: result.bodyTotal,
+      }).toEqual({ status: 417, text: "nope", bodyWithHead: 0, bodyTotal: 0 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("without the Expect header the body still ships with the request head", async () => {
+    const { server, result } = rawOrigin(() => "");
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const res = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/upload`, {
+        method: "POST",
+        body: "the-payload",
+      });
+      // No 100 was ever sent; the body arrived on its own, so the request
+      // completes. The head+body going out in one write is the common case
+      // on loopback; assert it so a regression that starts withholding
+      // unconditionally is caught.
+      expect({ status: res.status, text: await res.text(), bodyTotal: result.bodyTotal }).toEqual({
+        status: 200,
+        text: "ok",
+        bodyTotal: 11,
+      });
+      expect(result.bodyWithHead).toBeGreaterThan(0);
+    } finally {
+      server.close();
+    }
+  });
+});

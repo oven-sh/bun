@@ -1565,10 +1565,8 @@ impl QuicSession {
             ),
             None => (JSValue::UNDEFINED, JSValue::UNDEFINED),
         };
-        // Fire before `opened` resolves: the early streams were already torn
-        // down during `EarlyDataFailed`, and the application's re-open
-        // decision keys off this callback having run by the time it awaits
-        // `opened`.
+        // Before onSessionHandshake so `onearlyrejected` has fired when the
+        // application's `await opened` continuation runs.
         if early_data.0 && !early_data.1 && !self.is_server.get() {
             if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
                 let vm = global.bun_vm().as_mut();

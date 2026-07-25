@@ -487,6 +487,8 @@ describe("worker_threads", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface stderr in the failure diff if the child produced no JSON.
+    if (!stdout.startsWith("{")) expect({ stdout, stderr, exitCode }).toEqual({ stdout: "{", stderr: "", exitCode: 0 });
     const { workerCwd, mainCwd, target } = JSON.parse(stdout);
     expect(workerCwd).toBe(target);
     expect(mainCwd).toBe(target);

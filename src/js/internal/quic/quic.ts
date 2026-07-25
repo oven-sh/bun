@@ -4421,10 +4421,8 @@ class QuicEndpoint {
     debug("destroying the endpoint");
     const inner = this.#inner;
     if (error !== undefined) inner.pendingError ??= error;
-    // With no error the cascaded sessions still get close options so a
-    // NO_ERROR CONNECTION_CLOSE reaches the peer; `session.destroy()`
-    // with no options is silent (Node parity), so without this the peer
-    // would only learn via its idle timer.
+    // session.destroy() with no options is silent; pass {} so the peer
+    // gets a NO_ERROR CONNECTION_CLOSE instead of waiting on idle.
     const closeOptions = errorToCloseOptions(error) ?? kEmptyObject;
     // Node's Endpoint::Send drops packets in the closing state.
     const alreadyClosing = this.#isClosedOrClosing;

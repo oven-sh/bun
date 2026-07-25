@@ -383,6 +383,12 @@ describe("fake npm/npx cli", () => {
       // missing script exits 0.
       const ip = await fakePmRun(String(dir), "npm", ["run", "missing-script", "--if-present"]);
       expect(ip.exitCode).toBe(0);
+      // An unknown config flag consumes its value like npm's parser does;
+      // neither may shift the script name or reach the script.
+      const pair = await fakePmRun(String(dir), "npm", ["run", "go", "--port", "3000"]);
+      expect(pair.stdout).toContain("ARGS:");
+      expect(pair.stdout).not.toContain("3000");
+      expect(pair.exitCode).toBe(0);
     });
 
     test.concurrent("-- stops flag translation", async () => {

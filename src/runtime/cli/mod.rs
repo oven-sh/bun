@@ -1160,22 +1160,33 @@ pub mod command {
             hoisted.clear();
         }
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"run")) {
-            let mut past_separator = false;
-            tail.retain(|a| {
+            let mut new_tail: Vec<&'static ZStr> = Vec::with_capacity(tail.len());
+            let mut i = 0;
+            while i < tail.len() {
+                let a = tail[i];
                 let b = a.as_bytes();
-                if past_separator {
-                    return true;
-                }
                 if b == b"--" {
-                    past_separator = true;
-                    return true;
+                    new_tail.extend_from_slice(&tail[i..]);
+                    break;
                 }
                 if b.first() == Some(&b'-') {
-                    hoisted.push(a);
-                    return false;
+                    if matches!(b, b"--if-present" | b"--silent") {
+                        hoisted.push(a);
+                        i += 1;
+                    } else {
+                        let consumes_next = !strings::contains_char(b, b'=')
+                            && tail.get(i + 1).is_some_and(|n| {
+                                let nb = n.as_bytes();
+                                nb != b"--" && nb.first() != Some(&b'-')
+                            });
+                        i += if consumes_next { 2 } else { 1 };
+                    }
+                    continue;
                 }
-                true
-            });
+                new_tail.push(a);
+                i += 1;
+            }
+            tail = new_tail;
         }
         if matches!(mapped.first().map(|z| z.as_bytes()), Some(b"create")) {
             pre_subcommand_flags.clear();

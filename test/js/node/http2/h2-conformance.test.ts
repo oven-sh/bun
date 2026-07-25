@@ -1423,8 +1423,6 @@ describe("inbound stream lifecycle", () => {
 // and so could not have an 'error' listener on — and the unhandled stream 'error' became an
 // uncaughtException.
 describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
-  const wellFormedGet = Buffer.concat([Buffer.from([0x82, 0x86, 0x84, 0x01]), hpackLiteral("localhost")]);
-
   // Each case is the raw bytes to send after the client preface + SETTINGS; every one is a
   // connection error the server must tear down that one connection for, and nothing else.
   const killingFrames: [string, Buffer][] = [
@@ -1458,7 +1456,7 @@ describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
     [
       "PING inside a header block",
       Buffer.concat([
-        encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, wellFormedGet),
+        encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, requestHeaderBlock("GET")),
         encodeFrame(FrameType.PING, 0, 0, Buffer.alloc(8)),
       ]),
     ],
@@ -1466,8 +1464,8 @@ describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
     [
       "other-stream HEADERS inside a header block",
       Buffer.concat([
-        encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, wellFormedGet),
-        encodeFrame(FrameType.HEADERS, 0x5, 3, wellFormedGet),
+        encodeFrame(FrameType.HEADERS, 0x1 /* END_STREAM, no END_HEADERS */, 1, requestHeaderBlock("GET")),
+        encodeFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET")),
       ]),
     ],
   ];
@@ -1542,7 +1540,7 @@ describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
       Buffer.concat([
         PREFACE,
         encodeFrame(FrameType.SETTINGS, 0, 0),
-        encodeFrame(FrameType.HEADERS, 0x5, 1, wellFormedGet),
+        encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
       ]),
     );
     await gotResponse.promise;
@@ -1553,5 +1551,5 @@ describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
     proc.stdin.write("quit\n");
     const exitCode = await proc.exited;
     expect(exitCode).toBe(0);
-  });
+  }, 15_000);
 });

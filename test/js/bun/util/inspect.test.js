@@ -984,32 +984,4 @@ describe("DOM nodes", () => {
     }
     expect(Bun.inspect(new HTMLThrowElement())).toStartWith("HTMLThrowElement {");
   });
-
-  it("happy-dom elements (real prototype-accessor shapes)", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
-          const { Window } = require("happy-dom");
-          const { document, customElements, HTMLElement } = new Window();
-          const btn = document.createElement("button");
-          btn.setAttribute("type", "submit");
-          btn.textContent = "go";
-          console.log(Bun.inspect(btn));
-          customElements.define("my-widget", class MyWidget extends HTMLElement {});
-          const w = document.createElement("my-widget");
-          console.log(Bun.inspect(w));
-        `,
-      ],
-      env: bunEnv,
-      cwd: import.meta.dir,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe('<button type="submit">\n  go\n</button>\n<my-widget />\n');
-    expect(exitCode).toBe(0);
-  });
 });

@@ -519,7 +519,7 @@ impl<'a> State<'a> {
                         }
                     }
                     Status::Signaled(signal) => {
-                        return bun_sys::SignalCode(*signal).to_exit_code().unwrap_or(1);
+                        return 128u8.wrapping_add(*signal);
                     }
                     _ => return 1,
                 }

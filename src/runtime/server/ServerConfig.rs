@@ -1216,15 +1216,22 @@ impl ServerConfig {
             return Err(JsError::Thrown);
         }
 
-        if let Some(unix) = arg.get_stringish(global, "unix")? {
-            let unix_str = unix.to_utf8();
-            if !unix_str.slice().is_empty() {
+        if let Some(unix) = arg.get(global, "unix")? {
+            if !unix.is_undefined_or_null() {
+                if !unix.is_string() && !(unix.is_cell() && unix.js_type().is_array_buffer_like()) {
+                    return Err(global.throw_invalid_property_type(b"unix", "string", unix));
+                }
+                let unix_str = unix.to_slice(global)?;
+                if unix_str.slice().is_empty() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "Expected \"unix\" to be a non-empty string for a Unix domain socket path",
+                    )));
+                }
                 if has_hostname {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Cannot specify both hostname and unix",
                     )));
                 }
-
                 args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
             }
         }

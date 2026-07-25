@@ -1110,16 +1110,33 @@ pub enum URLProto {
 
 impl Display for URLFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}://",
-            match self.proto {
-                URLProto::Http => "http",
-                URLProto::Https => "https",
-                URLProto::Unix => "unix",
-                URLProto::Abstract => "abstract",
+        if matches!(self.proto, URLProto::Unix | URLProto::Abstract) {
+            f.write_str(if self.proto == URLProto::Unix {
+                "unix://"
+            } else {
+                "abstract://"
+            })?;
+            // Percent-encode everything outside the RFC 3986 unreserved set
+            // plus '/', so the result is always a parseable URL regardless of
+            // what the socket path contains.
+            for &b in self.hostname.unwrap_or(b"") {
+                if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
+                    f.write_char(b as char)?;
+                } else {
+                    let h = hex2_upper(b);
+                    f.write_char('%')?;
+                    f.write_char(h[0] as char)?;
+                    f.write_char(h[1] as char)?;
+                }
             }
-        )?;
+            return Ok(());
+        }
+
+        f.write_str(if self.proto == URLProto::Https {
+            "https://"
+        } else {
+            "http://"
+        })?;
 
         if let Some(hostname) = self.hostname {
             let needs_brackets = hostname[0] != b'[' && strings::is_ipv6_address(hostname);
@@ -1130,10 +1147,6 @@ impl Display for URLFormatter<'_> {
             }
         } else {
             f.write_str("localhost")?;
-        }
-
-        if self.proto == URLProto::Unix {
-            return Ok(());
         }
 
         let is_port_optional = self.port.is_none()

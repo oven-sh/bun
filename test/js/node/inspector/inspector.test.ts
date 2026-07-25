@@ -1092,32 +1092,39 @@ for await (const line of rl) {
   await waitForStdout("URL ");
   const wsUrl = stdoutText.match(/URL (\S+)/)![1];
 
+  type Pending = { resolve: (msg: any) => void; reject: (err: Error) => void; method: string };
   type Client = {
     ws: WebSocket;
     events: any[];
     pauseCount: number;
     send: (method: string, params?: unknown) => Promise<any>;
+    abandon: (why: string) => void;
   };
-  function attach(autoResume: boolean): Promise<Client> {
+  function attach(name: string, autoResume: boolean): Promise<Client> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
-      const pending = new Map<number, (msg: any) => void>();
+      const pending = new Map<number, Pending>();
+      let nextId = 1;
       const client: Client = {
         ws,
         events: [],
         pauseCount: 0,
         send: (method, params) =>
-          new Promise(r => {
+          new Promise((res, rej) => {
             const id = nextId++;
-            pending.set(id, r);
+            pending.set(id, { resolve: res, reject: rej, method });
             ws.send(JSON.stringify({ id, method, params }));
           }),
+        abandon: why => {
+          for (const p of pending.values())
+            p.reject(new Error(`${why} while ${name} awaited ${p.method}; stderr: ${stderrText}`));
+          pending.clear();
+        },
       };
-      let nextId = 1;
       ws.onmessage = e => {
         const m = JSON.parse(String(e.data));
         if (m.id !== undefined) {
-          pending.get(m.id)?.(m);
+          pending.get(m.id)?.resolve(m);
           pending.delete(m.id);
         } else {
           client.events.push(m);
@@ -1127,7 +1134,8 @@ for await (const line of rl) {
           }
         }
       };
-      ws.onerror = reject;
+      ws.onerror = e => (pending.size ? client.abandon(`ws ${name} errored`) : reject(e));
+      ws.onclose = () => client.abandon(`ws ${name} closed`);
       ws.onopen = () => resolve(client);
     });
   }
@@ -1135,8 +1143,12 @@ for await (const line of rl) {
   // A auto-resumes every pause so each "hit" trigger always reaches the
   // "after-hit" marker; the pauseCount delta tells us whether the breakpoint
   // actually fired.
-  const A = await attach(true);
-  const B = await attach(false);
+  const A = await attach("A", true);
+  const B = await attach("B", false);
+  proc.exited.then(code => {
+    A.abandon(`child exited (code ${code})`);
+    B.abandon(`child exited (code ${code})`);
+  });
 
   await A.send("Runtime.enable");
   await A.send("Debugger.enable");
@@ -1167,12 +1179,21 @@ for await (const line of rl) {
   expect(A.pauseCount).toBe(pausesMid + 1);
 
   // B never enabled Debugger, so the FrontendRouter broadcast must have been
-  // dropped before reaching its socket.
+  // dropped before reaching its socket, and its Debugger commands are rejected.
   expect(B.events.filter(e => e.method === "Debugger.paused")).toEqual([]);
+  const bEval = await B.send("Debugger.evaluateOnCallFrame", {
+    callFrameId: '{"ordinal":0,"injectedScriptId":1}',
+    expression: "local",
+  });
+  expect(bEval.error?.message).toBe("Debugger agent is not enabled");
 
   // objectId isolation: B presenting A's handle is rejected, and B's
-  // releaseObject cannot invalidate it for A.
-  const evalA = await A.send("Runtime.evaluate", { expression: "globalThis.secretStore", returnByValue: false });
+  // releaseObject / releaseObjectGroup cannot invalidate it for A.
+  const evalA = await A.send("Runtime.evaluate", {
+    expression: "globalThis.secretStore",
+    objectGroup: "console",
+    returnByValue: false,
+  });
   const objectId = evalA.result?.result?.objectId;
   expect(objectId).toBeString();
   const bProps = await B.send("Runtime.getProperties", { objectId, ownProperties: true });
@@ -1190,6 +1211,7 @@ for await (const line of rl) {
     returnByValue: true,
   });
   const bRelease = await B.send("Runtime.releaseObject", { objectId });
+  await B.send("Runtime.releaseObjectGroup", { objectGroup: "console" });
   const aProps = await A.send("Runtime.getProperties", { objectId, ownProperties: true });
   const alphaFromA = (aProps.result?.result || []).find((p: any) => p.name === "alpha")?.value?.value;
   expect({
@@ -1208,9 +1230,19 @@ for await (const line of rl) {
     aError: undefined,
   });
 
+  // returnByValue user JSON with a property named `objectId` must round-trip
+  // unchanged (the adapter's session tagging must not descend into user data).
+  const userJson = await A.send("Runtime.evaluate", {
+    expression: 'JSON.parse(\'{"objectId":"{\\\\"k\\\\":1}","nested":{"objectId":"x"}}\')',
+    returnByValue: true,
+  });
+  expect(userJson.result?.result?.value).toEqual({ objectId: '{"k":1}', nested: { objectId: "x" } });
+
   // Runtime/Console refcounting: B's Runtime.disable must not silence A, and
-  // B (never enabled Runtime) must not have received A's console stream.
+  // B (never enabled Runtime) must not have received A's console stream. A
+  // direct Console.disable (deprecated CDP domain) must not bypass the guard.
   await B.send("Runtime.disable");
+  await B.send("Console.disable");
   A.events.length = 0;
   B.events.length = 0;
   proc.stdin.write("log\n");

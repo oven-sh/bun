@@ -97,9 +97,12 @@ const CONSOLE_LEVEL_MAP: Record<string, string> = {
 // V8InspectorSession) is emulated at this layer. All adapters run on the one
 // debugger thread, so module-level state needs no locking.
 
-// Disjoint backend-command-id ranges per session so a broadcast response only
-// matches the sender's #pending map.
-const BACKEND_ID_STRIDE = 1_000_000_000;
+// One counter shared across adapters: FrontendRouter replays a response to
+// every channel, and BackendDispatcher echoes the id as a 32-bit int, so each
+// adapter drawing from the same counter keeps ids unique (a broadcast only
+// matches the sender's #pending map) without per-session ranges overflowing
+// that int.
+let nextBackendId = 1;
 
 const PAUSE_ON_EXCEPTIONS_ORDER: Record<string, number> = {
   __proto__: null as never,
@@ -160,6 +163,7 @@ function anyRuntimeEnabled(): boolean {
 // Tag every RemoteObject.objectId leaving this adapter with its session id so
 // a handle minted for one client cannot be presented by another. JSC emits the
 // fixed `{"injectedScriptId":N,"id":M}` shape (InjectedScriptSource.js).
+const INJECTED_SCRIPT_OBJECT_ID_PREFIX = '{"injectedScriptId":';
 function tagObjectIds(value: unknown, sessionId: number): void {
   if (value === null || typeof value !== "object") return;
   if ($isArray(value)) {
@@ -167,11 +171,15 @@ function tagObjectIds(value: unknown, sessionId: number): void {
     return;
   }
   const obj = value as AnyObject;
+  // RemoteObject.value (returnByValue:true) is arbitrary user JSON; never walk
+  // into it or a user property that happens to be named `objectId` is mutated.
+  const isRemoteObject = typeof obj.type === "string";
   for (const key in obj) {
     const child = obj[key];
-    if (key === "objectId" && typeof child === "string" && child.charCodeAt(0) === 123 /* '{' */) {
+    if (key === "objectId" && typeof child === "string" && child.startsWith(INJECTED_SCRIPT_OBJECT_ID_PREFIX)) {
       obj[key] = `{"bunSessionId":${sessionId},${child.slice(1)}`;
     } else if (child !== null && typeof child === "object") {
+      if (isRemoteObject && key === "value") continue;
       tagObjectIds(child, sessionId);
     }
   }
@@ -197,7 +205,7 @@ class InspectorCDPAdapter {
   #writeToBackend: (message: string) => void;
   #writeToClient: (message: string) => void;
   #sessionId: number;
-  #nextBackendId: number;
+  #objectGroupPrefix: string;
   #nextExceptionId = 1;
   #pending = new Map<
     number,
@@ -210,10 +218,17 @@ class InspectorCDPAdapter {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;
     this.#sessionId = nextSessionId++;
-    this.#nextBackendId = this.#sessionId * BACKEND_ID_STRIDE;
+    this.#objectGroupPrefix = `bun-session-${this.#sessionId}:`;
     this.#flags = { debuggerEnabled: false, runtimeEnabled: false, breakpointsActive: true, pauseOnExceptions: "none" };
     sessionFlags.$set(this.#sessionId, this.#flags);
     liveAdapters.$set(this.#sessionId, this);
+  }
+
+  // JSC's InjectedScript keeps one process-global objectGroup→ids map, so
+  // prefix client-supplied group names per session and another client's
+  // releaseObjectGroup cannot name this session's handles.
+  #sessionObjectGroup(name: unknown): string {
+    return this.#objectGroupPrefix + (typeof name === "string" ? name : "");
   }
 
   handleClientMessage(message: string): void {
@@ -342,7 +357,7 @@ class InspectorCDPAdapter {
     clientMethod = method,
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
-    const id = this.#nextBackendId++;
+    const id = nextBackendId++;
     this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }
@@ -396,7 +411,7 @@ class InspectorCDPAdapter {
         // execution context"), so drop it even though CDP clients echo it.
         const jscParams = {
           expression: params.expression,
-          objectGroup: params.objectGroup,
+          objectGroup: this.#sessionObjectGroup(params.objectGroup),
           includeCommandLineAPI: params.includeCommandLineAPI,
           doNotPauseOnExceptionsAndMuteConsole: params.silent,
           returnByValue: params.returnByValue,
@@ -529,7 +544,7 @@ class InspectorCDPAdapter {
         // client's objectGroup so its releaseObjectGroup reclaims this handle.
         this.#sendToBackend(
           "Runtime.evaluate",
-          { expression: "globalThis", objectGroup: params.objectGroup },
+          { expression: "globalThis", objectGroup: this.#sessionObjectGroup(params.objectGroup) },
           null,
           method,
           (result, error) => {
@@ -555,7 +570,7 @@ class InspectorCDPAdapter {
       }
 
       case "Runtime.releaseObjectGroup":
-        this.#sendToBackend(method, params, id, method);
+        this.#sendToBackend(method, { objectGroup: this.#sessionObjectGroup(params.objectGroup) }, id, method);
         return;
 
       case "Runtime.getIsolateId":
@@ -632,6 +647,10 @@ class InspectorCDPAdapter {
       case "Debugger.stepOver":
       case "Debugger.continueToLocation":
       case "Debugger.getScriptSource":
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         this.#sendToBackend(method, params, id, method);
         return;
 
@@ -698,12 +717,16 @@ class InspectorCDPAdapter {
       }
 
       case "Debugger.evaluateOnCallFrame":
+        if (!this.#flags.debuggerEnabled) {
+          this.#replyErrorToClient(id, -32000, "Debugger agent is not enabled");
+          return;
+        }
         this.#sendToBackend(
           "Debugger.evaluateOnCallFrame",
           {
             callFrameId: params.callFrameId,
             expression: params.expression,
-            objectGroup: params.objectGroup,
+            objectGroup: this.#sessionObjectGroup(params.objectGroup),
             includeCommandLineAPI: params.includeCommandLineAPI,
             doNotPauseOnExceptionsAndMuteConsole: params.silent,
             returnByValue: params.returnByValue,
@@ -718,8 +741,14 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Heap.gc", undefined, id, method);
         return;
 
+      // The deprecated CDP Console domain is fully managed via Runtime.enable/
+      // disable above; forwarding disable here would let one client tear the
+      // shared ConsoleAgent down under another.
       case "Console.enable":
       case "Console.disable":
+        this.#replyToClient(id, {});
+        return;
+
       case "Console.clearMessages":
       case "Inspector.enable":
         this.#sendToBackend(method, undefined, id, method);
@@ -874,9 +903,11 @@ class InspectorCDPAdapter {
           case "assert":
             cdpParams.reason = "assert";
             break;
-          case "Breakpoint":
-            if (data?.breakpointId) cdpParams.hitBreakpoints = [data.breakpointId];
+          case "Breakpoint": {
+            const hitId = data?.breakpointId;
+            if (hitId && breakpointOwner.$get(hitId) === this.#sessionId) cdpParams.hitBreakpoints = [hitId];
             break;
+          }
         }
         if (asyncStackTrace) cdpParams.asyncStackTrace = this.#translateStackTrace(asyncStackTrace);
         this.#emitToClient("Debugger.paused", cdpParams);
@@ -888,6 +919,7 @@ class InspectorCDPAdapter {
         return;
 
       case "Debugger.breakpointResolved":
+        if (breakpointOwner.$get(params.breakpointId) !== this.#sessionId) return;
         this.#emitToClient("Debugger.breakpointResolved", {
           breakpointId: params.breakpointId,
           location: params.location,

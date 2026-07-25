@@ -737,6 +737,16 @@ impl ESMConditions {
         require_condition_map.insert(b"require".as_slice(), ());
         style_condition_map.insert(b"style".as_slice(), ());
 
+        // Node matches "module-sync" for both import and require() in runtimes
+        // where require(esm) is available. Only Node-flavored targets carry it;
+        // browser bundles do not (matching esbuild/webpack).
+        // https://nodejs.org/docs/latest-v26.x/api/packages.html#community-conditions-definitions
+        if defaults.contains(&b"node".as_slice()) {
+            import_condition_map.insert(b"module-sync".as_slice(), ());
+            require_condition_map.insert(b"module-sync".as_slice(), ());
+            default_condition_amp.insert(b"module-sync".as_slice(), ());
+        }
+
         for condition in conditions {
             import_condition_map.insert(*condition, ());
             require_condition_map.insert(*condition, ());

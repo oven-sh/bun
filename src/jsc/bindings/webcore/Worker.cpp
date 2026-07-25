@@ -825,6 +825,15 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetWorkerData, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    // node:worker_threads unwraps/transforms the raw deserialized value
+    // (stdio/messaging wrapper, unpackJSTransferables); push that back into the
+    // global cache so Worker.data stays identical to the exported workerData.
+    defaultGlobalObject(lexicalGlobalObject)->setNodeWorkerData(callFrame->argument(0));
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -887,7 +896,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
         isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -900,6 +909,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setWorkerData"_s, jsFunctionSetWorkerData, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

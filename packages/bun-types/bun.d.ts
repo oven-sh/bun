@@ -441,6 +441,19 @@ declare module "bun" {
      * copying them.
      */
     data?: any;
+
+    /**
+     * Alias for {@link data}. If both are provided, `workerData` takes
+     * precedence.
+     */
+    workerData?: any;
+
+    /**
+     * Transferable values (such as `MessagePort` or `ArrayBuffer`) referenced
+     * from `data`/`workerData` that should be moved to the worker instead of
+     * cloned.
+     */
+    transferList?: readonly import("node:worker_threads").TransferListItem[] | undefined;
   }
 
   interface Worker extends EventTarget, AbstractWorker {

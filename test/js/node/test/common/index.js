@@ -177,6 +177,14 @@ if (process.argv.length === 2 &&
         // does not exist, so don't re-spawn just to pass the flag through.
         continue;
       }
+      if (process.versions.bun &&
+          (flag === "--permission" || flag === "--experimental-permission" ||
+           flag === "--permission-audit" || flag.startsWith("--allow-"))) {
+        // Bun refuses to start under Node's permission-model flags. Vendored
+        // tests that carry them are granting a capability the test needs; under
+        // Bun that capability is never restricted, so drop the flag.
+        continue;
+      }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;

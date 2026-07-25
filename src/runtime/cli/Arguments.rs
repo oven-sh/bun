@@ -307,6 +307,23 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // Node.js permission-model flags. Bun does not implement the permission
+    // model; these are declared so `parse()` can refuse to run rather than
+    // silently executing with no sandbox. `<STR>?` on the boolean grants
+    // accepts both `--allow-x` and `--allow-x=val` without a DoesntTakeValue
+    // parse error.
+    parse_param!("--permission"),
+    parse_param!("--experimental-permission"),
+    parse_param!("--permission-audit"),
+    parse_param!("--allow-fs-read <STR>..."),
+    parse_param!("--allow-fs-write <STR>..."),
+    parse_param!("--allow-child-process <STR>?"),
+    parse_param!("--allow-worker <STR>?"),
+    parse_param!("--allow-addons <STR>?"),
+    parse_param!("--allow-wasi <STR>?"),
+    parse_param!("--allow-net <STR>?"),
+    parse_param!("--allow-inspector <STR>?"),
+    parse_param!("--allow-ffi <STR>?"),
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
@@ -925,6 +942,54 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             | CommandTag::TestCommand
             | CommandTag::RunAsNodeCommand
     ) {
+        // Node's permission model (`--permission`) runs user code inside a
+        // sandbox that denies filesystem / child-process / worker / net access
+        // unless granted via `--allow-*`. Bun does not implement that model,
+        // so accepting the flag and running anyway would execute the program
+        // with none of the restrictions the caller asked for, and
+        // `process.permission` being undefined makes that indistinguishable
+        // from Node launched without `--permission`. Refuse to run instead.
+        // The escape hatch exists for node/bun CI matrices that pass the flag
+        // unconditionally and do not actually rely on the sandbox.
+        {
+            let permission_flag: Option<&[u8]> = if args.flag(b"--permission") {
+                Some(b"--permission")
+            } else if args.flag(b"--experimental-permission") {
+                Some(b"--experimental-permission")
+            } else if args.flag(b"--permission-audit") {
+                Some(b"--permission-audit")
+            } else if !args.options(b"--allow-fs-read").is_empty() {
+                Some(b"--allow-fs-read")
+            } else if !args.options(b"--allow-fs-write").is_empty() {
+                Some(b"--allow-fs-write")
+            } else if args.option(b"--allow-child-process").is_some() {
+                Some(b"--allow-child-process")
+            } else if args.option(b"--allow-worker").is_some() {
+                Some(b"--allow-worker")
+            } else if args.option(b"--allow-addons").is_some() {
+                Some(b"--allow-addons")
+            } else if args.option(b"--allow-wasi").is_some() {
+                Some(b"--allow-wasi")
+            } else if args.option(b"--allow-net").is_some() {
+                Some(b"--allow-net")
+            } else if args.option(b"--allow-inspector").is_some() {
+                Some(b"--allow-inspector")
+            } else if args.option(b"--allow-ffi").is_some() {
+                Some(b"--allow-ffi")
+            } else {
+                None
+            };
+            if let Some(flag) = permission_flag {
+                if !env_var::BUN_IGNORE_NODE_PERMISSION_FLAGS.get().unwrap_or(false) {
+                    Output::err_generic(
+                        "Bun does not implement the Node.js permission model, so {} would run without the requested restrictions. Refusing to run.\n       Set BUN_IGNORE_NODE_PERMISSION_FLAGS=1 to ignore this flag and run without a sandbox.",
+                        format_args!("{}", BStr::new(flag)),
+                    );
+                    Global::exit(1);
+                }
+            }
+        }
+
         {
             let preloads = args.options(b"--preload");
             let preloads2 = args.options(b"--require");

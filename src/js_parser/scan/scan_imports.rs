@@ -267,11 +267,13 @@ impl<'a> ImportScanner<'a> {
                         // so maybe if it errors, it shows a suggestion "retry without trimming unused imports"
                         //
                         // The second arm covers imports whose bindings were all culled above
-                        // (use_count_estimate == 0). It applies to TypeScript too: an import
-                        // binding that was used as a value but only in dead code (DCE'd or
-                        // replace_exports'd) has ts_use_counts > 0 yet no surviving bindings.
-                        // Without this arm TypeScript would keep the statement as a bare
-                        // side-effect import while JavaScript drops it entirely (#12892).
+                        // (use_count_estimate == 0). For TypeScript it only applies outside
+                        // the bundler: a binding used as a value but only in dead code has
+                        // ts_use_counts > 0 yet no surviving bindings, and without this arm
+                        // Bun.Transpiler would keep the statement as a bare side-effect
+                        // import while JavaScript drops it entirely (#12892). When bundling,
+                        // the import record feeds resolution, so a TypeScript value import
+                        // stays reachable and the linker decides whether the module is kept.
                         if (is_typescript_enabled
                             && found_imports
                             && is_unused_in_typescript
@@ -282,9 +284,9 @@ impl<'a> ImportScanner<'a> {
                                 // SAFETY: arena-owned slice; see above.
                                 && st.items.slice().is_empty()
                                 && st.default_name.is_none()
-                                && !(is_typescript_enabled
-                                    && is_unused_in_typescript
-                                    && p.options.preserve_unused_imports_ts))
+                                && (!is_typescript_enabled
+                                    || (!p.options.bundle
+                                        && !p.options.preserve_unused_imports_ts)))
                         {
                             // internal imports are presumed to be always used
                             // require statements cannot be stripped

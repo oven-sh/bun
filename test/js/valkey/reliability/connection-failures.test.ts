@@ -338,7 +338,6 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
 });
 
 describe("Valkey: connect() error identity", () => {
-  // https://github.com/oven-sh/bun/issues/3064
   // Previously all connect-time failures surfaced as ERR_REDIS_CONNECTION_CLOSED / "Connection closed".
   const CRLF = "\r\n";
 

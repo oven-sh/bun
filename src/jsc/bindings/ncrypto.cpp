@@ -2618,6 +2618,15 @@ EVPKeyPointer EVPKeyPointer::TryParsePqcBothFormPkcs8(
             != 0) {
         return {};
     }
+    // For ML-KEM the 64-byte seed is d||z: ek depends only on d, and z is
+    // stored verbatim as the trailing 32 bytes of dk. RFC 9935 requires
+    // checking the full KeyGen_internal(d, z) output, so also compare z.
+    if (params->seedLen == 64
+        && CRYPTO_memcmp(CBS_data(&seed) + 32,
+               CBS_data(&expanded) + params->expandedLen - 32, 32)
+            != 0) {
+        return {};
+    }
 
     return key;
 }

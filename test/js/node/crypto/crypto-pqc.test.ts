@@ -169,15 +169,20 @@ describe("PKCS#8 private-key CHOICE forms", () => {
     test("`both` form with a seed that does not match the expanded key is rejected", async () => {
       const seedLen = type.startsWith("ml-kem") ? 64 : 32;
       const seed = fixtureDer(seedOnly).subarray(-seedLen);
-      const modified = Buffer.from(fixtureDer(both));
-      expect(modified.subarray(30, 30 + seedLen).equals(seed)).toBe(true);
-      modified[30] ^= 0xff;
-      await expect(subtle.importKey("pkcs8", modified, { name: algName }, true, usages)).rejects.toThrow(
-        expect.objectContaining({ name: "DataError" }),
-      );
-      expect(() => createPrivateKey({ key: modified, format: "der", type: "pkcs8" })).toThrow(
-        expect.objectContaining({ code: "ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED" }),
-      );
+      const bothDer = fixtureDer(both);
+      expect(bothDer.subarray(30, 30 + seedLen).equals(seed)).toBe(true);
+      // For ML-KEM, seed = d||z: ek depends only on d, z is the trailing 32
+      // bytes of dk. Flip a byte in each half so the z check is exercised.
+      for (const offset of seedLen === 64 ? [30, 62] : [30]) {
+        const modified = Buffer.from(bothDer);
+        modified[offset] ^= 0xff;
+        await expect(subtle.importKey("pkcs8", modified, { name: algName }, true, usages)).rejects.toThrow(
+          expect.objectContaining({ name: "DataError" }),
+        );
+        expect(() => createPrivateKey({ key: modified, format: "der", type: "pkcs8" })).toThrow(
+          expect.objectContaining({ code: "ERR_OSSL_EVP_PRIVATE_KEY_WAS_NOT_SEED" }),
+        );
+      }
     });
 
     test("expandedKey-only form (no seed) is rejected", async () => {

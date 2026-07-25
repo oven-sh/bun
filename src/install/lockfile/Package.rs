@@ -2165,6 +2165,42 @@ impl Package<u64> {
             out
         };
 
+        // `Features::LINK` skips dependencies and peerDependencies: the linked
+        // package is a symlink into its real source tree, so its own install
+        // owns that node_modules. Runtime resolution realpath's the symlink
+        // before walking node_modules, which means peers installed in *this*
+        // project are invisible to the linked package. pnpm prints a warning
+        // in this situation (https://github.com/pnpm/pnpm/pull/5876); do the
+        // same so `bun link` users aren't surprised.
+        if FEATURES == Features::LINK
+            && pm.options.log_level != crate::package_manager::LogLevel::Silent
+        {
+            if let Some(peer_deps) = json.as_property(b"peerDependencies") {
+                if peer_deps.expr.property_count() > 0 {
+                    let name = json
+                        .as_property(b"name")
+                        .and_then(|q| q.expr.as_utf8(&bump))
+                        .unwrap_or(b"");
+                    bun_core::warn!(
+                        "Linked package <b>\"{}\"<r> declares peerDependencies that will not resolve from this project:",
+                        bstr::BStr::new(name),
+                    );
+                    peer_deps.expr.for_each_property(|key, _loc, value| {
+                        let ver = value.as_utf8(&bump).unwrap_or(b"");
+                        bun_core::pretty_errorln!(
+                            "  <d>-<r> {}<d>@{}<r>",
+                            bstr::BStr::new(key),
+                            bstr::BStr::new(ver),
+                        );
+                    });
+                    bun_core::pretty_errorln!(
+                        "  Linked packages resolve modules from their real location on disk.\n  Run bun with <cyan>--preserve-symlinks<r> to resolve peers from this project's node_modules.",
+                    );
+                    Output::flush();
+                }
+            }
+        }
+
         let mut workspace_names = workspace_map::WorkspaceMap::init();
         // defer workspace_names.deinit(); — Drop handles it
 

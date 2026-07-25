@@ -472,3 +472,96 @@ it("should link dependency without crashing", async () => {
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
 });
+
+// https://github.com/oven-sh/bun/issues/13676
+it("should warn when linked package has peerDependencies", async () => {
+  const link_name = basename(link_dir).slice("bun-link.".length);
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: link_name,
+      version: "0.0.1",
+      peerDependencies: {
+        "peer-one": "^1.0.0",
+        "peer-two": "*",
+      },
+    }),
+  );
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "consumer",
+      version: "0.0.2",
+    }),
+  );
+
+  // Registering the link (no args) should not warn: nothing is being resolved.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: link_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("peerDependencies");
+    expect(await stdout.text()).toContain(`Success! Registered "${link_name}"`);
+    expect(await exited).toBe(0);
+  }
+
+  // `bun link <name>` should warn, listing every peer and the workaround.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "link", link_name],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = stderrForInstall(await stderr.text());
+    expect(err).toContain(`Linked package "${link_name}" declares peerDependencies`);
+    expect(err).toContain("peer-one@^1.0.0");
+    expect(err).toContain("peer-two@*");
+    expect(err).toContain("--preserve-symlinks");
+    expect(await stdout.text()).toContain(`installed ${link_name}@link:${link_name}`);
+    expect(await exited).toBe(0);
+  }
+
+  // `bun install` with a `link:` dependency in package.json should warn too.
+  {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "consumer",
+        version: "0.0.2",
+        dependencies: {
+          [link_name]: `link:${link_name}`,
+        },
+      }),
+    );
+    const { err } = await runBunInstall(env, package_dir, { allowWarnings: true });
+    expect(err).toContain(`Linked package "${link_name}" declares peerDependencies`);
+    expect(err).toContain("peer-one@^1.0.0");
+    expect(err).toContain("--preserve-symlinks");
+  }
+
+  // --silent suppresses the warning.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "link", link_name, "--silent"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = stderrForInstall(await stderr.text());
+    expect(err).not.toContain("peerDependencies");
+    expect(err).not.toContain("--preserve-symlinks");
+    await stdout.text();
+    expect(await exited).toBe(0);
+  }
+});

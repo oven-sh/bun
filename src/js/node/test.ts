@@ -2204,6 +2204,8 @@ class TestNode {
   firstSubtestError: unknown = undefined;
   // First failure from a before hook created while this test was running.
   hookFailure: unknown = undefined;
+  // Deferred diagnostics_channel end publisher for suites (node's #publishEnd).
+  publishSuiteEnd: (() => void) | null = null;
   #ctx: TestContext | undefined;
   #suiteCtx: SuiteContext | undefined;
   #tags: string[] | undefined;
@@ -2728,6 +2730,109 @@ function createHook(arg0: unknown, arg1: unknown): Hook {
 }
 
 // -----------------------------------------------------------------------------
+// diagnostics_channel tracing — node's testChannel = tracingChannel('node.test')
+// (lib/internal/test_runner/utils.js:264, published from Test.run/Suite.createBuild).
+// Channels are created lazily on first use so the common path never loads
+// node:diagnostics_channel.
+// -----------------------------------------------------------------------------
+
+type TestTracingChannel = {
+  start: { hasSubscribers: boolean; runStores: (ctx: object, fn: () => unknown) => unknown };
+  end: { hasSubscribers: boolean; publish: (data: object) => void };
+  error: { hasSubscribers: boolean; publish: (data: object) => void };
+};
+let cachedTestChannel: TestTracingChannel | undefined;
+function getTestChannel(): TestTracingChannel {
+  return (cachedTestChannel ??= require("node:diagnostics_channel").tracingChannel("node.test"));
+}
+function testChannelHasSubscribers(): boolean {
+  const tc = getTestChannel();
+  return tc.start.hasSubscribers || tc.end.hasSubscribers || tc.error.hasSubscribers;
+}
+// Node's channelContext: one object shared by the start/end/error events of a
+// test run (test.js:1298); the error event copies it and adds `error`.
+function makeChannelContext(node: TestNode, type: "test" | "suite") {
+  return { __proto__: null, name: node.name, nesting: nestingOf(node), file: node.filePath, type };
+}
+function bindToAsyncContext<T extends Function>(fn: T): T {
+  const { AsyncResource } = require("node:async_hooks");
+  return AsyncResource.bind(fn);
+}
+
+// Wraps a suite build callback like node's Suite.createBuild: the body runs
+// inside start.runStores (so bindStore stores are active while the describe
+// callback executes), a throwing/rejecting body publishes the error event, and
+// the end event is deferred until the suite finishes (publishSuiteEndEvent).
+function tracedSuiteBuildFn(node: TestNode, buildFn: () => unknown): () => unknown {
+  if (!testChannelHasSubscribers()) return buildFn;
+  const context = makeChannelContext(node, "suite");
+  function publishEnd() {
+    const tc = getTestChannel();
+    if (tc.end.hasSubscribers) tc.end.publish(context);
+  }
+  node.publishSuiteEnd = publishEnd;
+  function publishBuildError(err: unknown) {
+    const tc = getTestChannel();
+    if (tc.error.hasSubscribers) tc.error.publish({ __proto__: null, ...context, error: err });
+  }
+  function rethrowBuildError(err: unknown): never {
+    publishBuildError(err);
+    throw err;
+  }
+  function tracedBuild() {
+    let ret: unknown;
+    try {
+      const tc = getTestChannel();
+      if (tc.start.hasSubscribers) {
+        function tracedBody() {
+          node.publishSuiteEnd = bindToAsyncContext(publishEnd);
+          return buildFn();
+        }
+        ret = tc.start.runStores(context, tracedBody);
+      } else {
+        ret = buildFn();
+      }
+    } catch (err) {
+      rethrowBuildError(err);
+    }
+    if (ret != null && typeof (ret as PromiseLike<unknown>).then === "function") {
+      return (ret as Promise<unknown>).then(undefined, rethrowBuildError);
+    }
+    return ret;
+  }
+  return tracedBuild;
+}
+
+// Publishes the suite's deferred end event exactly once (node's
+// #publishSuiteEnd, fired from Suite.postRun).
+function publishSuiteEndEvent(node: TestNode) {
+  const publishEnd = node.publishSuiteEnd;
+  if (publishEnd === null) return;
+  node.publishSuiteEnd = null;
+  publishEnd();
+}
+
+// Standalone root: node's root Test publishes its own start/end span once the
+// queue has drained (root.run happens at exit), with the end publisher bound
+// inside runStores so end subscribers observe bindStore stores for '<root>'.
+function publishRootTestSpan(root: TestNode) {
+  if (!testChannelHasSubscribers()) return;
+  const tc = getTestChannel();
+  const context = makeChannelContext(root, "test");
+  let publishEnd = function publishRootEnd() {
+    const channel = getTestChannel();
+    if (channel.end.hasSubscribers) channel.end.publish(context);
+  };
+  if (tc.start.hasSubscribers) {
+    function bindRootEnd() {
+      publishEnd = bindToAsyncContext(publishEnd);
+    }
+    tc.start.runStores(context, bindRootEnd);
+  }
+  publishEnd();
+}
+
+// -----------------------------------------------------------------------------
 // Execution engine
 // -----------------------------------------------------------------------------
 
@@ -3046,6 +3151,23 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
+  let failureFromSubtestAggregation = false;
+
+  // diagnostics_channel span for this test (node's channelContext, test.js:1298).
+  let channelContext: object | null = null;
+  let publishTestEnd: (() => void) | null = null;
+  let publishTestError: ((err: unknown) => void) | null = null;
+  if (testChannelHasSubscribers()) {
+    const context = (channelContext = makeChannelContext(node, "test"));
+    publishTestEnd = function publishEnd() {
+      const tc = getTestChannel();
+      if (tc.end.hasSubscribers) tc.end.publish(context);
+    };
+    publishTestError = function publishError(err: unknown) {
+      const tc = getTestChannel();
+      if (tc.error.hasSubscribers) tc.error.publish({ __proto__: null, ...context, error: err });
+    };
+  }
 
   // Node applies the plan option before the beforeEach hooks run, and only for a
   // truthy count, so `{ plan: 0 }` installs no plan at all (test.js:1313-1315).
@@ -3100,6 +3222,17 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
     const stop = createStopController(node.options.timeout);
     try {
       function invokeBodyFn() {
+        if (channelContext !== null && getTestChannel().start.hasSubscribers) {
+          // Node wraps the test fn itself in start.runStores (test.js:1354) so
+          // bindStore stores are live for the body and for the end/error
+          // publishers bound inside it.
+          function tracedTestBody() {
+            publishTestEnd = bindToAsyncContext(publishTestEnd!);
+            publishTestError = bindToAsyncContext(publishTestError!);
+            return invokeTestFn(fn, ctx);
+          }
+          return getTestChannel().start.runStores(channelContext, tracedTestBody);
+        }
         return invokeTestFn(fn, ctx);
       }
       function invoke() {
@@ -3173,7 +3306,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
         (error as { cause?: unknown }).cause = firstSubtestError;
       }
       failure = error;
+      failureFromSubtestAggregation = true;
     }
+  }
+
+  // Node's catch publishes the raw error before the afterEach/after hooks run;
+  // the synthesized "N subtests failed" error is set in postRun and never
+  // published (test.js:1410).
+  if (failure !== undefined && !failureFromSubtestAggregation && publishTestError !== null) {
+    publishTestError(failure);
   }
 
   // node cancels (rather than fails) a timed-out test and aborts t.signal.
@@ -3221,6 +3362,10 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   } catch (err) {
     failure ??= err;
   }
+
+  // Node's finally: the end event fires after the after hooks in both the
+  // success and error cases (test.js:1434).
+  if (publishTestEnd !== null) publishTestEnd();
 
   node.passed = failure === undefined;
   node.error = failure ?? null;
@@ -3311,6 +3456,7 @@ function scheduleSuiteSubtest(parent: TestNode, suite: TestNode, build: unknown,
     // Align accounting with what actually reported and settle, so the suite's
     // test:complete/plan/verdict match the enqueue/dequeue/start its first
     // child already emitted walking up.
+    publishSuiteEndEvent(suite);
     if (runEventsEnabled()) {
       suite.childrenCount = suite.reportedCount;
       suite.childrenDone = suite.reportedCount;
@@ -3686,6 +3832,7 @@ async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, re
     }
 
     const hookError = await executeStandaloneQueue(callerRoot);
+    publishRootTestSpan(callerRoot);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
@@ -3764,6 +3911,7 @@ async function runStandalone() {
 
   try {
     const hookError = await executeStandaloneQueue(root);
+    publishRootTestSpan(root);
     if (hookError !== undefined) {
       console.error(hookError);
       counts.failed++;
@@ -3888,6 +4036,7 @@ async function runStandaloneEntry(entry: StandaloneEntry) {
     }
   }
   // Settle + complete + bubble to the parent in one step.
+  publishSuiteEndEvent(node);
   noteSuiteCollectionSettled(node);
 }
 
@@ -4224,7 +4373,7 @@ function addSuite(
       function buildSuiteFn() {
         return invokeSuiteFn(fn, suite.getSuiteCtx());
       }
-      build = runWithNode(suite, buildSuiteFn);
+      build = runWithNode(suite, tracedSuiteBuildFn(suite, buildSuiteFn));
     } catch (err) {
       // The callback threw after possibly registering children: fail the suite
       // but still schedule it so those children are awaited and rolled up.
@@ -4266,7 +4415,7 @@ function addSuite(
       function buildSuiteNodeFn() {
         return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
       }
-      build = runWithNode(suiteNode, buildSuiteNodeFn);
+      build = runWithNode(suiteNode, tracedSuiteBuildFn(suiteNode, buildSuiteNodeFn));
     } catch (err) {
       suiteNode.childrenFailed++;
       suiteNode.error = err;
@@ -4299,6 +4448,17 @@ function addSuite(
           const isTodoAdvisory = runChildReporterEnabled && (suiteNode.todoFlag || hasTodoAncestor(suiteNode));
           function buildWrappedSuiteFn() {
             return invokeSuiteFn(fn, suiteNode.getSuiteCtx());
+          }
+          const tracedWrappedSuiteFn = tracedSuiteBuildFn(suiteNode, buildWrappedSuiteFn);
+          if (suiteNode.publishSuiteEnd !== null) {
+            // The suite's deferred end event fires after its children and its
+            // own after hooks, which under bun:test is this scope's last
+            // afterAll (node fires it from Suite.postRun).
+            const { afterAll } = bunTest();
+            function publishSuiteEndHook() {
+              publishSuiteEndEvent(suiteNode);
+            }
+            afterAll(publishSuiteEndHook);
           }
           function settleSuiteAfterHooks() {
             // Settle from a bun:test afterAll registered after the body ran
@@ -4336,7 +4496,7 @@ function addSuite(
           }
           let built: unknown;
           try {
-            built = runWithNode(suiteNode, buildWrappedSuiteFn);
+            built = runWithNode(suiteNode, tracedWrappedSuiteFn);
           } catch (err) {
             recordSuiteBodyFailed(err);
             if (isTodoAdvisory || runChildReporterEnabled) {

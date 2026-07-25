@@ -32,3 +32,5 @@ fixtures/test-runner/coverage/*
 !fixtures/test-runner/error-reporter-fail-fast/**
 !fixtures/test-runner/worker-id
 !fixtures/test-runner/worker-id/**
+!fixtures/test-runner/diagnostics-channel-bindstore-end.js
+!fixtures/test-runner/diagnostics-channel-error-test.js

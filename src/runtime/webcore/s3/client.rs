@@ -447,7 +447,8 @@ pub(crate) fn writable_stream(
                 S3UploadResult::Success => {
                     // flush() keeps its delta contract: 0 = nothing left pending.
                     if sink.flush_promise.has_value() {
-                        sink.flush_promise.resolve(global, JSValue::js_number(0.0))?;
+                        sink.flush_promise
+                            .resolve(global, JSValue::js_number(0.0))?;
                     }
                     if sink.end_promise.has_value() {
                         sink.end_promise

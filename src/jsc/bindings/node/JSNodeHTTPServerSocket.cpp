@@ -649,15 +649,15 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
     }
 }
 
-void JSNodeHTTPServerSocket::onRawData(const char* data, int length)
+bool JSNodeHTTPServerSocket::onRawData(const char* data, int length)
 {
     if (!functionToCallOnRawData) {
-        return;
+        return false;
     }
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
     if (!scriptExecutionContext) {
-        return;
+        return false;
     }
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
@@ -666,7 +666,7 @@ void JSNodeHTTPServerSocket::onRawData(const char* data, int length)
     if (auto* exception = scope.exception()) {
         (void)scope.tryClearException();
         globalObject->reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return;
+        return false;
     }
     gcProtect(chunk);
     scriptExecutionContext->postTask([self = this, chunk = chunk](ScriptExecutionContext& context) {
@@ -694,6 +694,7 @@ void JSNodeHTTPServerSocket::onRawData(const char* data, int length)
             }
         }
     });
+    return true;
 }
 
 JSC::Structure* JSNodeHTTPServerSocket::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)

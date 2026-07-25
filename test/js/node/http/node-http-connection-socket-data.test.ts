@@ -217,3 +217,39 @@ test("http.Server 'connection' socket 'data' sees the CONNECT request line once"
     server.close();
   }
 });
+
+// Upgrade-with-body: the body-fin and the first tunnel bytes can share one TCP
+// read. The raw tap delivers that whole read; the tunnel path must not also
+// deliver the tail.
+test("http.Server 'connection' socket 'data' does not double-deliver an Upgrade tunnel tail", async () => {
+  const received: Buffer[] = [];
+  const server = createServer();
+  server.on("connection", socket => {
+    socket.on("data", chunk => received.push(chunk));
+  });
+  server.on("upgrade", (req, sock) => {
+    req.resume();
+    sock.write("HTTP/1.1 101\r\n\r\n");
+  });
+  await once(server.listen(0), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const client = connect(port);
+  try {
+    await once(client, "connect");
+    client.write("POST / HTTP/1.1\r\nHost: x\r\nUpgrade: foo\r\nConnection: Upgrade\r\nContent-Length: 5\r\n\r\n");
+    await once(client, "data");
+    client.write("HELLOTUNNELDATA");
+    const deadline = Date.now() + 1000;
+    while (!Buffer.concat(received).includes("TUNNELDATA") && Date.now() < deadline) {
+      await new Promise(r => setImmediate(r));
+    }
+    const raw = Buffer.concat(received).toString("latin1");
+    expect(raw).toContain("POST / HTTP/1.1\r\n");
+    expect((raw.match(/TUNNELDATA/g) ?? []).length).toBe(1);
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});

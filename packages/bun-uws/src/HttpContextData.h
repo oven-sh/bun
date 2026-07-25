@@ -54,6 +54,7 @@ struct alignas(16) HttpContextData {
 private:
     std::vector<MoveOnlyFunction<void(HttpResponse<SSL> *, int)>> filterHandlers;
     using OnSocketDataCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length, bool last);
+    using OnSocketRawDataCallback = bool (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket, const char *data, int length);
     using OnSocketDrainCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
@@ -77,8 +78,9 @@ private:
     OnSocketDrainCallback onSocketDrain = nullptr;
     OnSocketDataCallback onSocketData = nullptr;
     /* node:http: tap of every TCP payload before HTTP parsing, so a user
-     * 'data' listener on the 'connection' socket sees the raw request bytes. */
-    OnSocketDataCallback onSocketRawData = nullptr;
+     * 'data' listener on the 'connection' socket sees the raw request bytes.
+     * Returns true when a JS callback was armed (the bytes will reach JS). */
+    OnSocketRawDataCallback onSocketRawData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
 

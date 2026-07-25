@@ -1224,10 +1224,10 @@ function onServerConnection(this: Server, socketHandle) {
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
   this.emit("connection", socket);
-  maybeEnableRawSocketData(socket);
   if (isTLS && socketHandle.secureEstablished) {
     this.emit("secureConnection", socket);
   }
+  maybeEnableRawSocketData(socket);
 }
 
 // Like Node.js: server.setTimeout only records the per-socket inactivity

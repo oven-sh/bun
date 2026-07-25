@@ -613,10 +613,10 @@ static void assignOnNodeJSCompat(uWS::TemplatedApp<isSSL>* app)
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
         socket->onData(data, length, last);
     });
-    app->setOnSocketRawData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, const char* data, int length, bool last) -> void {
+    app->setOnSocketRawData([](void* socketData, int is_ssl, struct us_socket_t* rawSocket, const char* data, int length) -> bool {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);
         ASSERT(rawSocket == socket->socket || socket->socket == nullptr);
-        socket->onRawData(data, length);
+        return socket->onRawData(data, length);
     });
     app->setOnSocketUpgraded([](void* socketData, int is_ssl, struct us_socket_t* rawSocket) -> void {
         auto* socket = reinterpret_cast<JSNodeHTTPServerSocket*>(socketData);

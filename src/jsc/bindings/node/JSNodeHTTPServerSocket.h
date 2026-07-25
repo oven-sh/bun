@@ -161,7 +161,7 @@ public:
     void onClose();
     void onDrain();
     void onData(const char* data, int length, bool last);
-    void onRawData(const char* data, int length);
+    bool onRawData(const char* data, int length);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     void finishCreation(JSC::VM& vm);

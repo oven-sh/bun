@@ -1395,6 +1395,56 @@ test("MessagePort emitter and EventTarget registrations share one registry", () 
     expect(p.listenerCount("m")).toBe(1);
     p.close();
   }
+
+  // An AbortSignal removes the listener natively; the registry must drop it too
+  // so a later add of the same function is not blocked by a stale entry.
+  {
+    const { port1: p } = new MessageChannel();
+    const ac = new AbortController();
+    let n = 0;
+    const f = () => n++;
+    p.addEventListener("s", f, { signal: ac.signal });
+    ac.abort();
+    const afterAbort = p.listenerCount("s");
+    p.addEventListener("s", f);
+    p.dispatchEvent(new Event("s"));
+    expect({ afterAbort, calls: n, count: p.listenerCount("s") }).toEqual({ afterAbort: 0, calls: 1, count: 1 });
+    p.close();
+  }
+
+  // An already-aborted signal makes addEventListener a no-op, registry included.
+  {
+    const { port1: p } = new MessageChannel();
+    const ac = new AbortController();
+    ac.abort();
+    p.addEventListener("s", () => {}, { signal: ac.signal });
+    expect(p.listenerCount("s")).toBe(0);
+    p.close();
+  }
+
+  // EventTarget identity is (type, listener, capture): the same function can be
+  // registered once per capture flag, and removeEventListener only removes the
+  // entry whose capture flag matches.
+  {
+    const { port1: p } = new MessageChannel();
+    let n = 0;
+    const f = () => n++;
+    p.addEventListener("c", f, { capture: true });
+    p.addEventListener("c", f);
+    p.dispatchEvent(new Event("c"));
+    const both = { calls: n, count: p.listenerCount("c") };
+    p.removeEventListener("c", f);
+    p.dispatchEvent(new Event("c"));
+    const afterWrongCapture = { calls: n, count: p.listenerCount("c") };
+    p.removeEventListener("c", f, true);
+    p.dispatchEvent(new Event("c"));
+    expect({ both, afterWrongCapture, final: { calls: n, count: p.listenerCount("c") } }).toEqual({
+      both: { calls: 2, count: 2 },
+      afterWrongCapture: { calls: 3, count: 1 },
+      final: { calls: 3, count: 0 },
+    });
+    p.close();
+  }
 });
 
 // jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed

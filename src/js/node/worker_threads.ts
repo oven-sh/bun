@@ -173,33 +173,50 @@ function injectFakeEmitter(Class) {
     return MessageEvent;
   }
 
-  // EventTarget dedupes on (type, callback), so in node the FIRST registration of
-  // a listener wins outright -- including its once-ness -- and later adds of the
-  // same function are no-ops. Keying wrappers per listener reproduces that.
-  function register(target, event, listener, wrapper, options) {
+  // EventTarget dedupes on (type, callback, capture), so in node the FIRST
+  // registration wins outright — including its once-ness — and later adds of
+  // the same function with the same capture flag are no-ops. The registry entry
+  // per listener is a two-slot pair [bubble, capture] holding what was handed
+  // to the native map (the listener itself for addEventListener(), a wrapper
+  // for on()/once() and {once:true}); a slot is vacated by setting it back to
+  // undefined and the listener key is dropped once both are.
+  function captureSlot(options) {
+    return options === true || (typeof options === "object" && options !== null && options.capture) ? 1 : 0;
+  }
+  function recordListener(target, type, listener, actual, slot) {
     const map = registryFor(target, true)!;
-    let byListener = map.get(event);
-    if (!byListener) map.set(event, (byListener = new SafeMap()));
-    if (byListener.has(listener)) return false;
-    target.addEventListener(event, wrapper, options);
-    byListener.set(listener, wrapper);
+    let byListener = map.get(type);
+    if (!byListener) map.set(type, (byListener = new SafeMap()));
+    let rec = byListener.get(listener);
+    if (rec) {
+      if (rec[slot] !== undefined) return false;
+    } else {
+      byListener.set(listener, (rec = [undefined, undefined]));
+    }
+    rec[slot] = actual;
     return true;
+  }
+  function forgetListener(target, type, listener, slot) {
+    const byListener = registryFor(target, false)?.get(type);
+    const rec = byListener?.get(listener);
+    if (!rec || rec[slot] === undefined) return undefined;
+    const actual = rec[slot];
+    rec[slot] = undefined;
+    if (rec[0] === undefined && rec[1] === undefined) byListener!.delete(listener);
+    return actual;
   }
 
   function on(event, listener) {
-    register(this, event, listener, functionForEventType(event, listener), undefined);
+    const wrapper = functionForEventType(event, listener);
+    if (recordListener(this, event, listener, wrapper, 0)) this.addEventListener(event, wrapper);
     return this;
   }
 
   function off(event, listener) {
-    if (listener) {
-      const byListener = registryFor(this, false)?.get(event);
-      const wrapper = byListener?.get(listener) ?? listener;
-      this.removeEventListener(event, wrapper);
-      byListener?.delete(listener);
-    } else {
-      this.removeEventListener(event);
-    }
+    // Node's removeListener is bubble-only; a capture-phase addEventListener()
+    // listener is only removed via removeEventListener() with a matching flag.
+    const actual = forgetListener(this, event, listener, 0) ?? listener;
+    this.removeEventListener(event, actual);
     return this;
   }
 
@@ -210,11 +227,11 @@ function injectFakeEmitter(Class) {
     // registry — so purge it here or listenerCount()/eventNames() keep counting
     // a listener that already fired.
     function onceWrapper(ev) {
-      registryFor(target, false)?.get(event)?.delete(listener);
+      forgetListener(target, event, listener, 0);
       return wrapper(ev);
     }
     onceWrapper[kWrapped] = true;
-    register(this, event, listener, onceWrapper, { once: true });
+    if (recordListener(this, event, listener, onceWrapper, 0)) this.addEventListener(event, onceWrapper, { once: true });
     return this;
   }
 
@@ -230,27 +247,30 @@ function injectFakeEmitter(Class) {
       return nativeAddEventListener.$call(this, type, listener, options);
     if (listener == null || (typeof listener !== "function" && typeof listener !== "object"))
       return nativeAddEventListener.$call(this, type, listener, options);
+    const opts = typeof options === "object" && options !== null ? options : undefined;
+    const signal = opts?.signal;
+    // Native addEventListener no-ops on an already-aborted signal; don't record
+    // a listener that will never be in the native map.
+    if (signal?.aborted) return;
+    const slot = captureSlot(options);
+    const target = this;
     let actual = listener;
-    if (typeof options === "object" && options !== null && options.once) {
-      const target = this;
+    if (opts?.once) {
       actual = function (ev) {
-        registryFor(target, false)?.get(type)?.delete(listener);
+        forgetListener(target, type, listener, slot);
         return typeof listener === "function" ? listener.$call(this, ev) : listener.handleEvent?.(ev);
       };
     }
-    const map = registryFor(this, true)!;
-    let byListener = map.get(type);
-    if (!byListener) map.set(type, (byListener = new SafeMap()));
-    if (byListener.has(listener)) return;
+    if (!recordListener(this, type, listener, actual, slot)) return;
     nativeAddEventListener.$call(this, type, actual, options);
-    byListener.set(listener, actual);
+    // Native removes via a C++ abort algorithm that never re-enters this
+    // override, so purge the registry entry from here when the signal fires.
+    if (signal) signal.addEventListener("abort", () => forgetListener(target, type, listener, slot), { once: true });
   }
 
-  function removeEventListener(type, listener) {
-    const byListener = registryFor(this, false)?.get(type);
-    const actual = byListener?.get(listener) ?? listener;
-    nativeRemoveEventListener.$call(this, type, actual);
-    byListener?.delete(listener);
+  function removeEventListener(type, listener, options) {
+    const actual = forgetListener(this, type, listener, captureSlot(options)) ?? listener;
+    nativeRemoveEventListener.$call(this, type, actual, options);
   }
 
   function emit(event, ...args) {
@@ -278,7 +298,14 @@ function injectFakeEmitter(Class) {
     return this[kMaxListeners] ?? 10;
   }
   function listenerCount(type) {
-    return registryFor(this, false)?.get(type)?.size ?? 0;
+    const byListener = registryFor(this, false)?.get(type);
+    if (!byListener) return 0;
+    let n = 0;
+    for (const rec of byListener.values()) {
+      if (rec[0] !== undefined) n++;
+      if (rec[1] !== undefined) n++;
+    }
+    return n;
   }
   function eventNames() {
     const map = registryFor(this, false);
@@ -293,7 +320,10 @@ function injectFakeEmitter(Class) {
     const removeType = t => {
       const byListener = map.get(t);
       if (byListener) {
-        for (const w of byListener.values()) this.removeEventListener(t, w);
+        for (const rec of byListener.values()) {
+          if (rec[0] !== undefined) this.removeEventListener(t, rec[0]);
+          if (rec[1] !== undefined) this.removeEventListener(t, rec[1], true);
+        }
         map.delete(t);
       }
     };

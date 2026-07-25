@@ -869,3 +869,139 @@ it("prints an actionable error for a lockfile version newer than this build supp
   expect(err).not.toContain("Unknown lockfile version");
   expect(await exited).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/8662#issuecomment-3379529330
+// `bun remove` of a package that also happened to satisfy some other package's
+// *optional* peer dependency must drop it from bun.lock. The optional peer's
+// resolution slot was carried forward by Lockfile::clean_with_logger and kept
+// the removed package (and its transitives) alive forever.
+it("bun remove drops a package that was only otherwise an optional peer", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+
+  async function run(args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  // A `packages` entry for `no-deps` serializes as `"no-deps": ["no-deps@...`.
+  // (The literal "no-deps" also appears inside optional-peer-deps's
+  // peerDependencies/optionalPeers metadata, so match the entry prefix.)
+  const noDepsEntry = '"no-deps": ["no-deps@';
+
+  await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0" }));
+
+  // step 1: optional-peer-deps has an optional peer on no-deps; no-deps is NOT in the lockfile yet.
+  await run(["add", "-D", "optional-peer-deps@1.0.0"]);
+  const afterStep1 = await file(join(packageDir, "bun.lock")).text();
+  expect(afterStep1).not.toContain(noDepsEntry);
+
+  // step 2: add no-deps as a direct dependency; the optional peer slot is now satisfied.
+  await run(["add", "no-deps@1.0.0"]);
+  const afterStep2 = await file(join(packageDir, "bun.lock")).text();
+  expect(afterStep2).toContain(noDepsEntry);
+
+  // step 3: remove no-deps. The lockfile must return to the step-1 state.
+  await run(["remove", "no-deps"]);
+  const afterStep3 = await file(join(packageDir, "bun.lock")).text();
+  expect(afterStep3).not.toContain(noDepsEntry);
+  expect(afterStep3).toBe(afterStep1);
+
+  // --frozen-lockfile must accept the result (round-trip).
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+});
+
+it("bun remove keeps an optional peer that is still reachable via a non-peer edge", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+
+  async function run(args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  // optional-peer-deps: optional peer on no-deps
+  // one-dep:            hard dependency on no-deps@1.0.1
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      devDependencies: { "optional-peer-deps": "1.0.0", "one-dep": "1.0.0" },
+    }),
+  );
+  const noDepsEntry = '"no-deps": ["no-deps@';
+  await run(["install"]);
+  const baseline = await file(join(packageDir, "bun.lock")).text();
+  expect(baseline).toContain(noDepsEntry);
+
+  await run(["add", "no-deps@1.0.1"]);
+  await run(["remove", "no-deps"]);
+
+  // no-deps must remain (one-dep still depends on it), and the lockfile must be
+  // byte-identical to before the add/remove pair.
+  const after = await file(join(packageDir, "bun.lock")).text();
+  expect(after).toContain(noDepsEntry);
+  expect(after).toBe(baseline);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+});
+
+it("bun install drops a once-resolved optional peer after the providing dependency leaves package.json", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+
+  async function run(args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ args, err, code }).toMatchObject({ args, err: expect.not.stringContaining("error:"), code: 0 });
+    return { out, err };
+  }
+
+  // Same as the first test but via editing package.json + `bun install` instead
+  // of `bun remove`, which is the other path into clean_with_logger.
+  const noDepsEntry = '"no-deps": ["no-deps@';
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      devDependencies: { "optional-peer-deps": "1.0.0" },
+      dependencies: { "no-deps": "1.0.0" },
+    }),
+  );
+  await run(["install"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain(noDepsEntry);
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      devDependencies: { "optional-peer-deps": "1.0.0" },
+    }),
+  );
+  await run(["install"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).not.toContain(noDepsEntry);
+});

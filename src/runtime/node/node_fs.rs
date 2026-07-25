@@ -1987,8 +1987,12 @@ mod _async_tasks {
             #[cfg(target_os = "macos")]
             {
                 // clonefile() has no per-file callback, so shell `cp -v` needs the walk below.
-                let skip_clonefile =
-                    IS_SHELL && this_ref.shelltask.expect("IS_SHELL ⇒ shelltask").opts.verbose;
+                let skip_clonefile = IS_SHELL
+                    && this_ref
+                        .shelltask
+                        .expect("IS_SHELL ⇒ shelltask")
+                        .opts
+                        .verbose;
                 if !skip_clonefile {
                     // CLONE_NOFOLLOW: `src` was classified as a directory via lstat, so
                     // mirror the O_NOFOLLOW directory open below instead of dereferencing.

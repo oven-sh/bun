@@ -185,6 +185,11 @@ static void nq_on_path_switch(lsquic_conn_t *c, int validated, int is_preferred,
 }
 
 #define US_NQ_HSET_MIN_BUF 256
+/* Fallback ceiling for nq_hsi_prepare_decode when maxHeaderLength is
+ * unlimited: lsqpack requests the decode buffer from the peer-declared
+ * length varint before any value bytes arrive, so this bounds how much a
+ * few wire bytes can reserve per stream. */
+#define US_NQ_HSET_MAX_BUF (128 * 1024)
 
 struct nq_hset {
     struct lsxpack_header xhdr;
@@ -216,7 +221,12 @@ static struct lsxpack_header *nq_hsi_prepare_decode(void *hset,
                                                     struct lsxpack_header *hdr,
                                                     size_t space) {
     struct nq_hset *h = hset;
-    if (space > LSXPACK_MAX_STRLEN)
+    /* 2x max_bytes covers the Huffman decode-window headroom for a single
+     * header that is itself the whole configured maxHeaderLength; without a
+     * cap the peer's length varint alone drives the realloc (see
+     * US_NQ_HSET_MAX_BUF). */
+    size_t cap = h->max_bytes ? (size_t) h->max_bytes * 2 : US_NQ_HSET_MAX_BUF;
+    if (space > LSXPACK_MAX_STRLEN || space > cap)
         return NULL;
     if (space > h->decode_cap) {
         size_t want = space < US_NQ_HSET_MIN_BUF ? US_NQ_HSET_MIN_BUF : space;

@@ -305,6 +305,7 @@ describe("custom inspect", () => {
           sizes["session@" + K] = Bun.inspect(live[0]).length;
           sizes["util@" + K] = inspect(server).length;
           sizes["null@" + K] = inspect(server, { depth: null }).length;
+          sizes["inf@" + K] = inspect(server, { depth: Infinity }).length;
         }
         console.log(JSON.stringify(sizes));
         for (const c of live) c.destroy();
@@ -342,11 +343,14 @@ describe("custom inspect", () => {
       "util@4": expect.any(Number),
       "null@2": expect.any(Number),
       "null@4": expect.any(Number),
+      "inf@2": expect.any(Number),
+      "inf@4": expect.any(Number),
     });
     expect(sizes["bun@4"]).toBeLessThan(64 * 1024);
     expect(sizes["bun@4"]).toBeLessThan(sizes["bun@2"] * 3);
     expect(sizes["session@4"]).toBeLessThan(64 * 1024);
     expect(sizes["null@4"]).toBeLessThan(16 * 1024);
+    expect(sizes["inf@4"]).toBeLessThan(16 * 1024);
     expect(sizes["util@4"]).toBeLessThan(4 * 1024);
     expect(exitCode).toBe(0);
   }, 45000);

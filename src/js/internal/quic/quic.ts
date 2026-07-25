@@ -51,6 +51,7 @@ function wrapCertificate(der) {
 const ArrayIsArray = Array.isArray;
 const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
+const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
 const ArrayPrototypePush = uncurryThis(Array.prototype.push);
@@ -2588,13 +2589,14 @@ class QuicStream {
 
     // stream -> session -> endpoint -> sessions is cyclic, and each hop
     // builds a fresh wrapper object that the inspector's seen-set cannot
-    // recognise. Bound the recursion off the remaining `depth` (null is
-    // "infinite": clamp to the util.inspect default) so Bun.inspect and
-    // `util.inspect({depth: null})` stay finite.
+    // recognise. Bound the recursion off the remaining `depth` (null and
+    // Infinity never decrement past the `< 0` guard: clamp them to the
+    // util.inspect default) so Bun.inspect / `util.inspect({depth: null})`
+    // stay finite.
     const opts = {
       __proto__: null,
       ...options,
-      depth: (typeof depth === "number" ? depth : 2) - 1,
+      depth: (NumberIsFinite(depth) ? depth : 2) - 1,
     };
 
     const { id, direction, pending, stats, session } = this;
@@ -3889,11 +3891,11 @@ class QuicSession {
 
     // See QuicStream[kInspect]: session <-> endpoint is a cycle through
     // fresh wrapper objects, so bound by the remaining `depth` and clamp
-    // null to the util.inspect default.
+    // non-finite inputs to the util.inspect default.
     const opts = {
       __proto__: null,
       ...options,
-      depth: (typeof depth === "number" ? depth : 2) - 1,
+      depth: (NumberIsFinite(depth) ? depth : 2) - 1,
     };
 
     const { isPendingClose: closing, endpoint, path, state, stats, streams } = this.#inner;
@@ -4575,11 +4577,11 @@ class QuicEndpoint {
 
     // See QuicStream[kInspect]: endpoint <-> session is a cycle through
     // fresh wrapper objects, so bound by the remaining `depth` and clamp
-    // null to the util.inspect default.
+    // non-finite inputs to the util.inspect default.
     const opts = {
       __proto__: null,
       ...options,
-      depth: (typeof depth === "number" ? depth : 2) - 1,
+      depth: (NumberIsFinite(depth) ? depth : 2) - 1,
     };
 
     const { address, busy, isPendingClose: closing, listening, sessions, stats, state } = this.#inner;

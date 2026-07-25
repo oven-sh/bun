@@ -276,7 +276,7 @@ describe("endpoint.destroy() without an error", () => {
   test("emits CONNECTION_CLOSE so the connected peer's session.closed settles", async () => {
     const tp = { maxIdleTimeout: 30 };
     const serverHs = Promise.withResolvers<void>();
-    const server = await listen(
+    await using server = await listen(
       (s: any) => {
         s.onerror = () => {};
         s.closed.catch(() => {});

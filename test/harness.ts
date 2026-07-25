@@ -120,6 +120,21 @@ if (isDebug) {
   bunEnv.BUN_DEBUG_NO_DUMP = "1";
 }
 
+/**
+ * `bunEnv` with every ambient HTTP(S) proxy variable cleared. Use for spawned
+ * fixtures that must reach an in-process server directly instead of being
+ * rerouted through a proxy configured on the CI host.
+ */
+export const bunEnvNoProxy: NodeJS.Dict<string> = {
+  ...bunEnv,
+  NO_PROXY: undefined,
+  no_proxy: undefined,
+  HTTP_PROXY: undefined,
+  http_proxy: undefined,
+  HTTPS_PROXY: undefined,
+  https_proxy: undefined,
+};
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;

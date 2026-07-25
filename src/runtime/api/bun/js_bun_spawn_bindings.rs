@@ -956,16 +956,12 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             };
             let stream_value = stream.value;
             stream_value.ensure_still_alive();
-            let bytes_result = global_this.readable_stream_to_bytes(stream_value);
-            if global_this.has_exception() {
-                return Err(JsError::Thrown);
-            }
+            let bytes_result = jsc::from_js_host_call(global_this, || {
+                global_this.readable_stream_to_bytes(stream_value)
+            })?;
             let bytes_value = match bytes_result.as_any_promise() {
                 Some(promise) => {
                     jsc_vm.wait_for_promise(promise);
-                    if global_this.has_exception() {
-                        return Err(JsError::Thrown);
-                    }
                     match promise.unwrap(global_this.vm(), jsc::js_promise::UnwrapMode::MarkHandled)
                     {
                         jsc::js_promise::Unwrapped::Fulfilled(v) => v,

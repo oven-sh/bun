@@ -2704,27 +2704,33 @@ EVPKeyPointer::ParseKeyResult EVPKeyPointer::TryParsePrivateKey(
             // wrapping one). Either way BoringSSL decrypted successfully and
             // then rejected the inner encoding; re-read whichever block it was
             // to recover the plaintext PrivateKeyInfo for the "both"-form
-            // retry.
+            // retry. PEM_read_bio_PrivateKey skips leading non-key blocks, so
+            // this scan does too.
             auto pemBio = BIOPointer::New(buffer);
             uint8_t* der = nullptr;
             long derLen = 0;
             char* name = nullptr;
             char* header = nullptr;
-            if (pemBio && PEM_read_bio(pemBio.get(), &name, &header, &der, &derLen)) {
-                Buffer<const unsigned char> derBuf { .data = der, .len = static_cast<size_t>(derLen) };
-                EVPKeyPointer recovered;
+            EVPKeyPointer recovered;
+            while (pemBio && PEM_read_bio(pemBio.get(), &name, &header, &der, &derLen)) {
+                bool matched = true;
                 if (strcmp(name, PEM_STRING_PKCS8INF) == 0) {
+                    Buffer<const unsigned char> derBuf { .data = der, .len = static_cast<size_t>(derLen) };
                     recovered = TryParsePqcBothFormPkcs8(derBuf);
                 } else if (strcmp(name, PEM_STRING_PKCS8) == 0 && config.passphrase.has_value()) {
+                    Buffer<const unsigned char> derBuf { .data = der, .len = static_cast<size_t>(derLen) };
                     recovered = tryRecoverPqcBothFormEncrypted(derBuf, passphrase);
+                } else {
+                    matched = false;
                 }
                 OPENSSL_free(name);
                 OPENSSL_free(header);
                 OPENSSL_free(der);
-                if (recovered) {
-                    ERR_clear_error();
-                    return ParseKeyResult(WTF::move(recovered));
-                }
+                if (matched) break;
+            }
+            if (recovered) {
+                ERR_clear_error();
+                return ParseKeyResult(WTF::move(recovered));
             }
         }
         return keyOrError(EVPKeyPointer(key), config.passphrase.has_value());

@@ -196,6 +196,24 @@ describe("PKCS#8 private-key CHOICE forms", () => {
     expect(verify(undefined, data, pub, sig)).toBe(true);
   });
 
+  test("PEM with a leading non-key block still recovers the `both` form", () => {
+    // PEM_read_bio_PrivateKey skips leading non-private-key blocks; the
+    // recovery path must scan past them too.
+    const cert = fixture("rsa_cert.crt").toString("ascii");
+    const reference = createPrivateKey(fixture("ml_dsa_44_private_seed_only.pem"));
+    for (const inner of ["ml_dsa_44_private.pem", "ml_dsa_44_private_both_encrypted.pem"]) {
+      const bundle = cert + fixture(inner).toString("ascii");
+      const key = createPrivateKey(
+        inner.includes("encrypted") ? { key: bundle, passphrase: "password" } : bundle,
+      );
+      expect({ inner, type: key.asymmetricKeyType, equalsSeedOnly: key.equals(reference) }).toEqual({
+        inner,
+        type: "ml-dsa-44",
+        equalsSeedOnly: true,
+      });
+    }
+  });
+
   describe.each([
     ["ml_dsa_44", "ml-dsa-44"],
     ["ml_kem_768", "ml-kem-768"],

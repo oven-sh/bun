@@ -4157,8 +4157,17 @@ pub(crate) extern "C" fn Blob__dupe(this: &Blob) -> *mut Blob {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Blob__getFileNameString(this: &Blob) -> BunString {
-    this.get_name_string()
-        .map_or(BunString::EMPTY, Clone::clone)
+    let Some(name) = this.get_name_string() else {
+        return BunString::EMPTY;
+    };
+    if this.needs_to_read_file() || this.is_s3() {
+        let utf8 = name.to_utf8();
+        let base = bun_paths::basename(&utf8);
+        if base.len() != utf8.len() {
+            return BunString::clone_utf8(base);
+        }
+    }
+    name.clone()
 }
 
 // ──────────────────────────────────────────────────────────────────────────

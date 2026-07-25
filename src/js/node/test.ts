@@ -2630,8 +2630,7 @@ function addTest(
     const register = effectiveMode === "todo" ? test.todo : test.skip;
     // Node runs todo bodies; bun:test only does so under --todo.
     const body = effectiveMode === "todo" ? createTopLevelTestRunner(node, fn, true) : kDefaultFunction;
-    const registerOptions =
-      node.message !== undefined ? { ...passOptions, note: node.message } : passOptions;
+    const registerOptions = node.message !== undefined ? { ...passOptions, note: node.message } : passOptions;
     if (registerOptions !== undefined) {
       register(name, body, registerOptions);
     } else {

@@ -1339,8 +1339,7 @@ impl CommandLineReporter {
                 }
             }
 
-            let note: Option<&[u8]> =
-                sequence.note.as_deref().or(test_entry.note.as_deref());
+            let note: Option<&[u8]> = sequence.note.as_deref().or(test_entry.note.as_deref());
 
             junit
                 .write_test_case(

@@ -448,8 +448,9 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   }
   if (position < 0) return this;
 
-  // Copy-remove (arrays are never mutated in place), and store a lone
-  // survivor bare like node does, so `_events[type]` shape matches theirs.
+  // Copy-remove (an index-shifting mutation must install a fresh array so an
+  // in-flight emit keeps a stable view), and store a lone survivor bare like
+  // node does, so `_events[type]` shape matches theirs.
   const n = list.length;
   const copy = $newArrayWithSize(n - 1);
   for (let i = 0, j = 0; i < n; i++) {

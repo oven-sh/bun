@@ -51,7 +51,6 @@ function wrapCertificate(der) {
 const ArrayIsArray = Array.isArray;
 const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
-const NumberIsFinite = Number.isFinite;
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
 const ArrayPrototypePush = uncurryThis(Array.prototype.push);
@@ -283,6 +282,7 @@ const {
   kTrailers,
   kVersionNegotiation,
   kInspect,
+  inspectChildOptions,
 } = require("internal/quic/symbols");
 
 const { QuicEndpointStats, QuicStreamStats, QuicSessionStats, kCreateDisconnected } = require("internal/quic/stats");
@@ -292,17 +292,6 @@ const { QuicEndpointState, QuicSessionState, QuicStreamState } = require("intern
 const { hasObserver, startPerf, stopPerf } = require("internal/shared");
 
 const kPerfEntry = Symbol("kPerfEntry");
-
-// stream <-> session <-> endpoint is cyclic and each [kInspect] inspects a
-// fresh wrapper object, so the seen-set never trips: derive the child depth
-// from the remaining budget and clamp null/Infinity so the cycle bottoms out.
-function inspectChildOptions(depth, options) {
-  return {
-    __proto__: null,
-    ...options,
-    depth: (NumberIsFinite(depth) ? depth : 2) - 1,
-  };
-}
 
 const {
   onEndpointCreatedChannel,

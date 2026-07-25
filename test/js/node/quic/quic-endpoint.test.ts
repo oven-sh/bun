@@ -302,8 +302,10 @@ describe("custom inspect", () => {
             live.push(c);
           }
           sizes["bun@" + K] = Bun.inspect(server).length;
+          sizes["buninf@" + K] = Bun.inspect(server, { depth: Infinity }).length;
           sizes["session@" + K] = Bun.inspect(live[0]).length;
           sizes["util@" + K] = inspect(server).length;
+          sizes["util50@" + K] = inspect(server, { depth: 50 }).length;
           sizes["null@" + K] = inspect(server, { depth: null }).length;
           sizes["inf@" + K] = inspect(server, { depth: Infinity }).length;
         }
@@ -334,21 +336,15 @@ describe("custom inspect", () => {
     // util.inspect({depth: null}) recursed until the process was killed.
     // After: each session is expanded once, so doubling K roughly doubles
     // the output, and {depth: null} clamps to the util.inspect default.
-    expect(sizes).toEqual({
-      "bun@2": expect.any(Number),
-      "bun@4": expect.any(Number),
-      "session@2": expect.any(Number),
-      "session@4": expect.any(Number),
-      "util@2": expect.any(Number),
-      "util@4": expect.any(Number),
-      "null@2": expect.any(Number),
-      "null@4": expect.any(Number),
-      "inf@2": expect.any(Number),
-      "inf@4": expect.any(Number),
-    });
+    const expectKeys: Record<string, unknown> = {};
+    for (const p of ["bun", "buninf", "session", "util", "util50", "null", "inf"])
+      for (const K of [2, 4]) expectKeys[`${p}@${K}`] = expect.any(Number);
+    expect(sizes).toEqual(expectKeys);
     expect(sizes["bun@4"]).toBeLessThan(64 * 1024);
     expect(sizes["bun@4"]).toBeLessThan(sizes["bun@2"] * 3);
+    expect(sizes["buninf@4"]).toBeLessThan(64 * 1024);
     expect(sizes["session@4"]).toBeLessThan(64 * 1024);
+    expect(sizes["util50@4"]).toBeLessThan(64 * 1024);
     expect(sizes["null@4"]).toBeLessThan(16 * 1024);
     expect(sizes["inf@4"]).toBeLessThan(16 * 1024);
     expect(sizes["util@4"]).toBeLessThan(4 * 1024);

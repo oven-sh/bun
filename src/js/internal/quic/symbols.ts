@@ -5,11 +5,8 @@ const MathMin = Math.min;
 
 const kInspect = Symbol.for("nodejs.util.inspect.custom");
 
-// stream <-> session <-> endpoint is cyclic and every [kInspect] recurses
-// into util.inspect() with a fresh wrapper object, so the seen-set never
-// trips: derive the child depth from the remaining budget, clamp non-finite
-// inputs, and cap at a small ceiling so large/unbounded depths (including
-// Bun.inspect's u16::MAX for Infinity) bottom out after one round-trip.
+// endpoint <-> session <-> stream [kInspect] each other through fresh
+// wrappers; cap the remaining depth so the cycle bottoms out in one pass.
 function inspectChildOptions(depth, options) {
   return {
     __proto__: null,

@@ -141,10 +141,7 @@ function emitError(emitter, args) {
   throw err; // Unhandled 'error' event
 }
 
-// A listener list is a bare function for a single listener, else an array
-// (like node). Index-shifting mutations (prepend, remove) install a copy;
-// append pushes past the latched `length` below. Either way a stored list is
-// safe to iterate with no defensive clone.
+// Single listener is stored bare, else an array (like node); see the emit() loop for why no clone.
 function applyHandlers(handlers, emitter, args) {
   if (typeof handlers === "function") {
     handlers.$apply(emitter, args);
@@ -209,9 +206,7 @@ const emitWithoutRejectionCapture = function emit(type, ...args) {
     }
     return true;
   }
-  // No defensive clone: prepend/remove install a fresh array and append lands
-  // past the `length` latched here, so `handler[0..length)` is stable for the
-  // whole loop even if a listener adds/removes listeners.
+  // No clone: prepend/remove install a fresh array, append lands past the `length` latched here.
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     switch (args.length) {
@@ -269,9 +264,7 @@ const emitWithRejectionCapture = function emit(type, ...args) {
     }
     return true;
   }
-  // No defensive clone: prepend/remove install a fresh array and append lands
-  // past the `length` latched here, so `handler[0..length)` is stable for the
-  // whole loop even if a listener adds/removes listeners.
+  // No clone: prepend/remove install a fresh array, append lands past the `length` latched here.
   for (let i = 0, { length } = handler; i < length; i++) {
     const listener = handler[i];
     let result;
@@ -326,9 +319,7 @@ function _addListener(target, type, fn, prepend) {
   } else if (prepend) {
     handlers = events[type] = copyWithPrepended(existing, fn);
   } else {
-    // Append in place. emit() latches `length` before iterating, so a listener
-    // appended mid-emit sits past the latched length and is not visited; only
-    // prepend/remove (which shift indices) install a fresh array.
+    // Append in place: emit() latches `length` first, so the pushed slot is never visited mid-emit.
     $arrayPush(existing, fn);
     handlers = existing;
   }
@@ -350,9 +341,7 @@ EventEmitterPrototype.prependListener = function prependListener(type, fn) {
   return this;
 };
 
-// emit() iterates the stored array with no clone, so a prepend (which shifts
-// indices) lands in a fresh array; `warned` carries over so the leak warning
-// fires once. An inline loop beats concat/slice here ~10x (host-call boundary).
+// Fresh array (prepend shifts indices an in-flight emit() is iterating); inline loop beats [fn, ...list] ~10x.
 function copyWithPrepended(list, fn) {
   const n = list.length;
   const copy = $newArrayWithSize(n + 1);
@@ -448,9 +437,7 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   }
   if (position < 0) return this;
 
-  // Copy-remove (an index-shifting mutation must install a fresh array so an
-  // in-flight emit keeps a stable view), and store a lone survivor bare like
-  // node does, so `_events[type]` shape matches theirs.
+  // Copy-remove so an in-flight emit() keeps a stable view; store a lone survivor bare like node.
   const n = list.length;
   const copy = $newArrayWithSize(n - 1);
   for (let i = 0, j = 0; i < n; i++) {

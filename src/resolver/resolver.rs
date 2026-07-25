@@ -1654,13 +1654,6 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            // .mjs/.mts/.cjs/.cts override any package.json "type".
-            if !kind.is_from_css() && name.ext.len() == 4 {
-                if let Some(from_ext) = module_type_from_ext(name.ext) {
-                    module_type = from_ext;
-                }
-            }
-
             if let Some(entries) = dir.get_entries_ref(self.generation) {
                 if let Some(query) = entries.get(name.filename) {
                     // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
@@ -1760,6 +1753,13 @@ impl<'a> Resolver<'a> {
         if !kind.is_from_css() && module_type == options::ModuleType::Unknown {
             if let Some(pkg) = result.package_json_ref() {
                 module_type = pkg.module_type;
+            }
+        }
+
+        // .mjs/.mts/.cjs/.cts override any package.json "type".
+        if !kind.is_from_css() {
+            if let Some(from_ext) = module_type_from_ext(result.path_pair.primary.name().ext) {
+                module_type = from_ext;
             }
         }
 

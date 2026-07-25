@@ -699,4 +699,35 @@ describe("bundler", () => {
     },
     run: { stdout: `{"__esModule":true,"default":"THE_DEFAULT","named":"NAMED"}` },
   });
+  // When resolution yields both a "module" (.mjs) primary and a "main" (.cjs)
+  // secondary, the primary's extension determines module_type.
+  itBundled("cjs2esm/ToESMSetsNodeModeForMJSPrimaryWithCJSSecondary", {
+    files: {
+      "/entry.js": /* js */ `
+        import mod from 'dual';
+        console.log(JSON.stringify(mod.Base));
+      `,
+      "/package.json": `{ "type": "module" }`,
+      "/node_modules/dual/package.json": `{ "name": "dual", "module": "dist/index.mjs", "main": "dist/index.cjs" }`,
+      "/node_modules/dual/dist/index.mjs": /* js */ `
+        import Base from 'cjs-dep';
+        export default { Base: Base };
+      `,
+      "/node_modules/dual/dist/index.cjs": /* js */ `
+        module.exports = { Base: require('cjs-dep').default };
+      `,
+      "/node_modules/cjs-dep/package.json": `{ "name": "cjs-dep", "main": "index.js" }`,
+      "/node_modules/cjs-dep/index.js": /* js */ `
+        exports.__esModule = true;
+        exports.default = "THE_DEFAULT";
+        exports.named = "NAMED";
+      `,
+    },
+    target: "bun",
+    onAfterBundle(api) {
+      const code = api.readFile("out.js");
+      expect(code).toContain("__toESM(require_cjs_dep(), 1)");
+    },
+    run: { stdout: `{"__esModule":true,"default":"THE_DEFAULT","named":"NAMED"}` },
+  });
 });

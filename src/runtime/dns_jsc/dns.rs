@@ -1630,9 +1630,7 @@ impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
         timeouts: i32,
         results: *mut c_ares::AddrInfo,
     ) {
-        // Node's dns.lookup (libc getaddrinfo) never yields EBADNAME; remap the
-        // c-ares status so lookup() is Node-compatible on every backend. The
-        // resolve* path (ares_query) does not flow through this handler.
+        // Node's dns.lookup never yields EBADNAME; remap for compat (resolve* doesn't use this handler).
         let status = match status {
             Some(c_ares::Error::EBADNAME) => Some(c_ares::Error::ENOTFOUND),
             other => other,

@@ -285,6 +285,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                         {
                             target_ref = namespace_alias.namespace_ref;
                         }
+                        let target_ref = symbols.follow(target_ref);
 
                         if cfg!(debug_assertions) {
                             // SAFETY: arena slice valid for the link pass.

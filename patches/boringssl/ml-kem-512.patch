@@ -1,8 +1,6 @@
-diff -ruN a/crypto/evp/evp_ctx.cc b/crypto/evp/evp_ctx.cc
 --- a/crypto/evp/evp_ctx.cc
 +++ b/crypto/evp/evp_ctx.cc
-@@ -100,6 +100,9 @@
-     case EVP_PKEY_ML_DSA_87:
+@@ -101,4 +101,7 @@
        alg = EVP_pkey_ml_dsa_87();
        break;
 +    case EVP_PKEY_ML_KEM_512:
@@ -10,39 +8,29 @@ diff -ruN a/crypto/evp/evp_ctx.cc b/crypto/evp/evp_ctx.cc
 +      break;
      case EVP_PKEY_ML_KEM_768:
        alg = EVP_pkey_ml_kem_768();
-       break;
-diff -ruN a/crypto/evp/internal.h b/crypto/evp/internal.h
 --- a/crypto/evp/internal.h
 +++ b/crypto/evp/internal.h
-@@ -410,6 +410,7 @@
-       EVP_pkey_ml_dsa_44(),
+@@ -411,4 +411,5 @@
        EVP_pkey_ml_dsa_65(),
        EVP_pkey_ml_dsa_87(),
 +      EVP_pkey_ml_kem_512(),
        EVP_pkey_ml_kem_768(),
        EVP_pkey_ml_kem_1024(),
-       // TODO(crbug.com/438761503): Remove DSA from this set, after callers that
-diff -ruN a/crypto/evp/p_mlkem.cc b/crypto/evp/p_mlkem.cc
 --- a/crypto/evp/p_mlkem.cc
 +++ b/crypto/evp/p_mlkem.cc
-@@ -38,6 +38,7 @@
- 
+@@ -39,4 +39,5 @@
  constexpr CBS_ASN1_TAG kSeedTag = CBS_ASN1_CONTEXT_SPECIFIC | 0;
  
 +constexpr uint8_t kMLKEM512OID[] = {OBJ_ENC_ML_KEM_512};
  constexpr uint8_t kMLKEM768OID[] = {OBJ_ENC_ML_KEM_768};
  constexpr uint8_t kMLKEM1024OID[] = {OBJ_ENC_ML_KEM_1024};
- 
-@@ -63,6 +64,7 @@
-                   "PublicKey type must be trivially copyable.");               \
+@@ -64,4 +65,5 @@
    };
  
 +MAKE_MLKEM_TRAITS(512)
  MAKE_MLKEM_TRAITS(768)
  MAKE_MLKEM_TRAITS(1024)
- 
-@@ -468,6 +470,10 @@
- 
+@@ -469,4 +471,8 @@
  }  // namespace
  
 +const EVP_PKEY_ALG *EVP_pkey_ml_kem_512() {
@@ -51,9 +39,7 @@ diff -ruN a/crypto/evp/p_mlkem.cc b/crypto/evp/p_mlkem.cc
 +
  const EVP_PKEY_ALG *EVP_pkey_ml_kem_768() {
    return &MLKEMImplementation<MLKEM768Traits>::pkey_alg;
- }
-@@ -476,6 +482,10 @@
-   return &MLKEMImplementation<MLKEM1024Traits>::pkey_alg;
+@@ -477,4 +483,8 @@
  }
  
 +const EVP_KEM *EVP_kem_ml_kem_512() {
@@ -62,12 +48,9 @@ diff -ruN a/crypto/evp/p_mlkem.cc b/crypto/evp/p_mlkem.cc
 +
  const EVP_KEM *EVP_kem_ml_kem_768() {
    return &MLKEMImplementation<MLKEM768Traits>::evp_kem;
- }
-diff -ruN a/crypto/fipsmodule/bcm_interface.h b/crypto/fipsmodule/bcm_interface.h
 --- a/crypto/fipsmodule/bcm_interface.h
 +++ b/crypto/fipsmodule/bcm_interface.h
-@@ -606,6 +606,10 @@
- // decapsulating party.
+@@ -607,4 +607,8 @@
  #define BCM_MLKEM_ENCAP_ENTROPY 32
  
 +// BCM_MLKEM512_PRIVATE_KEY_BYTES is the length of the data produced by
@@ -76,9 +59,7 @@ diff -ruN a/crypto/fipsmodule/bcm_interface.h b/crypto/fipsmodule/bcm_interface.
 +
  // BCM_MLKEM768_PRIVATE_KEY_BYTES is the length of the data produced by
  // `BCM_mlkem768_marshal_private_key`.
- #define BCM_MLKEM768_PRIVATE_KEY_BYTES 2400
-@@ -614,6 +618,58 @@
- // `BCM_mlkem1024_marshal_private_key`.
+@@ -615,4 +619,56 @@
  #define BCM_MLKEM1024_PRIVATE_KEY_BYTES 3168
  
 +OPENSSL_EXPORT bcm_infallible BCM_mlkem512_generate_key(
@@ -135,12 +116,9 @@ diff -ruN a/crypto/fipsmodule/bcm_interface.h b/crypto/fipsmodule/bcm_interface.
 +
  OPENSSL_EXPORT bcm_infallible BCM_mlkem768_generate_key(
      uint8_t out_encoded_public_key[MLKEM768_PUBLIC_KEY_BYTES],
-     uint8_t optional_out_seed[MLKEM_SEED_BYTES],
-diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem.cc.inc
 --- a/crypto/fipsmodule/mlkem/mlkem.cc.inc
 +++ b/crypto/fipsmodule/mlkem/mlkem.cc.inc
-@@ -94,6 +94,9 @@
- const uint16_t kInverseDegree = 3303;
+@@ -95,4 +95,7 @@
  
  // Rank-specific constants.
 +#define RANK512 2
@@ -148,9 +126,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +const int kDV512 = 4;
  #define RANK768 3
  const int kDU768 = 10;
- const int kDV768 = 4;
-@@ -101,6 +104,18 @@
- const int kDU1024 = 11;
+@@ -102,4 +105,16 @@
  const int kDV1024 = 5;
  
 +constexpr int du_for_rank(int rank) {
@@ -167,9 +143,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +
  constexpr size_t encoded_vector_size(int rank) {
    return (kLog2Prime * DEGREE / 8) * static_cast<size_t>(rank);
- }
-@@ -109,20 +124,21 @@
-   return encoded_vector_size(rank) + /*sizeof(rho)=*/32;
+@@ -110,10 +125,10 @@
  }
  
 +static_assert(encoded_public_key_size(RANK512) == MLKEM512_PUBLIC_KEY_BYTES);
@@ -182,7 +156,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +  return static_cast<size_t>(du_for_rank(rank)) * static_cast<size_t>(rank) *
           DEGREE / 8;
  }
- 
+@@ -121,7 +136,8 @@
  constexpr size_t ciphertext_size(int rank) {
    return compressed_vector_size(rank) +
 -         (rank == RANK768 ? kDV768 : kDV1024) * DEGREE / 8;
@@ -192,9 +166,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +static_assert(ciphertext_size(RANK512) == MLKEM512_CIPHERTEXT_BYTES);
  static_assert(ciphertext_size(RANK768) == MLKEM768_CIPHERTEXT_BYTES);
  static_assert(ciphertext_size(RANK1024) == MLKEM1024_CIPHERTEXT_BYTES);
- 
-@@ -504,6 +520,32 @@
- }
+@@ -505,4 +521,30 @@
  #endif
  
 +// Algorithm 8 from the spec, with eta fixed to three. Samples 6 bits per
@@ -225,9 +197,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +
  // Generates a secret vector by using
  // `scalar_centered_binomial_distribution_eta_2_with_prf`, using the given seed
- // appending and incrementing `counter` for entry of the vector.
-@@ -528,6 +570,30 @@
-   }
+@@ -529,4 +571,28 @@
  }
  
 +// Like vector_generate_secret_eta_2, but with eta = 3.
@@ -256,9 +226,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +
  template <int RANK>
  void matrix_expand_step(scalar *out, uint8_t input[34], int i) {
-   input[32] = i / RANK;
-@@ -926,8 +992,8 @@
- template <int RANK>
+@@ -927,6 +993,6 @@
  inline void decrypt_cpa(uint8_t out[32], const private_key<RANK> *priv,
                          const uint8_t ciphertext[MLKEM768_CIPHERTEXT_BYTES]) {
 -  constexpr int du = RANK == RANK768 ? kDU768 : kDU1024;
@@ -267,9 +235,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +  constexpr int dv = dv_for_rank(RANK);
  
    vector<RANK> u;
-   vector_decode<du>(&u, ciphertext);
-@@ -981,10 +1047,10 @@
-   OPENSSL_memcpy(priv->pub.rho, hashed, sizeof(priv->pub.rho));
+@@ -982,8 +1048,8 @@
    matrix_expand(&priv->pub.m, rho);
    uint8_t counter = 0;
 -  vector_generate_secret_eta_2(&priv->s, &counter, sigma);
@@ -280,9 +246,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +  vector_generate_secret_eta1(&error, &counter, sigma);
    vector_ntt(&error);
    matrix_mult_transpose(&priv->pub.t, &priv->pub.m, &priv->s);
-   vector_add(&priv->pub.t, &error);
-@@ -1018,12 +1084,12 @@
- template <int RANK>
+@@ -1019,10 +1085,10 @@
  void encrypt_cpa(uint8_t *out, const mlkem::public_key<RANK> *pub,
                   const uint8_t message[32], const uint8_t randomness[32]) {
 -  constexpr int du = RANK == RANK768 ? mlkem::kDU768 : mlkem::kDU1024;
@@ -296,9 +260,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +  vector_generate_secret_eta1(&secret, &counter, randomness);
    vector_ntt(&secret);
    mlkem::vector<RANK> error;
-   vector_generate_secret_eta_2(&error, &counter, randomness);
-@@ -1147,6 +1213,22 @@
-   return 1;
+@@ -1148,4 +1214,20 @@
  }
  
 +static_assert(sizeof(MLKEM512_public_key) == sizeof(public_key<RANK512>));
@@ -319,9 +281,7 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +
  static_assert(sizeof(MLKEM768_public_key) == sizeof(public_key<RANK768>));
  static_assert(alignof(MLKEM768_public_key) == alignof(public_key<RANK768>));
- 
-@@ -1180,6 +1262,18 @@
-   return reinterpret_cast<const MLKEM1024_public_key *>(public_key);
+@@ -1181,4 +1263,16 @@
  }
  
 +static_assert(sizeof(MLKEM512_private_key) >= sizeof(private_key<RANK512>));
@@ -338,11 +298,10 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +
  static_assert(sizeof(MLKEM768_private_key) >= sizeof(private_key<RANK768>));
  static_assert(alignof(MLKEM768_private_key) >= alignof(private_key<RANK768>));
- 
-@@ -1692,6 +1786,144 @@
+@@ -1692,4 +1786,142 @@
    if (!mlkem_parse_private_key(priv, in)) {
      return bcm_status::failure;
-   }
++  }
 +  return bcm_status::approved;
 +}
 +
@@ -480,15 +439,11 @@ diff -ruN a/crypto/fipsmodule/mlkem/mlkem.cc.inc b/crypto/fipsmodule/mlkem/mlkem
 +      mlkem::private_key_512_from_external(out_private_key);
 +  if (!mlkem_parse_private_key(priv, in)) {
 +    return bcm_status::failure;
-+  }
+   }
    return bcm_status::approved;
- }
- 
-diff -ruN a/crypto/mlkem/mlkem.cc b/crypto/mlkem/mlkem.cc
 --- a/crypto/mlkem/mlkem.cc
 +++ b/crypto/mlkem/mlkem.cc
-@@ -19,6 +19,50 @@
- 
+@@ -20,4 +20,48 @@
  using namespace bssl;
  
 +void MLKEM512_generate_key(
@@ -537,21 +492,16 @@ diff -ruN a/crypto/mlkem/mlkem.cc b/crypto/mlkem/mlkem.cc
 +
  void MLKEM768_generate_key(
      uint8_t out_encoded_public_key[MLKEM768_PUBLIC_KEY_BYTES],
-     uint8_t optional_out_seed[MLKEM_SEED_BYTES],
-diff -ruN a/crypto/obj/obj_dat.h b/crypto/obj/obj_dat.h
 --- a/crypto/obj/obj_dat.h
 +++ b/crypto/obj/obj_dat.h
-@@ -16,7 +16,7 @@
- 
+@@ -17,5 +17,5 @@
  
  BSSL_NAMESPACE_BEGIN
 -#define NUM_NID 973
 +#define NUM_NID 974
  
  static const uint8_t kObjectData[] = {
-     /* NID_rsadsi */
-@@ -7146,6 +7146,16 @@
-     0x04,
+@@ -7147,4 +7147,14 @@
      0x04,
      0x02,
 +    /* NID_ML_KEM_512 */
@@ -566,79 +516,61 @@ diff -ruN a/crypto/obj/obj_dat.h b/crypto/obj/obj_dat.h
 +    0x01,
  };
  
- static const ASN1_OBJECT kObjects[NUM_NID] = {
-@@ -8802,6 +8812,8 @@
-      0},
+@@ -8803,4 +8813,6 @@
      {NULL, NULL, NID_undef, 0, NULL, 0},
      {"X-Wing", "X-Wing", NID_X_Wing, 0, NULL, 0},
 +    {"id-alg-ml-kem-512", "ML-KEM-512", NID_ML_KEM_512, 9, &kObjectData[6241],
 +     0},
  };
  
- static const uint16_t kNIDsInShortNameOrder[] = {
-@@ -9241,6 +9253,7 @@
-     326 /* id-alg-dh-pop */,
+@@ -9242,4 +9254,5 @@
      325 /* id-alg-dh-sig-hmac-sha1 */,
      966 /* id-alg-ml-kem-1024 */,
 +    973 /* id-alg-ml-kem-512 */,
      970 /* id-alg-ml-kem-768 */,
      324 /* id-alg-noSignature */,
-     907 /* id-camellia128-wrap */,
-@@ -9825,6 +9838,7 @@
-     968 /* ML-DSA-65 */,
+@@ -9826,4 +9839,5 @@
      969 /* ML-DSA-87 */,
      966 /* ML-KEM-1024 */,
 +    973 /* ML-KEM-512 */,
      970 /* ML-KEM-768 */,
      388 /* Mail */,
-     383 /* Management */,
-@@ -11445,6 +11459,7 @@
-     967 /* 2.16.840.1.101.3.4.3.17 (OBJ_ML_DSA_44) */,
+@@ -11446,4 +11460,5 @@
      968 /* 2.16.840.1.101.3.4.3.18 (OBJ_ML_DSA_65) */,
      969 /* 2.16.840.1.101.3.4.3.19 (OBJ_ML_DSA_87) */,
 +    973 /* 2.16.840.1.101.3.4.4.1 (OBJ_ML_KEM_512) */,
      970 /* 2.16.840.1.101.3.4.4.2 (OBJ_ML_KEM_768) */,
      966 /* 2.16.840.1.101.3.4.4.3 (OBJ_ML_KEM_1024) */,
-     71 /* 2.16.840.1.113730.1.1 (OBJ_netscape_cert_type) */,
-diff -ruN a/include/openssl/evp.h b/include/openssl/evp.h
 --- a/include/openssl/evp.h
 +++ b/include/openssl/evp.h
-@@ -124,6 +124,7 @@
- #define EVP_PKEY_ML_DSA_44 NID_ML_DSA_44
+@@ -125,4 +125,5 @@
  #define EVP_PKEY_ML_DSA_65 NID_ML_DSA_65
  #define EVP_PKEY_ML_DSA_87 NID_ML_DSA_87
 +#define EVP_PKEY_ML_KEM_512 NID_ML_KEM_512
  #define EVP_PKEY_ML_KEM_768 NID_ML_KEM_768
  #define EVP_PKEY_ML_KEM_1024 NID_ML_KEM_1024
- #define EVP_PKEY_XWING NID_X_Wing
-@@ -203,6 +204,7 @@
- // can be done programmatically with OpenSSL's
+@@ -204,4 +205,5 @@
  // `OSSL_PROVIDER_add_conf_parameter` function, or by passing "-provparam" to
  // the command-line tool.
 +OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_kem_512(void);
  OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_kem_768(void);
  OPENSSL_EXPORT const EVP_PKEY_ALG *EVP_pkey_ml_kem_1024(void);
- 
-@@ -1174,6 +1176,7 @@
- // ciphertexts and secrets.
+@@ -1175,4 +1177,5 @@
  
  // EVP_kem_ml_kem_* implement ML-KEM, defined in FIPS 203.
 +OPENSSL_EXPORT const EVP_KEM *EVP_kem_ml_kem_512(void);
  OPENSSL_EXPORT const EVP_KEM *EVP_kem_ml_kem_768(void);
  OPENSSL_EXPORT const EVP_KEM *EVP_kem_ml_kem_1024(void);
- 
-diff -ruN a/include/openssl/mlkem.h b/include/openssl/mlkem.h
 --- a/include/openssl/mlkem.h
 +++ b/include/openssl/mlkem.h
-@@ -22,12 +22,109 @@
- #endif
+@@ -23,5 +23,5 @@
  
  
 -// ML-KEM-768.
 +// ML-KEM-512.
  //
  // This implements the Module-Lattice-Based Key-Encapsulation Mechanism from
- // https://csrc.nist.gov/pubs/fips/203/final
+@@ -29,4 +29,101 @@
  
  
 +// MLKEM512_public_key contains an ML-KEM-512 public key. The contents of this
@@ -740,9 +672,7 @@ diff -ruN a/include/openssl/mlkem.h b/include/openssl/mlkem.h
 +
  // MLKEM768_public_key contains an ML-KEM-768 public key. The contents of this
  // object should never leave the address space since the format is unstable.
- struct MLKEM768_public_key {
-@@ -50,9 +147,6 @@
- // public key.
+@@ -51,7 +148,4 @@
  #define MLKEM768_PUBLIC_KEY_BYTES 1184
  
 -// MLKEM_SEED_BYTES is the number of bytes in an ML-KEM seed.
@@ -750,9 +680,7 @@ diff -ruN a/include/openssl/mlkem.h b/include/openssl/mlkem.h
 -
  // MLKEM768_generate_key generates a random public/private key pair, writes the
  // encoded public key to `out_encoded_public_key` and sets `out_private_key` to
- // the private key. If `optional_out_seed` is not NULL then the seed used to
-@@ -80,9 +174,6 @@
- // MLKEM768_CIPHERTEXT_BYTES is number of bytes in the ML-KEM-768 ciphertext.
+@@ -81,7 +175,4 @@
  #define MLKEM768_CIPHERTEXT_BYTES 1088
  
 -// MLKEM_SHARED_SECRET_BYTES is the number of bytes in an ML-KEM shared secret.
@@ -760,12 +688,9 @@ diff -ruN a/include/openssl/mlkem.h b/include/openssl/mlkem.h
 -
  // MLKEM768_encap encrypts a random shared secret for `public_key`, writes the
  // ciphertext to `out_ciphertext`, and writes the random shared secret to
- // `out_shared_secret`.
-diff -ruN a/include/openssl/nid.h b/include/openssl/nid.h
 --- a/include/openssl/nid.h
 +++ b/include/openssl/nid.h
-@@ -5511,6 +5511,12 @@
- #define SN_X_Wing "X-Wing"
+@@ -5512,4 +5512,10 @@
  #define NID_X_Wing 972
  
 +#define SN_ML_KEM_512 "id-alg-ml-kem-512"
@@ -776,28 +701,21 @@ diff -ruN a/include/openssl/nid.h b/include/openssl/nid.h
 +
  #define SN_sha512_224 "SHA512-224"
  #define LN_sha512_224 "sha512-224"
- #define NID_sha512_224 1094
-diff -ruN a/include/openssl/prefix_symbols.h b/include/openssl/prefix_symbols.h
 --- a/include/openssl/prefix_symbols.h
 +++ b/include/openssl/prefix_symbols.h
-@@ -1313,6 +1313,7 @@
- #pragma redefine_extname EVP_hpke_x25519_hkdf_sha256 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_hpke_x25519_hkdf_sha256)
+@@ -1314,4 +1314,5 @@
  #pragma redefine_extname EVP_hpke_xwing BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_hpke_xwing)
  #pragma redefine_extname EVP_kem_ml_kem_1024 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_kem_ml_kem_1024)
 +#pragma redefine_extname EVP_kem_ml_kem_512 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_kem_ml_kem_512)
  #pragma redefine_extname EVP_kem_ml_kem_768 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_kem_ml_kem_768)
  #pragma redefine_extname EVP_kem_xwing BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_kem_xwing)
- #pragma redefine_extname EVP_marshal_digest_algorithm BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_marshal_digest_algorithm)
-@@ -1336,6 +1337,7 @@
- #pragma redefine_extname EVP_pkey_ml_dsa_65 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_ml_dsa_65)
+@@ -1337,4 +1338,5 @@
  #pragma redefine_extname EVP_pkey_ml_dsa_87 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_ml_dsa_87)
  #pragma redefine_extname EVP_pkey_ml_kem_1024 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_ml_kem_1024)
 +#pragma redefine_extname EVP_pkey_ml_kem_512 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_ml_kem_512)
  #pragma redefine_extname EVP_pkey_ml_kem_768 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_ml_kem_768)
  #pragma redefine_extname EVP_pkey_rsa BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_rsa)
- #pragma redefine_extname EVP_pkey_rsa_pss_sha256 BORINGSSL_ADD_USER_LABEL_AND_PREFIX(EVP_pkey_rsa_pss_sha256)
-@@ -1455,6 +1457,13 @@
- #pragma redefine_extname MLKEM1024_parse_public_key BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM1024_parse_public_key)
+@@ -1456,4 +1458,11 @@
  #pragma redefine_extname MLKEM1024_private_key_from_seed BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM1024_private_key_from_seed)
  #pragma redefine_extname MLKEM1024_public_from_private BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM1024_public_from_private)
 +#pragma redefine_extname MLKEM512_decap BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM512_decap)
@@ -809,25 +727,19 @@ diff -ruN a/include/openssl/prefix_symbols.h b/include/openssl/prefix_symbols.h
 +#pragma redefine_extname MLKEM512_public_from_private BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM512_public_from_private)
  #pragma redefine_extname MLKEM768_decap BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM768_decap)
  #pragma redefine_extname MLKEM768_encap BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM768_encap)
- #pragma redefine_extname MLKEM768_generate_key BORINGSSL_ADD_USER_LABEL_AND_PREFIX(MLKEM768_generate_key)
-@@ -4430,6 +4439,7 @@
- #define EVP_hpke_x25519_hkdf_sha256 BORINGSSL_ADD_PREFIX(EVP_hpke_x25519_hkdf_sha256)
+@@ -4431,4 +4440,5 @@
  #define EVP_hpke_xwing BORINGSSL_ADD_PREFIX(EVP_hpke_xwing)
  #define EVP_kem_ml_kem_1024 BORINGSSL_ADD_PREFIX(EVP_kem_ml_kem_1024)
 +#define EVP_kem_ml_kem_512 BORINGSSL_ADD_PREFIX(EVP_kem_ml_kem_512)
  #define EVP_kem_ml_kem_768 BORINGSSL_ADD_PREFIX(EVP_kem_ml_kem_768)
  #define EVP_kem_xwing BORINGSSL_ADD_PREFIX(EVP_kem_xwing)
- #define EVP_marshal_digest_algorithm BORINGSSL_ADD_PREFIX(EVP_marshal_digest_algorithm)
-@@ -4453,6 +4463,7 @@
- #define EVP_pkey_ml_dsa_65 BORINGSSL_ADD_PREFIX(EVP_pkey_ml_dsa_65)
+@@ -4454,4 +4464,5 @@
  #define EVP_pkey_ml_dsa_87 BORINGSSL_ADD_PREFIX(EVP_pkey_ml_dsa_87)
  #define EVP_pkey_ml_kem_1024 BORINGSSL_ADD_PREFIX(EVP_pkey_ml_kem_1024)
 +#define EVP_pkey_ml_kem_512 BORINGSSL_ADD_PREFIX(EVP_pkey_ml_kem_512)
  #define EVP_pkey_ml_kem_768 BORINGSSL_ADD_PREFIX(EVP_pkey_ml_kem_768)
  #define EVP_pkey_rsa BORINGSSL_ADD_PREFIX(EVP_pkey_rsa)
- #define EVP_pkey_rsa_pss_sha256 BORINGSSL_ADD_PREFIX(EVP_pkey_rsa_pss_sha256)
-@@ -4572,6 +4583,13 @@
- #define MLKEM1024_parse_public_key BORINGSSL_ADD_PREFIX(MLKEM1024_parse_public_key)
+@@ -4573,4 +4584,11 @@
  #define MLKEM1024_private_key_from_seed BORINGSSL_ADD_PREFIX(MLKEM1024_private_key_from_seed)
  #define MLKEM1024_public_from_private BORINGSSL_ADD_PREFIX(MLKEM1024_public_from_private)
 +#define MLKEM512_decap BORINGSSL_ADD_PREFIX(MLKEM512_decap)
@@ -839,4 +751,3 @@ diff -ruN a/include/openssl/prefix_symbols.h b/include/openssl/prefix_symbols.h
 +#define MLKEM512_public_from_private BORINGSSL_ADD_PREFIX(MLKEM512_public_from_private)
  #define MLKEM768_decap BORINGSSL_ADD_PREFIX(MLKEM768_decap)
  #define MLKEM768_encap BORINGSSL_ADD_PREFIX(MLKEM768_encap)
- #define MLKEM768_generate_key BORINGSSL_ADD_PREFIX(MLKEM768_generate_key)

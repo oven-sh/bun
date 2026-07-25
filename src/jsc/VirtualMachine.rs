@@ -4839,8 +4839,7 @@ impl VirtualMachine {
                 allow_ansi_color,
                 allow_side_effects,
             };
-            // `getDirect` can hand back empty (deleted prop) or a GetterSetter
-            // cell (accessor); `is_object()` rejects both before `for_each`.
+            // `getDirect` may hand back empty or a GetterSetter; `is_object()` rejects both.
             let errors = value.get_errors_property(global_ref);
             if errors.is_object()
                 && errors

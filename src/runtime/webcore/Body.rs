@@ -301,7 +301,6 @@ impl PendingValue {
         {
             on_start_buffering(producer_task);
         }
-        self.on_start_buffering = None;
         self.on_start_streaming = None;
         self.on_readable_stream_available = None;
         self.on_stream_cancelled = None;

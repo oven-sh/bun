@@ -3632,7 +3632,14 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
+        let body_decoded = response.body_decoded();
         if let Some(mut headers_) = response.swap_init_headers() {
+            if body_decoded {
+                // fetch() auto-decoded this body, so the upstream Content-Encoding
+                // no longer describes the bytes about to be written. Content-Length
+                // and Transfer-Encoding are always re-derived below.
+                headers_.fast_remove(jsc::HTTPHeaderName::ContentEncoding);
+            }
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
             // For .slice()-driven ranges, only promote to 206 if the user

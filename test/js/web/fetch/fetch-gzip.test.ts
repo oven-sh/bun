@@ -882,6 +882,151 @@ describe("fetch() decodes multi-member Content-Encoding: gzip", () => {
   });
 });
 
+describe("Bun.serve proxying a compressed fetch() response", () => {
+  // Returning `fetch(upstream)` from a handler used to emit the upstream's
+  // Content-Encoding alongside the already-decoded body, so a second decoder
+  // on the client saw plaintext-as-gzip and failed with ZlibError.
+  const payload = "proxied through a compressed upstream without double-decoding";
+  const encoders = {
+    gzip: gzipSync,
+    deflate: deflateSync,
+    br: brotliCompressSync,
+    zstd: zstdCompressSync,
+  } as const;
+
+  it("still exposes content-encoding on the fetched Response (issue #5668)", async () => {
+    using upstream = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(gzipSync(payload), {
+          headers: { "Content-Encoding": "gzip", "Content-Type": "text/plain" },
+        }),
+    });
+    const res = await fetch(upstream.url);
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(await res.text()).toBe(payload);
+  });
+
+  describe.each(Object.keys(encoders) as (keyof typeof encoders)[])("%s", enc => {
+    it.concurrent("drops the stale Content-Encoding when proxied via return fetch()", async () => {
+      const encoded = encoders[enc](payload);
+      using upstream = Bun.serve({
+        port: 0,
+        fetch: () =>
+          new Response(encoded, {
+            headers: {
+              "Content-Encoding": enc,
+              "Content-Type": "text/plain",
+              "Content-Length": String(encoded.length),
+            },
+          }),
+      });
+      using proxy = Bun.serve({
+        port: 0,
+        fetch: () => fetch(upstream.url),
+      });
+
+      const res = await fetch(proxy.url);
+      expect({
+        encoding: res.headers.get("content-encoding"),
+        length: res.headers.get("content-length"),
+        text: await res.text(),
+      }).toEqual({ encoding: null, length: String(payload.length), text: payload });
+    });
+  });
+
+  it.concurrent("also applies to a cloned fetch() response", async () => {
+    using upstream = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(gzipSync(payload), {
+          headers: { "Content-Encoding": "gzip", "Content-Type": "text/plain" },
+        }),
+    });
+    using proxy = Bun.serve({
+      port: 0,
+      fetch: async () => (await fetch(upstream.url)).clone(),
+    });
+    const res = await fetch(proxy.url);
+    expect({ encoding: res.headers.get("content-encoding"), text: await res.text() }).toEqual({
+      encoding: null,
+      text: payload,
+    });
+  });
+
+  it.concurrent("passes Content-Encoding through when decompress: false", async () => {
+    const encoded = gzipSync(payload);
+    using upstream = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(encoded, {
+          headers: { "Content-Encoding": "gzip", "Content-Type": "text/plain" },
+        }),
+    });
+    using proxy = Bun.serve({
+      port: 0,
+      fetch: () => fetch(upstream.url, { decompress: false }),
+    });
+    // Proxy forwarded the still-encoded body with its encoding header intact,
+    // so the client's own auto-decompression yields the payload.
+    const res = await fetch(proxy.url);
+    expect(await res.text()).toBe(payload);
+  });
+
+  it.concurrent("keeps Content-Encoding on HEAD/304 responses (no body to decode)", async () => {
+    const raw = createNetServer(socket => {
+      socket.once("data", buf => {
+        const head = buf.toString("latin1");
+        if (head.startsWith("HEAD")) {
+          socket.end("HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 10\r\n\r\n");
+        } else {
+          socket.end("HTTP/1.1 304 Not Modified\r\nContent-Encoding: gzip\r\n\r\n");
+        }
+      });
+    });
+    await once(raw.listen(0, "127.0.0.1"), "listening");
+    const uport = (raw.address() as import("node:net").AddressInfo).port;
+    try {
+      using proxy = Bun.serve({
+        port: 0,
+        fetch: req =>
+          fetch(`http://127.0.0.1:${uport}/`, { method: req.method, redirect: "manual" }),
+      });
+
+      const head = await fetch(proxy.url, { method: "HEAD" });
+      const notModified = await fetch(proxy.url, { method: "GET" });
+      expect({
+        head: { status: head.status, encoding: head.headers.get("content-encoding") },
+        notModified: {
+          status: notModified.status,
+          encoding: notModified.headers.get("content-encoding"),
+        },
+      }).toEqual({
+        head: { status: 200, encoding: "gzip" },
+        notModified: { status: 304, encoding: "gzip" },
+      });
+    } finally {
+      raw.close();
+    }
+  });
+
+  it.concurrent("does not strip Content-Encoding from a handler-constructed Response", async () => {
+    const encoded = gzipSync(payload);
+    using server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(encoded, {
+          headers: { "Content-Encoding": "gzip", "Content-Type": "text/plain" },
+        }),
+    });
+    const res = await fetch(server.url);
+    expect({ encoding: res.headers.get("content-encoding"), text: await res.text() }).toEqual({
+      encoding: "gzip",
+      text: payload,
+    });
+  });
+});
+
 describe("empty compressed responses", () => {
   // A response that declares Content-Encoding but sends zero body bytes must
   // resolve as an empty body, like Node — not fail with ZlibError.

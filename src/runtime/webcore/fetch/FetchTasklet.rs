@@ -1768,7 +1768,8 @@ impl FetchTasklet {
         };
         let url = BunString::clone_utf8(metadata.url.slice());
         let redirected = self.result.redirected;
-        Response::init(
+        let body_decoded = self.result.body_decoded;
+        let response = Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
                 headers: Some(unsafe { HeadersRef::adopt(headers) }),
@@ -1779,7 +1780,9 @@ impl FetchTasklet {
             Body::new(self.to_body_value()),
             url,
             redirected,
-        )
+        );
+        response.set_body_decoded(body_decoded);
+        response
     }
 
     fn ignore_remaining_response_body(&mut self, from_finalizer: bool) {

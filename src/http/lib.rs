@@ -406,6 +406,9 @@ pub struct HTTPClientResult<'a> {
     pub body: Option<&'a mut MutableString>,
     pub has_more: bool,
     pub redirected: bool,
+    /// The client recognised a `Content-Encoding` and will decode the body, so
+    /// the header no longer describes the bytes delivered in `body`.
+    pub body_decoded: bool,
     pub can_stream: bool,
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
@@ -478,6 +481,7 @@ impl<'a> HTTPClientResult<'a> {
                 .map(|b| unsafe { &mut *core::ptr::from_mut::<MutableString>(b) }),
             has_more: self.has_more,
             redirected: self.redirected,
+            body_decoded: self.body_decoded,
             can_stream: self.can_stream,
             is_http2: self.is_http2,
             fail: self.fail,
@@ -3727,14 +3731,6 @@ impl<'a> HTTPClient<'a> {
             }
         };
 
-        if (self.state.content_encoding_i as usize) < response.headers.list.len()
-            && !self.state.flags.did_set_content_encoding
-        {
-            // if it compressed with this header, it is no longer because we will decompress it
-            self.state.flags.did_set_content_encoding = true;
-            self.state.content_encoding_i = u8::MAX;
-        }
-
         if should_continue == ShouldContinue::Finished {
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
@@ -4428,6 +4424,17 @@ impl<'a> HTTPClient<'a> {
             self.state.cloned_metadata = None;
         }
 
+        // Only true when a body will actually be decoded; HEAD/1xx/204/304
+        // carry the header but no bytes, so it still describes the entity.
+        let status_allows_body = self
+            .state
+            .cloned_metadata
+            .as_ref()
+            .map(|m| m.response.status_code)
+            .is_none_or(|s| !(100..200).contains(&s) && s != 204 && s != 304);
+        let body_decoded =
+            self.state.encoding != Encoding::Identity && self.method.has_body() && status_allows_body;
+
         let certificate_info = self.state.certificate_info.take();
         if certificate_info.is_none() {
             if let Some(metadata) = self.state.cloned_metadata.take() {
@@ -4436,6 +4443,7 @@ impl<'a> HTTPClient<'a> {
                     metadata: Some(metadata),
                     body: None,
                     redirected: self.flags.redirected,
+                    body_decoded,
                     fail: self.state.fail,
                     dns_error: self.state.dns_error,
                     dns_hostname: self.state.dns_hostname.take(),
@@ -4453,6 +4461,7 @@ impl<'a> HTTPClient<'a> {
             body: None,
             metadata: None,
             redirected: self.flags.redirected,
+            body_decoded,
             fail: self.state.fail,
             dns_error: self.state.dns_error,
             dns_hostname: self.state.dns_hostname.take(),
@@ -4767,7 +4776,7 @@ impl<'a> HTTPClient<'a> {
         let mut location: &[u8] = b"";
         let mut pretend_304 = false;
         let mut is_server_sent_events = false;
-        for (header_i, header) in response.headers.list.iter().enumerate() {
+        for header in response.headers.list.iter() {
             match hash_header_name(header.name()) {
                 h if h == hash_header_const(b"Content-Length") => {
                     // RFC 9110 section 9.3.6: a client MUST ignore
@@ -4819,18 +4828,14 @@ impl<'a> HTTPClient<'a> {
                             || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
                         {
                             self.state.encoding = Encoding::Gzip;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(
                             value, b"deflate",
                         ) {
                             self.state.encoding = Encoding::Deflate;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                             self.state.encoding = Encoding::Brotli;
-                            self.state.content_encoding_i = header_i as u8;
                         } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
-                            self.state.content_encoding_i = header_i as u8;
                         }
                     }
                 }

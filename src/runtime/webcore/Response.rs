@@ -171,6 +171,10 @@ pub struct Response {
     // `Copy` and has no `Drop`.
     url: JsCell<OwnedString>,
     redirected: Cell<bool>,
+    /// `fetch()` recognised and removed a `Content-Encoding` from the body it
+    /// delivered, so the header stored in `init.headers` no longer describes
+    /// `body`. `Bun.serve` consults this to avoid re-emitting the stale header.
+    body_decoded: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
     pub ref_count: Cell<u32>,
@@ -192,6 +196,7 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(OwnedString::new(BunString::empty())),
             redirected: Cell::new(false),
+            body_decoded: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
@@ -271,6 +276,16 @@ impl Response {
             redirected: Cell::new(redirected),
             ..Default::default()
         }
+    }
+
+    #[inline]
+    pub fn body_decoded(&self) -> bool {
+        self.body_decoded.get()
+    }
+
+    #[inline]
+    pub fn set_body_decoded(&self, decoded: bool) {
+        self.body_decoded.set(decoded);
     }
 
     /// Takes ownership (+1) of `status_text`.
@@ -821,6 +836,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
+            body_decoded: Cell::new(self.body_decoded.get()),
             ..Default::default()
         })
     }

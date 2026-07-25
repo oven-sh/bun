@@ -267,21 +267,34 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
             }
             JSObject* envObject = nullptr;
+            bool isProcessEnv = false;
 
             if (envValue && envValue.isCell()) {
                 envObject = dynamicDowncast<JSC::JSObject>(envValue);
+                isProcessEnv = globalObject->m_processEnvObject.isInitialized()
+                    && envObject == globalObject->processEnvObject();
             } else if (globalObject->m_processEnvObject.isInitialized()) {
                 envObject = globalObject->processEnvObject();
+                isProcessEnv = true;
             }
 
             if (envObject) {
+                // process.env carries DontEnum accessors for auto-loaded .env
+                // values and the always-present TZ/TLS/proxy vars. Unwrap the
+                // Windows Proxy and include DontEnum when snapshotting it so
+                // workers keep seeing .env values; user-provided env objects
+                // stay Exclude so their DontEnum properties are not leaked.
+                if (isProcessEnv) {
+                    envObject = Bun::unwrapProcessEnvProxy(envObject);
+                }
                 if (!envObject->staticPropertiesReified()) {
                     envObject->reifyAllStaticProperties(globalObject);
                     RETURN_IF_EXCEPTION(throwScope, {});
                 }
 
                 JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-                envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+                envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys,
+                    isProcessEnv ? JSC::DontEnumPropertiesMode::Include : JSC::DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(throwScope, {});
 
                 HashMap<String, String> env;
@@ -289,6 +302,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
                 for (const auto& key : keys) {
                     JSValue value = envObject->get(lexicalGlobalObject, key);
                     RETURN_IF_EXCEPTION(throwScope, {});
+                    if (isProcessEnv) {
+                        if (value.isUndefined())
+                            continue;
+                        if (value.isCallable())
+                            continue;
+                    }
                     String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
                     RETURN_IF_EXCEPTION(throwScope, {});
                     env.add(key.impl()->isolatedCopy(), str);

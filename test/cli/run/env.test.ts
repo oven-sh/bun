@@ -329,6 +329,21 @@ describe("dotenv priority", () => {
     expect(stdout).toBe("secret\nsecret");
   });
 
+  test("auto-loaded .env values survive the default worker env snapshot", () => {
+    const dir = tempDirWithFiles("dotenv-worker-snap", {
+      ".env": "AUTO_FROM_FILE=secret\n",
+      "worker.js": `require("worker_threads").parentPort.postMessage(process.env.AUTO_FROM_FILE);`,
+      "index.ts": `
+        const { Worker } = require("worker_threads");
+        void process.env.PATH;
+        const w = new Worker("./worker.js", {});
+        w.on("message", (m) => { console.log(process.env.AUTO_FROM_FILE, m); process.exit(0); });
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("secret secret");
+  });
+
   test("auto-loaded special-cased env keys are not enumerable", () => {
     const dir = tempDirWithFiles("dotenv-special", {
       ".env": "HTTP_PROXY=http://p:1\nTZ=UTC\n123=num\n",

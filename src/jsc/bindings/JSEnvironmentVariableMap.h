@@ -13,6 +13,11 @@ namespace Bun {
 
 JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+// Windows' process.env is a Proxy over internalEnv; snapshotting wants the
+// target so DontEnum keys (auto-loaded .env values) are visible. Pass-through
+// on POSIX.
+JSC::JSObject* unwrapProcessEnvProxy(JSC::JSObject* envObject);
+
 // worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);

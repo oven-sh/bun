@@ -18,6 +18,7 @@
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include "BunProcess.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
@@ -37,6 +38,20 @@ extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* 
 namespace Bun {
 
 using namespace WebCore;
+
+// On Windows process.env is a Proxy whose ownKeys trap returns envMapList,
+// which by design excludes DontEnum auto-loaded .env keys. Snapshot and
+// SHARE_ENV seeding want the target so DontEnumPropertiesMode::Include sees
+// those keys; pass-through on POSIX.
+JSObject* unwrapProcessEnvProxy(JSObject* envObject)
+{
+#if OS(WINDOWS)
+    if (auto* proxy = jsDynamicCast<JSC::ProxyObject*>(envObject)) {
+        if (auto* target = proxy->target()) return target;
+    }
+#endif
+    return envObject;
+}
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -715,7 +730,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
 
     // Founding a new tree. processEnvObject() forces the lazy init so the OS
     // environment is captured before the swap below.
-    JSObject* envObject = globalObject->processEnvObject();
+    JSObject* envObject = unwrapProcessEnvProxy(globalObject->processEnvObject());
     if (!envObject->staticPropertiesReified()) {
         envObject->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);

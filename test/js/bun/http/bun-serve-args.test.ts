@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isWindows, tmpdirSync } from "../../../harness";
+import { isWindows, tempDir, tmpdirSync } from "../../../harness";
 
 const defaultHostname = "localhost";
 
@@ -160,15 +160,15 @@ describe("unix option validation", () => {
   });
 
   test("Uint8Array is read as raw path bytes", () => {
-    const dir = tmpdirSync();
-    const name = "u8a.sock";
+    using dir = tempDir("unix-opt-u8a", {});
+    const p = String(dir) + "/u8a.sock";
     using server = serve({
       // @ts-expect-error
-      unix: new Uint8Array(Buffer.from(dir + "/" + name)),
+      unix: new Uint8Array(Buffer.from(p)),
       fetch: () => new Response("ok"),
     });
     // @ts-expect-error
-    expect(server.address + "").toBe(dir + "/" + name);
+    expect(server.address + "").toBe(p);
   });
 
   test.each([undefined, null])("%p is treated as absent (TCP)", value => {
@@ -183,9 +183,9 @@ describe("unix option validation", () => {
   });
 
   test.skipIf(isWindows)("server.url never throws for unix paths with special characters", () => {
-    const dir = tmpdirSync();
+    using dir = tempDir("unix-opt-special", {});
     for (const name of ["my app.sock", "a#b.sock", "a?b.sock", "a@b.sock"]) {
-      const p = dir + "/" + name;
+      const p = String(dir) + "/" + name;
       using server = serve({ unix: p, fetch: () => new Response("ok") });
       const url = server.url;
       expect(url).toBeInstanceOf(URL);
@@ -195,9 +195,9 @@ describe("unix option validation", () => {
   });
 
   test.skipIf(isWindows)("server.url never throws for a relative unix path with a space", () => {
+    using dir = tempDir("unix-opt-rel", {});
     const cwd = process.cwd();
-    const dir = tmpdirSync();
-    process.chdir(dir);
+    process.chdir(String(dir));
     try {
       using server = serve({ unix: "my app.sock", fetch: () => new Response("ok") });
       const url = server.url;

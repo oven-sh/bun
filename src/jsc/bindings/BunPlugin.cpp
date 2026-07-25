@@ -40,7 +40,6 @@ JSC::JSValue unwrapSpyOriginal(JSC::JSValue);
 }
 
 extern "C" bool Bun__VirtualMachine__isInPreload(void*);
-extern "C" void* Bun__getVM();
 
 namespace Zig {
 
@@ -427,10 +426,11 @@ public:
     WriteBarrier<JSObject> esmOriginalExports;
     WriteBarrier<JSObject> cjsModule;
     WriteBarrier<Unknown> cjsOriginalExports;
-    // Bun.plugin build.module() callback this mock overwrote; reinstated on restore.
+    // virtualModules entry this mock overwrote (Bun.plugin or preload mock); reinstated on restore.
     WriteBarrier<JSObject> priorVirtualModuleEntry;
-    // Namespace came from a mock factory, not the real source: evict on restore.
-    bool mustEvictOnRestore = false;
+    // That cache's entry came from a mock factory, not the real source: evict on restore.
+    bool mustEvictEsm = false;
+    bool mustEvictCjs = false;
     // Preload mocks survive mock.restore() so afterEach(mock.restore) keeps global setup.
     bool installedDuringPreload = false;
 
@@ -617,7 +617,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     JSC::JSObject* callback = callbackValue.getObject();
 
     JSModuleMock* mock = JSModuleMock::create(vm, globalObject->mockModule.mockModuleStructure.getInitializedOnMainThread(globalObject), callback);
-    mock->installedDuringPreload = Bun__VirtualMachine__isInPreload(Bun__getVM());
+    mock->installedDuringPreload = Bun__VirtualMachine__isInPreload(globalObject->bunVM());
 
     // Preserve true originals across repeat mock.module() calls for the same specifier.
     if (globalObject->onLoadPlugins.virtualModules) {
@@ -633,8 +633,11 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     mock->cjsOriginalExports.set(vm, mock, priorMock->cjsOriginalExports.get());
                 if (priorMock->priorVirtualModuleEntry)
                     mock->priorVirtualModuleEntry.set(vm, mock, priorMock->priorVirtualModuleEntry.get());
-                // Prior mock had no snapshot: the registry entry came from its factory.
-                mock->mustEvictOnRestore = priorMock->mustEvictOnRestore || (!priorMock->esmNamespace && !priorMock->cjsModule);
+                else if (priorMock->installedDuringPreload)
+                    mock->priorVirtualModuleEntry.set(vm, mock, priorMock);
+                // Prior mock had no snapshot for a cache: that cache's entry came from its factory.
+                mock->mustEvictEsm = priorMock->mustEvictEsm || !priorMock->esmNamespace;
+                mock->mustEvictCjs = priorMock->mustEvictCjs || !priorMock->cjsModule;
             } else {
                 mock->priorVirtualModuleEntry.set(vm, mock, prior.get());
             }
@@ -697,7 +700,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                         removeFromESM = false;
 
                         JSObject* esmOriginals = nullptr;
-                        if (!mock->mustEvictOnRestore) {
+                        if (!mock->mustEvictEsm) {
                             if (!mock->esmNamespace)
                                 mock->esmNamespace.set(vm, mock, moduleNamespaceObject);
                             esmOriginals = mock->esmOriginalExports.get();
@@ -758,7 +761,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     if (entryValue) {
         removeFromCJS = true;
         if (auto* moduleObject = entryValue ? dynamicDowncast<Bun::JSCommonJSModule>(entryValue) : nullptr) {
-            if (!mock->cjsModule && !mock->mustEvictOnRestore) {
+            if (!mock->cjsModule && !mock->mustEvictCjs) {
                 JSValue priorExports = moduleObject->getIfPropertyExists(globalObject, Bun::builtinNames(vm).exportsPublicName());
                 RETURN_IF_EXCEPTION(scope, {});
                 mock->cjsModule.set(vm, mock, moduleObject);
@@ -823,7 +826,7 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
 
         toReplace.append({ entry.key, JSC::Strong<JSC::JSObject> { vm, moduleMock->priorVirtualModuleEntry.get() } });
 
-        auto* ns = moduleMock->mustEvictOnRestore ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
+        auto* ns = moduleMock->mustEvictEsm ? nullptr : dynamicDowncast<JSC::JSModuleNamespaceObject>(moduleMock->esmNamespace.get());
         if (ns) {
             if (auto* originals = moduleMock->esmOriginalExports.get()) {
                 auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -850,7 +853,7 @@ void BunPlugin::OnLoad::restoreModuleMocks(Zig::GlobalObject* globalObject)
             moduleLoader->removeEntry(specifierIdent);
         }
 
-        auto* cjs = moduleMock->mustEvictOnRestore ? nullptr : dynamicDowncast<Bun::JSCommonJSModule>(moduleMock->cjsModule.get());
+        auto* cjs = moduleMock->mustEvictCjs ? nullptr : dynamicDowncast<Bun::JSCommonJSModule>(moduleMock->cjsModule.get());
         if (cjs) {
             JSValue original = moduleMock->cjsOriginalExports.get();
             cjs->putDirect(vm, Bun::builtinNames(vm).exportsPublicName(), original ? original : jsUndefined(), 0);

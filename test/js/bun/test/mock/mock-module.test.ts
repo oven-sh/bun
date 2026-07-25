@@ -447,4 +447,30 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(stderr).not.toContain("fail)");
     expect(exitCode).toBe(0);
   });
+
+  test("test-time re-mock of a preload-installed mock restores to the preload mock", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("./dep.ts", () => ({ getValue: () => "preload-mock" }));
+      `,
+      "fixture.test.ts": `
+        import { test, expect, mock, afterEach } from "bun:test";
+        import { getValue } from "./dep.ts";
+        afterEach(() => mock.restore());
+        test("a overrides", () => {
+          mock.module("./dep.ts", () => ({ getValue: () => "per-test" }));
+          expect(getValue()).toBe("per-test");
+        });
+        test("b sees preload mock again", async () => {
+          expect((await import("./dep.ts")).getValue()).toBe("preload-mock");
+        });
+      `,
+      "bunfig.toml": `[test]\npreload = ["./preload.ts"]\n`,
+    });
+    expect(stderr).toContain("2 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1867,7 +1867,7 @@ impl QuicSession {
             self.deferred_close
                 .with_mut(|d| *d = Some((app, code, reason)));
         } else {
-            self.apply_close(app, code, &reason);
+            self.apply_close(app, code, &reason, false);
         }
     }
 
@@ -1887,11 +1887,13 @@ impl QuicSession {
         false
     }
 
-    fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
+    fn apply_close(&self, app: bool, code: u64, reason: &[u8], immediate: bool) {
         let Some(c) = self.conn() else { return };
         if app || code != 0 || reason.len() > 1 {
             let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
             c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
+        } else if immediate {
+            c.abort();
         } else {
             c.close();
         }
@@ -1916,7 +1918,7 @@ impl QuicSession {
             return;
         }
         if let Some((app, code, reason)) = self.deferred_close.with_mut(Option::take) {
-            self.apply_close(app, code, &reason);
+            self.apply_close(app, code, &reason, false);
             self.schedule_process();
         }
     }
@@ -1975,18 +1977,7 @@ impl QuicSession {
                 // here, so teardown() MUST run; report a parse failure
                 // instead of propagating past it.
                 match self.parse_close_options(global, options) {
-                    Ok((app, code, reason)) => {
-                        if let Some(c) = self.conn() {
-                            if app || code != 0 || reason.len() > 1 {
-                                let r = core::ffi::CStr::from_bytes_until_nul(&reason)
-                                    .unwrap_or(c"close");
-                                c.abort_error(app, code.min(u32::MAX as u64) as c_uint, r);
-                            } else {
-                                // close() defers on server bidi streams; abort() emits NO_ERROR now.
-                                c.abort();
-                            }
-                        }
-                    }
+                    Ok((app, code, reason)) => self.apply_close(app, code, &reason, true),
                     Err(e) => global.report_uncaught_exception_from_error(e),
                 }
                 if let Some(endpoint) = self.endpoint_ref() {

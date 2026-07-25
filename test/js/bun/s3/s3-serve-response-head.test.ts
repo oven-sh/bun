@@ -51,7 +51,7 @@ function makeMockS3(body: string) {
     fetch(req) {
       seen.push(req.method);
       if (!verifySigV4(req, "testsecret")) {
-        return new Response("<?xml version=\"1.0\"?><Error><Code>SignatureDoesNotMatch</Code></Error>", {
+        return new Response('<?xml version="1.0"?><Error><Code>SignatureDoesNotMatch</Code></Error>', {
           status: 403,
           headers: { "x-minio-error-code": "SignatureDoesNotMatch" },
         });

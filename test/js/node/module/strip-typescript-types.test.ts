@@ -10,7 +10,7 @@ describe("stripTypeScriptTypes", () => {
   test("strips types in place, preserving positions", () => {
     expect(stripTypeScriptTypes("const x: number = 1;")).toBe("const x         = 1;");
     expect(stripTypeScriptTypes("let x: string = 1 as any;")).toBe("let x         = 1       ;");
-    expect(stripTypeScriptTypes("let x: Ту = 1;")).toBe("let x     = 1;");
+    expect(stripTypeScriptTypes("let x: Ту = 1;")).toBe("let x  \u00a0\u00a0 = 1;");
   });
 
   test("mode: 'strip' explicit", () => {
@@ -163,10 +163,6 @@ describe("stripTypeScriptTypes", () => {
         "let b = <string>y;",
         "The angle-bracket syntax for type assertions, `<T>expr`, is not supported in type strip mode. Instead, use the 'as' syntax: `expr as T`.",
       ],
-      [
-        "let x = 1 + 2 as any * 3;",
-        "Type assertions that would change binary expression grouping are not supported in strip-only mode.",
-      ],
     ];
     for (const [code, message] of cases) {
       expect(() => stripTypeScriptTypes(code)).toThrow(
@@ -181,7 +177,9 @@ describe("stripTypeScriptTypes", () => {
     expect(stripTypeScriptTypes("declare namespace O { enum E {} }")).toBe(
       "                                 ",
     );
-    // Parenthesized bases do not change grouping.
+    // Casts inside binary expressions blank like any other (Node v26.3.0's
+    // amaro predates swc's grouping-change rejection).
+    expect(stripTypeScriptTypes("let x = 1 + 2 as any * 3;")).toBe("let x = 1 + 2        * 3;");
     expect(stripTypeScriptTypes("let x = (1 + 2) as any * 3;")).toBe("let x = (1 + 2)        * 3;");
   });
 

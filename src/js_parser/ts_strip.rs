@@ -41,7 +41,6 @@ pub enum UnsupportedKind {
     ExportAssignment,
     TypeAssertion,
     ModuleKeyword,
-    UnsafeGrouping,
 }
 
 impl UnsupportedKind {
@@ -66,9 +65,6 @@ impl UnsupportedKind {
             UnsupportedKind::ModuleKeyword => {
                 "`module` keyword is not supported. Use `namespace` instead."
             }
-            UnsupportedKind::UnsafeGrouping => {
-                "Type assertions that would change binary expression grouping are not supported in strip-only mode."
-            }
         }
     }
 }
@@ -83,15 +79,10 @@ pub enum EntryKind {
     /// `import type`, function overloads, …): blank + `fix_asi`.
     BlankStmt,
     /// `expr as T` / `expr satisfies T`: the span covers `as`/`satisfies`
-    /// through the end of the type. Gets `fix_asi_in_expr` plus the
-    /// binary-grouping safety check. `base_op` is `Some(precedence)` when the
-    /// expression at the base of the assertion chain is an (unparenthesized)
-    /// binary expression.
+    /// through the end of the type. Gets `fix_asi_in_expr`.
     BlankAs {
-        /// Precedence of the base binary op (swc's scale, 4..=15), if any.
-        base_op: Option<u8>,
-        /// `expr as const` (const assertion): mirrors swc, which applies the
-        /// grouping check but not `fix_asi_in_expr` for `TsConstAssertion`.
+        /// `expr as const` (const assertion): mirrors swc, which skips
+        /// `fix_asi_in_expr` for `TsConstAssertion`.
         is_const_assertion: bool,
     },
     /// Arrow-function type parameter list `<T, …>`. Needs the async/newline
@@ -142,61 +133,6 @@ pub struct StripError {
     pub hi: u32,
 }
 
-/// swc's binary operator precedence table (`binary_operator_precedence`).
-/// `**` (15) is the only right-associative case the grouping check cares
-/// about.
-pub const PREC_EXP: u8 = 15;
-
-fn binary_op_precedence(token: T) -> Option<u8> {
-    Some(match token {
-        T::TAsteriskAsterisk => PREC_EXP,
-        T::TAsterisk | T::TSlash | T::TPercent => 14,
-        T::TPlus | T::TMinus => 13,
-        T::TLessThanLessThan
-        | T::TGreaterThanGreaterThan
-        | T::TGreaterThanGreaterThanGreaterThan => 12,
-        T::TLessThan | T::TLessThanEquals | T::TGreaterThan | T::TGreaterThanEquals => 11,
-        T::TIn | T::TInstanceof => 11,
-        T::TEqualsEquals
-        | T::TExclamationEquals
-        | T::TEqualsEqualsEquals
-        | T::TExclamationEqualsEquals => 10,
-        T::TAmpersand => 9,
-        T::TCaret => 8,
-        T::TBar => 7,
-        T::TAmpersandAmpersand => 6,
-        T::TBarBar => 5,
-        T::TQuestionQuestion => 4,
-        _ => return None,
-    })
-}
-
-/// swc's precedence scale for Bun's `OpCode`, for the base of an assertion
-/// chain. `None` for comma/assignment (swc models those as `SeqExpr`/
-/// `AssignExpr`, not `Bin`, so they never trigger the grouping check).
-pub fn precedence_for_opcode(op: bun_ast::OpCode) -> Option<u8> {
-    use bun_ast::OpCode;
-    Some(match op {
-        OpCode::BinPow => PREC_EXP,
-        OpCode::BinMul | OpCode::BinDiv | OpCode::BinRem => 14,
-        OpCode::BinAdd | OpCode::BinSub => 13,
-        OpCode::BinShl | OpCode::BinShr | OpCode::BinUShr => 12,
-        OpCode::BinLt
-        | OpCode::BinLe
-        | OpCode::BinGt
-        | OpCode::BinGe
-        | OpCode::BinIn
-        | OpCode::BinInstanceof => 11,
-        OpCode::BinLooseEq | OpCode::BinLooseNe | OpCode::BinStrictEq | OpCode::BinStrictNe => 10,
-        OpCode::BinBitwiseAnd => 9,
-        OpCode::BinBitwiseXor => 8,
-        OpCode::BinBitwiseOr => 7,
-        OpCode::BinLogicalAnd => 6,
-        OpCode::BinLogicalOr => 5,
-        OpCode::BinNullishCoalescing => 4,
-        _ => return None,
-    })
-}
 
 struct Strip<'s> {
     tokens: &'s [CapturedToken],
@@ -380,32 +316,6 @@ pub fn apply(
                     hi: strip.snap_hi(e.lo, e.hi),
                 });
             }
-            EntryKind::BlankAs { base_op, .. } => {
-                // swc `assertion_chain_would_change_binary_grouping`: erasing
-                // `a + b as T * c` would regroup the arithmetic; reject.
-                let Some(base_prec) = base_op else { continue };
-                let hi = strip.snap_hi(e.lo, e.hi);
-                let Some(next) = strip.next_token(hi) else {
-                    continue;
-                };
-                let Some(next_prec) = binary_op_precedence(next.token) else {
-                    continue;
-                };
-                let unsafe_grouping = if next_prec != base_prec {
-                    next_prec > base_prec
-                } else {
-                    // Equal precedence: only `**` is right-associative, so
-                    // flattening equal-precedence groups is unsafe for it.
-                    base_prec == PREC_EXP
-                };
-                if unsafe_grouping {
-                    consider(StripError {
-                        kind: UnsupportedKind::UnsafeGrouping,
-                        lo: e.lo,
-                        hi,
-                    });
-                }
-            }
             _ => {}
         }
     }
@@ -431,9 +341,7 @@ pub fn apply(
                     strip.fix_asi(e.lo, hi);
                 }
             }
-            EntryKind::BlankAs {
-                is_const_assertion, ..
-            } => {
+            EntryKind::BlankAs { is_const_assertion } => {
                 strip.replacements.push((e.lo, hi));
                 if !is_const_assertion {
                     strip.fix_asi_in_expr(e.lo, hi);

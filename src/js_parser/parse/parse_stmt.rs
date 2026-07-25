@@ -902,10 +902,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.expect(T::TIdentifier)?;
                         p.lexer.expect_or_insert_semicolon()?;
 
-                        p.ts_strip_record_to_here(
-                            crate::ts_strip::EntryKind::BlankStmt,
-                            loc.start as u32,
-                        );
+                        // Strip mode: amaro leaves `export as namespace ns;`
+                        // verbatim (no TsStrip visitor handles
+                        // TsNamespaceExportDecl), so no span is recorded.
                         return Ok(p.s(S::TypeScript {}, loc));
                     }
                 }
@@ -1873,6 +1872,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if !p.lexer.has_newline_before
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                 {
+                    // swc strips the `abstract` keyword itself (visit_class).
+                    p.ts_strip_record_span(
+                        crate::ts_strip::EntryKind::Blank,
+                        loc.start as u32,
+                        loc.start as u32 + b"abstract".len() as u32,
+                    );
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
                 }
                 if opts.ts_decorators.is_some() {

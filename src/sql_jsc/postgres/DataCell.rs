@@ -19,14 +19,6 @@ type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 bun_core::declare_scope!(Postgres, visible);
 bun_core::declare_scope!(PostgresDataCell, visible);
 
-/// Decode a Postgres date/timestamp/timestamptz text value to JS epoch
-/// milliseconds. DateStyle is pinned to ISO in the startup packet, so the
-/// server always emits `YYYY-MM-DD[...]` here regardless of postgresql.conf /
-/// ALTER DATABASE / ALTER ROLE defaults. `timestamp` and `timestamptz` are
-/// parsed component-wise so the text path agrees with the binary path on
-/// non-UTC hosts and for years 0001..0099 (which JS `Date.parse` windows into
-/// the 20th/21st century on the non-ISO heuristic path). `date` is the
-/// date-only ISO form, which `Date.parse` handles correctly.
 fn parse_date_time_text(
     tag: types::Tag,
     bytes: &[u8],

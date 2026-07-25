@@ -1,12 +1,10 @@
-//! Shared parser for the ISO date/time text both SQL drivers receive over
-//! their text protocols: `YYYY-MM-DD[ |T]HH:MM:SS[.ffffff]` plus, for Postgres
-//! `timestamptz`, a trailing `[+-]HH[:MM[:SS]]` offset.
+//! Shared parser for the wall-clock date/time text both SQL drivers receive
+//! over their text protocols: `YYYY-MM-DD[ |T]HH:MM:SS[.ffffff]`.
 //!
-//! Callers convert the parsed components with UTC arithmetic to match their
-//! binary protocol paths. Routing these strings through JS `Date.parse` is
-//! wrong: the space separator makes JSC take its non-ISO heuristic path, which
-//! reads a zoneless wall-clock as *local* time and maps years 0001..0099 into
-//! the 20th/21st century.
+//! The text carries no timezone, so callers convert the parsed components with
+//! UTC arithmetic to match their binary protocol paths. Routing these strings
+//! through JS `Date.parse` instead would read the wall-clock as *local* time
+//! and shift the value by the host's UTC offset.
 //!
 //! Only the structural form is validated here (digit positions, separators,
 //! fraction length). Calendar/range validation is the caller's job: MySQL
@@ -44,8 +42,7 @@ pub fn parse_postgres_timestamp(text: &[u8]) -> Option<DateTimeText> {
 
 /// Postgres `timestamptz` text: `YYYY-MM-DD HH:MM:SS[.ffffff][+-]HH[:MM[:SS]]`.
 /// Returns the wall-clock components and the UTC offset in seconds (positive
-/// east of UTC). Anything outside this exact shape (BC dates, 5+ digit years,
-/// missing offset) returns `None` so the caller can fall back to `Date.parse`.
+/// east of UTC); `None` for anything outside this shape so the caller falls back.
 pub fn parse_postgres_timestamptz(text: &[u8]) -> Option<(DateTimeText, i32)> {
     let (dt, consumed) = parse(text, false, false)?;
     let tail = text.get(consumed..)?;
@@ -55,8 +52,6 @@ pub fn parse_postgres_timestamptz(text: &[u8]) -> Option<(DateTimeText, i32)> {
         b'-' => -1,
         _ => return None,
     };
-    // Offset is `HH`, `HH:MM` or `HH:MM:SS` (Postgres emits seconds for
-    // pre-standardization zones).
     let hh = parse_u(rest.get(0..2)?)? as i32;
     let (mm, ss) = match rest.len() {
         2 => (0, 0),
@@ -83,10 +78,6 @@ fn parse_u(bytes: &[u8]) -> Option<u32> {
     Some(n)
 }
 
-/// Parses `YYYY-MM-DD[ HH:MM:SS[.ffffff]]` from the head of `text`, returning
-/// the parsed components and the number of bytes consumed. Trailing bytes are
-/// left for the caller (the MySQL and naive-timestamp wrappers require none;
-/// the timestamptz wrapper parses the UTC offset from them).
 fn parse(
     text: &[u8],
     allow_date_only: bool,

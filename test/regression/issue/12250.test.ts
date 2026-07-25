@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-test.failing("issue #12250: afterAll hook should run even with --bail flag", async () => {
+test("issue #12250: afterAll hook should run even with --bail flag", async () => {
   using dir = tempDir("test-12250", {
     "test.spec.ts": `
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
@@ -36,19 +36,16 @@ describe('test', () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // The test should fail with exit code 1
-  expect(exitCode).toBe(1);
-
   // Before hook should run
   expect(stdout).toContain("Before");
 
-  // Currently failing: afterAll hook should run even with --bail
-  // TODO: Remove .todo() when fixed
+  // afterAll hook should run even with --bail
   expect(stdout).toContain("After");
 
-  // Should bail out after first failure
-  expect(stdout).toContain("Bailed out after 1 failure");
-  expect(stdout).toContain("Ran 1 tests");
+  // Should bail out after first failure and not run the second test
+  expect(stderr).toContain("Bailed out after 1 failure");
+  expect(stderr).not.toContain("should pass");
+  expect(exitCode).toBe(1);
 });
 
 test("issue #12250: afterAll hook runs normally without --bail flag", async () => {

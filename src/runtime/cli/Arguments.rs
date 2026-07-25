@@ -1214,7 +1214,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 Some(at) => &inspect_port_flag[at + 1..],
                 None => inspect_port_flag,
             };
-            if let Ok(port) = core::str::from_utf8(port_bytes).unwrap_or("").parse::<u16>() {
+            if let Ok(port) = core::str::from_utf8(port_bytes)
+                .unwrap_or("")
+                .parse::<u16>()
+            {
                 unsafe { Bun__setProcessDebugPort(port) };
                 if let Debugger::Enable(ref mut enable) = ctx.runtime_options.debugger {
                     if enable.path_or_port.is_empty() {

@@ -1466,7 +1466,9 @@ class InspectorCDPAdapter {
             }
             const chunkSize = 100 * 1024;
             for (let offset = 0; offset < snapshot.length; offset += chunkSize) {
-              this.#emitToClient("HeapProfiler.addHeapSnapshotChunk", { chunk: snapshot.slice(offset, offset + chunkSize) });
+              this.#emitToClient("HeapProfiler.addHeapSnapshotChunk", {
+                chunk: snapshot.slice(offset, offset + chunkSize),
+              });
             }
             this.#replyToClient(id, {});
           },

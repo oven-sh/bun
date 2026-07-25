@@ -288,6 +288,9 @@ function installBunExposeInternalsRequireInterceptor() {
   let requireVendoredNodeInternal;
   const mergedInternals = { __proto__: null };
   BunModule.prototype.require = function require(id) {
+    if (typeof id === 'string' && id.startsWith('node:internal/')) {
+      id = id.slice(5);
+    }
     if (typeof id === 'string' && id.startsWith('internal/')) {
       exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
       // Pure-JS node internals vendored under common/nodeinternals/ (webidl,

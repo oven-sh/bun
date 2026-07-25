@@ -934,19 +934,15 @@ describe("DOM nodes", () => {
 
   it("toMatchInlineSnapshot (snapshot serializer path)", () => {
     const div = element(HTMLDivElement, "DIV", [attr("id", "x")], [new Text("hi"), new Comment("c")]);
-    expect(div).toMatchInlineSnapshot(`
-      <div
-        id="x"
-      >
-        hi
-        <!--c-->
-      </div>
-    `);
-    expect(new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])])).toMatchInlineSnapshot(`
-      <DocumentFragment>
-        <button />
-      </DocumentFragment>
-    `);
+    expect(div).toMatchInlineSnapshot(`<div
+  id="x"
+>
+  hi
+  <!--c-->
+</div>`);
+    expect(new DocumentFragment([element(HTMLButtonElement, "BUTTON", [], [])])).toMatchInlineSnapshot(`<DocumentFragment>
+  <button />
+</DocumentFragment>`);
   });
 
   it("toEqual diff on a DOM element renders markup, not object graph", () => {

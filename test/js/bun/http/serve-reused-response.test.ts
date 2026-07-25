@@ -5,7 +5,9 @@ import { bunEnv, bunExe } from "harness";
 // A fetch handler that returns a Response whose body has already been used
 // (most often the same Response object returned for every request) must invoke
 // the error handler instead of silently sending a 200 with an empty body.
-describe("returning a Response with an already-used body", () => {
+// Every case spins up its own port-0 server and shares no state, so the whole
+// block runs concurrently to keep wall time bounded by the single subprocess spawn.
+describe.concurrent("returning a Response with an already-used body", () => {
   const alreadyUsedError = {
     code: "ERR_BODY_ALREADY_USED",
     name: "TypeError",
@@ -102,6 +104,7 @@ describe("returning a Response with an already-used body", () => {
 
   it("a Response reused through a static route keeps working", async () => {
     // Static routes snapshot the body at registration, so reuse is allowed there.
+    const error = jest.fn();
     await using server = serve({
       port: 0,
       routes: {
@@ -110,6 +113,7 @@ describe("returning a Response with an already-used body", () => {
       fetch() {
         return new Response("fallback");
       },
+      error,
     });
 
     for (let i = 0; i < 3; i++) {
@@ -117,6 +121,7 @@ describe("returning a Response with an already-used body", () => {
       expect(await response.text()).toBe("static-body");
       expect(response.status).toBe(200);
     }
+    expect(error).not.toHaveBeenCalled();
   });
 
   it("without an error handler, logs the error and responds with 500", async () => {
@@ -138,7 +143,15 @@ describe("returning a Response with an already-used body", () => {
         console.log(second.status, JSON.stringify(await second.text()));
         server.stop(true);`,
       ],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // On the ASAN CI lane this file runs with detect_leaks=1 and
+        // BUN_DESTRUCT_VM_ON_EXIT=1, which bunEnv forwards via process.env. That
+        // turns this behavior probe into a ~24s leak scan. Disable leak detection
+        // for the subprocess; the outer test process still runs under LSan.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+        BUN_DESTRUCT_VM_ON_EXIT: "0",
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

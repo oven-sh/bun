@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { openSync, writeSync, closeSync } from "node:fs";
+import { closeSync, openSync, writeSync } from "node:fs";
 import { join } from "node:path";
 
 // fetch(url, { body: formData }) where the FormData holds a Bun.file() entry

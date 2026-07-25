@@ -465,6 +465,23 @@ impl bun_ptr::RefCounted for JSValkeyClient {
         unsafe { &raw mut (*this).ref_count }
     }
     unsafe fn destructor(this: *mut Self, _ctx: ()) {
+        // SAFETY: last ref dropped; `this` is live until `deinit` reclaims it.
+        let this_ref = unsafe { &*this };
+        if this_ref.this_value.get().is_not_empty() {
+            // The count reached 0 while the JS wrapper is still attached
+            // (`finalize()` clears `this_value` as its last step). A ref was
+            // released that was not owned; freeing now would make the body of
+            // `finalize()` (or a later GC finalize) read the freed box.
+            // Donate the stolen ref back and leave the allocation live so
+            // `finalize()`'s own release runs `deinit` instead. Assertion
+            // builds panic so the over-release is still caught.
+            debug_assert!(
+                false,
+                "JSValkeyClient refcount reached 0 with this_value still attached",
+            );
+            this_ref.ref_();
+            return;
+        }
         // SAFETY: last ref dropped; sole owner.
         unsafe { JSValkeyClient::deinit(this) };
     }
@@ -1426,8 +1443,12 @@ impl JSValkeyClient {
             return;
         }
 
-        // During VM shutdown the event loop won't tick, so the deferred task below
-        // would never run; close inline (this_value is cleared, no JS re-entry).
+        // During VM shutdown the event loop won't tick, so the deferred task
+        // below would never run; close inline. `flags.finalized` is set (the
+        // only caller is `finalize`), so `fail()` / `update_poll_ref()` in
+        // the synchronous on_close path short-circuit. In practice the socket
+        // was already closed by `close_all_socket_groups` before `finalize`,
+        // so `is_closed()` above returns and this branch is not reached.
         if self.vm().is_shutting_down() {
             bun_core::hint::cold();
             self.client_mut().close();
@@ -1486,10 +1507,15 @@ impl JSValkeyClient {
         // SAFETY: the JS wrapper owned one ref; this scope consumes it.
         let _guard = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
 
-        this.stop_timers();
-        this.this_value.with_mut(|t| t.finalize());
         this.client_mut().flags.finalized = true;
+        this.stop_timers();
         this.close_socket_next_tick();
+        // Cleared last: `destructor()` treats a non-empty `this_value` as the
+        // "still in finalize" signal and donates instead of freeing, so every
+        // `this.*` above sees a live box even if `stop_timers()` or
+        // `close_socket_next_tick()` re-enter a deref that would otherwise
+        // take the count to 0.
+        this.this_value.with_mut(|t| t.finalize());
         // `_subscription_ctx` is three inline bools (no allocation, no GC
         // ref); `is_subscriber` can legitimately still be set here if the
         // server never confirmed UNSUBSCRIBE before disconnect, since

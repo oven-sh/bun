@@ -512,3 +512,88 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 });
+
+// A subscribed RedisClient inside a Worker that is busy when terminate() lands
+// forces the client to survive until the worker VM's lastChanceToFinalize
+// sweep. Before the fix, worker shutdown cleared hasTerminationRequest but left
+// the NeedTermination trap and/or the pending TerminationException, so the
+// first allocation inside close_all_socket_groups (creating the "Connection
+// closed" error for the subscriber's on_close) re-threw it. Debug builds hit
+// ASSERT(vm.hasTerminationRequest()) in deferTerminationSlow; release builds
+// continued into ErrorCodeCache::createError's uncheckedDowncast<JSObject> on
+// the TerminationException's JSString value and hit reportZappedCellAndCrash.
+// With the trap fully cleared, the release path would instead reach
+// JSValkeyClient::finalize and (under an over-release from the same family)
+// read the freed box from this_value.with_mut after stop_timers() dropped the
+// count to 0.
+test.concurrent(
+  "a subscribed RedisClient in a Worker survives worker.terminate() while JS is busy",
+  async () => {
+    const src = `
+    const { Worker } = require("node:worker_threads");
+    const CRLF = "\\r\\n";
+    const blk = s => "$" + s.length + CRLF + s + CRLF;
+    // RESP3 server: HELLO -> map{proto:3}; SUBSCRIBE -> push[subscribe,chan,1]; anything else -> +OK.
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { buf: "" }; },
+        data(s, d) {
+          s.data.buf += d.toString("latin1");
+          while (s.data.buf.includes(CRLF)) {
+            if (s.data.buf.includes("HELLO")) {
+              s.write("%1" + CRLF + blk("proto") + ":3" + CRLF);
+              s.data.buf = "";
+            } else if (s.data.buf.includes("SUBSCRIBE")) {
+              s.write(">3" + CRLF + blk("subscribe") + blk("ch") + ":1" + CRLF);
+              s.data.buf = "";
+            } else {
+              s.write("+OK" + CRLF);
+              s.data.buf = "";
+            }
+          }
+        },
+        close() {},
+      },
+    });
+
+    const body = \`
+      const { parentPort, workerData } = require("node:worker_threads");
+      const url = "redis://127.0.0.1:" + workerData.port;
+      const sub = new Bun.RedisClient(url, { autoReconnect: false });
+      await sub.subscribe("ch", m => { globalThis.m = m; });
+      // Keep JS busy so terminate() interrupts mid-execution and the
+      // TerminationException / trap bit are actually in play at shutdown.
+      (async () => { for (;;) { await new Promise(r => setTimeout(r, 0)); globalThis.n = (globalThis.n|0)+1; } })();
+      parentPort.postMessage("up");
+    \`;
+
+    for (let r = 0; r < ${isASAN ? 2 : 4}; r++) {
+      const w = new Worker(body, { eval: true, workerData: { port: server.port } });
+      await new Promise(res => w.once("message", res));
+      await Bun.sleep(20 + (r * 7) % 30);
+      await w.terminate();
+    }
+    server.stop(true);
+    console.log("OK");
+    process.exit(0);
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("hasTerminationRequest");
+    expect(stderr).not.toContain("use-after-free");
+    expect(stdout.trim()).toBe("OK");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

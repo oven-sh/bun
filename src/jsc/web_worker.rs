@@ -1245,8 +1245,14 @@ impl WebWorker {
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
+            // re-sets it for the JSC VM teardown. `clear_termination_exception`
+            // clears both the request bit and the pending TerminationException;
+            // clearing only the bit leaves `m_exception` set while
+            // `m_hasTerminationRequest` is false, which trips
+            // `ASSERT(vm.hasTerminationRequest())` in `deferTerminationSlow`
+            // the next time anything enters a `DeferTermination` scope
+            // (error-structure lazy init, socket on_close, promise reject).
+            vm.global().clear_termination_exception();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {

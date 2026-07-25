@@ -5819,6 +5819,8 @@ pub mod bv2_impl {
                 };
 
                 let kind = parent.kind;
+                let mut seen_stems: std::collections::HashSet<Vec<u8>> =
+                    std::collections::HashSet::new();
 
                 let mut names: Vec<Vec<u8>> = dir_entries
                     .data
@@ -5866,11 +5868,16 @@ pub mod bv2_impl {
                         .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
                     if suffix.is_empty() {
                         let stem = &rel[..rel.len() - ext.len()];
-                        if stem.len() < rel.len() {
+                        if seen_stems.insert(stem.to_vec()) {
+                            let stem_idx = self
+                                .resolve_glob_child(source_dir, stem, kind, target, resolve_queue)
+                                .unwrap_or(source_index);
                             let key: &'static [u8] =
                                 FilenameStore::instance().append_slice(stem).expect("oom");
-                            glob.entries
-                                .push(bun_ast::ast_result::GlobImportEntry { key, source_index });
+                            glob.entries.push(bun_ast::ast_result::GlobImportEntry {
+                                key,
+                                source_index: stem_idx,
+                            });
                         }
                     }
                 }

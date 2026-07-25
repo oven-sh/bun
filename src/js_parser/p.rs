@@ -864,7 +864,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn try_glob_require(&mut self, arg: Expr) -> Option<Expr> {
-        if !self.options.bundle {
+        if !self.options.bundle || self.options.features.hot_module_reloading {
             return None;
         }
         let mut shape_buf = BumpVec::new_in(self.arena);
@@ -889,6 +889,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         let tail = &shape[first_wild + 1..];
         if tail.contains(&0) || tail.contains(&b'/') {
+            return None;
+        }
+        if !tail.is_empty() && tail[0] != b'.' {
             return None;
         }
 

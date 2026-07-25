@@ -572,7 +572,10 @@ mod tests {
         assert_eq!(&*strip(b"https://user:pass@host/"), b"https://host/");
         assert_eq!(&*strip(b"http://TOKEN@host:4873/"), b"http://host:4873/");
         assert_eq!(&*strip(b"https://user:p@ss@host/"), b"https://host/");
-        assert_eq!(&*strip(b"https://host?m=@backup"), b"https://host?m=@backup");
+        assert_eq!(
+            &*strip(b"https://host?m=@backup"),
+            b"https://host?m=@backup"
+        );
         assert_eq!(&*strip(b"https://host#@frag"), b"https://host#@frag");
         assert_eq!(&*strip(b"host:4873/"), b"host:4873/");
         assert_eq!(&*strip(b""), b"");

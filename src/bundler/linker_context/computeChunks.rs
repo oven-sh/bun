@@ -618,16 +618,18 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
         let pathname = bun_fs::PathName::init(
             output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
         );
+        // Use the entry-point AST's target, not `this.options.target`: an HTML
+        // import in a server-side build produces browser chunks whose
+        // extension must not follow the server target.
+        let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk
             .content
-            .ext(this.options.target, this.options.output_format)
+            .ext(chunk_target, this.options.output_format)
             .to_vec()
             .into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {
-            // Determine the target from the AST of the entry point source
-            let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
             chunk.template.placeholder.target = match chunk_target {
                 Target::Browser => b"browser".to_vec().into_boxed_slice(),
                 Target::Bun => b"bun".to_vec().into_boxed_slice(),

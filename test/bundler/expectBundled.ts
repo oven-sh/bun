@@ -676,11 +676,12 @@ function expectBundled(
     outfile = useOutFile ? path.join(root, outfile ?? (compile ? "/out" : "/out.js")) : undefined;
     outdir = !useOutFile && generateOutput ? path.join(root, outdir ?? "/out") : undefined;
     metafile = metafile ? path.join(root, metafile) : undefined;
+    const derivedJsExt = target === "node" && (format ?? "esm") === "esm" ? ".mjs" : ".js";
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir || "", path.basename(file).replace(/\.[jt]sx?$/, ".js")))
-    ).map(x => x.replace(/\.ts$/, ".js"));
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file).replace(/\.[jt]sx?$/, derivedJsExt)))
+    ).map(x => x.replace(/\.ts$/, derivedJsExt));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
       throw new Error("cjs2esm=true requires one output file, minifyWhitespace=false, and minifySyntax=false");

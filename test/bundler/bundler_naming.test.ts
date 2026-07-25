@@ -379,6 +379,29 @@ describe("bundler", () => {
       api.assertFileExists("/out/b/entry.js");
     },
   });
+  // A `--target node` build that imports HTML emits the server chunk as .mjs
+  // but the browser-side chunk referenced from the HTML stays .js; the
+  // extension follows the chunk's own target, not the global one.
+  itBundled("naming/NodeTargetHtmlImportBrowserChunkStaysJs", {
+    files: {
+      "/server.ts": `import page from "./index.html"; console.log(JSON.stringify(page));`,
+      "/index.html": `<!DOCTYPE html><script type="module" src="./client.ts"></script>`,
+      "/client.ts": `console.log("client");`,
+    },
+    target: "node",
+    outdir: "/out",
+    outputPaths: ["/out/server.mjs"],
+    entryPointsRaw: ["./server.ts"],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/server.mjs");
+      const html = api.readFile("/out/index.html");
+      const m = html.match(/src="\.\/([^"]+)"/);
+      if (!m) throw new Error("no script src in " + html);
+      if (!m[1].endsWith(".js")) throw new Error("browser chunk should be .js, got " + m[1]);
+      api.assertFileExists("/out/" + m[1]);
+      api.expectFile("/out/server.mjs").toContain(m[1]);
+    },
+  });
   // A non-ASCII ID_Continue basename char is preserved in the generated
   // CommonJS wrapper symbol, not replaced per-code-point (nor per-UTF-8-byte,
   // which once regressed to `require_caf__utils`).

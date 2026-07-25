@@ -374,9 +374,8 @@ When using `target: "bun"` and `format: "cjs"` together, the `// @bun @bun-cjs` 
 
 <Card title="node" icon="node">
   For bundles that run in Node.js. Prioritizes the `"node"` export condition when resolving imports. When `format` is
-  `"esm"` (the default), JavaScript output files use the `.mjs` extension so Node.js loads them as ES modules; override
-  this with `naming`/`--entry-naming` if you need `.js`. Bun does not polyfill the `Bun` global or the built-in `bun:*`
-  modules.
+  `"esm"` (the default), JavaScript output files use the `.mjs` extension so Node.js loads them as ES modules; use
+  [`naming`](#naming) if you need `.js` instead. Bun does not polyfill the `Bun` global or the built-in `bun:*` modules.
 </Card>
 
 ### format

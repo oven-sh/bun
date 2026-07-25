@@ -3648,7 +3648,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
 
     if (res.success) {
         if (!fileURLKeySuffix.isEmpty()) {
-            ASSERT(queryString.isEmpty());
+            queryString.deref();
             auto result = JSC::Identifier::fromString(globalObject->vm(), makeString(res.result.value.toWTFString(BunString::ZeroCopy), fileURLKeySuffix));
             res.result.value.deref();
             return result;
@@ -3766,7 +3766,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         }
 
         if (!fileURLKeySuffix.isEmpty()) {
-            ASSERT(queryString.isEmpty());
+            queryString.deref();
             resolvedIdentifier = JSC::Identifier::fromString(vm, makeString(resolved.result.value.toWTFString(BunString::ZeroCopy), fileURLKeySuffix));
         } else if (queryString.isEmpty()) {
             resolvedIdentifier = JSC::Identifier::fromString(vm, resolved.result.value.toWTFString());

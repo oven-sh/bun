@@ -4770,9 +4770,14 @@ impl<'a> HTTPClient<'a> {
 
         // RFC 9112 §9.3: HTTP/1.0 connections are non-persistent unless the
         // response carries an explicit `Connection: keep-alive`. The header loop
-        // below can flip this back on. h2/h3 reach here with a synthetic
-        // minor_version of 0 but overwrite allow_keepalive afterwards.
-        if response.minor_version == 0 {
+        // below can flip this back on. Skip the CONNECT reply itself: that
+        // status line is about the client↔proxy hop, and allow_keepalive is not
+        // reset between here and the origin response inside the tunnel. h2/h3
+        // reach here with a synthetic minor_version of 0 but overwrite
+        // allow_keepalive afterwards.
+        if response.minor_version == 0
+            && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
+        {
             self.state.flags.allow_keepalive = false;
         }
 

@@ -326,6 +326,83 @@ test("Connection: close on a non-2xx response and HTTP/1.0 defaults are not pool
   });
 });
 
+// Guard for the CONNECT exemption on the HTTP/1.0 default above: older
+// proxies (Squid, tinyproxy, Apache mod_proxy_connect) answer CONNECT with
+// `HTTP/1.0 200 Connection Established`. That status line is about the
+// client↔proxy hop; once the tunnel is up the origin's HTTP/1.1 response
+// governs persistence, so the tunnel must still be pooled.
+test("a proxy that answers CONNECT with HTTP/1.0 200 still allows the tunnel to be pooled", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import net from "node:net";
+      const tlsCert = ${JSON.stringify({ cert: tls.cert, key: tls.key })};
+      await using origin = Bun.serve({
+        port: 0,
+        tls: tlsCert,
+        fetch: () => new Response("ok"),
+      });
+
+      let connects = 0;
+      const proxy = net.createServer(client => {
+        let head = Buffer.alloc(0);
+        let upstream;
+        client.on("error", () => {});
+        client.on("close", () => upstream?.destroy());
+        client.on("data", chunk => {
+          if (upstream) return upstream.write(chunk);
+          head = Buffer.concat([head, chunk]);
+          const end = head.indexOf("\\r\\n\\r\\n");
+          if (end === -1) return;
+          connects++;
+          const leftover = head.subarray(end + 4);
+          upstream = net.connect(origin.port, "127.0.0.1", () => {
+            client.write("HTTP/1.0 200 Connection Established\\r\\n\\r\\n");
+            if (leftover.length) upstream.write(leftover);
+          });
+          upstream.on("error", () => {});
+          upstream.on("data", d => client.write(d));
+          upstream.on("close", () => client.destroy());
+        });
+      });
+      await new Promise(r => proxy.listen(0, "127.0.0.1", r));
+
+      const bodies = [];
+      for (let i = 0; i < 3; i++) {
+        const res = await fetch("https://localhost:" + origin.port + "/", {
+          proxy: "http://127.0.0.1:" + proxy.address().port,
+          tls: { rejectUnauthorized: false },
+        });
+        bodies.push(await res.text());
+      }
+      proxy.close();
+      console.log(JSON.stringify({ connects, bodies }));
+      process.exit(0);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      NO_PROXY: undefined,
+      no_proxy: undefined,
+      HTTP_PROXY: undefined,
+      http_proxy: undefined,
+      HTTPS_PROXY: undefined,
+      https_proxy: undefined,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = stdout.startsWith("{") ? JSON.parse(stdout.trim()) : { stdout, stderr };
+  expect({ result, exitCode }).toEqual({
+    result: { connects: 1, bodies: ["ok", "ok", "ok"] },
+    exitCode: 0,
+  });
+});
+
 // Negative contract for the gate above: a streamed POST whose chunked body
 // completed (terminator written) before the response arrived must still hand
 // its connection back to the keep-alive pool.

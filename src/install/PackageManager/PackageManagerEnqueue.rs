@@ -2703,11 +2703,8 @@ fn get_or_put_resolved_package(
             // reshaped for borrowck — `link_dir` / `symlink_path`
             // borrow into `*this`; detach their lifetimes so the
             // `&mut PackageManager` reborrow for `get_or_put` does not
-            // conflict.
-            // SAFETY: `global_link_dir_path` returns a slice into the lazily-
-            // initialized `PackageManager.global_link_dir_path` (a `Box<[u8]>`
-            // set once and never freed); `get_or_put` copies `symlink_path`
-            // into the lockfile string buffer before any other mutation.
+            // conflict. `get_or_put` copies `symlink_path` into the lockfile
+            // string buffer before any other mutation.
             // `version.tag == Symlink`.
             let symlink_path = this.lockfile.str_detached(version.symlink());
             let res = if dependency::is_link_path(symlink_path) {
@@ -2744,6 +2741,9 @@ fn get_or_put_resolved_package(
                     )
                 }
             } else {
+                // SAFETY: `global_link_dir_path` returns a slice into the
+                // lazily-initialized `PackageManager.global_link_dir_path`
+                // (a `Box<[u8]>` set once and never freed).
                 let link_dir =
                     unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
                 FolderResolution::get_or_put(

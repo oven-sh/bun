@@ -492,8 +492,11 @@ describe("bunx --no-install", () => {
 it.concurrent("detects bunx mode when argv[0] ends with bunx.exe on posix", async () => {
   const { x_dir, env } = setup();
   const exe = join(x_dir, "bunx.exe");
-  copyFileSync(bunExe(), exe);
-  if (!isWindows) chmodSync(exe, 0o755);
+  if (isWindows) {
+    copyFileSync(bunExe(), exe);
+  } else {
+    symlinkSync(bunExe(), exe);
+  }
 
   await using proc = spawn({
     cmd: [exe, "--help"],
@@ -503,13 +506,14 @@ it.concurrent("detects bunx mode when argv[0] ends with bunx.exe on posix", asyn
     stderr: "pipe",
     env,
   });
-  const [out, err] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // `bunx --help` writes its usage to stderr; `bun --help` (the wrong mode
-  // before this fix) writes the full CLI help to stdout.
-  const combined = out + err;
-  expect(combined).toContain("Usage: bunx");
-  expect(combined).not.toContain("Bun is a fast JavaScript runtime");
+  // `bunx --help` writes its usage to stderr and exits 1; `bun --help` (the
+  // wrong mode before this fix) writes the full CLI help to stdout and exits 0.
+  expect(err).toContain("Usage: bunx");
+  expect(out).not.toContain("Bun is a fast JavaScript runtime");
+  expect(out).toHaveLength(0);
+  expect(exited).toBe(1);
 });
 
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {

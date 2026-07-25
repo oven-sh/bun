@@ -344,6 +344,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         (((5 + 2 * idx) << 1) | 1) as f64
     }
 
+    /// Pick an unused `#`-private name (suffixing on collision) and record it.
+    fn fresh_private_name(&self, used: &mut HashMap<&'a [u8], ()>, base: &'a [u8]) -> &'a [u8] {
+        let mut name = base;
+        let mut tries: usize = 2;
+        while used.contains_key(name) {
+            name = self.bump_name(base, Some(tries));
+            tries += 1;
+        }
+        used.insert(name, ());
+        name
+    }
+
+    /// A synthetic `#__N = void <expr>` class-body property. Placed at a
+    /// lowered private's source position so its brand-add runs on the
+    /// class-body initializer timeline alongside native fields.
+    fn inline_brand_field(
+        &mut self,
+        used: &mut HashMap<&'a [u8], ()>,
+        counter: &mut usize,
+        expr: Expr,
+        loc: bun_ast::Loc,
+    ) -> Property {
+        let base = self.bump_name(b"#__lowered_", Some(*counter));
+        *counter += 1;
+        let name = self.fresh_private_name(used, base);
+        let ref_ = self.new_sym(js_ast::symbol::Kind::PrivateField, name);
+        let key = self.new_expr(E::PrivateIdentifier { ref_ }, loc);
+        let init = self.new_expr(
+            E::Unary {
+                op: js_ast::OpCode::UnVoid,
+                value: expr,
+                flags: js_ast::e::UnaryFlags::empty(),
+            },
+            loc,
+        );
+        Property {
+            key: Some(key),
+            initializer: Some(init),
+            kind: PropertyKind::Normal,
+            flags: js_ast::flags::PROPERTY_NONE,
+            ..Default::default()
+        }
+    }
+
     /// Emit __privateAdd for a given storage ref.
     fn emit_private_add(
         &mut self,
@@ -1393,11 +1437,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut emitted_private_adds: HashMap<u32, ()> = HashMap::default();
         let mut static_private_add_blocks = BumpVec::<Property>::new_in(bump);
 
-        // Pre-scan: determine if all private members need lowering, and collect
-        // the class's private-name set so generated accessor-storage privates
-        // can pick an unused name.
+        // Pre-scan: determine if all private members need lowering.
         let mut lower_all_private = false;
-        let mut class_private_names: HashMap<&'a [u8], ()> = HashMap::default();
         {
             let mut has_any_private = false;
             let mut has_any_decorated = false;
@@ -1417,20 +1458,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         lower_all_private = true;
                     }
                 }
-                if let Some(k) = cprop.key
-                    && let js_ast::ExprData::EPrivateIdentifier(pi) = &k.data
+                if cprop.key.is_some()
+                    && matches!(
+                        cprop.key.unwrap().data,
+                        js_ast::ExprData::EPrivateIdentifier(_)
+                    )
                 {
                     has_any_private = true;
-                    let name: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
-                        .original_name
-                        .slice();
-                    class_private_names.insert(name, ());
                 }
             }
             if !lower_all_private && has_any_private && has_any_decorated {
                 lower_all_private = true;
             }
         }
+
+        // Generated `#`-privates must not textually shadow any private name
+        // already parsed (this class's declarations and any enclosing class's),
+        // because `NoOpRenamer` prints symbol names verbatim.
+        let mut class_private_names: HashMap<&'a [u8], ()> = HashMap::default();
+        for sym in p.symbols.iter() {
+            if sym.kind.is_private() {
+                class_private_names.insert(sym.original_name.slice(), ());
+            }
+        }
+        let mut brand_field_counter: usize = 0;
 
         let props_slice2: &mut [Property] = class.properties.slice_mut();
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
@@ -1504,14 +1555,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // __privateAdd (once per name)
                         if !emitted_private_adds.contains_key(&npriv_inner) {
                             emitted_private_adds.insert(npriv_inner, ());
-                            p.emit_private_add(
-                                prop.flags.contains(Flags::Property::IsStatic),
-                                ws_ref,
-                                None,
-                                loc,
-                                &mut constructor_inject_stmts,
-                                &mut static_private_add_blocks,
-                            );
+                            if prop.flags.contains(Flags::Property::IsStatic) {
+                                let t = p.new_expr(E::This {}, loc);
+                                let s = p.use_ref(ws_ref, loc);
+                                let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
+                                static_private_add_blocks.push(p.make_static_block(call, loc));
+                            } else {
+                                let t = p.new_expr(E::This {}, loc);
+                                let s = p.use_ref(ws_ref, loc);
+                                let call = p.call_rt(loc, b"__privateAdd", &[t, s]);
+                                new_properties.push(p.inline_brand_field(
+                                    &mut class_private_names,
+                                    &mut brand_field_counter,
+                                    call,
+                                    loc,
+                                ));
+                            }
                         }
                         continue;
                     } else {
@@ -1528,24 +1587,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let this_e = p.new_expr(E::This {}, loc);
                         let wm_e = p.use_ref(wm_ref, loc);
                         let call = p.call_rt(loc, b"__privateAdd", &[this_e, wm_e, init_val]);
-                        if !prop.flags.contains(Flags::Property::IsStatic) {
-                            constructor_inject_stmts.push(p.s(
-                                S::SExpr {
-                                    value: call,
-                                    ..Default::default()
-                                },
+                        if prop.flags.contains(Flags::Property::IsStatic) {
+                            static_private_add_blocks.push(p.make_static_block(call, loc));
+                        } else {
+                            new_properties.push(p.inline_brand_field(
+                                &mut class_private_names,
+                                &mut brand_field_counter,
+                                call,
                                 loc,
                             ));
-                        } else {
-                            static_private_add_blocks.push(p.make_static_block(call, loc));
                         }
                         continue;
                     }
                 }
                 // Undecorated auto-accessor → native `#`-storage field + get/set.
-                // The storage initializer stays at the accessor's class-body
-                // position so it runs in source order with neighbouring fields,
-                // and the per-class private name needs no module-scope binding.
                 if prop.kind == PropertyKind::AutoAccessor {
                     let storage_base: &'a [u8] = 'brk: {
                         if let Some(k) = prop.key {
@@ -1553,13 +1608,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 js_ast::ExprData::EString(s)
                                     if s.is_utf8() && js_lexer::is_identifier(&s.data) =>
                                 {
-                                    break 'brk p.bump_name2(b"#_", &s.data);
+                                    let mut v = BumpVec::<u8>::new_in(bump);
+                                    v.push(b'#');
+                                    v.extend_from_slice(&s.data);
+                                    v.extend_from_slice(b"_accessor_storage");
+                                    break 'brk v.into_bump_slice();
                                 }
                                 js_ast::ExprData::EPrivateIdentifier(pi) => {
                                     let orig: &'a [u8] = p.symbols[pi.ref_.inner_index() as usize]
                                         .original_name
                                         .slice();
-                                    break 'brk p.bump_name2(b"#_", &orig[1..]);
+                                    break 'brk p.bump_name2(orig, b"_accessor_storage");
                                 }
                                 _ => {}
                             }
@@ -1569,13 +1628,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         accessor_storage_counter += 1;
                         name
                     };
-                    let mut storage_name: &'a [u8] = storage_base;
-                    let mut tries: usize = 2;
-                    while class_private_names.contains_key(storage_name) {
-                        storage_name = p.bump_name(storage_base, Some(tries));
-                        tries += 1;
-                    }
-                    class_private_names.insert(storage_name, ());
+                    let storage_name = p.fresh_private_name(&mut class_private_names, storage_base);
 
                     let is_static = prop.flags.contains(Flags::Property::IsStatic);
                     let storage_kind = if is_static {

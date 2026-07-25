@@ -1293,9 +1293,9 @@ describe("ES Decorators", () => {
     test("generated storage name avoids existing private names", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         class C {
-          #_y = "user";
+          #y_accessor_storage = "user";
           accessor y = "acc";
-          read() { return this.#_y; }
+          read() { return this.#y_accessor_storage; }
         }
         const c = new C();
         console.log(c.y, c.read());
@@ -1304,6 +1304,27 @@ describe("ES Decorators", () => {
       `);
       expect(stderr).toBe("");
       expect(stdout).toBe("acc user\nchanged user\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("generated storage name does not shadow a private referenced from an enclosing class", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        class Outer {
+          #x_accessor_storage = 42;
+          make() {
+            const outer = this;
+            return class Inner {
+              accessor x = 1;
+              readOuter() { return outer.#x_accessor_storage; }
+            };
+          }
+        }
+        const Inner = new Outer().make();
+        const i = new Inner();
+        console.log(i.readOuter(), i.x);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("42 1\n");
       expect(exitCode).toBe(0);
     });
 
@@ -1324,10 +1345,46 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("instance fields run in source order when sibling #-privates are WeakMap-lowered", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        const log = [];
+        class C {
+          @dec m() {}
+          #a = (log.push("a"), 1);
+          accessor b = (log.push("b"), this.readA());
+          c = (log.push("c"), this.b);
+          readA() { return this.#a; }
+        }
+        const o = new C();
+        console.log(log.join(","), o.b, o.c, o.readA());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("a,b,c 1 1 1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("WeakMap-lowered #-private does not strip NamedEvaluation or new.target from sibling fields", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec m() {}
+          #p;
+          onClick = () => {};
+          nt = new.target;
+        }
+        const c = new C();
+        console.log(c.onClick.name, c.nt === undefined);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("onClick true\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("storage is a class-body private field, not a module-scope WeakMap", () => {
       const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
       const out = transpiler.transformSync(`class C { accessor x = 1; }`);
-      expect(out).toContain("#_x");
+      expect(out).toContain("#x_accessor_storage");
       expect(out).not.toContain("WeakMap");
       expect(out).not.toContain("__privateAdd");
     });

@@ -991,6 +991,17 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * gl
     return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
 }
 
+extern "C" bool Bun__Permission__isEnabled();
+extern "C" bool Bun__Permission__throwIfFsDenied(JSC::JSGlobalObject*, bool isWrite, const char* ptr, size_t len);
+
+/// The internal/permission builtin, for the diagnostics-channel publishes
+/// node's permission model does on denied checks and drops.
+extern "C" JSC::EncodedJSValue Bun__Permission__requireInternalPermissionModule(Zig::GlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    return JSValue::encode(globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::InternalPermission));
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1000,7 +1011,16 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObj
     Bun::V::validateString(scope, globalObject, value, "directory"_s);
     RETURN_IF_EXCEPTION(scope, {});
 
-    ZigString str = Zig::toZigString(value.toWTFString(globalObject));
+    auto pathString = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (Bun__Permission__isEnabled()) [[unlikely]] {
+        // node_process_methods.cc Chdir: fs.read scope on the target.
+        auto utf8 = pathString.utf8();
+        if (Bun__Permission__throwIfFsDenied(globalObject, false, utf8.data(), utf8.length()))
+            return {};
+    }
+
+    ZigString str = Zig::toZigString(pathString);
     JSC::JSValue result = JSC::JSValue::decode(Bun__Process__setCwd(globalObject, &str));
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2568,6 +2588,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (Bun__Permission__isEnabled()) [[unlikely]] {
+        // node_report.cc WriteReport: fs.write on the filename as passed, or
+        // on the cwd when no filename is given.
+        auto filenameValue = callFrame->argument(0);
+        if (filenameValue.isString()) {
+            auto filename = filenameValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto utf8 = filename.utf8();
+            if (Bun__Permission__throwIfFsDenied(globalObject, true, utf8.data(), utf8.length()))
+                return {};
+        } else {
+            if (Bun__Permission__throwIfFsDenied(globalObject, true, nullptr, 0))
+                return {};
+        }
+    }
     // TODO:
     return JSValue::encode(callFrame->argument(0));
 }

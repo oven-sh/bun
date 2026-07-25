@@ -1099,16 +1099,62 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             opts.allow_addons = Some(false);
         }
 
-        if args.flag(b"--permission") {
+        // Node's child_process copies the parent's permission-model flags into
+        // NODE_OPTIONS when spawning process.execPath, so a sandboxed parent's
+        // children inherit the sandbox; merge those with the argv flags.
+        let env_grants = crate::permission::grants_from_node_options();
+        if args.flag(b"--permission") || env_grants.is_some() {
+            let mut fs_read: Vec<&'static [u8]> = args.options(b"--allow-fs-read").to_vec();
+            let mut fs_write: Vec<&'static [u8]> = args.options(b"--allow-fs-write").to_vec();
+            let (mut child, mut worker, mut inspector, mut wasi, mut net, mut addon) = (
+                args.flag(b"--allow-child-process"),
+                args.flag(b"--allow-worker"),
+                args.flag(b"--allow-inspector"),
+                args.flag(b"--allow-wasi"),
+                args.flag(b"--allow-net"),
+                args.flag(b"--allow-addons"),
+            );
+            if let Some(env_grants) = env_grants {
+                fs_read.extend_from_slice(&env_grants.fs_read);
+                fs_write.extend_from_slice(&env_grants.fs_write);
+                child |= env_grants.child;
+                worker |= env_grants.worker;
+                inspector |= env_grants.inspector;
+                wasi |= env_grants.wasi;
+                net |= env_grants.net;
+                addon |= env_grants.addon;
+            }
+
+            // `env.cc` "Implicit allow entrypoint to kFileSystemRead": the
+            // entry script and every preloaded module are readable without an
+            // explicit grant. `-e`/`-p` runs have no entry script.
+            let mut implicit_fs_read: Vec<&[u8]> = Vec::new();
+            if args.option(b"--eval").is_none() && args.option(b"--print").is_none() {
+                if let Some(entry) = ctx.positionals.first() {
+                    implicit_fs_read.push(entry);
+                }
+            }
+            for preload in &ctx.preloads {
+                implicit_fs_read.push(preload);
+            }
+
+            if !addon {
+                // Node treats a missing --allow-addons exactly like
+                // --no-addons: process.dlopen throws and the "node-addons"
+                // export condition is dropped.
+                opts.allow_addons = Some(false);
+            }
+
             crate::permission::init_from_cli(&crate::permission::CliGrants {
-                fs_read: args.options(b"--allow-fs-read"),
-                fs_write: args.options(b"--allow-fs-write"),
-                child: args.flag(b"--allow-child-process"),
-                worker: args.flag(b"--allow-worker"),
-                inspector: args.flag(b"--allow-inspector"),
-                wasi: args.flag(b"--allow-wasi"),
-                net: args.flag(b"--allow-net"),
-                addon: args.flag(b"--allow-addons"),
+                fs_read: &fs_read,
+                fs_write: &fs_write,
+                implicit_fs_read: &implicit_fs_read,
+                child,
+                worker,
+                inspector,
+                wasi,
+                net,
+                addon,
             });
         }
 

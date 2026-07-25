@@ -90,7 +90,9 @@ function streamFileHandleClose(this: FileHandle, fd: FD, cb: (err?: any) => void
 function getValidatedPath(p: any) {
   if (p instanceof URL) return Bun.fileURLToPath(p as URL);
   if (typeof p !== "string") throw $ERR_INVALID_ARG_TYPE("path", "string or URL", p);
-  return require("node:path").resolve(p);
+  // Node keeps `stream.path` exactly as passed (relative stays relative); the
+  // open() at construct time resolves against the cwd like any fs call.
+  return p;
 }
 
 function copyObject(source) {
@@ -403,9 +405,8 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
-    // Internal $fastPath callers (writableFromFileSink) discard .path; do not
-    // resolve it - path.resolve("") needs process.cwd(), which throws when
-    // the cwd has been deleted (Node still spawns children in that state).
+    // Internal $fastPath callers (writableFromFileSink) discard .path; skip
+    // the type validation entirely.
     this.path = fastPath ? path : getValidatedPath(path);
     const { flags, mode } = options;
     this.flags = flags === undefined ? "w" : flags;

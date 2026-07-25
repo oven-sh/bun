@@ -997,6 +997,14 @@ class Worker extends EventEmitter {
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
 
+    {
+      const permission = require("internal/permission");
+      if (permission.enabled && !permission.has("worker")) {
+        // node_worker.cc Worker::New
+        throw permission.accessDeniedError("worker");
+      }
+    }
+
     // The `= {}` default only covers undefined; normalize null too so the
     // option accesses below don't throw on `new Worker(file, null)`.
     options ??= {};

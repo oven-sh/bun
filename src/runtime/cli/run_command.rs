@@ -1399,10 +1399,6 @@ impl Run {
 
         self.add_conditional_globals();
 
-        // `initializePermission` in Node's pre_execution.js: warn about the
-        // bypass flags once the global object exists and before user code runs.
-        crate::permission::emit_startup_warnings(vm.global());
-
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {
             if !ctx.runtime_options.redis_preconnect {
@@ -1545,6 +1541,22 @@ impl Run {
                 }
             }
             Err(err) => entry_point_load_failed(vm, &err.into()),
+        }
+
+        // `initializePermission` in Node's pre_execution.js emits these via
+        // process.emitWarning, whose nextTick fires only after the main
+        // module's synchronous body — so a `process.on('warning')` listener
+        // registered at the top of the entry script observes them. Bun's
+        // module load drains tick queues, so emitting before the load (the
+        // obvious spot) fires too early for such listeners.
+        crate::permission::emit_startup_warnings(vm.global());
+        if crate::permission::is_enabled() {
+            // Drain the queued warning ticks even when the script scheduled
+            // no other work (the run loop below only spins while the event
+            // loop is alive).
+            // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
+            // accessed here.
+            vm.event_loop_ref().tick();
         }
 
         // don't run the GC if we don't actually need to

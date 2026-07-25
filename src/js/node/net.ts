@@ -3616,6 +3616,13 @@ Server.prototype.getConnections = function getConnections(callback) {
 };
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
+  if (permissionModelEnabled) {
+    // TCPWrap/PipeWrap Bind+Listen throw synchronously under the permission
+    // model, before any argument handling can pick a different code path.
+    netAccessDeniedError ??= $newRustFunction("permission.rs", "netAccessDeniedError", 1);
+    const denied = netAccessDeniedError(undefined);
+    if (denied) throw denied;
+  }
   const argsLength = arguments.length;
   if (typeof port === "string") {
     const numPort = Number(port);

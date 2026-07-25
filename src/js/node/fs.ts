@@ -25,6 +25,8 @@ function lazyGlob() {
 }
 
 const { guardCallback } = require("internal/shared");
+const permission = require("internal/permission");
+const permissionModelEnabled: boolean = permission.enabled;
 
 const asyncHooks = require("internal/async_hooks");
 const asyncHooksState = asyncHooks.state;
@@ -92,6 +94,16 @@ function nullcallback(callback) {
 const FunctionPrototypeBind = nullcallback.bind;
 
 function openAsBlob(path, options) {
+  if (permissionModelEnabled) {
+    // node's openAsBlob checks fs.read eagerly; Bun.file defers opening.
+    let resource = path;
+    if (typeof resource !== "string") {
+      resource = resource instanceof URL ? Bun.fileURLToPath(resource) : String(resource);
+    }
+    if (!permission.has("fs.read", resource)) {
+      throw permission.accessDeniedError("fs.read", resource);
+    }
+  }
   return Promise.$resolve(Bun.file(path, options));
 }
 
@@ -182,11 +194,19 @@ var access = function access(path, mode, callback) {
   fchmod = function fchmod(fd, mode, callback) {
     callback = ensureCallback(callback);
 
+    if (permissionModelEnabled) {
+      callback(permission.customAccessDeniedError("fchmod API is disabled when Permission Model is enabled."));
+      return;
+    }
     fs.fchmod(fd, mode).then(nullcallback(callback), callback);
   },
   fchown = function fchown(fd, uid, gid, callback) {
     callback = ensureCallback(callback);
 
+    if (permissionModelEnabled) {
+      callback(permission.customAccessDeniedError("fchown API is disabled when Permission Model is enabled."));
+      return;
+    }
     fs.fchown(fd, uid, gid).then(nullcallback(callback), callback);
   },
   fstat = function fstat(fd, options, callback) {
@@ -203,6 +223,10 @@ var access = function access(path, mode, callback) {
   fsync = function fsync(fd, callback) {
     callback = ensureCallback(callback);
 
+    if (permissionModelEnabled) {
+      callback(permission.customAccessDeniedError("fsync API is disabled when Permission Model is enabled."));
+      return;
+    }
     fs.fsync(fd).then(nullcallback(callback), callback);
   },
   ftruncate = function ftruncate(fd, len = 0, callback) {
@@ -218,6 +242,10 @@ var access = function access(path, mode, callback) {
   futimes = function futimes(fd, atime, mtime, callback) {
     callback = ensureCallback(callback);
 
+    if (permissionModelEnabled) {
+      callback(permission.customAccessDeniedError("futimes API is disabled when Permission Model is enabled."));
+      return;
+    }
     fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
   },
   lchmod =
@@ -280,6 +308,10 @@ var access = function access(path, mode, callback) {
   fdatasync = function fdatasync(fd, callback) {
     callback = ensureCallback(callback);
 
+    if (permissionModelEnabled) {
+      callback(permission.customAccessDeniedError("fdatasync API is disabled when Permission Model is enabled."));
+      return;
+    }
     fs.fdatasync(fd).then(nullcallback(callback), callback);
   },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
@@ -466,6 +498,12 @@ var access = function access(path, mode, callback) {
       callback = wrapFsCallback(callback);
     }
 
+    if (permissionModelEnabled && !permission.has("fs")) {
+      // Symlinks can point anywhere, so node disables the API outright
+      // without full fs.read + fs.write (lib/fs.js).
+      callback(permission.customAccessDeniedError("fs.symlink API requires full fs.read and fs.write permissions."));
+      return;
+    }
     fs.symlink(target, path, type).then(callback, callback);
   },
   truncate = function truncate(path, len, callback) {
@@ -523,18 +561,36 @@ var access = function access(path, mode, callback) {
     }
     try {
       return fs.existsSync.$apply(fs, arguments);
-    } catch {
+    } catch (err) {
+      // node's ExistsSync swallows I/O errors but not permission denials.
+      if (permissionModelEnabled && (err as any)?.code === "ERR_ACCESS_DENIED") throw err;
       return false;
     }
   },
   chownSync = fs.chownSync.bind(fs) as unknown as typeof import("node:fs").chownSync,
   chmodSync = fs.chmodSync.bind(fs) as unknown as typeof import("node:fs").chmodSync,
-  fchmodSync = fs.fchmodSync.bind(fs) as unknown as typeof import("node:fs").fchmodSync,
-  fchownSync = fs.fchownSync.bind(fs) as unknown as typeof import("node:fs").fchownSync,
+  fchmodSync = (permissionModelEnabled
+    ? function fchmodSync() {
+        throw permission.customAccessDeniedError("fchmod API is disabled when Permission Model is enabled.");
+      }
+    : fs.fchmodSync.bind(fs)) as unknown as typeof import("node:fs").fchmodSync,
+  fchownSync = (permissionModelEnabled
+    ? function fchownSync() {
+        throw permission.customAccessDeniedError("fchown API is disabled when Permission Model is enabled.");
+      }
+    : fs.fchownSync.bind(fs)) as unknown as typeof import("node:fs").fchownSync,
   fstatSync = fs.fstatSync.bind(fs) as unknown as typeof import("node:fs").fstatSync,
-  fsyncSync = fs.fsyncSync.bind(fs) as unknown as typeof import("node:fs").fsyncSync,
+  fsyncSync = (permissionModelEnabled
+    ? function fsyncSync() {
+        throw permission.customAccessDeniedError("fsync API is disabled when Permission Model is enabled.");
+      }
+    : fs.fsyncSync.bind(fs)) as unknown as typeof import("node:fs").fsyncSync,
   ftruncateSync = fs.ftruncateSync.bind(fs) as unknown as typeof import("node:fs").ftruncateSync,
-  futimesSync = fs.futimesSync.bind(fs) as unknown as typeof import("node:fs").futimesSync,
+  futimesSync = (permissionModelEnabled
+    ? function futimesSync() {
+        throw permission.customAccessDeniedError("futimes API is disabled when Permission Model is enabled.");
+      }
+    : fs.futimesSync.bind(fs)) as unknown as typeof import("node:fs").futimesSync,
   lchmodSync = constants.O_SYMLINK !== undefined ? fs.lchmodSync.bind(fs) : undefined, // lchmod is only available on macOS
   lchownSync = fs.lchownSync.bind(fs) as unknown as typeof import("node:fs").lchownSync,
   linkSync = fs.linkSync.bind(fs) as unknown as typeof import("node:fs").linkSync,
@@ -600,13 +656,24 @@ var access = function access(path, mode, callback) {
   },
   readdirSync = fs.readdirSync.bind(fs),
   readFileSync = fs.readFileSync.bind(fs),
-  fdatasyncSync = fs.fdatasyncSync.bind(fs),
+  fdatasyncSync = permissionModelEnabled
+    ? function fdatasyncSync() {
+        throw permission.customAccessDeniedError("fdatasync API is disabled when Permission Model is enabled.");
+      }
+    : fs.fdatasyncSync.bind(fs),
   writeFileSync = fs.writeFileSync.bind(fs),
   readlinkSync = fs.readlinkSync.bind(fs),
   renameSync = fs.renameSync.bind(fs),
   statSync = fs.statSync.bind(fs),
   statfsSync = fs.statfsSync.bind(fs),
-  symlinkSync = fs.symlinkSync.bind(fs),
+  symlinkSync = permissionModelEnabled
+    ? function symlinkSync(target, path, type) {
+        if (!permission.has("fs")) {
+          throw permission.customAccessDeniedError("fs.symlink API requires full fs.read and fs.write permissions.");
+        }
+        return fs.symlinkSync(target, path, type);
+      }
+    : fs.symlinkSync.bind(fs),
   truncateSync = fs.truncateSync.bind(fs),
   unlinkSync = fs.unlinkSync.bind(fs),
   utimesSync = fs.utimesSync.bind(fs),

@@ -13,6 +13,7 @@ const {
 } = require("internal/validators");
 
 const constants = $processBindingConstants.fs;
+const permission = require("internal/permission");
 
 var PromisePrototypeFinally = $Promise.prototype.finally; //TODO
 var SymbolAsyncDispose = Symbol.asyncDispose;
@@ -265,8 +266,16 @@ const exports = {
   },
   chown: asyncWrap(fs.chown, "chown"),
   chmod: asyncWrap(fs.chmod, "chmod"),
-  fchmod: asyncWrap(fs.fchmod, "fchmod"),
-  fchown: asyncWrap(fs.fchown, "fchown"),
+  fchmod: permission.enabled
+    ? async function fchmod() {
+        throw permission.customAccessDeniedError("fchmod API is disabled when Permission Model is enabled.");
+      }
+    : asyncWrap(fs.fchmod, "fchmod"),
+  fchown: permission.enabled
+    ? async function fchown() {
+        throw permission.customAccessDeniedError("fchown API is disabled when Permission Model is enabled.");
+      }
+    : asyncWrap(fs.fchown, "fchown"),
   fstat: asyncWrap(fs.fstat, "fstat"),
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
@@ -331,7 +340,14 @@ const exports = {
   realpath: asyncWrap(fs.realpath, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
   stat: asyncWrap(fs.stat, "stat"),
-  symlink: asyncWrap(fs.symlink, "symlink"),
+  symlink: permission.enabled
+    ? async function symlink(target, path, type) {
+        if (!permission.has("fs")) {
+          throw permission.customAccessDeniedError("fs.symlink API requires full fs.read and fs.write permissions.");
+        }
+        return fs.symlink(target, path, type);
+      }
+    : asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
   utimes: asyncWrap(fs.utimes, "utimes"),

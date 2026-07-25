@@ -266,8 +266,7 @@ describe("FormData", () => {
 
     for (const prefix of ["hello", "x", "zz", "-", "--"]) {
       it(`keeps mid-line '${prefix}--${B}\\r\\n' in a value (not a delimiter)`, async () => {
-        const value =
-          `${prefix}--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
+        const value = `${prefix}--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
         const body =
           `--${B}${CRLF}` +
           `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +
@@ -318,8 +317,7 @@ describe("FormData", () => {
     });
 
     it("Bun.serve req.formData(): mid-line boundary in a value is not a delimiter", async () => {
-      const value =
-        `hello--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
+      const value = `hello--${B}${CRLF}` + `Content-Disposition: form-data; name="role"${CRLF}${CRLF}` + `admin`;
       const body =
         `--${B}${CRLF}` +
         `Content-Disposition: form-data; name="comment"${CRLF}${CRLF}` +

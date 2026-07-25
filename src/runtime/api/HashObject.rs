@@ -12,19 +12,19 @@ use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsRes
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) trait HashOutput: Copy {
-    fn to_js(self, global: &JSGlobalObject) -> JSValue;
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
 }
 
 impl HashOutput for u32 {
     #[inline]
-    fn to_js(self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(f64::from(self))
+    fn to_js(self, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(JSValue::js_number(f64::from(self)))
     }
 }
 
 impl HashOutput for u64 {
     #[inline]
-    fn to_js(self, global: &JSGlobalObject) -> JSValue {
+    fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         JSValue::from_uint64_no_truncate(global, self)
     }
 }
@@ -302,5 +302,5 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 
     let value = H::hash(seed, input);
-    Ok(value.to_js(global))
+    value.to_js(global)
 }

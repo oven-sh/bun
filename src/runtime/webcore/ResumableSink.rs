@@ -38,13 +38,22 @@ pub trait ResumableSinkJs {
 }
 
 /// Trait capturing the per-`Context` callbacks the sink invokes.
-// The only
-// in-tree impls (FetchTasklet / S3UploadStreamWrapper) mutate self in both
-// callbacks (e.g. `detachSink`, `deref`, clearing `endPromise`), so these
-// MUST be `&mut self`.
+///
+/// Both methods take `*mut Self` (not `&mut self`) per the "borrow = ptr"
+/// dispatch rule in src/CLAUDE.md: HTMLRewriter's `write_request_data` drives
+/// `lol_html::HtmlRewriter::write`, which runs user async handlers via
+/// `vm.wait_for_promise`; on the `Source::Bytes` native-pipe path that nested
+/// event loop can deliver the next chunk and re-enter `on_write` on the same
+/// context. A `&mut self` receiver would be aliased on the re-entrant call.
+/// Impls that do not re-enter (FetchTasklet, S3) dereference once at the top.
+///
+/// # Safety
+/// `this` is the live heap allocation stored in [`ResumableSink::context`];
+/// callers only invoke these via [`ResumableSink::on_write`] /
+/// [`ResumableSink::on_end`].
 pub trait ResumableSinkContext {
-    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure;
-    fn write_end_request(&mut self, err: Option<JSValue>);
+    fn write_request_data(this: *mut Self, bytes: &[u8]) -> ResumableSinkBackpressure;
+    fn write_end_request(this: *mut Self, err: Option<JSValue>);
 }
 
 #[repr(u8)]
@@ -122,15 +131,11 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
 
     #[inline]
     fn on_write(ctx: *mut Context, bytes: &[u8]) -> ResumableSinkBackpressure {
-        // SAFETY: `context` is a BACKREF to the owning Context (FetchTasklet /
-        // S3UploadStreamWrapper) which outlives this sink — see LIFETIMES.tsv.
-        // Dereferenced as `&mut` because impls mutate (detachSink, deref, etc.).
-        unsafe { (*ctx).write_request_data(bytes) }
+        Context::write_request_data(ctx, bytes)
     }
     #[inline]
     fn on_end(ctx: *mut Context, err: Option<JSValue>) {
-        // SAFETY: see on_write.
-        unsafe { (*ctx).write_end_request(err) }
+        Context::write_end_request(ctx, err)
     }
 
     pub fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Self> {
@@ -632,12 +637,15 @@ impl_resumable_sink_js!(
 // (S3UploadStreamWrapper's impl lives next to its struct in s3/client.rs.)
 impl ResumableSinkContext for FetchTasklet {
     #[inline]
-    fn write_request_data(&mut self, bytes: &[u8]) -> ResumableSinkBackpressure {
-        FetchTasklet::write_request_data(self, bytes)
+    fn write_request_data(this: *mut Self, bytes: &[u8]) -> ResumableSinkBackpressure {
+        // SAFETY: `this` is the live context registered in `ResumableSink::init`;
+        // FetchTasklet does not re-enter the sink from these callbacks.
+        FetchTasklet::write_request_data(unsafe { &mut *this }, bytes)
     }
     #[inline]
-    fn write_end_request(&mut self, err: Option<JSValue>) {
-        FetchTasklet::write_end_request(self, err)
+    fn write_end_request(this: *mut Self, err: Option<JSValue>) {
+        // SAFETY: see `write_request_data`.
+        FetchTasklet::write_end_request(unsafe { &mut *this }, err)
     }
 }
 

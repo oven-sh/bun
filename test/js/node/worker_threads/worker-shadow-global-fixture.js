@@ -1,7 +1,7 @@
-// Mimics the `web-worker` npm package: polyfills a WorkerGlobalScope by
-// swapping globalThis' prototype to a user-defined EventTarget. That only
-// works when globalThis has no own addEventListener/dispatchEvent, which is
-// how Node.js worker_threads behave.
+// https://github.com/oven-sh/bun/issues/11005
+// Mimics the `web-worker` npm package: swaps globalThis' prototype for a
+// user-defined EventTarget, which only works when globalThis has no own
+// addEventListener/dispatchEvent (Node.js worker_threads behavior).
 const { parentPort } = require("worker_threads");
 
 const self = (global.self = global);

@@ -3217,7 +3217,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // these on globalThis; node:worker_threads reaches the backing
     // globalEventScope via $newCppFunction instead (see fakeParentPort).
     if (!m_isNodeWorker) {
-        // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
+        // A JSFunction-backed accessor cannot live in the static lookup table.
         putDirectAccessor(
             this,
             builtinNames.selfPublicName(),
@@ -3228,7 +3228,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
                 JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
             PropertyAttribute::Accessor | 0);
 
-        // TODO: this should be usable on the lookup table. it crashed las time i tried it
         putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);
         putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onerror"_s), JSC::CustomGetterSetter::create(vm, globalOnError, setGlobalOnError), 0);
 

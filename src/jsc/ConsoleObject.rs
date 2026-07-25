@@ -5644,12 +5644,11 @@ pub mod formatter {
                                     let name_s = name.get_zig_string(self.global_this)?;
                                     let name_owned = name_s.to_slice().slice().to_vec();
                                     let val = match get_swallow!(attr, "value") {
-                                        Some(v) if v.is_string() => {
-                                            v.get_zig_string(self.global_this)?
-                                                .to_slice()
-                                                .slice()
-                                                .to_vec()
-                                        }
+                                        Some(v) if v.is_string() => v
+                                            .get_zig_string(self.global_this)?
+                                            .to_slice()
+                                            .slice()
+                                            .to_vec(),
                                         _ => Vec::new(),
                                     };
                                     pairs.push((name_owned, val));

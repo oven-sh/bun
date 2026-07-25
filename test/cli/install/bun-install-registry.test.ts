@@ -3972,9 +3972,9 @@ describe("hoisting", async () => {
       expect(await exists(join(packageDir, "node_modules", "strict-peer-dep", "node_modules"))).toBeFalse();
     }
 
-    async function install(cwd: string) {
+    async function install(cwd: string, ...args: string[]) {
       const { stderr, exited } = spawn({
-        cmd: [bunExe(), "install"],
+        cmd: [bunExe(), "install", ...args],
         cwd,
         stdout: "ignore",
         stderr: "pipe",
@@ -3982,6 +3982,7 @@ describe("hoisting", async () => {
       });
       const [err, exitCode] = await Promise.all([stderr.text(), exited]);
       expect(err).not.toContain("error:");
+      expect(err).not.toContain("lockfile had changes");
       expect(exitCode).toBe(0);
     }
 
@@ -3994,6 +3995,8 @@ describe("hoisting", async () => {
 
       await install(cwd);
       await checkLayout();
+
+      await install(cwd, "--frozen-lockfile");
 
       await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
       await rm(join(packageDir, "libs", "lib", "node_modules"), { recursive: true, force: true });

@@ -230,16 +230,16 @@ impl<'a> DepSorter<'a> {
             Ordering::Equal => {
                 // Match npm: order workspaces by relative path so the path-first
                 // workspace's deps win the root node_modules slot.
-                if l_dep.behavior.is_workspace()
-                    && l_dep.version.tag == dependency::Tag::Workspace
-                    && r_dep.version.tag == dependency::Tag::Workspace
-                {
-                    let l_path = l_dep.version.workspace().slice(string_buf);
-                    let r_path = r_dep.version.workspace().slice(string_buf);
-                    match strings::order(l_path, r_path) {
-                        Ordering::Less => return true,
-                        Ordering::Greater => return false,
-                        Ordering::Equal => {}
+                if l_dep.behavior.is_workspace() {
+                    if let (Some(l_path), Some(r_path)) = (
+                        self.lockfile.workspace_paths.get(&l_dep.name_hash),
+                        self.lockfile.workspace_paths.get(&r_dep.name_hash),
+                    ) {
+                        match strings::order(l_path.slice(string_buf), r_path.slice(string_buf)) {
+                            Ordering::Less => return true,
+                            Ordering::Greater => return false,
+                            Ordering::Equal => {}
+                        }
                     }
                 }
                 strings::order(l_dep.name.slice(string_buf), r_dep.name.slice(string_buf))

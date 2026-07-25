@@ -1618,8 +1618,6 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
       if (enable) {
         handle.ondata = this.#onData.bind(this);
         handle.ondrain = this.#onDrain.bind(this);
-        // Tunnel mode owns the readable side; the raw tap would double-deliver.
-        handle.onrawdata = undefined;
       } else {
         handle.ondata = undefined;
         handle.ondrain = undefined;
@@ -1639,11 +1637,7 @@ const NodeHTTPServerSocket = class Socket extends NetSocket {
   #onRawData(chunk) {
     this._unrefTimer();
     this.bytesRead += chunk.length;
-    if (!this.push(chunk)) {
-      // Buffer full: drop the tap; _read() re-arms on next demand.
-      const handle = this[kHandle];
-      if (handle) handle.onrawdata = undefined;
-    }
+    this.push(chunk);
   }
   [kEnableRawData]() {
     const handle = this[kHandle];

@@ -183,3 +183,38 @@ test("req.socket 'data' listener added inside the request handler sees subsequen
     server.close();
   }
 });
+
+// The native tap fires for the packet that carries the CONNECT line; tunnel
+// bytes route through the tunnel ondata path. No byte appears twice.
+test("http.Server 'connection' socket 'data' sees the CONNECT request line once", async () => {
+  const received: Buffer[] = [];
+  const server = createServer();
+  server.on("connection", socket => {
+    socket.on("data", chunk => received.push(chunk));
+  });
+  server.on("connect", (req, sock) => {
+    sock.write("HTTP/1.1 200 OK\r\n\r\n");
+  });
+  await once(server.listen(0), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const client = connect(port);
+  try {
+    await once(client, "connect");
+    client.write("CONNECT x:1 HTTP/1.1\r\nHost: x\r\n\r\nEXTRA");
+    await once(client, "data");
+    client.write("HELLO");
+    const deadline = Date.now() + 1000;
+    while (!Buffer.concat(received).includes("HELLO") && Date.now() < deadline) {
+      await new Promise(r => setImmediate(r));
+    }
+    const raw = Buffer.concat(received).toString("latin1");
+    expect(raw).toContain("CONNECT x:1 HTTP/1.1\r\n");
+    expect((raw.match(/EXTRA/g) ?? []).length).toBe(1);
+    expect((raw.match(/HELLO/g) ?? []).length).toBe(1);
+  } finally {
+    client.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});

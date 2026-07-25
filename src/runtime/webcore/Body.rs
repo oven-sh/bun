@@ -1817,7 +1817,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // so we can't hold a `match` borrow on `get_body_value()` across it.
         match self.get_body_value() {
             Value::Used => true,
-            Value::Locked(pending) if !pending.action.is_none() => true,
+            Value::Locked(pending)
+                if !pending.action.is_none() || pending.on_receive_value.is_some() =>
+            {
+                true
+            }
             Value::Locked(_) => 'brk: {
                 if let Some(readable) = self.get_body_readable_stream(global_object) {
                     break 'brk check(&readable, global_object);

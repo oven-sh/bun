@@ -1785,6 +1785,7 @@ describe("deno_task", () => {
           using dir = tempDir("shell-body-write", {});
           const p = $`cat < ${res}`.quiet();
           p.run();
+          expect(res.bodyUsed).toBe(true);
           expect(() => Bun.write(join(String(dir), "out"), res)).toThrow(/already used/i);
           const { stdout } = await p;
           expect(stdout.length).toBe(500_000);

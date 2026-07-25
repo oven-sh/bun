@@ -87,7 +87,7 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
     let mut seen_pseudo: u8 = 0;
     let mut seen_regular = false;
     let mut saw_host = false;
-    let mut content_length: Option<&[u8]> = None;
+    let mut content_length: Option<u64> = None;
     let mut method_is_connect = false;
     let mut is_interim = false;
     for [name, value] in pairs.as_chunks::<2>().0 {
@@ -136,14 +136,21 @@ fn validate_h3_field_section(pairs: &[Vec<u8>], role: H3HeaderRole) -> Result<u3
                 return Err(());
             }
             match name {
-                b"host" => saw_host |= !value.is_empty(),
+                b"host" => {
+                    if value.is_empty() {
+                        return Err(());
+                    }
+                    saw_host = true;
+                }
                 b"content-length" => {
-                    if value.is_empty()
-                        || !value.iter().all(u8::is_ascii_digit)
-                        || content_length
-                            .replace(value)
-                            .is_some_and(|prev| prev != value)
-                    {
+                    let Some(n) = value.iter().try_fold(0u64, |acc, &d| {
+                        d.is_ascii_digit()
+                            .then(|| acc.checked_mul(10)?.checked_add((d - b'0').into()))
+                            .flatten()
+                    }) else {
+                        return Err(());
+                    };
+                    if value.is_empty() || content_length.replace(n).is_some_and(|p| p != n) {
                         return Err(());
                     }
                 }

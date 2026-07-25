@@ -219,8 +219,10 @@ describe("HTTP/3 inbound field-section validation (RFC 9114)", () => {
     { name: "plain CONNECT with :path", pairs: [":method", "CONNECT", ":authority", "h", ":path", "/"] },
     { name: "no :authority and no Host", pairs: [":method", "GET", ":scheme", "https", ":path", "/"] },
     { name: "empty Host without :authority", pairs: [":method", "GET", ":scheme", "https", ":path", "/", "host", ""] },
+    { name: "empty Host with :authority", pairs: [...valid, "host", ""] },
     { name: "non-numeric content-length", pairs: [...valid, "content-length", "abc"] },
     { name: "conflicting content-length", pairs: [...valid, "content-length", "5", "content-length", "100"] },
+    { name: "content-length overflow", pairs: [...valid, "content-length", "99999999999999999999"] },
   ];
 
   const malformedResponses: Row[] = [

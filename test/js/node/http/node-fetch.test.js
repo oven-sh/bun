@@ -56,9 +56,6 @@ for (const [impl, name] of [
 }
 
 // https://github.com/oven-sh/bun/issues/13390
-// Packages like minipass (used by cacache, @expo/cli) implement streams by extending the legacy
-// Stream base class directly, without Node's Readable machinery. node-fetch accepts these as
-// Response bodies; previously Bun's override threw ERR_INVALID_ARG_TYPE from Readable.toWeb.
 test("node-fetch Response accepts a legacy Stream body that is not a stream.Readable", async () => {
   class MinipassLike extends stream.Stream {
     end(chunk) {

@@ -42,9 +42,7 @@ class Response extends WebResponse {
   constructor(body, init) {
     const { Readable, Stream, PassThrough } = require("node:stream");
     if (body && typeof body === "object" && (body instanceof Stream || body instanceof Readable)) {
-      // Readable.toWeb requires a Node.js Readable (with _readableState). Packages like minipass
-      // extend the legacy Stream base class without that state, so route them through a
-      // PassThrough first — the same approach used in fetch() below for legacy streams.
+      // Readable.toWeb requires _readableState; minipass etc. extend Stream without it.
       let readable = body;
       if (typeof readable._readableState !== "object") {
         const passthrough = new PassThrough();

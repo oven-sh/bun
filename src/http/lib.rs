@@ -2341,12 +2341,7 @@ impl<'a> HTTPClient<'a> {
         let mut add_transfer_encoding = true;
         let mut original_content_length: Option<&[u8]> = None;
 
-        // fetch() owns the hop-by-hop / framing headers: Connection, Keep-Alive,
-        // Upgrade, Expect, HTTP2-Settings, Transfer-Encoding and (for stream
-        // bodies) Content-Length are dropped so a caller cannot inject
-        // hop-by-hop directives (RFC 9110 §7.6.1), the h2c upgrade shape, or a
-        // desynchronized CL/TE frame. node:http (`is_node_http_client`) keeps
-        // full control.
+        // fetch() drops hop-by-hop / framing headers (RFC 9110 §7.6.1); node:http keeps full control.
         let enforce_fetch_forbidden = !self.flags.is_node_http_client;
 
         // Reserve slots for default headers that may be appended after user headers
@@ -2387,9 +2382,7 @@ impl<'a> HTTPClient<'a> {
                         self.flags.disable_keepalive = false;
                     }
                     if enforce_fetch_forbidden {
-                        // The `close`/`keep-alive` intent above was honoured; the
-                        // verbatim value (which may name arbitrary headers for a
-                        // downstream hop to strip) never reaches the wire.
+                        // Intent honoured above; the verbatim value never reaches the wire.
                         continue;
                     }
                     if will_append {
@@ -2467,9 +2460,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if enforce_fetch_forbidden && self.flags.upgrade_state == HTTPUpgradeState::Pending {
-            // User supplied `Upgrade: <proto>`; emit the normalized
-            // `Connection: Upgrade` ourselves so no caller-controlled tokens
-            // ride along in the Connection line.
+            // Emit `Connection: Upgrade` ourselves so no caller tokens ride along.
             request_headers_buf[header_count] = CONNECTION_UPGRADE_HEADER;
             header_count += 1;
         } else if !override_connection_header && !self.flags.disable_keepalive {

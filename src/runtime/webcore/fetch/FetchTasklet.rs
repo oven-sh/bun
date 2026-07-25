@@ -2166,9 +2166,8 @@ impl FetchTasklet {
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections (e.g. WebSocket) and HTTP/2. fetch() owns
-    /// framing for stream bodies; a user-supplied Content-Length/Transfer-Encoding
-    /// is dropped in `build_request`, so the body framing here must match.
+    /// fetch() owns framing (user CL/TE is dropped in `build_request`), so
+    /// only upgraded connections and HTTP/2 skip it.
     fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection || self.result.is_http2
     }

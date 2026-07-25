@@ -743,6 +743,7 @@ pub(crate) fn run_scripts_with_filter(
 
     // Get list of packages that match the configuration
     let mut scripts: Vec<ScriptConfig> = Vec::new();
+    let mut any_package_matched_filter = false;
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while let Some(package_json_path) = package_json_iter.next()? {
         let dirpath =
@@ -767,13 +768,15 @@ pub(crate) fn run_scripts_with_filter(
             );
             continue;
         };
-        let Some(pkgscripts) = &pkgjson.scripts else {
-            continue;
-        };
 
         if !filter_instance.matches(path, &pkgjson.name) {
             continue;
         }
+        any_package_matched_filter = true;
+
+        let Some(pkgscripts) = &pkgjson.scripts else {
+            continue;
+        };
 
         let run_in_bun = ctx.debug.run_in_bun;
         let path_var: Vec<u8> = RunCommand::configure_path_for_run_with_package_json_dir(
@@ -857,6 +860,11 @@ pub(crate) fn run_scripts_with_filter(
         if ctx.workspaces {
             Output::err_generic(
                 "No workspace packages have script \"{s}\"",
+                (bstr::BStr::new(script_name),),
+            );
+        } else if any_package_matched_filter {
+            Output::err_generic(
+                "None of the selected packages has a \"{s}\" script",
                 (bstr::BStr::new(script_name),),
             );
         } else {

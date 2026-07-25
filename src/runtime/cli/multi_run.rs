@@ -875,6 +875,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             path: Box<[u8]>,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
+        let mut any_package_matched_filter = false;
 
         while let Some(package_json_path) = package_json_iter.next()? {
             let dirpath: Box<[u8]> =
@@ -899,6 +900,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             if !filter_instance.matches(pkg_path, &pkgjson.name) {
                 continue;
             }
+            any_package_matched_filter = true;
 
             let Some(pkg_scripts) = &pkgjson.scripts else {
                 continue;
@@ -1002,6 +1004,17 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: No workspace packages have matching scripts"
                 );
+            } else if any_package_matched_filter {
+                if let [only] = script_names.as_slice() {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: None of the selected packages has a \"{}\" script",
+                        bstr::BStr::new(only),
+                    );
+                } else {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r>: None of the selected packages has matching scripts"
+                    );
+                }
             } else {
                 bun_core::pretty_errorln!("<r><red>error<r>: No packages matched the filter");
             }

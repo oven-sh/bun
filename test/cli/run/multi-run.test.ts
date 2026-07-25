@@ -1974,6 +1974,26 @@ describe("workspace integration", () => {
     expect(r.exitCode).toBe(0);
   });
 
+  test("--filter errors distinguishing no-match from missing script (#13966)", async () => {
+    using dir = makeWorkspace("mr-ws-missing-vs-nomatch", {
+      "pkg-a": { build: `echo a` },
+      "pkg-b": { build: `echo b` },
+    });
+    {
+      // matched, but no package has the script
+      const r = await runMulti(["run", "--parallel", "--filter", "*", "nonexistent"], String(dir));
+      expect(r.stderr).toContain('None of the selected packages has a "nonexistent" script');
+      expect(r.stderr).not.toContain("No packages matched the filter");
+      expect(r.exitCode).not.toBe(0);
+    }
+    {
+      // no package matched the filter at all
+      const r = await runMulti(["run", "--parallel", "--filter", "does-not-exist", "build"], String(dir));
+      expect(r.stderr).toContain("No packages matched the filter");
+      expect(r.exitCode).not.toBe(0);
+    }
+  });
+
   test("--workspaces errors when a package is missing the script", async () => {
     using dir = makeWorkspace("mr-ws-missing-err", {
       "pkg-a": { build: `echo a-ok` },

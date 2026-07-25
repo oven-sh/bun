@@ -434,7 +434,32 @@ describe("bun", () => {
   });
 
   test("should error with missing script", () => {
-    runInCwdFailure(cwd_root, "*", "notpresent", /No packages matched/);
+    // https://github.com/oven-sh/bun/issues/13966
+    // Packages match the filter but none of them define the script, so the
+    // error should say that, not "No packages matched the filter".
+    runInCwdFailure(cwd_root, "*", "notpresent", /None of the selected packages has a "notpresent" script/);
+  });
+  test("should error distinguishing no-match from missing script", () => {
+    const dir = tempDirWithFiles("filter-missing-script", {
+      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      packages: {
+        "has-scripts": {
+          "package.json": JSON.stringify({
+            name: "has-scripts",
+            scripts: { build: "echo built" },
+          }),
+        },
+        "no-scripts": {
+          "package.json": JSON.stringify({ name: "no-scripts" }),
+        },
+      },
+    });
+    // filter matches a package that has no scripts object at all
+    runInCwdFailure(dir, "no-scripts", "lint", /None of the selected packages has a "lint" script/);
+    // filter matches a package that has scripts but not this one
+    runInCwdFailure(dir, "has-scripts", "lint", /None of the selected packages has a "lint" script/);
+    // filter matches nothing
+    runInCwdFailure(dir, "does-not-exist", "build", /No packages matched the filter/);
   });
   test("should warn about malformed package.json", () => {
     runInCwdFailure(cwd_root, "*", "x", /Failed to read .*malformed2.*package\.json/);

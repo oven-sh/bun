@@ -2661,7 +2661,7 @@ EVPKeyPointer tryRecoverPqcBothFormEncrypted(
     }
     Buffer<const unsigned char> plainBuf { .data = plain, .len = plainLen };
     auto key = EVPKeyPointer::TryParsePqcBothFormPkcs8(plainBuf);
-    OPENSSL_free(plain);
+    OPENSSL_clear_free(plain, plainLen);
     return key;
 }
 } // namespace

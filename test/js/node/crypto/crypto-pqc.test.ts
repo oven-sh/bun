@@ -154,18 +154,23 @@ describe("PKCS#8 private-key CHOICE forms", () => {
     });
 
     test("subtle.importKey of the `both` form under a different parameter set is rejected as wrong key type", async () => {
-      const other = type === "ml-dsa-44" ? "ML-DSA-65" : "ML-DSA-44";
-      const otherUsages: KeyUsage[] = ["sign"];
-      await expect(subtle.importKey("pkcs8", fixtureDer(both), { name: other }, true, otherUsages)).rejects.toThrow(
-        "Invalid key type",
-      );
+      const siblings: Record<string, string> = {
+        "ML-DSA-44": "ML-DSA-65",
+        "ML-DSA-65": "ML-DSA-44",
+        "ML-DSA-87": "ML-DSA-44",
+        "ML-KEM-768": "ML-KEM-1024",
+        "ML-KEM-1024": "ML-KEM-768",
+      };
+      await expect(
+        subtle.importKey("pkcs8", fixtureDer(both), { name: siblings[algName] }, true, usages),
+      ).rejects.toThrow("Invalid key type");
     });
 
     test("`both` form with a seed that does not match the expanded key is rejected", async () => {
-      // Byte 30 of the PKCS#8 is the first byte of the seed OCTET STRING
-      // contents for every fixture here (13-byte AlgorithmIdentifier, 4-byte
-      // OCTET STRING and SEQUENCE headers, 2-byte seed OCTET STRING header).
+      const seedLen = type.startsWith("ml-kem") ? 64 : 32;
+      const seed = fixtureDer(seedOnly).subarray(-seedLen);
       const modified = Buffer.from(fixtureDer(both));
+      expect(modified.subarray(30, 30 + seedLen).equals(seed)).toBe(true);
       modified[30] ^= 0xff;
       await expect(subtle.importKey("pkcs8", modified, { name: algName }, true, usages)).rejects.toThrow(
         expect.objectContaining({ name: "DataError" }),

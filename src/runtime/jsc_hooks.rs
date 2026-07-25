@@ -3121,11 +3121,7 @@ fn transpile_source_code_inner(
                         && path.is_file()
                         && loader.is_java_script_like()
                     {
-                        bun_jsc::node_compile_cache::fetch(
-                            path.text,
-                            is_commonjs_module,
-                            written,
-                        )
+                        bun_jsc::node_compile_cache::fetch(path.text, is_commonjs_module, written)
                     } else {
                         None
                     };

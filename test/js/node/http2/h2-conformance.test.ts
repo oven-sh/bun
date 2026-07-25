@@ -1472,84 +1472,88 @@ describe("malformed-frame process survival (RFC 9113 §5.4.1)", () => {
 
   const fixture = require.resolve("./h2-malformed-frame-survival-fixture.ts");
 
-  test.concurrent.each(killingFrames)("%s closes only the connection", async (_name, payload) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), fixture],
-      env: bunEnv,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    const reader = proc.stdout.getReader();
-    let buffered = "";
-    while (!buffered.includes("\n")) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      buffered += Buffer.from(value).toString("latin1");
-    }
-    reader.releaseLock();
-    const m = buffered.match(/PORT:(\d+)/);
-    expect(m?.[1]).toBeDefined();
-    const childPort = Number(m![1]);
-
-    // Send the malformed bytes on one connection and wait for the server to tear it down.
-    {
-      const s = net.connect(childPort, "127.0.0.1");
-      s.on("error", () => {});
-      s.resume();
-      await once(s, "connect");
-      s.write(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), payload]));
-      await once(s, "close");
-    }
-
-    // The child's default uncaughtException handler would have terminated it by now; a fresh
-    // connection succeeding is the liveness proof.
-    const probe = net.connect(childPort, "127.0.0.1");
-    const probeResult = await Promise.race([
-      once(probe, "connect").then(() => "connected" as const),
-      once(probe, "error").then(([e]) => e as Error),
-      proc.exited.then(code => `exited:${code}` as const),
-    ]);
-    if (probeResult !== "connected") {
-      const stderr = await proc.stderr.text();
-      expect({ probeResult: String(probeResult), stderr }).toEqual({ probeResult: "connected", stderr: "" });
-    }
-
-    // Liveness means a well-formed request on the fresh connection completes.
-    const frames: Frame[] = [];
-    const gotResponse = Promise.withResolvers<void>();
-    let buf = Buffer.alloc(0);
-    probe.on("data", d => {
-      buf = Buffer.concat([buf, d]);
-      while (buf.length >= 9) {
-        const len = buf.readUIntBE(0, 3);
-        if (buf.length < 9 + len) break;
-        const f: Frame = {
-          length: len,
-          type: buf.readUInt8(3),
-          flags: buf.readUInt8(4),
-          streamId: buf.readUInt32BE(5) & 0x7fffffff,
-          payload: buf.subarray(9, 9 + len),
-        };
-        frames.push(f);
-        buf = buf.subarray(9 + len);
-        if (f.streamId === 1 && (f.flags & 0x1) !== 0) gotResponse.resolve();
-        if (f.type === FrameType.GOAWAY) gotResponse.resolve();
+  test.concurrent.each(killingFrames)(
+    "%s closes only the connection",
+    async (_name, payload) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture],
+        env: bunEnv,
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const reader = proc.stdout.getReader();
+      let buffered = "";
+      while (!buffered.includes("\n")) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffered += Buffer.from(value).toString("latin1");
       }
-    });
-    probe.on("close", () => gotResponse.resolve());
-    probe.write(
-      Buffer.concat([
-        PREFACE,
-        encodeFrame(FrameType.SETTINGS, 0, 0),
-        encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
-      ]),
-    );
-    await gotResponse.promise;
-    const data = frames.filter(f => f.type === FrameType.DATA && f.streamId === 1);
-    expect(Buffer.concat(data.map(f => f.payload)).toString()).toBe("ok");
-    probe.destroy();
+      reader.releaseLock();
+      const m = buffered.match(/PORT:(\d+)/);
+      expect(m?.[1]).toBeDefined();
+      const childPort = Number(m![1]);
 
-    proc.stdin.write("quit\n");
-    const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
-  }, 15_000);
+      // Send the malformed bytes on one connection and wait for the server to tear it down.
+      {
+        const s = net.connect(childPort, "127.0.0.1");
+        s.on("error", () => {});
+        s.resume();
+        await once(s, "connect");
+        s.write(Buffer.concat([PREFACE, encodeFrame(FrameType.SETTINGS, 0, 0), payload]));
+        await once(s, "close");
+      }
+
+      // The child's default uncaughtException handler would have terminated it by now; a fresh
+      // connection succeeding is the liveness proof.
+      const probe = net.connect(childPort, "127.0.0.1");
+      const probeResult = await Promise.race([
+        once(probe, "connect").then(() => "connected" as const),
+        once(probe, "error").then(([e]) => e as Error),
+        proc.exited.then(code => `exited:${code}` as const),
+      ]);
+      if (probeResult !== "connected") {
+        const stderr = await proc.stderr.text();
+        expect({ probeResult: String(probeResult), stderr }).toEqual({ probeResult: "connected", stderr: "" });
+      }
+
+      // Liveness means a well-formed request on the fresh connection completes.
+      const frames: Frame[] = [];
+      const gotResponse = Promise.withResolvers<void>();
+      let buf = Buffer.alloc(0);
+      probe.on("data", d => {
+        buf = Buffer.concat([buf, d]);
+        while (buf.length >= 9) {
+          const len = buf.readUIntBE(0, 3);
+          if (buf.length < 9 + len) break;
+          const f: Frame = {
+            length: len,
+            type: buf.readUInt8(3),
+            flags: buf.readUInt8(4),
+            streamId: buf.readUInt32BE(5) & 0x7fffffff,
+            payload: buf.subarray(9, 9 + len),
+          };
+          frames.push(f);
+          buf = buf.subarray(9 + len);
+          if (f.streamId === 1 && (f.flags & 0x1) !== 0) gotResponse.resolve();
+          if (f.type === FrameType.GOAWAY) gotResponse.resolve();
+        }
+      });
+      probe.on("close", () => gotResponse.resolve());
+      probe.write(
+        Buffer.concat([
+          PREFACE,
+          encodeFrame(FrameType.SETTINGS, 0, 0),
+          encodeFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")),
+        ]),
+      );
+      await gotResponse.promise;
+      const data = frames.filter(f => f.type === FrameType.DATA && f.streamId === 1);
+      expect(Buffer.concat(data.map(f => f.payload)).toString()).toBe("ok");
+      probe.destroy();
+
+      proc.stdin.write("quit\n");
+      const exitCode = await proc.exited;
+      expect(exitCode).toBe(0);
+    },
+    15_000,
+  );
 });

@@ -12,7 +12,14 @@ const {
 } = require("internal/validators");
 const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
-const { deprecate } = require("internal/util/deprecate");
+const { deprecate: internalDeprecate } = require("internal/util/deprecate");
+
+// Public util.deprecate API. Node takes modifyPrototype as an option bag here
+// and as a positional argument internally.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/util.js#L586
+function deprecate(fn, msg, code, { modifyPrototype } = { __proto__: null }) {
+  return internalDeprecate(fn, msg, code, modifyPrototype);
+}
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
 const internalErrorEntries = $newRustFunction("node_util_binding.rs", "internalErrorEntries", 0);

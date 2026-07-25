@@ -2666,6 +2666,70 @@ it("should update a GitHub dependency when adding the same repo at a different r
   });
 });
 
+it("should update a folder dependency when adding the same package from a different folder", async () => {
+  // Two local folders containing the same package name at different versions.
+  using tmpRoot = tempDir("bun-add-folder-replace", {
+    "pkg-v1/package.json": JSON.stringify({ name: "mypkg", version: "1.0.0" }),
+    "pkg-v2/package.json": JSON.stringify({ name: "mypkg", version: "2.0.0" }),
+  });
+  const tmpDir = String(tmpRoot);
+
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  // First add installs mypkg@1.0.0 from the first folder.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", join(tmpDir, "pkg-v1")],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(out).toContain("installed mypkg@");
+    expect(exitCode).toBe(0);
+  }
+  expect(await file(join(package_dir, "node_modules", "mypkg", "package.json")).json()).toMatchObject({
+    name: "mypkg",
+    version: "1.0.0",
+  });
+
+  // Second add of a different folder for the same package must replace the
+  // entry and install the new folder's contents, not keep the stale one.
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "add", join(tmpDir, "pkg-v2")],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("dependency loop");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed mypkg@");
+    expect(exitCode).toBe(0);
+  }
+
+  // package.json points at the new folder with no duplicate entry.
+  const raw = await file(join(package_dir, "package.json")).text();
+  expect(raw.match(/"mypkg"\s*:/g) ?? []).toHaveLength(1);
+  const pkg = JSON.parse(raw);
+  expect(Object.keys(pkg.dependencies)).toEqual(["mypkg"]);
+  expect(pkg.dependencies.mypkg).toContain("pkg-v2");
+
+  // The installed package is the v2 contents.
+  expect(await file(join(package_dir, "node_modules", "mypkg", "package.json")).json()).toMatchObject({
+    name: "mypkg",
+    version: "2.0.0",
+  });
+});
+
 it("should add multiple dependencies specified on command line", async () => {
   expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({

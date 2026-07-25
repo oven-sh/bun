@@ -904,6 +904,7 @@ impl Lockfile {
                                 dependency::Tag::Tarball
                                     | dependency::Tag::Git
                                     | dependency::Tag::Github
+                                    | dependency::Tag::Folder
                             )
                         {
                             superseding.push((dep.name_hash, dep.behavior, resolutions[i]));

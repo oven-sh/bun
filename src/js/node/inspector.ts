@@ -50,7 +50,8 @@ const getNodeInspectorUrl = Bun.isMainThread ? nativeGetNodeInspectorUrl : () =>
   const initialUrl = getNodeInspectorUrl();
   if (typeof initialUrl === "string") {
     try {
-      process.debugPort = Number(new URL(initialUrl).port);
+      const port = new URL(initialUrl).port;
+      if (port) process.debugPort = Number(port);
     } catch {}
   }
 }

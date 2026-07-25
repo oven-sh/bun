@@ -118,6 +118,9 @@ pub struct HTTPResponseMetadata {
     pub url: bun_ptr::RawSlice<u8>,
     pub owned_buf: Box<[u8]>,
     pub response: bun_picohttp::Response<'static>,
+    /// The client recognised `Content-Encoding` and will deliver decoded
+    /// bytes, so the header no longer describes the body it accompanies.
+    pub did_decompress: bool,
 }
 
 impl Default for HTTPResponseMetadata {
@@ -126,6 +129,7 @@ impl Default for HTTPResponseMetadata {
             url: bun_ptr::RawSlice::EMPTY,
             owned_buf: Box::default(),
             response: bun_picohttp::Response::default(),
+            did_decompress: false,
         }
     }
 }
@@ -3988,6 +3992,7 @@ impl<'a> HTTPClient<'a> {
             owned_buf,
             response: cloned_response,
             url: href,
+            did_decompress: self.state.encoding.is_compressed(),
         });
     }
 

@@ -171,6 +171,10 @@ pub struct Response {
     // `Copy` and has no `Drop`.
     url: JsCell<OwnedString>,
     redirected: Cell<bool>,
+    /// `fetch()` transparently decoded `Content-Encoding`; the header is kept
+    /// for user inspection (#5668) but `Bun.serve` must not re-emit it against
+    /// the now-decoded body.
+    body_decoded: Cell<bool>,
     /// We increment this count in fetch so if JS Response is discarted we can resolve the Body
     /// In the server we use a flag response_protected to protect/unprotect the response
     pub ref_count: Cell<u32>,
@@ -192,6 +196,7 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(OwnedString::new(BunString::empty())),
             redirected: Cell::new(false),
+            body_decoded: Cell::new(false),
             ref_count: Cell::new(1),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
@@ -358,6 +363,16 @@ impl Response {
     #[inline]
     pub fn swap_init_headers(&self) -> Option<HeadersRef> {
         self.init.with_mut(|init| init.headers.take())
+    }
+
+    #[inline]
+    pub fn body_decoded(&self) -> bool {
+        self.body_decoded.get()
+    }
+
+    #[inline]
+    pub fn set_body_decoded(&self, value: bool) {
+        self.body_decoded.set(value);
     }
 
     #[inline]
@@ -821,6 +836,7 @@ impl Response {
             init: JsCell::new(init),
             url: JsCell::new(self.url.get().clone()),
             redirected: Cell::new(self.redirected.get()),
+            body_decoded: Cell::new(self.body_decoded.get()),
             ..Default::default()
         })
     }

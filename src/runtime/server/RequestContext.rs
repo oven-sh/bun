@@ -1862,8 +1862,9 @@ where
                     let mut crbuf = [0u8; RangeRequest::CONTENT_RANGE_BUF];
                     self.do_write_status(416);
                     if let Some(response) = self.response_weakref.get() {
+                        let body_decoded = response.body_decoded();
                         if let Some(mut headers_) = response.swap_init_headers() {
-                            self.do_write_headers(&mut headers_);
+                            self.do_write_headers(&mut headers_, body_decoded);
                             // `HeadersRef` releases the +1 ref in Drop; do NOT
                             // call `.deref()` explicitly (would double-free).
                             drop(headers_);
@@ -3632,6 +3633,7 @@ where
         });
         let mut has_content_disposition = false;
         let mut has_content_range = false;
+        let body_decoded = response.body_decoded();
         if let Some(mut headers_) = response.swap_init_headers() {
             has_content_disposition = headers_.fast_has(jsc::HTTPHeaderName::ContentDisposition);
             has_content_range = headers_.fast_has(jsc::HTTPHeaderName::ContentRange);
@@ -3645,7 +3647,7 @@ where
             }
 
             self.do_write_status(status);
-            self.do_write_headers(&mut headers_);
+            self.do_write_headers(&mut headers_, body_decoded);
             // `HeadersRef` is RAII — its Drop
             // already calls `WebCore__FetchHeaders__deref`, so an explicit
             // `.deref()` here would resolve (via DerefMut) to the inherent
@@ -3771,10 +3773,13 @@ where
         }
     }
 
-    fn do_write_headers(&mut self, headers: &mut FetchHeaders) {
+    fn do_write_headers(&mut self, headers: &mut FetchHeaders, body_decoded: bool) {
         ctx_log!("writeHeaders");
         headers.fast_remove(jsc::HTTPHeaderName::ContentLength);
         headers.fast_remove(jsc::HTTPHeaderName::TransferEncoding);
+        if body_decoded {
+            headers.fast_remove(jsc::HTTPHeaderName::ContentEncoding);
+        }
         if HTTP3 {
             // RFC 9114 §4.2: connection-specific fields are malformed.
             headers.fast_remove(jsc::HTTPHeaderName::Connection);

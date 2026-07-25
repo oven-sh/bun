@@ -103,14 +103,9 @@ describe.skipIf(!isWindows)("bun install with a scanner holding an extracted fil
     );
 
     // Hold the handle for 500ms: longer than the unfixed 150ms retry
-    // budget, shorter than the fixed ~1.3s budget.
+    // budget, shorter than the fixed default 5s budget.
     await using blocker = Bun.spawn({
-      cmd: [
-        bunExe(),
-        join(import.meta.dir, "../../cli/install/bun-install-windows-locked-temp-fixture.ts"),
-        tmp,
-        "500",
-      ],
+      cmd: [bunExe(), join(import.meta.dir, "bun-install-windows-locked-temp-fixture.ts"), tmp, "500"],
       env: bunEnv,
       stdout: "pipe",
       stderr: "inherit",

@@ -532,11 +532,8 @@ void Worker::dispatchErrorWithMessage(WTF::String message, RefPtr<SerializedScri
             return;
         }
 
-        // https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2
-        // A Web Worker error the parent did not observe is reported to the host
-        // so it is printed and reflected in the process exit code. The Node
-        // worker_threads wrapper always installs an error listener, so this is
-        // reachable only via the global Worker constructor with no error listener.
+        // No parent-side error listener: report as unhandled so it is printed
+        // and exit code 1 (https://html.spec.whatwg.org/multipage/workers.html#runtime-script-errors-2).
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

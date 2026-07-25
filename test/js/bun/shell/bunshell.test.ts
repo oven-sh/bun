@@ -3010,7 +3010,9 @@ describe("FORCE_COLOR", () => {
     });
     await promise;
     await proc.exited;
-    return output;
+    // ConPTY wraps output in screen-control and window-title sequences; strip
+    // them so the line-anchored assertions see the visible text.
+    return output.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
   }
 
   function fixture(body: string) {
@@ -3024,14 +3026,20 @@ describe("FORCE_COLOR", () => {
     return `import { $ } from "bun";\n${body.replaceAll("PROBE", probe)}\nprocess.stdout.write("DONE\\n");`;
   }
 
+  function probeResult(output: string) {
+    const m = output.match(/fc=([0-9]*) nc=([0-9]*)/);
+    if (!m) throw new Error(`no probe output in: ${JSON.stringify(output)}`);
+    return { fc: m[1], nc: m[2] };
+  }
+
   test("is set for a subprocess whose output goes to a color terminal", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE\`;`));
-    expect(output).toMatch(/^fc=[123] nc=\r?$/m);
+    expect(probeResult(output).fc).toMatch(/^[123]$/);
   });
 
   test("is set for `cmd 2>&1` when stderr is the relayed terminal", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE 2>&1\`;`));
-    expect(output).toMatch(/^fc=[123] nc=\r?$/m);
+    expect(probeResult(output).fc).toMatch(/^[123]$/);
   });
 
   test("is not set for a subprocess whose stdout is redirected to a file", async () => {
@@ -3044,54 +3052,54 @@ describe("FORCE_COLOR", () => {
          } finally { require("fs").rmSync(f, { force: true }); }`,
       ),
     );
-    expect(output).toMatch(/^fc= nc=\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
   });
 
   test("is not set for a non-final pipeline stage", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE | cat\`;`));
-    expect(output).toMatch(/^fc= nc=\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
   });
 
   test("is not set inside a command substitution", async () => {
     const output = await runInTerminal(fixture(`await $\`echo result=$(PROBE)\`;`));
-    expect(output).toMatch(/^result=fc= nc=\r?$/m);
+    expect(output).toContain("result=fc= nc=");
   });
 
   test("is not set when the caller's env specifies NO_COLOR", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE\`.env({ ...process.env, NO_COLOR: "1" });`));
-    expect(output).toMatch(/^fc= nc=1\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "1" });
   });
 
   test("is not set when an inline NO_COLOR=1 assignment is present", async () => {
     const output = await runInTerminal(fixture(`await $\`NO_COLOR=1 PROBE\`;`));
-    expect(output).toMatch(/^fc= nc=1\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "1" });
   });
 
   test("is not set after an in-script export NO_COLOR", async () => {
     const output = await runInTerminal(fixture(`await $\`export NO_COLOR=1 && PROBE\`;`));
-    expect(output).toMatch(/^fc= nc=1\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "1" });
   });
 
   test("does not override a FORCE_COLOR already in the caller's env", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE\`.env({ ...process.env, FORCE_COLOR: "0" });`));
-    expect(output).toMatch(/^fc=0 nc=\r?$/m);
+    expect(probeResult(output).fc).toBe("0");
   });
 
   test("is not set for .quiet() / .text()", async () => {
     const output = await runInTerminal(fixture(`const out = await $\`PROBE\`.text(); process.stdout.write(out);`));
-    expect(output).toMatch(/^fc= nc=\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
   });
 
   test("is not visible to shell expansion", async () => {
     // The hint is appended to the child's spawn env only; it is not an
     // exported shell variable.
     const output = await runInTerminal(fixture(`await $\`echo fc=[$FORCE_COLOR]\`;`));
-    expect(output).toMatch(/^fc=\[\]\r?$/m);
+    expect(output).toContain("fc=[]");
   });
 
   test.skipIf(isWindows)("is not set when TERM=dumb", async () => {
     const output = await runInTerminal(fixture(`await $\`PROBE\`;`), { ...colorEnv, TERM: "dumb" });
-    expect(output).toMatch(/^fc= nc=\r?$/m);
+    expect(probeResult(output)).toEqual({ fc: "", nc: "" });
   });
 
   test("is not set when the script's own stdout is not a terminal", async () => {
@@ -3138,5 +3146,38 @@ describe("FORCE_COLOR", () => {
     await promise;
     await proc.exited;
     expect(await Bun.file(out).text()).toBe("fc= nc=\nDONE\n");
+  });
+
+  test("is set for `cmd 1>&2` when stderr is the relayed terminal", async () => {
+    const output = await runInTerminal(fixture(`await $\`PROBE 1>&2\`;`));
+    expect(probeResult(output).fc).toMatch(/^[123]$/);
+  });
+
+  test.skipIf(isWindows)("is not set for `cmd 1>&2` when the script's stderr is redirected", async () => {
+    // `1>&2` reroutes stdout onto stderr's destination; here root stderr is a
+    // file, so the output must stay plain even though stdout is the PTY.
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    await using terminal = new Bun.Terminal({
+      cols: 200,
+      rows: 24,
+      data(_t, chunk: Uint8Array) {
+        output += new TextDecoder().decode(chunk);
+        if (output.includes("DONE")) resolve();
+      },
+    });
+    using dir = tempDir("shell-fc-dup2", {});
+    const err = join(String(dir), "err.txt");
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", `exec "$0" -e "$1" 2> "$2"`, bunExe(), fixture(`await $\`PROBE 1>&2\`;`), err],
+      env: colorEnv,
+      terminal,
+    });
+    proc.exited.then(code => {
+      if (code !== 0) reject(new Error(`exit ${code}: ${output}`));
+    });
+    await promise;
+    await proc.exited;
+    expect(await Bun.file(err).text()).toBe("fc= nc=\n");
   });
 });

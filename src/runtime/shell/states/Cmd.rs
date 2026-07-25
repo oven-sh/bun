@@ -585,9 +585,13 @@ impl Cmd {
         // do not suppress ANSI just because `isatty()` is false.
         if let Some(line) = force_color_env {
             let stdout_is_relay = match &spawn_args.stdio[1] {
+                // Plain capture; also `2>&1`, whose combined output still
+                // relays through root stdout (slot 2 carries the dup there).
                 Stdio::Capture(_) => true,
+                // `1>&2`: output is rerouted onto root stderr, which only
+                // reaches the terminal when stderr is itself a tty.
                 Stdio::Dup2(d) if matches!(d.to, StdioKind::Stderr) => {
-                    matches!(spawn_args.stdio[2], Stdio::Capture(_))
+                    interp.stderr_is_tty.get() && matches!(spawn_args.stdio[2], Stdio::Capture(_))
                 }
                 _ => false,
             };

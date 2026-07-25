@@ -330,6 +330,9 @@ pub struct Interpreter {
     /// terminal. `Cmd` appends it to a child's env only when that child's
     /// resolved stdout is still the relayed `Stdio::Capture` pipe.
     pub force_color_env: Cell<Option<&'static [u8]>>,
+    /// Whether the root stderr is itself a tty; gates the `2>&1` relay arm of
+    /// the `force_color_env` check (the stderr capture may relay to a file).
+    pub stderr_is_tty: Cell<bool>,
     pub exit_code: Cell<Option<ExitCode>>,
     pub this_jsvalue: Cell<crate::jsc::JSValue>,
     pub cleanup_state: Cell<CleanupState>,
@@ -609,6 +612,7 @@ impl Interpreter {
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
             force_color_env: Cell::new(None),
+            stderr_is_tty: Cell::new(false),
             // Starts at `None` so `async_cmd_done` only finishes once
             // `on_root_child_done` has recorded the real exit code.
             exit_code: Cell::new(None),
@@ -1244,6 +1248,8 @@ impl Interpreter {
                 captured: cap_err,
             });
         });
+
+        self.stderr_is_tty.set(bun_sys::isatty(stderr_fd));
 
         // JS path: children get a `Stdio::Capture` pipe, so isatty() is false.
         // When the relayed output is a color terminal, record a FORCE_COLOR

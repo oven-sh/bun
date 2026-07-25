@@ -1836,10 +1836,10 @@ export class VerdaccioRegistry {
 
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind to 127.0.0.1 explicitly. With only a port, verdaccio listens on
-    // whatever getaddrinfo("localhost") returns first; on hosts where that is
-    // ::1, bun's HTTP client (which resolves localhost to 127.0.0.1) gets
-    // ConnectionRefused and every registry-backed test fails.
+    // Bind to 127.0.0.1 explicitly so verdaccio's listen address and bun's
+    // connect address cannot diverge on hosts where "localhost" resolution
+    // differs between the two (registry-backed tests otherwise fail with
+    // ConnectionRefused on such hosts).
     this.process = fork(
       require.resolve("verdaccio/bin/verdaccio"),
       ["-c", this.configPath, "-l", `127.0.0.1:${this.port}`],

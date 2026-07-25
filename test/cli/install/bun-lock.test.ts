@@ -982,3 +982,37 @@ it("bun install drops a once-resolved optional peer after the providing dependen
   await run(["install"]);
   expect(await file(join(packageDir, "bun.lock")).text()).not.toContain(noDepsEntry);
 });
+
+it("optional peer with a non-wildcard range is idempotent with two versions of the target in the tree", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+  const run = makeInstallRunner(packageDir);
+
+  // one-optional-peer-dep@1.0.2: optional peer no-deps@^1.0.0
+  // one-dep:                      hard dep no-deps@1.0.1 (satisfies ^1.0.0)
+  // one-fixed-dep@2.0.0:          hard dep no-deps@2.0.0 (does not satisfy ^1.0.0)
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "one-optional-peer-dep": "1.0.2",
+        "one-dep": "1.0.0",
+        "one-fixed-dep": "2.0.0",
+      },
+    }),
+  );
+
+  await run(["install"]);
+  const first = await file(join(packageDir, "bun.lock")).text();
+  expect(first).toContain('"no-deps": ["no-deps@');
+
+  // A second install over the same lockfile must be a byte-for-byte no-op: the
+  // cleared optional-peer slot re-derives to the same value hoist produced on
+  // fresh install.
+  await run(["install"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(first);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+});

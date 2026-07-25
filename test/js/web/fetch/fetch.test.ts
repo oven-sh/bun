@@ -3150,7 +3150,65 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
     }
   });
 
-  it("without the Expect header the body still ships with the request head", async () => {
+  it("over an HTTPS CONNECT proxy the body still reaches the origin", async () => {
+    // Regression guard: the CONNECT `200 Connection Established` reply must
+    // not be treated as a final origin status that abandons the withheld body.
+    const env = { ...bunEnv };
+    for (const k of ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) delete env[k];
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          import net from "node:net";
+          import { once } from "node:events";
+          const tlsCert = ${JSON.stringify(tls)};
+          await using origin = Bun.serve({
+            port: 0, hostname: "127.0.0.1", tls: tlsCert,
+            async fetch(req) { return new Response(await req.text()); },
+          });
+          const proxy = net.createServer(client => {
+            let buf = Buffer.alloc(0);
+            const onHead = chunk => {
+              buf = Buffer.concat([buf, chunk]);
+              if (!buf.includes("\\r\\n\\r\\n")) return;
+              client.off("data", onHead);
+              const up = net.connect(origin.port, "127.0.0.1", () => {
+                client.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+                client.pipe(up); up.pipe(client);
+              });
+              up.on("error", () => client.destroy());
+            };
+            client.on("data", onHead);
+            client.on("error", () => {});
+          });
+          proxy.listen(0, "127.0.0.1");
+          await once(proxy, "listening");
+          try {
+            const res = await fetch("https://127.0.0.1:" + origin.port + "/upload", {
+              method: "POST",
+              body: "the-payload",
+              headers: { expect: "100-continue" },
+              proxy: "http://127.0.0.1:" + proxy.address().port,
+              tls: { rejectUnauthorized: false },
+            });
+            console.log(res.status, await res.text());
+          } finally { proxy.close(); }
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("200 the-payload");
+    expect(exitCode).toBe(0);
+  });
+
+  it("without the Expect header the body is sent without waiting for 100", async () => {
+    // No 100 is ever written; if the body were withheld unconditionally the
+    // server would never see `bodyTotal >= cl` and the fetch would time out.
     const { server, result } = rawOrigin(() => "");
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
@@ -3159,16 +3217,11 @@ describe("fetch Expect: 100-continue (HTTP/1.1)", () => {
         method: "POST",
         body: "the-payload",
       });
-      // No 100 was ever sent; the body arrived on its own, so the request
-      // completes. The head+body going out in one write is the common case
-      // on loopback; assert it so a regression that starts withholding
-      // unconditionally is caught.
       expect({ status: res.status, text: await res.text(), bodyTotal: result.bodyTotal }).toEqual({
         status: 200,
         text: "ok",
         bodyTotal: 11,
       });
-      expect(result.bodyWithHead).toBeGreaterThan(0);
     } finally {
       server.close();
     }

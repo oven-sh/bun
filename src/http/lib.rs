@@ -2421,7 +2421,11 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(b"Expect") => {
+                    // h2/h3 use `Stream.awaiting_continue` (set in their own
+                    // encode paths); setting the h1 flag there would leave it
+                    // uncleared and gate `can_stream` forever.
                     if will_append
+                        && self.flags.protocol == Protocol::Http1_1
                         && bun_core::strings::eql_case_insensitive_ascii_check_length(
                             self.header_str(header_values[i]),
                             b"100-continue",
@@ -3771,10 +3775,15 @@ impl<'a> HTTPClient<'a> {
 
             break parsed;
         };
-        if self.state.flags.awaiting_continue {
-            // Final status without a preceding 100: abandon the upload. The
-            // declared Content-Length / chunked body will not be sent, so the
-            // connection framing is indeterminate and must not be reused.
+        if self.state.flags.awaiting_continue
+            && !(self.flags.proxy_tunneling && self.proxy_tunnel.is_none())
+        {
+            // Final status from the origin without a preceding 100: abandon
+            // the upload. The declared Content-Length / chunked body will not
+            // be sent, so the connection framing is indeterminate and must
+            // not be reused. A CONNECT reply (tunnel not yet established) is
+            // not an origin response; the flag is re-evaluated once the real
+            // request head goes through the tunnel.
             self.state.flags.awaiting_continue = false;
             self.state.flags.allow_keepalive = false;
             self.state.request_body = bun_ptr::RawSlice::EMPTY;

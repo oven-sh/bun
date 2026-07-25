@@ -66,14 +66,9 @@ type Socket = uws::AnySocket;
 
 #[derive(Default)]
 pub struct SubscriptionCtx {
-    /// Back-reference to the owning client. Constructed from the Box's raw
-    /// `*mut JSValkeyClient` so reads through it carry the allocation's full
-    /// provenance; the previous `container_of` recovery from `&self` (three
-    /// `bool`s, a Freeze type) produced a pointer LLVM may mark
-    /// `noalias readonly`, making the refcount write in
-    /// `on_new_subscription_callback_insert` a dead store at O2+ while the
-    /// paired `ScopedRef` drop survived as an opaque call. `None` only between
-    /// `JSValkeyClient::new` and `SubscriptionCtx::init`.
+    /// Stored (not `container_of`-recovered) so writes to the parent carry the
+    /// Box's provenance rather than `&self`'s `noalias readonly`. `None` only
+    /// until [`SubscriptionCtx::init`].
     parent: Option<BackRef<JSValkeyClient>>,
     pub is_subscriber: bool,
     pub original_enable_offline_queue: bool,

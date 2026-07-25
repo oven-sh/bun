@@ -280,17 +280,11 @@ impl<T: RefCounted> RefCount<T> {
         count.assert_single_threaded();
         let next = count.raw_count.get() + 1;
         count.raw_count.set(next);
-        // Tripwire for readonly-provenance stores: if `self_` was derived from
-        // a `&T` whose provenance does not cover `ref_count` (e.g. container_of
-        // from a Freeze child field), LLVM may elide this store at O2+ while
-        // the paired `deref` on the opaque side survives, silently dropping a
-        // ref. Re-reading via a volatile load defeats forwarding so the assert
-        // observes the actual cell contents.
+        // Volatile re-read catches an O2+ dead-store when `self_` was derived
+        // from a readonly-provenance `&T` (container_of on a Freeze child).
         #[cfg(debug_assertions)]
         debug_assert_eq!(
-            // SAFETY: `count` is live per the caller contract; `Cell<u32>` is
-            // `repr(transparent)` over `UnsafeCell<u32>`, so reading the
-            // underlying `u32` at this address is valid.
+            // SAFETY: `count` is live per the caller contract.
             unsafe { core::ptr::read_volatile(count.raw_count.as_ptr()) },
             next,
             "RefCount::ref_ store elided (pointer derived from readonly provenance?)",

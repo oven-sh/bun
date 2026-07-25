@@ -746,13 +746,9 @@ macro_rules! from_field_ptr {
 /// standalone, the generated accessors are unsound; keep a hand-rolled
 /// `pub unsafe fn` instead.
 ///
-/// The ref-only form derives `&$Parent` from `core::ptr::from_ref(self)`, so
-/// its provenance is that of `&$Child`. Use it for **reads only**: if `$Child`
-/// is `Freeze` the argument is `noalias readonly` and a write to any parent
-/// field through the result is UB the optimizer will exploit. When the parent
-/// must be written through, store an explicit `BackRef<$Parent>` on the child
-/// (constructed from the allocation's raw pointer) instead of using this
-/// macro.
+/// The `&self` forms carry `&$Child`'s provenance (`noalias readonly` when
+/// `$Child: Freeze`), so treat the returned `&$Parent` as read-only; store a
+/// `BackRef<$Parent>` on the child if it must write.
 #[macro_export]
 macro_rules! impl_field_parent {
     // ref + raw-mut pair

@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
-import { mkdir, rm, writeFile } from "fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isDebug, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, statSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
@@ -1263,11 +1263,11 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
 // wrapper, but previously the fallback wrote the batch text into bunx.exe
 // instead of bunx.cmd. A directory at the bunx.exe path blocks both the
 // non-directory delete and the hard link, forcing the fallback.
-it.skipIf(!isWindows)("completions: writes bunx.cmd (not bunx.exe) when hard link fails", async () => {
+it.concurrent.skipIf(!isWindows)("completions: writes bunx.cmd (not bunx.exe) when hard link fails", async () => {
   const dir = tmpdirSync();
   const bunxName = isDebug ? "bunx-debug" : "bunx";
   const bunCopy = join(dir, "bun-copy.exe");
-  copyFileSync(bunExe(), bunCopy);
+  await copyFile(bunExe(), bunCopy);
   await mkdir(join(dir, `${bunxName}.exe`));
 
   await using proc = spawn({

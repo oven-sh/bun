@@ -921,8 +921,7 @@ using namespace WebCore;
 
 static void promiseRejectionTrackerForShadowRealm(JSGlobalObject*, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
 {
-    // Only the thread-default global's m_aboutToBeNotifiedRejectedPromises is
-    // ever drained by the event loop, so route ShadowRealm rejections there.
+    // handleRejectedPromises() only drains the thread-default global's queue.
     Zig::GlobalObject::promiseRejectionTracker(defaultGlobalObject(), promise, operation);
 }
 

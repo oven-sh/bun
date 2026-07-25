@@ -40,27 +40,6 @@ describe("runtime transpiler", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("static `import * as B from 'bun'` with module-level `let globalThis`", async () => {
-    using dir = tempDir("issue-08058-static", {
-      "index.ts": `
-        let globalThis = { Bun: "intercepted" };
-        import * as B from "bun";
-        console.log(typeof B.serve);
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("function\n");
-    expect(exitCode).toBe(0);
-  });
-
   test("require('bun') in a .cjs file with a local `globalThis`", async () => {
     using dir = tempDir("issue-08058-cjs", {
       "index.cjs": `
@@ -80,6 +59,32 @@ describe("runtime transpiler", () => {
     expect(stdout).toBe("function\n");
     expect(exitCode).toBe(0);
   });
+
+  test("`import { env } from 'bun'` does not eagerly reify the Bun object", async () => {
+    // `import X from "bun"` is still lowered to `var X = globalThis.Bun` at runtime
+    // (not a real ESM import) so that (a) only the requested property is touched and
+    // (b) type-only names declared in bun.d.ts don't fail link-time export validation.
+    using dir = tempDir("issue-08058-reify", {
+      "index.ts": `
+        import { env } from "bun";
+        import { hasNonReifiedStatic } from "bun:internal-for-testing";
+        if (!hasNonReifiedStatic(Bun)) throw new Error("import { env } from 'bun' reified the whole Bun object");
+        void env;
+        console.log("pass");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("pass\n");
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("bundler", () => {
@@ -87,6 +92,9 @@ describe("bundler", () => {
     target: "bun",
     files: {
       "/entry.ts": /* js */ `
+        import * as B from "bun";
+        var globalThis = { Bun: "intercepted" };
+        if (typeof B.serve !== "function") throw new Error("import * from 'bun' was shadowed: " + B);
         {
           let globalThis = { Bun: "intercepted" };
           const b = require("bun");
@@ -100,7 +108,7 @@ describe("bundler", () => {
     run: { stdout: "pass" },
     onAfterBundle(api) {
       // The user's local binding should have been renamed away.
-      expect(api.readFile("out.js")).not.toContain(`let globalThis =`);
+      expect(api.readFile("out.js")).not.toContain(`globalThis = { Bun`);
     },
   });
 
@@ -109,10 +117,12 @@ describe("bundler", () => {
     format: "cjs",
     files: {
       "/entry.ts": /* js */ `
+        import * as B from "bun";
         {
           let globalThis = { Bun: "intercepted" };
           const b = require("bun");
           if (typeof b.serve !== "function") throw new Error("require('bun') was shadowed: " + b);
+          if (typeof B.serve !== "function") throw new Error("import * from 'bun' was shadowed: " + B);
           console.log("pass");
         }
       `,

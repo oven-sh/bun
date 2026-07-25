@@ -5769,10 +5769,14 @@ pub mod __gated_printer {
                     self.print_space_before_identifier();
                     self.add_source_mapping(stmt.loc);
 
-                    if IS_BUN_PLATFORM && self.options.bundling {
-                        // Gated on `bundling` for the same reason as the Tag::Bun
-                        // arm in print_require_or_import_expr: the `globalThis.Bun`
-                        // literal is only safe once a renamer has reserved the name.
+                    if IS_BUN_PLATFORM {
+                        // Unlike print_require_or_import_expr this is not gated on
+                        // `bundling`: lowering `import { x } from "bun"` to a real
+                        // ESM import in the runtime path would (a) eagerly reify
+                        // every property on the Bun object and (b) fail link-time
+                        // validation for names that exist only as types in bun.d.ts.
+                        // When bundling, the renamer has already renamed any user
+                        // `globalThis` away (compute_initial_reserved_names).
                         if record.tag == ImportRecordTag::Bun {
                             self.print_global_bun_import_statement(s);
                             self.prev_stmt_tag = new_tag;

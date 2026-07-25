@@ -2931,30 +2931,11 @@ fn normalize_specifier_for_resolution<'a>(
     specifier_: &'a [u8],
     query_string: &mut &'a [u8],
 ) -> &'a [u8] {
-    if let Some(i) = index_of_query_or_fragment(specifier_) {
+    if let Some(i) = bun_core::strings::index_of_char_usize(specifier_, b'?') {
         *query_string = &specifier_[i..];
         &specifier_[..i]
     } else {
         specifier_
-    }
-}
-
-/// Index of the first `?` or `#` in a module specifier, or `None`.
-///
-/// A `#` at byte 0 is a package.json `"imports"` subpath (node's
-/// PACKAGE_IMPORTS_RESOLVE), not a URL fragment, so it is skipped. Node keys
-/// the ESM cache on the full URL including `?search` and `#hash`, so both must
-/// participate in the module key and be stripped for filesystem lookup.
-#[inline]
-pub fn index_of_query_or_fragment(specifier: &[u8]) -> Option<usize> {
-    let q = bun_core::strings::index_of_char_usize(specifier, b'?');
-    let h = match specifier.get(1..) {
-        Some(rest) => bun_core::strings::index_of_char_usize(rest, b'#').map(|i| i + 1),
-        None => None,
-    };
-    match (q, h) {
-        (Some(q), Some(h)) => Some(q.min(h)),
-        (a, b) => a.or(b),
     }
 }
 

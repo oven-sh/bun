@@ -167,21 +167,14 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
 
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
-    auto q = specifier.find('?');
-    auto h = specifier.find('#');
-    auto index = q < h ? q : h;
+    auto index = specifier.find('?');
     URL url;
-    if (index == notFound) {
-        url = URL::fileURLWithFileSystemPath(specifier);
-    } else {
+    if (index != notFound) {
         StringView view = specifier;
         url = URL::fileURLWithFileSystemPath(view.substring(0, index));
-        if (q < h) {
-            url.setQuery(view.substring(q + 1, h == notFound ? view.length() - q - 1 : h - q - 1));
-        }
-        if (h != notFound) {
-            url.setFragmentIdentifier(view.substring(h + 1));
-        }
+        url.setQuery(view.substring(index + 1));
+    } else {
+        url = URL::fileURLWithFileSystemPath(specifier);
     }
     return create(globalObject, url.string());
 }

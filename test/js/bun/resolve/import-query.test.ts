@@ -298,6 +298,48 @@ test("static import with a #fragment keys the module cache per fragment", async 
   expect(exitCode).toBe(0);
 });
 
+// `#` is a legal filename byte. A resolved module key with a `#` that came
+// from the filesystem path (not from a specifier fragment) must round-trip
+// through the loader intact.
+test("#fragment splitting does not break modules under a directory containing #", async () => {
+  using dir = tempDir("import-fragment-hash-dir", {
+    "C#proj/target.mjs": `export default 42;\nexport const url = import.meta.url;`,
+    "C#proj/entry.mjs": `
+      import v, { url } from "./target.mjs";
+      const m = await import("./target.mjs#x");
+      console.log(JSON.stringify({ v, m: m.default, same: url === m.url, hash: m.url.slice(m.url.lastIndexOf("#")) }));
+    `,
+    "C#proj/hash#name.cjs": `module.exports = "cjs";`,
+    "C#proj/req.cjs": `console.log(JSON.stringify({ r: require("./hash#name.cjs") }));`,
+  });
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "C#proj/entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ v: 42, m: 42, same: false, hash: "#x" });
+    expect(exitCode).toBe(0);
+  }
+  {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "C#proj/req.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ r: "cjs" });
+    expect(exitCode).toBe(0);
+  }
+});
+
 // A leading `#` is a package.json "imports" subpath, not a URL fragment;
 // fragment splitting must not swallow it.
 test("#fragment splitting does not break package.json imports subpaths", async () => {

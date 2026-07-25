@@ -443,14 +443,8 @@ pub fn normalize_specifier<'a>(
     let specifier = slice;
     let mut query: &[u8] = b"";
 
-    let q = strings::index_of_char_usize(slice, b'?');
-    let h = slice
-        .get(1..)
-        .and_then(|rest| strings::index_of_char_usize(rest, b'#').map(|i| i + 1));
-    if let Some(i) = match (q, h) {
-        (Some(q), Some(h)) => Some(q.min(h)),
-        (a, b) => a.or(b),
-    } {
+    if let Some(i) = strings::index_of_char(slice, b'?') {
+        let i = i as usize;
         query = &slice[i..];
         slice = &slice[..i];
     }

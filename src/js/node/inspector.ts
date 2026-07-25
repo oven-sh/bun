@@ -273,18 +273,21 @@ function removeConsoleHooks() {
 }
 
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
-// ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
-// into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
-// each function gets an entry whose first range spans the whole function with its
-// call count, followed by the basic-block ranges inside it; blocks outside any
-// function go on a synthetic whole-script entry.
+// ([{ url, scriptId, sourceLength, blocks: [[start, end, count, rStart?, rEnd?]],
+// functions: [[start, end, executed, name, rStart?, rEnd?]] }]) into the V8
+// ScriptCoverage list returned by Profiler.takePreciseCoverage.
+// Block→function assignment is done on the raw (transpiled) start/end so
+// containment holds; the emitted CoverageRange uses the remapped start/end
+// (original-file bytes) when present, so offsets address the file the url names.
+type RawBlock = [number, number, number, number?, number?];
+type RawFunction = [number, number, boolean, string, number?, number?];
 function buildScriptCoverageList(
   rawScripts: Array<{
     url: string;
     scriptId: number;
     sourceLength: number;
-    blocks: Array<[number, number, number]>;
-    functions: Array<[number, number, boolean]>;
+    blocks: RawBlock[];
+    functions: RawFunction[];
   }>,
   callCount: boolean,
   detailed: boolean,
@@ -309,8 +312,8 @@ function buildScriptCoverageList(
     const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
 
     // Assign each basic block to the innermost function range containing it.
-    const blocksPerFunction: Array<Array<[number, number, number]>> = functions.map(() => []);
-    const topLevelBlocks: Array<[number, number, number]> = [];
+    const blocksPerFunction: RawBlock[][] = functions.map(() => []);
+    const topLevelBlocks: RawBlock[] = [];
     const stack: number[] = [];
     let nextFunction = 0;
     for (const block of blocks) {
@@ -346,10 +349,10 @@ function buildScriptCoverageList(
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
-    const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
-      startOffset,
-      endOffset,
-      count: callCount ? count : count > 0 ? 1 : 0,
+    const toRange = (b: RawBlock) => ({
+      startOffset: b[3] ?? b[0],
+      endOffset: b[4] ?? b[1],
+      count: callCount ? b[2] : b[2] > 0 ? 1 : 0,
     });
 
     // Whole-script entry. V8 always reports one covering the entire source.
@@ -363,10 +366,12 @@ function buildScriptCoverageList(
     });
 
     for (let i = 0; i < functions.length; i++) {
-      const [startOffset, endOffset, executed] = functions[i];
+      const [rawStart, rawEnd, executed, functionName, rStart, rEnd] = functions[i];
+      const startOffset = rStart ?? rawStart;
+      const endOffset = rEnd ?? rawEnd;
       if (!executed) {
         entries.push({
-          functionName: "",
+          functionName,
           ranges: [{ startOffset, endOffset, count: 0 }],
           isBlockCoverage: false,
         });
@@ -387,7 +392,7 @@ function buildScriptCoverageList(
         count = entryBlock[2];
       }
       entries.push({
-        functionName: "",
+        functionName,
         ranges: [
           { startOffset, endOffset, count: callCount ? count : count > 0 ? 1 : 0 },
           ...(detailed ? ownBlocks.map(toRange) : []),

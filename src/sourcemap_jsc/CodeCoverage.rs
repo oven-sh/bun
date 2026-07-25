@@ -946,3 +946,125 @@ pub struct Block {
     pub start_line: u32,
     pub end_line: u32,
 }
+
+/// Remap ControlFlowProfiler byte offsets (which index the runtime-transpiled
+/// source JSC compiled) back to byte offsets into the original file on disk,
+/// so `Profiler.takePreciseCoverage` output matches what Node/V8 produce for
+/// the same file. Scripts with no saved sourcemap (vm.Script, eval, modules
+/// the transpiler passed through untouched) return false and keep their
+/// offsets unchanged.
+///
+/// # Safety
+/// `offsets` must point to `count` writable `i32`s and `out_original_len` to a
+/// writable `u32`. Must be called on the JS thread (touches the per-VM
+/// `SavedSourceMap`).
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
+    source_url: bun_core::String,
+    transpiled: bun_core::String,
+    offsets: *mut i32,
+    count: usize,
+    out_original_len: *mut u32,
+) -> bool {
+    let path = source_url.to_utf8();
+    // Only filesystem-backed modules have a saved sourcemap AND a file to read
+    // the original text from. vm.Script / eval / builtins fall through here.
+    if !bun_paths::is_absolute(path.slice()) {
+        return false;
+    }
+
+    // SAFETY: JS-thread-only; `VirtualMachine::get()` returns the live singleton.
+    let Some(parsed) = bun_jsc::VirtualMachine::VirtualMachine::get()
+        .as_mut()
+        .source_mappings()
+        .get(path.slice())
+    else {
+        return false;
+    };
+
+    // The original text is what external consumers (c8, v8-to-istanbul) read
+    // from disk; we need its line-start table to turn the sourcemap's
+    // (line, column) answers back into byte offsets.
+    let original = match bun_sys::File::read_from(bun_core::Fd::cwd(), path.slice()) {
+        Ok(bytes) => bytes,
+        Err(_) => return false,
+    };
+    let Ok(original_table) = LineOffsetTable::generate(&original, 0) else {
+        return false;
+    };
+    let original_starts = original_table.items_byte_offset_to_start_of_line();
+
+    let transpiled = transpiled.to_utf8();
+    let Ok(transpiled_table) = LineOffsetTable::generate(transpiled.slice(), 0) else {
+        return false;
+    };
+    let transpiled_starts = transpiled_table.items_byte_offset_to_start_of_line();
+
+    // SAFETY: caller contract.
+    let offsets = unsafe { core::slice::from_raw_parts_mut(offsets, count) };
+    let original_len = i32::try_from(original.len()).unwrap_or(i32::MAX);
+    let mut cursor = parsed.internal_cursor();
+
+    let remap_one =
+        |off: i32, is_end: bool, cursor: &mut Option<internal_source_map::Cursor>| -> i32 {
+            if off < 0 {
+                return off;
+            }
+            let line = LineOffsetTable::find_line(transpiled_starts, Loc { start: off });
+            if line < 0 {
+                return if is_end { original_len } else { 0 };
+            }
+            let line_start = transpiled_starts[line as usize] as i32;
+            let col = off - line_start;
+            let found = if let Some(c) = cursor.as_mut() {
+                c.move_to(
+                    Ordinal::from_zero_based(line),
+                    Ordinal::from_zero_based(col),
+                )
+            } else {
+                parsed.find_mapping(
+                    Ordinal::from_zero_based(line),
+                    Ordinal::from_zero_based(col),
+                )
+            };
+            let Some(m) = found else {
+                return if is_end { original_len } else { 0 };
+            };
+            let orig_line = m.original.lines.zero_based();
+            if orig_line < 0 || (orig_line as usize) >= original_starts.len() {
+                return if is_end { original_len } else { 0 };
+            }
+            // The nearest-at-or-before mapping's original position. No byte-delta
+            // carry: the builder inserts a synthetic column-0 mapping on every
+            // output line that would otherwise start past column 0
+            // (`cover_lines_without_mappings` in `sourcemap::Chunk`), so bytes
+            // between a mapping and the target do not line up 1:1.
+            let mut remapped =
+                original_starts[orig_line as usize] as i32 + m.original.columns.zero_based();
+            // Closing `}` has no explicit mapping (FnBody carries no
+            // close_brace_loc), so an end offset lands on the last statement's
+            // start. Extend to the end of that original line so the range still
+            // encloses the function body for line-based coverage consumers.
+            if is_end {
+                let next_line = orig_line as usize + 1;
+                let line_end = if next_line < original_starts.len() {
+                    original_starts[next_line] as i32
+                } else {
+                    original_len
+                };
+                remapped = remapped.max(line_end);
+            }
+            remapped.clamp(0, original_len)
+        };
+
+    for pair in offsets.chunks_exact_mut(2) {
+        let start = remap_one(pair[0], false, &mut cursor);
+        let end = remap_one(pair[1], true, &mut cursor);
+        pair[0] = start;
+        pair[1] = start.max(end);
+    }
+
+    // SAFETY: caller contract.
+    unsafe { *out_original_len = original_len as u32 };
+    true
+}

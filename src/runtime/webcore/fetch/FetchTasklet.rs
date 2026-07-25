@@ -2519,13 +2519,18 @@ impl FetchTasklet {
     /// the regular [`abort_task`] is avoided because `tracker.did_cancel`
     /// reaches the inspector.
     fn abandon_response_body_from_finalizer(&mut self) {
-        let drain = match self.body_size {
-            http::BodySize::ContentLength(n) => {
-                n.saturating_sub(self.scheduled_response_buffer.list.len())
-                    <= ABANDONED_RESPONSE_DRAIN_MAX_BYTES
-            }
-            http::BodySize::TotalReceived(_) | http::BodySize::Unknown => false,
-        };
+        // `body_size` is assigned by the HTTP-thread `callback()` under
+        // `self.mutex`; take the same lock here so the enum read is not torn.
+        self.mutex.lock();
+        let body_size = self.body_size;
+        self.mutex.unlock();
+        // `Content-Length` is the wire (post-encoding) size; compare it
+        // directly. `scheduled_response_buffer` holds decompressed bytes, so
+        // subtracting it from the wire count would mix units.
+        let drain = matches!(
+            body_size,
+            http::BodySize::ContentLength(n) if n <= ABANDONED_RESPONSE_DRAIN_MAX_BYTES
+        );
         if !drain && !self.signal_store.aborted.swap(true, Ordering::Relaxed) {
             if let Some(http_) = self.http.as_mut() {
                 http::http_thread().schedule_shutdown(http_);

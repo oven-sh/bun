@@ -3824,7 +3824,9 @@ impl<'a> HTTPClient<'a> {
 
         if self.proxy_tunnel.is_some() {
             // if we have a tunnel we dont care about the other stages, we will just tunnel the data
-            self.set_timeout(&socket);
+            if !self.signals.is_receive_ignored() {
+                self.set_timeout(&socket);
+            }
             self.proxy_tunnel_mut().unwrap().receive(incoming_data);
             return;
         }
@@ -4050,7 +4052,9 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "resume receive {}", self.async_http_id);
         if self.signals.is_receive_ignored() {
             // Armed once here and never re-armed in `on_data` while ignored, so
-            // this is the absolute deadline for the whole discard-drain.
+            // this is the absolute deadline for the whole discard-drain. Proxy
+            // tunnels never pause receive and so never reach here; their drain
+            // runs under the previously-armed idle timeout.
             socket.set_timeout(IGNORE_DRAIN_TIMEOUT_SECONDS);
         } else {
             self.set_timeout(&socket);

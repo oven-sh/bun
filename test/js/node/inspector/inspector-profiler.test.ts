@@ -679,9 +679,8 @@ console.log(JSON.stringify(entry));
       expect(byName("alpha").ranges[0].startOffset).toBe(bytes.indexOf("function alpha"));
       expect(byName("m").ranges[0].startOffset).toBe(bytes.indexOf("m() {"));
       expect(byName("caf\u00e9").ranges[0].startOffset).toBe(bytes.indexOf("function caf\u00e9"));
-      // The CJK method 語 is on a line with earlier non-ASCII (the other
-      // method body returns '語'), so its UTF-16 column sits inside an
-      // equal-value run of columns_for_non_ascii.
+      // 語 is a 3-byte BMP codepoint (é is 2, 🎉 is astral), exercising the
+      // columns_for_non_ascii inversion at first_na exactly.
       expect(slice(byName("\u8a9e"))).toStartWith("\u8a9e() { return '\u8a9e'; }");
       expect(byName("\u8a9e").ranges[0].startOffset).toBe(bytes.indexOf("\u8a9e() {"));
     });

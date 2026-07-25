@@ -1579,9 +1579,15 @@ impl Content {
         }
     }
 
-    pub fn ext(&self) -> &'static [u8] {
+    pub fn ext(&self, target: options::Target, output_format: options::Format) -> &'static [u8] {
         match self {
-            Content::Javascript(_) => b"js",
+            Content::Javascript(_) => match (target, output_format) {
+                // Node treats `.js` as CommonJS unless the nearest package.json
+                // says `"type": "module"`, so an ESM bundle written as `.js`
+                // fails to load there. Emit `.mjs` so the output runs as-is.
+                (options::Target::Node, options::Format::Esm) => b"mjs",
+                _ => b"js",
+            },
             Content::Css(_) => b"css",
             Content::Html => b"html",
         }

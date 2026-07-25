@@ -619,7 +619,11 @@ pub fn compute_chunks(this: &mut LinkerContext, unique_key: u64) -> crate::Resul
             output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
         );
         chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
-        chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
+        chunk.template.placeholder.ext = chunk
+            .content
+            .ext(this.options.target, this.options.output_format)
+            .to_vec()
+            .into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {
             // Determine the target from the AST of the entry point source

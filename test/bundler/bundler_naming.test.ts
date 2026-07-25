@@ -302,6 +302,83 @@ describe("bundler", () => {
       },
     ],
   });
+  // https://github.com/oven-sh/bun/issues/10607
+  // `--target node` emits ESM by default; Node loads `.js` as CommonJS unless
+  // the nearest package.json says `"type": "module"`, so the default `[ext]`
+  // for a JS chunk must be `mjs` to produce output that runs as-is.
+  itBundled("naming/NodeTargetEsmEmitsMjs#10607", {
+    files: {
+      "/a/entry.ts": `console.log(1);`,
+      "/b/entry.ts": `console.log(2);`,
+    },
+    target: "node",
+    entryPointsRaw: ["./a/entry.ts", "./b/entry.ts"],
+    run: [
+      { file: "/out/a/entry.mjs", stdout: "1", runtime: "node" },
+      { file: "/out/b/entry.mjs", stdout: "2", runtime: "node" },
+    ],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a/entry.mjs");
+      api.assertFileExists("/out/b/entry.mjs");
+    },
+  });
+  itBundled("naming/NodeTargetEsmSplittingEmitsMjs#10607", {
+    files: {
+      "/shared.ts": `export const v = 42;`,
+      "/a.ts": `import { v } from "./shared"; console.log("a", v);`,
+      "/b.ts": `import { v } from "./shared"; console.log("b", v);`,
+    },
+    target: "node",
+    splitting: true,
+    entryPointsRaw: ["./a.ts", "./b.ts"],
+    run: [
+      { file: "/out/a.mjs", stdout: "a 42", runtime: "node" },
+      { file: "/out/b.mjs", stdout: "b 42", runtime: "node" },
+    ],
+    onAfterBundle(api) {
+      // The shared chunk is .mjs and the entries reference it by that name.
+      api.expectFile("/out/a.mjs").toMatch(/from "\.\/[^"]+\.mjs"/);
+      api.expectFile("/out/b.mjs").toMatch(/from "\.\/[^"]+\.mjs"/);
+    },
+  });
+  itBundled("naming/NodeTargetCjsEmitsJs", {
+    files: {
+      "/a/entry.ts": `console.log(1);`,
+      "/b/entry.ts": `console.log(2);`,
+    },
+    target: "node",
+    format: "cjs",
+    entryPointsRaw: ["./a/entry.ts", "./b/entry.ts"],
+    run: [
+      { file: "/out/a/entry.js", stdout: "1", runtime: "node" },
+      { file: "/out/b/entry.js", stdout: "2", runtime: "node" },
+    ],
+  });
+  itBundled("naming/BrowserTargetEsmEmitsJs", {
+    files: {
+      "/a/entry.ts": `console.log(1);`,
+      "/b/entry.ts": `console.log(2);`,
+    },
+    target: "browser",
+    entryPointsRaw: ["./a/entry.ts", "./b/entry.ts"],
+    run: [
+      { file: "/out/a/entry.js", stdout: "1" },
+      { file: "/out/b/entry.js", stdout: "2" },
+    ],
+  });
+  itBundled("naming/NodeTargetEntryNamingOverridesExt", {
+    files: {
+      "/a/entry.ts": `console.log(1);`,
+      "/b/entry.ts": `console.log(2);`,
+    },
+    target: "node",
+    entryNaming: "[dir]/[name].js",
+    entryPointsRaw: ["./a/entry.ts", "./b/entry.ts"],
+    onAfterBundle(api) {
+      api.assertFileExists("/out/a/entry.js");
+      api.assertFileExists("/out/b/entry.js");
+    },
+  });
   // A non-ASCII ID_Continue basename char is preserved in the generated
   // CommonJS wrapper symbol, not replaced per-code-point (nor per-UTF-8-byte,
   // which once regressed to `require_caf__utils`).

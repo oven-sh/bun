@@ -954,6 +954,7 @@ dependencies = [
  "bun_resolver",
  "bun_semver",
  "bun_sha_hmac",
+ "bun_shell_parser",
  "bun_simdutf_sys",
  "bun_spawn",
  "bun_sys",

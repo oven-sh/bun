@@ -19,9 +19,6 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 const SCRIPT_NAMES_LEN: usize = LockfileScripts::NAMES.len();
 
-/// Build the shell command that installs a git dependency's own
-/// `dependencies`/`devDependencies` into its `node_modules/` before the
-/// package's prepare scripts run. `None` only when `self_exe_path` fails.
 fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
     let bun_exe = bun_core::self_exe_path().ok()?;
     let registry = crate::package_manager_real::PackageManager::get()
@@ -30,13 +27,16 @@ fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
         .url
         .href();
     let mut cmd: Vec<u8> = Vec::with_capacity(bun_exe.len() + registry.len() + 64);
-    cmd.push(b'"');
-    cmd.extend_from_slice(bun_exe.as_bytes());
-    cmd.extend_from_slice(b"\" install --ignore-scripts --no-summary --no-progress");
+    bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
+        bun_exe.as_bytes(),
+        &mut cmd,
+    ));
+    cmd.extend_from_slice(b" install --ignore-scripts --no-summary --no-progress");
     if !registry.is_empty() {
-        cmd.extend_from_slice(b" --registry \"");
-        cmd.extend_from_slice(registry);
-        cmd.push(b'"');
+        cmd.extend_from_slice(b" --registry ");
+        bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
+            registry, &mut cmd,
+        ));
     }
     Some(cmd.into_boxed_slice())
 }
@@ -186,12 +186,8 @@ impl Scripts {
             ResolutionTag::Git | ResolutionTag::Github | ResolutionTag::Root => {
                 let prepare_scripts = [&self.preprepare, &self.prepare, &self.postprepare];
 
-                // npm installs a git dependency by cloning it, running a full
-                // `npm install` (dependencies + devDependencies), running
-                // `prepare`, then packing the result. Run a nested install
-                // first so `prepare` can find the package's own devDependencies
-                // without adding them to the consumer's lockfile
-                // (oven-sh/bun#10297, #6138).
+                // npm installs a git dep's devDependencies before `prepare`; do the
+                // same via a nested install so they are resolvable (#10297, #6138).
                 let install_deps = if resolution_tag != ResolutionTag::Root
                     && prepare_scripts.iter().any(|s| !s.is_empty())
                 {

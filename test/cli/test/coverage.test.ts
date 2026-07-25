@@ -99,14 +99,25 @@ test("coverage text reporter prints every uncovered line", () => {
   return "ok";
 }
 `,
+    // the old sentinel couldn't tell bit index 0 apart from "no run yet"; line 1 (and 4) were lost.
+    "line1.ts": `export function miss(): never {
+  throw new Error("a");
+}
+export function also(): never {
+  throw new Error("b");
+}
+export function ok2() { return "ok"; }
+`,
     "demo.test.ts": `import { test, expect } from "bun:test";
 import { check } from "./many";
 import { only } from "./one";
 import { mix } from "./mix";
+import { ok2 } from "./line1";
 test("paths", () => {
   expect(check(0)).toBe("ok");
   expect(only(1)).toBe("ok");
   expect(mix(2)).toBe("ok");
+  expect(ok2()).toBe("ok");
 });
 `,
   });
@@ -121,7 +132,8 @@ test("paths", () => {
   const table = stderr.split("\n").filter(l => l.includes(" | "));
   expect(normalizeBunSnapshot(table.join("\n"), dir)).toMatchInlineSnapshot(`
 "File       | % Funcs | % Lines | Uncovered Line #s
-All files  |  100.00 |   74.24 |
+All files  |   83.33 |   70.68 |
+ line1.ts  |   33.33 |   60.00 | 1,4
  many.ts   |  100.00 |   72.73 | 3,6,9
  mix.ts    |  100.00 |   70.00 | 3-4,8
  one.ts    |  100.00 |   80.00 | 3"

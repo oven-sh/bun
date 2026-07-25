@@ -1419,6 +1419,42 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   expect(enumerable).not.toContain("cpuUsageInternal");
 });
 
+test("env: {} scrubs the launch environment from the worker's process.env", async () => {
+  // Spawn so the launch environ we're scrubbing is known and not the test
+  // runner's own. The worker reads the vars as literal dot accesses, which is
+  // the form the worker transpiler was previously inlining from the parent's
+  // env loader even when `env: {}` installed an empty plain object.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("node:worker_threads");
+       const src = \`const { parentPort } = require("node:worker_threads");
+         parentPort.postMessage({
+           keys: Object.keys(process.env),
+           secret: process.env.LAUNCH_SECRET ?? null,
+           only: process.env.ONLY ?? null,
+           inSecret: "LAUNCH_SECRET" in process.env,
+           node_env: process.env.NODE_ENV ?? null,
+         });\`;
+       const w = new Worker(src, { eval: true, env: { ONLY: "1" } });
+       w.once("message", m => { console.log(JSON.stringify(m)); w.terminate(); });`,
+    ],
+    env: { ...bunEnv, LAUNCH_SECRET: "s3cr3t", NODE_ENV: "production" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual({
+    keys: ["ONLY"],
+    secret: null,
+    only: "1",
+    inSecret: false,
+    node_env: null,
+  });
+  expect(exitCode).toBe(0);
+});
+
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
   async function run(mode: string) {
     const proc = Bun.spawn({

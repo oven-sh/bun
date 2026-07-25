@@ -96,6 +96,12 @@ plugins = ["./my-plugin.ts"]
 bun build ./app.ts --outdir ./out
 ```
 
+<Note>
+  Plugins loaded from `bunfig.toml` run their `onStart`, `onResolve`, `onLoad`, and `onBeforeParse` hooks during `bun
+  build` and `Bun.serve`. The `onEnd` hook is only invoked by `Bun.build()`'s JS API, which produces the `BuildOutput`
+  object that `onEnd` receives.
+</Note>
+
 ## Plugin lifecycle
 
 ### Namespaces

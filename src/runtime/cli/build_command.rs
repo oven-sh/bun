@@ -623,29 +623,28 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
-            // Bundler plugins from bunfig `[serve.static].plugins` need a JS VM +
-            // JS event loop so onLoad/onResolve callbacks can run. Without
-            // plugins the Mini loop is used and no VM is created.
-            let (mut event_loop, plugins) =
-                if let Some(specifiers) = opt_serve_plugins.as_deref().filter(|s| !s.is_empty()) {
-                    let (vm_ptr, plugin) = load_bundler_plugins(
-                        ctx.args.clone(),
-                        ctx.log,
-                        ctx.runtime_options.smol,
-                        opt_target,
-                        specifiers,
-                        &opt_bunfig_path,
-                    );
-                    // SAFETY: `vm_ptr` is the unique live VM on this thread;
-                    // process-lifetime (exec() never returns).
-                    let vm = unsafe { &mut *vm_ptr };
-                    (
-                        bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
-                        Some(plugin),
-                    )
-                } else {
-                    (bun_event_loop::AnyEventLoop::init(), None)
-                };
+            // bunfig `[serve.static].plugins` need a JS VM + Js event loop.
+            let (mut event_loop, plugins) = if let Some(specifiers) = opt_serve_plugins
+                .as_deref()
+                .filter(|s| fetcher.is_none() && !s.is_empty())
+            {
+                let (vm_ptr, plugin) = load_bundler_plugins(
+                    ctx.args.clone(),
+                    ctx.log,
+                    ctx.runtime_options.smol,
+                    opt_target,
+                    specifiers,
+                    &opt_bunfig_path,
+                );
+                // SAFETY: unique live VM on this thread; process-lifetime.
+                let vm = unsafe { &mut *vm_ptr };
+                (
+                    bun_event_loop::AnyEventLoop::js(vm.event_loop().cast()),
+                    Some(plugin),
+                )
+            } else {
+                (bun_event_loop::AnyEventLoop::init(), None)
+            };
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
@@ -1162,13 +1161,7 @@ impl BuildCommand {
     }
 }
 
-/// When `[serve.static].plugins` is configured in bunfig, `bun build` spins up a
-/// JS VM so those plugins can participate in bundling. Returns the created VM
-/// (caller keeps it alive for the bundle) and the loaded `JSBundlerPlugin`, or
-/// prints the error and exits.
-///
-/// `#[cold]` so the VM-init body is kept out of the no-plugin fast path's icache
-/// footprint.
+/// Start a JS VM, load each bunfig plugin, and return the `JSBundlerPlugin`.
 #[cold]
 fn load_bundler_plugins(
     args: api::TransformOptions,
@@ -1210,19 +1203,17 @@ fn load_bundler_plugins(
     vm.load_extra_env_and_source_code_printer();
     vm.event_loop_ref().ensure_waker();
     let global = vm.global();
+    BUILD_PLUGIN_VM.store(vm_ptr, core::sync::atomic::Ordering::Relaxed);
 
-    // The API lock must be held for every JSC heap access, both during plugin
-    // setup here and while the bundler drives plugin callbacks through the JS
-    // event loop. `exec()` never returns (it diverges via `exit_or_watch`), so
-    // the guard is intentionally never dropped.
+    // Held for the rest of the process (`exec()` diverges via `exit_or_watch`).
     // SAFETY: `vm.jsc_vm` is the live `JSC::VM*` set in `VirtualMachine::init`.
     #[allow(clippy::mem_forget)]
     core::mem::forget(unsafe { (*vm.jsc_vm).get_api_lock() });
 
-    let plugin_target = match target {
-        bun_ast::Target::Bun | bun_ast::Target::BunMacro => bun_jsc::BunPluginTarget::Bun,
-        bun_ast::Target::Node => bun_jsc::BunPluginTarget::Node,
-        _ => bun_jsc::BunPluginTarget::Browser,
+    let (plugin_target, target_name): (bun_jsc::BunPluginTarget, &[u8]) = match target {
+        bun_ast::Target::Bun | bun_ast::Target::BunMacro => (bun_jsc::BunPluginTarget::Bun, b"bun"),
+        bun_ast::Target::Node => (bun_jsc::BunPluginTarget::Node, b"node"),
+        _ => (bun_jsc::BunPluginTarget::Browser, b"browser"),
     };
     let plugin = Plugin::create(global, plugin_target);
     let plugin_ref = Plugin::opaque_ref(plugin);
@@ -1238,15 +1229,20 @@ fn load_bundler_plugins(
         // SAFETY: `vm_ptr` is the unique live VM on this thread.
         unsafe { (*vm_ptr).print_error_like_object_to_console(err) };
         Output::flush();
-        Global::exit(1);
+        exit_or_watch(1, false);
     };
 
     let setup = || -> bun_jsc::JsResult<bun_jsc::JSValue> {
         let plugin_js_array = bun_jsc::bun_string_jsc::to_js_array(global, &bunstring_array)?;
         let bunfig_folder_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
+        let target_js = bun_jsc::bun_string_jsc::create_utf8_for_js(global, target_name)?;
         vm.event_loop_mut().enter();
         let result = bun_jsc::host_fn::from_js_host_call(global, || {
-            plugin_ref.load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_js)
+            plugin_ref.load_and_resolve_plugins_for_serve(
+                plugin_js_array,
+                bunfig_folder_js,
+                target_js,
+            )
         });
         vm.event_loop_mut().exit();
         result
@@ -1283,6 +1279,11 @@ fn load_bundler_plugins(
     )
 }
 
+/// Set by [`load_bundler_plugins`] so [`exit_or_watch`] can route the process
+/// exit through the VM's `on_exit`/`global_exit` path when plugins were loaded.
+static BUILD_PLUGIN_VM: core::sync::atomic::AtomicPtr<bun_jsc::virtual_machine::VirtualMachine> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
 fn exit_or_watch(code: u8, watch: bool) -> ! {
     if watch {
         // the watcher thread will exit the process. `std::thread::sleep`
@@ -1290,6 +1291,15 @@ fn exit_or_watch(code: u8, watch: bool) -> ! {
         // (the stdlib loops internally where the OS primitive is narrower),
         // so this parks the thread for ~584 years — effectively forever.
         std::thread::sleep(std::time::Duration::from_secs(u64::MAX / 1_000_000_000));
+    }
+    let vm_ptr = BUILD_PLUGIN_VM.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+    if !vm_ptr.is_null() {
+        // SAFETY: set once from `load_bundler_plugins` on this thread; the VM
+        // is process-lifetime and never otherwise torn down.
+        let vm = unsafe { &mut *vm_ptr };
+        vm.exit_handler.exit_code = code;
+        vm.on_exit();
+        vm.global_exit();
     }
     Global::exit(u32::from(code));
 }

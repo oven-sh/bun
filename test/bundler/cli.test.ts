@@ -515,6 +515,26 @@ describe("bunfig [serve.static].plugins", () => {
     expect(stdout).not.toContain("asset");
   });
 
+  test("onLoad plugin runs when bundling to stdout", async () => {
+    using dir = tempDir("build-cli-plugin-stdout", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": pluginSource,
+      "data.myext": "from stdout loader",
+      "entry.ts": `import msg from "./data.myext";\nconsole.log(msg);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('"from stdout loader"');
+    expect(exitCode).toBe(0);
+  });
+
   test("onResolve plugin runs for bun build", async () => {
     using dir = tempDir("build-cli-plugin-onresolve", {
       "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
@@ -533,6 +553,42 @@ describe("bunfig [serve.static].plugins", () => {
     expect(exitCode).toBe(0);
     const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
     expect(out).toContain('"RESOLVED"');
+  });
+
+  test.each([
+    ["bun", "bun"],
+    ["node", "node"],
+    ["browser", "browser"],
+    [undefined, "browser"],
+  ] as const)("build.config.target reflects --target=%s", async (flag, expected) => {
+    using dir = tempDir("build-cli-plugin-target", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "plugin.ts": `
+        export default {
+          name: "check-target",
+          setup(build) {
+            build.onLoad({ filter: /\\.tgt$/ }, () => ({
+              contents: "export default " + JSON.stringify(build.config.target),
+              loader: "js",
+            }));
+          },
+        };
+      `,
+      "x.tgt": "",
+      "entry.ts": `import t from "./x.tgt";\nconsole.log(t);`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.ts", "--outdir", "out", ...(flag ? ["--target", flag] : [])],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const out = await Bun.file(path.join(String(dir), "out", "entry.js")).text();
+    expect(out).toContain(JSON.stringify(expected));
   });
 
   test("onLoad plugin runs for bun build --compile", async () => {

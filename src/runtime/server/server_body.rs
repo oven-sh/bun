@@ -1038,7 +1038,11 @@ impl ServePlugins {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
                 _ => unreachable!(),
             }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            .load_and_resolve_plugins_for_serve(
+                plugin_js_array,
+                bunfig_folder_bunstr,
+                jsc::JSValue::UNDEFINED,
+            )
         })?;
         global.bun_vm().event_loop_mut().exit();
 

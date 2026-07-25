@@ -1548,29 +1548,22 @@ impl<'a> Resolver<'a> {
         self.resolve(source_dir, import_path, kind)
     }
 
-    /// Locate a native addon the way the npm `bindings` package does at
-    /// runtime: walk up from `source_dir` to the nearest package.json, then
-    /// probe the conventional node-gyp output directories for `<name>.node`.
-    /// Used by the bundler for `require('bindings')('<name>')` so the `.node`
-    /// file gets picked up by the napi loader.
+    /// Find `<name>.node` under the importer's package root, probing the same node-gyp output dirs the npm `bindings` package does.
     pub fn resolve_node_gyp_bindings(
         &mut self,
         source_dir: &[u8],
         binding_name: &[u8],
     ) -> Option<&'static [u8]> {
-        // Paths mirror the `try` table in npm `bindings` 1.5.0, minus the
-        // legacy/waf entries that node-gyp has not produced in a decade and
-        // the ABI-versioned node-pre-gyp path. `build/Release` is what an
-        // `npm install` postinstall produces, so it is probed first.
+        // `try` table from npm `bindings` 1.5.0, minus entries that embed runtime-version strings.
         const BINDINGS_SEARCH: &[&[&[u8]]] = &[
+            &[b"build"],
             &[b"build", b"Release"],
             &[b"build", b"Debug"],
-            &[b"build"],
             &[b"out", b"Release"],
             &[b"Release"],
             &[b"out", b"Debug"],
             &[b"Debug"],
-            &[b"prebuilds"],
+            &[b"build", b"default"],
             &[b"addon-build", b"release", b"install-root"],
             &[b"addon-build", b"debug", b"install-root"],
             &[b"addon-build", b"default", b"install-root"],
@@ -1578,26 +1571,18 @@ impl<'a> Resolver<'a> {
 
         let dir_info = self.dir_info_cached(source_dir).ok().flatten()?;
         let module_root = dir_info.enclosing_package_json?.source.path.source_dir();
-        let mut name_buf = [0u8; 256];
-        let name = if strings::has_suffix_comptime(binding_name, b".node") {
-            binding_name
-        } else {
-            let n = binding_name.len();
-            if n + 5 > name_buf.len() {
-                return None;
-            }
-            name_buf[..n].copy_from_slice(binding_name);
-            name_buf[n..n + 5].copy_from_slice(b".node");
-            &name_buf[..n + 5]
-        };
 
-        let buf = bufs!(native_bindings_candidate);
-        let mut parts: [&[u8]; 5] = [module_root, b"", b"", b"", name];
+        let mut parts: [&[u8]; 5] = [module_root, b"", b"", b"", binding_name];
         for sub in BINDINGS_SEARCH {
             for (i, slot) in parts[1..4].iter_mut().enumerate() {
                 *slot = sub.get(i).copied().unwrap_or(b"");
             }
-            let candidate = self.fs_ref().abs_buf(&parts, buf);
+            let Some(candidate) = self
+                .fs_ref()
+                .abs_buf_checked(&parts, bufs!(native_bindings_candidate))
+            else {
+                return None;
+            };
             if let Some(found) = self.load_as_file(candidate, options::ExtOrder::DefaultDefault) {
                 return Some(found.path);
             }

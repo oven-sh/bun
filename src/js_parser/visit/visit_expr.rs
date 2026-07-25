@@ -2008,17 +2008,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `require('bindings')('<name>.node')` — rewrite to a direct require
-        // of the native addon so the bundler's napi loader can copy it.
-        // https://github.com/oven-sh/bun/issues/8895
+        // `require('bindings')('<name>')` -> `require('<name>.node')` so the napi loader copies the addon (oven-sh/bun#8895).
         if p.options.bundle && e_.args.len_u32() == 1 {
             if let Data::ERequireString(req) = e_.target.data {
                 let idx = req.import_record_index as usize;
                 if p.import_records.items()[idx].path.text == b"bindings" {
                     if let Data::EString(mut str_) = e_.args.slice()[0].data {
-                        str_.resolve_rope_if_needed(p.arena);
-                        let name = str_.string(p.arena).expect("unreachable");
+                        let name = str_.slice(p.arena);
                         if !name.is_empty() {
+                            // Always store `<name>.node` so the record never collides with a bare builtin alias (e.g. `zlib`).
+                            let name: &[u8] = if strings::has_suffix_comptime(name, b".node") {
+                                name
+                            } else {
+                                let mut buf =
+                                    bun_alloc::ArenaVec::with_capacity_in(name.len() + 5, p.arena);
+                                buf.extend_from_slice(name);
+                                buf.extend_from_slice(b".node");
+                                buf.into_bump_slice()
+                            };
                             let record = &mut p.import_records.items_mut()[idx];
                             // SAFETY: `name` is arena-owned via `p.arena`; see
                             // `add_import_record_by_range_and_path`.

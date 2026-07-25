@@ -599,7 +599,30 @@ describe("bundler", async () => {
     },
   });
 
-  itBundled("bun/napi-require-bindings-not-built#8895", {
+  for (const withExt of [true, false]) {
+    itBundled(`bun/napi-require-bindings-not-built${withExt ? "" : "-no-ext"}#8895`, {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* ts */ `
+          const addon = require("mypkg");
+          console.log(addon);
+        `,
+        "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./index.js"}`,
+        "/node_modules/mypkg/index.js": `module.exports = require('bindings')('never_built${withExt ? ".node" : ""}');`,
+        "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
+        "/node_modules/bindings/bindings.js": "module.exports = () => {};",
+      },
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).some(x => x.endsWith(".node"))).toBe(false);
+        const js = api.readFile(join("/out", readdirSync(api.outdir).find(x => x.endsWith(".js"))!));
+        expect(js).toContain(`require("never_built.node")`);
+      },
+    });
+  }
+
+  // An addon named like a node builtin must not be hijacked by the alias table.
+  itBundled("bun/napi-require-bindings-builtin-name-collision#8895", {
     target: "bun",
     outdir: "/out",
     files: {
@@ -608,14 +631,17 @@ describe("bundler", async () => {
         console.log(addon);
       `,
       "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./index.js"}`,
-      "/node_modules/mypkg/index.js": `module.exports = require('bindings')('never_built.node');`,
+      "/node_modules/mypkg/index.js": `module.exports = require('bindings')('zlib');`,
+      "/node_modules/mypkg/build/Release/zlib.node": "<zlib addon>",
       "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
       "/node_modules/bindings/bindings.js": "module.exports = () => {};",
     },
     onAfterBundle(api) {
-      expect(readdirSync(api.outdir).some(x => x.endsWith(".node"))).toBe(false);
+      const addon = readdirSync(api.outdir).find(x => x.endsWith(".node"));
+      expect(addon).toBeDefined();
+      expect(api.readFile(join("/out", addon!))).toBe("<zlib addon>");
       const js = api.readFile(join("/out", readdirSync(api.outdir).find(x => x.endsWith(".js"))!));
-      expect(js).toContain(`require("never_built.node")`);
+      expect(js).not.toMatch(/require\("zlib"\)/);
     },
   });
 });

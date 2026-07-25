@@ -5870,6 +5870,24 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
+                    import_record.tag = bun_ast::ImportRecordTag::None;
+                    if let Some(abs) = self
+                        .transpiler
+                        .resolver
+                        .resolve_node_gyp_bindings(source_dir, import_record.path.text)
+                    {
+                        import_record.path = bun_paths::fs::Path::init(abs);
+                    } else {
+                        // No built addon on disk: leave `require("<name>.node")` external for runtime.
+                        import_record.source_index = Index::INVALID;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        continue;
+                    }
+                }
+
                 if ctx.target.is_bun() {
                     if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                         import_record.path.text,
@@ -6055,26 +6073,6 @@ pub mod bv2_impl {
                         resolve_task.tree_shaking = transpiler.options.tree_shaking;
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
                         *resolve_entry.value_ptr = resolve_task;
-                        continue;
-                    }
-                }
-
-                if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
-                    import_record.tag = bun_ast::ImportRecordTag::None;
-                    if let Some(abs) = transpiler
-                        .resolver
-                        .resolve_node_gyp_bindings(source_dir, import_record.path.text)
-                    {
-                        import_record.path = bun_paths::fs::Path::init(abs);
-                    } else {
-                        // No built addon on disk. Leave the record external so the
-                        // output still contains `require("<name>.node")` and fails
-                        // with a clear message at runtime instead of a misleading
-                        // resolve error at build time.
-                        import_record.source_index = Index::INVALID;
-                        import_record
-                            .flags
-                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                         continue;
                     }
                 }

@@ -835,7 +835,7 @@ const addon = require("./addon.node");
 console.log(addon.hello());
 ```
 
-If you're using `@mapbox/node-pre-gyp` or similar tools, the `.node` file must be required directly or it won't bundle correctly.
+Packages that load their addon via `require('bindings')('name')` (for example `better-sqlite3`) are handled automatically: Bun locates the built `.node` file under the package's `build/Release` (or `build/Debug`) directory at bundle time and embeds it. If you're using `@mapbox/node-pre-gyp` or other loaders that compute the path at runtime, the `.node` file must be required directly or it won't bundle correctly.
 
 ### Embed directories
 

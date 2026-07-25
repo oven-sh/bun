@@ -7136,9 +7136,10 @@ describe("RedisClient PSUBSCRIBE (mock server)", () => {
 
   test("psubscribe without a listener throws", async () => {
     const srv = makeServer();
-    const c: any = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
+    const c = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
     try {
       await c.connect();
+      // @ts-expect-error psubscribe requires a listener
       expect(() => c.psubscribe("evt:*")).toThrow("listener");
     } finally {
       c.close();
@@ -7148,13 +7149,13 @@ describe("RedisClient PSUBSCRIBE (mock server)", () => {
 
   test("psubscribe delivers pmessage pushes to its listener", async () => {
     const srv = makeServer();
-    const c: any = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
+    const c = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
     try {
       await c.connect();
 
       const received: [string, string][] = [];
       const counter = awaitableCounter();
-      const result = await c.psubscribe("evt:*", (message: string, channel: string) => {
+      const result = await c.psubscribe("evt:*", (message, channel) => {
         received.push([message, channel]);
         counter.increment();
       });
@@ -7185,7 +7186,7 @@ describe("RedisClient PSUBSCRIBE (mock server)", () => {
 
   test("punsubscribe stops delivery and leaves subscriber mode", async () => {
     const srv = makeServer();
-    const c: any = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
+    const c = new RedisClient(`redis://127.0.0.1:${srv.port}`, { autoReconnect: false });
     try {
       await c.connect();
 

@@ -610,9 +610,7 @@ impl FileReader {
                 let total_readed = self.total_readed.get();
                 if total_readed >= max_size {
                     if !self.reader().is_done() {
-                        // Clear first: on Windows the chunk lives in the
-                        // reader buffer and would otherwise reach
-                        // `consume_reader_buffer` via `on_reader_done`.
+                        // Drop past-window bytes before close() or they reach consume_reader_buffer.
                         self.reader().buffer().clear();
                         self.reader().close();
                     }
@@ -624,9 +622,7 @@ impl FileReader {
                 }
                 self.total_readed.set(total_readed + len);
 
-                // Reaching `max_size` is this stream's EOF: close so a
-                // chardev / file past the window doesn't keep the consumer
-                // pending on a read that is never re-armed.
+                // Reaching `max_size` is this stream's EOF.
                 if total_readed + len >= max_size {
                     close = true;
                     has_more = false;

@@ -897,9 +897,6 @@ impl PosixBufferedReader {
                                         ReadState::Progress
                                     },
                                 );
-                                // `on_read_chunk` may close the reader
-                                // (sliced window satisfied); `fd` is stale
-                                // after that even on HUP.
                                 if parent.is_done() || (!keep_reading && !received_hup) {
                                     return;
                                 }

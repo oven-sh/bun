@@ -3271,11 +3271,7 @@ fn transpile_source_code_inner(
                         unsafe { &mut *args.log }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{} reading \"{}\"",
-                                err,
-                                bstr::BStr::new(path.text),
-                            ),
+                            format_args!("{} reading \"{}\"", err, bstr::BStr::new(path.text),),
                         );
                         return Err(crate::Error::ParseError);
                     }

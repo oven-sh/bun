@@ -12,7 +12,12 @@ const probe =
   "  console.log('read OK permission=' + typeof process.permission + ' execArgv=' + JSON.stringify(process.execArgv)) }" +
   "catch (e) { console.log('read ' + e.code + ' ' + e.permission) }";
 
-async function run(argv: string[], env: Record<string, string | undefined> = bunEnv) {
+// bunEnv spreads process.env; pin the escape hatch off so an ambient
+// BUN_IGNORE_NODE_PERMISSION_FLAGS from the outer shell cannot flip the
+// refusal cases.
+const baseEnv = { ...bunEnv, BUN_IGNORE_NODE_PERMISSION_FLAGS: undefined };
+
+async function run(argv: string[], env: Record<string, string | undefined> = baseEnv) {
   using dir = tempDir("node-permission", { "probe.cjs": probe });
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...argv, "probe.cjs"],
@@ -54,7 +59,7 @@ describe("Node.js permission-model flags", () => {
     using dir = tempDir("node-permission", { "probe.cjs": probe });
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--permission", "./probe.cjs"],
-      env: bunEnv,
+      env: baseEnv,
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
@@ -69,7 +74,7 @@ describe("Node.js permission-model flags", () => {
     "BUN_IGNORE_NODE_PERMISSION_FLAGS=1 runs (unsandboxed) and keeps process.permission undefined",
     async () => {
       const { stdout, stderr, exitCode } = await run(["--permission", "--allow-fs-read=/nope"], {
-        ...bunEnv,
+        ...baseEnv,
         BUN_IGNORE_NODE_PERMISSION_FLAGS: "1",
       });
       expect(stderr).toBe("");
@@ -84,7 +89,7 @@ describe("Node.js permission-model flags", () => {
     "BUN_IGNORE_NODE_PERMISSION_FLAGS=1 execArgv does not swallow the script name after a bare grant",
     async () => {
       const { stdout, stderr, exitCode } = await run(["--permission", "--allow-child-process"], {
-        ...bunEnv,
+        ...baseEnv,
         BUN_IGNORE_NODE_PERMISSION_FLAGS: "1",
       });
       expect(stderr).toBe("");
@@ -96,12 +101,14 @@ describe("Node.js permission-model flags", () => {
   test.concurrent("--permission is hidden from --help", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--help"],
-      env: bunEnv,
+      env: baseEnv,
       stdout: "pipe",
     });
-    const [stdout] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toContain("--watch");
     expect(stdout).not.toContain("--permission");
     expect(stdout).not.toContain("--allow-fs-read");
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("does not trip on an unrelated flag", async () => {

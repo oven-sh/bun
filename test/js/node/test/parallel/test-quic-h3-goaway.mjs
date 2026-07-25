@@ -74,7 +74,7 @@ dc.subscribe('quic.session.goaway', mustCall((msg) => {
     verifyPeer: 'manual',
     // Ongoaway fires when the peer sends GOAWAY.
     ongoaway: mustCall(function(lastStreamId) {
-      strictEqual(lastStreamId, -1n);
+      strictEqual(lastStreamId, 4n);
       goawayReceived.resolve();
     }),
   });

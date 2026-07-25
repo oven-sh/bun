@@ -1,0 +1,54 @@
+--- a/include/lsquic.h
++++ b/include/lsquic.h
+@@ -2202,6 +2202,14 @@
+ lsquic_conn_ack_now (lsquic_conn_t *);
+ 
+ /**
++ * Read the Stream ID from the peer's HTTP/3 GOAWAY frame (RFC 9114 sec 5.2)
++ * once LSCONN_PEER_GOING_AWAY is set on a client connection.  Returns 1 and
++ * writes *out on success, 0 otherwise.  bun addition.
++ */
++int
++lsquic_conn_get_min_goaway_stream_id (const lsquic_conn_t *, uint64_t *out);
++
++/**
+  * Update the millisecond idle timeout applied to connections created
+  * after this call (see @ref es_idle_timeout_ms).
+  */
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -3135,6 +3135,26 @@
+ }
+ 
+ 
++/* bun: expose the Stream ID from the peer's GOAWAY frame (RFC 9114 sec 5.2)
++ * so on_goaway_received can report it to the application and reject in-flight
++ * requests above it instead of surfacing lsquic's fake-reset as a clean EOF.
++ */
++int
++lsquic_conn_get_min_goaway_stream_id (const struct lsquic_conn *lconn,
++                                      uint64_t *out)
++{
++    const struct ietf_full_conn *conn;
++
++    if ((lconn->cn_flags & (LSCONN_MINI|LSCONN_IETF|LSCONN_SERVER))
++                                                            != LSCONN_IETF
++            || !(lconn->cn_flags & LSCONN_PEER_GOING_AWAY))
++        return 0;
++    conn = (const struct ietf_full_conn *) lconn;
++    *out = conn->ifc_u.cli.ifcli_min_goaway_stream_id;
++    return 1;
++}
++
++
+ static void
+ retire_dcid (struct ietf_full_conn *conn, struct dcid_elem **dce)
+ {
+@@ -9856,6 +9876,7 @@
+         return;
+     }
+ 
++    conn->ifc_u.cli.ifcli_min_goaway_stream_id = stream_id;
+     conn->ifc_conn.cn_flags |= LSCONN_PEER_GOING_AWAY;
+     LSQ_DEBUG("received GOAWAY frame, last good stream ID: %"PRIu64, stream_id);
+     if (conn->ifc_enpub->enp_stream_if->on_goaway_received)

@@ -622,6 +622,17 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_get_ssl(self.0) }
     }
+    /// The Stream ID from the peer's GOAWAY frame (RFC 9114 §5.2).
+    /// `None` until one arrives; client-only.
+    pub fn min_goaway_stream_id(&self) -> Option<u64> {
+        unsafe extern "C" {
+            fn lsquic_conn_get_min_goaway_stream_id(c: *const lsquic_conn, out: *mut u64) -> c_int;
+        }
+        let mut id: u64 = 0;
+        // SAFETY: `self.0` is live; `id` is a stack out-param.
+        (unsafe { lsquic_conn_get_min_goaway_stream_id(self.0, core::ptr::from_mut(&mut id)) } != 0)
+            .then_some(id)
+    }
     pub fn sockaddr(&self) -> Option<(*const sockaddr, *const sockaddr)> {
         let mut local: *const sockaddr = core::ptr::null();
         let mut peer: *const sockaddr = core::ptr::null();

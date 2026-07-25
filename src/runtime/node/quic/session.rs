@@ -51,6 +51,7 @@ const STREAM_ID_UNI_BIT: u64 = 0x2;
 /// HTTP/3 application error codes (RFC 9114 §8.1).
 const H3_NO_ERROR: u64 = 0x100;
 const H3_INTERNAL_ERROR: u64 = 0x102;
+const H3_REQUEST_REJECTED: u64 = 0x10b;
 
 /// Node's DefaultApplication normalized option defaults
 /// (node/src/quic/session.cc).
@@ -312,7 +313,9 @@ pub(super) enum SessionEvent {
         stream: *mut super::stream::QuicStream,
     },
     HandshakeConfirmed,
-    GoawayReceived,
+    GoawayReceived {
+        last_stream_id: Option<u64>,
+    },
     Datagram {
         payload: Vec<u8>,
         early: bool,
@@ -893,7 +896,10 @@ impl QuicSession {
             // SAFETY: teardown clears `endpoint` before the endpoint can die.
             let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
             if (dispatched_js || defer_closes)
-                && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
+                && matches!(
+                    event,
+                    SessionEvent::Closed | SessionEvent::GoawayReceived { .. }
+                )
             {
                 self.events.with_mut(|e| e.insert(0, event));
                 self.schedule_process();
@@ -1073,10 +1079,12 @@ impl QuicSession {
                         }
                     }
                 }
-                SessionEvent::GoawayReceived => {
-                    // lsquic doesn't surface the GOAWAY stream-id; Node
-                    // reports -1n when the id is unavailable.
-                    let last_stream_id = match JSValue::from_int64_no_truncate(global, -1) {
+                SessionEvent::GoawayReceived { last_stream_id } => {
+                    // -1n is Node's "id unavailable" (session.cc EmitGoaway).
+                    let last_stream_id = match last_stream_id.map_or_else(
+                        || JSValue::from_int64_no_truncate(global, -1),
+                        |id| JSValue::from_uint64_no_truncate(global, id),
+                    ) {
                         Ok(v) => v,
                         Err(e) => {
                             global.report_uncaught_exception_from_error(e);
@@ -2377,7 +2385,37 @@ lsquic_callback! {
     }
 
     pub(super) fn on_goaway_received(session: &QuicSession) {
-        session.push_event(SessionEvent::GoawayReceived);
+        let stream_id = session.conn().and_then(|c| c.min_goaway_stream_id());
+        session.push_event(SessionEvent::GoawayReceived {
+            last_stream_id: stream_id,
+        });
+        // RFC 9114 §5.2: client requests above the GOAWAY id were not
+        // processed and are safe to retry. lsquic is about to fake-reset or
+        // shutdown-internal those streams without firing on_reset, which would
+        // surface here as a clean EOF; mark them rejected first so the reader
+        // sees an error instead of a truncated body. The `>` matches lsquic's
+        // own walk (on_goaway_client in lsquic_full_conn_ietf.c).
+        let Some(stream_id) = stream_id.filter(|_| !session.is_server()) else {
+            return;
+        };
+        let streams: Vec<*mut super::stream::QuicStream> = session.streams.get().clone();
+        for sp in streams {
+            let Some(stream) = session.live_stream(sp) else {
+                continue;
+            };
+            let id = stream.stream_id();
+            // Client-initiated bidirectional streams have the two low bits
+            // clear (RFC 9000 §2.1); pending streams report id < 0.
+            if id < 0 || id as u64 & 0x3 != 0 || id as u64 <= stream_id {
+                continue;
+            }
+            stream.mark_reset(H3_REQUEST_REJECTED);
+            session.push_event(SessionEvent::StreamReset {
+                stream: sp,
+                code: H3_REQUEST_REJECTED,
+            });
+            session.push_event(SessionEvent::StreamWake { stream: sp });
+        }
     }
 
     pub(super) fn on_hsk_confirmed(session: &QuicSession) {

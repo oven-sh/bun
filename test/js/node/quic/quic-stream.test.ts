@@ -179,3 +179,109 @@ describe("HTTP/3 header encoding", () => {
     expect(Object.keys(seen[0])).not.toContain("authorization");
   });
 });
+
+// RFC 9114 §5.2: GOAWAY carries the lowest Stream ID the server did NOT
+// process. Requests above it were never handled and may be retried. The id
+// must reach `ongoaway`, and those streams must fail loudly: a clean EOF on a
+// body that had already delivered `:status 200` is silent data corruption.
+describe("HTTP/3 GOAWAY on the client", () => {
+  test("delivers the stream id and rejects in-flight requests above it", async () => {
+    const serverReady = Promise.withResolvers<void>();
+    let serverSessionRef: any;
+    const server = await listen(
+      async serverSession => {
+        serverSessionRef = serverSession;
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 2 },
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.writer.writeSync(new TextEncoder().encode("partial"));
+          serverReady.resolve();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 2 },
+    });
+    let id: bigint, bError: any, bReset: any, streamAId: bigint, streamBId: bigint;
+    try {
+      await client.opened;
+
+      const goawayId = Promise.withResolvers<bigint>();
+      client.ongoaway = (i: bigint) => goawayId.resolve(i);
+
+      // Stream A sends a request (server sees it, max_req_id = A.id).
+      // Stream B is created locally with a higher id but writes nothing, so
+      // the server never learns of it: GOAWAY carries A.id and B is strictly
+      // above it.
+      const gotFirstChunk = Promise.withResolvers<void>();
+      const streamA = await client.createBidirectionalStream({
+        headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+        onheaders() {},
+      });
+      streamAId = streamA.id;
+      const streamB = await client.createBidirectionalStream();
+      streamBId = streamB.id;
+      streamB.onreset = (e: any) => {
+        bReset = e;
+      };
+      streamB.closed.catch(() => {});
+      const readB = (async () => {
+        try {
+          for await (const _ of streamB) {
+          }
+          return undefined;
+        } catch (e: any) {
+          return e;
+        }
+      })();
+      (async () => {
+        for await (const _ of streamA) gotFirstChunk.resolve();
+      })().catch(() => {});
+
+      await serverReady.promise;
+      await gotFirstChunk.promise;
+      // Server has seen only stream A (B never hit the wire) and sends
+      // GOAWAY(A.id) on graceful close.
+      serverSessionRef.close();
+
+      id = await goawayId.promise;
+      // ongoaway and the per-stream onreset dispatch from the same event
+      // batch; let that batch finish before tearing the client down so
+      // bReset is observable. Without the fix B is never closed at all, so
+      // the destroy is what settles readB deterministically.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      client.destroy();
+      bError = await readB;
+    } finally {
+      client.destroy?.();
+      serverSessionRef?.destroy?.();
+      server.close?.({ force: true });
+    }
+
+    // Before the fix this was always -1n.
+    expect(id).toBe(streamAId);
+    expect(id).toBeGreaterThanOrEqual(0n);
+    expect(streamBId).toBeGreaterThan(streamAId);
+    // Before the fix lsquic fake-resets B without an on_reset, which used to
+    // surface as a clean end-of-iteration here with no onreset: silent
+    // truncation. H3_REQUEST_REJECTED = 0x10b (RFC 9114 §8.1).
+    expect({
+      iterator: bError?.code,
+      onreset: bReset && { code: bReset.code, errorCode: bReset.errorCode },
+    }).toEqual({
+      iterator: "ERR_QUIC_STREAM_RESET",
+      onreset: { code: "ERR_QUIC_APPLICATION_ERROR", errorCode: 0x10bn },
+    });
+    expect(bError?.message).toContain(String(0x10b));
+  });
+});

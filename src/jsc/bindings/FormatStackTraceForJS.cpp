@@ -802,7 +802,7 @@ JSC_DEFINE_CUSTOM_GETTER(nonErrorInstanceLazyStackCustomGetter, (JSGlobalObject 
     const auto& privateName = WebCore::builtinNames(vm).capturedStackTracePrivateName();
     JSObject* errorObject = nullptr;
     JSC::JSArray* callSites = nullptr;
-    for (JSObject* o = receiver; o; ) {
+    for (JSObject* o = receiver; o;) {
         JSValue v = o->getDirect(vm, privateName);
         if (auto* arr = v ? dynamicDowncast<JSC::JSArray>(v) : nullptr) {
             callSites = arr;

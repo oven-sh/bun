@@ -330,8 +330,8 @@ pub struct Interpreter {
     /// terminal. `Cmd` appends it to a child's env only when that child's
     /// resolved stdout is still the relayed `Stdio::Capture` pipe.
     pub force_color_env: Cell<Option<&'static [u8]>>,
-    /// Whether the root stderr is itself a tty; gates the `2>&1` relay arm of
-    /// the `force_color_env` check (the stderr capture may relay to a file).
+    /// Whether root stderr is itself a tty; gates the `1>&2` arm of the
+    /// `force_color_env` check, since that reroutes output onto root stderr.
     pub stderr_is_tty: Cell<bool>,
     pub exit_code: Cell<Option<ExitCode>>,
     pub this_jsvalue: Cell<crate::jsc::JSValue>,

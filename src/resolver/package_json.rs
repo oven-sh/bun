@@ -587,14 +587,9 @@ impl PackageJSON {
             }
         }
 
-        // Read the "main" fields
-        //
-        // The parsed `PackageJSON` is cached in the process-global DirInfo map
-        // and may be read by a later resolver with a different target, so read
-        // every default main-field name here (not just `r.opts.main_fields`).
-        // Also read any user-configured names so a custom `--main-fields` is
-        // honored on the first parse. `put` overwrites on collision, so the
-        // overlap between the two lists is harmless.
+        // Read the "main" fields. We're cached process-globally, so read every
+        // default name regardless of the invoking resolver's target (#14253),
+        // plus any user-configured names; `put` dedupes the overlap.
         let mut read_main_field = |name: &[u8]| {
             if let Some(main_json) = json.as_property(name) {
                 let expr: &js_ast::Expr = &main_json.expr;

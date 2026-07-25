@@ -622,3 +622,14 @@ impl Default for RuntimeOptions {
         }
     }
 }
+
+impl RuntimeOptions {
+    /// `--preserve-symlinks-main` or `NODE_PRESERVE_SYMLINKS_MAIN=1`.
+    #[inline]
+    pub fn preserve_symlinks_main_effective(&self) -> bool {
+        self.preserve_symlinks_main
+            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
+                .get()
+                .unwrap_or(false)
+    }
+}

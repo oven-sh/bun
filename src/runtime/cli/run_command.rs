@@ -960,10 +960,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
         vm.transpiler.resolver.opts.preserve_symlinks_main =
-            ctx.runtime_options.preserve_symlinks_main
-                || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                    .get()
-                    .unwrap_or(false);
+            ctx.runtime_options.preserve_symlinks_main_effective();
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
@@ -2570,10 +2567,7 @@ impl RunCommand {
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main
-                    || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                        .get()
-                        .unwrap_or(false);
+                ctx.runtime_options.preserve_symlinks_main_effective();
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
             let resolved = match this_transpiler.resolver.resolve(
@@ -2875,10 +2869,7 @@ impl RunCommand {
             ..Default::default()
         });
 
-        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main
-            || bun_core::env_var::NODE_PRESERVE_SYMLINKS_MAIN
-                .get()
-                .unwrap_or(false);
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_effective();
 
         // Re-derive the canonical absolute path from the open fd (resolves
         // symlinks), or under `--preserve-symlinks-main` join against cwd.

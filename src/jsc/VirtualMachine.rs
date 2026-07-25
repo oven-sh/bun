@@ -4158,13 +4158,16 @@ impl VirtualMachine {
         let result_path = result
             .path_const()
             .ok_or(crate::CrateError::ModuleNotFound)?;
-        // `--preserve-symlinks-main`: `Path::set_realpath` stashed the
-        // pre-realpath spelling in `.pretty`; return that for the entry.
-        let path_text = if is_main_entry_resolve
-            && self.transpiler.resolver.opts.preserve_symlinks_main
-            && result_path.is_symlink
-            && !result_path.pretty.is_empty()
-        {
+        // Node.js: `--preserve-symlinks` keeps the link spelling for required
+        // modules only; `--preserve-symlinks-main` extends it to the entry.
+        // `Path::set_realpath` stashed the pre-realpath spelling in `.pretty`.
+        let opts = &self.transpiler.resolver.opts;
+        let preserve = if is_main_entry_resolve {
+            opts.preserve_symlinks_main
+        } else {
+            opts.preserve_symlinks
+        };
+        let path_text = if preserve && result_path.is_symlink && !result_path.pretty.is_empty() {
             result_path.pretty
         } else {
             result_path.text

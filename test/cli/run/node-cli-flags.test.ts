@@ -44,6 +44,27 @@ describe("--preserve-symlinks", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.concurrent("--preserve-symlinks alone does not apply to the entry point", async () => {
+    // Node.js: --preserve-symlinks affects required modules only; the main
+    // module is realpath'd unless --preserve-symlinks-main is also passed.
+    using dir = tempDir("preserve-symlinks-not-main", {
+      "sub/real.cjs": `console.log(__filename);`,
+    });
+    symlinkSync(join(String(dir), "sub", "real.cjs"), join(String(dir), "link.cjs"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preserve-symlinks", "link.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(String(dir), "sub", "real.cjs"));
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent("--preserve-symlinks-main keeps the symlink path for the entry point", async () => {
     using dir = tempDir("preserve-symlinks-main", {
       "real.cjs": `console.log(__filename);`,

@@ -3,8 +3,8 @@ import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "t
 import publicKey from "../../third_party/jsonwebtoken/pub.pem" with { type: "text" };
 
 describe("Bun.serve SSL validations", () => {
-  describe("tls option without a certificate", () => {
-    const tuningOnly: Record<string, Bun.TLSOptions> = {
+  describe("tls option without a server identity", () => {
+    const noIdentity: Record<string, Bun.TLSOptions> = {
       "lowMemoryMode": { lowMemoryMode: true },
       "requestCert": { requestCert: true },
       "rejectUnauthorized": { rejectUnauthorized: false },
@@ -12,28 +12,29 @@ describe("Bun.serve SSL validations", () => {
       "passphrase": { passphrase: "x" },
       "serverName": { serverName: "example.com" },
       "ca": { ca: publicKey },
+      "cert only": { cert: publicKey },
+      "key only": { key: privateKey },
     };
 
-    // An explicit `tls: { ... }` that only carries tuning knobs (no cert/key)
-    // must throw rather than start an HTTPS listener that can never complete a
-    // handshake.
-    for (const [label, tls] of Object.entries(tuningOnly)) {
+    // An explicit `tls: { ... }` that has no complete cert+key pair must throw
+    // rather than start an HTTPS listener that can never complete a handshake.
+    for (const [label, tls] of Object.entries(noIdentity)) {
       test(`tls: { ${label} } throws`, () => {
         expect(() => {
-          Bun.serve({ port: 0, tls, fetch: () => new Response("ok") });
-        }).toThrow('tls object is missing "cert" and "key"');
+          using _ = Bun.serve({ port: 0, tls, fetch: () => new Response("ok") });
+        }).toThrow('tls object must specify both "cert" and "key"');
       });
       test(`tls: [{ ${label} }] throws`, () => {
         expect(() => {
-          Bun.serve({ port: 0, tls: [tls], fetch: () => new Response("ok") });
-        }).toThrow('tls object is missing "cert" and "key"');
+          using _ = Bun.serve({ port: 0, tls: [tls], fetch: () => new Response("ok") });
+        }).toThrow('tls object must specify both "cert" and "key"');
       });
     }
 
     // The same keys at the top level (the legacy v0.2 flattened shape) must
     // NOT flip the server into TLS mode. They are silently ignored and the
     // server stays plain HTTP.
-    for (const [label, opts] of Object.entries(tuningOnly)) {
+    for (const [label, opts] of Object.entries(noIdentity)) {
       test(`top-level { ${label} } stays HTTP`, async () => {
         using server = Bun.serve({
           port: 0,

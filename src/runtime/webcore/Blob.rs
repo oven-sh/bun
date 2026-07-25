@@ -472,17 +472,37 @@ impl BlobExt for Blob {
 
         #[cfg(not(windows))]
         {
+            let store = self.store().expect("infallible: store present").clone();
+
+            // For fd-backed stores (Bun.stdin, Bun.file(fd)), a second
+            // concurrent blob read would race `read()` on the shared fd and
+            // re-register it with epoll (EEXIST). Attach to the in-flight
+            // reader instead so every caller sees the same full byte stream.
+            if read_file::ReadFile::try_coalesce_fd_read(
+                &store,
+                handler.cast::<c_void>(),
+                read_file::completion_thunk::<Handler<'_, F>>,
+            ) {
+                // SAFETY: handler was just boxed; sole owner.
+                unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
+                // SAFETY: same `handler` as above; still solely owned here.
+                let promise_value = unsafe { (*handler).promise.value() };
+                promise_value.ensure_still_alive();
+                debug!("doReadFile: coalesced onto in-flight fd reader");
+                return promise_value;
+            }
+
             let file_read = read_file::ReadFile::create(
-                self.store().expect("infallible: store present").clone(),
+                store.clone(),
                 self.offset.get(),
                 self.size.get(),
                 handler,
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
+            let file_read_ptr = bun_core::heap::into_raw(file_read);
+            read_file::ReadFile::mark_in_flight(&store, file_read_ptr);
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, file_read_ptr);
 
             // Create the Promise only after the store has been ref()'d.
             // The garbage collector runs on memory allocations
@@ -688,18 +708,26 @@ impl BlobExt for Blob {
         }
         #[cfg(not(windows))]
         {
+            let store = self.store().expect("infallible: store present").clone();
+            if read_file::ReadFile::try_coalesce_fd_read(
+                &store,
+                ctx.cast::<c_void>(),
+                NewInternalReadFileHandler::<C, F>::run,
+            ) {
+                return;
+            }
             let file_read = read_file::ReadFile::create_with_ctx(
-                self.store().expect("infallible: store present").clone(),
+                store.clone(),
                 ctx.cast::<c_void>(),
                 NewInternalReadFileHandler::<C, F>::run,
                 self.offset.get(),
                 self.size.get(),
             )
             .unwrap_or_else(|e| bun_core::handle_oom(Err(e)));
-            let read_file_task = read_file::ReadFileTask::create_on_js_thread(
-                global,
-                bun_core::heap::into_raw(file_read),
-            );
+            let file_read_ptr = bun_core::heap::into_raw(file_read);
+            read_file::ReadFile::mark_in_flight(&store, file_read_ptr);
+            let read_file_task =
+                read_file::ReadFileTask::create_on_js_thread(global, file_read_ptr);
             // SAFETY: `read_file_task` was just heap-allocated by `create_on_js_thread`.
             read_file::ReadFileTask::schedule(unsafe { &mut *read_file_task });
         }
@@ -2486,6 +2514,8 @@ impl BlobExt for Blob {
                         mime_type: bun_http_types::MimeType::NONE,
                         ref_count: bun_ptr::ThreadSafeRefCount::init(),
                         is_all_ascii: None,
+                        in_flight_blob_reader:
+                            core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
                     }));
                     let blob = Blob::init_with_store(store, global_this);
                     if was_string && blob.content_type_slice().is_empty() {
@@ -5615,6 +5645,8 @@ pub fn jsdom_file_construct_(
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 mime_type: bun_http_types::MimeType::NONE,
                 is_all_ascii: None,
+                in_flight_blob_reader:
+                    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             }))));
         }
     }

@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test";
+import { expect, test, describe } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
+import crypto from "node:crypto";
 
 // Reading a sliced non-regular file blob (like stdin from a pipe) with a size
 // close to Blob.max_size used to overflow when computing the initial read
@@ -39,4 +40,94 @@ test.skipIf(isWindows)("Bun.stdin.slice(0, N).text() caps reads at N bytes", asy
 
   expect(stdout).toBe("012");
   expect(exitCode).toBe(0);
+});
+
+// Two concurrent blob reads on a piped stdin used to spawn two independent
+// readers: each did its own read() on fd 0 (splitting the byte stream) and
+// each tried epoll_ctl(ADD) on fd 0, so the loser rejected with the raw
+// "EEXIST: file already exists, epoll_ctl" and the winner could resolve short.
+// Now the second read attaches to the in-flight reader and both resolve with
+// the full, identical byte stream.
+describe.skipIf(isWindows)("concurrent Bun.stdin blob reads on a pipe", () => {
+  // Large enough that the pipe cannot buffer it all and the async epoll path
+  // is taken, small enough to keep the test fast under ASAN.
+  const SIZE = 2 * 1024 * 1024;
+
+  async function run(script: string, payload: Uint8Array) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(payload);
+    await proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("arrayBuffer + arrayBuffer both resolve with the full input", async () => {
+    const payload = crypto.randomBytes(SIZE);
+    const sha = Bun.SHA256.hash(payload, "hex");
+    const { stdout, stderr, exitCode } = await run(
+      `
+        const rs = await Promise.allSettled([Bun.stdin.arrayBuffer(), Bun.stdin.arrayBuffer()]);
+        const out = rs.map(r => r.status === "fulfilled"
+          ? { status: r.status, byteLength: r.value.byteLength, sha: Bun.SHA256.hash(r.value, "hex") }
+          : { status: r.status, code: r.reason?.code, message: String(r.reason?.message ?? r.reason) });
+        process.stdout.write(JSON.stringify(out));
+      `,
+      payload,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      { status: "fulfilled", byteLength: SIZE, sha },
+      { status: "fulfilled", byteLength: SIZE, sha },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("text + arrayBuffer both resolve with the full input", async () => {
+    const payload = new Uint8Array(Buffer.alloc(SIZE, "abcdefghij"));
+    const sha = Bun.SHA256.hash(payload, "hex");
+    const { stdout, stderr, exitCode } = await run(
+      `
+        const rs = await Promise.allSettled([Bun.stdin.text(), Bun.stdin.arrayBuffer()]);
+        const out = rs.map(r => {
+          if (r.status !== "fulfilled") return { status: r.status, code: r.reason?.code };
+          if (typeof r.value === "string")
+            return { status: r.status, length: r.value.length, sha: Bun.SHA256.hash(Buffer.from(r.value), "hex") };
+          return { status: r.status, byteLength: r.value.byteLength, sha: Bun.SHA256.hash(r.value, "hex") };
+        });
+        process.stdout.write(JSON.stringify(out));
+      `,
+      payload,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([
+      { status: "fulfilled", length: SIZE, sha },
+      { status: "fulfilled", byteLength: SIZE, sha },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a read started after the first resolves begins a fresh reader", async () => {
+    const payload = crypto.randomBytes(SIZE);
+    const { stdout, stderr, exitCode } = await run(
+      `
+        const a = await Bun.stdin.arrayBuffer();
+        const b = await Bun.stdin.arrayBuffer();
+        process.stdout.write(JSON.stringify({ a: a.byteLength, b: b.byteLength }));
+      `,
+      payload,
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ a: SIZE, b: 0 });
+    expect(exitCode).toBe(0);
+  });
 });

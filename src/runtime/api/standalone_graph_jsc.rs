@@ -48,6 +48,8 @@ impl FileJsc for File {
                 mime_type: MimeType::NONE,
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 is_all_ascii: None,
+                in_flight_blob_reader:
+                    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut()),
             }));
             // make it never free
             store.ref_();

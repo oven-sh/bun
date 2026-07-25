@@ -728,6 +728,14 @@ private:
              * If write was never called, the developer should still return true so that we may drain. */
             bool success = httpResponseData->callOnWritable(reinterpret_cast<HttpResponse<SSL> *>(asyncSocket), httpResponseData->offset);
 
+            /* The writable callback may have completed the response and replayed
+             * a buffered pipelined request whose dispatch closed or adopted this
+             * socket (parse error, Connection: close, WebSocket upgrade); every
+             * httpResponseData read below would then be on a destructed object. */
+            if (us_socket_is_closed(s)) {
+                return s;
+            }
+
             if constexpr (!IsNodeHttp) {
                 /* Bun.serve: onEnd deferred close for a tryEnd tail (offset < total,
                  * nothing in AsyncSocketData::buffer). A retry that moves zero bytes

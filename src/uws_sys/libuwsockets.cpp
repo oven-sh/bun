@@ -1327,6 +1327,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      uwsRes->replayPipelinedRequests();
     }
     else
     {
@@ -1336,6 +1337,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      uwsRes->replayPipelinedRequests();
     }
   }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
@@ -1378,6 +1380,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      uwsRes->replayPipelinedRequests();
     }
     else
     {
@@ -1400,6 +1403,7 @@ extern "C"
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
       uwsRes->resetTimeout();
+      uwsRes->replayPipelinedRequests();
     }
   }
 

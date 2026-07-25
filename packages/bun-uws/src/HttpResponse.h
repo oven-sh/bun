@@ -206,6 +206,8 @@ public:
 
             /* tryEnd can never fail when in chunked mode, since we do not have tryWrite (yet), only write */
             this->resetTimeout();
+            /* Last action: the replayed onData may close or adopt this socket. */
+            this->replayPipelinedRequests();
             return true;
         } else {
             /* Write content-length on first call */
@@ -268,6 +270,8 @@ public:
                 }  else if (!keepCorked) {
                     this->uncork();
                 }
+                /* Last action: the replayed onData may close or adopt this socket. */
+                this->replayPipelinedRequests();
             }
 
             return success;
@@ -457,18 +461,18 @@ public:
 
     /* Dispatch pipelined request bytes that were buffered while the previous
      * response was still in flight (Bun.serve's async-pipelining path). Called
-     * from markDone(), i.e. after the in-flight response has been fully
-     * written. node:http never buffers here (it dispatches immediately and
-     * queues responses), so replay is always the IsNodeHttp=false onData. */
+     * as the final action after a response completes: the replayed onData can
+     * synchronously close or adopt this socket (parse error, Connection: close,
+     * WebSocket upgrade), destructing HttpResponseData, so callers must not
+     * touch the response after this returns. node:http never buffers here (it
+     * dispatches immediately and queues responses), so replay is always the
+     * IsNodeHttp=false onData. */
     void replayPipelinedRequests() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (httpResponseData->pipelinedBuffer.empty()) {
             return;
         }
-        /* Connection is being torn down after this response; the buffered
-         * request is discarded and the close path proceeds unchanged. */
-        if (httpResponseData->shouldCloseConnection()
-            || us_socket_is_closed((us_socket_t *) this)
+        if (us_socket_is_closed((us_socket_t *) this)
             || us_socket_is_shut_down((us_socket_t *) this)) {
             httpResponseData->pipelinedBuffer.clear();
             return;
@@ -480,6 +484,17 @@ public:
          * corrupting the outer parse. */
         HttpContextData<SSL> *httpContextData = HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this);
         if (httpContextData->flags.isParsingHttp) {
+            return;
+        }
+        /* Flush the just-completed response before dispatching the next
+         * request: onData's parse-error path closes with uncorkWithoutSending,
+         * which would otherwise drop the corked bytes. */
+        Super::uncork();
+        /* Connection is being torn down after this response; the buffered
+         * request is discarded and the close path proceeds unchanged. */
+        if (httpResponseData->shouldCloseConnection()) {
+            httpResponseData->pipelinedBuffer.clear();
+            this->resume();
             return;
         }
 

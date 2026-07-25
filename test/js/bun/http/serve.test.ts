@@ -3206,6 +3206,41 @@ describe("dispatches a pipelined request after the previous async response compl
       { status: "HTTP/1.1 200 OK", body: "B" },
     ]);
   });
+
+  it("delivers the first response when the pipelined bytes are a parse error", async () => {
+    // Replay runs onData on the buffered bytes after the first response
+    // completes; a parse error there closes the socket (writes 505, then
+    // us_socket_close). The first response must already be on the wire, and
+    // the post-markDone state reads in internalEnd must not touch a
+    // destructed HttpResponseData.
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch() {
+        await new Promise<void>(r => setImmediate(r));
+        return new Response("A");
+      },
+    });
+
+    const raw = await new Promise<string>(resolve => {
+      let got = "";
+      const s = net.connect(server.port, "127.0.0.1", () =>
+        s.write("GET /a HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/9.9\r\nHost: x\r\n\r\n"),
+      );
+      s.on("data", d => (got += d.toString("latin1")));
+      s.on("error", () => {});
+      s.on("close", () => resolve(got));
+    });
+
+    const first = wireResponses(raw);
+    expect({
+      first: first[0],
+      followedBy505: raw.slice(raw.indexOf(first[0].body) + first[0].body.length).startsWith("HTTP/1.1 505 "),
+    }).toEqual({
+      first: { status: "HTTP/1.1 200 OK", body: "A" },
+      followedBy505: true,
+    });
+  });
 });
 
 it("only serves /bun:info to loopback clients in development mode", async () => {

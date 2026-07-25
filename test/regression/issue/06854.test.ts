@@ -2,8 +2,6 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 // https://github.com/oven-sh/bun/issues/6854
-// "use client"/"use server" directives must stay at the top of the output,
-// ahead of auto-injected JSX runtime imports and bundler runtime helpers.
 
 test.concurrent('"use client" stays above the JSX runtime import in --no-bundle', async () => {
   using dir = tempDir("issue-6854-nobundle", {

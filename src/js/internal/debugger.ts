@@ -244,9 +244,8 @@ export default function (
             adapter = new (cdpAdapterConstructor())(
               writeSessionCommandToBackend,
               discardSessionClientMessage,
-              isWaitingForDebugger,
-              undefined,
               allocateRemoteBackendId,
+              isWaitingForDebugger,
             );
             sessionAdapter = adapter;
             sessionAdapter.handleClientMessage(JSON.stringify({ id: 0, method: "Debugger.enable", params: {} }));
@@ -792,9 +791,9 @@ class Debugger {
       adapter = new (cdpAdapterConstructor())(
         writeToRemoteBackend,
         writeToRemoteClient,
+        allocateRemoteBackendId,
         this.#isWaitingForDebugger,
         this.#disconnectNotify,
-        allocateRemoteBackendId,
       );
 
       data.client = client;
@@ -849,7 +848,10 @@ class Debugger {
     adapter?.handleClientDisconnect();
     backend?.close();
     if (this.#nodeInspector || data.isCDP) {
-      connection.close?.(1003, "Unexpected binary message");
+      // 1003 (unsupported data) only fits the binary-frame case; anything
+      // else is an internal error (1011) with the error's own message.
+      const binary = error?.message === "Unexpected binary message";
+      connection.close?.(binary ? 1003 : 1011, binary ? "Unexpected binary message" : "Internal error");
     }
   }
 }

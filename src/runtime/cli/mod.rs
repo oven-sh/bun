@@ -1444,6 +1444,25 @@ pub mod command {
             Global::exit(1);
         }
 
+        // Node: `-i foo.js` runs the script; `-i -e code` evals then enters the
+        // REPL (via process._eval). `-i -p` is not yet threaded through the
+        // bootstrap (Node prints AND enters the REPL), so `-p` currently
+        // bypasses the REPL. RunCommand's positionals carry a leading "run".
+        if ctx.runtime_options.interactive && !ctx.runtime_options.eval.eval_and_print {
+            let no_target = match tag {
+                Tag::AutoCommand => ctx.positionals.is_empty(),
+                Tag::RunCommand => match ctx.positionals.as_slice() {
+                    [] => true,
+                    [r] => r.as_ref() == b"run",
+                    _ => false,
+                },
+                _ => false,
+            };
+            if no_target {
+                return run_command::RunCommand::exec_node_repl(ctx);
+            }
+        }
+
         if tag == Tag::AutoCommand && !ctx.runtime_options.eval.script.is_empty() {
             return run_command::RunCommand::exec_eval(ctx);
         }

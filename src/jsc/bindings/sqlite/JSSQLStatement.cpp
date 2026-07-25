@@ -759,17 +759,14 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             }
 
             size_t len = strlen(name);
-            if (len == 0) {
-                anyHoles = true;
-                break;
-            }
 
             // When joining multiple tables, the same column names can appear multiple times
             // columnNames de-dupes property names internally
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
-            columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
+            columnNames->add(len == 0
+                    ? vm.propertyNames->emptyIdentifier
+                    : Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -815,14 +812,11 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     for (int i = count - 1; i >= 0; i--) {
         const char* name = sqlite3_column_name(stmt, i);
 
-        if (name == nullptr)
-            break;
+        size_t len = name != nullptr ? strlen(name) : 0;
 
-        size_t len = strlen(name);
-        if (len == 0)
-            break;
-
-        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
+        const auto key = len == 0
+            ? vm.propertyNames->emptyIdentifier
+            : Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
 
         JSC::JSValue primitive = JSC::jsUndefined();
         auto decl = sqlite3_column_decltype(stmt, i);
@@ -2236,7 +2230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    size_t columnCount = castedThis->columnNames->size();
+    int columnCount = sqlite3_column_count(stmt);
     JSValue result = jsUndefined();
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
@@ -2390,7 +2384,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
         }
     }
 
-    size_t columnCount = castedThis->columnNames->size();
+    size_t columnCount = sqlite3_column_count(stmt);
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
@@ -2399,15 +2393,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
                 status = sqlite3_step(stmt);
             }
 
-            result = jsNumber(sqlite3_column_count(stmt));
+            result = jsNumber(0);
 
         } else {
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
             RETURN_IF_EXCEPTION(scope, {});
             {
-                size_t columnCount = sqlite3_column_count(stmt);
-
                 do {
                     JSC::JSArray* row = constructResultRow(vm, lexicalGlobalObject, castedThis, columnCount);
                     if (!row || scope.exception()) [[unlikely]] {
@@ -2479,7 +2471,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
         }
     }
 
-    size_t columnCount = castedThis->columnNames->size();
+    size_t columnCount = sqlite3_column_count(stmt);
     JSValue result = jsNull();
     if (status == SQLITE_ROW) {
         // this is a count from UPDATE or another query like that
@@ -2488,15 +2480,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRawRows, (JSC::JS
                 status = sqlite3_step(stmt);
             }
 
-            result = jsNumber(sqlite3_column_count(stmt));
+            result = jsNumber(0);
 
         } else {
 
             JSC::JSArray* resultArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
             RETURN_IF_EXCEPTION(scope, {});
             {
-                size_t columnCount = sqlite3_column_count(stmt);
-
                 do {
                     JSC::JSArray* row = constructResultRowRaw(vm, lexicalGlobalObject, castedThis, columnCount);
                     if (!row || scope.exception()) [[unlikely]] {
@@ -2633,29 +2623,19 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnNames, (JSGlobalObject * lexical
     JSSQLStatement* castedThis = dynamicDowncast<JSSQLStatement>(JSValue::decode(thisValue));
     auto scope = DECLARE_THROW_SCOPE(vm);
     CHECK_THIS
+    CHECK_PREPARED
 
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-    JSC::JSArray* array;
-    auto* columnNames = castedThis->columnNames.get();
-    if (columnNames->size() > 0) {
-        if (castedThis->_prototype) {
-            array = ownPropertyKeys(lexicalGlobalObject, castedThis->_prototype.get(), PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else {
-            array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), columnNames->size());
-            RETURN_IF_EXCEPTION(scope, {});
-            unsigned int i = 0;
-            for (const auto& column : *columnNames) {
-                auto* string = jsString(vm, column.string());
-                RETURN_IF_EXCEPTION(scope, {});
-                array->putDirectIndex(lexicalGlobalObject, i++, string);
-            }
-        }
-    } else {
-        array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), 0);
+    auto* stmt = castedThis->stmt;
+    int count = sqlite3_column_count(stmt);
+    JSC::JSArray* array = JSC::constructEmptyArray(lexicalGlobalObject, static_cast<ArrayAllocationProfile*>(nullptr), count);
+    RETURN_IF_EXCEPTION(scope, {});
+    for (int i = 0; i < count; i++) {
+        const char* name = sqlite3_column_name(stmt, i);
+        size_t len = name != nullptr ? strlen(name) : 0;
+        auto* string = len == 0
+            ? jsEmptyString(vm)
+            : JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
+        array->putDirectIndex(lexicalGlobalObject, i, string);
         RETURN_IF_EXCEPTION(scope, {});
     }
     return JSC::JSValue::encode(array);

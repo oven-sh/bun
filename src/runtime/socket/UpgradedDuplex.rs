@@ -46,6 +46,24 @@ pub(crate) struct UpgradedDuplex {
     pub on_close_callback: JSValue,
     pub event_loop_timer: EventLoopTimer,
     pub current_timeout: u32,
+    /// Transport bytes that arrived before the TLS engine existed.
+    ///
+    /// `js_upgrade_duplex_to_tls` defers `start_tls` to an event-loop task (so
+    /// `on_open` cannot re-enter JS before the caller holds the handle), but the
+    /// JS caller attaches its `data` listener as soon as that function returns.
+    /// When both ends of a `duplexPair()` are wrapped in-process, the peer's
+    /// engine starts first and writes its ClientHello while this side's
+    /// `wrapper` is still `None`. Dropping those bytes deadlocks the handshake
+    /// forever, so stage them here and replay them from
+    /// [`Self::drain_pending`] as soon as the engine is up.
+    pub pending_data: Vec<u8>,
+    /// Peer EOF that arrived before the TLS engine existed. Same race as
+    /// [`Self::pending_data`]: a duplex that writes its last bytes and calls
+    /// `end()` in the tick before `StartTLS` runs would otherwise have the EOF
+    /// dropped, leaving the readable side waiting on data that will never come.
+    /// Replayed by [`Self::drain_pending`] after the staged bytes, preserving
+    /// the original data-then-EOF order.
+    pub pending_end: bool,
 }
 
 bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
@@ -60,6 +78,17 @@ pub struct CertError {
 // `Box<CStr>` drops automatically — no explicit Drop needed.
 
 type WrapperType = SSLWrapper<*mut UpgradedDuplex>;
+
+/// Server-side peer-certificate policy for a duplex TLS upgrade, resolved in
+/// `js_upgrade_duplex_to_tls` and applied via `SSLWrapper::set_server_verify`.
+/// Ignored for client upgrades.
+#[derive(Clone, Copy)]
+pub(crate) struct ServerVerify {
+    /// `requestCert` — whether to send a CertificateRequest at all.
+    pub request_cert: bool,
+    /// `rejectUnauthorized` — only meaningful when `request_cert` is set.
+    pub reject_unauthorized: bool,
+}
 
 pub struct Handlers {
     // BACKREF per LIFETIMES.tsv — container holding self as `.upgrade`.
@@ -188,6 +217,20 @@ impl UpgradedDuplex {
         // global is set in `from()` whenever origin is set.
         let Some(global) = self.global else { return };
 
+        // Teardown-phase bytes (close_notify / the trailing end()) aimed at a
+        // duplex whose write side already ended (TLS-inception teardown) only
+        // surface a spurious EPIPE - drop them. Ordinary data writes skip the
+        // probe so write-after-end still errors like node.
+        let teardown = data.is_none() || self.wrapper.as_ref().is_some_and(|w| w.is_shutdown());
+        if teardown {
+            match duplex.get(&global, "writableEnded") {
+                Ok(Some(ended)) if ended.to_boolean() => return,
+                Ok(_) => {}
+                // Best-effort probe: consume the exception and fall through.
+                Err(err) => drop(global.take_exception(err)),
+            }
+        }
+
         let name = if msg_more { "write" } else { "end" };
         let write_or_end = match duplex.get(&global, name) {
             Ok(Some(f)) if f.is_callable() => f,
@@ -241,7 +284,67 @@ impl UpgradedDuplex {
             if let Some(wrapper) = &mut self.wrapper {
                 wrapper.receive_data(data);
             }
+            return;
         }
+        // Engine not up yet - `start_tls` is still queued. Stage the bytes;
+        // `drain_pending` feeds them in as soon as the engine is up.
+        self.pending_data.extend_from_slice(data);
+    }
+
+    /// Replay bytes that arrived before the engine existed. Called by
+    /// `DuplexUpgradeContext::run_event` once the `StartTLS` branch has
+    /// finished its bookkeeping, so the replay is indistinguishable from an
+    /// ordinary post-start delivery.
+    pub(super) fn drain_pending(&mut self) {
+        // Nothing to replay, or the engine never came up (the socket died
+        // before `StartTLS`). Bail before `mem::take` so the bytes are not
+        // destroyed by a drain that could not deliver them.
+        if self.wrapper.is_none() {
+            return;
+        }
+        if self.pending_data.is_empty() {
+            self.drain_pending_end();
+            return;
+        }
+        // `receive_data` can re-enter this object (it drives BoringSSL, which
+        // calls back into `internal_write`/`on_data`), so move the buffer out
+        // before handing it over rather than holding a borrow across the call.
+        // Taking ownership is load-bearing: a re-entrant `teardown()` clears
+        // `pending_data`, and BoringSSL must not have the slice freed under it.
+        let staged = std::mem::take(&mut self.pending_data);
+        self.reset_timeout();
+        // Feed in bounded slices rather than one concatenated buffer. Each JS
+        // chunk was originally delivered on its own; `receive_data` casts the
+        // length to `c_int` with a panicking `expect`, so handing it the sum of
+        // every chunk staged in the window would turn a large pre-start burst
+        // into a process abort. Re-check the engine each round: BoringSSL can
+        // re-enter and tear it down partway through, and `teardown()` neuters
+        // in place (frees the SSL, keeps the Option `Some`), so the live
+        // signal is the SSL handle, not the Option.
+        for chunk in staged.chunks(64 * 1024) {
+            match &mut self.wrapper {
+                Some(wrapper) if wrapper.ssl.is_some() => wrapper.receive_data(chunk),
+                _ => break,
+            }
+        }
+        self.drain_pending_end();
+    }
+
+    /// Replay an EOF that landed before the engine came up. Split out so both
+    /// `drain_pending` exits report it, and kept after the staged bytes so the
+    /// engine sees data-then-EOF in the order the peer sent it.
+    fn drain_pending_end(&mut self) {
+        if !self.pending_end {
+            return;
+        }
+        self.pending_end = false;
+        // A re-entrant teardown during the byte replay above neuters the
+        // engine in place (`teardown()` keeps the Option `Some` but frees the
+        // SSL); do not synthesize an EOF into a dead socket.
+        if self.wrapper.as_ref().is_none_or(|w| w.ssl.is_none()) {
+            return;
+        }
+        (self.handlers.on_end)(self.handlers.ctx);
     }
 
     pub(crate) fn on_timeout(&mut self) {
@@ -283,6 +386,8 @@ impl UpgradedDuplex {
             on_close_callback: JSValue::ZERO,
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
             current_timeout: 0,
+            pending_data: Vec::new(),
+            pending_end: false,
         }
     }
 
@@ -348,6 +453,7 @@ impl UpgradedDuplex {
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
+        verify: ServerVerify,
     ) -> Result<(), crate::Error> {
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
@@ -364,7 +470,9 @@ impl UpgradedDuplex {
             },
         )?);
 
-        self.wrapper.as_mut().unwrap().start();
+        let wrapper = self.wrapper.as_mut().unwrap();
+        wrapper.set_server_verify(verify.request_cert, verify.reject_unauthorized);
+        wrapper.start();
         Ok(())
     }
 
@@ -376,6 +484,7 @@ impl UpgradedDuplex {
         &mut self,
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
+        verify: ServerVerify,
     ) -> Result<(), crate::Error> {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
@@ -401,7 +510,9 @@ impl UpgradedDuplex {
         // Success: disarm the errdefer.
         scopeguard::ScopeGuard::into_inner(ctx_guard);
 
-        self.wrapper.as_mut().unwrap().start();
+        let wrapper = self.wrapper.as_mut().unwrap();
+        wrapper.set_server_verify(verify.request_cert, verify.reject_unauthorized);
+        wrapper.start();
         Ok(())
     }
 
@@ -562,6 +673,8 @@ impl UpgradedDuplex {
             }
         }
         self.ssl_error = CertError::default();
+        self.pending_data = Vec::new();
+        self.pending_end = false;
     }
 }
 
@@ -618,6 +731,10 @@ fn on_end(_global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
         if this.wrapper.is_some() {
             (this.handlers.on_end)(this.handlers.ctx);
+        } else {
+            // EOF before `start_tls` ran. Hold it so `drain_pending` reports it
+            // in order, after any bytes staged in the same window.
+            this.pending_end = true;
         }
     }
     Ok(JSValue::UNDEFINED)

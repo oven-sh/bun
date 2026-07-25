@@ -217,9 +217,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    // Note: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
-    // the raw VM pointer and re-borrow inside.
-    match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
+    match build_with_vm(ctx, &cwd, &mut pt) {
         Ok(()) => {}
         Err(crate::Error::JSError) => {
             // SAFETY: vm.global is live for VM lifetime.
@@ -283,14 +281,11 @@ pub(super) fn write_sourcemap_to_disk(
     Ok(())
 }
 
-pub(super) fn build_with_vm(
-    ctx: Context,
-    cwd: &[u8],
-    vm_ptr: *mut VirtualMachine,
-    pt: &mut PerThread,
-) -> crate::Result<()> {
-    // SAFETY: vm_ptr is the live per-thread VM passed from build_command;
-    // exclusive access on this thread for the duration of the call.
+pub(super) fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
+    // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
+    // `as_ptr()` is `Copy` and does not borrow `pt`.
+    let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
+    // SAFETY: exclusive access on this thread for the duration of the call.
     let vm = unsafe { &mut *vm_ptr };
     // Load and evaluate the configuration module. `global()` returns
     // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.

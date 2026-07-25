@@ -431,13 +431,13 @@ class InspectorCDPAdapter {
   constructor(
     writeToBackend: (message: string) => void,
     writeToClient: (message: string) => void,
+    allocateBackendId: () => number,
     isWaitingForDebugger: () => boolean = () => false,
     disconnectNotify: DisconnectNotifyState = {
       handshakeStarted: false,
       retaining: 0,
       adapters: undefined,
     },
-    allocateBackendId: () => number,
   ) {
     this.#writeToBackend = writeToBackend;
     this.#writeToClient = writeToClient;

@@ -1296,10 +1296,27 @@ where
         }
 
         if let Some(promise) = result.as_any_promise() {
+            // HTMLRewriter observes the rejection and propagates it to the
+            // caller, so this is a handled rejection. Mark it before waiting
+            // so `handle_rejected_promises()` (run by `wait_for_promise`'s
+            // tick, and again on the next event-loop turn) skips it instead of
+            // firing `process.on("unhandledRejection")`.
+            promise.set_handled(global.vm());
             vm().wait_for_promise(promise);
             let fail = promise.status() == jsc::js_promise::Status::Rejected;
             if fail {
-                vm().unhandled_rejection(global, promise.result(global.vm()), promise.as_value());
+                // Capture the rejection directly (same slot the sync-throw arm
+                // above writes). `vm.unhandled_rejection()` is NOT equivalent:
+                // it dispatches to `process.on("unhandledRejection")` first and
+                // only reaches the capture handler when no listener exists, so
+                // with a listener the original error is lost and the caller
+                // sees the generic "rewriter has been stopped" instead.
+                let err = promise.result(global.vm());
+                err.ensure_still_alive();
+                if let Some(err_ptr) = vm().unhandled_pending_rejection_to_capture {
+                    // SAFETY: VM-owned pointer set by BufferOutputSink::init.
+                    unsafe { *err_ptr = err };
+                }
             }
             return fail;
         }

@@ -3447,8 +3447,7 @@ fn auto_watch_asset(jsc_vm: *mut VirtualMachine, path: &Fs::Path, loader: Loader
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {
         return;
     }
-    if !bun_paths::is_absolute(path.text)
-        || bun_core::strings::contains(path.text, b"node_modules")
+    if !bun_paths::is_absolute(path.text) || bun_core::strings::contains(path.text, b"node_modules")
     {
         return;
     }
@@ -3471,7 +3470,14 @@ fn auto_watch_asset(jsc_vm: *mut VirtualMachine, path: &Fs::Path, loader: Loader
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
     if watcher
-        .add_file::<true>(input_fd, path.text, hash, loader, bun_sys::Fd::INVALID, None)
+        .add_file::<true>(
+            input_fd,
+            path.text,
+            hash,
+            loader,
+            bun_sys::Fd::INVALID,
+            None,
+        )
         .is_err()
         && bun_watcher::REQUIRES_FILE_DESCRIPTORS
         && input_fd.is_valid()

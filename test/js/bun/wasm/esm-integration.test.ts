@@ -170,31 +170,34 @@ describe("wasm ES module integration (#12434)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("`with { type: 'file' }` on a .wasm specifier keeps the legacy path-as-default behaviour", async () => {
-    using dir = tempDir("wasm-type-file", {
-      "add.wasm": addWasmBytes,
-      "index.js": `
+  test.concurrent(
+    "`with { type: 'file' }` on a .wasm specifier keeps the legacy path-as-default behaviour",
+    async () => {
+      using dir = tempDir("wasm-type-file", {
+        "add.wasm": addWasmBytes,
+        "index.js": `
         const m = await import("./add.wasm", { with: { type: "file" } });
         console.log(JSON.stringify({
           default: m.default,
           hasAdd: typeof m.add,
         }));
       `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const parsed = JSON.parse(stdout);
-    expect(parsed.hasAdd).toBe("undefined");
-    expect(parsed.default).toMatch(/add\.wasm$/);
-    expect(exitCode).toBe(0);
-  });
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const parsed = JSON.parse(stdout);
+      expect(parsed.hasAdd).toBe("undefined");
+      expect(parsed.default).toMatch(/add\.wasm$/);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrent("require('./x.wasm') keeps the legacy path-as-value behaviour", async () => {
     using dir = tempDir("wasm-require-path", {

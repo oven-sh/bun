@@ -1026,7 +1026,29 @@ static JSValue fetchESMSourceCode(
         auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateNativeModule_##name, JSC::SourceOrigin(), WTF::move(moduleKey))); \
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                     \
     }
-            BUN_FOREACH_ESM_NATIVE_MODULE(CASE)
+// The node: native builtins memoize their exports object in the
+// InternalModuleRegistry (the object require() returns); build the ESM
+// namespace from that same object so `import x from 'node:buffer'` and
+// `require('node:buffer')` are reference-equal, like Node.
+#define CASE_REGISTRY(name)                                                                                                                                                                                    \
+    case (SyntheticModuleType::name): {                                                                                                                                                                        \
+        auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, InternalModuleRegistry::Field::name), JSC::SourceOrigin(), WTF::move(moduleKey))); \
+        RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));                                                                                                               \
+    }
+            CASE_REGISTRY(NodeBuffer)
+            CASE_REGISTRY(NodeConstants)
+            CASE_REGISTRY(NodeSqlite)
+            CASE_REGISTRY(NodeStringDecoder)
+            CASE_REGISTRY(NodeUtilTypes)
+            CASE("bun:test"_s, BunTest)
+            CASE("bun:jsc"_s, BunJSC)
+            CASE("bun:app"_s, BunApp)
+            CASE("utf-8-validate"_s, UTF8Validate)
+            CASE("abort-controller"_s, AbortControllerModule)
+            CASE("node:module"_s, NodeModule)
+            CASE("node:process"_s, NodeProcess)
+            CASE("bun"_s, BunObject)
+#undef CASE_REGISTRY
 #undef CASE
 
         // CommonJS modules from src/js/*

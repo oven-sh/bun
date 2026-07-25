@@ -115,11 +115,8 @@ pub struct FetchTasklet {
     pub check_server_identity: StrongOptional,
     pub reject_unauthorized: bool,
     pub upgraded_connection: bool,
-    /// A caller-supplied `Content-Length` for a streamed request body, parsed
-    /// once at setup. `None` when not set (or unparseable), in which case the
-    /// body is chunk-framed. When `Some`, `write_request_data` /
-    /// `write_end_request` count bytes against it and reject on mismatch so the
-    /// header this client writes is never contradicted by the body it sends.
+    /// Caller-supplied `Content-Length` for a streamed body; `None` means
+    /// chunked framing, `Some` is enforced against the byte count.
     pub declared_request_content_length: Option<u64>,
     pub request_body_bytes_written: u64,
     // Custom Hostname
@@ -2179,9 +2176,6 @@ impl FetchTasklet {
     }
 
     /// Whether the request body should skip chunked transfer encoding framing.
-    /// True for upgraded connections, HTTP/2, or when the caller supplied a
-    /// valid Content-Length (which `build_request` then emits instead of
-    /// `Transfer-Encoding: chunked`).
     fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection
             || self.result.is_http2
@@ -2210,9 +2204,7 @@ impl FetchTasklet {
                 .request_body_bytes_written
                 .saturating_add(data.len() as u64);
             if self.request_body_bytes_written > declared {
-                // Rejecting before the surplus bytes are buffered is what makes
-                // this a request-smuggling guard: the wire never carries more
-                // body bytes than the Content-Length header promised.
+                // Reject before buffering so the surplus never reaches the wire.
                 self.abort_with_content_length_mismatch();
                 return ResumableSinkBackpressure::Done;
             }

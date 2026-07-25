@@ -2420,11 +2420,7 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
-                    // Transfer-Encoding is always engine-managed: a buffered body is
-                    // sent with Content-Length, and a streamed body is chunked (or
-                    // raw with a validated Content-Length). A caller-supplied value
-                    // would be written verbatim while the body is still chunk-framed,
-                    // producing an undecodable message per RFC 9112 section 6.1.
+                    // Engine-owned: a caller value never matches the body framing.
                     continue;
                 }
                 _ => {}
@@ -2469,10 +2465,7 @@ impl<'a> HTTPClient<'a> {
 
         if body_len > 0 || self.method.has_request_body() {
             if self.flags.is_streaming_request_body {
-                // A caller-supplied Content-Length is honoured only when it parses
-                // as a non-negative integer; the body writer (FetchTasklet) then
-                // enforces the byte count and rejects any mismatch, so the value
-                // on the wire is never a lie. Anything else falls back to chunked.
+                // Parseable caller CL is honoured (FetchTasklet enforces the count).
                 if let Some(content_length) = original_content_length
                     && bun_core::parse_unsigned::<u64>(content_length, 10).is_ok()
                 {

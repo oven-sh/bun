@@ -123,6 +123,23 @@ describe("Bun.inspect", () => {
     expect(exitCode).toBe(expectedExit);
   });
 
+  it.concurrent.each([
+    ["throw", `throw e;`],
+    ["Promise.reject", `Promise.reject(e); await 0;`],
+  ])("deeply nested AggregateError via %s does not crash", async (name, emit) => {
+    const src = `let e = new Error("leaf"); for (let i = 0; i < 16 * 1024; i++) e = new AggregateError([e], "agg"); process.stderr.write("built\\n"); ${emit}`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr.slice(0, 6)).toBe("built\n");
+    expect(proc.signalCode).toBeNull();
+    expect(exitCode).toBe(1);
+  });
+
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });

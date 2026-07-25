@@ -945,8 +945,7 @@ pub fn defines_from_transform_options(
         }
     }
 
-    // Bun.env / import.meta.env alias process.env; Node lacks them. globalThis
-    // keeps the rewrite pointed at the real env if `process` is shadowed locally.
+    // `globalThis.` so a local `const process` binding doesn't capture the rewrite.
     if target == Target::Node {
         user_defines
             .get_or_put_value(b"Bun.env", Box::from(b"globalThis.process.env".as_slice()))?;

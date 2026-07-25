@@ -390,10 +390,6 @@ impl Stdio {
                         .throw());
                 }
 
-                // For spawnSync, the stream is drained to bytes on the main
-                // event loop before the isolated loop is entered (the isolated
-                // loop cannot receive HTTP data or run microtasks). See
-                // `spawn_maybe_sync`.
                 *out_stdio = Stdio::ReadableStream(stream);
             }
         }

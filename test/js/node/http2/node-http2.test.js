@@ -3309,6 +3309,44 @@ it("http2 allowHTTP1 fallback frames a HEAD response like plain HTTP/1 (no Conte
   }
 });
 
+it("http2 allowHTTP1 fallback sets res.shouldKeepAlive from the request's Connection header", async () => {
+  // Node.js's parserOnIncoming: `res.shouldKeepAlive = keepAlive` (the parser's
+  // llhttp_should_keep_alive value). The fallback path receives that value as
+  // the kOnHeadersComplete callback parameter and must apply it to the response
+  // so middleware reading res.shouldKeepAlive sees the same value as on node:http.
+  const seen = {};
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    seen[req.url] = res.shouldKeepAlive;
+    res.setHeader("content-length", "1");
+    res.end("x");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const port = server.address().port;
+    const send = raw =>
+      new Promise((resolve, reject) => {
+        const socket = tls.connect({ host: "localhost", port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] }, () =>
+          socket.end(raw),
+        );
+        socket.on("error", reject);
+        socket.on("data", () => {});
+        socket.on("close", resolve);
+      });
+    await send("GET /11close HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    await send("GET /10keepalive HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n");
+    await send("GET /11none HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    await send("GET /10none HTTP/1.0\r\nHost: localhost\r\n\r\n");
+    expect(seen).toEqual({
+      "/11close": false,
+      "/10keepalive": true,
+      "/11none": true,
+      "/10none": false,
+    });
+  } finally {
+    server.close();
+  }
+});
+
 it("http2 allowHTTP1 fallback writes a close-delimited body raw and ends the connection", async () => {
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
     res.removeHeader("content-length");

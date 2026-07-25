@@ -52,3 +52,16 @@
      conn->ifc_conn.cn_flags |= LSCONN_PEER_GOING_AWAY;
      LSQ_DEBUG("received GOAWAY frame, last good stream ID: %"PRIu64, stream_id);
      if (conn->ifc_enpub->enp_stream_if->on_goaway_received)
+@@ -9907,6 +9928,12 @@
+                 conn->ifc_u.cli.ifcli_min_goaway_stream_id);
+             return;
+         }
++        /* bun: lower id (RFC 9114 sec 5.2 two-phase shutdown).  Record it and
++         * re-notify so the application can reject the newly-abandoned range
++         * instead of seeing it as a clean EOF from the walk below. */
++        conn->ifc_u.cli.ifcli_min_goaway_stream_id = stream_id;
++        if (conn->ifc_enpub->enp_stream_if->on_goaway_received)
++            conn->ifc_enpub->enp_stream_if->on_goaway_received(&conn->ifc_conn);
+     }
+     else
+     {

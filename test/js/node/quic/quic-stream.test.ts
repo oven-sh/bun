@@ -188,7 +188,7 @@ describe("HTTP/3 GOAWAY on the client", () => {
   test("delivers the stream id and rejects in-flight requests above it", async () => {
     const serverReady = Promise.withResolvers<void>();
     let serverSessionRef: any;
-    const server = await listen(
+    await using server = await listen(
       async serverSession => {
         serverSessionRef = serverSession;
         serverSession.onstream = (stream: any) => {
@@ -207,13 +207,14 @@ describe("HTTP/3 GOAWAY on the client", () => {
       },
     );
 
-    const client = await connect(server.address, {
-      servername: "localhost",
-      verifyPeer: "manual",
-      transportParams: { maxIdleTimeout: 2 },
-    });
+    let client: any;
     let id: bigint, bError: any, bReset: any, streamAId: bigint, streamBId: bigint;
     try {
+      client = await connect(server.address, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 2 },
+      });
       await client.opened;
 
       const goawayId = Promise.withResolvers<bigint>();
@@ -263,9 +264,8 @@ describe("HTTP/3 GOAWAY on the client", () => {
       client.destroy();
       bError = await readB;
     } finally {
-      client.destroy?.();
+      client?.destroy?.();
       serverSessionRef?.destroy?.();
-      server.close?.({ force: true });
     }
 
     // Before the fix this was always -1n.

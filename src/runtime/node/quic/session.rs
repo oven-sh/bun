@@ -2405,8 +2405,13 @@ lsquic_callback! {
             };
             let id = stream.stream_id();
             // Client-initiated bidirectional streams have the two low bits
-            // clear (RFC 9000 §2.1); pending streams report id < 0.
-            if id < 0 || id as u64 & 0x3 != 0 || id as u64 <= stream_id {
+            // clear (RFC 9000 §2.1); pending streams report id < 0. A stream
+            // already reset was handled by a previous GOAWAY with a higher id.
+            if id < 0
+                || id as u64 & 0x3 != 0
+                || id as u64 <= stream_id
+                || stream.with_state(|s| s.reset != 0)
+            {
                 continue;
             }
             stream.mark_reset(H3_REQUEST_REJECTED);

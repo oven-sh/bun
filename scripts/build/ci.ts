@@ -13,13 +13,13 @@ import { basename, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generateOrderFile } from "../orderfile/generate.ts";
 // @ts-ignore — utils.mjs has JSDoc types but no .d.ts
+import { createHash } from "node:crypto";
 import * as utils from "../utils.mjs";
 import { bunExeName, shouldStrip, type BunOutput } from "./bun.ts";
 import type { Config } from "./config.ts";
 import { BuildError } from "./error.ts";
 import { crossFeaturesJson } from "./features-json.ts";
 import { builtinBytecodeEmbeddable, builtinBytecodePath, orderFilePath, usesOrderFile } from "./flags.ts";
-import { createHash } from "node:crypto";
 
 /** True if running under any CI (env: CI, BUILDKITE, or GITHUB_ACTIONS). */
 export const isCI: boolean = utils.isCI;

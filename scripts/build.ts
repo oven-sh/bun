@@ -33,7 +33,6 @@ import {
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
-  publishBuiltinBytecode,
   printEnvironment,
   regenerateOrderFile,
   reportOrderFileBootstrap,

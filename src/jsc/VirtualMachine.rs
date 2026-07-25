@@ -183,9 +183,7 @@ pub struct VirtualMachine {
     /// threads.
     pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
-    /// Resolved path of the preload entry currently being imported by
-    /// `load_preloads`, so the runtime plugin dispatch can skip onLoad/onResolve
-    /// for that exact file while still serving its own imports.
+    /// Resolved path of the preload entry `load_preloads` is currently importing.
     pub currently_loading_preload: Vec<u8>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
     // Note: layering — the concrete `bun_standalone_graph::Graph` lives
@@ -617,8 +615,7 @@ unsafe impl Sync for VirtualMachine {}
 unsafe impl Send for VirtualMachine {}
 
 impl VirtualMachine {
-    /// True while `load_preloads` is importing `specifier` as a preload entry,
-    /// so runtime plugin hooks skip that file but still serve its own imports.
+    /// True while `load_preloads` is importing `specifier` as a preload entry.
     #[inline]
     pub fn is_loading_preload_entry(&self, specifier: &[u8]) -> bool {
         !self.currently_loading_preload.is_empty()

@@ -830,7 +830,7 @@ __std_minmax_8i                                                                 
 
 # ----------------------------------------------------------------------------
 # MSVC CRT libm + mem*/str* SIMD variants. Gate: __isa_available.
-# (45 symbols)
+# (44 symbols)
 # ----------------------------------------------------------------------------
 __remainder_piby2_fma3      [AVX, FMA]
 __remainder_piby2_fma3_bdl  [AVX, FMA]
@@ -873,13 +873,39 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
-strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]
 tanhf_fma                   [AVX, FMA]
 wcslen                      [AVX, AVX2]
 wcsnlen                     [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
+# MSVC CRT strspn/strcspn/strpbrk. Data-in-.text false positive, NOT a gate.
+#
+# Windows SDK source at ucrt/string/amd64/strspn.c (all three functions share
+# it) is plain SSE2 with three 16-way `switch (shift)` statements over
+# pslldq/psrldq immediates. MSVC lays each switch's jump table in .text right
+# after the function's ret. The 4-byte entries are image-relative RVAs of the
+# case handlers (read via `mov r, [base + 4*idx + OFF]; add r, base; jmp r`),
+# so their low bytes vary with link layout. The linear sweep falls into the
+# table and, depending on where a given case handler landed, can decode a
+# stray VEX (AVX/AVX2) or RTM opcode out of one entry:
+#
+#   build 80916, strcspn @0x14386f9e0: bytes `c7 f8 86 03 ce f8` are two
+#   consecutive table entries (RVAs 0x0386f8c7 / 0x0386f8ce → the `pslldq
+#   xmm2, 13/14` cases) that iced decodes as `xbegin rel32`. strpbrk has
+#   previously been flagged as `xabort imm8` (C6 F8 ib) for the same reason.
+#
+# There is no __isa_available dispatch in this file; the SSE2 path is taken
+# unconditionally and is baseline-safe. Ceiling covers the encodings observed
+# so far; a multi-feature hit here would still warrant a look.
+# (3 symbols)
+# ----------------------------------------------------------------------------
+strspn   [AVX, AVX2, RTM]
+strcspn  [AVX, AVX2, RTM]
+strpbrk  [AVX, AVX2, RTM]
 
 
 # ----------------------------------------------------------------------------

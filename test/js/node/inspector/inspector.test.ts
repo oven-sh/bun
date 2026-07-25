@@ -165,9 +165,7 @@ process.exit(0);
   // Mark the global before resuming so the fixture can prove it actually
   // waited. The CLI server speaks JSC's protocol; Inspector.initialized is
   // what resolves the waiting-for-connection state (BunDebugger.cpp).
-  ws.send(
-    JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "globalThis.__resumed = true" } }),
-  );
+  ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression: "globalThis.__resumed = true" } }));
   ws.send(JSON.stringify({ id: 2, method: "Inspector.initialized" }));
 
   const drained = (async () => {

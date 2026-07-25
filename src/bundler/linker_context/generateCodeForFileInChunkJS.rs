@@ -531,10 +531,26 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             WrapKind::Cjs => {
                 // If the wrapped body contains direct eval, bind `require` as a
                 // real parameter so code like `eval("require")("buffer")`
-                // (protobufjs) keeps working. `require_ref` is declared Unbound
-                // so the renamer keeps the original name.
-                let needs_require_arg =
-                    ast.module_scope.contains_direct_eval && runtime_require_ref.is_some();
+                // (protobufjs) keeps working. Use the "require" entry from the
+                // module scope instead of `ast.require_ref`, because the latter
+                // may have been replaced with the file-local `__require`
+                // polyfill symbol when the body also contains a dynamic
+                // `require(expr)` or bare `require` reference.
+                let require_arg_ref = if ast.module_scope.contains_direct_eval
+                    && runtime_require_ref.is_some()
+                {
+                    ast.module_scope.members.get(&b"require"[..]).and_then(|m| {
+                        match c.graph.symbols.get_const(m.ref_).map(|s| s.kind) {
+                            Some(bun_ast::symbol::Kind::Unbound) => Some(m.ref_),
+                            // User declared their own `var require`; it already
+                            // shadows whatever we would pass.
+                            _ => None,
+                        }
+                    })
+                } else {
+                    None
+                };
+                let needs_require_arg = require_arg_ref.is_some();
 
                 // Only include the arguments that are actually used
                 let mut args: bun_alloc::ArenaVec<'_, G::Arg> =
@@ -580,13 +596,11 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                             ..Default::default()
                         });
 
-                        if needs_require_arg {
+                        if let Some(require_ref) = require_arg_ref {
                             args.push(G::Arg {
                                 binding: Binding::alloc(
                                     temp_arena,
-                                    B::Identifier {
-                                        r#ref: ast.require_ref,
-                                    },
+                                    B::Identifier { r#ref: require_ref },
                                     bun_ast::Loc::EMPTY,
                                 ),
                                 ..Default::default()

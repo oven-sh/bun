@@ -3102,12 +3102,17 @@ static bool bufferAccessCheckOffsetType(JSC::JSGlobalObject* lexicalGlobalObject
 
 // boundsError(offset, byteLength - byteSize): the same ERR_OUT_OF_RANGE / ERR_BUFFER_OUT_OF_BOUNDS as
 // lib/internal/buffer.js. Returns the offset when it is in range after all (an integral double).
-static std::optional<size_t> bufferAccessCheckOffsetBounds(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetValue, size_t viewLength, size_t byteSize)
+static std::optional<size_t> bufferAccessCheckOffsetBounds(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSValue offsetValue, size_t viewLength, size_t byteSize, bool viewHasLength = true)
 {
     double offset = offsetValue.asNumber();
     // Math.floor(value) !== value: NaN and fractions are "an integer"; +-Infinity get the range error.
     if (std::floor(offset) != offset) [[unlikely]] {
         Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetValue);
+        return std::nullopt;
+    }
+    if (!viewHasLength) [[unlikely]] {
+        // A DataView receiver has no `length`, so boundsError() compares against NaN.
+        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, ">= 0 and <= NaN"_s, offsetValue);
         return std::nullopt;
     }
     if (viewLength < byteSize) [[unlikely]] {
@@ -3166,7 +3171,7 @@ static JSC::EncodedJSValue bufferRead(JSC::JSGlobalObject* lexicalGlobalObject, 
     auto* view = dynamicDowncast<JSC::JSArrayBufferView>(thisValue);
     size_t offset;
     // The fast path: an int32 (or missing) offset inside a real ArrayBufferView -- what the JIT'd form assumes.
-    if (view && (offsetValue.isInt32() || offsetValue.isUndefined())) [[likely]] {
+    if (view && view->type() != JSC::DataViewType && (offsetValue.isInt32() || offsetValue.isUndefined())) [[likely]] {
         int32_t offset32 = offsetValue.isInt32() ? offsetValue.asInt32() : 0;
         size_t viewLength = view->length();
         if (offset32 >= 0 && static_cast<size_t>(offset32) + byteSize <= viewLength) [[likely]] {
@@ -3185,7 +3190,7 @@ static JSC::EncodedJSValue bufferRead(JSC::JSGlobalObject* lexicalGlobalObject, 
             bufferAccessReceiver(lexicalGlobalObject, scope, thisValue);
             return {};
         }
-        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize);
+        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize, view->type() != JSC::DataViewType);
         if (!checkedOffset)
             return {};
         offset = *checkedOffset;
@@ -3245,7 +3250,7 @@ static JSC::EncodedJSValue bufferWrite(JSC::JSGlobalObject* lexicalGlobalObject,
 
     size_t offset;
     // The fast path: an in-range value at an int32 (or missing) offset inside a real ArrayBufferView.
-    if (view && (offsetValue.isInt32() || offsetValue.isUndefined())) [[likely]] {
+    if (view && view->type() != JSC::DataViewType && (offsetValue.isInt32() || offsetValue.isUndefined())) [[likely]] {
         int32_t offset32 = offsetValue.isInt32() ? offsetValue.asInt32() : 0;
         size_t viewLength = view->length();
         if (offset32 >= 0 && static_cast<size_t>(offset32) + byteSize <= viewLength && valueIsInRange()) [[likely]] {
@@ -3278,7 +3283,7 @@ static JSC::EncodedJSValue bufferWrite(JSC::JSGlobalObject* lexicalGlobalObject,
             bufferAccessReceiver(lexicalGlobalObject, scope, thisValue);
             return {};
         }
-        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize);
+        auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteSize, view->type() != JSC::DataViewType);
         if (!checkedOffset)
             return {};
         offset = *checkedOffset;
@@ -3360,38 +3365,6 @@ static EncodedJSValue throwBufferInvalidByteLength(JSC::JSGlobalObject* lexicalG
     return Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "byteLength"_s, ">= 1 and <= 6"_s, byteLengthValue);
 }
 
-// The reader's offset validation: validateInteger() for non-numbers / fractions, then the
-// this.length - byteLength range (boundsError).
-static std::optional<size_t> bufferReadVarWidthOffset(JSC::JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, JSC::JSArrayBufferView* view, JSValue offsetValue, size_t byteLength)
-{
-    double offset;
-    if (offsetValue.isInt32()) [[likely]]
-        offset = offsetValue.asInt32();
-    else {
-        offset = offsetValue.isNumber() ? offsetValue.asNumber() : 0;
-        // ((offset | 0) !== offset && offset !== +-Infinity) -> validateInteger(offset, "offset")
-        if (!offsetValue.isNumber() || (std::floor(offset) != offset && !std::isinf(offset)) || (std::isfinite(offset) && std::abs(offset) > 9007199254740991.0)) {
-            int32_t unused;
-            Bun::V::validateInteger(scope, lexicalGlobalObject, offsetValue, "offset"_s, jsUndefined(), jsUndefined(), &unused);
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-        }
-    }
-    size_t byteLengthOfView = view->length();
-    if (!(offset >= 0 && offset <= static_cast<double>(byteLengthOfView) - static_cast<double>(byteLength))) [[unlikely]] {
-        // boundsError(offset, length - byteLength)
-        if (std::floor(offset) != offset) {
-            Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, "an integer"_s, offsetValue);
-            return std::nullopt;
-        }
-        if (byteLengthOfView < byteLength) {
-            Bun::ERR::BUFFER_OUT_OF_BOUNDS(scope, lexicalGlobalObject, ""_s);
-            return std::nullopt;
-        }
-        Bun::ERR::OUT_OF_RANGE(scope, lexicalGlobalObject, "offset"_s, makeString(">= 0 and <= "_s, byteLengthOfView - byteLength), offsetValue);
-        return std::nullopt;
-    }
-    return static_cast<size_t>(offset);
-}
 
 // checkInt()'s value range for byteLength <= 4 and the ">= -(2 ** N) and < 2 ** N" wording it uses
 // for the 5- and 6-byte widths.
@@ -3433,7 +3406,9 @@ static JSC::EncodedJSValue bufferReadVarWidth(JSC::JSGlobalObject* lexicalGlobal
         bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
         return {};
     }
-    auto checkedOffset = bufferReadVarWidthOffset(lexicalGlobalObject, scope, view, offsetValue, byteLength);
+    if (!bufferAccessCheckOffsetType(lexicalGlobalObject, scope, offsetValue)) [[unlikely]]
+        return {};
+    auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength, view->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)
         return {};
@@ -3461,15 +3436,6 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
     JSValue offsetValue = callFrame->argument(1);
     JSValue byteLengthValue = callFrame->argument(2);
 
-    // value = +value
-    double number;
-    if (valueValue.isNumber()) [[likely]]
-        number = valueValue.asNumber();
-    else {
-        number = valueValue.toNumber(lexicalGlobalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-    }
-
     if (!byteLengthValue.isNumber()) [[unlikely]] {
         // boundsError(byteLength, 6, "byteLength") -> validateNumber(byteLength, "byteLength")
         return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "byteLength"_s, "number"_s, byteLengthValue);
@@ -3478,6 +3444,15 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
     if (!(byteLengthNumber >= 1 && byteLengthNumber <= 6 && std::floor(byteLengthNumber) == byteLengthNumber)) [[unlikely]]
         return throwBufferInvalidByteLength(lexicalGlobalObject, scope, byteLengthValue);
     size_t byteLength = static_cast<size_t>(byteLengthNumber);
+
+    // value = +value: after the byteLength dispatch, as in lib/internal/buffer.js
+    double number;
+    if (valueValue.isNumber()) [[likely]]
+        number = valueValue.asNumber();
+    else {
+        number = valueValue.toNumber(lexicalGlobalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (!bufferWriteVarWidthCheckValue(lexicalGlobalObject, scope, number, byteLength, isSigned)) [[unlikely]]
         return {};
@@ -3490,7 +3465,7 @@ static JSC::EncodedJSValue bufferWriteVarWidth(JSC::JSGlobalObject* lexicalGloba
         return {};
     }
     // checkBounds(): the offset type was validated above; the range check is boundsError().
-    auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength);
+    auto checkedOffset = bufferAccessCheckOffsetBounds(lexicalGlobalObject, scope, offsetValue, view->length(), byteLength, view->type() != JSC::DataViewType);
     RETURN_IF_EXCEPTION(scope, {});
     if (!checkedOffset)
         return {};
@@ -3541,10 +3516,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64LE, (JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
-    if (!castedThis) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-    auto byteLength = castedThis->byteLength();
+    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3571,10 +3545,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigInt64BE, (JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
-    if (!castedThis) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-    auto byteLength = castedThis->byteLength();
+    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3601,10 +3574,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64LE, (JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
-    if (!castedThis) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-    auto byteLength = castedThis->byteLength();
+    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);
@@ -3630,10 +3602,9 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_writeBigUInt64BE, (JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* castedThis = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
-    if (!castedThis) [[unlikely]]
-        return throwVMError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-    auto byteLength = castedThis->byteLength();
+    auto* castedThis = bufferAccessReceiver(lexicalGlobalObject, scope, callFrame->thisValue());
+    RETURN_IF_EXCEPTION(scope, {});
+    auto byteLength = castedThis->length();
 
     auto valueVal = callFrame->argument(0);
     auto offsetVal = callFrame->argument(1);

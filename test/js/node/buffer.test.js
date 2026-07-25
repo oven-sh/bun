@@ -4810,6 +4810,21 @@ describe("read*/write* after JIT tier-up", () => {
     // its byteLength: on a wider-element view these throw even though the bytes would fit.
     const u16 = new Uint16Array(4);
     expect(codeOf(() => Buffer.prototype.writeUInt32BE.call(u16, 1, 3))).toBe("ERR_OUT_OF_RANGE");
+    // The BigInt writers share the receiver / bound handling with the rest of the family.
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call(u16, 5n, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(codeOf(() => Buffer.prototype.readBigInt64LE.call(u16, 0))).toBe("ERR_BUFFER_OUT_OF_BOUNDS");
+    expect(codeOf(() => Buffer.prototype.writeBigInt64LE.call({}, 0n))).toBe("ERR_INVALID_ARG_TYPE");
+    // A DataView has no `length`, so as in lib/internal/buffer.js every accessor reports `<= NaN`.
+    const dv = new DataView(new ArrayBuffer(8));
+    for (const f of [
+      () => Buffer.prototype.readIntLE.call(dv, 0, 3),
+      () => Buffer.prototype.writeIntLE.call(dv, 1, 0, 3),
+      () => Buffer.prototype.readInt32LE.call(dv, 0),
+      () => Buffer.prototype.writeInt32LE.call(dv, 1, 0),
+    ]) {
+      expect(codeOf(f)).toBe("ERR_OUT_OF_RANGE");
+      expect(() => f()).toThrow("<= NaN");
+    }
     expect(codeOf(() => Buffer.prototype.readInt32LE.call(u16, 3))).toBe("ERR_OUT_OF_RANGE");
     expect(codeOf(() => Buffer.prototype.readUIntLE.call(u16, 2, 3))).toBe("ERR_OUT_OF_RANGE");
     u16[0] = 0x1234;
@@ -4860,5 +4875,12 @@ describe("read*/write* after JIT tier-up", () => {
       ];
     }
     expect(codes).toEqual(["ERR_OUT_OF_RANGE", "ERR_INVALID_ARG_TYPE", "ERR_OUT_OF_RANGE", "ERR_OUT_OF_RANGE"]);
+    // The value is only coerced after the byteLength dispatch, as in lib/internal/buffer.js.
+    let valueOfCalls = 0;
+    expect(codeOf(() => scratch.writeIntLE({ valueOf() { valueOfCalls++; return 1; } }, 0, 7))).toBe("ERR_OUT_OF_RANGE");
+    expect(valueOfCalls).toBe(0);
+    // Out-of-range integral offsets, including |offset| > 2**53, get the bounds message.
+    expect(() => scratch.readIntLE(2 ** 53, 2)).toThrow(">= 0 and <= 14");
+    expect(() => scratch.readIntLE(1.5, 2)).toThrow("an integer");
   });
 });

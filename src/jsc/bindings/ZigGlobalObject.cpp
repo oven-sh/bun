@@ -1080,7 +1080,15 @@ extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
+    // The event loop only drains the thread-default Zig::GlobalObject's
+    // m_aboutToBeNotifiedRejectedPromises. A ShadowRealm's global is also a
+    // Zig::GlobalObject but is never drained, so route its rejections (and the
+    // matching Handle) to the default global so they are reported.
     auto* globalObj = static_cast<GlobalObject*>(obj);
+    if (!globalObj->isThreadLocalDefaultGlobalObject) [[unlikely]] {
+        if (auto* defaultGlobal = defaultGlobalObject())
+            globalObj = defaultGlobal;
+    }
 
     switch (operation) {
     case JSPromiseRejectionOperation::Reject:

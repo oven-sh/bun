@@ -86,9 +86,7 @@ pub struct PackageJSON {
     pub scripts: Option<Box<ScriptsMap>>,
     // Values borrow the source buffer (lifetime-erased; owned by `source_contents`).
     pub config: Option<Box<StringArrayHashMap<&'static [u8]>>>,
-    /// True when this package.json declares `"workspaces"` (array, or object
-    /// with a `"packages"` array). The resolver does not expand the globs;
-    /// this is only used to locate the monorepo root for `.env` loading.
+    /// Set when `"workspaces"` is an array or `{ "packages": [...] }`.
     pub has_workspaces: bool,
 
     pub arch: Architecture,

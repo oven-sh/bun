@@ -711,15 +711,13 @@ impl<'a> Transpiler<'a> {
         self.configure_linker_with_auto_jsx(true);
     }
 
-    /// Walk `start`'s parent chain to find the nearest ancestor whose
-    /// `package.json` declares `"workspaces"`, returning that directory's
-    /// entries. Returns `None` if no such ancestor exists, or if it is the
-    /// same directory we already loaded from (`skip_dir`).
+    /// Nearest ancestor whose `package.json` declares `"workspaces"`, skipping
+    /// `skip_dir` and anything under `node_modules`.
     fn workspace_root_dir_entry(
         start: bun_resolver::DirInfoRef,
         skip_dir: &[u8],
         generation: bun_core::Generation,
-    ) -> Option<*mut bun_resolver::fs::DirEntry> {
+    ) -> Option<&'static bun_resolver::fs::DirEntry> {
         let mut dir_info = Some(start);
         while let Some(info) = dir_info {
             if info.is_inside_node_modules() || info.is_node_modules() {
@@ -727,10 +725,8 @@ impl<'a> Transpiler<'a> {
             }
             if let Some(pkg) = info.package_json() {
                 if pkg.has_workspaces {
-                    let entries = info.get_entries(generation)?;
-                    // SAFETY: BSSMap singleton owns `*entries`; read-only use
-                    // of `.dir` here, with no other live `&mut` to this slot.
-                    if unsafe { (*entries).dir } == skip_dir {
+                    let entries = info.get_entries_ref(generation)?;
+                    if entries.dir == skip_dir {
                         return None;
                     }
                     return Some(entries);
@@ -785,16 +781,9 @@ impl<'a> Transpiler<'a> {
                     merge_tsconfig_jsx_into(tsconfig, &mut self.options.jsx);
                 }
 
-                let Some(dir) = dir_info.get_entries(self.resolver.generation) else {
+                let Some(dir) = dir_info.get_entries_ref(self.resolver.generation) else {
                     return Ok(());
                 };
-                // `get_entries` returns `*mut bun_resolver::fs::DirEntry`
-                // (BSSMap-owned). `dot_env::Loader::load` takes
-                // `impl DirEntryProbe` (bun_dotenv sits below `bun_resolver`
-                // in the crate graph); `bun_resolver::fs::DirEntry` impls it.
-                // SAFETY: BSSMap singleton owns `*dir`; single-threaded path —
-                // sole `&mut` for the call.
-                let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
                 // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
@@ -810,17 +799,12 @@ impl<'a> Transpiler<'a> {
                 };
                 env.load(dir, &env_files, suffix, skip_default_env)?;
 
-                // When cwd is inside a workspace, also load the workspace
-                // root's `.env*` at lower priority so monorepo packages see
-                // shared config. Skip when `--env-file` was passed or when
-                // default loading is disabled (same gating as cwd defaults).
+                // Default-load path only: fall back to the workspace root's
+                // `.env*` at lower priority (issue #11190).
                 if env_files.is_empty() && !skip_default_env {
                     if let Some(root_dir) =
                         Self::workspace_root_dir_entry(dir_info, dir.dir, self.resolver.generation)
                     {
-                        // SAFETY: BSSMap singleton owns `*root_dir`;
-                        // single-threaded path, sole `&mut` for the call.
-                        let root_dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *root_dir };
                         env.load_workspace_root_defaults(suffix, root_dir)?;
                     }
                 }

@@ -21,6 +21,29 @@ pub enum DotEnvFileSuffix {
     Test,
 }
 
+impl DotEnvFileSuffix {
+    /// Auto-loaded `.env*` filenames, highest priority first. `.env.local` is
+    /// omitted under `bun test` so committed test env is not overridden by a
+    /// developer's local file.
+    pub const fn default_filenames(self) -> &'static [&'static [u8]] {
+        match self {
+            Self::Development => &[
+                b".env.development.local",
+                b".env.local",
+                b".env.development",
+                b".env",
+            ],
+            Self::Production => &[
+                b".env.production.local",
+                b".env.local",
+                b".env.production",
+                b".env",
+            ],
+            Self::Test => &[b".env.test.local", b".env.test", b".env"],
+        }
+    }
+}
+
 /// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
 /// `bun_resolver` in the crate graph, so the concrete
 /// `bun_resolver::fs::DirEntry` is taken generically; the only operation
@@ -673,10 +696,6 @@ impl Loader {
         Ok(())
     }
 
-    // .env.local goes first
-    // Load .env.development if development
-    // Load .env.production if !development
-    // .env goes last
     fn load_default_files<D: DirEntryProbe + ?Sized>(
         &mut self,
         suffix: DotEnvFileSuffix,
@@ -684,47 +703,15 @@ impl Loader {
         value_buffer: &mut Vec<u8>,
     ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
-
-        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
-        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
-        // impls `DirEntryProbe`.
-        match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production.local", value_buffer)?
-            }
-            DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test.local", value_buffer)?
-            }
+        for name in suffix.default_filenames() {
+            self.try_load_default(dir, dir_handle, name, value_buffer)?;
         }
-
-        if suffix != DotEnvFileSuffix::Test {
-            self.try_load_default(dir, dir_handle, b".env.local", value_buffer)?;
-        }
-
-        match suffix {
-            DotEnvFileSuffix::Development => {
-                self.try_load_default(dir, dir_handle, b".env.development", value_buffer)?
-            }
-            DotEnvFileSuffix::Production => {
-                self.try_load_default(dir, dir_handle, b".env.production", value_buffer)?
-            }
-            DotEnvFileSuffix::Test => {
-                self.try_load_default(dir, dir_handle, b".env.test", value_buffer)?
-            }
-        }
-
-        self.try_load_default(dir, dir_handle, b".env", value_buffer)
+        Ok(())
     }
 
-    /// Load the default `.env*` set from the workspace root, after
-    /// `load_default_files` has already populated from cwd. Values already set
-    /// (process env, cwd `.env*`) win. Files are tracked by absolute path in
-    /// `custom_files_loaded` so cwd and root `.env` can both contribute.
-    ///
-    /// See https://github.com/oven-sh/bun/issues/11190.
+    /// Load [`DotEnvFileSuffix::default_filenames`] from the workspace root
+    /// after cwd has already been loaded. Existing values win; root files are
+    /// tracked by absolute path in `custom_files_loaded`. See issue #11190.
     pub fn load_workspace_root_defaults<D: DirEntryProbe + ?Sized>(
         &mut self,
         suffix: DotEnvFileSuffix,
@@ -733,91 +720,22 @@ impl Loader {
         let mut value_buffer: Vec<u8> = Vec::new();
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let dir_path = dir.dir();
-
-        match suffix {
-            DotEnvFileSuffix::Development => self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.development.local",
-                &mut path_buf,
-                &mut value_buffer,
-            )?,
-            DotEnvFileSuffix::Production => self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.production.local",
-                &mut path_buf,
-                &mut value_buffer,
-            )?,
-            DotEnvFileSuffix::Test => self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.test.local",
-                &mut path_buf,
-                &mut value_buffer,
-            )?,
-        }
-
-        if suffix != DotEnvFileSuffix::Test {
-            self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.local",
-                &mut path_buf,
-                &mut value_buffer,
-            )?;
-        }
-
-        match suffix {
-            DotEnvFileSuffix::Development => self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.development",
-                &mut path_buf,
-                &mut value_buffer,
-            )?,
-            DotEnvFileSuffix::Production => self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.production",
-                &mut path_buf,
-                &mut value_buffer,
-            )?,
-            DotEnvFileSuffix::Test => self.try_load_workspace_root(
-                dir,
-                dir_path,
-                b".env.test",
-                &mut path_buf,
-                &mut value_buffer,
-            )?,
-        }
-
-        self.try_load_workspace_root(dir, dir_path, b".env", &mut path_buf, &mut value_buffer)
-    }
-
-    #[inline]
-    fn try_load_workspace_root<D: DirEntryProbe + ?Sized>(
-        &mut self,
-        dir: &D,
-        dir_path: &[u8],
-        name: &'static [u8],
-        path_buf: &mut PathBuffer,
-        value_buffer: &mut Vec<u8>,
-    ) -> crate::Result<()> {
-        if dir.has_comptime_query(name) {
+        for name in suffix.default_filenames() {
+            if !dir.has_comptime_query(name) {
+                continue;
+            }
             let joined = bun_paths::resolve_path::join_string_buf::<bun_paths::platform::Auto>(
                 &mut path_buf[..],
                 &[dir_path, name],
             );
-            self.load_env_file_dynamic::<false>(joined, value_buffer)?;
+            self.load_env_file_dynamic::<false>(joined, &mut value_buffer)?;
             analytics::Features::dotenv_inc();
         }
         Ok(())
     }
 
     /// Probe `dir` for a known `.env*` filename and, if present, load it into
-    /// its dedicated slot and bump the analytics counter. Shared body for the
-    /// eight call sites in `load_default_files`.
+    /// its dedicated slot and bump the analytics counter.
     #[inline]
     fn try_load_default<D: DirEntryProbe + ?Sized>(
         &mut self,

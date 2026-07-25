@@ -1040,7 +1040,7 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
 
 // https://github.com/oven-sh/bun/issues/11190
 // https://github.com/oven-sh/bun/issues/10358
-describe.concurrent("workspace root .env is loaded from a subdirectory", () => {
+describe("workspace root .env is loaded from a subdirectory", () => {
   const print = `console.log(JSON.stringify({
     LOCAL: process.env.LOCAL ?? null,
     ROOT_ONLY: process.env.ROOT_ONLY ?? null,
@@ -1058,6 +1058,32 @@ describe.concurrent("workspace root .env is loaded from a subdirectory", () => {
     const { stdout } = bunRun(`${dir}/packages/app/index.ts`);
     // local .env wins for SHARED; root .env fills in ROOT_ONLY
     expect(JSON.parse(stdout)).toEqual({ LOCAL: "local", ROOT_ONLY: "root", SHARED: "local" });
+  });
+
+  test("package .env beats root .env.local and .env.development", () => {
+    const dir = tempDirWithFiles("dotenv-ws", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      ".env.local": "SHARED=root-local\n",
+      ".env.development": "SHARED=root-dev\nROOT_ONLY=root-dev\n",
+      "packages/app/package.json": JSON.stringify({ name: "app" }),
+      "packages/app/.env": "SHARED=pkg\n",
+      "packages/app/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/app/index.ts`);
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: "root-dev", SHARED: "pkg" });
+  });
+
+  test("stops at the nearest workspace root", () => {
+    const dir = tempDirWithFiles("dotenv-ws-nested", {
+      "package.json": JSON.stringify({ name: "outer", workspaces: ["packages/*"] }),
+      ".env": "ROOT_ONLY=outer\nSHARED=outer\n",
+      "packages/sub/package.json": JSON.stringify({ name: "inner", workspaces: ["apps/*"] }),
+      "packages/sub/.env": "SHARED=inner\n",
+      "packages/sub/apps/x/package.json": JSON.stringify({ name: "x" }),
+      "packages/sub/apps/x/index.ts": print,
+    });
+    const { stdout } = bunRun(`${dir}/packages/sub/apps/x/index.ts`);
+    expect(JSON.parse(stdout)).toEqual({ LOCAL: null, ROOT_ONLY: null, SHARED: "inner" });
   });
 
   test("workspace package without its own .env sees root .env", () => {

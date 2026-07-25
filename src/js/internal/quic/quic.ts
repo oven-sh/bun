@@ -1809,7 +1809,8 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.onheaders = FunctionPrototypeBind(fn, this);
     }
-    inner.state.wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+    inner.state.wantsHeaders =
+      inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
   }
 
   /** @type {Function|undefined} */
@@ -1828,7 +1829,8 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.oninfo = FunctionPrototypeBind(fn, this);
     }
-    inner.state.wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+    inner.state.wantsHeaders =
+      inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
   }
 
   /** @type {Function|undefined} */
@@ -1847,7 +1849,8 @@ class QuicStream {
       assertHeadersSupported(inner.session);
       inner.ontrailers = FunctionPrototypeBind(fn, this);
     }
-    inner.state.wantsHeaders = inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
+    inner.state.wantsHeaders =
+      inner.onheaders !== undefined || inner.ontrailers !== undefined || inner.oninfo !== undefined;
   }
 
   /** @type {Function|undefined} */

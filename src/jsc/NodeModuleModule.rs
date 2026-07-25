@@ -231,8 +231,9 @@ fn on_require_extension_modify_non_function(
 /// Keys that `JSCommonJSExtensions::finishCreation` installs on the
 /// `Module._extensions` object. Used by [`find_longest_registered_extension`]
 /// to decide whether an unmatched extension should fall back to `.js`.
-const EXTENSIONS_DEFAULT_KEYS: &[&[u8]] =
-    &[b".js", b".json", b".node", b".ts", b".cts", b".mjs", b".mts"];
+const EXTENSIONS_DEFAULT_KEYS: &[&[u8]] = &[
+    b".js", b".json", b".node", b".ts", b".cts", b".mjs", b".mts",
+];
 
 pub fn find_longest_registered_extension<'a>(
     vm: &'a VirtualMachine,

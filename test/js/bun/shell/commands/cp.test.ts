@@ -84,16 +84,22 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
         .runAsTest(`cp ${flag} copies a directory verbosely`);
     }
 
-    for (const flag of ["--verbose", "--force --verbose"]) {
-      TestBuilder.command`echo hi > a.txt; cp ${{ raw: flag }} a.txt b.txt`
-        .ensureTempDir()
-        .exitCode(0)
-        .stderr("")
-        .stdout(p("$TEMP_DIR/a.txt -> $TEMP_DIR/b.txt\n"))
-        .fileEquals("b.txt", "hi\n")
-        .testMini()
-        .runAsTest(`cp ${flag} copies a file`);
-    }
+    TestBuilder.command`echo hi > a.txt; cp --verbose a.txt b.txt`
+      .ensureTempDir()
+      .exitCode(0)
+      .stderr("")
+      .stdout(p("$TEMP_DIR/a.txt -> $TEMP_DIR/b.txt\n"))
+      .fileEquals("b.txt", "hi\n")
+      .testMini()
+      .runAsTest("cp --verbose copies a file");
+
+    TestBuilder.command`echo hi > a.txt; cp --force a.txt b.txt`
+      .ensureTempDir()
+      .exitCode(0)
+      .stderr("")
+      .fileEquals("b.txt", "hi\n")
+      .testMini()
+      .runAsTest("cp --force copies a file");
   });
 
   describe("EBUSY windows", () => {

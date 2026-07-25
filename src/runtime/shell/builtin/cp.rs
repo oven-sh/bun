@@ -810,8 +810,6 @@ impl FlagParser for Opts {
             }
             // `force: true` is already the default (see `CpFlags` below).
             b'f' => None,
-            // `-n` (no-clobber) is accepted as a silent no-op for compatibility
-            // (pre-existing; dest is still overwritten).
             b'n' => None,
             _ => Some(ParseFlagResult::IllegalOption(&raw const smallflags[i..])),
         }

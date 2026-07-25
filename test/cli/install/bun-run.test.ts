@@ -1119,4 +1119,50 @@ describe.concurrent("bun run", () => {
       exitCode: 0,
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/7504 — the `--bun` node shim dir
+  // under /tmp used to be shared across users (`/tmp/bun-node-<sha>`). The
+  // first user to run `bun --bun` owns the 0700 directory; every other user
+  // hits EEXIST, fails the ownership check, and silently gets no shim (their
+  // `node` falls through to whatever is on PATH, or ENOENT). Windows is
+  // already per-user via `GetTempPathW`.
+  it.skipIf(isWindows)("--bun node shim dir is per-user so two users do not collide (#7504)", async () => {
+    using dir = tempDir("bun-run-shim-uid", {
+      "package.json": JSON.stringify({ name: "shim-uid", scripts: { go: "node ./check.js" } }),
+      "check.js": `
+        const { delimiter, basename } = require("path");
+        const entries = (process.env.PATH || "").split(delimiter);
+        const shim = entries.find(e => basename(e).startsWith("bun-node"));
+        console.log(JSON.stringify({ shim: shim ? basename(shim) : null, isBun: !!process.isBun }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--bun", "run", "go"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // `check.js` is executed via the `node` shim, so it must be running under
+    // bun, and the shim dir it found on PATH must carry the current uid so a
+    // second user on the same host gets their own.
+    const line = stdout
+      .split("\n")
+      .map(l => l.trim())
+      .filter(l => l.startsWith("{"))
+      .pop();
+    expect(line).toBeDefined();
+    const { shim, isBun } = JSON.parse(line!);
+    const uid = process.getuid!();
+
+    expect({ stderr, isBun, shim, exitCode }).toEqual({
+      stderr: expect.any(String),
+      isBun: true,
+      shim: expect.stringContaining(`bun-node-${uid}`),
+      exitCode: 0,
+    });
+  });
 });

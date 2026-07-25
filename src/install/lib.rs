@@ -410,33 +410,39 @@ impl RunCommand {
     #[cfg(not(windows))]
     const SHELLS_TO_SEARCH: &'static [&'static [u8]] = &[b"bash", b"sh", b"zsh"];
 
-    /// `/tmp/bun-node-<sha>` (or debug variant). Windows builds compute the path
-    /// at runtime via GetTempPathW, so this constant is POSIX-only.
+    /// `/tmp/bun-node-<uid>-<sha>` (or debug variant). Windows builds compute
+    /// the path at runtime via `GetTempPathW` (already per-user), so this is
+    /// POSIX-only.
     ///
-    /// NOTE: the SHA alone does not uniquely identify a binary — two local
-    /// builds at the same commit share this dir. `create_fake_temporary_node_executable`
-    /// therefore re-points a stale link on EEXIST instead of trusting it.
+    /// The uid component keeps two users on the same host from colliding on a
+    /// single 0700 directory (issue #7504); the sha keeps two bun versions from
+    /// colliding. Two local builds at the same commit still share this dir, so
+    /// `create_fake_temporary_node_executable` re-points a stale link on EEXIST
+    /// instead of trusting it.
     #[cfg(not(windows))]
-    pub const BUN_NODE_DIR: &'static str = {
-        // `const_format::concatcp!` cannot host
-        // `if` expressions inline, so split into helper consts.
-        use const_format::concatcp;
-        const TMP: &str = if cfg!(target_os = "macos") {
-            "/private/tmp"
-        } else if cfg!(target_os = "android") {
-            "/data/local/tmp"
-        } else {
-            "/tmp"
-        };
-        const SUFFIX: &str = if bun_core::env::IS_DEBUG {
-            "/bun-node-debug"
-        } else if bun_core::env::GIT_SHA_SHORT.is_empty() {
-            "/bun-node"
-        } else {
-            concatcp!("/bun-node-", bun_core::env::GIT_SHA_SHORT)
-        };
-        concatcp!(TMP, SUFFIX)
-    };
+    pub fn bun_node_dir() -> &'static str {
+        static ONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+        ONCE.get_or_init(|| {
+            use core::fmt::Write as _;
+            let tmp: &str = if cfg!(target_os = "macos") {
+                "/private/tmp"
+            } else if cfg!(target_os = "android") {
+                "/data/local/tmp"
+            } else {
+                "/tmp"
+            };
+            let uid = bun_sys::c::getuid();
+            let mut s = String::with_capacity(tmp.len() + 32);
+            write!(&mut s, "{tmp}/bun-node-{uid}").expect("infallible");
+            if bun_core::env::IS_DEBUG {
+                s.push_str("-debug");
+            } else if !bun_core::env::GIT_SHA_SHORT.is_empty() {
+                s.push('-');
+                s.push_str(bun_core::env::GIT_SHA_SHORT);
+            }
+            s
+        })
+    }
 
     fn find_shell_impl<'a>(
         buf: &'a mut bun_paths::PathBuffer,
@@ -520,8 +526,6 @@ impl RunCommand {
 
         #[cfg(not(windows))]
         {
-            use const_format::concatcp;
-
             let argv0: &ZStr = bun_core::argv().get(0).unwrap_or(bun_core::zstr!("bun"));
 
             // PREFER `self_exe_path()` OVER `argv[0]`: on a nested `--bun`, the
@@ -553,7 +557,7 @@ impl RunCommand {
                     }
                     result => {
                         let argv0_bytes = argv0.as_bytes();
-                        if argv0_bytes.starts_with(Self::BUN_NODE_DIR.as_bytes()) {
+                        if argv0_bytes.starts_with(Self::bun_node_dir().as_bytes()) {
                             // `self_exe_path()` failed and `argv[0]` is the shim
                             // under `BUN_NODE_DIR` (nested `--bun`). Using it as
                             // the target would recreate the #30711 self-loop; the
@@ -576,36 +580,31 @@ impl RunCommand {
                 }
             };
 
+            let dir = Self::bun_node_dir();
+
             #[cfg(bun_debug)]
             {
                 // Debug-only cleanup; failures are ignored. The EEXIST branch
                 // below already handles a stale dir.
-                let _ = bun_sys::delete_tree_absolute(Self::BUN_NODE_DIR.as_bytes());
+                let _ = bun_sys::delete_tree_absolute(dir.as_bytes());
             }
 
-            const NODE_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/node\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const BUN_LINK: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "/bun\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
-            const DIR_Z: &ZStr = {
-                const B: &[u8] = concatcp!(RunCommand::BUN_NODE_DIR, "\0").as_bytes();
-                // SAFETY: literal ends in NUL; len excludes it.
-                ZStr::from_static(B)
-            };
+            // `dir` is at most "/private/tmp/bun-node-<u32>-<short sha>" ≈ 48
+            // bytes, so `dir.len() + "/node\0".len()` comfortably fits 128.
+            let mut link_buf = [0u8; 128];
+            debug_assert!(dir.len() + 6 <= link_buf.len());
+            link_buf[..dir.len()].copy_from_slice(dir.as_bytes());
+            let dir_z = ZStr::from_buf(&link_buf, dir.len());
 
             // Don't trust attacker-created entries in a shared temp dir
-            // (`BUN_NODE_DIR` lives under e.g. `/tmp`). Create it `0700`; if it
-            // already exists, refuse to use it unless it's a directory we own
-            // with no group/other write bits.
-            match bun_sys::mkdir(DIR_Z, 0o700) {
+            // (`bun_node_dir()` lives under e.g. `/tmp`). Create it `0700`; if
+            // it already exists, refuse to use it unless it's a directory we
+            // own with no group/other write bits. The per-user uid in the path
+            // means legitimate use never hits a foreign-owned dir; this guard
+            // is for a squatter that pre-created our path.
+            match bun_sys::mkdir(dir_z, 0o700) {
                 Ok(()) => {}
-                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(DIR_Z) {
+                Err(e) if e.get_errno() == bun_sys::E::EEXIST => match bun_sys::lstat(dir_z) {
                     Ok(st)
                         if bun_sys::kind_from_mode(st.st_mode as bun_sys::Mode)
                             == bun_sys::FileKind::Directory
@@ -616,18 +615,20 @@ impl RunCommand {
                 Err(_) => return Ok(()),
             }
 
-            for dest in [NODE_LINK, BUN_LINK] {
+            for name in [&b"/node\0"[..], &b"/bun\0"[..]] {
+                link_buf[dir.len()..dir.len() + name.len()].copy_from_slice(name);
+                let dest = ZStr::from_buf(&link_buf, dir.len() + name.len() - 1);
                 let mut replaced = false;
                 loop {
                     match bun_sys::symlink(argv0_z, dest) {
                         Ok(()) => break,
                         Err(e) if e.get_errno() == bun_sys::E::EEXIST => {
-                            // The dir is keyed only on GIT_SHA_SHORT, so two
-                            // different binaries built at the same commit (e.g.
-                            // side-by-side local builds being benchmarked)
-                            // collide here. Blindly reusing the existing link
-                            // would make every `--bun` child of the SECOND
-                            // binary silently exec the FIRST. Verify the target
+                            // The dir is keyed on uid+sha, so two different
+                            // binaries built at the same commit (e.g. side-by-
+                            // side local builds being benchmarked) collide
+                            // here. Blindly reusing the existing link would
+                            // make every `--bun` child of the SECOND binary
+                            // silently exec the FIRST. Verify the target
                             // before reusing; replace it once if stale.
                             let mut buf = bun_paths::PathBuffer::uninit();
                             let matches = bun_sys::readlink(dest, &mut buf)
@@ -651,7 +652,7 @@ impl RunCommand {
             // The reason for the extra delim is because we are going to append the system PATH
             // later on. this is done by the caller, and explains why we are adding bun_node_dir
             // to the end of the path slice rather than the start.
-            path.extend_from_slice(Self::BUN_NODE_DIR.as_bytes());
+            path.extend_from_slice(dir.as_bytes());
             path.push(bun_paths::DELIMITER);
             Ok(())
         }

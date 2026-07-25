@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDirWithFiles } from "harness";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -55,6 +55,74 @@ export class Y {
   expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
     "lcov-coverage-reporter-output",
   );
+});
+
+// https://github.com/oven-sh/bun/issues/17502
+test.each([["--coverage-reporter=lcov"], ["--coverage-reporter", "lcov"]])("%s implies --coverage", (...flags) => {
+  const dir = tempDirWithFiles("cov", {
+    "add.ts": `export function add(a: number, b: number) { return a + b; }`,
+    "add.test.ts": `
+import { test, expect } from "bun:test";
+import { add } from "./add";
+test("add", () => { expect(add(1, 2)).toBe(3); });
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", ...flags], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, "pipe", "pipe"],
+  });
+  const lcovPath = path.join(dir, "coverage", "lcov.info");
+  expect({
+    "coverage/lcov.info exists": existsSync(lcovPath),
+    exitCode: result.exitCode,
+  }).toEqual({
+    "coverage/lcov.info exists": true,
+    exitCode: 0,
+  });
+  expect(readFileSync(lcovPath, "utf-8")).toContain("SF:add.ts");
+});
+
+test("--coverage-reporter=text implies --coverage", () => {
+  const dir = tempDirWithFiles("cov", {
+    "add.ts": `export function add(a: number, b: number) { return a + b; }`,
+    "add.test.ts": `
+import { test, expect } from "bun:test";
+import { add } from "./add";
+test("add", () => { expect(add(1, 2)).toBe(3); });
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage-reporter=text"], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, "pipe", "pipe"],
+  });
+  const stderr = result.stderr.toString("utf-8");
+  expect(stderr).toContain("% Funcs");
+  expect(stderr).toContain("% Lines");
+  expect(stderr).toContain("add.ts");
+  expect(result.exitCode).toBe(0);
+});
+
+test("--coverage-dir implies --coverage", () => {
+  const dir = tempDirWithFiles("cov", {
+    "add.ts": `export function add(a: number, b: number) { return a + b; }`,
+    "add.test.ts": `
+import { test, expect } from "bun:test";
+import { add } from "./add";
+test("add", () => { expect(add(1, 2)).toBe(3); });
+`,
+  });
+  const result = Bun.spawnSync([bunExe(), "test", "--coverage-dir=out"], {
+    cwd: dir,
+    env: bunEnv,
+    stdio: [null, "pipe", "pipe"],
+  });
+  const stderr = result.stderr.toString("utf-8");
+  expect(stderr).toContain("% Funcs");
+  expect(stderr).toContain("% Lines");
+  expect(stderr).toContain("add.ts");
+  expect(result.exitCode).toBe(0);
 });
 
 test("coverage excludes node_modules directory", () => {

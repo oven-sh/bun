@@ -2,8 +2,8 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tls as tlsCerts } from "harness";
 import crypto from "node:crypto";
 import net from "node:net";
-import tls from "node:tls";
 import path from "node:path";
+import tls from "node:tls";
 
 // The tunnel-mode success branch in WebSocketUpgradeClient.processResponse()
 // took `outgoing_websocket` without releasing the ref that paired with C++'s

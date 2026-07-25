@@ -329,7 +329,10 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 scoped_log!(ResumableSink, "paused");
                 this.status = Status::Paused;
             }
-            ResumableSinkBackpressure::Done => {}
+            ResumableSinkBackpressure::Done => {
+                this.cancel(JSValue::UNDEFINED);
+                return Ok(JSValue::FALSE);
+            }
             ResumableSinkBackpressure::WantMore => {
                 this.status = Status::Started;
             }

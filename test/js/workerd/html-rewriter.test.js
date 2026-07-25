@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { once } from "events";
 import fs from "fs";
@@ -467,8 +468,31 @@ describe("HTMLRewriter", () => {
       await expect(transformed.text()).rejects.toThrow(TypeError);
     });
 
+    it("cancels the source stream once a handler throws", async () => {
+      let pulls = 0;
+      let cancelled = false;
+      const body = new ReadableStream({
+        pull(c) {
+          pulls++;
+          c.enqueue(encode("<p>x</p>"));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      const rw = new HTMLRewriter().on("p", {
+        element() {
+          throw new Error("boom");
+        },
+      });
+      await expect(rw.transform(new Response(body)).text()).rejects.toThrow("boom");
+      // The pump must stop instead of reading the never-closing source
+      // forever; a couple of extra pulls queued before cancel lands is fine.
+      expect(pulls).toBeLessThan(5);
+      expect(cancelled).toBe(true);
+    });
+
     it("does not leak a handler's thrown error", async () => {
-      const { heapStats } = require("bun:jsc");
       const once = async () => {
         const rw = new HTMLRewriter().on("p", {
           element() {

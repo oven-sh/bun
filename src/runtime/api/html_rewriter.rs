@@ -560,7 +560,13 @@ impl ResumableSinkContext for BufferOutputSink {
         let captured = Cell::new(JSValue::ZERO);
         let _scope = HandlerErrorScope::enter(&self.global, &captured);
         self.feed(bytes);
-        ResumableSinkBackpressure::WantMore
+        if self.rewriter.get().is_null() {
+            // `fail()` destroyed the rewriter; stop the pump so the source
+            // is cancelled and `write_end_request` fires.
+            ResumableSinkBackpressure::Done
+        } else {
+            ResumableSinkBackpressure::WantMore
+        }
     }
 
     fn write_end_request(&mut self, err: Option<JSValue>) {
@@ -805,6 +811,9 @@ impl BufferOutputSink {
     }
 
     fn finish(&self, err: Option<JSValue>) {
+        if self.failed.get().has() {
+            return;
+        }
         if let Some(err) = err {
             self.fail(err);
             return;

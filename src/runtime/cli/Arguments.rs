@@ -1348,7 +1348,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
     ctx.bundler_options.ignore_dce_annotations = args.flag(b"--ignore-dce-annotations");
 
     if cmd == CommandTag::BuildCommand {
-        parse_build_command_options(cmd, &args, &mut opts, ctx, &mut diag);
+        parse_build_command_options(cmd, &args, &mut opts, ctx);
     }
 
     if opts.entry_points.is_empty() {
@@ -1856,7 +1856,6 @@ fn parse_build_command_options(
     args: &clap::Args<clap::Help>,
     opts: &mut api::TransformOptions,
     ctx: Context<'_>,
-    diag: &mut clap::Diagnostic,
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.bytecode = args.flag(b"--bytecode");
@@ -1997,7 +1996,7 @@ fn parse_build_command_options(
                     }
                 }
                 b"bun" => api::Target::Bun,
-                _ => cli::invalid_target(diag, target),
+                _ => cli::invalid_target(target),
             }));
 
             if opts.target.unwrap() == api::Target::Bun {
@@ -2006,12 +2005,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bytecode {
                     Output::err_generic(
                         "target must be 'bun' when bytecode is true. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                     Global::exit(1);
                 }
@@ -2019,12 +2013,7 @@ fn parse_build_command_options(
                 if ctx.bundler_options.bake {
                     Output::err_generic(
                         "target must be 'bun' when using --app. Received: {}",
-                        format_args!(
-                            "{:?}",
-                            <bun_ast::Target as bun_options_types::TargetExt>::from_api(
-                                opts.target
-                            )
-                        ),
+                        format_args!("{}", BStr::new(target)),
                     );
                 }
             }
@@ -2386,8 +2375,8 @@ fn parse_build_command_options(
                 Output::err_generic(
                     "Cannot use client-side --target={} with --server-components",
                     format_args!(
-                        "{:?}",
-                        <bun_ast::Target as bun_options_types::TargetExt>::from_api(Some(target))
+                        "{}",
+                        BStr::new(args.option(b"--target").unwrap_or_default())
                     ),
                 );
                 Global::crash();

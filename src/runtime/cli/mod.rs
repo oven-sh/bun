@@ -513,8 +513,11 @@ impl colon_list_type::ColonListValue for &'static [u8] {
 }
 
 #[cold]
-pub(crate) fn invalid_target(diag: &mut bun_clap::Diagnostic, _target: &[u8]) -> ! {
-    let _ = diag.report(Output::error_writer(), bun_clap::Error::InvalidArgument);
+pub(crate) fn invalid_target(target: &[u8]) -> ! {
+    Output::err_generic(
+        "Invalid value for --target: {}. Must be 'browser', 'node', 'macro', or 'bun'.",
+        (bun::fmt::quote(target),),
+    );
     Global::exit(1);
 }
 

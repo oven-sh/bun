@@ -2691,6 +2691,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_BODY_NOT_ALLOWED, "Adding content for this request method or response status is not allowed."_s));
     case ErrorCode::ERR_HTTP_TRAILER_INVALID:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_TRAILER_INVALID, "Trailers are invalid with this transfer encoding"_s));
+    case ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s));
     case ErrorCode::ERR_HTTP_SOCKET_ASSIGNED:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_HTTP_SOCKET_ASSIGNED, "Socket already assigned"_s));
     case ErrorCode::ERR_STREAM_RELEASE_LOCK:

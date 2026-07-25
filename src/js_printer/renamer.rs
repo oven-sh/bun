@@ -1115,9 +1115,7 @@ pub fn compute_initial_reserved_names(
 
     let mut names = StringHashMap::<u32>::default();
 
-    // Names the printer may emit as bare identifier literals without a Ref
-    // (e.g. `Promise.resolve(...)`, `globalThis.Bun`, `new Error(...)`) must be
-    // reserved so a user local is renamed away instead of capturing them.
+    // Identifiers the printer may emit as raw text without a Ref.
     const EXTRAS: [&[u8]; 4] = [b"Promise", b"Require", b"globalThis", b"Error"];
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];

@@ -220,8 +220,14 @@ function injectFakeEmitter(Class) {
   function getMaxListeners() {
     return this[kMaxListeners] ?? 10;
   }
+  const getEventListeners = EventEmitter.getEventListeners;
   function listenerCount(type) {
-    return registryFor(this, false)?.get(type)?.size ?? 0;
+    try {
+      return getEventListeners(this, type).length;
+    } catch {
+      // fakeParentPort has no EventTarget internal slot; fall back to the .on() registry.
+      return registryFor(this, false)?.get(type)?.size ?? 0;
+    }
   }
   function eventNames() {
     const map = registryFor(this, false);

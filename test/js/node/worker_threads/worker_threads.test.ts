@@ -1384,6 +1384,15 @@ test("MessagePort emit() delivers the raw payload and returns a boolean", () => 
     p.close();
   }
 
+  // addEventListener-only: emit() -> true and listenerCount() sees it (node's
+  // NodeEventTarget counts both styles from one store).
+  {
+    const { port1: p } = new MessageChannel();
+    p.addEventListener("message", () => {});
+    expect({ emit: p.emit("message", 1), count: p.listenerCount("message") }).toEqual({ emit: true, count: 1 });
+    p.close();
+  }
+
   // Custom events (unchanged behaviour, guards against regression): .on() gets
   // the arg, addEventListener gets CustomEvent with .detail = arg.
   {

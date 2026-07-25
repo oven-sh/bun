@@ -316,10 +316,41 @@ fn use_real_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     Ok(frame.this())
 }
 
+/// RAII guard: set `vm.suppress_microtask_drain = true` for its lifetime,
+/// restore the prior value on drop.
+///
+/// Jest's sync fake-timer APIs (`advanceTimersByTime`, `runAllTimers`, ...)
+/// fire timer callbacks without flushing microtasks between or after them;
+/// microtasks queued inside a callback run at the test's next real `await`.
+/// The `*Async` variants are what opt into per-timer flushing. Without this
+/// guard each fired timer's `event_loop().exit()` sees depth 1 (the test body
+/// isn't itself inside an enter/exit pair) and drains eagerly.
+struct SuppressMicrotaskDrain {
+    vm: &'static bun_jsc::virtual_machine::VirtualMachine,
+    prev: bool,
+}
+
+impl SuppressMicrotaskDrain {
+    #[inline]
+    fn new(global: &JSGlobalObject) -> Self {
+        let vm = global.bun_vm();
+        let prev = vm.suppress_microtask_drain.replace(true);
+        Self { vm, prev }
+    }
+}
+
+impl Drop for SuppressMicrotaskDrain {
+    #[inline]
+    fn drop(&mut self) {
+        self.vm.suppress_microtask_drain.set(self.prev);
+    }
+}
+
 #[bun_jsc::host_fn]
 fn advance_timers_to_next_timer(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
+    let _suppress = SuppressMicrotaskDrain::new(global);
     let _ = FakeTimers::execute_next(global);
 
     Ok(frame.this())
@@ -354,6 +385,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let effective_advance = if arg_number == 0.0 { 1.0 } else { arg_number };
     let target = current.add_ms_float(effective_advance);
 
+    let _suppress = SuppressMicrotaskDrain::new(global);
     FakeTimers::execute_until(global, target);
     CURRENT_TIME.set(global, &target, None);
 
@@ -364,6 +396,7 @@ fn advance_timers_by_time(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
 fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
+    let _suppress = SuppressMicrotaskDrain::new(global);
     FakeTimers::execute_only_pending_timers(global);
 
     Ok(frame.this())
@@ -373,6 +406,7 @@ fn run_only_pending_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
 fn run_all_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     error_unless_fake_timers(global)?;
 
+    let _suppress = SuppressMicrotaskDrain::new(global);
     FakeTimers::execute_all_timers(global);
 
     Ok(frame.this())

@@ -111,6 +111,96 @@ describe("advanceTimersToNextTimer", () => {
     vi.useRealTimers();
   });
 });
+describe("sync APIs do not drain the microtask queue (jest parity)", () => {
+  // Jest's sync fake-timer APIs fire callbacks without flushing microtasks; a
+  // microtask scheduled inside a callback runs at the test's next real `await`,
+  // not before advanceTimersByTime() returns. The *Async variants opt into
+  // per-timer flushing.
+  test("advanceTimersByTime", async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    setTimeout(() => {
+      log.push("T1");
+      Promise.resolve().then(() => log.push("P1"));
+    }, 10);
+    vi.advanceTimersByTime(10);
+    log.push("after-advance");
+    await Promise.resolve();
+    log.push("after-await");
+    expect(log).toEqual(["T1", "after-advance", "P1", "after-await"]);
+  });
+
+  test("advanceTimersByTime: two timers, microtasks batch after", async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    setTimeout(() => {
+      log.push("T1");
+      Promise.resolve().then(() => log.push("P1"));
+    }, 5);
+    setTimeout(() => {
+      log.push("T2");
+      Promise.resolve().then(() => log.push("P2"));
+    }, 10);
+    vi.advanceTimersByTime(10);
+    log.push("after-advance");
+    await Promise.resolve();
+    expect(log).toEqual(["T1", "T2", "after-advance", "P1", "P2"]);
+  });
+
+  test("advanceTimersToNextTimer", async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    setTimeout(() => {
+      log.push("T1");
+      Promise.resolve().then(() => log.push("P1"));
+    }, 10);
+    vi.advanceTimersToNextTimer();
+    log.push("after-advance");
+    await Promise.resolve();
+    expect(log).toEqual(["T1", "after-advance", "P1"]);
+  });
+
+  test("runAllTimers", async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    setTimeout(() => {
+      log.push("T1");
+      Promise.resolve().then(() => log.push("P1"));
+    }, 5);
+    setTimeout(() => {
+      log.push("T2");
+      Promise.resolve().then(() => log.push("P2"));
+    }, 10);
+    vi.runAllTimers();
+    log.push("after");
+    await Promise.resolve();
+    expect(log).toEqual(["T1", "T2", "after", "P1", "P2"]);
+  });
+
+  test("runOnlyPendingTimers", async () => {
+    vi.useFakeTimers();
+    const log: string[] = [];
+    setTimeout(() => {
+      log.push("T1");
+      Promise.resolve().then(() => log.push("P1"));
+    }, 5);
+    vi.runOnlyPendingTimers();
+    log.push("after");
+    await Promise.resolve();
+    expect(log).toEqual(["T1", "after", "P1"]);
+  });
+
+  test("microtask drain resumes after advanceTimersByTime returns", async () => {
+    vi.useFakeTimers();
+    setTimeout(() => {}, 10);
+    vi.advanceTimersByTime(10);
+    let ran = false;
+    queueMicrotask(() => (ran = true));
+    await Promise.resolve();
+    expect(ran).toBe(true);
+  });
+});
+
 describe("advanceTimersByTime", () => {
   test("setInterval", () => {
     vi.useFakeTimers();

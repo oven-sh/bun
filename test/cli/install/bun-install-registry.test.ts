@@ -3966,12 +3966,12 @@ describe("hoisting", async () => {
         name: "no-deps",
         version: "2.0.0",
       });
-      expect(await file(join(packageDir, "libs", "lib", "node_modules", "no-deps", "package.json")).json()).toMatchObject(
-        {
-          name: "no-deps",
-          version: "1.0.0",
-        },
-      );
+      expect(
+        await file(join(packageDir, "libs", "lib", "node_modules", "no-deps", "package.json")).json(),
+      ).toMatchObject({
+        name: "no-deps",
+        version: "1.0.0",
+      });
       expect(await exists(join(packageDir, "apps", "app", "node_modules"))).toBeFalse();
       expect(await exists(join(packageDir, "node_modules", "strict-peer-dep", "node_modules"))).toBeFalse();
     }

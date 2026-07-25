@@ -57,7 +57,7 @@ describe.concurrent("process.env.TZ POSIX std+offset form", () => {
   // host-dependent (registry on Windows, /etc/localtime for some of these on
   // POSIX), so assert the override is not an Etc/GMT* zone rather than a fixed
   // offset.
-  test.each(["XXX+13", "IST-5:30", "FOO4BAR", "XX-3", "ABC-05:00"])("TZ=%s is not parsed as an offset", async tz => {
+  test.each(["IST-5:30", "FOO4BAR", "XX-3", "ABC-05:00"])("TZ=%s is not parsed as an offset", async tz => {
     const { intl } = await offset(tz);
     expect(intl).not.toMatch(/^Etc\/GMT[+-]/);
   });

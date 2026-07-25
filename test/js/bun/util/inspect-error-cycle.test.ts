@@ -2,7 +2,7 @@
 // The AggregateError `errors` recursion had no stack check and no visited
 // set, so self/mutual cycles and very deep nesting hit the stack guard page
 // (silent SIGSEGV) via `print_errorlike_object` -> `for_each` -> `agg_iter`.
-import { expect, test, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 type Shape = { name: string; build: string };
@@ -64,11 +64,7 @@ describe.concurrent("error-graph cycles do not crash the printer", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([
-          proc.stdout.text(),
-          proc.stderr.text(),
-          proc.exited,
-        ]);
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         if (proc.signalCode) {
           throw new Error(
             `crashed with ${proc.signalCode}\nstdout: ${stdout.slice(0, 300)}\nstderr: ${stderr.slice(0, 300)}`,
@@ -85,7 +81,6 @@ describe.concurrent("error-graph cycles do not crash the printer", () => {
       });
     }
   }
-
 });
 
 // Depth tests kept out of the concurrent matrix: each prints hundreds of
@@ -139,11 +134,7 @@ describe.concurrent("AggregateError printer output", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toContain("[Circular]");
     expect(stdout).toContain("outer");
@@ -190,11 +181,7 @@ describe.concurrent("AggregateError printer output", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toContain("msg");
     expect(exitCode).toBe(0);

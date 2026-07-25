@@ -906,3 +906,55 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+test("bun pm trust preserves comments in a JSONC package.json", async () => {
+  using dir = tempDir("pm-trust-jsonc", {
+    "dep/package.json": JSON.stringify({
+      name: "dep-a",
+      version: "1.0.0",
+      scripts: { postinstall: "echo ran > postinstall.txt" },
+    }),
+    "package.json": `{
+  // my app
+  "name": "app",
+  "dependencies": {
+    // local dep
+    "dep-a": "file:./dep"
+  }
+}
+`,
+  });
+  const dirStr = String(dir);
+
+  await using install = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: dirStr,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const installErr = await install.stderr.text();
+  expect(installErr).not.toContain("error:");
+  expect(await install.exited).toBe(0);
+
+  await using trust = Bun.spawn({
+    cmd: [bunExe(), "pm", "trust", "dep-a"],
+    cwd: dirStr,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const trustErr = await trust.stderr.text();
+  expect(trustErr).not.toContain("error:");
+  expect(await trust.exited).toBe(0);
+
+  const out = await Bun.file(join(dirStr, "package.json")).text();
+  expect(out).toContain("// my app");
+  expect(out).toContain("// local dep");
+  expect(JSON.parse(out.replace(/\/\/.*$/gm, ""))).toEqual({
+    name: "app",
+    dependencies: { "dep-a": "file:./dep" },
+    trustedDependencies: ["dep-a"],
+  });
+  expect(await exists(join(dirStr, "node_modules", "dep-a", "postinstall.txt"))).toBeTrue();
+});

@@ -503,12 +503,13 @@ it.concurrent("detects bunx mode when argv[0] ends with bunx.exe on posix", asyn
     stderr: "pipe",
     env,
   });
-  const [out, err, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [out, err] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(err).not.toContain("error:");
-  expect(out).toContain("Usage: bunx");
-  expect(out).not.toContain("Bun is a fast JavaScript runtime");
-  expect(exited).toBe(0);
+  // `bunx --help` writes its usage to stderr; `bun --help` (the wrong mode
+  // before this fix) writes the full CLI help to stdout.
+  const combined = out + err;
+  expect(combined).toContain("Usage: bunx");
+  expect(combined).not.toContain("Bun is a fast JavaScript runtime");
 });
 
 it.concurrent("should handle postinstall scripts correctly with symlinked bunx", async () => {

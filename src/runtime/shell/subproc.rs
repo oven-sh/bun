@@ -993,6 +993,16 @@ impl Writable {
                         JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
                     )));
                 }
+                Stdio::OwnedBuffer(bytes) => {
+                    return Ok(Writable::Buffer(StaticPipeWriter::create(
+                        event_loop,
+                        subprocess,
+                        result,
+                        JscSubprocess::Source::from_owned_bytes(
+                            core::mem::take(bytes).into_boxed_slice(),
+                        ),
+                    )));
+                }
                 Stdio::Fd(fd) => {
                     return Ok(Writable::Fd(*fd));
                 }
@@ -1051,6 +1061,14 @@ impl Writable {
                     subprocess,
                     result,
                     JscSubprocess::source_from_array_buffer(core::mem::take(array_buffer)),
+                ))),
+                Stdio::OwnedBuffer(bytes) => Ok(Writable::Buffer(StaticPipeWriter::create(
+                    event_loop,
+                    subprocess,
+                    result,
+                    JscSubprocess::Source::from_owned_bytes(
+                        core::mem::take(bytes).into_boxed_slice(),
+                    ),
                 ))),
                 Stdio::Memfd(memfd) => {
                     debug_assert!(memfd.is_valid());
@@ -1216,6 +1234,8 @@ impl Readable {
                     };
                     Readable::Pipe(pipe)
                 }
+                // OwnedBuffer is stdin-only; Readable handles stdout/stderr.
+                Stdio::OwnedBuffer(_) => Readable::Ignore,
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
                     event_loop, process, result, shellio, out_type, interp,
                 )),
@@ -1261,6 +1281,8 @@ impl Readable {
                     };
                     Readable::Pipe(pipe)
                 }
+                // OwnedBuffer is stdin-only; Readable handles stdout/stderr.
+                Stdio::OwnedBuffer(_) => Readable::Ignore,
                 Stdio::Capture(_) => Readable::Pipe(PipeReader::create(
                     event_loop, process, result, shellio, out_type, interp,
                 )),

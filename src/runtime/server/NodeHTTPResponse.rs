@@ -2252,7 +2252,10 @@ impl NodeHTTPResponse {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);
             }
             let flags = self.flags.get();
-            if !flags.contains(Flags::SOCKET_CLOSED) && !flags.contains(Flags::UPGRADED) {
+            if !flags.contains(Flags::SOCKET_CLOSED)
+                && !flags.contains(Flags::UPGRADED)
+                && !flags.contains(Flags::REQUEST_HAS_COMPLETED)
+            {
                 scoped_log!(NodeHTTPResponse, "clearOnData");
                 if let Some(raw_response) = self.raw_response.get() {
                     raw_response.clear_on_data();

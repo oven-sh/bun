@@ -33,8 +33,6 @@ namespace WebCore {
 
 class CryptoKeyAKP;
 
-// One implementation backs ML-KEM-512/768/1024; the registered subclasses below
-// only pin the name and identifier, mirroring Node's ml_kem.js.
 class CryptoAlgorithmMLKEM : public CryptoAlgorithm {
 public:
     void generateKey(const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyOrKeyPairCallback&&, ExceptionCallback&&, ScriptExecutionContext&) final;

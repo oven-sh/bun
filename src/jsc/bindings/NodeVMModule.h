@@ -76,6 +76,8 @@ public:
 
     JSC::Exception* evaluationException() const { return m_evaluationException.get(); }
 
+    void prepareDeferredSubgraph(JSGlobalObject* globalObject, UncheckedKeyHashSet<NodeVMModule*>& visited, uint32_t timeout, bool breakOnSigint);
+
 protected:
     WTF::String m_identifier;
     Status m_status = Status::Unlinked;

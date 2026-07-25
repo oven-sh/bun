@@ -215,6 +215,9 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
     const Identifier& specifierIdentifier = builtinNames.specifierPublicName();
     const Identifier& attributesIdentifier = builtinNames.attributesPublicName();
     const Identifier& hostDefinedImportTypeIdentifier = builtinNames.hostDefinedImportTypePublicName();
+    const Identifier phaseIdentifier = Identifier::fromString(vm, "phase"_s);
+    JSString* evaluationPhase = jsString(vm, String("evaluation"_s));
+    JSString* deferPhase = jsString(vm, String("defer"_s));
 
     WTF::Vector<ImportAttributesListNode*, 8> attributesNodes;
     attributesNodes.reserveInitialCapacity(requests.size());
@@ -242,7 +245,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
 
         JSString* specifierValue = JSC::jsString(vm, request.m_specifier.string());
 
-        JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+        JSObject* requestObject = constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
         requestObject->putDirect(vm, specifierIdentifier, specifierValue);
 
         WTF::String attributesTypeString = "unknown"_str;
@@ -293,6 +296,7 @@ JSValue NodeVMSourceTextModule::createModuleRecord(JSGlobalObject* globalObject)
         }
 
         requestObject->putDirect(vm, attributesIdentifier, attributesObject);
+        requestObject->putDirect(vm, phaseIdentifier, request.m_phase == AbstractModuleRecord::ModulePhase::Defer ? deferPhase : evaluationPhase);
         addModuleRequest({ request.m_specifier.string(), WTF::move(attributeMap) });
         requestsArray->putDirectIndex(globalObject, i, requestObject);
     }
@@ -543,13 +547,16 @@ void NodeVMSourceTextModule::initializeImportMeta(JSGlobalObject* globalObject)
         return;
     }
 
-    CallData callData = JSC::getCallData(m_initializeImportMeta.get());
+    JSValue callback = m_initializeImportMeta.get();
+    m_initializeImportMeta.clear();
+
+    CallData callData = JSC::getCallData(callback);
 
     MarkedArgumentBuffer args;
     args.append(metaValue);
     args.append(m_moduleWrapper.get());
 
-    JSC::call(globalObject, m_initializeImportMeta.get(), callData, jsUndefined(), args);
+    JSC::call(globalObject, callback, callData, jsUndefined(), args);
     scope.release();
 }
 

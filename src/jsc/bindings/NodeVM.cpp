@@ -70,11 +70,11 @@
 namespace Bun {
 using namespace WebCore;
 
-static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin);
+static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred);
 
 namespace NodeVM {
 
-static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner);
+static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner, bool deferred);
 
 static JSValue scriptFetchParametersToImportAttributes(JSGlobalObject* globalObject, JSC::ScriptFetchParameters* params)
 {
@@ -269,7 +269,7 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
     return function;
 }
 
-JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin)
+JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin, bool deferred)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -278,7 +278,7 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefP
         if (!sourceOrigin.url().isEmpty()) {
             if (auto* nodeVmGlobalObject = dynamicDowncast<NodeVMGlobalObject>(globalObject)) {
                 if (nodeVmGlobalObject->dynamicImportCallback()) {
-                    RELEASE_AND_RETURN(scope, moduleLoaderImportModuleInner(nodeVmGlobalObject, globalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin));
+                    RELEASE_AND_RETURN(scope, moduleLoaderImportModuleInner(nodeVmGlobalObject, globalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin, deferred));
                 }
             }
         }
@@ -296,16 +296,16 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefP
     if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
         Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
-        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin, false));
+        RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin, deferred));
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return nullptr;
     }
 
-    RELEASE_AND_RETURN(scope, importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, dynamicImportCallback, fetcher->owner()));
+    RELEASE_AND_RETURN(scope, importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, dynamicImportCallback, fetcher->owner(), deferred));
 }
 
-static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner)
+static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin, JSValue dynamicImportCallback, JSValue owner, bool deferred)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -326,9 +326,8 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
         args.append(jsUndefined());
     }
     args.append(importAttributes);
-    // Node passes the import phase name as the 4th argument; JSC has no
-    // source-phase imports, so it is always the evaluation phase.
-    args.append(jsString(vm, String("evaluation"_s)));
+    // Node passes the import phase name as the 4th argument.
+    args.append(jsString(vm, String(deferred ? "defer"_s : "evaluation"_s)));
 
     JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
 
@@ -347,7 +346,7 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
 
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [deferred](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -357,6 +356,10 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
             JSValue result = object->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s));
             RETURN_IF_EXCEPTION(scope, {});
             if (!result.isUndefinedOrNull()) {
+                if (deferred) {
+                    if (auto* ns = dynamicDowncast<JSModuleNamespaceObject>(result))
+                        RELEASE_AND_RETURN(scope, JSValue::encode(ns->moduleRecord()->getModuleNamespace(globalObject, AbstractModuleRecord::ModulePhase::Defer)));
+                }
                 return JSValue::encode(result);
             }
         }
@@ -1746,7 +1749,7 @@ bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObje
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
-static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
+static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1755,7 +1758,7 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
 
     if (sourceOrigin.fetcher() == nullptr && sourceOrigin.url().isEmpty()) {
         if (globalObject->dynamicImportCallback().isCallable()) {
-            return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
+            return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {}, deferred);
         }
 
         promise->reject(vm, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
@@ -1773,12 +1776,11 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
 
 JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin, bool deferred)
 {
-    UNUSED_PARAM(deferred);
     auto* nodeVmGlobalObject = static_cast<NodeVMGlobalObject*>(globalObject);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin);
+    JSPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin, deferred);
     // importModule runs the user's dynamic-import callback, which can throw
     // and leave a null result; surface that as a rejected promise instead of
     // falling through with the exception pending.
@@ -1790,7 +1792,7 @@ JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalOb
         return result;
     }
 
-    RELEASE_AND_RETURN(scope, moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, WTF::move(parameters), sourceOrigin));
+    RELEASE_AND_RETURN(scope, moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, WTF::move(parameters), sourceOrigin, deferred));
 }
 
 void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArrayBuilder& propertyNames, JSC::DontEnumPropertiesMode mode)

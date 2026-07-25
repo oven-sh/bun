@@ -29,9 +29,7 @@ public:
 
 private:
     void* m_createdInBunVm;
-    // Captured for the pool-thread completion: the creating VM may be a worker
-    // freed by terminate() while the task ran, so the unref goes through the
-    // contexts-map lock instead of dereferencing m_createdInBunVm.
+    // For ConcurrentCppTask's checked pool-thread unref.
     WebCore::ScriptExecutionContextIdentifier m_contextIdentifier;
     Function<void()> m_task;
 };

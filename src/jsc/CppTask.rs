@@ -11,9 +11,7 @@ unsafe extern "C" {
         task: &EventLoopTaskNoContext,
     ) -> *mut VirtualMachine;
     safe fn Bun__EventLoopTaskNoContext__contextIdentifier(task: &EventLoopTaskNoContext) -> u32;
-    // safe: by-value `u32` in; resolves the context under the C++ contexts-map
-    // lock (same fence as `postTaskTo`/`markTerminating`) and no-ops if the
-    // context is gone or terminating.
+    // safe: u32 in; resolves under the contexts-map lock, no-op if gone/terminating.
     safe fn ScriptExecutionContext__unrefEventLoopConcurrently(id: u32);
 }
 
@@ -53,18 +51,13 @@ impl EventLoopTaskNoContext {
     }
 
     /// The VM that created this task. Only safe to dereference on that VM's JS
-    /// thread (worker VMs are freed by `terminate()`); the pool-thread
-    /// completion uses [`Self::context_identifier`] instead.
+    /// thread; worker VMs are freed by `terminate()`.
     pub fn get_vm(&self) -> Option<bun_ptr::BackRef<VirtualMachine>> {
         NonNull::new(Bun__EventLoopTaskNoContext__createdInBunVm(self)).map(bun_ptr::BackRef::from)
     }
 
-    /// The creating VM's [`ScriptExecutionContextIdentifier`], captured at
-    /// construction so the pool-thread completion can unref the event loop
-    /// under the contexts-map lock instead of dereferencing the (possibly
-    /// freed) VM pointer.
-    ///
-    /// [`ScriptExecutionContextIdentifier`]: crate::JSGlobalObject::ScriptExecutionContextIdentifier
+    /// The creating context's `ScriptExecutionContextIdentifier`, for the
+    /// pool-thread checked unref in [`ConcurrentCppTask::run_owned`].
     pub fn context_identifier(&self) -> u32 {
         Bun__EventLoopTaskNoContext__contextIdentifier(self)
     }
@@ -91,11 +84,8 @@ impl ConcurrentCppTask {
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
         // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
         unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        // Runs on a work-pool thread: the creating VM may be a worker freed by
-        // terminate() while `run` (the crypto op) ran. The identifier-keyed
-        // unref takes the contexts-map lock (serializing with the shutdown
-        // path's `markTerminating()`, which is called before the VM box is
-        // freed) and no-ops if the context is gone or terminating.
+        // Checked unref: the creating VM may be a worker freed by terminate()
+        // while `run` ran; the contexts-map lock serializes with markTerminating().
         ScriptExecutionContext__unrefEventLoopConcurrently(context_id);
     }
 }
@@ -104,13 +94,9 @@ impl ConcurrentCppTask {
 pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
-    // the centralised non-null deref proof. C++ just handed it over.
-    //
-    // Called on the creating VM's JS thread (only caller is
-    // `PhonyWorkQueue::dispatch` from the SubtleCrypto IDL entry points), so
-    // dereferencing the captured VM here is safe. The matching unref happens
-    // on a work-pool thread in `run_owned` and goes through the context
-    // identifier instead.
+    // the centralised non-null deref proof. Runs on the creating VM's JS
+    // thread (only caller is `PhonyWorkQueue::dispatch`), so dereferencing
+    // the captured VM here is safe; `run_owned`'s unref is the checked one.
     if let Some(vm) = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm() {
         vm.event_loop_shared().ref_concurrently();
     }

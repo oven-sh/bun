@@ -308,21 +308,16 @@ extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* glo
         context->markTerminating();
 }
 
-// Release one concurrent event-loop ref on the context's VM, if that context
-// is still live and not terminating. Called from a work-pool thread after a
-// ConcurrentCppTask's body has run; the creating VM may be a worker that
-// worker.terminate() freed while the task was running. Taking the map lock
-// serializes with markTerminating() (called from WebWorker::shutdown before
-// the VM box is freed), so either we observe the live context and unref under
-// the lock, or we observe it gone/terminating and drop the unref (the counter
-// of a freed event loop needs no balancing). Same fence as postTaskTo().
+// Checked unref for ConcurrentCppTask's pool-thread completion: the map lock
+// serializes with markTerminating() (called before the worker VM is freed), so
+// a terminated worker's VM is never dereferenced. Same fence as postTaskTo().
 extern "C" void ScriptExecutionContext__unrefEventLoopConcurrently(ScriptExecutionContextIdentifier id)
 {
     Locker locker { allScriptExecutionContextsMapLock };
     auto* context = allScriptExecutionContextsMap().get(id);
     if (!context || context->isTerminating())
         return;
-    Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(context->vm())->bunVM, -1);
+    context->unrefEventLoop();
 }
 
 } // namespace WebCore

@@ -186,8 +186,7 @@ impl Scripts {
             ResolutionTag::Git | ResolutionTag::Github | ResolutionTag::Root => {
                 let prepare_scripts = [&self.preprepare, &self.prepare, &self.postprepare];
 
-                // npm installs a git dep's devDependencies before `prepare`; do the
-                // same via a nested install so they are resolvable (#10297, #6138).
+                // Match npm: make a git dep's devDependencies available to `prepare` (#10297).
                 let install_deps = if resolution_tag != ResolutionTag::Root
                     && prepare_scripts.iter().any(|s| !s.is_empty())
                 {
@@ -213,10 +212,11 @@ impl Scripts {
                     scripts[PREPREPARE] = Some(match scripts[PREPREPARE].take() {
                         Some(user_preprepare) => {
                             let mut chained =
-                                Vec::with_capacity(install_cmd.len() + 4 + user_preprepare.len());
+                                Vec::with_capacity(install_cmd.len() + 10 + user_preprepare.len());
                             chained.extend_from_slice(&install_cmd);
-                            chained.extend_from_slice(b" && ");
+                            chained.extend_from_slice(b" && { ");
                             chained.extend_from_slice(&user_preprepare);
+                            chained.extend_from_slice(b" ; }");
                             chained.into_boxed_slice()
                         }
                         None => {

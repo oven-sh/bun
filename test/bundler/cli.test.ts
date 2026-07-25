@@ -539,7 +539,7 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(main).toContain("main");
     expect(deep).toContain("deep");
     expect(stdout).toContain("main.js");
-    expect(stdout).toContain(path.join("nested", "deep.js"));
+    expect(stdout).toContain("nested/deep.js");
   });
 
   test("creates nested directories for a single entry point with --root", async () => {
@@ -560,7 +560,51 @@ describe.concurrent("--no-bundle with --outdir", () => {
 
     const deep = await Bun.file(path.join(String(dir), "dist", "src", "nested", "deep.js")).text();
     expect(deep).toContain("deep");
-    expect(stdout).toContain(path.join("src", "nested", "deep.js"));
+    expect(stdout).toContain("src/nested/deep.js");
+  });
+
+  test("respects --entry-naming", async () => {
+    using dir = tempDir("no-bundle-outdir-naming", {
+      "src/app.ts": `export const app = 1;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./src/app.ts", "--outdir=dist", "--entry-naming", "[name].mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("app.mjs");
+    expect(exitCode).toBe(0);
+
+    const out = await Bun.file(path.join(String(dir), "dist", "app.mjs")).text();
+    expect(out).toContain("app");
+  });
+
+  test("does not escape --outdir when an entry point is outside --root", async () => {
+    using dir = tempDir("no-bundle-outdir-escape", {
+      "src/a.ts": `export const a = 1;\n`,
+      "other/b.ts": `export const b = 2;\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "--root=src", "./src/a.ts", "./other/b.ts", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(fs.existsSync(path.join(String(dir), "other", "b.js"))).toBe(false);
+    const b = await Bun.file(path.join(String(dir), "dist", "_.._", "other", "b.js")).text();
+    expect(b).toContain("b");
+    expect(stdout).toContain("_.._/other/b.js");
   });
 });
 

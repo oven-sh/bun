@@ -280,13 +280,13 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
             if (envObject) {
                 // process.env carries DontEnum accessors for auto-loaded .env
-                // values and the always-present TZ/TLS/proxy vars. Unwrap the
-                // Windows Proxy and include DontEnum when snapshotting it so
-                // workers keep seeing .env values; user-provided env objects
-                // stay Exclude so their DontEnum properties are not leaked.
-                if (isProcessEnv) {
-                    envObject = Bun::unwrapProcessEnvProxy(envObject);
-                }
+                // values and the always-present TZ/TLS/proxy vars; include
+                // DontEnum when snapshotting it so workers keep seeing .env
+                // values. On Windows the Proxy's ownKeys trap lists those keys
+                // in their original case and the descriptor trap reports them
+                // non-enumerable, so Include sees them without an unwrap.
+                // User-provided env objects stay Exclude so their DontEnum
+                // properties are not leaked.
                 if (!envObject->staticPropertiesReified()) {
                     envObject->reifyAllStaticProperties(globalObject);
                     RETURN_IF_EXCEPTION(throwScope, {});

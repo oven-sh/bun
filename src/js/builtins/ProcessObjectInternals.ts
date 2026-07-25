@@ -453,24 +453,24 @@ export function windowsEnv(
   //
   // it throws "Cannot convert a Symbol value to a string"
 
-  (internalEnv as any)[Bun.inspect.custom] = () => {
+  // envMapList now includes auto-loaded .env keys (DontEnum on internalEnv) so
+  // getOwnPropertyNames can see them; inspection and toJSON mirror Object.keys
+  // by skipping keys whose storage property is non-enumerable.
+  const enumerableView = () => {
     let o = {};
     for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
+      const up = k.toUpperCase();
+      if ($Object.getOwnPropertyDescriptor(internalEnv, up)?.enumerable) {
+        o[k] = internalEnv[up];
+      }
     }
     return o;
   };
-
-  (internalEnv as any).toJSON = () => {
-    // Mirror enumeration: original-case key names, case-insensitive values.
-    // Spreading internalEnv directly would leak the canonical UPPERCASE
-    // storage keys into JSON.stringify(process.env) and IPC env echoes.
-    let o = {};
-    for (let k of envMapList) {
-      o[k] = internalEnv[k.toUpperCase()];
-    }
-    return o;
-  };
+  (internalEnv as any)[Bun.inspect.custom] = enumerableView;
+  // Mirror enumeration: original-case key names, case-insensitive values.
+  // Spreading internalEnv directly would leak the canonical UPPERCASE
+  // storage keys into JSON.stringify(process.env) and IPC env echoes.
+  (internalEnv as any).toJSON = enumerableView;
 
   return new Proxy(internalEnv, {
     get(_, p) {

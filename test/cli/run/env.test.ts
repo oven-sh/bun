@@ -329,6 +329,21 @@ describe("dotenv priority", () => {
     expect(stdout).toBe("secret\nsecret");
   });
 
+  test("auto-loaded .env values survive child_process default env inheritance", () => {
+    const dir = tempDirWithFiles("dotenv-cp", {
+      ".env": "AUTO_FROM_FILE=secret\n",
+      "child.js": `console.log(process.env.AUTO_FROM_FILE, process.env.USER_MUTATION);`,
+      "index.ts": `
+        process.env.USER_MUTATION = "from-js";
+        const { execFileSync } = require("child_process");
+        const out = execFileSync(process.execPath, ["child.js"], { encoding: "utf8" });
+        console.log(out.trim());
+      `,
+    });
+    const { stdout } = bunRun(`${dir}/index.ts`);
+    expect(stdout).toBe("secret from-js");
+  });
+
   test("auto-loaded .env values survive the default worker env snapshot", () => {
     const dir = tempDirWithFiles("dotenv-worker-snap", {
       ".env": "AUTO_FROM_FILE=secret\n",

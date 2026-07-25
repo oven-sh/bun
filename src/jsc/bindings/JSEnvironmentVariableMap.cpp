@@ -18,7 +18,6 @@
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/PropertyDescriptor.h>
-#include <JavaScriptCore/ProxyObject.h>
 #include "BunProcess.h"
 #include "ScriptExecutionContext.h"
 #include "SharedEnvStore.h"
@@ -38,20 +37,6 @@ extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* 
 namespace Bun {
 
 using namespace WebCore;
-
-// On Windows process.env is a Proxy whose ownKeys trap returns envMapList,
-// which by design excludes DontEnum auto-loaded .env keys. Snapshot and
-// SHARE_ENV seeding want the target so DontEnumPropertiesMode::Include sees
-// those keys; pass-through on POSIX.
-JSObject* unwrapProcessEnvProxy(JSObject* envObject)
-{
-#if OS(WINDOWS)
-    if (envObject->type() == JSC::ProxyObjectType) {
-        if (auto* target = static_cast<JSC::ProxyObject*>(envObject)->target()) return target;
-    }
-#endif
-    return envObject;
-}
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -730,7 +715,7 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
 
     // Founding a new tree. processEnvObject() forces the lazy init so the OS
     // environment is captured before the swap below.
-    JSObject* envObject = unwrapProcessEnvProxy(globalObject->processEnvObject());
+    JSObject* envObject = globalObject->processEnvObject();
     if (!envObject->staticPropertiesReified()) {
         envObject->reifyAllStaticProperties(globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -853,12 +838,12 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         // We can't really trust that the OS gives us valid UTF-8
         auto name = String::fromUTF8ReplacingInvalidSequences(std::span { chars, len });
 #if OS(WINDOWS)
-        // keyArray backs the Windows Proxy's ownKeys() trap; skip conditional
-        // keys to keep DontEnum semantics through the Proxy.
-        if (!conditional) {
-            keyArray->push(globalObject, jsString(vm, name));
-            RETURN_IF_EXCEPTION(scope, {});
-        }
+        // keyArray backs the Windows Proxy's ownKeys() trap. Include conditional
+        // keys so Object.getOwnPropertyNames sees them; Object.keys / for..in /
+        // spread still filter them out via the getOwnPropertyDescriptor trap,
+        // which reflects internalEnv's DontEnum accessor.
+        keyArray->push(globalObject, jsString(vm, name));
+        RETURN_IF_EXCEPTION(scope, {});
 #endif
         // The has* flags gate whether the post-loop CustomAccessor is installed
         // enumerable; a .env-only value (conditional) stays DontEnum by leaving

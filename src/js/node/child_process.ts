@@ -1020,8 +1020,16 @@ function normalizeSpawnArguments(file, args, options) {
   // copyProcessEnvToEnv(env, "NODE_V8_COVERAGE", options.env);
 
   let envKeys: string[] = [];
-  for (const key in env) {
-    ArrayPrototypePush.$call(envKeys, key);
+  if (env === process.env) {
+    // Auto-loaded .env values are DontEnum on process.env; getOwnPropertyNames
+    // includes them (and runtime mutations) so children keep inheriting both.
+    for (const key of $Object.getOwnPropertyNames(env)) {
+      ArrayPrototypePush.$call(envKeys, key);
+    }
+  } else {
+    for (const key in env) {
+      ArrayPrototypePush.$call(envKeys, key);
+    }
   }
 
   if (process.platform === "win32") {

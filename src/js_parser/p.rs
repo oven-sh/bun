@@ -813,6 +813,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    fn append_estring_rope(
+        &self,
+        s: &js_ast::e::EString,
+        buf: &mut BumpVec<'a, u8>,
+    ) -> Result<(), crate::Error> {
+        if s.next.is_none() {
+            buf.extend_from_slice(s.string(self.arena)?);
+            return Ok(());
+        }
+        let mut cur: Option<&js_ast::e::EString> = Some(s);
+        while let Some(seg) = cur {
+            buf.extend_from_slice(seg.string(self.arena)?);
+            cur = seg.next.as_ref().map(|r| r.get());
+        }
+        Ok(())
+    }
+
     /// Appends `arg`'s static shape to `buf`; `false` means opaque.
     fn append_dynamic_specifier_shape(
         &mut self,
@@ -823,31 +840,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if depth >= 32 {
             return Ok(false);
         }
-        match arg.data {
-            js_ast::ExprData::EString(mut s) => {
-                s.resolve_rope_if_needed(self.arena);
-                buf.extend_from_slice(s.string(self.arena)?);
+        match &arg.data {
+            js_ast::ExprData::EString(s) => {
+                self.append_estring_rope(s, buf)?;
                 Ok(true)
             }
-            js_ast::ExprData::ETemplate(mut tmpl) => {
+            js_ast::ExprData::ETemplate(tmpl) => {
                 if tmpl.tag.is_some() {
                     return Ok(false);
                 }
-                match &mut tmpl.head {
+                match &tmpl.head {
                     js_ast::e::TemplateContents::Cooked(head) => {
-                        head.resolve_rope_if_needed(self.arena);
-                        buf.extend_from_slice(head.string(self.arena)?);
+                        self.append_estring_rope(head, buf)?;
                     }
                     js_ast::e::TemplateContents::Raw(_) => return Ok(false),
                 }
-                for part in tmpl.parts_mut().iter_mut() {
-                    if !self.append_dynamic_specifier_shape(part.value, buf, depth + 1)? {
+                for part in tmpl.parts().iter() {
+                    let value = part.value;
+                    if !self.append_dynamic_specifier_shape(value, buf, depth + 1)? {
                         buf.push(0);
                     }
-                    match &mut part.tail {
+                    match &part.tail {
                         js_ast::e::TemplateContents::Cooked(tail) => {
-                            tail.resolve_rope_if_needed(self.arena);
-                            buf.extend_from_slice(tail.string(self.arena)?);
+                            self.append_estring_rope(tail, buf)?;
                         }
                         js_ast::e::TemplateContents::Raw(_) => return Ok(false),
                     }
@@ -872,9 +887,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && self.symbols[ref_.inner_index() as usize].kind
                         == js_ast::symbol::Kind::Constant
                 {
-                    if let Some(init) = self.glob_specifier_values.get(&ref_) {
-                        let init = *init;
-                        return self.append_dynamic_specifier_shape(init, buf, depth + 1);
+                    if let Some(init) = self.glob_specifier_values.remove(&ref_) {
+                        let r = self.append_dynamic_specifier_shape(init, buf, depth + 1);
+                        self.glob_specifier_values.put(ref_, init).expect("oom");
+                        return r;
                     }
                 }
                 Ok(false)

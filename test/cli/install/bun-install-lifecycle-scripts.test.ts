@@ -1963,6 +1963,8 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       // lockfile or hoist them into the outer node_modules.
       expect(await exists(join(packageDir, "node_modules", "what-bin"))).toBeFalse();
       expect(await file(join(packageDir, "bun.lock")).text()).not.toContain("what-bin");
+      // The nested install runs with --no-save.
+      expect(await exists(join(depDir, "bun.lock"))).toBeFalse();
     });
 
     test("root lifecycle scripts should wait for dependency lifecycle scripts", async () => {

@@ -31,7 +31,7 @@ fn git_dep_dev_install_command() -> Option<Box<[u8]>> {
         bun_exe.as_bytes(),
         &mut cmd,
     ));
-    cmd.extend_from_slice(b" install --ignore-scripts --no-summary --no-progress");
+    cmd.extend_from_slice(b" install --ignore-scripts --no-save --no-summary --no-progress");
     if !registry.is_empty() {
         cmd.extend_from_slice(b" --registry ");
         bun_core::handle_oom(bun_shell_parser::escape_8bit::<true, false>(
@@ -216,7 +216,7 @@ impl Scripts {
                             chained.extend_from_slice(&install_cmd);
                             chained.extend_from_slice(b" && ( ");
                             chained.extend_from_slice(&user_preprepare);
-                            chained.extend_from_slice(b" )");
+                            chained.extend_from_slice(b"\n)");
                             chained.into_boxed_slice()
                         }
                         None => {

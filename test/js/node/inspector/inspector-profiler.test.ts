@@ -80,10 +80,12 @@ const code = [
   "function andop(a, b) { return a && b; }",
   "function f() { return 42; }",
   "function dead() { return 1; 0xdead; }",
-  "({ K, D, F, gen, af, andop, f, dead });",
+  "function tc() { return 1; /* done */ } // eol",
+  "({ K, D, F, gen, af, andop, f, dead, tc });",
 ].join("\\n");
 const url = "file:///inspector-coverage-shape/virtual.js";
 const exported = vm.runInThisContext(code, { filename: url });
+const lone = vm.runInThisContext("function lone(){return 1}", { filename: "file:///inspector-coverage-shape/lone.js" });
 new exported.K().m();
 new exported.D();
 new exported.F();
@@ -94,22 +96,28 @@ exported.andop(1, 1);
 exported.f();
 exported.f();
 exported.dead();
+exported.tc();
+exported.tc();
 
 const coverage = await session.post("Profiler.takePreciseCoverage");
 session.disconnect();
 
-const entry = coverage.result.find(script => script.url === url);
 // Normalise: sort by first-range start so order is stable, and collapse ranges
 // to [start, end, count] triples for a compact equality check.
-const normalised = entry.functions
-  .slice()
-  .sort((a, b) => a.ranges[0].startOffset - b.ranges[0].startOffset)
-  .map(fn => ({
-    name: fn.functionName,
-    block: fn.isBlockCoverage,
-    ranges: fn.ranges.map(r => [r.startOffset, r.endOffset, r.count]),
-  }));
-console.log(JSON.stringify({ codeLength: code.length, entry: normalised }));
+const normalise = list =>
+  list
+    .slice()
+    .sort((a, b) => a.ranges[0].startOffset - b.ranges[0].startOffset)
+    .map(fn => ({
+      name: fn.functionName,
+      block: fn.isBlockCoverage,
+      ranges: fn.ranges.map(r => [r.startOffset, r.endOffset, r.count]),
+    }));
+const entry = normalise(coverage.result.find(script => script.url === url).functions);
+const loneEntry = normalise(
+  coverage.result.find(script => script.url === "file:///inspector-coverage-shape/lone.js").functions,
+);
+console.log(JSON.stringify({ codeLength: code.length, entry, loneEntry }));
 `;
 
 const coverageImportFixture = `
@@ -672,7 +680,7 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
-      const { codeLength, entry } = JSON.parse(stdout);
+      const { codeLength, entry, loneEntry } = JSON.parse(stdout);
       const byName: Record<string, { name: string; block: boolean; ranges: [number, number, number][] }> = {};
       for (const fn of entry) byName[fn.name] = fn;
 
@@ -693,10 +701,11 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       expect(byName.af).toEqual({ name: "af", block: true, ranges: [[116, 149, 1]] });
 
       // (d) Functions whose last statement is a return have no trailing
-      // count-0 sub-range over the closing brace; but real dead code after a
-      // return is still reported.
+      // count-0 sub-range over the closing brace or over a trailing comment;
+      // real dead code after a return is still reported.
       expect(byName.f).toEqual({ name: "f", block: true, ranges: [[190, 217, 2]] });
       expect(byName.m).toEqual({ name: "m", block: true, ranges: [[10, 27, 1]] });
+      expect(byName.tc).toEqual({ name: "tc", block: true, ranges: [[256, 294, 2]] });
       expect(byName.andop.ranges[0]).toEqual([150, 189, 2]);
       expect(byName.andop.ranges.some(([, , c]) => c === 0)).toBe(false);
       expect(byName.dead.ranges[0]).toEqual([218, 255, 1]);
@@ -708,7 +717,15 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
       // One entry per declared function (plus the script entry); no extras
       // from module-program, generator bodies, default constructors or
       // class-field initializers.
-      expect(entry.map((fn: any) => fn.name).sort()).toEqual(["", "af", "andop", "dead", "f", "g", "gen", "m"]);
+      expect(entry.map((fn: any) => fn.name).sort()).toEqual(["", "af", "andop", "dead", "f", "g", "gen", "m", "tc"]);
+
+      // A function declaration that spans the entire script still gets its own
+      // entry and reports count 0 when never called.
+      expect(loneEntry.find((fn: any) => fn.name === "lone")).toEqual({
+        name: "lone",
+        block: false,
+        ranges: [[0, 25, 0]],
+      });
     });
   });
 

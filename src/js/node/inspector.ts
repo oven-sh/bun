@@ -299,30 +299,25 @@ function buildScriptCoverageList(
     }
 
     // Keyed by (functionStart, functionEnd): the same key FunctionHasExecutedCache uses.
-    const execByRange = new Map<number, { end: number; sourceEnd: number; name: string; skip: boolean }>();
+    const execByRange = new Map<string, { end: number; sourceEnd: number; name: string; skip: boolean }>();
     for (const [start, end, sourceEnd, name, skip] of script.executables) {
-      const key = start * 0x100000000 + end;
+      const key = `${start}:${end}`;
       const prev = execByRange.$get(key);
       if (prev === undefined || (prev.skip && !skip)) {
         execByRange.$set(key, { end, sourceEnd, name, skip });
       }
     }
 
-    // Drop FunctionHasExecutedCache ranges with no user-visible source: the
-    // program/module range, skip-marked executables (generator/async bodies,
-    // class-field initializers), and ranges with no executable on this
-    // sourceID (builtin default class constructors link against their own
-    // provider but register offsets under the enclosing script's sourceID).
     type Fn = { start: number; end: number; sourceEnd: number; name: string; executed: boolean };
-    const seenFns = new Set<number>();
+    const seenFns = new Set<string>();
     const functions: Fn[] = [];
     for (const [start, end, executed] of script.functions) {
       if (start < 0 || end < start) continue;
-      if (start === 0 && end >= sourceLength - 1) continue;
-      const key = start * 0x100000000 + end;
+      const key = `${start}:${end}`;
       if (seenFns.$has(key)) continue;
       seenFns.$add(key);
       const meta = execByRange.$get(key);
+      // Program/module/eval and default-ctor ranges have no FunctionExecutable on this sourceID; gen/async bodies are skip.
       if (meta === undefined || meta.skip) continue;
       functions.push({ start, end, sourceEnd: meta.sourceEnd, name: meta.name, executed });
     }
@@ -332,8 +327,7 @@ function buildScriptCoverageList(
 
     const blocks = script.blocks.filter(([start, end]) => start >= 0 && end >= start).sort((a, b) => a[0] - b[0]);
 
-    // Assign each basic block to the innermost surviving function; blocks from
-    // skipped generator/async bodies fall through to the enclosing wrapper.
+    // Assign each block to the innermost surviving function; skipped generator/async body blocks fall to the wrapper.
     const blocksPerFunction: Array<Array<[number, number, number, boolean]>> = functions.map(() => []);
     const topLevelBlocks: Array<[number, number, number, boolean]> = [];
     const stack: number[] = [];
@@ -367,13 +361,12 @@ function buildScriptCoverageList(
 
     const clampCount = (c: number) => (callCount ? c : c > 0 ? 1 : 0);
 
-    // V8 sub-ranges are deltas from the owner's count, so skip blocks with that
-    // count. Also skip JSC's post-return/throw block when it spans no code or
-    // collapses onto the owner's last character (arrow-body case).
     const subRanges = (ownBlocks: Array<[number, number, number, boolean]>, ownerCount: number, ownerEnd: number) => {
       const ranges: object[] = [];
       for (const [start, end, count, hasCode] of ownBlocks) {
+        // V8 sub-ranges are deltas from the owner's count, so the entry block (same count) is redundant.
         if (count === ownerCount) continue;
+        // JSC's post-return/throw block: whitespace/comment/`}` only, or a single position at ownerEnd for arrow bodies.
         if (count === 0 && (!hasCode || start >= ownerEnd)) continue;
         ranges.push({ startOffset: start, endOffset: end + 1, count: clampCount(count) });
       }
@@ -386,10 +379,7 @@ function buildScriptCoverageList(
     const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
-    // JSC keys BasicBlockLocations by (sourceID, start, end), so a class-field
-    // initializer (whose source is the enclosing scope) aliases the script
-    // entry block and inflates its counter; use that counter as the top-level
-    // baseline so only real branches survive.
+    // A class-field initializer shares the script's entry BasicBlockLocation and inflates its counter; use that as baseline.
     let scriptEntryCount = scriptExecuted;
     if (topLevelBlocks.length > 0) {
       let entry = topLevelBlocks[0];
@@ -409,7 +399,9 @@ function buildScriptCoverageList(
 
     for (let i = 0; i < functions.length; i++) {
       const fn = functions[i];
-      if (!fn.executed) {
+      const ownBlocks = blocksPerFunction[i];
+      // No entry block means not actually called (the executed bit can alias the program's when they share (start,end)).
+      if (!fn.executed || ownBlocks.length === 0) {
         entries.push({
           functionName: fn.name,
           ranges: [{ startOffset: fn.start, endOffset: fn.sourceEnd, count: 0 }],
@@ -418,18 +410,12 @@ function buildScriptCoverageList(
         continue;
       }
 
-      const ownBlocks = blocksPerFunction[i];
-      // The smallest-start block is the function's entry block; its count is
-      // the call count (the wrapper's, since generator/async bodies were
-      // filtered above).
-      let count = 1;
-      if (ownBlocks.length > 0) {
-        let entryBlock = ownBlocks[0];
-        for (const block of ownBlocks) {
-          if (block[0] < entryBlock[0]) entryBlock = block;
-        }
-        count = entryBlock[2];
+      // The smallest-start block is the entry block; its count is the call count (wrapper's, since bodies were skipped).
+      let entryBlock = ownBlocks[0];
+      for (const block of ownBlocks) {
+        if (block[0] < entryBlock[0]) entryBlock = block;
       }
+      const count = entryBlock[2];
       entries.push({
         functionName: fn.name,
         ranges: [

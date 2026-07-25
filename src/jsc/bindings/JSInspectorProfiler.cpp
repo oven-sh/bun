@@ -77,8 +77,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_stopPreciseCoverage, (JSGlobalObject * globa
 }
 
 // Returns a JSON string describing every script the control flow profiler has
-// data for. The JS layer in node/inspector.ts reshapes this into the V8
-// ScriptCoverage format returned by Profiler.takePreciseCoverage.
+// data for: [{ url, scriptId, sourceLength, blocks: [[start, end, count]],
+// functions: [[start, end, executed]] }]. The JS layer in node/inspector.ts
+// reshapes this into the V8 ScriptCoverage format.
 JSC_DECLARE_HOST_FUNCTION(jsFunction_collectPreciseCoverage);
 JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * globalObject, CallFrame*))
 {
@@ -91,8 +92,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     // (not the whole heap). Providers whose executables were all GC'd are not
     // reported, and offsets index the transpiled source for Bun-loaded modules;
     // Bun appends an inline //# sourceMappingURL, so consumers that read the
-    // script source (v8-to-istanbul) can remap. FunctionExecutable metadata is
-    // collected alongside so the JS layer can drop JSC-internal synthetics.
+    // script source (v8-to-istanbul) can remap.
     struct ExecutableInfo {
         unsigned functionStart;
         unsigned functionEnd;
@@ -118,23 +118,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
                     return;
 
                 auto* fn = static_cast<FunctionExecutable*>(executable);
+                if (fn->isBuiltinFunction() || fn->implementationVisibility() != ImplementationVisibility::Public)
+                    return;
                 SourceParseMode mode = fn->parseMode();
-                // These have no distinct user-visible source: generator/async
-                // bodies alias the wrapper, and default constructors and
-                // class-field initializers carry offsets into a different
-                // provider. Emit them only as a skip marker.
-                bool skip = fn->isBuiltinFunction()
-                    || fn->implementationVisibility() != ImplementationVisibility::Public
-                    || mode == SourceParseMode::ClassFieldInitializerMode
-                    || isGeneratorOrAsyncFunctionBodyParseMode(mode);
-                ExecutableInfo info {
+                // Synthetics with no distinct user-visible source: gen/async bodies, field initializers.
+                bool skip = mode == SourceParseMode::ClassFieldInitializerMode || isGeneratorOrAsyncFunctionBodyParseMode(mode);
+                executablesPerSource.ensure(sourceID, [] { return Vector<ExecutableInfo> {}; }).iterator->value.append(ExecutableInfo {
                     fn->functionStart(),
                     fn->functionEnd(),
                     static_cast<unsigned>(executable->source().endOffset()),
                     fn->ecmaName().string(),
                     skip,
-                };
-                executablesPerSource.ensure(sourceID, [] { return Vector<ExecutableInfo> {}; }).iterator->value.append(WTF::move(info));
+                });
             });
         });
     }
@@ -157,17 +152,28 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
 
         StringView source = provider->source();
         unsigned providerLen = source.length();
-        // Tag each block so the JS layer can drop JSC's post-return/throw
-        // block when it spans only whitespace and the closing brace.
+        // Lets the JS layer drop JSC's post-return/throw block when it spans only whitespace, comments, and `}`.
         auto rangeHasCode = [&](int start, int end) -> bool {
-            unsigned s = start < 0 ? 0 : static_cast<unsigned>(start);
+            unsigned i = start < 0 ? 0 : static_cast<unsigned>(start);
             unsigned e = end < 0 ? 0 : static_cast<unsigned>(end);
             if (e >= providerLen)
                 e = providerLen ? providerLen - 1 : 0;
-            for (unsigned i = s; i <= e && i < providerLen; i++) {
+            while (i <= e && i < providerLen) {
                 char16_t c = source[i];
-                if (c != ' ' && c != '\t' && c != '\r' && c != '\n' && c != '}' && c != ';')
+                if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '}' || c == ';' || c == 0x00A0 || c == 0x2028 || c == 0x2029 || c == 0xFEFF) {
+                    i++;
+                } else if (c == '/' && i + 1 < providerLen && source[i + 1] == '/') {
+                    i += 2;
+                    while (i < providerLen && source[i] != '\n' && source[i] != '\r' && source[i] != 0x2028 && source[i] != 0x2029)
+                        i++;
+                } else if (c == '/' && i + 1 < providerLen && source[i + 1] == '*') {
+                    i += 2;
+                    while (i + 1 < providerLen && !(source[i] == '*' && source[i + 1] == '/'))
+                        i++;
+                    i += 2;
+                } else {
                     return true;
+                }
             }
             return false;
         };
@@ -178,7 +184,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
             range->pushInteger(block.m_startOffset);
             range->pushInteger(block.m_endOffset);
             range->pushDouble(static_cast<double>(block.m_executionCount));
-            range->pushBoolean(rangeHasCode(block.m_startOffset, block.m_endOffset));
+            range->pushBoolean(block.m_executionCount == 0 && rangeHasCode(block.m_startOffset, block.m_endOffset));
             blockArray->pushValue(WTF::move(range));
         }
         script->setValue("blocks"_s, WTF::move(blockArray));

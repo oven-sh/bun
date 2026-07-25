@@ -2274,6 +2274,20 @@ impl VirtualMachine {
         }
     }
 
+    /// Runs `internal/freeze_intrinsics` if `--frozen-intrinsics` was passed.
+    /// Called after `load_preloads` so polyfill preloads land before the freeze
+    /// (Node.js documents that `--require`/`--import` run first). The module
+    /// registry caches the evaluation, so repeat calls are no-ops.
+    fn maybe_freeze_intrinsics(&self) {
+        unsafe extern "C" {
+            static Bun__Node__FrozenIntrinsics: core::sync::atomic::AtomicBool;
+        }
+        // SAFETY: `#[no_mangle]` static defined in `bun_runtime::cli::Arguments`.
+        if unsafe { Bun__Node__FrozenIntrinsics.load(core::sync::atomic::Ordering::Relaxed) } {
+            crate::cpp::Bun__freezeIntrinsics(self.global());
+        }
+    }
+
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     pub fn reload_entry_point(
@@ -2304,9 +2318,7 @@ impl VirtualMachine {
         // execArgv. (The JS side re-reads `process.execArgv`, so an explicit
         // empty execArgv under a traced parent stays a no-op there.)
         fn is_bootstrap_flag(arg: &[u8]) -> bool {
-            arg.starts_with(b"--trace-")
-                || arg.starts_with(b"--stack-trace-limit")
-                || arg == b"--frozen-intrinsics"
+            arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit")
         }
         let needs_pre_execution = bun_core::argv().into_iter().any(is_bootstrap_flag)
             || self
@@ -2375,6 +2387,8 @@ impl VirtualMachine {
                 }
             }
 
+            self.maybe_freeze_intrinsics();
+
             // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
@@ -2399,6 +2413,7 @@ impl VirtualMachine {
             JSValue::from_cell(promise).ensure_still_alive();
             Ok(promise)
         } else {
+            self.maybe_freeze_intrinsics();
             let global = self.global;
             let main_str = bun_core::String::from_bytes(self.main());
             let promise =
@@ -4530,6 +4545,8 @@ impl VirtualMachine {
                 }
             }
         }
+
+        self.maybe_freeze_intrinsics();
 
         // Note: reshaped for borrowck.
         let global = self.global;

@@ -31,7 +31,12 @@ const SymbolIterator = Symbol.iterator;
 const SymbolMatchAll = Symbol.matchAll;
 const TypedArray = ObjectGetPrototypeOf(Uint8Array);
 
-export default function freezeIntrinsics(): void {
+process.emitWarning(
+  "Frozen intristics is an experimental feature and might change at any time",
+  "ExperimentalWarning",
+);
+
+{
   const intrinsicPrototypes: unknown[] = [
     // 20 Fundamental Objects
     Object.prototype, // 20.1
@@ -186,6 +191,7 @@ export default function freezeIntrinsics(): void {
     FinalizationRegistry,
 
     // 27 Control Abstraction Objects
+    Iterator,
     ObjectGetPrototypeOf(ObjectGetPrototypeOf(Array.prototype[SymbolIterator]())), // IteratorPrototype
     ObjectGetPrototypeOf(ObjectGetPrototypeOf(ObjectGetPrototypeOf((async function* () {})()))), // AsyncIteratorPrototype
     Promise,
@@ -340,3 +346,5 @@ export default function freezeIntrinsics(): void {
       enableDerivedOverride(obj as object, syms[i], descs[syms[i] as unknown as string]);
   }
 }
+
+export default {};

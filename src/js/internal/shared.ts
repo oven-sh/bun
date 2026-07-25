@@ -147,6 +147,12 @@ function once(callback, { preserveReturnValue = false } = kEmptyObject) {
 
 const kEmptyObject = ObjectFreeze(Object.create(null));
 
+function isErrorStackTraceLimitWritable(): boolean {
+  const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+  if (desc === undefined) return Object.isExtensible(Error);
+  return Object.prototype.hasOwnProperty.$call(desc, "writable") ? desc.writable! : desc.set !== undefined;
+}
+
 // Marks an addEventListener() options object so that dispatch still invokes the
 // listener after an unrelated listener called event.stopImmediatePropagation().
 // `$kResistStopPropagation` is a private symbol the native EventTarget reads, so
@@ -341,6 +347,7 @@ export default {
   once,
   getLazy,
   resistStopPropagation,
+  isErrorStackTraceLimitWritable,
 
   hasObserver,
   startPerf,

@@ -695,6 +695,9 @@ pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::Atomic
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__DisallowCodeGenerationFromStrings: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub static Bun__Node__FrozenIntrinsics: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -1312,6 +1315,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         if args.flag(b"--disallow-code-generation-from-strings") {
             Bun__Node__DisallowCodeGenerationFromStrings
                 .store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        if args.flag(b"--frozen-intrinsics") {
+            Bun__Node__FrozenIntrinsics.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(mode) = args.option(b"--disable-proto") {
             let mode = match mode {

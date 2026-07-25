@@ -261,7 +261,6 @@ function installExitTracing(): void {
   let traceEnv = false;
   let traceEnvJsStack = false;
   let traceExit = false;
-  let frozenIntrinsics = false;
 
   for (let i = 0; i < execArgv.length; i++) {
     const arg = execArgv[i];
@@ -293,8 +292,6 @@ function installExitTracing(): void {
       // keys its native-stack assertions on that string appearing.
     } else if (arg === "--trace-exit") {
       traceExit = true;
-    } else if (arg === "--frozen-intrinsics") {
-      frozenIntrinsics = true;
     }
   }
 
@@ -335,14 +332,6 @@ function installExitTracing(): void {
     envTracePrintMessage = traceEnv;
     envTracePrintJsStack = traceEnvJsStack;
     installEnvTracing();
-  }
-  // Last: nothing after this may assign to an intrinsic prototype property.
-  if (frozenIntrinsics) {
-    process.emitWarning(
-      "Frozen intristics is an experimental feature and might change at any time",
-      "ExperimentalWarning",
-    );
-    require("internal/freeze_intrinsics")();
   }
 }
 

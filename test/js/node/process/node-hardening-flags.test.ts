@@ -1,5 +1,5 @@
 import { describe, expect, test as test_ } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 const test = test_.concurrent;
 // --frozen-intrinsics and worker spawns are ~3s each under debug+ASAN.
@@ -181,6 +181,7 @@ describe("--frozen-intrinsics", () => {
            suppressedError: Object.isFrozen(SuppressedError.prototype),
            disposableStack: Object.isFrozen(DisposableStack.prototype),
            asyncDisposableStack: Object.isFrozen(AsyncDisposableStack.prototype),
+           iterator: Object.isFrozen(Iterator),
            console: Object.isFrozen(console),
            globalThis: Object.isFrozen(globalThis),
            slotConfigurable: Object.getOwnPropertyDescriptor(globalThis, "globalThis").configurable,
@@ -196,6 +197,7 @@ describe("--frozen-intrinsics", () => {
         suppressedError: true,
         disposableStack: true,
         asyncDisposableStack: true,
+        iterator: true,
         console: true,
         globalThis: false,
         slotConfigurable: false,
@@ -219,6 +221,46 @@ describe("--frozen-intrinsics", () => {
          console.log(JSON.stringify({ proto, derived: o.toString() }));`,
       );
       expect(JSON.parse(stdout)).toEqual({ proto: "TypeError", derived: "overridden" });
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
+
+  test(
+    "node:assert still throws AssertionError (Error.stackTraceLimit is guarded)",
+    async () => {
+      const { stdout, exitCode } = await run(
+        ["--frozen-intrinsics"],
+        `try { require("assert").strictEqual(1, 2); console.log("no throw"); }
+         catch (e) { console.log(e.code); }`,
+      );
+      expect(stdout.trim()).toBe("ERR_ASSERTION");
+      expect(exitCode).toBe(0);
+    },
+    SLOW,
+  );
+
+  test(
+    "--require preloads run before the freeze",
+    async () => {
+      using dir = tempDir("frozen-intrinsics-preload", {
+        "poly.cjs": `Array.prototype.myPolyfill = 1;`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "--frozen-intrinsics",
+          "--require",
+          "./poly.cjs",
+          "-e",
+          `console.log(JSON.stringify({ frozen: Object.isFrozen(Array.prototype), poly: Array.prototype.myPolyfill }))`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(JSON.parse(stdout)).toEqual({ frozen: true, poly: 1 });
       expect(exitCode).toBe(0);
     },
     SLOW,

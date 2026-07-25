@@ -290,10 +290,12 @@ const codes = {}; // exported from errors.js
     return msg;
   });
   codes[sym] = function NodeError(...args) {
+    const stlDesc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+    const stlWritable = stlDesc ? (stlDesc.writable ?? stlDesc.set !== undefined) : Object.isExtensible(Error);
     const limit = Error.stackTraceLimit;
-    Error.stackTraceLimit = 0;
+    if (stlWritable) Error.stackTraceLimit = 0;
     const error = new TypeError();
-    Error.stackTraceLimit = limit; // Reset the limit and setting the name property.
+    if (stlWritable) Error.stackTraceLimit = limit; // Reset the limit and setting the name property.
 
     const msg = messages.get(sym);
     assert(typeof msg === "function");
@@ -315,9 +317,9 @@ const codes = {}; // exported from errors.js
     // addCodeToName + captureLargerStackTrace
     let err = error;
     const userStackTraceLimit = Error.stackTraceLimit;
-    Error.stackTraceLimit = Infinity;
+    if (stlWritable) Error.stackTraceLimit = Infinity;
     ErrorCaptureStackTrace(err);
-    Error.stackTraceLimit = userStackTraceLimit; // Reset the limit
+    if (stlWritable) Error.stackTraceLimit = userStackTraceLimit; // Reset the limit
     err.name = `${TypeError.name} [${sym}]`; // Add the error code to the name to include it in the stack trace.
     void err.stack; // Access the stack to generate the error message including the error code from the name.
     delete err.name; // Reset the name to the actual name.

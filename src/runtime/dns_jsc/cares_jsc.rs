@@ -19,11 +19,8 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)
 }
 
-/// Create a JS string from raw octets, one byte per code unit (Latin-1).
-/// TXT RDATA is a sequence of arbitrary-octet <character-string>s (RFC 1035
-/// §3.3.14 / §3.3); Node's cares_wrap uses `OneByteString` here so the bytes
-/// round-trip via `Buffer.from(s, "latin1")`. UTF-8 decoding would replace
-/// any 0x80–0xFF byte that isn't part of a valid sequence with U+FFFD.
+/// Create a JS string from raw octets, one byte per code unit. TXT RDATA is
+/// arbitrary octets (RFC 1035 §3.3); Node's cares_wrap uses `OneByteString`.
 #[inline]
 fn latin1_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bstr::String::clone_latin1(bytes).transfer_to_js(global)

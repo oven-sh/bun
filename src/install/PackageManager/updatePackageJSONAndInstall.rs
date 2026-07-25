@@ -803,21 +803,29 @@ fn is_dangling_windows_shim(bin_dir: Fd, bunx_name: &ZStr, bin_dir_path: &ZStr) 
     }
 
     let base = bun_paths::dirname(bin_dir_path.as_bytes()).unwrap_or(b".");
-    let mut target_buf = bun_paths::w_path_buffer_pool::get();
-    let base_len = strings::convert_utf8_to_utf16_in_buffer(target_buf.as_mut_slice(), base).len();
+    let mut joined = bun_paths::w_path_buffer_pool::get();
+    let base_len = strings::convert_utf8_to_utf16_in_buffer(joined.as_mut_slice(), base).len();
 
     let rel_target_units = rel_target_byte_len / 2;
     let total = base_len + 1 + rel_target_units;
-    if total >= target_buf.len() {
+    if total >= joined.len() {
         return false;
     }
 
-    target_buf[base_len] = b'\\' as u16;
+    joined[base_len] = b'\\' as u16;
     for j in 0..rel_target_units {
-        target_buf[base_len + 1 + j] = u16::from_le_bytes([contents[j * 2], contents[j * 2 + 1]]);
+        joined[base_len + 1 + j] = u16::from_le_bytes([contents[j * 2], contents[j * 2 + 1]]);
     }
 
-    match bun_sys::exists_at_type_w(Fd::cwd(), &target_buf[..total]) {
+    // The encoded target may contain `..` (bin.rs only strips one leading `..\`); resolve it
+    // because the existence check goes through an NT path.
+    let mut target_buf = bun_paths::w_path_buffer_pool::get();
+    let target = bun_paths::resolve_path::normalize_buf_t::<u16, bun_paths::platform::Windows>(
+        &joined[..total],
+        target_buf.as_mut_slice(),
+    );
+
+    match bun_sys::exists_at_type_w(Fd::cwd(), target) {
         Ok(_) => false,
         Err(e) => e.get_errno() == bun_sys::E::ENOENT,
     }

@@ -1,6 +1,6 @@
 import { sleep } from "bun";
 import { describe, expect, mock, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { createRequire } from "module";
 
 // this is also testing that imports with default and named imports in the same statement work
@@ -1095,9 +1095,8 @@ test("once() wrapper releases its target after firing", async () => {
 });
 
 // on() must be amortized O(1). A copy-on-write append pays N per add, so N
-// adds cost N^2: under debug+ASAN that put 12k adds well over a second, versus
-// tens of ms for an in-place push. 500ms sits between the two with room on
-// both sides.
+// adds cost N^2: 12k adds took ~270ms release / ~1.6s debug+ASAN versus <2ms /
+// ~70ms for an in-place push.
 test("on() is amortized O(1), not O(N) per add", () => {
   const fn = () => {};
   function timeAdds(n: number) {
@@ -1109,7 +1108,7 @@ test("on() is amortized O(1), not O(N) per add", () => {
   }
   timeAdds(2000); // warm up
   const ms = timeAdds(12000);
-  expect(ms).toBeLessThan(500);
+  expect(ms).toBeLessThan(isDebug || isASAN ? 500 : 100);
 });
 
 // on() during emit must not run the new listener in that same emit round

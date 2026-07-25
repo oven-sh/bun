@@ -221,31 +221,34 @@ test("import of an extension mapped to the napi loader throws instead of crashin
 test("dynamic import with a #fragment keys the module cache per fragment", async () => {
   using dir = tempDir("import-fragment-dynamic", {
     "config.mjs": `export default 1;\nexport const url = import.meta.url;`,
-    "entry.mjs": `
-      import { pathToFileURL } from "node:url";
+    "sub/entry.mjs": `
+      import { fileURLToPath } from "node:url";
       import { writeFileSync } from "node:fs";
-      const fileURL = pathToFileURL("./config.mjs").href;
+      const fileURL = new URL("../config.mjs", import.meta.url).href;
+      const configPath = fileURLToPath(fileURL);
       const tail = u => u.slice(u.lastIndexOf("/") + 1);
 
-      const rel1 = await import("./config.mjs#a");
-      writeFileSync("./config.mjs", "export default 2;\\nexport const url = import.meta.url;");
-      const rel2 = await import("./config.mjs#b");
-      const rel2Again = await import("./config.mjs#b");
+      const rel1 = await import("../config.mjs#a");
+      const urlA = await import(fileURL + "#a");
+      writeFileSync(configPath, "export default 2;\\nexport const url = import.meta.url;");
+      const rel2 = await import("./../config.mjs#b");
+      const rel2Again = await import("../config.mjs#b");
 
-      writeFileSync("./config.mjs", "export default 3;\\nexport const url = import.meta.url;");
+      writeFileSync(configPath, "export default 3;\\nexport const url = import.meta.url;");
       const url1 = await import(fileURL + "#c");
-      writeFileSync("./config.mjs", "export default 4;\\nexport const url = import.meta.url;");
+      writeFileSync(configPath, "export default 4;\\nexport const url = import.meta.url;");
       const url2 = await import(fileURL + "#d");
 
-      writeFileSync("./config.mjs", "export default 5;\\nexport const url = import.meta.url;");
-      const mix1 = await import("./config.mjs?v=1#x");
-      const mix2 = await import("./config.mjs?v=1#y");
+      writeFileSync(configPath, "export default 5;\\nexport const url = import.meta.url;");
+      const mix1 = await import("../config.mjs?v=1#x");
+      const mix2 = await import("../config.mjs?v=1#y");
 
       console.log(JSON.stringify({
         rel: [rel1.default, rel2.default],
         relUrls: [tail(rel1.url), tail(rel2.url)],
         relDistinct: rel1 !== rel2,
         relCached: rel2 === rel2Again,
+        relEqFileURL: rel1 === urlA,
         url: [url1.default, url2.default],
         urlDistinct: url1 !== url2,
         mixDistinct: mix1 !== mix2,
@@ -254,7 +257,7 @@ test("dynamic import with a #fragment keys the module cache per fragment", async
     `,
   });
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "entry.mjs"],
+    cmd: [bunExe(), "sub/entry.mjs"],
     env: bunEnv,
     cwd: String(dir),
     stdout: "pipe",
@@ -267,6 +270,7 @@ test("dynamic import with a #fragment keys the module cache per fragment", async
     relUrls: ["config.mjs#a", "config.mjs#b"],
     relDistinct: true,
     relCached: true,
+    relEqFileURL: true,
     url: [3, 4],
     urlDistinct: true,
     mixDistinct: true,

@@ -1218,11 +1218,18 @@ impl ServerConfig {
 
         if let Some(unix) = arg.get(global, "unix")? {
             if !unix.is_undefined_or_null() {
-                if !unix.is_string() && !(unix.is_cell() && unix.js_type().is_array_buffer_like()) {
+                let path = if unix.is_string() {
+                    let s = unix.to_slice(global)?;
+                    bun_core::ZBox::from_bytes(s.slice())
+                } else if unix.is_cell() && unix.js_type() == bun_jsc::JSType::Uint8Array {
+                    match unix.as_array_buffer(global) {
+                        Some(ab) => bun_core::ZBox::from_bytes(ab.byte_slice()),
+                        None => bun_core::ZBox::from_bytes(b""),
+                    }
+                } else {
                     return Err(global.throw_invalid_property_type(b"unix", "string", unix));
-                }
-                let unix_str = unix.to_slice(global)?;
-                if unix_str.slice().is_empty() {
+                };
+                if path.as_bytes().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected \"unix\" to be a non-empty string for a Unix domain socket path",
                     )));
@@ -1232,7 +1239,7 @@ impl ServerConfig {
                         "Cannot specify both hostname and unix",
                     )));
                 }
-                args.address = Address::Unix(bun_core::ZBox::from_bytes(unix_str.slice()));
+                args.address = Address::Unix(path);
             }
         }
         if global.has_exception() {

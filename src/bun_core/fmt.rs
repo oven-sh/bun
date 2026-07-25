@@ -1119,8 +1119,14 @@ impl Display for URLFormatter<'_> {
             // Percent-encode everything outside the RFC 3986 unreserved set
             // plus '/', so the result is always a parseable URL regardless of
             // what the socket path contains.
+            let is_abstract = self.proto == URLProto::Abstract;
             for &b in self.hostname.unwrap_or(b"") {
-                if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~' | b'/') {
+                // Abstract socket names sit in the URL authority, so '/' is a
+                // structural delimiter there and must be encoded too.
+                if b.is_ascii_alphanumeric()
+                    || matches!(b, b'-' | b'.' | b'_' | b'~')
+                    || (b == b'/' && !is_abstract)
+                {
                     f.write_char(b as char)?;
                 } else {
                     let h = hex2_upper(b);
@@ -1128,6 +1134,9 @@ impl Display for URLFormatter<'_> {
                     f.write_char(h[0] as char)?;
                     f.write_char(h[1] as char)?;
                 }
+            }
+            if is_abstract {
+                f.write_char('/')?;
             }
             return Ok(());
         }

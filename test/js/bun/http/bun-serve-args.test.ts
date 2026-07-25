@@ -138,18 +138,38 @@ describe("unix option validation", () => {
     ).toThrow(/non-empty string/);
   });
 
-  test.each([[42], [{}], [true], [["sock"]], [() => {}], [{ toString: () => "coerced.sock" }]])(
-    "non-string %p throws TypeError",
-    value => {
-      expect(() =>
-        serve({
-          // @ts-expect-error
-          unix: value,
-          fetch: () => new Response("ok"),
-        }),
-      ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-    },
-  );
+  test.each([
+    [42],
+    [{}],
+    [true],
+    [["sock"]],
+    [() => {}],
+    [{ toString: () => "coerced.sock" }],
+    [new ArrayBuffer(8)],
+    [new DataView(new ArrayBuffer(4))],
+    [new Float32Array([1.5])],
+    [new Uint16Array([1, 2])],
+  ])("non-string %p throws TypeError", value => {
+    expect(() =>
+      serve({
+        // @ts-expect-error
+        unix: value,
+        fetch: () => new Response("ok"),
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  test("Uint8Array is read as raw path bytes", () => {
+    const dir = tmpdirSync();
+    const name = "u8a.sock";
+    using server = serve({
+      // @ts-expect-error
+      unix: new Uint8Array(Buffer.from(dir + "/" + name)),
+      fetch: () => new Response("ok"),
+    });
+    // @ts-expect-error
+    expect(server.address + "").toBe(dir + "/" + name);
+  });
 
   test.each([undefined, null])("%p is treated as absent (TCP)", value => {
     using server = serve({

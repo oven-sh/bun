@@ -154,6 +154,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         const mod = await import('./sub.js');
+        if (!('bad' in mod)) throw new Error("expected 'bad' to be exported from wrapped module");
         console.log(mod.bad);
       `,
       "/sub.js": /* js */ `

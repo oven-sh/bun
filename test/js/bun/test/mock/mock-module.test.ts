@@ -303,6 +303,74 @@ describe.concurrent("mock.restore() reverts mock.module()", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("spyOn and mock.module on the same export restores to the true original", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "fixture.test.ts": `
+        import { test, expect, mock, spyOn } from "bun:test";
+        import * as dep from "./dep";
+        test("spyOn first", () => {
+          spyOn(dep, "getValue");
+          mock.module("./dep", () => ({ getValue: () => "mocked" }));
+          expect(dep.getValue()).toBe("mocked");
+          mock.restore();
+          expect(dep.getValue()).toBe("original");
+        });
+        test("mock.module first", () => {
+          mock.module("./dep", () => ({ getValue: () => "mocked" }));
+          spyOn(dep, "getValue");
+          expect(dep.getValue()).toBe("mocked");
+          mock.restore();
+          expect(dep.getValue()).toBe("original");
+        });
+      `,
+    });
+    expect(stderr).toContain("2 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("re-mock after the first mock preceded first load still restores to the real module", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        test("t", async () => {
+          mock.module("./dep.ts", () => ({ getValue: () => "first" }));
+          expect((await import("./dep.ts")).getValue()).toBe("first");
+          mock.module("./dep.ts", () => ({ getValue: () => "second" }));
+          expect((await import("./dep.ts")).getValue()).toBe("second");
+          mock.restore();
+          expect((await import("./dep.ts")).getValue()).toBe("original");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("evicts the loader that was populated after mock.module() when the other was patched in place", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.cjs": `module.exports = { getValue: () => "original-cjs" };`,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        test("t", async () => {
+          expect(require("./dep.cjs").getValue()).toBe("original-cjs");
+          mock.module("./dep.cjs", () => ({ getValue: () => "mocked" }));
+          expect(require("./dep.cjs").getValue()).toBe("mocked");
+          expect((await import("./dep.cjs")).getValue()).toBe("mocked");
+          mock.restore();
+          expect(require("./dep.cjs").getValue()).toBe("original-cjs");
+          expect((await import("./dep.cjs")).getValue()).toBe("original-cjs");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
   test("leaves Bun.plugin virtual modules alone", async () => {
     const { stderr, exitCode } = await runFixture({
       "preload.ts": `

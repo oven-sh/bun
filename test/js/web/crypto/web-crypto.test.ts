@@ -709,9 +709,7 @@ describe("ChaCha20-Poly1305 and AKP review fixes", () => {
     // match the independently-generated SPKI fixture byte-for-byte.
     const keysDir = path.join(import.meta.dir, "..", "..", "node", "test", "fixtures", "keys");
     const seedPriv = createPrivateKey(fs.readFileSync(path.join(keysDir, "ml_kem_512_private_seed_only.pem")));
-    const fixturePub = require("crypto").createPublicKey(
-      fs.readFileSync(path.join(keysDir, "ml_kem_512_public.pem")),
-    );
+    const fixturePub = require("crypto").createPublicKey(fs.readFileSync(path.join(keysDir, "ml_kem_512_public.pem")));
     const derived = require("crypto").createPublicKey(seedPriv).export({ type: "spki", format: "der" });
     expect(derived).toEqual(fixturePub.export({ type: "spki", format: "der" }));
   });

@@ -56,19 +56,23 @@ impl Drop for CookedStdinGuard {
 /// so Backspace edits the line instead of arriving as an escape sequence.
 /// `StdinModeGuard` is inert when stdin is not a console.
 #[cfg(windows)]
-struct CookedStdinGuard(#[allow(dead_code)] bun_sys::windows::StdinModeGuard);
+struct CookedStdinGuard {
+    _guard: bun_sys::windows::StdinModeGuard,
+}
 
 #[cfg(windows)]
 impl CookedStdinGuard {
     fn new() -> Self {
-        Self(bun_sys::windows::StdinModeGuard::set(
-            bun_sys::windows::UpdateStdioModeFlagsOpts {
-                set: bun_sys::windows::ENABLE_LINE_INPUT
-                    | bun_sys::windows::ENABLE_ECHO_INPUT
-                    | bun_sys::windows::ENABLE_PROCESSED_INPUT,
-                unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
-            },
-        ))
+        Self {
+            _guard: bun_sys::windows::StdinModeGuard::set(
+                bun_sys::windows::UpdateStdioModeFlagsOpts {
+                    set: bun_sys::windows::ENABLE_LINE_INPUT
+                        | bun_sys::windows::ENABLE_ECHO_INPUT
+                        | bun_sys::windows::ENABLE_PROCESSED_INPUT,
+                    unset: bun_sys::windows::ENABLE_VIRTUAL_TERMINAL_INPUT,
+                },
+            ),
+        }
     }
 }
 

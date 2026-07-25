@@ -519,3 +519,52 @@ describe("util.parseEnv", () => {
     expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
   });
 });
+
+describe("util.debuglog", () => {
+  it("exposes an `enabled` accessor and passes the optimized logger to the callback", async () => {
+    const code = `
+      const util = require("util");
+      const assert = require("assert");
+      let inner = null;
+      const debug = util.debuglog("tud", (fn) => {
+        assert.strictEqual(typeof fn, "function");
+        inner = fn;
+      });
+      assert.strictEqual(typeof Object.getOwnPropertyDescriptor(debug, "enabled").get, "function");
+      debug("this", { is: "a" }, /debugging/);
+      debug("num=%d str=%s obj=%j", 1, "a", { foo: "bar" });
+      assert.strictEqual(typeof Object.getOwnPropertyDescriptor(inner, "enabled").get, "function");
+      console.log(debug.enabled ? "outer enabled" : "outer disabled");
+      console.log(inner.enabled ? "inner enabled" : "inner disabled");
+    `;
+    const run = async env => {
+      const proc = Bun.spawn({
+        cmd: [process.execPath, "-e", code],
+        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: undefined, FORCE_COLOR: undefined, NODE_DEBUG: env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        proc.stdout.text(),
+        proc.stderr.text(),
+        proc.exited,
+      ]);
+      return { stdout, stderr, exitCode };
+    };
+
+    {
+      // Wildcard-enabled section: node's "SET PID: message" format on stderr.
+      const { stdout, stderr, exitCode } = await run("foo,tu*,bar");
+      expect(stdout).toBe("outer enabled\ninner enabled\n");
+      expect(stderr).toMatch(/^TUD \d+: this \{ is: 'a' \} \/debugging\/\nTUD \d+: num=1 str=a obj=\{"foo":"bar"\}\n$/);
+      expect(exitCode).toBe(0);
+    }
+    {
+      // Non-matching sections: nothing on stderr, enabled getters report false.
+      const { stdout, stderr, exitCode } = await run("foo,bar,test-*");
+      expect(stdout).toBe("outer disabled\ninner disabled\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    }
+  }, 20_000);
+});

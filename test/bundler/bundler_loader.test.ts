@@ -541,4 +541,81 @@ describe("bundler", async () => {
       },
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/8895
+  // `require('bindings')('<name>')` is how better-sqlite3 and many other
+  // node-gyp addons locate their compiled .node file. The bundler rewrites
+  // this to a direct require so the napi loader copies the addon to output.
+  for (const withExt of [true, false]) {
+    itBundled(`bun/napi-require-bindings-pattern${withExt ? "" : "-no-ext"}#8895`, {
+      target: "bun",
+      outdir: "/out",
+      files: {
+        "/entry.ts": /* ts */ `
+          const addon = require("mypkg");
+          console.log(addon);
+        `,
+        "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./lib/index.js"}`,
+        "/node_modules/mypkg/lib/index.js": /* js */ `
+          module.exports = require('bindings')('mypkg_native${withExt ? ".node" : ""}');
+        `,
+        "/node_modules/mypkg/build/Release/mypkg_native.node": "<binary placeholder>",
+        "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
+        "/node_modules/bindings/bindings.js": /* js */ `
+          module.exports = function () { throw new Error("bindings stub reached"); };
+        `,
+      },
+      onAfterBundle(api) {
+        const names = readdirSync(api.outdir);
+        const addon = names.find(x => x.endsWith(".node"));
+        expect(addon).toBeDefined();
+        expect(api.readFile(join("/out", addon!))).toBe("<binary placeholder>");
+
+        const js = api.readFile(join("/out", names.find(x => x.endsWith(".js"))!));
+        expect(js).toContain(`require("./${addon}")`);
+        expect(js).not.toContain("bindings stub");
+      },
+    });
+  }
+
+  itBundled("bun/napi-require-bindings-debug-dir#8895", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* ts */ `
+        const addon = require("mypkg");
+        console.log(addon);
+      `,
+      "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./index.js"}`,
+      "/node_modules/mypkg/index.js": `module.exports = require('bindings')('mypkg_native');`,
+      "/node_modules/mypkg/build/Debug/mypkg_native.node": "debug build",
+      "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
+      "/node_modules/bindings/bindings.js": "module.exports = () => {};",
+    },
+    onAfterBundle(api) {
+      const addon = readdirSync(api.outdir).find(x => x.endsWith(".node"));
+      expect(addon).toBeDefined();
+      expect(api.readFile(join("/out", addon!))).toBe("debug build");
+    },
+  });
+
+  itBundled("bun/napi-require-bindings-not-built#8895", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* ts */ `
+        const addon = require("mypkg");
+        console.log(addon);
+      `,
+      "/node_modules/mypkg/package.json": `{"name":"mypkg","main":"./index.js"}`,
+      "/node_modules/mypkg/index.js": `module.exports = require('bindings')('never_built.node');`,
+      "/node_modules/bindings/package.json": `{"name":"bindings","main":"./bindings.js"}`,
+      "/node_modules/bindings/bindings.js": "module.exports = () => {};",
+    },
+    onAfterBundle(api) {
+      expect(readdirSync(api.outdir).some(x => x.endsWith(".node"))).toBe(false);
+      const js = api.readFile(join("/out", readdirSync(api.outdir).find(x => x.endsWith(".js"))!));
+      expect(js).toContain(`require("never_built.node")`);
+    },
+  });
 });

@@ -6059,6 +6059,26 @@ pub mod bv2_impl {
                     }
                 }
 
+                if import_record.tag == bun_ast::ImportRecordTag::NativeBindings {
+                    import_record.tag = bun_ast::ImportRecordTag::None;
+                    if let Some(abs) = transpiler
+                        .resolver
+                        .resolve_node_gyp_bindings(source_dir, import_record.path.text)
+                    {
+                        import_record.path = bun_paths::fs::Path::init(abs);
+                    } else {
+                        // No built addon on disk. Leave the record external so the
+                        // output still contains `require("<name>.node")` and fails
+                        // with a clear message at runtime instead of a misleading
+                        // resolve error at build time.
+                        import_record.source_index = Index::INVALID;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                        continue;
+                    }
+                }
+
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result = 'inner: loop {
                     match transpiler.resolver.resolve_with_framework(

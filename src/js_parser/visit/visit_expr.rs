@@ -2008,6 +2008,31 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        // `require('bindings')('<name>.node')` — rewrite to a direct require
+        // of the native addon so the bundler's napi loader can copy it.
+        // https://github.com/oven-sh/bun/issues/8895
+        if p.options.bundle && e_.args.len_u32() == 1 {
+            if let Data::ERequireString(req) = e_.target.data {
+                let idx = req.import_record_index as usize;
+                if p.import_records.items()[idx].path.text == b"bindings" {
+                    if let Data::EString(mut str_) = e_.args.slice()[0].data {
+                        str_.resolve_rope_if_needed(p.arena);
+                        let name = str_.string(p.arena).expect("unreachable");
+                        if !name.is_empty() {
+                            let record = &mut p.import_records.items_mut()[idx];
+                            // SAFETY: `name` is arena-owned via `p.arena`; see
+                            // `add_import_record_by_range_and_path`.
+                            record.path =
+                                unsafe { crate::parser::fs::Path::init(name).into_static() };
+                            record.tag = bun_ast::ImportRecordTag::NativeBindings;
+                            *e = e_.target;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         if matches!(e_.target.data, Data::ERequireCallTarget) {
             e_.can_be_unwrapped_if_unused = E::CallUnwrap::Never;
 

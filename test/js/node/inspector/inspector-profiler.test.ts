@@ -618,6 +618,7 @@ console.log(JSON.stringify({ first: countFor(first), second: countFor(second) })
         "// header comment that the runtime transpiler strips",
         "export function alpha() { return 'A'; }   // called 3x",
         "export function beta() { return 'B'; }    // called 1x",
+        "const tag='\u00e9\u{1f389}'; export function caf\u00e9() { return tag; }   // non-ASCII before the function",
         "export class Zed { m() { return 'Z'; } }   // hoisted in the transpiled text",
         "",
       ].join("\n");
@@ -630,7 +631,7 @@ session.connect();
 await session.post("Profiler.enable");
 await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: true });
 const M = await import("./m.mjs");
-M.alpha(); M.alpha(); M.alpha(); M.beta(); new M.Zed().m();
+M.alpha(); M.alpha(); M.alpha(); M.beta(); new M.Zed().m(); M.caf\u00e9();
 const coverage = await session.post("Profiler.takePreciseCoverage");
 await session.post("Profiler.stopPreciseCoverage");
 session.disconnect();
@@ -651,10 +652,11 @@ console.log(JSON.stringify(entry));
       }).toEqual({ alpha: 3, beta: 1, m: 1 });
 
       // The whole-script range must cover the on-disk file length, not the
-      // transpiled text's length (which is shorter: no comments).
+      // transpiled text's length (which is shorter: no comments). Byte length,
+      // not JS string length: the source contains multi-byte characters.
       expect(entry.functions[0].ranges[0]).toEqual({
         startOffset: 0,
-        endOffset: moduleSource.length,
+        endOffset: Buffer.byteLength(moduleSource),
         count: 1,
       });
 
@@ -663,14 +665,20 @@ console.log(JSON.stringify(entry));
       // are line-granular (the closing brace has no sourcemap entry of its own),
       // so the slice may extend to the end of the line like Node's ranges do
       // for wrapped CJS modules.
-      const slice = (fn: any) => moduleSource.slice(fn.ranges[0].startOffset, fn.ranges[0].endOffset);
+      const bytes = Buffer.from(moduleSource);
+      const slice = (fn: any) => bytes.toString("utf8", fn.ranges[0].startOffset, fn.ranges[0].endOffset);
       expect(slice(byName("alpha"))).toStartWith("function alpha() { return 'A'; }");
       expect(slice(byName("beta"))).toStartWith("function beta() { return 'B'; }");
       expect(slice(byName("m"))).toStartWith("m() { return 'Z'; }");
+      // The line before café() has non-ASCII bytes (é is 2 UTF-8 bytes, 🎉 is 4)
+      // before the function; the remap must convert the sourcemap's UTF-16
+      // column back to a byte column so startOffset lands on the function.
+      expect(slice(byName("caf\u00e9"))).toStartWith("function caf\u00e9() { return tag; }");
       // Before the offset remap, the class-hoisted transpiled offsets for m()
       // landed inside the header comment when sliced out of the on-disk file.
-      expect(byName("alpha").ranges[0].startOffset).toBe(moduleSource.indexOf("function alpha"));
-      expect(byName("m").ranges[0].startOffset).toBe(moduleSource.indexOf("m() {"));
+      expect(byName("alpha").ranges[0].startOffset).toBe(bytes.indexOf("function alpha"));
+      expect(byName("m").ranges[0].startOffset).toBe(bytes.indexOf("m() {"));
+      expect(byName("caf\u00e9").ranges[0].startOffset).toBe(bytes.indexOf("function caf\u00e9"));
     });
   });
 

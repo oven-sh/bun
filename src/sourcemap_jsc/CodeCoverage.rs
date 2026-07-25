@@ -984,21 +984,27 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
 
     // The original text is what external consumers (c8, v8-to-istanbul) read
     // from disk; we need its line-start table to turn the sourcemap's
-    // (line, column) answers back into byte offsets.
+    // (line, column) answers back into byte offsets. The `OwnedLineOffsetTables`
+    // wrapper runs `MultiArrayList::drop_elements` so each line's
+    // `columns_for_non_ascii` box is freed (the bare list's `Drop` is
+    // slab-only by design).
     let original = match bun_sys::File::read_from(bun_core::Fd::cwd(), path.slice()) {
         Ok(bytes) => bytes,
         Err(_) => return false,
     };
-    let Ok(original_table) = LineOffsetTable::generate(&original, 0) else {
+    let Ok(table) = LineOffsetTable::generate(&original, 0) else {
         return false;
     };
-    let original_starts = original_table.items_byte_offset_to_start_of_line();
+    let original_table = bun_sourcemap::chunk::OwnedLineOffsetTables(table);
+    let original_starts = original_table.0.items_byte_offset_to_start_of_line();
+    let original_first_na = original_table.0.items_byte_offset_to_first_non_ascii();
 
     let transpiled = transpiled.to_utf8();
-    let Ok(transpiled_table) = LineOffsetTable::generate(transpiled.slice(), 0) else {
+    let Ok(table) = LineOffsetTable::generate(transpiled.slice(), 0) else {
         return false;
     };
-    let transpiled_starts = transpiled_table.items_byte_offset_to_start_of_line();
+    let transpiled_table = bun_sourcemap::chunk::OwnedLineOffsetTables(table);
+    let transpiled_starts = transpiled_table.0.items_byte_offset_to_start_of_line();
 
     // SAFETY: caller contract.
     let offsets = unsafe { core::slice::from_raw_parts_mut(offsets, count) };
@@ -1039,8 +1045,23 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
             // output line that would otherwise start past column 0
             // (`cover_lines_without_mappings` in `sourcemap::Chunk`), so bytes
             // between a mapping and the target do not line up 1:1.
-            let mut remapped =
-                original_starts[orig_line as usize] as i32 + m.original.columns.zero_based();
+            // Sourcemap columns are UTF-16 code units; invert `add_source_mapping`'s
+            // byte->code-unit table when this original line has non-ASCII before
+            // the mapped position so the code-unit column becomes a byte column.
+            let orig_col_units = m.original.columns.zero_based();
+            let first_na = original_first_na[orig_line as usize];
+            let orig_col_bytes = if orig_col_units >= 0 && (orig_col_units as u32) >= first_na {
+                let cols: &[i32] = &original_table
+                    .0
+                    .items::<"columns_for_non_ascii", Box<[i32]>>()[orig_line as usize];
+                first_na as i32
+                    + cols
+                        .partition_point(|&c| c < orig_col_units)
+                        .min(cols.len().saturating_sub(1)) as i32
+            } else {
+                orig_col_units
+            };
+            let mut remapped = original_starts[orig_line as usize] as i32 + orig_col_bytes;
             // Closing `}` has no explicit mapping (FnBody carries no
             // close_brace_loc), so an end offset lands on the last statement's
             // start. Extend to the end of that original line so the range still
@@ -1057,7 +1078,7 @@ pub(crate) unsafe extern "C" fn InspectorCoverage__remapOffsets(
             remapped.clamp(0, original_len)
         };
 
-    for pair in offsets.chunks_exact_mut(2) {
+    for pair in offsets.as_chunks_mut::<2>().0 {
         let start = remap_one(pair[0], false, &mut cursor);
         let end = remap_one(pair[1], true, &mut cursor);
         pair[0] = start;

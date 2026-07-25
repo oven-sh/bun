@@ -471,7 +471,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         ),
         parse_param!("--splitting                      Enable code splitting"),
         parse_param!(
-            "--public-path <STR>              A prefix to be appended to any import paths in bundled code"
+            "--public-path <STR>              A prefix for emitted asset, chunk, and source-map paths"
         ),
         parse_param!(
             "-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react"

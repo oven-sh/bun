@@ -816,9 +816,7 @@ impl Stream {
 pub struct HeaderSet(*mut c_void);
 
 impl HeaderSet {
-    /// RFC 9114 §4.1.2 malformed-message flag (NUL in a field, empty name).
-    /// The shim flags-and-continues instead of returning -1 into lsqpack so
-    /// this stream can be reset without taking the connection down.
+    /// RFC 9114 §4.1.2 malformed-message flag set by `nq_hsi_process_header`.
     pub fn malformed(&self) -> bool {
         // SAFETY: `self.0` is a live `nq_hset` until `Drop`.
         unsafe { us_nq_hset_malformed(self.0) != 0 }

@@ -103,6 +103,27 @@ describe("HTTP/3 malformed message is a stream error, not a connection error", (
     expect((poisonedReset as any)?.errorCode).toBe(0x10en);
   });
 
+  // verify_cl_on_new_data_frame fires while DATA is still arriving (no FIN
+  // yet); lsquic_stream_msg_error must therefore queue STOP_SENDING and let
+  // the peer's RESET_STREAM reply finish the stream instead of leaking it.
+  test("request body exceeding content-length resets that stream, innocent completes", async () => {
+    const { completed, poisonedReset, sessionClose } = await blastRadius(async client =>
+      client.createBidirectionalStream({
+        headers: {
+          ":method": "POST",
+          ":path": "/poison",
+          ":scheme": "https",
+          ":authority": "localhost",
+          "content-length": "3",
+        },
+        body: new TextEncoder().encode(Buffer.alloc(100, "a").toString()),
+      }),
+    );
+    expect(completed).toBeGreaterThan(0);
+    expect(sessionClose).toBeNull();
+    expect((poisonedReset as any)?.errorCode).toBe(0x10en);
+  });
+
   test("response content-length mismatch resets that stream, innocent completes", async () => {
     const { completed, poisonedReset } = await blastRadius(
       client =>

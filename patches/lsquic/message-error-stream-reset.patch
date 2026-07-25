@@ -31,7 +31,7 @@
  void
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -1495,6 +1495,62 @@
+@@ -1495,6 +1495,66 @@
  }
  
  
@@ -59,7 +59,11 @@
 +        if (!(stream->sm_qflags & SMQF_SENDING_FLAGS))
 +            TAILQ_INSERT_TAIL(&stream->conn_pub->sending_streams, stream,
 +                                                        next_send_stream);
-+        stream->sm_qflags |= SMQF_SEND_STOP_SENDING|SMQF_WAIT_FIN_OFF;
++        /* No SMQF_WAIT_FIN_OFF: STREAM_RST_RECVD is synthesized below, so
++         * the peer's RESET_STREAM hits lsquic_stream_rst_in's duplicate guard
++         * before the line that would clear it, and stream_is_finished()'s
++         * SMQF_SELF_FLAGS check would keep the stream alive forever. */
++        stream->sm_qflags |= SMQF_SEND_STOP_SENDING;
 +    }
 +    /* stream_reset() clears every SMQF_SENDING flag; re-arm the STOP_SENDING
 +     * we just queued so both frames reach the peer. */
@@ -94,7 +98,7 @@
  static void
  verify_cl_on_fin (struct lsquic_stream *stream)
  {
-@@ -1506,6 +1562,11 @@
+@@ -1506,6 +1566,11 @@
       */
      if (stream->sm_data_in != 0 && stream->sm_cont_len != stream->sm_data_in)
      {
@@ -106,7 +110,7 @@
          lconn = stream->conn_pub->lconn;
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" is %llu, "
-@@ -4977,9 +5038,14 @@
+@@ -4977,9 +5042,14 @@
      stream->sm_data_in += filter->hqfi_left;
      if (stream->sm_data_in > stream->sm_cont_len)
      {
@@ -122,15 +126,20 @@
          lconn->cn_if->ci_abort_error(lconn, 1, HEC_MESSAGE_ERROR,
              "number of bytes in DATA frames of stream %"PRIu64" exceeds "
              "content-length limit of %llu", stream->id, stream->sm_cont_len);
-@@ -5139,6 +5205,11 @@
+@@ -5139,6 +5209,16 @@
                      goto end;
                  default:
                      assert(LQRHS_ERROR == rhs);
-+                    /* bun: qdh_header_read_results already reset this stream
-+                     * (or aborted the connection for a QPACK-fatal error). */
 +                    if (stream->conn_pub->enpub
 +                                ->enp_settings.es_message_error_is_stream)
++                    {
++                        /* bun: qdec already reset this stream for the peer-
++                         * triggerable cases; the fallback covers the handful
++                         * of LQRHS_ERROR paths (OOM, !QDH_INITIALIZED) that
++                         * return early without reaching qdec's reset. */
++                        lsquic_stream_msg_error(stream, HEC_INTERNAL_ERROR);
 +                        goto end;
++                    }
                      stream->sm_qflags &= ~SMQF_QPACK_DEC;
                      filter->hqfi_flags |= HQFI_FLAG_ERROR;
                      LSQ_INFO("error processing header block");

@@ -1364,6 +1364,21 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("decorated instance #-private method's brand is installed before a following undecorated #-private field reads it", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(v) { return v; }
+        class C {
+          @dec #m() { return 1; }
+          #a = this.readM();
+          readM() { return this.#m(); }
+        }
+        console.log(new C().readM());
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("1\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("WeakMap-lowered #-private does not strip NamedEvaluation or new.target from sibling fields", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(v) { return v; }

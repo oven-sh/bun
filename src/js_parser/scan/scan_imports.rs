@@ -269,8 +269,7 @@ impl<'a> ImportScanner<'a> {
                             && st.star_name_loc.is_empty()
                             && st.items.slice().is_empty()
                             && st.default_name.is_none();
-                        // replace_exports is Bun.Transpiler-only; it opts TS into dropping
-                        // value imports orphaned by the replaced export (#12892).
+                        // replace_exports (Bun.Transpiler-only) opts TS into dropping orphaned value imports (#12892).
                         let has_replace_exports = p.options.features.replace_exports.count() > 0;
                         if (is_typescript_enabled
                             && found_imports

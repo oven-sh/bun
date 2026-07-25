@@ -1924,7 +1924,7 @@ export default class {
         expect(out).toContain("action");
       });
 
-      it("drops imports only used in dead code", () => {
+      it("drops imports only used in dead code when exports.replace is configured", () => {
         const out = t.transformSync(`
           import {devOnly} from './dev-stuff';
 
@@ -1937,6 +1937,30 @@ export default class {
         expect(out).not.toContain("dev-stuff");
         expect(out).not.toContain("devOnly");
         expect(out).toContain("export const x = 1");
+      });
+
+      it("without exports.replace: TypeScript keeps the bare import for side effects", () => {
+        const noReplace = new Bun.Transpiler({
+          loader,
+          treeShaking: true,
+          trimUnusedImports: true,
+          define: { "process.env.NODE_ENV": '"production"' },
+        });
+        const out = noReplace.transformSync(`
+          import {devOnly} from './dev-stuff';
+
+          if (process.env.NODE_ENV !== "production") {
+            devOnly();
+          }
+
+          export const x = 1;
+        `);
+        if (loader === "ts" || loader === "tsx") {
+          expect(out).toContain("./dev-stuff");
+          expect(out).not.toContain("devOnly");
+        } else {
+          expect(out).not.toContain("dev-stuff");
+        }
       });
 
       it("keeps imports with live uses", () => {

@@ -471,7 +471,7 @@ describe("bun", () => {
     expect(exitCode).toBe(23);
   });
 
-  function runElideLinesTest({
+  async function runElideLinesTest({
     elideLines,
     target_pattern,
     antipattern,
@@ -498,63 +498,58 @@ describe("bun", () => {
       }),
     });
 
-    if (process.platform === "win32") {
-      // Windows spawnSync pipes stdout, so `windowsIsTerminal()` returns false,
-      // `state.pretty_output` is false, and `redraw()` short-circuits before
-      // ever emitting elision output. `target_pattern` is intentionally NOT
-      // iterated here: every caller bundles TTY-only regexes such as
-      // `/\[N lines elided\]/` that would never appear in piped Windows output
-      // and would fail the test for the wrong reason. The hardcoded log_line
-      // match covers the non-TTY subset of every caller's target_pattern.
-      // `antipattern` is iterated because absence-checks remain valid on either
-      // code path.
-      const { exitCode, stderr, stdout } = spawnSync({
-        cwd: dir,
-        cmd: [bunExe(), "run", "--filter", "./packages/dep0", "--elide-lines", String(elideLines), "script"],
-        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: "0" },
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-
-      const stdoutval = stdout.toString();
-      expect(stderr.toString()).not.toContain("--elide-lines is only supported in terminal environments");
-      expect(stdoutval).toMatch(/(?:log_line[\s\S]*?){20}/);
-      if (antipattern) {
-        for (const r of antipattern) {
-          expect(stdoutval).not.toMatch(r);
-        }
-      }
-      expect(exitCode).toBe(0);
-      return;
-    }
-
-    runInCwdSuccess({
+    // Elision lives in the redraw renderer which only runs when stdout is a
+    // real terminal, so spawn on a pty. The final frame is written in full at
+    // exit so `[N lines elided]` is observable in the collected output.
+    const decoder = new TextDecoder();
+    let output = "";
+    const done = Promise.withResolvers<void>();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--elide-lines", String(elideLines), "--filter", "./packages/dep0", "script"],
       cwd: dir,
-      pattern: "./packages/dep0",
-      env: { FORCE_COLOR: "1", NO_COLOR: "0" },
-      target_pattern,
-      antipattern,
-      command: ["script"],
-      elideCount: elideLines,
+      env: { ...bunEnv, FORCE_COLOR: undefined, NO_COLOR: undefined, TERM: "xterm-256color" },
+      terminal: {
+        cols: 200,
+        rows: 40,
+        data(_t, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+        exit() {
+          done.resolve();
+        },
+      },
     });
+    await done.promise;
+    const exitCode = await proc.exited;
+    output += decoder.decode();
+    const stdoutval = Bun.stripANSI(output);
+    for (const r of target_pattern) {
+      expect(stdoutval).toMatch(r);
+    }
+    if (antipattern) {
+      for (const r of antipattern) {
+        expect(stdoutval).not.toMatch(r);
+      }
+    }
+    expect(exitCode).toBe(0);
   }
 
-  test("elides output by default when using --filter", () => {
-    runElideLinesTest({
+  test("elides output by default when using --filter", async () => {
+    await runElideLinesTest({
       elideLines: 10,
-      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/\[10 lines elided\]/, /(?:log_line[\s\S]*?){10}/],
     });
   });
 
-  test("respects --elide-lines argument", () => {
-    runElideLinesTest({
+  test("respects --elide-lines argument", async () => {
+    await runElideLinesTest({
       elideLines: 15,
-      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){20}/],
+      target_pattern: [/\[5 lines elided\]/, /(?:log_line[\s\S]*?){15}/],
     });
   });
 
-  test("--elide-lines=0 shows all output", () => {
-    runElideLinesTest({
+  test("--elide-lines=0 shows all output", async () => {
+    await runElideLinesTest({
       elideLines: 0,
       target_pattern: [/(?:log_line[\s\S]*?){20}/],
       antipattern: [/lines elided/],
@@ -702,6 +697,7 @@ describe("--filter forwards color to scripts", () => {
         ...bunEnv,
         NO_COLOR: undefined,
         FORCE_COLOR: undefined,
+        NODE_DISABLE_COLORS: undefined,
         CI: undefined,
         TERM: "xterm-256color",
         COLORTERM: undefined,
@@ -722,12 +718,14 @@ describe("--filter forwards color to scripts", () => {
       },
     });
     await done.promise;
-    await proc.exited;
+    const exitCode = await proc.exited;
     output += decoder.decode();
     const stripped = Bun.stripANSI(output).replace(/\r/g, "");
     const m = stripped.match(/RESULT (\{[^}]*\})/);
     if (!m) throw new Error("missing RESULT in terminal output: " + JSON.stringify(output));
-    return JSON.parse(m[1]);
+    const result = JSON.parse(m[1]);
+    expect(exitCode).toBe(0);
+    return result;
   }
 
   test("sets FORCE_COLOR when parent stdout is a color TTY", async () => {
@@ -791,6 +789,7 @@ describe("--filter forwards color to scripts", () => {
         ...bunEnv,
         NO_COLOR: undefined,
         FORCE_COLOR: undefined,
+        NODE_DISABLE_COLORS: undefined,
         CI: undefined,
         TERM: "xterm-256color",
         COLORTERM: undefined,
@@ -808,6 +807,25 @@ describe("--filter forwards color to scripts", () => {
       FORCE_COLOR: null,
       NO_COLOR: null,
     });
+    expect(exitCode).toBe(0);
+  });
+
+  // A nested `bun --filter` inherits the outer runner's injected FORCE_COLOR
+  // but its own stdout is a pipe. The redraw renderer must stay off so its
+  // cursor-up/erase sequences don't corrupt the outer tree.
+  test("FORCE_COLOR on piped stdout uses the line-prefixed writer, not redraw", async () => {
+    const dir = colorFixture();
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "--filter", "*", "probe"],
+      cwd: dir,
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("pkga probe: RESULT ");
+    expect(stdout).not.toContain("\x1b[?2026h");
+    expect(stdout).not.toContain("\x1b[1A");
     expect(exitCode).toBe(0);
   });
 });

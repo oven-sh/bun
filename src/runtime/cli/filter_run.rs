@@ -909,6 +909,9 @@ pub(crate) fn run_scripts_with_filter(
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
+        // Redraw renderer emits cursor-up/erase-line sequences; those only make
+        // sense on a real terminal. `FORCE_COLOR` (which we now inject for
+        // child scripts) must not enable it on a pipe.
         pretty_output: {
             #[cfg(windows)]
             {
@@ -916,7 +919,7 @@ pub(crate) fn run_scripts_with_filter(
             }
             #[cfg(not(windows))]
             {
-                Output::enable_ansi_colors_stdout()
+                Output::is_stdout_tty() && Output::enable_ansi_colors_stdout()
             }
         },
         shell_bin,

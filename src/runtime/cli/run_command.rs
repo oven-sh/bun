@@ -1917,24 +1917,19 @@ impl RunCommand {
         Ok(())
     }
 
-    /// `--filter` / `--parallel` pipe script stdout/stderr so isatty()-based
-    /// color detection in the script is false. When the parent is rendering
-    /// with color, forward that decision via `FORCE_COLOR` at the depth the
-    /// parent detected so tools like chalk/supports-color keep their colors.
-    /// Leaves the env untouched if the user already set `FORCE_COLOR`,
-    /// `NO_COLOR`, or `NODE_DISABLE_COLORS`, or if the parent itself is not
-    /// rendering in color.
+    /// `--filter` / `--parallel` pipe script stdio, so isatty() in the script
+    /// is false. Forward the parent's color decision via `FORCE_COLOR` unless
+    /// the user set `FORCE_COLOR`/`NO_COLOR`/`NODE_DISABLE_COLORS` themselves.
     pub fn forward_color_to_piped_scripts(env: &mut DotEnv::Loader) {
-        if !Output::enable_ansi_colors_stdout() {
+        if !(Output::is_stdout_tty() && Output::enable_ansi_colors_stdout()) {
             return;
         }
-        if env.map.get(b"FORCE_COLOR").is_some() || env.map.get(b"NO_COLOR").is_some() {
-            return;
-        }
-        if env
-            .map
-            .get(b"NODE_DISABLE_COLORS")
-            .is_some_and(|v| !v.is_empty())
+        if env.map.get(b"FORCE_COLOR").is_some()
+            || env.map.get(b"NO_COLOR").is_some_and(|v| !v.is_empty())
+            || env
+                .map
+                .get(b"NODE_DISABLE_COLORS")
+                .is_some_and(|v| !v.is_empty())
         {
             return;
         }
@@ -1942,7 +1937,11 @@ impl RunCommand {
         let depth: &[u8] = match Source::color_depth() {
             ColorDepth::C16m => b"3",
             ColorDepth::C256 => b"2",
-            _ => b"1",
+            ColorDepth::C16 => b"1",
+            // Windows terminals typically don't set TERM/COLORTERM; every
+            // supported Windows build has truecolor (see is_color_terminal).
+            ColorDepth::None if cfg!(windows) => b"3",
+            ColorDepth::None => b"1",
         };
         let _ = env.map.put(b"FORCE_COLOR", depth);
     }

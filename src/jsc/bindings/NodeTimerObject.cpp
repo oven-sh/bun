@@ -13,13 +13,33 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/JSCJSValue.h"
 #include "AsyncContextFrame.h"
+#include "NodeAsyncHooks.h"
 namespace Bun {
 using namespace JSC;
+
+// Returns true if an exception was pending, after handing it to the unhandled
+// error path.
+template<typename Scope>
+static bool reportPendingException(JSGlobalObject* globalObject, Scope& scope)
+{
+    auto* exception = scope.exception();
+    if (!exception) [[likely]] {
+        return false;
+    }
+    (void)scope.tryClearException();
+    Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
+    return true;
+}
 
 static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue callbackValue, JSValue argumentsValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Before);
+    if (reportPendingException(globalObject, scope)) [[unlikely]] {
+        return true;
+    }
 
     JSValue restoreAsyncContext {};
     JSC::InternalFieldTuple* asyncContextData = nullptr;
@@ -57,14 +77,11 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
         JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, timerObject, args);
     }
 
-    bool hadException = false;
+    bool hadException = reportPendingException(globalObject, scope);
 
-    if (scope.exception()) [[unlikely]] {
-        auto* exception = scope.exception();
-        (void)scope.tryClearException();
-        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-        hadException = true;
-    }
+    emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::After);
+    emitImmediateAsyncHook(globalObject, timerObject, ImmediateAsyncHook::Destroy);
+    hadException |= reportPendingException(globalObject, scope);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);

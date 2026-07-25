@@ -3,6 +3,7 @@ import { createTest } from "node-harness";
 import { EventEmitter } from "node:events";
 import readline from "node:readline";
 import { PassThrough, Writable } from "node:stream";
+import { promisify } from "node:util";
 const { beforeEach, describe, it, createDoneDotAll, createCallCheckCtx, assert } = createTest(import.meta.path);
 
 var {
@@ -2085,5 +2086,31 @@ describe("readline.createInterface()", () => {
 
     assert.strictEqual(closed, true);
     assert.strictEqual(rl.closed, true);
+  });
+
+  it("throws ERR_USE_AFTER_CLOSE from write/pause/resume after close", () => {
+    const fi = new FakeInput();
+    const rli = new readline.Interface({ input: fi, output: fi, terminal: true });
+    rli.close();
+
+    for (const call of [() => rli.write("nope"), () => rli.pause(), () => rli.resume()]) {
+      assert.throws(call, { name: "Error", code: "ERR_USE_AFTER_CLOSE" });
+    }
+  });
+
+  it("promisified question rejects with AbortError when the signal is already aborted", async () => {
+    const fi = new FakeInput();
+    const rli = new readline.Interface({ input: fi, output: fi, terminal: true });
+    const question = promisify(rli.question).bind(rli);
+
+    let error;
+    try {
+      await question("hello?", { signal: AbortSignal.abort() });
+    } catch (e) {
+      error = e;
+    }
+    assert.strictEqual(error?.name, "AbortError");
+    assert.strictEqual(error?.code, "ABORT_ERR");
+    rli.close();
   });
 });

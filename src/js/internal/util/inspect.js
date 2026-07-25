@@ -3008,6 +3008,7 @@ export default {
   formatWithOptions,
   stripVTControlCharacters,
   getStringWidth,
+  previewEntries,
   //! non-standard properties, should these be kept? (not currently exposed)
   //stylizeWithColor,
   //stylizeWithHTML(str, styleType) {

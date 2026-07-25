@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -394,6 +394,8 @@ describe("util", () => {
   });
 
   it("multiplecolors", () => {
+    // validateStream: false - otherwise styleText only colorizes when the
+    // target stream supports color, which a piped stdout does not.
     const noValidate = { validateStream: false };
     expect(util.styleText(["bold", "red"], "test", noValidate)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
     expect(util.styleText("bold", "test", noValidate)).toBe("\u001b[1mtest\u001b[22m");
@@ -569,4 +571,48 @@ describe("util.debuglog", () => {
       expect(exitCode).toBe(0);
     }
   }, 20_000);
+// https://nodejs.org/docs/latest-v26.x/api/util.html#utildebuglogsection-callback
+describe("util.debuglog", () => {
+  const script = `
+    const assert = require("node:assert");
+    const util = require("node:util");
+    let inner = null;
+    const debug = util.debuglog(process.argv[1], cb => { inner = cb; });
+    assert.strictEqual(typeof Object.getOwnPropertyDescriptor(debug, "enabled").get, "function");
+    assert.strictEqual(inner, null, "the callback runs on the first call, not at creation");
+    debug("hello %s", "world");
+    assert.strictEqual(typeof inner, "function");
+    assert.strictEqual(typeof Object.getOwnPropertyDescriptor(inner, "enabled").get, "function");
+    console.log(JSON.stringify({ outer: debug.enabled, inner: inner.enabled }));
+  `;
+
+  async function run(section, nodeDebug) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script, section],
+      env: { ...bunEnv, NODE_DEBUG: nodeDebug },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  it("exposes `enabled` and passes the real logger to the callback", async () => {
+    const cases = [
+      ["tud", "foo,tud,bar", true],
+      ["tud", "foo,bar", false],
+      ["test-abc", "test-*", true],
+      // A section name is matched literally: `$` and `.` are not regexp syntax.
+      ["f.oo", "f$oo", false],
+    ];
+    const results = await Promise.all(cases.map(([section, env]) => run(section, env)));
+    for (let i = 0; i < cases.length; i++) {
+      const [section, env, expected] = cases[i];
+      expect({ section, env, stdout: results[i].stdout, exitCode: results[i].exitCode }).toEqual({
+        section,
+        env,
+        stdout: JSON.stringify({ outer: expected, inner: expected }),
+        exitCode: 0,
+      });
+    }
+  });
 });

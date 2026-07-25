@@ -830,11 +830,9 @@ static void writeFetchHeadersToUWSResponse(WebCore::FetchHeaders& headers, uWS::
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
         }
 
+        // Prevent automatic Connection: close insertion when user provides one
         if (header.key == WebCore::HTTPHeaderName::Connection) {
-            // Prevent automatic Connection: close insertion when user provides one
             data->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
-            // RFC 9112 §9.6: a server that sends the "close" connection option
-            // MUST close after the response.
             if (connectionValueHasClose(value)) {
                 data->state |= uWS::HttpResponseData<isSSL>::HTTP_CONNECTION_CLOSE;
             }
@@ -941,10 +939,9 @@ static bool NodeHTTPServer__writeHead(
     }
     response->writeStatus(std::string_view(statusMessage, statusMessageLength));
 
-    // node:http's ServerResponse owns the Date header entirely (it honors
-    // res.sendDate / removeHeader("date") in JS), so never let uWS write its
-    // own Date header for these responses. It owns the Connection header the
-    // same way (_storeHeader always decides and writes one).
+    // node:http's ServerResponse owns the Date and Connection headers entirely
+    // (it honors res.sendDate / removeHeader in JS, and _storeHeader always
+    // writes a Connection line), so never let uWS write its own.
     response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_DATE_HEADER
         | uWS::HttpResponseData<isSSL>::HTTP_WROTE_CONNECTION_HEADER;
 

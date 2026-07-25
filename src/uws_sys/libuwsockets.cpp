@@ -1326,7 +1326,10 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      uwsRes->resetTimeout();
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
+      {
+        uwsRes->resetTimeout();
+      }
     }
     else
     {
@@ -1335,7 +1338,10 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      uwsRes->resetTimeout();
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
+      {
+        uwsRes->resetTimeout();
+      }
     }
   }
   void uws_res_reset_timeout(int ssl, uws_res_r res) {
@@ -1377,9 +1383,7 @@ extern "C"
       }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      // keepCorked: a corked caller (onData, cork()) owns the uncork and close.
-      // node:http's destroy path relies on its cork being discarded, not flushed.
-      if (!uwsRes->uncorkAndCloseIfNeeded(data, true))
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
       {
         uwsRes->resetTimeout();
       }
@@ -1404,7 +1408,7 @@ extern "C"
       }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone(uwsRes);
-      if (!uwsRes->uncorkAndCloseIfNeeded(data, true))
+      if (!uwsRes->uncorkAndCloseIfNeeded(data, /* keepCorked: caller owns uncork */ true))
       {
         uwsRes->resetTimeout();
       }

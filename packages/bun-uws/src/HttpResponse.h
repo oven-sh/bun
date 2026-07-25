@@ -157,9 +157,8 @@ public:
             /* We can only write the header once */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
 
-                /* RFC 9112 9.6: a server that closes SHOULD send the close
-                 * connection option. Skipped once the body started or when the
-                 * application already wrote its own Connection header. */
+                /* RFC 9112 9.6: echo the close option unless the body started
+                 * or the application already wrote a Connection header. */
                 if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONNECTION_HEADER))) {
                     writeHeader("Connection", "close");
                 }
@@ -268,7 +267,9 @@ public:
             /* Remove onAborted function if we reach the end */
             if (httpResponseData->offset == totalSize) {
                 httpResponseData->markDone(this);
-                uncorkAndCloseIfNeeded(httpResponseData, keepCorked);
+                if (uncorkAndCloseIfNeeded(httpResponseData, keepCorked)) {
+                    return true;
+                }
             }
 
             return success;

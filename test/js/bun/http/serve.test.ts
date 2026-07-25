@@ -3756,6 +3756,7 @@ describe("Connection: close on an async handler", () => {
   // (its microtask drain) must still close; the close gate is per socket, not
   // per server.
   it("async: closes when the response resolves inside another socket's onData", async () => {
+    const armedReady = Promise.withResolvers<void>();
     let armed: (() => void) | null = null;
     using server = serve({
       port: 0,
@@ -3765,6 +3766,7 @@ describe("Connection: close on an async handler", () => {
         if (path === "/a") {
           return new Promise<Response>(resolve => {
             armed = () => resolve(new Response("hi", { headers: { connection: "close" } }));
+            armedReady.resolve();
           });
         }
         if (path === "/b") armed?.();
@@ -3772,7 +3774,7 @@ describe("Connection: close on an async handler", () => {
       },
     });
     const a = exchange(server.port, "GET /a HTTP/1.1\r\nHost: x\r\n\r\n");
-    while (!armed) await Bun.sleep(1);
+    await armedReady.promise;
     await fetch(`http://127.0.0.1:${server.port}/b`);
     const { serverClosed, responses } = await a;
     expect({ responses, serverClosed }).toEqual({ responses: 1, serverClosed: true });

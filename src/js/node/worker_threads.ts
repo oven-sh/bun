@@ -122,7 +122,7 @@ function injectFakeEmitter(Class) {
 
   // fakeParentPort routes self's native ErrorEvent (.error) here; emit() sends CustomEvent (.detail)
   function errorEventHandler(event) {
-    return event.error ?? event.detail;
+    return event instanceof ErrorEvent ? event.error : event.detail;
   }
 
   function customEventHandler(event) {

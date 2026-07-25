@@ -403,7 +403,8 @@ extern "C" bool Bun__VM__allowAddons(void* vm);
 static void rebindThunks(BYTE* base, HMODULE host, PIMAGE_THUNK_DATA iat, PIMAGE_THUNK_DATA names, bool keepUnresolved)
 {
     size_t count = 0;
-    for (auto* n = names; n->u1.AddressOfData != 0; ++n) ++count;
+    for (auto* n = names; n->u1.AddressOfData != 0; ++n)
+        ++count;
     if (count == 0) return;
 
     // Regular IATs sit in a read-only page once the loader is done.

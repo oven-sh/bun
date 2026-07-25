@@ -1410,10 +1410,20 @@ impl NodeHTTPResponse {
             let bytes = self
                 .buffered_request_body_data_during_pause
                 .replace(Vec::new());
-            return Some(JSValue::create_buffer_from_box(
-                global_object,
-                bytes.into_boxed_slice(),
-            ));
+            let buf = JSValue::create_buffer_from_box(global_object, bytes.into_boxed_slice());
+            // The body's fin arrived on the buffered-pause shim after the
+            // response had already ended; the buffered tail has now been
+            // handed to JS, so the request can be marked done
+            // (on_buffer_request_body_while_paused deferred this while the
+            // buffer was non-empty).
+            if self
+                .flags
+                .get()
+                .contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+            {
+                self.mark_request_as_done_if_necessary();
+            }
+            return Some(buf);
         }
         None
     }
@@ -1611,11 +1621,20 @@ impl NodeHTTPResponse {
             self.capture_request_trailers();
             self.update_flags(|f| f.insert(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST));
             // Mirror on_data_or_aborted: the body has been fully received, so
-            // should_request_be_pending() must observe Done (not Pending) for
-            // mark_request_as_done_if_necessary() below to release the request.
+            // should_request_be_pending() must observe Done (not Pending) once
+            // the consumer has the buffered tail.
             self.body_read_state.set(BodyReadState::Done);
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+            }
+            // IS_REQUEST_PENDING is only released once the buffered tail has
+            // been handed to JS (drain_buffered_request_body_from_pause), so
+            // mark_request_as_done does not free it first.
+            if self
+                .buffered_request_body_data_during_pause
+                .get()
+                .is_empty()
+            {
                 self.mark_request_as_done_if_necessary();
             }
         }
@@ -1703,8 +1722,12 @@ impl NodeHTTPResponse {
         if last {
             if self.body_read_ref.get().has {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
-                self.mark_request_as_done_if_necessary();
             }
+            // body_read_state is now Done; re-evaluate IS_REQUEST_PENDING. This
+            // runs unconditionally because run_callback above can reach
+            // _destroy → set_on_data(undefined) and unref body_read_ref before
+            // the check re-reads it.
+            self.mark_request_as_done_if_necessary();
             self.deref();
         }
     }
@@ -2028,17 +2051,16 @@ impl NodeHTTPResponse {
         self.spill_pending_pinned_write(global_object);
 
         if IS_END {
-            // Discard the body read ref if it's pending and no onData callback is set at this point.
-            // This is the equivalent of req._dump(); ServerResponse.prototype.end runs req._dump()
-            // (which clears ondata) before reaching here whenever the IncomingMessage has no
-            // consumer, so an ondata that is still set means the request body is being read.
-            // A closing connection (Connection: close / HTTP/1.0) also discards: the socket is
-            // shut down from the 'finish' nextTick before any later body segment could reach
-            // the parser, so keeping the body Pending there would only strand the ref.
+            // Node.js keeps reading the request body after the response is
+            // written; resOnFinish (on the 'finish' nextTick) calls req._dump()
+            // only when nothing is consuming it. The body is kept Pending here
+            // except on a closing connection (Connection: close / HTTP/1.0):
+            // uws's end(close=true) shuts the socket down before any later
+            // segment could reach the parser, so keeping the body Pending there
+            // would only strand the ref.
             if self.body_read_ref.get().has
                 && self.body_read_state.get() == BodyReadState::Pending
-                && (js::on_data_get_cached(this_value).is_none()
-                    || state.is_http_connection_close())
+                && state.is_http_connection_close()
             {
                 self.body_read_ref.with_mut(|r| r.unref(vm_get()));
                 self.body_read_state.set(BodyReadState::None);
@@ -2059,14 +2081,31 @@ impl NodeHTTPResponse {
             } else {
                 raw_response.end_stream(state.is_http_connection_close());
             }
-            // uws's markDone() (reached from end/end_stream) nulls the connection's
-            // inStream. Re-arm it when the request body is still being consumed so
-            // body chunks keep flowing into the IncomingMessage after the response
-            // has been sent, like Node.js. IS_REQUEST_PENDING (held while the body
-            // is Pending) keeps `self` alive for the callback.
-            if self.body_read_state.get() == BodyReadState::Pending {
+            // uws's markDone() (reached from end/end_stream) nulls the
+            // connection's inStream. Re-arm it when the request body is still
+            // arriving so body chunks keep flowing into the IncomingMessage
+            // after the response has been sent, like Node.js.
+            // IS_REQUEST_PENDING (held while the body is Pending) keeps `self`
+            // alive for the callback; on_data(last=true) → mark_request_as_done
+            // releases it once the body is done.
+            // SOCKET_CLOSED: end() closed the connection synchronously (peer
+            // FIN already received) and the HttpResponseData ext was
+            // destructed by the context onClose; do not touch it.
+            let post_end_flags = self.flags.get();
+            if self.body_read_state.get() == BodyReadState::Pending
+                && !post_end_flags.contains(Flags::SOCKET_CLOSED)
+            {
                 if let Some(raw_response) = self.raw_response.get() {
-                    raw_response.on_data(on_data_shim, self.as_ctx_ptr());
+                    // Preserve an existing pause (async handler where
+                    // push()->false already swapped in the buffered shim),
+                    // like do_pause/do_resume do.
+                    if post_end_flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE)
+                        && !post_end_flags.contains(Flags::IS_DATA_BUFFERED_DURING_PAUSE_LAST)
+                    {
+                        raw_response.on_data(on_buffer_paused_shim, self.as_ctx_ptr());
+                    } else {
+                        raw_response.on_data(on_data_shim, self.as_ctx_ptr());
+                    }
                 }
             }
             self.on_request_complete();

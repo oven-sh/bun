@@ -198,6 +198,9 @@ function injectFakeEmitter(Class) {
   // addEventListener listeners, and return whether any listeners were
   // registered. The extractors in functionForEventType undo the wrapping for
   // .on() listeners, so the init dict here must round-trip through them.
+  // Known gap: listenerCount() only sees the .on()/.once() registry, so an
+  // addEventListener-only listener yields false here where node returns true
+  // (same pre-existing gap as listenerCount() itself).
   function emit(event, arg) {
     const hadListeners = listenerCount.$call(this, event) > 0;
     switch (event) {

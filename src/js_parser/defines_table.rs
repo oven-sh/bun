@@ -266,10 +266,7 @@ mod identifiers {
 }
 
 /// True when `name` is one of the pure global identifiers in
-/// `defines_table.string-map.ts` (the ~640 well-known host/browser globals).
-/// The bundler's renamer uses this to avoid emitting a chunk-top-level `var`
-/// that would overwrite the global when an ESM bundle is loaded as a classic
-/// script.
+/// `defines_table.string-map.ts`.
 pub fn is_pure_global_identifier(name: &[u8]) -> bool {
     lookup_pure_global_identifier(name).is_some()
 }

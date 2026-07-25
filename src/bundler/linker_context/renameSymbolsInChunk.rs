@@ -137,26 +137,14 @@ pub unsafe fn rename_symbols_in_chunk(
         );
     }
 
-    // Scope hoisting rewrites module-scope `const`/`let` to `var` so the
-    // declaration can be split from its initializer when a module is wrapped.
-    // For `--format=esm --target=browser` the chunk has no wrapper, so those
-    // `var`s sit at the true top level. Loaded as a module that is fine, but
-    // loaded as a classic `<script>` a top-level `var`/`function` becomes a
-    // property of `globalThis`. When the original name collides with a host
-    // global that the code reads back through `window`/`defaultView`, the
-    // bundle silently overwrites it (Chart.js's `const getComputedStyle = …`
-    // recurses into itself via `defaultView.getComputedStyle`; #14110).
-    // Reserve any declared top-level name that is in the pure-global table so
-    // the number renamer suffixes the binding while unbound references to the
-    // real global keep the name.
-    //
-    // Gated to `target=browser` because Bun/Node load ESM output in module
-    // scope, where `var` never reaches `globalThis`. `WrapKind::Cjs` modules
-    // keep their declarations inside the `__commonJS` closure, so skip those
-    // too. Only symbol kinds that print as a VarScoped declaration at the
-    // chunk top level (`var`/`function`/`async function`/`function*`) are
-    // considered; `class` and `import` stay lexical and cannot clobber
-    // `globalThis`.
+    // Scope hoisting rewrites module-scope `const`/`let` to `var`. In an
+    // unwrapped browser ESM chunk a top-level `var`/`function` becomes a
+    // `globalThis` property when the bundle is loaded as a classic `<script>`,
+    // so a name that collides with a host global overwrites it (#14110:
+    // Chart.js's `const getComputedStyle` recurses via
+    // `defaultView.getComputedStyle`). Reserve those names so the renamer
+    // suffixes the binding. CJS-wrapped modules keep their declarations in the
+    // closure; `class`/`import` are lexical and cannot clobber `globalThis`.
     if c.options.output_format == options::OutputFormat::Esm
         && c.options.target == options::Target::Browser
     {

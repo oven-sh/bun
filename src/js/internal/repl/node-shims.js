@@ -6,11 +6,19 @@ const util = require("node:util");
 const Module = require("node:module");
 const path = require("node:path");
 const {
+  ArrayIsArray,
   ArrayPrototypeIncludes,
   ArrayPrototypeJoin,
   ArrayPrototypeMap,
   ArrayPrototypePush,
   ArrayPrototypeSlice,
+  ObjectDefineProperty,
+  ObjectGetPrototypeOf,
+  ObjectKeys,
+  ReflectApply,
+  SafeMap,
+  SafeSet,
+  SafeWeakMap,
   RegExpPrototypeExec,
   RegExpPrototypeSymbolReplace,
   RegExpPrototypeSymbolSplit,
@@ -77,12 +85,353 @@ function debuglog(set, cb) {
 }
 
 // ---- internal/util/inspector ----------------------------------------------
+//
+// Node's sendInspectorCommand opens a V8 inspector session; REPL previews rely
+// on `Runtime.evaluate` with `throwOnSideEffect: true`. JSC has no side-effect-
+// checking evaluator, so this shim emulates the session: expressions are vetted
+// statically (acorn AST allowlist, fail-closed — unvetted input is never
+// evaluated) and only then run in the REPL's vm context. Unlike V8's dynamic
+// check the vet goes by callee name/shape, so a preview can invoke a user
+// function bound to an allowlisted name (`Array = f` then typing `Array(1)`).
+
+// Lazy: don't destructure — see internal/repl/acorn.js.
+const acorn = require("internal/repl/acorn");
+
+const { globalLexicalScopeNames } = $cpp("NodeVM.cpp", "Bun::createNodeVMBinding");
+
+// Globals whose direct call cannot mutate pre-existing state (constructors of
+// fresh objects, pure conversions/parsers). Mirrors the spirit of V8's
+// debug-evaluate allowlist (v8/src/debug/debug-evaluate.cc).
+const kSafeGlobalCallees = new SafeSet([
+  "Array", "ArrayBuffer", "BigInt", "Boolean", "Date", "Error", "EvalError", "Map", "Number", "Object",
+  "RangeError", "ReferenceError", "RegExp", "Set", "String", "Symbol", "SyntaxError", "TypeError", "URIError",
+  "AggregateError", "WeakMap", "WeakSet", "Proxy",
+  "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent", "escape", "unescape",
+  "isFinite", "isNaN", "parseFloat", "parseInt",
+]);
+
+// Method names that do not mutate their receiver or arguments.
+const kSafeMethodNames = new SafeSet([
+  // Object / Reflect statics + Object.prototype
+  "create", "entries", "fromEntries", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors",
+  "getOwnPropertyNames", "getOwnPropertySymbols", "getPrototypeOf", "is", "isExtensible", "isFrozen",
+  "isSealed", "keys", "values", "has", "hasOwn", "ownKeys", "get", "hasOwnProperty", "isPrototypeOf",
+  "propertyIsEnumerable",
+  // Array reads
+  "isArray", "of", "from", "at", "concat", "every", "filter", "find", "findIndex", "findLast",
+  "findLastIndex", "flat", "flatMap", "forEach", "includes", "indexOf", "join", "lastIndexOf", "map",
+  "reduce", "reduceRight", "slice", "some", "toReversed", "toSorted", "toSpliced", "with",
+  // String reads
+  "charAt", "charCodeAt", "codePointAt", "endsWith", "localeCompare", "match", "matchAll", "normalize",
+  "padEnd", "padStart", "repeat", "replace", "replaceAll", "search", "split", "startsWith", "substring",
+  "toLowerCase", "toUpperCase", "trim", "trimEnd", "trimStart", "valueOf", "toString",
+  // Number
+  "toFixed", "toPrecision", "toExponential", "isInteger", "isSafeInteger",
+  // Math
+  "abs", "ceil", "floor", "round", "trunc", "sign", "sqrt", "cbrt", "min", "max", "pow", "exp", "log",
+  "log2", "log10", "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "hypot", "fround", "clz32", "imul",
+  // JSON
+  "parse", "stringify",
+  // Date reads
+  "getTime", "getDate", "getDay", "getFullYear", "getHours", "getMilliseconds", "getMinutes", "getMonth",
+  "getSeconds", "getTimezoneOffset", "getUTCDate", "getUTCDay", "getUTCFullYear", "getUTCHours",
+  "getUTCMilliseconds", "getUTCMinutes", "getUTCMonth", "getUTCSeconds", "toISOString", "toJSON",
+]);
+
+// Mutating methods, allowed only when the receiver is provably allocated by the
+// expression itself (V8 tracks this dynamically; `Array(100).fill(1)` must
+// preview but `existing.fill(1)` must not).
+const kFreshOnlyMethodNames = new SafeSet(["fill", "push", "unshift", "sort", "reverse", "copyWithin", "add", "set"]);
+
+function isFreshAllocation(node) {
+  switch (node.type) {
+    case "ArrayExpression":
+    case "ObjectExpression":
+    case "NewExpression":
+    case "TemplateLiteral":
+    case "Literal":
+      return true;
+    case "CallExpression":
+      // Only direct constructor-style calls (`Array(100)`) are known-fresh.
+      return node.callee.type === "Identifier" && kSafeGlobalCallees.has(node.callee.name);
+    default:
+      return false;
+  }
+}
+
+function memberCallName(callee) {
+  if (callee.computed) {
+    return callee.property.type === "Literal" && typeof callee.property.value === "string"
+      ? callee.property.value
+      : null;
+  }
+  return callee.property.type === "Identifier" ? callee.property.name : null;
+}
+
+function calleeAllowed(callee) {
+  if (callee.type === "ChainExpression") callee = callee.expression;
+  switch (callee.type) {
+    case "Literal":
+    case "TemplateLiteral":
+    case "ArrayExpression":
+    case "ObjectExpression":
+      // Calling a non-function throws TypeError before any side effect runs.
+      return true;
+    case "Identifier":
+      return kSafeGlobalCallees.has(callee.name);
+    case "MemberExpression": {
+      const name = memberCallName(callee);
+      if (name === null) return false;
+      if (kSafeMethodNames.has(name)) return true;
+      return kFreshOnlyMethodNames.has(name) && isFreshAllocation(callee.object);
+    }
+  }
+  return false;
+}
+
+function nodeAllowed(node, inFunction) {
+  switch (node.type) {
+    case "UnaryExpression":
+      if (node.operator === "delete") return false;
+      break;
+    case "CallExpression":
+    case "NewExpression":
+      if (!calleeAllowed(node.callee)) return false;
+      break;
+    case "ArrowFunctionExpression":
+    case "FunctionExpression":
+      // Definition alone is inert; the body still gets walked in case an
+      // allowlisted higher-order call (e.g. `.map`) invokes it.
+      inFunction = true;
+      break;
+    case "ReturnStatement":
+    case "IfStatement":
+    case "VariableDeclaration":
+    case "VariableDeclarator":
+      // Locals only: a top-level declaration creates a context binding.
+      if (!inFunction) return false;
+      break;
+    case "Program":
+    case "ExpressionStatement":
+    case "EmptyStatement":
+    case "BlockStatement":
+    case "LabeledStatement":
+    case "ThrowStatement":
+    case "SequenceExpression":
+    case "ConditionalExpression":
+    case "LogicalExpression":
+    case "BinaryExpression":
+    case "Literal":
+    case "Identifier":
+    case "TemplateLiteral":
+    case "TemplateElement":
+    case "ArrayExpression":
+    case "ObjectExpression":
+    case "Property":
+    case "SpreadElement":
+    case "MemberExpression":
+    case "ChainExpression":
+      break;
+    default:
+      return false;
+  }
+  return childrenAllowed(node, inFunction);
+}
+
+function childrenAllowed(node, inFunction) {
+  const keys = ObjectKeys(node);
+  for (let i = 0; i < keys.length; i++) {
+    const key = keys[i];
+    if (key === "type" || key === "start" || key === "end") continue;
+    const value = node[key];
+    if (ArrayIsArray(value)) {
+      for (let j = 0; j < value.length; j++) {
+        const el = value[j];
+        // Elisions in array literals are null entries.
+        if (el !== null && typeof el === "object" && typeof el.type === "string" && !nodeAllowed(el, inFunction)) {
+          return false;
+        }
+      }
+    } else if (value !== null && typeof value === "object" && typeof value.type === "string") {
+      if (!nodeAllowed(value, inFunction)) return false;
+    }
+  }
+  return true;
+}
+
+// Top-level declarations and module syntax can never preview; rejecting them
+// by keyword skips an acorn parse per keystroke (previews re-vet the line on
+// every keypress, and this path dominated a debug-build profile).
+const kDeclarationStartRegExp = /^\s*(?:const|let|var|class|function|import|export)\b/;
+
+// true: safe to evaluate; false: possible side effect; null: does not parse.
+function vetPreviewExpression(code) {
+  if (RegExpPrototypeExec(kDeclarationStartRegExp, code) !== null) return false;
+  let ast;
+  try {
+    ast = acorn.Parser.parse(code, { ecmaVersion: "latest" });
+  } catch {
+    return null;
+  }
+  return nodeAllowed(ast, false);
+}
+
+function remoteClassName(value) {
+  if (typeof value === "function") return "Function";
+  try {
+    const ctor = ObjectGetPrototypeOf(value)?.constructor;
+    const name = ctor?.name;
+    if (typeof name === "string" && name !== "") return name;
+  } catch {}
+  return "Object";
+}
+
+// The inspector protocol's ids are opaque to internal/repl/utils.js, so the
+// context "id" is the vm context object itself and the objectId carries the
+// value plus its context — no registry to leak or invalidate.
+function toRemoteObject(value, ctx) {
+  switch (typeof value) {
+    case "undefined":
+      return { type: "undefined" };
+    case "boolean":
+    case "string":
+      return { type: typeof value, value };
+    case "number":
+      if (value !== value || value === Infinity || value === -Infinity || (value === 0 && 1 / value < 0)) {
+        return { type: "number", unserializableValue: value === 0 ? "-0" : `${value}` };
+      }
+      return { type: "number", value };
+    case "bigint":
+      return { type: "bigint", unserializableValue: `${value}n` };
+  }
+  if (value === null) return { type: "object", subtype: "null", value: null };
+  return { type: typeof value, className: remoteClassName(value), objectId: { value, ctx } };
+}
+
+// No `timeout` option: JSC's Watchdog asserts on the REPL's re-entrant use
+// (preview evaluation runs inside completer callbacks), and the static vet
+// already rejects unbounded top-level constructs.
+function runPreviewCode(code, ctx) {
+  const options = { displayErrors: false };
+  return ctx === undefined ? vm.runInThisContext(code, options) : vm.runInContext(code, ctx, options);
+}
+
+function runtimeEvaluate(params, callback) {
+  const ctx = params.contextId;
+  if (params.throwOnSideEffect) {
+    const verdict = vetPreviewExpression(params.expression);
+    if (verdict === null) {
+      callback(null, { result: { type: "object", className: "SyntaxError" }, exceptionDetails: {} });
+      return;
+    }
+    if (!verdict) {
+      callback(null, {
+        result: { type: "object", className: "EvalError" },
+        exceptionDetails: { text: "Possible side-effect in debug-evaluate" },
+      });
+      return;
+    }
+  }
+  let value;
+  try {
+    value = runPreviewCode(params.expression, ctx);
+  } catch (err) {
+    callback(null, { result: toRemoteObject(err, ctx), exceptionDetails: {} });
+    return;
+  }
+  callback(null, { result: toRemoteObject(value, ctx) });
+}
+
+// The preview's inspect callback arrives as the same functionDeclaration text
+// on every keystroke; cache the compiled function per context.
+const compiledFunctionCaches = new SafeWeakMap();
+const kNoContext = { __proto__: null };
+
+function compileFunctionOn(declaration, ctx) {
+  const cacheKey = ctx === undefined ? kNoContext : ctx;
+  let cache = compiledFunctionCaches.get(cacheKey);
+  if (cache === undefined) {
+    cache = new SafeMap();
+    compiledFunctionCaches.set(cacheKey, cache);
+  }
+  let fn = cache.get(declaration);
+  if (fn === undefined) {
+    fn = runPreviewCode(`(${declaration})`, ctx);
+    cache.set(declaration, fn);
+  }
+  return fn;
+}
+
+function runtimeCallFunctionOn(params, callback) {
+  const objectId = params.objectId;
+  const ctx = objectId?.ctx;
+  try {
+    const fn = compileFunctionOn(params.functionDeclaration, ctx);
+    const args = [];
+    const callArgs = params.arguments;
+    if (callArgs) {
+      for (let i = 0; i < callArgs.length; i++) {
+        const arg = callArgs[i];
+        ArrayPrototypePush(args, arg != null && arg.objectId !== undefined ? arg.objectId.value : arg?.value);
+      }
+    }
+    const result = ReflectApply(fn, undefined, args);
+    callback(null, { result: toRemoteObject(result, ctx) });
+  } catch (err) {
+    callback(null, { result: toRemoteObject(err, ctx), exceptionDetails: {} });
+  }
+}
+
+class InspectorSession {
+  #onceHandlers = { __proto__: null };
+
+  once(event, handler) {
+    const existing = this.#onceHandlers[event];
+    if (existing === undefined) this.#onceHandlers[event] = [handler];
+    else ArrayPrototypePush(existing, handler);
+  }
+
+  // Not part of Node's inspector.Session: JSC's inspector does not observe
+  // vm.createContext, so repl.js reports the new context here and the session
+  // echoes the executionContextCreated event Runtime.enable would produce.
+  contextCreated(context) {
+    const handlers = this.#onceHandlers["Runtime.executionContextCreated"];
+    if (handlers === undefined) return;
+    this.#onceHandlers["Runtime.executionContextCreated"] = undefined;
+    const message = { params: { context: { id: context, origin: "", name: "<repl>" } } };
+    for (let i = 0; i < handlers.length; i++) handlers[i](message);
+  }
+
+  // Callbacks fire synchronously: internal/repl/utils.js's double-eval of
+  // `{`-wrapped input relies on the first response landing before its
+  // `if (wrapped)` re-dispatch check.
+  post(method, params, callback) {
+    if (typeof params === "function") {
+      callback = params;
+      params = undefined;
+    }
+    switch (method) {
+      case "Runtime.enable":
+      case "Runtime.disable":
+        callback?.(null, {});
+        return;
+      case "Runtime.evaluate":
+        runtimeEvaluate(params, callback);
+        return;
+      case "Runtime.callFunctionOn":
+        runtimeCallFunctionOn(params, callback);
+        return;
+      case "Runtime.globalLexicalScopeNames":
+        callback?.(null, { names: globalLexicalScopeNames(params?.executionContextId) });
+        return;
+      default:
+        callback?.(new Error(`Unsupported inspector method: ${method}`));
+    }
+  }
+}
 
 function sendInspectorCommand(cb, onError) {
-  // JSC's inspector protocol has no `Runtime.globalLexicalScopeNames` (V8-only),
-  // so let/const/class tab-completion in useGlobal:true mode is inert until a
-  // native binding enumerates JSGlobalObject::globalLexicalEnvironment().
-  return onError();
+  return cb(new InspectorSession());
 }
 
 // ---- internal/util/types ----------------------------------------------
@@ -196,7 +545,33 @@ function makeRequireFunction(_mod) {
   } catch {
     cwd = path.dirname(process.execPath);
   }
-  return Module.createRequire(path.join(cwd, "<repl>"));
+  const anchor = path.join(cwd, "<repl>");
+  const boundRequire = Module.createRequire(anchor);
+  // Bun's resolver throws a ResolveMessage; Node's loader throws a plain Error
+  // with the "Require stack" message, `code`, and `requireStack` — user code
+  // (and test-repl-require) matches on that exact shape. Only reshape failures
+  // whose referrer is the REPL itself: a miss inside a required module keeps
+  // its own (accurate) referrer message.
+  // Not named `require`: the builtin bundler rewrites `require(` tokens.
+  function replRequire(id) {
+    try {
+      return boundRequire(id);
+    } catch (err) {
+      if (err?.code === "MODULE_NOT_FOUND" && typeof err.specifier === "string" && err.referrer === anchor) {
+        const nodeError = new Error(`Cannot find module '${err.specifier}'\nRequire stack:\n- <repl>`);
+        nodeError.code = "MODULE_NOT_FOUND";
+        nodeError.requireStack = ["<repl>"];
+        throw nodeError;
+      }
+      throw err;
+    }
+  }
+  ObjectDefineProperty(replRequire, "name", { __proto__: null, value: "require", configurable: true });
+  replRequire.resolve = boundRequire.resolve;
+  replRequire.cache = boundRequire.cache;
+  replRequire.extensions = boundRequire.extensions;
+  replRequire.main = boundRequire.main;
+  return replRequire;
 }
 
 let builtinLibs;

@@ -32,6 +32,8 @@
 #include "wtf/URL.h"
 #include "JavaScriptCore/TypedArrayInlines.h"
 #include "JavaScriptCore/PropertyNameArray.h"
+#include "JavaScriptCore/JSGlobalLexicalEnvironment.h"
+#include "JavaScriptCore/SymbolTable.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
 #include "JavaScriptCore/JSWithScope.h"
@@ -1725,6 +1727,44 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, Cal
     return JSValue::encode(jsBoolean(isContext(globalObject, contextArg)));
 }
 
+// Names of let/const/class bindings in a context's global lexical environment
+// (V8 inspector's Runtime.globalLexicalScopeNames; used by the REPL completer).
+JSC_DEFINE_HOST_FUNCTION(vmModuleGlobalLexicalScopeNames, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSGlobalObject* target = globalObject;
+    JSValue contextArg = callFrame->argument(0);
+    if (contextArg.isObject()) {
+        auto* vmGlobalObject = getGlobalObjectFromContext(globalObject, contextArg, false);
+        // canThrow=false: every throw site in getGlobalObjectFromContext is gated.
+        scope.assertNoException();
+        if (vmGlobalObject)
+            target = vmGlobalObject;
+    }
+
+    Vector<WTF::String> names;
+    {
+        SymbolTable* symbolTable = target->globalLexicalEnvironment()->symbolTable();
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        for (auto iter = symbolTable->begin(locker), end = symbolTable->end(locker); iter != end; ++iter) {
+            auto& key = iter->key;
+            if (!key || key->isSymbol())
+                continue;
+            names.append(WTF::String(key.get()));
+        }
+    }
+
+    JSC::JSArray* result = JSC::constructEmptyArray(globalObject, nullptr, names.size());
+    RETURN_IF_EXCEPTION(scope, {});
+    for (unsigned i = 0; i < names.size(); i++) {
+        result->putDirectIndex(globalObject, i, JSC::jsString(vm, names[i]));
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(result);
+}
+
 const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
@@ -1828,6 +1868,9 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "isContext"_s, vmModule_isContext, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "globalLexicalScopeNames"_s)),
+        JSC::JSFunction::create(vm, globalObject, 1, "globalLexicalScopeNames"_s, vmModuleGlobalLexicalScopeNames, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "runInNewContext"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "runInNewContext"_s, vmModuleRunInNewContext, ImplementationVisibility::Public), 0);

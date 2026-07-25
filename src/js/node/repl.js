@@ -1131,6 +1131,9 @@ class REPLServer extends Interface {
             this[kContextId] = params.context.id;
           });
           context = vm.createContext();
+          // JSC's inspector doesn't observe vm context creation; report it to
+          // the shim session, which echoes executionContextCreated.
+          session.contextCreated(context);
           session.post("Runtime.disable");
         },
         () => {

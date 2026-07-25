@@ -7,7 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,165 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+// https://github.com/oven-sh/bun/issues/7823
+// Run in subprocesses so each case observes a clean module registry.
+describe.concurrent("mock.restore() reverts mock.module()", () => {
+  const depTs = `
+    export const getValue = () => "original";
+    export const other = 1;
+    export default "original-default";
+  `;
+
+  async function runFixture(files: Record<string, string>, entry = "fixture.test.ts") {
+    using dir = tempDir("mock-module-restore", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("restores an already-loaded ESM module's exports", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        import * as dep from "./dep";
+        test("t", () => {
+          expect(dep.getValue()).toBe("original");
+          expect(dep.default).toBe("original-default");
+          mock.module("./dep", () => ({
+            getValue: () => "mocked",
+            default: "mocked-default",
+          }));
+          expect(dep.getValue()).toBe("mocked");
+          expect(dep.default).toBe("mocked-default");
+          mock.restore();
+          expect(dep.getValue()).toBe("original");
+          expect(dep.default).toBe("original-default");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("restores to true originals after multiple re-mocks", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        import { getValue, other } from "./dep";
+        test("t", () => {
+          expect(getValue()).toBe("original");
+          expect(other).toBe(1);
+          mock.module("./dep", () => ({ getValue: () => "first" }));
+          expect(getValue()).toBe("first");
+          // second mock touches a disjoint export; restore must cover both
+          mock.module("./dep", () => ({ getValue: () => "second", other: 99 }));
+          expect(getValue()).toBe("second");
+          expect(other).toBe(99);
+          mock.restore();
+          expect(getValue()).toBe("original");
+          expect(other).toBe(1);
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("restores CJS module.exports", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.cjs": `module.exports = { getValue: () => "original-cjs" };`,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        test("t", () => {
+          const dep = require("./dep.cjs");
+          expect(dep.getValue()).toBe("original-cjs");
+          mock.module("./dep.cjs", () => ({ getValue: () => "mocked-cjs" }));
+          expect(require("./dep.cjs").getValue()).toBe("mocked-cjs");
+          mock.restore();
+          expect(require("./dep.cjs").getValue()).toBe("original-cjs");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("mock installed before first load is cleared so next import loads the real module", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        test("t", async () => {
+          mock.module("./dep.ts", () => ({ getValue: () => "mocked" }));
+          expect((await import("./dep.ts")).getValue()).toBe("mocked");
+          mock.restore();
+          expect((await import("./dep.ts")).getValue()).toBe("original");
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("restores spyOn and mock.module together", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "dep.ts": depTs,
+      "fixture.test.ts": `
+        import { test, expect, mock, spyOn } from "bun:test";
+        import * as dep from "./dep";
+        test("t", () => {
+          const originalOther = dep.other;
+          const spy = spyOn(dep, "getValue").mockReturnValue("spied");
+          mock.module("./dep", () => ({ other: 42 }));
+          expect(dep.getValue()).toBe("spied");
+          expect(dep.other).toBe(42);
+          mock.restore();
+          expect(dep.getValue()).toBe("original");
+          expect(dep.other).toBe(originalOther);
+        });
+      `,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("leaves Bun.plugin virtual modules alone", async () => {
+    const { stderr, exitCode } = await runFixture({
+      "preload.ts": `
+        Bun.plugin({
+          name: "p",
+          setup(build) {
+            build.module("plugin-virtual", () => ({ exports: { hi: 123 }, loader: "object" }));
+          },
+        });
+      `,
+      "fixture.test.ts": `
+        import { test, expect, mock } from "bun:test";
+        test("t", () => {
+          expect(require("plugin-virtual").hi).toBe(123);
+          mock.restore();
+          expect(require("plugin-virtual").hi).toBe(123);
+        });
+      `,
+      "bunfig.toml": `[test]\npreload = ["./preload.ts"]\n`,
+    });
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("fail)");
+    expect(exitCode).toBe(0);
+  });
 });

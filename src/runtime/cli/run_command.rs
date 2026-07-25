@@ -2564,10 +2564,10 @@ impl RunCommand {
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
+        let preserve_symlinks_main = ctx.runtime_options.preserve_symlinks_main_effective();
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
-            this_transpiler.resolver.opts.preserve_symlinks =
-                ctx.runtime_options.preserve_symlinks_main_effective();
+            this_transpiler.resolver.opts.preserve_symlinks = preserve_symlinks_main;
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
             let resolved = match this_transpiler.resolver.resolve(
@@ -2605,10 +2605,22 @@ impl RunCommand {
                     .or_else(|| bun_bundler::options::DEFAULT_LOADERS.get(ext).copied())
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
-                    bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
+                    // `--preserve-symlinks-main`: `set_realpath` stashed the
+                    // link spelling in `.pretty`.
+                    let entry_text =
+                        if preserve_symlinks_main && path.is_symlink && !path.pretty.is_empty() {
+                            path.pretty
+                        } else {
+                            path.text
+                        };
+                    bun_core::scoped_log!(
+                        RUN_LOG,
+                        "Resolved to: `{}`",
+                        bstr::BStr::new(entry_text)
+                    );
                     // borrowck — `_boot_and_handle_error` takes
-                    // `&mut ctx`; copy `path.text` out of the resolver borrow.
-                    let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    // `&mut ctx`; copy `entry_text` out of the resolver borrow.
+                    let text: Box<[u8]> = entry_text.to_vec().into_boxed_slice();
                     return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(

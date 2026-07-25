@@ -65,23 +65,59 @@ describe("--preserve-symlinks", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("--preserve-symlinks-main keeps the symlink path for the entry point", async () => {
-    using dir = tempDir("preserve-symlinks-main", {
-      "real.cjs": `console.log(__filename);`,
-    });
-    symlinkSync(join(String(dir), "real.cjs"), join(String(dir), "link.cjs"));
-
+  async function expectEntryFilename(
+    cmd: string[],
+    cwd: string,
+    expected: string,
+    extraEnv: Record<string, string> = {},
+  ) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preserve-symlinks-main", "link.cjs"],
-      env: bunEnv,
-      cwd: String(dir),
+      cmd,
+      env: { ...bunEnv, ...extraEnv },
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(stdout.trim()).toBe(join(String(dir), "link.cjs"));
+    expect(stdout.trim()).toBe(expected);
     expect(exitCode).toBe(0);
+  }
+
+  test.concurrent("--preserve-symlinks-main keeps the symlink path for the entry point", async () => {
+    using dir = tempDir("preserve-symlinks-main", {
+      "real.cjs": `console.log(__filename);`,
+    });
+    symlinkSync(join(String(dir), "real.cjs"), join(String(dir), "link.cjs"));
+    await expectEntryFilename(
+      [bunExe(), "--preserve-symlinks-main", "link.cjs"],
+      String(dir),
+      join(String(dir), "link.cjs"),
+    );
+  });
+
+  test.concurrent("NODE_PRESERVE_SYMLINKS_MAIN=1 keeps the symlink path for the entry point", async () => {
+    using dir = tempDir("preserve-symlinks-main-env", {
+      "real.cjs": `console.log(__filename);`,
+    });
+    symlinkSync(join(String(dir), "real.cjs"), join(String(dir), "link.cjs"));
+    await expectEntryFilename([bunExe(), "link.cjs"], String(dir), join(String(dir), "link.cjs"), {
+      NODE_PRESERVE_SYMLINKS_MAIN: "1",
+    });
+  });
+
+  test.concurrent("--preserve-symlinks-main applies to an extensionless entry via `bun run`", async () => {
+    // Exercises the resolver fallback path (no fast-run for extensionless).
+    using dir = tempDir("preserve-symlinks-main-run", {
+      "real.js": `console.log(__filename);`,
+      "package.json": `{}`,
+    });
+    symlinkSync(join(String(dir), "real.js"), join(String(dir), "link"));
+    await expectEntryFilename(
+      [bunExe(), "run", "--preserve-symlinks-main", "link"],
+      String(dir),
+      join(String(dir), "link"),
+    );
   });
 });
 

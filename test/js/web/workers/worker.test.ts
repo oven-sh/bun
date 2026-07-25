@@ -458,4 +458,38 @@ describe("worker_threads", () => {
     await p;
     expect(message).toEqual("hello");
   });
+
+  test("worker process.cwd() observes a main-thread chdir", async () => {
+    // Regression: each thread's Process object caches its cwd string, and a
+    // chdir on the main thread never invalidated worker caches, so a worker's
+    // process.cwd() was frozen at its first read. Uses a plain web Worker so
+    // the native cache invalidation is exercised without the node:worker_threads
+    // cwd wrapper.
+    const script = `
+      const target = require("fs").realpathSync(require("os").tmpdir());
+      const w = new Worker(new URL("data:text/javascript," + encodeURIComponent(
+        // The startup read populates the worker's cwd cache before the chdir.
+        "process.cwd(); postMessage('ready'); self.onmessage = () => postMessage(process.cwd());"
+      )));
+      w.onmessage = ({ data }) => {
+        if (data === "ready") {
+          process.chdir(target);
+          w.postMessage("go");
+          return;
+        }
+        console.log(JSON.stringify({ workerCwd: data, mainCwd: process.cwd(), target }));
+        w.terminate();
+      };
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { workerCwd, mainCwd, target } = JSON.parse(stdout);
+    expect(workerCwd).toBe(target);
+    expect(mainCwd).toBe(target);
+    expect(exitCode).toBe(0);
+  });
 });

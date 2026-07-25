@@ -329,6 +329,38 @@ let resourceLimits = {};
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
+const BUN_WORKER_CWD_COUNTER_KEY = "@@bunWorkerThreadsCwdCounter";
+
+// Shared cwd-invalidation counter, mirroring lib/internal/worker.js: the main
+// thread bumps it on every process.chdir(), and each worker wraps process.cwd
+// to re-read the real cwd when the counter changed (the wrapper's AtomicsLoad
+// call is observable — test-worker-process-cwd asserts it in the source).
+const AtomicsAdd = Atomics.add;
+const AtomicsLoad = Atomics.load;
+let cwdCounter: Uint32Array | undefined;
+if (isMainThread) {
+  const counter = (cwdCounter = new Uint32Array(new SharedArrayBuffer(4)));
+  const originalChdir = process.chdir;
+  process.chdir = function (path: string) {
+    originalChdir(path);
+    AtomicsAdd(counter, 0, 1);
+  };
+}
+function installWorkerCwd(counter: Uint32Array) {
+  // Keep the counter for workers spawned by this worker (node's
+  // workerIo.sharedCwdCounter pass-along).
+  cwdCounter = counter;
+  let cachedCwd = "";
+  let lastCounter = -1;
+  const originalCwd = process.cwd;
+  process.cwd = function () {
+    const currentCounter = AtomicsLoad(counter, 0);
+    if (currentCounter === lastCounter) return cachedCwd;
+    lastCounter = currentCounter;
+    cachedCwd = originalCwd.$call(process);
+    return cachedCwd;
+  };
+}
 
 // Captured stdio rides a dedicated MessageChannel per stream with node's flow
 // control (lib/internal/worker/io.js): the writer posts an array of chunks
@@ -748,9 +780,11 @@ if (
 ) {
   const stdioPorts = workerData[BUN_WORKER_STDIO_KEY];
   const controlPort = workerData[BUN_WORKER_MESSAGING_KEY];
+  const sharedCwdCounter = workerData[BUN_WORKER_CWD_COUNTER_KEY];
   workerData = workerData.data;
   if (stdioPorts) setupWorkerStdio(stdioPorts);
   if (controlPort) messaging.setupMainThreadPort(controlPort, _setEntryEvaluatedHook);
+  if (sharedCwdCounter) installWorkerCwd(sharedCwdCounter);
 }
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
@@ -1029,6 +1063,7 @@ class Worker extends EventEmitter {
       portToMain = channel.portToMain;
       const portToWorker = channel.portToWorker;
       const workerDataWrapper: any = { [BUN_WORKER_MESSAGING_KEY]: portToWorker, data: options.workerData };
+      if (cwdCounter) workerDataWrapper[BUN_WORKER_CWD_COUNTER_KEY] = cwdCounter;
       // stdout/stderr always create channels (stdin only when requested), so the
       // worker always receives a stdio control object.
       workerDataWrapper[BUN_WORKER_STDIO_KEY] = stdioForWorker;

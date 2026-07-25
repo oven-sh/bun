@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 test("Worker from a Blob", async () => {
   const worker = new Worker(
@@ -124,3 +125,93 @@ test("Worker on a revoked blob still works", async () => {
 
   expect(revoked).toBe("revoked.");
 });
+
+// The blob-URL registry is process-global. Before the per-owner sweep, an entry
+// registered inside a worker stayed in the map after the worker exited, and the
+// duped blob store pinned the payload for the lifetime of the process (roughly
+// 1 MB retained per MB minted per dead worker). After the sweep, a dead
+// worker's URL resolves like a revoked URL and the payload is released.
+//
+// Skipped on Windows: RSS there does not drop after worker threads exit (the
+// per-thread mimalloc arenas stay committed), so allocator residue alone
+// exceeds the threshold regardless of whether the entries are released.
+test.skipIf(isWindows)(
+  "blob URLs created inside a Worker are released when the Worker exits",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const workerBody = ${JSON.stringify(`
+          const urls = [];
+          for (let i = 0; i < 4; i++) {
+            const u8 = new Uint8Array(1 << 20);
+            u8.fill(65);
+            urls.push(URL.createObjectURL(new Blob([u8])));
+          }
+          postMessage(urls);
+        `)};
+        const src = URL.createObjectURL(
+          new Blob([workerBody], { type: "application/javascript" }),
+        );
+
+        async function runWorker() {
+          const w = new Worker(src);
+          const urls = await new Promise(r => (w.onmessage = e => r(e.data)));
+          await new Promise(r => w.addEventListener("close", r, { once: true }));
+          return urls;
+        }
+
+        // Establish the allocator high-water mark before measuring.
+        for (let i = 0; i < 3; i++) await runWorker();
+        Bun.gc(true);
+        Bun.gc(true);
+
+        const rss0 = process.memoryUsage.rss();
+        let deadUrl;
+        for (let i = 0; i < 30; i++) {
+          const urls = await runWorker();
+          deadUrl ??= urls[0];
+        }
+        Bun.gc(true);
+        Bun.gc(true);
+        const growthMB = (process.memoryUsage.rss() - rss0) / 2 ** 20;
+
+        let deadUrlServed = false;
+        try {
+          await fetch(deadUrl);
+          deadUrlServed = true;
+        } catch {}
+
+        // The parent-minted worker-source URL must survive the sweep.
+        const parentUrlStillResolves = (await (await fetch(src)).text()) === workerBody;
+
+        console.log(JSON.stringify({ growthMB, deadUrlServed, parentUrlStillResolves }));
+      `,
+      ],
+      env: {
+        ...bunEnv,
+        // Under ASAN the 1 MB payload frees go into the quarantine (default
+        // quarantine_size_mb=256) instead of being returned, so the RSS delta
+        // measures the quarantine rather than the registry. Disable it so the
+        // threshold is meaningful on ASAN builds.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    const { growthMB, deadUrlServed, parentUrlStillResolves } = JSON.parse(stdout);
+    // 30 workers * 4 MB: when leaking, growth is ~120 MB; when swept, growth
+    // is allocator noise (typically under 15 MB even on debug builds).
+    expect(growthMB).toBeLessThan(40);
+    expect(deadUrlServed).toBe(false);
+    expect(parentUrlStillResolves).toBe(true);
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);

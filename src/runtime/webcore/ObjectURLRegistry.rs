@@ -28,19 +28,25 @@ impl Default for ObjectURLRegistry {
 
 pub struct Entry {
     blob: Blob,
+    /// `VirtualMachine::initial_script_execution_context_identifier` of the
+    /// registering context. `WebWorker::shutdown` sweeps entries owned by the
+    /// dying context so a worker that never calls `revokeObjectURL` does not
+    /// pin its blob payloads for the lifetime of the process.
+    owner: i32,
 }
 
-// `Entry` is auto-`Send`: its sole field is `Blob`, which already asserts
-// `Send + Sync` (see `webcore_types::Blob`). No `unsafe impl` needed.
+// `Entry` is auto-`Send`: `Blob` already asserts `Send + Sync`
+// (see `webcore_types::Blob`). No `unsafe impl` needed.
 const _: fn() = || {
     fn assert_send<T: Send>() {}
     assert_send::<Entry>();
 };
 
 impl Entry {
-    pub fn init(blob: &Blob) -> Box<Entry> {
+    pub fn init(blob: &Blob, owner: i32) -> Box<Entry> {
         Box::new(Entry {
             blob: blob.dupe_with_content_type(true),
+            owner,
         })
     }
 }
@@ -54,8 +60,9 @@ impl Drop for Entry {
 
 impl ObjectURLRegistry {
     pub fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
+        let owner = vm.initial_script_execution_context_identifier;
         let uuid = vm.rare_data().next_uuid();
-        let entry = Entry::init(blob);
+        let entry = Entry::init(blob, owner);
 
         self.map.lock().insert(uuid.bytes, entry);
         uuid
@@ -96,6 +103,22 @@ impl ObjectURLRegistry {
             return false;
         };
         self.map.lock().contains_key(&uuid.bytes)
+    }
+
+    /// Drop every entry registered by `owner`. Called from
+    /// `WebWorker::shutdown` (via `RuntimeHooks`) so blob URLs minted inside a
+    /// worker are released when that worker exits. Entries from the main
+    /// context (or other still-live workers) are left untouched.
+    pub fn sweep_owner(&self, owner: i32) {
+        let mut map = self.map.lock();
+        let keys: Vec<[u8; 16]> = map
+            .iter()
+            .filter(|(_, e)| e.owner == owner)
+            .map(|(k, _)| *k)
+            .collect();
+        for k in keys {
+            let _ = map.remove(&k);
+        }
     }
 }
 

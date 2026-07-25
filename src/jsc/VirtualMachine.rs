@@ -1820,6 +1820,12 @@ pub struct RuntimeHooks {
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub close_dns_for_terminate: fn(),
+    /// `ObjectURLRegistry::singleton().sweep_owner(owner)` — drop every
+    /// `URL.createObjectURL` entry registered by the given script-execution
+    /// context. Called from `WebWorker::shutdown` so a worker that never calls
+    /// `revokeObjectURL` does not pin its blob payloads for the lifetime of
+    /// the process. The registry lives in `bun_runtime::webcore` (forward-dep).
+    pub sweep_object_urls_for_owner: fn(owner: i32),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

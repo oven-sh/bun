@@ -253,6 +253,39 @@ describe.concurrent("require() reads module source through fs.readFileSync", () 
     expect(exitCode).toBe(0);
   });
 
+  test("the override fires once per require from inside a user-registered extension handler", async () => {
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.cjs": `
+          const fs = require('fs');
+          const path = require('path');
+          const Module = require('module');
+          const targetPath = path.join(__dirname, 'target.foo');
+          const origReadFileSync = fs.readFileSync;
+          let calls = 0;
+          fs.readFileSync = function (...args) {
+            if (args[0] === targetPath) calls++;
+            return origReadFileSync(...args);
+          };
+          Module._extensions['.foo'] = function (mod, filename) {
+            mod._compile(fs.readFileSync(filename, 'utf8'), filename);
+          };
+          try {
+            console.log(JSON.stringify({ result: require(targetPath), calls }));
+          } finally {
+            fs.readFileSync = origReadFileSync;
+            delete Module._extensions['.foo'];
+          }
+        `,
+        "target.foo": `module.exports = "FROM-FOO";`,
+      },
+      "main.cjs",
+    );
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ result: "FROM-FOO", calls: 1 });
+    expect(exitCode).toBe(0);
+  });
+
   test("installing via Object.defineProperty is observed too", async () => {
     const { stdout, stderr, exitCode } = await run(
       {

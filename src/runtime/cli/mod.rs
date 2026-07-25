@@ -927,6 +927,8 @@ pub mod command {
             b"workspace"
         } else if arg == b"-C" || arg.starts_with(b"-C=") {
             b"prefix"
+        } else if arg == b"-m" || arg.starts_with(b"-m=") {
+            b"message"
         } else {
             return None;
         };
@@ -972,6 +974,7 @@ pub mod command {
                     | b"-g"
                     | b"--global"
                     | b"--json"
+                    | b"-l"
                     | b"--long"
                     | b"--parseable"
                     | b"--ignore-scripts"
@@ -1241,7 +1244,7 @@ pub mod command {
                     if b == b"--" {
                         past_separator = true;
                     }
-                    past_separator || !matches!(b, b"-p" | b"-y" | b"-d")
+                    past_separator || !matches!(b, b"-p" | b"-y" | b"-d" | b"-dd" | b"-ddd")
                 });
             };
             drop_colliding_shorts(&mut pre_subcommand_flags);

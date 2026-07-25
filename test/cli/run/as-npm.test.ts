@@ -277,6 +277,10 @@ describe("fake npm/npx cli", () => {
       expect(r.stdout).toContain("v1.2.4");
       expect(r.exitCode).toBe(0);
       expect(JSON.parse(await Bun.file(join(String(dir), "package.json")).text()).version).toBe("1.2.4");
+      // npm's -m shorthand takes a value; it must not eat the subcommand.
+      const m = await fakePmRun(String(dir), "npm", ["-m", "a message", "version", "patch", "--no-git-tag-version"]);
+      expect(m.stdout).toContain("v1.2.5");
+      expect(m.exitCode).toBe(0);
     });
 
     test("npm pack dispatches as bun pm pack, rewriting --pack-destination", async () => {
@@ -319,6 +323,7 @@ describe("fake npm/npx cli", () => {
           devDependencies: { dep: "./dep" },
         }),
         "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "dep2/package.json": JSON.stringify({ name: "dep2", version: "1.0.0" }),
         "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:1/nope"\n`,
       });
       // npm's -p is --parseable, not bun's --production.
@@ -329,6 +334,11 @@ describe("fake npm/npx cli", () => {
       const y = await fakePmRun(String(dir), "npm", ["-y", "install"]);
       expect(existsSync(join(String(dir), "yarn.lock"))).toBe(false);
       expect(y.exitCode).toBe(0);
+      // npm's -dd is a loglevel shorthand, not a chained bun -d -d (--dev).
+      const dd = await fakePmRun(String(dir), "npm", ["install", "-dd", "./dep2"]);
+      expect(dd.exitCode).toBe(0);
+      const pkg = JSON.parse(await Bun.file(join(String(dir), "package.json")).text());
+      expect(pkg.dependencies).toEqual({ dep2: "./dep2" });
     });
 
     test("npx drops npm config flags before the package name", async () => {
@@ -482,6 +492,10 @@ describe("fake npm/npx cli", () => {
       const pre = await fakePmRun(String(dir), "npm", ["-d", "run", "go"]);
       expect(pre.stdout).toContain("ARGS:");
       expect(pre.exitCode).toBe(0);
+      // npm's -l (--long) is boolean and must not pair with the script name.
+      const l = await fakePmRun(String(dir), "npm", ["run", "-l", "go"]);
+      expect(l.stdout).toContain("ARGS:");
+      expect(l.exitCode).toBe(0);
     });
 
     test("npm -y init does not scaffold into a folder named init", async () => {

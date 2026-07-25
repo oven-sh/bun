@@ -517,3 +517,49 @@ describe("CLI argument error messages", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// https://github.com/oven-sh/bun/issues/14519
+test("bun build --no-bundle --watch rebuilds when the entry file changes", async () => {
+  using dir = tempDir("build-no-bundle-watch", {
+    "entry.ts": `export const marker: string = "marker-v1"; console.log(marker);\n`,
+  });
+  const outfile = join(String(dir), "out.js");
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--no-bundle", "--watch", "--outfile", outfile],
+    env: { ...bunEnv, BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD: "1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const waitForOutput = async (needle: string) => {
+    while (true) {
+      const exitCode = proc.exitCode;
+      const text = await Bun.file(outfile)
+        .text()
+        .catch(() => "");
+      if (text.includes(needle)) return text;
+      if (exitCode !== null) {
+        const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+        throw new Error(
+          `watcher exited (code ${exitCode}) before emitting ${JSON.stringify(needle)}\n` +
+            `outfile: ${JSON.stringify(text)}\nstdout: ${stdout}\nstderr: ${stderr}`,
+        );
+      }
+      await Bun.sleep(16);
+    }
+  };
+
+  const initial = await waitForOutput("marker-v1");
+  // The TS annotation must be stripped (proves --no-bundle still transpiles).
+  expect(initial).not.toContain(": string");
+
+  writeFileSync(join(String(dir), "entry.ts"), `export const marker: string = "marker-v2"; console.log(marker);\n`);
+
+  const rebuilt = await waitForOutput("marker-v2");
+  expect(rebuilt).not.toContain("marker-v1");
+
+  proc.kill();
+});

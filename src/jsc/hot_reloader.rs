@@ -1405,3 +1405,75 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
     // command leaks the CLI arena), and the box is leaked under --watch.
     unsafe { BundlerWatcher::enable_hot_module_reloading(bv2.as_ptr(), None) };
 }
+
+// ── `bun build --no-bundle --watch` (Ctx = Transpiler) ───────────────────
+// Same RELOAD_IMMEDIATELY semantics as the BundleV2 path above; the
+// transform-only CLI never constructs a `BundleV2`, so the `Transpiler`
+// itself owns the watcher backref.
+
+impl<'a> HotReloaderCtx for bun_bundler::Transpiler<'a> {
+    type EventLoop = bun_event_loop::AnyEventLoop;
+
+    fn event_loop(&self) -> *mut Self::EventLoop {
+        unreachable!()
+    }
+
+    fn event_loop_ref(&self) -> &Self::EventLoop {
+        unreachable!()
+    }
+
+    fn bun_watcher_mut(&mut self) -> &mut Watcher {
+        let handle = self
+            .bun_watcher
+            .expect("bun_watcher_mut on un-enabled Transpiler reloader");
+        // SAFETY: `Box<Watcher>` leaked via `into_raw` in `install_bun_watcher`;
+        // live for the process (the CLI transpiler is arena-allocated and the
+        // main thread parks in `exit_or_watch`).
+        unsafe { &mut *handle.as_ptr() }
+    }
+
+    fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
+        unreachable!()
+    }
+
+    fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        self.resolver.bust_dir_cache(path)
+    }
+
+    fn get_loaders(&self) -> &bun_ast::LoaderHashTable {
+        &self.options.loaders
+    }
+
+    fn is_watcher_enabled(&self) -> bool {
+        self.bun_watcher.is_some()
+    }
+
+    fn watcher_top_level_dir(&self) -> &'static [u8] {
+        FileSystem::get().top_level_dir
+    }
+
+    fn install_bun_watcher(
+        &mut self,
+        watcher: Box<Watcher>,
+        _reload_immediately: bool,
+    ) -> *mut Watcher {
+        let watcher_nn = bun_core::heap::into_raw_nn(watcher);
+        let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
+        self.bun_watcher = Some(watcher_nn);
+        // SAFETY: `watcher_ptr` was just installed; live for the process.
+        self.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        watcher_ptr
+    }
+
+    fn compute_clear_screen(&self) -> bool {
+        !self
+            .env()
+            .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout())
+    }
+}
+
+/// `bun build --no-bundle --watch` reloader: same `RELOAD_IMMEDIATELY = true`
+/// execve-on-change semantics as [`BundlerWatcher`], but with the CLI
+/// `Transpiler` as context.
+pub type TranspilerWatcher =
+    NewHotReloader<bun_bundler::Transpiler<'static>, bun_event_loop::AnyEventLoop, true>;

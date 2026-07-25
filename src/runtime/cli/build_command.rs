@@ -584,6 +584,17 @@ impl BuildCommand {
                 this_transpiler.options.allow_runtime = false;
                 this_transpiler.resolver.opts.allow_runtime = false;
 
+                if ctx.debug.hot_reload == HotReload::Watch {
+                    // SAFETY: `this_transpiler` is allocated in the process-lifetime
+                    // CLI arena above, so it outlives the leaked watcher.
+                    unsafe {
+                        bun_jsc::hot_reloader::TranspilerWatcher::enable_hot_module_reloading(
+                            core::ptr::from_mut(this_transpiler),
+                            None,
+                        );
+                    }
+                }
+
                 // TODO: refactor this .transform function
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 

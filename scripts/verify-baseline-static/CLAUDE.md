@@ -269,5 +269,6 @@ See `src/main.rs:94-135` and `src/aarch64.rs`:
   SETSSBSY etc.) IS flagged — dedicated opcode slots that #UD on pre-CET.
 - **PACIASP/AUTIASP/BTI** (aarch64) — HINT-space, architecturally NOP on
   pre-PAC CPUs. (`LDRAA`/`LDRAB` are _not_ HINT-space and _are_ reported.)
-- **3DNow!, SMM, Cyrix, VIA** (x64) — no toolchain targeting x86-64 emits
-  these. When their `0f xx` encodings show up, it's data.
+- **3DNow!, SMM, Cyrix, VIA, RTM/TSX** (x64) — no toolchain targeting x86-64
+  emits these without explicit intrinsics. When their encodings show up
+  (`0f 0f` 3DNow!, `C7/C6 F8` XBEGIN/XABORT), it's data.

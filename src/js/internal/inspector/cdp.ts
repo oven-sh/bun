@@ -664,13 +664,13 @@ class InspectorCDPAdapter {
   }
 
   #translateConsoleMessage(message: AnyObject): void {
-    const level = message.level ?? "log";
-    let args = message.parameters?.length ? message.parameters : [{ type: "string", value: message.text ?? "" }];
+    const { level = "log", parameters, text, type: jscType } = message;
+    let args = parameters?.length ? parameters : [{ type: "string", value: text ?? "" }];
     // JSC's timeLog puts the elapsed-time string in `text` and only the
     // caller's extra data in `parameters`; Node emits the timing string as
     // args[0] followed by the extras.
-    if (message.type === "timing" && message.parameters?.length && message.text) {
-      args = [{ type: "string", value: message.text }, ...args];
+    if (jscType === "timing" && parameters?.length && text) {
+      args = [{ type: "string", value: text }, ...args];
     }
     // JSC's Console.messageAdded timestamp is WallTime::secondsSinceEpoch();
     // CDP Runtime.Timestamp is milliseconds since epoch.
@@ -681,7 +681,7 @@ class InspectorCDPAdapter {
         timestamp,
         exceptionDetails: {
           exceptionId: this.#nextExceptionId++,
-          text: message.text ?? "Uncaught",
+          text: text ?? "Uncaught",
           lineNumber: Math.max((message.line ?? 1) - 1, 0),
           columnNumber: Math.max((message.column ?? 1) - 1, 0),
           url: toCdpUrl(message.url ?? ""),
@@ -691,10 +691,7 @@ class InspectorCDPAdapter {
       return;
     }
 
-    const type =
-      message.type && CONSOLE_TYPE_MAP[message.type]
-        ? CONSOLE_TYPE_MAP[message.type]
-        : (CONSOLE_LEVEL_MAP[level] ?? "log");
+    const type = (jscType && CONSOLE_TYPE_MAP[jscType]) || (CONSOLE_LEVEL_MAP[level] ?? "log");
     this.#emitToClient("Runtime.consoleAPICalled", {
       type,
       args,

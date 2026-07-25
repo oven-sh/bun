@@ -2900,6 +2900,26 @@ impl<'a> Transpiler<'a> {
         output_file.output_kind = options::OutputKind::Chunk;
         output_file.side = None;
         output_file.entry_point_index = None;
+        output_file.dest_path = {
+            let rel_to_root =
+                bun_paths::resolve_path::relative(&self.options.root_dir, file_path_text);
+            let pathname = Fs::PathName::init(rel_to_root);
+            let out_ext: &[u8] = if self.options.preserve_extensions {
+                pathname.ext
+            } else {
+                self.options
+                    .out_extensions
+                    .get(pathname.ext)
+                    .copied()
+                    .unwrap_or(pathname.ext)
+            };
+            let dir: &[u8] = if pathname.dir.is_empty() {
+                b""
+            } else {
+                pathname.dir_with_trailing_slash()
+            };
+            strings::concat(&[b"./", dir, pathname.base, out_ext])
+        };
 
         match loader {
             options::Loader::Jsx

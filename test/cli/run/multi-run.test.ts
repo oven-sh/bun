@@ -73,68 +73,6 @@ describe.concurrent("parallel: basic", () => {
     expect(r.exitCode).toBe(0);
   });
 
-  describe("stdin", () => {
-    const readJs = `
-      let data = "";
-      process.stdin.setEncoding("utf8");
-      process.stdin.on("data", c => data += c);
-      process.stdin.on("end", () => console.log("STDIN=[" + data.trim() + "]"));
-    `;
-    async function spawnWithStdin(dir: string, args: string[]) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", ...args],
-        env: { ...bunEnv, NO_COLOR: "1" },
-        cwd: dir,
-        stdin: new Blob(["hello-from-parent\n"]),
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout, stderr, exitCode };
-    }
-
-    test("is inherited when a single script is requested", async () => {
-      using dir = tempDir("mr-par-stdin", {
-        "read.js": readJs,
-        "package.json": JSON.stringify({ scripts: { readstdin: `${bunExe()} run read.js` } }),
-      });
-      const r = await spawnWithStdin(String(dir), ["--parallel", "readstdin"]);
-      expect(r.stderr).toContain("Done");
-      expectPrefixed(r.stdout, "readstdin", "STDIN=[hello-from-parent]");
-      expect(r.exitCode).toBe(0);
-    });
-
-    test("is inherited for a single script even with pre/post hooks", async () => {
-      using dir = tempDir("mr-par-stdin-hooks", {
-        "read.js": readJs,
-        "package.json": JSON.stringify({
-          scripts: {
-            prereadstdin: "echo pre",
-            readstdin: `${bunExe()} run read.js`,
-            postreadstdin: "echo post",
-          },
-        }),
-      });
-      const r = await spawnWithStdin(String(dir), ["--parallel", "readstdin"]);
-      expectPrefixed(r.stdout, "readstdin", "STDIN=[hello-from-parent]");
-      expect(r.exitCode).toBe(0);
-    });
-
-    test("is ignored (EOF) when multiple scripts are requested", async () => {
-      using dir = tempDir("mr-par-stdin-multi", {
-        "read.js": readJs,
-        "package.json": JSON.stringify({
-          scripts: { a: `${bunExe()} run read.js`, b: `${bunExe()} run read.js` },
-        }),
-      });
-      const r = await spawnWithStdin(String(dir), ["--parallel", "a", "b"]);
-      expectPrefixed(r.stdout, "a", "STDIN=[]");
-      expectPrefixed(r.stdout, "b", "STDIN=[]");
-      expect(r.stdout).not.toContain("hello-from-parent");
-      expect(r.exitCode).toBe(0);
-    });
-  });
-
   test("runs many scripts (10+)", async () => {
     const scripts: Record<string, string> = {};
     for (let i = 0; i < 12; i++) {
@@ -165,6 +103,70 @@ describe.concurrent("parallel: basic", () => {
     expectDone(r.stderr, "a");
     expectDone(r.stderr, "b");
     expectDone(r.stderr, "c");
+    expect(r.exitCode).toBe(0);
+  });
+});
+
+// ─── PARALLEL: STDIN ──────────────────────────────────────────────────────────
+
+describe.concurrent("parallel: stdin", () => {
+  const readJs = `
+    let data = "";
+    process.stdin.setEncoding("utf8");
+    process.stdin.on("data", c => data += c);
+    process.stdin.on("end", () => console.log("STDIN=[" + data.trim() + "]"));
+  `;
+  async function spawnWithStdin(dir: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      cwd: dir,
+      stdin: new Blob(["hello-from-parent\n"]),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("is inherited when a single script is requested", async () => {
+    using dir = tempDir("mr-par-stdin", {
+      "read.js": readJs,
+      "package.json": JSON.stringify({ scripts: { readstdin: `${bunExe()} read.js` } }),
+    });
+    const r = await spawnWithStdin(String(dir), ["--parallel", "readstdin"]);
+    expect(r.stderr).toContain("Done");
+    expectPrefixed(r.stdout, "readstdin", "STDIN=[hello-from-parent]");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("is inherited for a single script even with pre/post hooks", async () => {
+    using dir = tempDir("mr-par-stdin-hooks", {
+      "read.js": readJs,
+      "package.json": JSON.stringify({
+        scripts: {
+          prereadstdin: "echo pre",
+          readstdin: `${bunExe()} read.js`,
+          postreadstdin: "echo post",
+        },
+      }),
+    });
+    const r = await spawnWithStdin(String(dir), ["--parallel", "readstdin"]);
+    expectPrefixed(r.stdout, "readstdin", "STDIN=[hello-from-parent]");
+    expect(r.exitCode).toBe(0);
+  });
+
+  test("is ignored (EOF) when multiple scripts are requested", async () => {
+    using dir = tempDir("mr-par-stdin-multi", {
+      "read.js": readJs,
+      "package.json": JSON.stringify({
+        scripts: { a: `${bunExe()} read.js`, b: `${bunExe()} read.js` },
+      }),
+    });
+    const r = await spawnWithStdin(String(dir), ["--parallel", "a", "b"]);
+    expectPrefixed(r.stdout, "a", "STDIN=[]");
+    expectPrefixed(r.stdout, "b", "STDIN=[]");
+    expect(r.stdout).not.toContain("hello-from-parent");
     expect(r.exitCode).toBe(0);
   });
 });

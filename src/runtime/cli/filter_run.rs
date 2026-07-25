@@ -743,6 +743,7 @@ pub(crate) fn run_scripts_with_filter(
 
     // Get list of packages that match the configuration
     let mut scripts: Vec<ScriptConfig> = Vec::new();
+    let mut matched_packages: usize = 0;
     // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
     while let Some(package_json_path) = package_json_iter.next()? {
         let dirpath =
@@ -785,6 +786,7 @@ pub(crate) fn run_scripts_with_filter(
             run_in_bun,
         )?;
 
+        let before = scripts.len();
         for (i, name) in [&pre_script_name[..], script_name, &post_script_name[..]]
             .iter()
             .enumerate()
@@ -846,6 +848,9 @@ pub(crate) fn run_scripts_with_filter(
                 PATH: Box::<[u8]>::from(&path_var[..]),
                 elide_count: ctx.bundler_options.elide_lines,
             });
+        }
+        if scripts.len() > before {
+            matched_packages += 1;
         }
     }
 
@@ -935,10 +940,7 @@ pub(crate) fn run_scripts_with_filter(
     let mut map: StringHashMap<Vec<*mut ProcessHandle>> = StringHashMap::default();
     // Inherit stdin only when one package matched (its pre/main/post run
     // sequentially); multiple packages run concurrently and would race on fd 0.
-    let single_package = scripts
-        .first()
-        .zip(scripts.last())
-        .is_some_and(|(a, b)| a.package_name == b.package_name);
+    let single_package = matched_packages == 1;
     for script in scripts.iter() {
         handles_vec.push(ProcessHandle {
             state: state_ptr,

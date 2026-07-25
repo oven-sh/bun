@@ -1328,6 +1328,30 @@ impl QuicEndpoint {
         // SAFETY: see doc comment.
         self.sessions.get().contains(&p).then(|| unsafe { &*p })
     }
+    /// Count live server sessions whose remote `(family, ip)` matches `peer`'s
+    /// (port ignored: Node keys `maxConnectionsPerHost` by source IP only;
+    /// node/src/quic/endpoint.cc SocketAddressInfoTraits).
+    fn server_sessions_from_host(&self, peer: &StoredAddr) -> usize {
+        let Some((family, _, ip)) = peer.decode() else {
+            return 0;
+        };
+        self.sessions
+            .get()
+            .iter()
+            // SAFETY: registered pointers are live on the JS thread (see
+            // `live_session`).
+            .map(|&p| unsafe { &*p })
+            .filter(|s| {
+                if !s.is_server() {
+                    return false;
+                }
+                let remote = s.remote_addr.get();
+                remote
+                    .decode()
+                    .is_some_and(|(f, _, a)| f == family && a == ip)
+            })
+            .count()
+    }
     fn write_stat(&self, idx: usize, value: u64) {
         if !self.stats.is_null() && idx < ENDPOINT_STATS_FIELDS.len() {
             // SAFETY: `stats` is a live `[u64; N]` view.
@@ -1676,12 +1700,15 @@ impl QuicEndpoint {
         }
         let peer_stored = stored_addr_from_sockaddr(peer);
         let peer_decoded = peer_stored.decode();
-        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
+        let (busy, max_conns, max_per_host) =
+            self.with_state(|s| (s.busy, s.max_connections_total, s.max_connections_per_host));
         // `closing`: on_new_conn refuses these at promotion, so announcing one
         // here would surface a session that can never open.
         if self.closing.get()
             || busy != 0
             || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize)
+            || (max_per_host > 0
+                && self.server_sessions_from_host(&peer_stored) >= max_per_host as usize)
         {
             return;
         }
@@ -1705,6 +1732,10 @@ impl QuicEndpoint {
             return;
         }
         if let Ok((session, _handle)) = created {
+            // Record the peer now so the per-host count includes provisional
+            // sessions; `bind_conn` refreshes it from the lsquic conn later.
+            // SAFETY: `session` was just created.
+            unsafe { (*session).remote_addr.set(peer_stored) };
             self.apply_server_session_options(global, session);
             self.sessions.with_mut(|v| v.push(session));
             self.pending_new_sessions.with_mut(|v| v.push(session));
@@ -1813,8 +1844,15 @@ impl QuicEndpoint {
             }
             return null_mut();
         }
-        let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
-        if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {
+        let (busy, max_conns, max_per_host) =
+            self.with_state(|s| (s.busy, s.max_connections_total, s.max_connections_per_host));
+        if busy != 0
+            || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize)
+            || (max_per_host > 0
+                && peer
+                    .as_ref()
+                    .is_some_and(|p| self.server_sessions_from_host(p) >= max_per_host as usize))
+        {
             // SAFETY: `conn` is the live conn lsquic just created.
             unsafe {
                 lsquic::lsquic_conn_abort_error(

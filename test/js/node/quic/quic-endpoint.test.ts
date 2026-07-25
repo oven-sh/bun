@@ -267,3 +267,55 @@ describe("endpoint.close() while a session is live", () => {
     expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
   });
 });
+
+// Node keys this on source IP (node/src/quic/endpoint.cc SocketAddressInfoTraits),
+// refusing the N+1st concurrent server session from the same host with
+// CONNECTION_REFUSED, same as `busy` and `maxConnectionsTotal` do.
+describe("QuicEndpoint({ maxConnectionsPerHost })", () => {
+  test("refuses the N+1st concurrent session from the same source IP", async () => {
+    const tp = { maxIdleTimeout: 30 };
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    let announced = 0;
+    await using ep = new QuicEndpoint({ maxConnectionsPerHost: 2 });
+    await using server = await listen(
+      async (s: any) => {
+        announced++;
+        await s.closed.catch(() => {});
+      },
+      { endpoint: ep, sni: sniOpt, alpn: ["quic-test"], transportParams: tp },
+    );
+
+    // Each attempt is a fresh source port, same 127.0.0.1 host.
+    const sessions: any[] = [];
+    const outcome = async () => {
+      const c: any = await connect(server.address, {
+        endpoint: new QuicEndpoint(),
+        alpn: "quic-test",
+        verifyPeer: "manual",
+        transportParams: tp,
+      });
+      c.closed.catch(() => {});
+      sessions.push(c);
+      return c.opened.then(
+        () => "open",
+        (e: any) => e?.code ?? "error",
+      );
+    };
+
+    const first = await outcome();
+    const second = await outcome();
+    const third = await outcome();
+    const fourth = await outcome();
+
+    for (const s of sessions) s.close();
+
+    expect({ first, second, third, fourth, announced, busy: server.stats.serverBusyCount }).toEqual({
+      first: "open",
+      second: "open",
+      third: "ERR_QUIC_TRANSPORT_ERROR",
+      fourth: "ERR_QUIC_TRANSPORT_ERROR",
+      announced: 2,
+      busy: 2n,
+    });
+  });
+});

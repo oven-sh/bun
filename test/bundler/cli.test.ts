@@ -640,6 +640,7 @@ describe.concurrent("--no-bundle with --outdir", () => {
     expect(stdout).toContain("config.js");
     expect(stdout).toContain("data.js");
     expect(stdout).toContain("style.css");
+    expect(stdout).not.toMatch(/style\.css\s+0 /);
   });
 
   test("does not escape --outdir when an entry point is outside --root", async () => {

@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "InternalBuiltinBytecode.h"
 #include "wtf/Forward.h"
 
 #include "NativeModuleImpl.h"
@@ -33,23 +34,28 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 // JS builtin that acts as a module. In debug mode, we use a different implementation that reads
 // from the developer's filesystem. This allows reloading code without recompiling bindings.
 
-JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString)
+JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, const String& SOURCE, const String& moduleName, const String& urlString, unsigned moduleIndex)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto&& origin = SourceOrigin(WTF::URL(urlString));
     SourceCode source = JSC::makeSource(SOURCE, origin, JSC::SourceTaintedOrigin::Untainted, moduleName);
     maybeAddCodeCoverage(vm, source);
+    UnlinkedFunctionExecutable* unlinkedExecutable = nullptr;
+#ifndef BUN_DYNAMIC_JS_LOAD_PATH
+    unlinkedExecutable = BuiltinBytecode::tryDecode(globalObject, vm, source, moduleName, moduleIndex);
+#endif
+    if (!unlinkedExecutable)
+        unlinkedExecutable = createBuiltinExecutable(
+            vm, source,
+            Identifier::fromString(vm, moduleName),
+            ImplementationVisibility::Public,
+            ConstructorKind::None,
+            ConstructAbility::CannotConstruct,
+            InlineAttribute::None);
     JSFunction* func
         = JSFunction::create(
             vm, globalObject,
-            createBuiltinExecutable(
-                vm, source,
-                Identifier::fromString(vm, moduleName),
-                ImplementationVisibility::Public,
-                ConstructorKind::None,
-                ConstructAbility::CannotConstruct,
-                InlineAttribute::None)
-                ->link(vm, nullptr, source),
+            unlinkedExecutable->link(vm, nullptr, source),
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -103,7 +109,7 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, c
     WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTF::move(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
-        return generateModule(globalObject, vm, string, moduleName, urlString);
+        return generateModule(globalObject, vm, string, moduleName, urlString, 0);
     } else {
         printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
                "Please re-compile Bun to continue.\n\n",
@@ -122,7 +128,7 @@ JSValue initializeInternalModuleFromDisk(JSGlobalObject* globalObject, VM& vm, c
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, OFFSET, LENGTH, urlString)                         \
     return generateModule(globalObject, vm,                                                                                        \
         WTF::String(WTF::StringImpl::createWithoutCopying(std::span<const char>(bun_internal_modules_data + (OFFSET), (LENGTH)))), \
-        moduleId, urlString)
+        moduleId, urlString, static_cast<unsigned>(id))
 #endif
 
 const ClassInfo InternalModuleRegistry::s_info = { "InternalModuleRegistry"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(InternalModuleRegistry) };

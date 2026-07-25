@@ -26,12 +26,14 @@ import { join } from "node:path";
 import {
   canTraceOrderFile,
   downloadArtifacts,
+  inheritBuiltinBytecode,
   inheritOrderFile,
   isCI,
   mustGenerateOrderFile,
   orderFileContext,
   orderFileEligible,
   packageAndUpload,
+  publishBuiltinBytecode,
   printEnvironment,
   regenerateOrderFile,
   reportOrderFileBootstrap,
@@ -152,9 +154,11 @@ async function main(): Promise<void> {
     if (result.cfg.buildkite && result.cfg.mode === "rust-and-link") {
       await startGroup("Build Rust", () => runNinja(["bun-rust"]));
       inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
+      await startGroup("Inherit builtin bytecode", () => inheritBuiltinBytecode(result.cfg, orderCtx));
       await startGroup("Wait for build-cpp & download artifacts", () => downloadArtifacts(result.cfg));
     } else {
       inherited = (await startGroup("Inherit symbol order file", runInherit)) as boolean;
+      await startGroup("Inherit builtin bytecode", () => inheritBuiltinBytecode(result.cfg, orderCtx));
     }
 
     await startGroup("Build", () => runNinja());

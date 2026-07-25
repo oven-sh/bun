@@ -540,15 +540,17 @@ describe("util.debuglog", () => {
     const run = async env => {
       const proc = Bun.spawn({
         cmd: [process.execPath, "-e", code],
-        env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1", NO_COLOR: undefined, FORCE_COLOR: undefined, NODE_DEBUG: env },
+        env: {
+          ...process.env,
+          BUN_DEBUG_QUIET_LOGS: "1",
+          NO_COLOR: undefined,
+          FORCE_COLOR: undefined,
+          NODE_DEBUG: env,
+        },
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     };
 
